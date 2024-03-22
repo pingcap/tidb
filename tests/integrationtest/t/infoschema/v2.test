@@ -1,0 +1,24 @@
+set @@global.tidb_schema_cache_size = 1024;
+
+# TestRenameTable
+use infoschema__v2;
+drop table if exists t1;
+create table t1 (id int);
+rename table t1 to t2;
+show tables;
+select * from t2;
+-- error 1146
+select * from t1;
+-- error 1146
+show create table t1;
+
+# TestExchangePartition
+use infoschema__v2;
+drop table if exists pt, nt;
+create table pt (a int) partition by hash(a) partitions 2;
+create table nt (a int);
+alter table pt exchange partition p1 with table nt;
+admin check table pt;
+admin check table nt;
+
+set @@global.tidb_schema_cache_size = default;

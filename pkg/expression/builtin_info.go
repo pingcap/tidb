@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -135,12 +136,13 @@ func (c *foundRowsFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	bf.tp.AddFlag(mysql.UnsignedFlag)
-	sig := &builtinFoundRowsSig{bf}
+	sig := &builtinFoundRowsSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinFoundRowsSig struct {
 	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinFoundRowsSig) Clone() builtinFunc {
@@ -149,11 +151,18 @@ func (b *builtinFoundRowsSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinFoundRowsSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
 // evalInt evals a builtinFoundRowsSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_found-rows
 // TODO: SQL_CALC_FOUND_ROWS and LIMIT not support for now, We will finish in another PR.
 func (b *builtinFoundRowsSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	data := ctx.GetSessionVars()
+	data, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return 0, true, err
+	}
 	if data == nil {
 		return 0, true, errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -173,12 +182,13 @@ func (c *currentUserFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, err
 	}
 	bf.tp.SetFlen(64)
-	sig := &builtinCurrentUserSig{bf}
+	sig := &builtinCurrentUserSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinCurrentUserSig struct {
 	baseBuiltinFunc
+	contextopt.CurrentUserPropReader
 }
 
 func (b *builtinCurrentUserSig) Clone() builtinFunc {
@@ -187,14 +197,22 @@ func (b *builtinCurrentUserSig) Clone() builtinFunc {
 	return newSig
 }
 
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinCurrentUserSig) RequiredOptionalEvalProps() (set OptionalEvalPropKeySet) {
+	return b.CurrentUserPropReader.RequiredOptionalEvalProps()
+}
+
 // evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
-func (b *builtinCurrentUserSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	data := ctx.GetSessionVars()
-	if data == nil || data.User == nil {
+func (b *builtinCurrentUserSig) evalString(ctx EvalContext, _ chunk.Row) (string, bool, error) {
+	user, err := b.CurrentUser(ctx)
+	if err != nil {
+		return "", true, err
+	}
+	if user == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-	return data.User.String(), false, nil
+	return user.String(), false, nil
 }
 
 type currentRoleFunctionClass struct {
@@ -210,12 +228,13 @@ func (c *currentRoleFunctionClass) getFunction(ctx BuildContext, args []Expressi
 		return nil, err
 	}
 	bf.tp.SetFlen(64)
-	sig := &builtinCurrentRoleSig{bf}
+	sig := &builtinCurrentRoleSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinCurrentRoleSig struct {
 	baseBuiltinFunc
+	contextopt.CurrentUserPropReader
 }
 
 func (b *builtinCurrentRoleSig) Clone() builtinFunc {
@@ -224,24 +243,32 @@ func (b *builtinCurrentRoleSig) Clone() builtinFunc {
 	return newSig
 }
 
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinCurrentRoleSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.CurrentUserPropReader.RequiredOptionalEvalProps()
+}
+
 // evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/8.0/en/information-functions.html#function_current-role
 func (b *builtinCurrentRoleSig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
-	data := ctx.GetSessionVars()
-	if data == nil || data.ActiveRoles == nil {
+	roles, err := b.ActiveRoles(ctx)
+	if err != nil {
+		return "", true, err
+	}
+	if roles == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-	if len(data.ActiveRoles) == 0 {
+	if len(roles) == 0 {
 		return "NONE", false, nil
 	}
 	sortedRes := make([]string, 0, 10)
-	for _, r := range data.ActiveRoles {
+	for _, r := range roles {
 		sortedRes = append(sortedRes, r.String())
 	}
 	slices.Sort(sortedRes)
 	for i, r := range sortedRes {
 		res += r
-		if i != len(data.ActiveRoles)-1 {
+		if i != len(roles)-1 {
 			res += ","
 		}
 	}
@@ -261,12 +288,13 @@ func (c *currentResourceGroupFunctionClass) getFunction(ctx BuildContext, args [
 		return nil, err
 	}
 	bf.tp.SetFlen(64)
-	sig := &builtinCurrentResourceGroupSig{bf}
+	sig := &builtinCurrentResourceGroupSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinCurrentResourceGroupSig struct {
 	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinCurrentResourceGroupSig) Clone() builtinFunc {
@@ -275,8 +303,15 @@ func (b *builtinCurrentResourceGroupSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinCurrentResourceGroupSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
 func (b *builtinCurrentResourceGroupSig) evalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error) {
-	data := ctx.GetSessionVars()
+	data, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return "", true, err
+	}
 	if data == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -309,12 +344,13 @@ func (c *userFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 		return nil, err
 	}
 	bf.tp.SetFlen(64)
-	sig := &builtinUserSig{bf}
+	sig := &builtinUserSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinUserSig struct {
 	baseBuiltinFunc
+	contextopt.CurrentUserPropReader
 }
 
 func (b *builtinUserSig) Clone() builtinFunc {
@@ -323,14 +359,22 @@ func (b *builtinUserSig) Clone() builtinFunc {
 	return newSig
 }
 
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinUserSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.CurrentUserPropReader.RequiredOptionalEvalProps()
+}
+
 // evalString evals a builtinUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
-func (b *builtinUserSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	data := ctx.GetSessionVars()
-	if data == nil || data.User == nil {
+func (b *builtinUserSig) evalString(ctx EvalContext, _ chunk.Row) (string, bool, error) {
+	user, err := b.CurrentUser(ctx)
+	if err != nil {
+		return "", true, err
+	}
+	if user == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-	return data.User.LoginString(), false, nil
+	return user.LoginString(), false, nil
 }
 
 type connectionIDFunctionClass struct {
@@ -346,12 +390,13 @@ func (c *connectionIDFunctionClass) getFunction(ctx BuildContext, args []Express
 		return nil, err
 	}
 	bf.tp.AddFlag(mysql.UnsignedFlag)
-	sig := &builtinConnectionIDSig{bf}
+	sig := &builtinConnectionIDSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinConnectionIDSig struct {
 	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinConnectionIDSig) Clone() builtinFunc {
@@ -360,8 +405,16 @@ func (b *builtinConnectionIDSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinConnectionIDSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
 func (b *builtinConnectionIDSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	data := ctx.GetSessionVars()
+	data, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+
 	if data == nil {
 		return 0, true, errors.Errorf("Missing session variable `builtinConnectionIDSig.evalInt`")
 	}
@@ -388,10 +441,10 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx BuildContext, args []Express
 	bf.tp.AddFlag(mysql.UnsignedFlag)
 
 	if len(args) == 1 {
-		sig = &builtinLastInsertIDWithIDSig{bf}
+		sig = &builtinLastInsertIDWithIDSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LastInsertIDWithID)
 	} else {
-		sig = &builtinLastInsertIDSig{bf}
+		sig = &builtinLastInsertIDSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LastInsertID)
 	}
 	return sig, err
@@ -399,6 +452,7 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinLastInsertIDSig struct {
 	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinLastInsertIDSig) Clone() builtinFunc {
@@ -407,15 +461,24 @@ func (b *builtinLastInsertIDSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinLastInsertIDSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
 // evalInt evals LAST_INSERT_ID().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
 func (b *builtinLastInsertIDSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
-	res = int64(ctx.GetSessionVars().StmtCtx.PrevLastInsertID)
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+	res = int64(vars.StmtCtx.PrevLastInsertID)
 	return res, false, nil
 }
 
 type builtinLastInsertIDWithIDSig struct {
 	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinLastInsertIDWithIDSig) Clone() builtinFunc {
@@ -424,15 +487,24 @@ func (b *builtinLastInsertIDWithIDSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinLastInsertIDWithIDSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
 // evalInt evals LAST_INSERT_ID(expr).
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
 func (b *builtinLastInsertIDWithIDSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+
 	res, isNull, err = b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
 	}
 
-	ctx.GetSessionVars().SetLastInsertID(uint64(res))
+	vars.SetLastInsertID(uint64(res))
 	return res, false, nil
 }
 
@@ -514,12 +586,13 @@ func (c *tidbIsDDLOwnerFunctionClass) getFunction(ctx BuildContext, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTiDBIsDDLOwnerSig{bf}
+	sig := &builtinTiDBIsDDLOwnerSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTiDBIsDDLOwnerSig struct {
 	baseBuiltinFunc
+	contextopt.DDLOwnerPropReader
 }
 
 func (b *builtinTiDBIsDDLOwnerSig) Clone() builtinFunc {
@@ -528,9 +601,18 @@ func (b *builtinTiDBIsDDLOwnerSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinTiDBIsDDLOwnerSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.DDLOwnerPropReader.RequiredOptionalEvalProps()
+}
+
 // evalInt evals a builtinTiDBIsDDLOwnerSig.
 func (b *builtinTiDBIsDDLOwnerSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
-	if ctx.IsDDLOwner() {
+	isOwner, err := b.IsDDLOwner(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+
+	if isOwner {
 		res = 1
 	}
 
@@ -781,13 +863,14 @@ func (c *rowCountFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	sig = &builtinRowCountSig{bf}
+	sig = &builtinRowCountSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_RowCount)
 	return sig, nil
 }
 
 type builtinRowCountSig struct {
 	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinRowCountSig) Clone() builtinFunc {
@@ -796,10 +879,18 @@ func (b *builtinRowCountSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinRowCountSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
 // evalInt evals ROW_COUNT().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count.
 func (b *builtinRowCountSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
-	res = ctx.GetSessionVars().StmtCtx.PrevAffectedRows
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+	res = vars.StmtCtx.PrevAffectedRows
 	return res, false, nil
 }
 

@@ -19,11 +19,14 @@ import (
 
 	"github.com/pingcap/tidb/pkg/errctx"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // sessionctx.Context + *ExprCtxExtendedImpl should implement `expression.BuildContext`
@@ -35,12 +38,28 @@ var _ exprctx.BuildContext = struct {
 
 // ExprCtxExtendedImpl extends the sessionctx.Context to implement `expression.BuildContext`
 type ExprCtxExtendedImpl struct {
-	sctx sessionctx.Context
+	sctx  sessionctx.Context
+	props contextopt.OptionalEvalPropProviders
 }
 
 // NewExprExtendedImpl creates a new ExprCtxExtendedImpl.
 func NewExprExtendedImpl(sctx sessionctx.Context) *ExprCtxExtendedImpl {
-	return &ExprCtxExtendedImpl{sctx: sctx}
+	impl := &ExprCtxExtendedImpl{sctx: sctx}
+	// set all optional properties
+	impl.setOptionalProp(currentUserProp(sctx))
+	impl.setOptionalProp(contextopt.NewSessionVarsProvider(sctx))
+	impl.setOptionalProp(contextopt.NewAdvisoryLockPropProvider(sctx))
+	impl.setOptionalProp(contextopt.DDLOwnerInfoProvider(sctx.IsDDLOwner))
+	// When EvalContext is created from a session, it should contain all the optional properties.
+	intest.Assert(impl.props.PropKeySet().IsFull())
+	return impl
+}
+
+func (ctx *ExprCtxExtendedImpl) setOptionalProp(prop exprctx.OptionalEvalPropProvider) {
+	intest.AssertFunc(func() bool {
+		return !ctx.props.Contains(prop.Desc().Key())
+	})
+	ctx.props.Add(prop)
 }
 
 // CtxID returns the context id.
@@ -101,4 +120,21 @@ func (ctx *ExprCtxExtendedImpl) GetDefaultWeekFormatMode() string {
 		return "0"
 	}
 	return mode
+}
+
+// GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
+func (ctx *ExprCtxExtendedImpl) GetDivPrecisionIncrement() int {
+	return ctx.sctx.GetSessionVars().GetDivPrecisionIncrement()
+}
+
+// GetOptionalPropProvider gets the optional property provider by key
+func (ctx *ExprCtxExtendedImpl) GetOptionalPropProvider(key exprctx.OptionalEvalPropKey) (exprctx.OptionalEvalPropProvider, bool) {
+	return ctx.props.Get(key)
+}
+
+func currentUserProp(sctx sessionctx.Context) exprctx.OptionalEvalPropProvider {
+	return contextopt.CurrentUserPropProvider(func() (*auth.UserIdentity, []*auth.RoleIdentity) {
+		vars := sctx.GetSessionVars()
+		return vars.User, vars.ActiveRoles
+	})
 }

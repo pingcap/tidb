@@ -51,26 +51,20 @@ type EvalContext interface {
 	GetMaxAllowedPacket() uint64
 	// GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
 	GetDefaultWeekFormatMode() string
+	// GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
+	GetDivPrecisionIncrement() int
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
 	// Value returns the value associated with this context for key.
 	Value(key fmt.Stringer) any
-	// IsDDLOwner checks whether this session is DDL owner.
-	IsDDLOwner() bool
-	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
-	GetAdvisoryLock(string, int64) error
-	// IsUsedAdvisoryLock checks for existing locks (aka IS_USED_LOCK()).
-	IsUsedAdvisoryLock(string) uint64
-	// ReleaseAdvisoryLock releases an advisory lock (aka RELEASE_LOCK()).
-	ReleaseAdvisoryLock(string) bool
-	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
-	ReleaseAllAdvisoryLocks() int
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 	// GetInfoSchema returns the current infoschema
 	GetInfoSchema() infoschema.InfoSchemaMetaVersion
 	// GetDomainInfoSchema returns the latest information schema in domain
 	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
+	// GetOptionalPropProvider gets the optional property provider by key
+	GetOptionalPropProvider(OptionalEvalPropKey) (OptionalEvalPropProvider, bool)
 }
 
 // BuildContext is used to build an expression

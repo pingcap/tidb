@@ -1062,7 +1062,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		KeepOrder:       keepOrder,
 		Desc:            desc,
 		physicalTableID: ds.physicalTableID,
-		isPartition:     ds.isPartition,
+		isPartition:     ds.partitionDefIdx != nil,
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -1250,7 +1250,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		Ranges:           ranges,
 		rangeInfo:        rangeInfo,
 		Desc:             desc,
-		isPartition:      ds.isPartition,
+		isPartition:      ds.partitionDefIdx != nil,
 		physicalTableID:  ds.physicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.getPKIsHandleCol(),
@@ -1274,7 +1274,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
 			DBName:          ds.DBName,
-			isPartition:     ds.isPartition,
+			isPartition:     ds.partitionDefIdx != nil,
 			physicalTableID: ds.physicalTableID,
 			tblCols:         ds.TblCols,
 			tblColHists:     ds.TblColHists,
@@ -2350,17 +2350,17 @@ func canExprsInJoinPushdown(p *LogicalJoin, storeType kv.StoreType) bool {
 		}
 		equalExprs = append(equalExprs, eqCondition)
 	}
-	ctx := p.SCtx().GetExprCtx()
-	if !expression.CanExprsPushDown(ctx, equalExprs, p.SCtx().GetClient(), storeType) {
+	pushDownCtx := GetPushDownCtx(p.SCtx())
+	if !expression.CanExprsPushDown(pushDownCtx, equalExprs, storeType) {
 		return false
 	}
-	if !expression.CanExprsPushDown(ctx, p.LeftConditions, p.SCtx().GetClient(), storeType) {
+	if !expression.CanExprsPushDown(pushDownCtx, p.LeftConditions, storeType) {
 		return false
 	}
-	if !expression.CanExprsPushDown(ctx, p.RightConditions, p.SCtx().GetClient(), storeType) {
+	if !expression.CanExprsPushDown(pushDownCtx, p.RightConditions, storeType) {
 		return false
 	}
-	if !expression.CanExprsPushDown(ctx, p.OtherConditions, p.SCtx().GetClient(), storeType) {
+	if !expression.CanExprsPushDown(pushDownCtx, p.OtherConditions, storeType) {
 		return false
 	}
 	return true
@@ -2626,15 +2626,15 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	newProps := []*property.PhysicalProperty{newProp}
 	// generate a mpp task candidate if mpp mode is allowed
 	ctx := p.SCtx()
-	exprCtx := ctx.GetExprCtx()
+	pushDownCtx := GetPushDownCtx(ctx)
 	if newProp.TaskTp != property.MppTaskType && ctx.GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash) &&
-		expression.CanExprsPushDown(exprCtx, p.Exprs, ctx.GetClient(), kv.TiFlash) {
+		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiFlash) {
 		mppProp := newProp.CloneEssentialFields()
 		mppProp.TaskTp = property.MppTaskType
 		newProps = append(newProps, mppProp)
 	}
 	if newProp.TaskTp != property.CopSingleReadTaskType && ctx.GetSessionVars().AllowProjectionPushDown && p.canPushToCop(kv.TiKV) &&
-		expression.CanExprsPushDown(exprCtx, p.Exprs, ctx.GetClient(), kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) {
+		expression.CanExprsPushDown(pushDownCtx, p.Exprs, kv.TiKV) && !expression.ContainVirtualColumn(p.Exprs) {
 		copProp := newProp.CloneEssentialFields()
 		copProp.TaskTp = property.CopSingleReadTaskType
 		newProps = append(newProps, copProp)
@@ -2646,7 +2646,7 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 			Exprs:                p.Exprs,
 			CalculateNoDelay:     p.CalculateNoDelay,
 			AvoidColumnEvaluator: p.AvoidColumnEvaluator,
-		}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), newProp)
+		}.Init(ctx, p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), newProp)
 		proj.SetSchema(p.schema)
 		ret = append(ret, proj)
 	}
@@ -2846,9 +2846,9 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 
 	{
 		allSupported := true
-		exprCtx := lw.SCtx().GetExprCtx()
+		sctx := lw.SCtx()
 		for _, windowFunc := range lw.WindowFuncDescs {
-			if !windowFunc.CanPushDownToTiFlash(exprCtx, lw.SCtx().GetClient()) {
+			if !windowFunc.CanPushDownToTiFlash(GetPushDownCtx(sctx)) {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function `" + windowFunc.Name + "` or its arguments are not supported now.")
 				allSupported = false
@@ -3476,11 +3476,7 @@ func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 func (p *LogicalSelection) canPushDown(storeTp kv.StoreType) bool {
 	return !expression.ContainVirtualColumn(p.Conditions) &&
 		p.canPushToCop(storeTp) &&
-		expression.CanExprsPushDown(
-			p.SCtx().GetExprCtx(),
-			p.Conditions,
-			p.SCtx().GetClient(),
-			storeTp)
+		expression.CanExprsPushDown(GetPushDownCtx(p.SCtx()), p.Conditions, storeTp)
 }
 
 func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {

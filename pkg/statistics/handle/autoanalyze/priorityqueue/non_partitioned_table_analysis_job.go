@@ -91,11 +91,9 @@ func (j *NonPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 
 // IsValidToAnalyze checks whether the table is valid to analyze.
 // We will check the last failed job and average analyze duration to determine whether the table is valid to analyze.
-func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(sctx sessionctx.Context) (bool, string) {
-	if valid, failReason := isValidWeight(j.Weight); !valid {
-		return false, failReason
-	}
-
+func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(
+	sctx sessionctx.Context,
+) (bool, string) {
 	if valid, failReason := isValidToAnalyze(
 		sctx,
 		j.TableSchema,
@@ -132,10 +130,10 @@ func (j *NonPartitionedTableAnalysisJob) String() string {
 			"\tTable: %s\n"+
 			"\tTableID: %d\n"+
 			"\tTableStatsVer: %d\n"+
-			"\tChangePercentage: %.2f\n"+
+			"\tChangePercentage: %.6f\n"+
 			"\tTableSize: %.2f\n"+
 			"\tLastAnalysisDuration: %v\n"+
-			"\tWeight: %.4f\n",
+			"\tWeight: %.6f\n",
 		j.getAnalyzeType(),
 		strings.Join(j.Indexes, ", "),
 		j.TableSchema, j.TableName, j.TableID, j.TableStatsVer,
@@ -171,10 +169,15 @@ func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
 ) {
-	for _, index := range j.Indexes {
-		sql, params := j.GenSQLForAnalyzeIndex(index)
-		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	if len(j.Indexes) == 0 {
+		return
 	}
+	// Only analyze the first index.
+	// This is because analyzing a single index also analyzes all other indexes and columns.
+	// Therefore, to avoid redundancy, we prevent multiple analyses of the same table.
+	firstIndex := j.Indexes[0]
+	sql, params := j.GenSQLForAnalyzeIndex(firstIndex)
+	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
 
 // GenSQLForAnalyzeIndex generates the SQL for analyzing the specified index.

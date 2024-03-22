@@ -83,13 +83,38 @@ func TestCheckRequirements(t *testing.T) {
 		Plan: &importer.Plan{
 			DBName:         "test",
 			DataSourceType: importer.DataSourceTypeFile,
+			TableInfo:      tableObj.Meta(),
 		},
 		Table: tableObj,
 	}
+
+	// create a dummy job
+	_, err = importer.CreateJob(ctx, conn, "test", "tttt", tableObj.Meta().ID, "root", &importer.ImportParameters{}, 0)
+	require.NoError(t, err)
+	// there is active job on the target table already
+	jobID, err := importer.CreateJob(ctx, conn, "test", "t", tableObj.Meta().ID, "root", &importer.ImportParameters{}, 0)
+	require.NoError(t, err)
+	err = c.CheckRequirements(ctx, conn)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "there is active job on the target table already")
+	// cancel the job
+	require.NoError(t, importer.CancelJob(ctx, conn, jobID))
+
+	// source data file size = 0
 	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataPreCheckFailed)
 
-	// now checkTotalFileSize pass, and try next pre-check item
+	// make checkTotalFileSize pass
 	c.TotalFileSize = 1
+	// global sort with thread count < 16
+	c.ThreadCnt = 15
+	c.CloudStorageURI = "s3://test"
+	err = c.CheckRequirements(ctx, conn)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "global sort requires at least 16 threads")
+
+	// reset fields, make global sort thread check pass
+	c.ThreadCnt = 1
+	c.CloudStorageURI = ""
 	// non-empty table
 	_, err = conn.Execute(ctx, "insert into test.t values(1)")
 	require.NoError(t, err)
@@ -155,6 +180,7 @@ func TestCheckRequirements(t *testing.T) {
 	require.NoError(t, c.CheckRequirements(ctx, conn))
 
 	// with global sort
+	c.Plan.ThreadCnt = 16
 	c.Plan.CloudStorageURI = ":"
 	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataInvalidURI)
 	c.Plan.CloudStorageURI = "sdsdsdsd://sdsdsdsd"

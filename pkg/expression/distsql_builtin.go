@@ -496,12 +496,12 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_BitCount:
 		f = &builtinBitCountSig{base}
 	case tipb.ScalarFuncSig_GetParamString:
-		f = &builtinGetParamStringSig{base}
+		f = &builtinGetParamStringSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_GetVar:
-		f = &builtinGetStringVarSig{base}
+		f = &builtinGetStringVarSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_RowSig:
 	case tipb.ScalarFuncSig_SetVar:
-		f = &builtinSetStringVarSig{base}
+		f = &builtinSetStringVarSig{baseBuiltinFunc: base}
 	// case tipb.ScalarFuncSig_ValuesDecimal:
 	// 	f = &builtinValuesDecimalSig{base}
 	// case tipb.ScalarFuncSig_ValuesDuration:
@@ -595,29 +595,29 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_Database:
 		f = &builtinDatabaseSig{base}
 	case tipb.ScalarFuncSig_FoundRows:
-		f = &builtinFoundRowsSig{base}
+		f = &builtinFoundRowsSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_CurrentUser:
-		f = &builtinCurrentUserSig{base}
+		f = &builtinCurrentUserSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_User:
-		f = &builtinUserSig{base}
+		f = &builtinUserSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ConnectionID:
-		f = &builtinConnectionIDSig{base}
+		f = &builtinConnectionIDSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LastInsertID:
-		f = &builtinLastInsertIDSig{base}
+		f = &builtinLastInsertIDSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_LastInsertIDWithID:
-		f = &builtinLastInsertIDWithIDSig{base}
+		f = &builtinLastInsertIDWithIDSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Version:
 		f = &builtinVersionSig{base}
 	case tipb.ScalarFuncSig_TiDBVersion:
 		f = &builtinTiDBVersionSig{base}
 	case tipb.ScalarFuncSig_RowCount:
-		f = &builtinRowCountSig{base}
+		f = &builtinRowCountSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Sleep:
-		f = &builtinSleepSig{base}
+		f = &builtinSleepSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Lock:
-		f = &builtinLockSig{base}
+		f = &builtinLockSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_ReleaseLock:
-		f = &builtinReleaseLockSig{base}
+		f = &builtinReleaseLockSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_DecimalAnyValue:
 		f = &builtinDecimalAnyValueSig{base}
 	case tipb.ScalarFuncSig_DurationAnyValue:

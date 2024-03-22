@@ -167,12 +167,10 @@ func SyntaxWarn(err error) error {
 	}
 	logutil.BgLogger().Debug("syntax error", zap.Error(err))
 
-	// If the warn is already a terror with stack, pass it through.
-	if errors.HasStack(err) {
-		cause := errors.Cause(err)
-		if _, ok := cause.(*terror.Error); ok {
-			return err
-		}
+	// If the "err" is already a terror, pass it through.
+	cause := errors.Cause(err)
+	if _, ok := cause.(*terror.Error); ok {
+		return err
 	}
 
 	return parser.ErrParse.FastGenByArgs(syntaxErrorPrefix, err.Error())

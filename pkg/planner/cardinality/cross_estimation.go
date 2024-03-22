@@ -189,13 +189,13 @@ func getColumnRangeCounts(sctx context.PlanContext, colID int64, ranges []*range
 	for i, ran := range ranges {
 		if idxID >= 0 {
 			idxHist := histColl.Indices[idxID]
-			if idxHist == nil || idxHist.IsInvalid(sctx, false) {
+			if statistics.IndexStatsIsInvalid(sctx, idxHist, histColl, idxID) {
 				return nil, false
 			}
 			count, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran})
 		} else {
-			colHist, ok := histColl.Columns[colID]
-			if !ok || colHist.IsInvalid(sctx, false) {
+			colHist := histColl.Columns[colID]
+			if statistics.ColumnStatsIsInvalid(colHist, sctx, histColl, colID) {
 				return nil, false
 			}
 			count, err = GetRowCountByColumnRanges(sctx, histColl, colID, []*ranger.Range{ran})

@@ -1016,9 +1016,9 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		if t.meta.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
 			_, err = txn.Get(ctx, key)
-		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
+		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() || txn.IsPipelined() {
 			var v []byte
-			v, err = txn.GetMemBuffer().Get(ctx, key)
+			v, err = txn.GetMemBuffer().GetLocal(ctx, key)
 			if err != nil {
 				setPresume = true
 			}
@@ -2346,7 +2346,7 @@ type TemporaryTable struct {
 func TempTableFromMeta(tblInfo *model.TableInfo) tableutil.TempTable {
 	return &TemporaryTable{
 		modified:        false,
-		stats:           statistics.PseudoTable(tblInfo, false),
+		stats:           statistics.PseudoTable(tblInfo, false, false),
 		autoIDAllocator: autoid.NewAllocatorFromTempTblInfo(tblInfo),
 		meta:            tblInfo,
 	}

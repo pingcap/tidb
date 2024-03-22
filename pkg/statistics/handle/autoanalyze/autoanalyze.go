@@ -487,7 +487,7 @@ func tryAutoAnalyzeTable(
 
 	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
-		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
+		if _, ok := statsTbl.Indices[idx.ID]; !ok && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
 			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
 			escaped, err := sqlescape.EscapeSQL(sqlWithIdx, paramsWithIdx...)
@@ -516,7 +516,7 @@ func tryAutoAnalyzeTable(
 //
 // Exposed for test.
 func NeedAnalyzeTable(tbl *statistics.Table, autoAnalyzeRatio float64) (bool, string) {
-	analyzed := exec.TableAnalyzed(tbl)
+	analyzed := tbl.IsAnalyzed()
 	if !analyzed {
 		return true, "table unanalyzed"
 	}
@@ -634,7 +634,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				continue
 			}
 			// 2. If the index is not analyzed, we need to analyze it.
-			if _, ok := partitionStats.Indices[idx.ID]; !ok {
+			if !partitionStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
 				needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
 				statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
 			}

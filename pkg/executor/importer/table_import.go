@@ -16,7 +16,6 @@ package importer
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"math"
 	"net"
@@ -125,19 +124,6 @@ func prepareSortDir(e *LoadDataController, id string, tidbCfg *tidb.Config) (str
 		}
 	}
 	return sortDir, nil
-}
-
-// GetCachedKVStoreFrom gets a cached kv store from PD address.
-// Callers should NOT close the kv store.
-func GetCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error) {
-	// Disable GC because TiDB enables GC already.
-	keySpaceName := tidb.GetGlobalKeyspaceName()
-	// the kv store we get is a cached store, so we can't close it.
-	kvStore, err := GetKVStore(fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", pdAddr, keySpaceName), tls.ToTiKVSecurityConfig())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return kvStore, nil
 }
 
 // GetRegionSplitSizeKeys gets the region split size and keys from PD.
@@ -517,6 +503,9 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) (int64, error) {
 	var kvCount int64
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
+	if common.ErrFoundDuplicateKeys.Equal(importErr) {
+		importErr = local.ConvertToErrFoundConflictRecords(importErr, ti.encTable)
+	}
 	if closedEngine.GetID() != common.IndexEngineID {
 		// todo: change to a finer-grain progress later.
 		// each row is encoded into 1 data key
@@ -605,6 +594,9 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 				int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio),
 				int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio),
 			); err != nil {
+				if common.ErrFoundDuplicateKeys.Equal(err) {
+					err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
+				}
 				importErr = multierr.Append(importErr, err)
 			}
 		}
@@ -699,6 +691,9 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		failpoint.Return(nil, errors.New("mock import from select error"))
 	})
 	if err = closedDataEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
+		}
 		return nil, err
 	}
 	dataKVCount := ti.backend.GetImportedKVCount(closedDataEngine.GetUUID())
@@ -708,6 +703,9 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		return nil, err
 	}
 	if err = closedIndexEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
+		if common.ErrFoundDuplicateKeys.Equal(err) {
+			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
+		}
 		return nil, err
 	}
 
@@ -768,7 +766,7 @@ func PostProcess(
 		callLog.End(zap.ErrorLevel, err)
 	}()
 
-	if err = RebaseAllocatorBases(ctx, maxIDs, plan, logger); err != nil {
+	if err = RebaseAllocatorBases(ctx, se.GetStore(), maxIDs, plan, logger); err != nil {
 		return err
 	}
 
@@ -789,7 +787,7 @@ func (r *autoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
 }
 
 // RebaseAllocatorBases rebase the allocator bases.
-func RebaseAllocatorBases(ctx context.Context, maxIDs map[autoid.AllocatorType]int64, plan *Plan, logger *zap.Logger) (err error) {
+func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs map[autoid.AllocatorType]int64, plan *Plan, logger *zap.Logger) (err error) {
 	callLog := log.BeginTask(logger, "rebase allocators")
 	defer func() {
 		callLog.End(zap.ErrorLevel, err)
@@ -812,11 +810,6 @@ func RebaseAllocatorBases(ctx context.Context, maxIDs map[autoid.AllocatorType]i
 		return err2
 	}
 
-	// no need to close kvStore, since it's a cached store.
-	kvStore, err2 := GetCachedKVStoreFrom(tidbCfg.Path, tls)
-	if err2 != nil {
-		return errors.Trace(err2)
-	}
 	addrs := strings.Split(tidbCfg.Path, ",")
 	etcdCli, err := clientv3.New(clientv3.Config{
 		Endpoints:        addrs,

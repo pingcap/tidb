@@ -1160,7 +1160,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					zap.Stringer("sql", getLastStmtInConn{cc}),
 					zap.String("txn_mode", txnMode),
 					zap.Uint64("timestamp", startTS),
-					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactNew)),
+					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
 				)
 			}
 			err1 := cc.writeError(ctx, err)
@@ -1173,7 +1173,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 }
 
 func errStrForLog(err error, redactMode string) string {
-	if redactMode == "ON" {
+	if redactMode == errors.RedactLogEnable {
 		// currently, only ErrParse is considered when enableRedactLog because it may contain sensitive information like
 		// password or accesskey
 		if parser.ErrParse.Equal(err) {
@@ -1187,7 +1187,7 @@ func errStrForLog(err error, redactMode string) string {
 	} else {
 		ret = errors.ErrorStack(err)
 	}
-	return redact.Redact(redactMode, ret)
+	return redact.String(redactMode, ret)
 }
 
 func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
@@ -1848,18 +1848,15 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	var rowKeys []kv.Key //nolint: prealloc
 	isCommonHandle := make(map[string]bool, 0)
 
-	handlePlan := func(p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
+	handlePlan := func(sctx sessionctx.Context, p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
 		var tableID int64
 		switch v := p.(type) {
 		case *plannercore.PointGetPlan:
-			if v.PartitionDef != nil {
-				tableID = v.PartitionDef.ID
-			} else {
-				tableID = v.TblInfo.ID
-			}
+			v.PrunePartitions(sctx)
+			tableID = executor.GetPhysID(v.TblInfo, v.PartitionIdx)
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
-				idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
+				idxKey, err1 := plannercore.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
 				if err1 != nil {
 					return err1
 				}
@@ -1869,20 +1866,21 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
 		case *plannercore.BatchPointGetPlan:
-			if v.PartitionDefs != nil && len(v.PartitionIDs) == 0 {
-				// skip when PartitionIDs is not initialized.
+			_, isTableDual := v.PrunePartitionsAndValues(sctx)
+			if isTableDual {
 				return nil
 			}
+			pi := v.TblInfo.GetPartitionInfo()
 			getPhysID := func(i int) int64 {
-				if v.PartitionDefs == nil {
+				if pi == nil || i >= len(v.PartitionIdxs) {
 					return v.TblInfo.ID
 				}
-				return v.PartitionIDs[i]
+				return executor.GetPhysID(v.TblInfo, &v.PartitionIdxs[i])
 			}
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
 				for i, idxVals := range v.IndexValues {
-					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, getPhysID(i))
+					idxKey, err1 := plannercore.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, getPhysID(i))
 					if err1 != nil {
 						return err1
 					}
@@ -1927,7 +1925,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 					zap.String("type", fmt.Sprintf("%T", stmt)))
 				continue
 			}
-			err = handlePlan(x.SelectPlan, func() {
+			err = handlePlan(cc.ctx.Session, x.SelectPlan, func() {
 				executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
 			})
 			if err != nil {
@@ -1940,7 +1938,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 					zap.String("type", fmt.Sprintf("%T", stmt)))
 				continue
 			}
-			err = handlePlan(x.SelectPlan, func() {
+			err = handlePlan(cc.ctx.Session, x.SelectPlan, func() {
 				executor.ResetDeleteStmtCtx(sc, deleteStmt, vars)
 			})
 			if err != nil {
@@ -2615,9 +2613,7 @@ func (cc getLastStmtInConn) String() string {
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		sql := string(hack.String(data))
-		if cc.ctx.GetSessionVars().EnableRedactLog {
-			sql = parser.Normalize(sql)
-		}
+		sql = parser.Normalize(sql, cc.ctx.GetSessionVars().EnableRedactLog)
 		return executor.FormatSQL(sql).String()
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
@@ -2649,7 +2645,7 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	case mysql.ComStmtReset:
 		return "ResetStmt"
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return parser.Normalize(executor.FormatSQL(string(hack.String(data))).String())
+		return parser.Normalize(executor.FormatSQL(string(hack.String(data))).String(), errors.RedactLogEnable)
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return executor.FormatSQL(cc.preparedStmt2StringNoArgs(stmtID)).String()

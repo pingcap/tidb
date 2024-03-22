@@ -27,7 +27,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
@@ -76,17 +75,6 @@ func newTestSplitClient(
 	}
 }
 
-// ScatterRegions scatters regions in a batch.
-func (c *testSplitClient) ScatterRegions(ctx context.Context, regionInfo []*split.RegionInfo) error {
-	return nil
-}
-
-func (c *testSplitClient) GetAllRegions() map[uint64]*split.RegionInfo {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.regions
-}
-
 func (c *testSplitClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -118,47 +106,7 @@ func (c *testSplitClient) GetRegionByID(ctx context.Context, regionID uint64) (*
 	return region, nil
 }
 
-func (c *testSplitClient) SplitRegion(
-	ctx context.Context,
-	regionInfo *split.RegionInfo,
-	key []byte,
-) (*split.RegionInfo, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	var target *split.RegionInfo
-	splitKey := codec.EncodeBytes([]byte{}, key)
-	for _, region := range c.regions {
-		if bytes.Compare(splitKey, region.Region.StartKey) >= 0 &&
-			beforeEnd(splitKey, region.Region.EndKey) {
-			target = region
-		}
-	}
-	if target == nil {
-		return nil, errors.Errorf("region not found: key=%s", string(key))
-	}
-	newRegion := &split.RegionInfo{
-		Region: &metapb.Region{
-			Peers:    target.Region.Peers,
-			Id:       c.nextRegionID,
-			StartKey: target.Region.StartKey,
-			EndKey:   splitKey,
-			RegionEpoch: &metapb.RegionEpoch{
-				Version: target.Region.RegionEpoch.Version,
-				ConfVer: target.Region.RegionEpoch.ConfVer + 1,
-			},
-		},
-	}
-	c.regions[c.nextRegionID] = newRegion
-	c.regionsInfo.SetRegion(pdtypes.NewRegionInfo(newRegion.Region, newRegion.Leader))
-	c.nextRegionID++
-	target.Region.StartKey = splitKey
-	target.Region.RegionEpoch.ConfVer++
-	c.regions[target.Region.Id] = target
-	c.regionsInfo.SetRegion(pdtypes.NewRegionInfo(target.Region, target.Leader))
-	return newRegion, nil
-}
-
-func (c *testSplitClient) BatchSplitRegionsWithOrigin(
+func (c *testSplitClient) SplitWaitAndScatter(
 	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
 ) (*split.RegionInfo, []*split.RegionInfo, error) {
 	c.mu.Lock()
@@ -233,17 +181,6 @@ func (c *testSplitClient) BatchSplitRegionsWithOrigin(
 	return target, newRegions, err
 }
 
-func (c *testSplitClient) BatchSplitRegions(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
-) ([]*split.RegionInfo, error) {
-	_, newRegions, err := c.BatchSplitRegionsWithOrigin(ctx, regionInfo, keys)
-	return newRegions, err
-}
-
-func (c *testSplitClient) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
-	return nil
-}
-
 func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -272,11 +209,8 @@ func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, l
 	return regions, err
 }
 
-func (c *testSplitClient) IsScatterRegionFinished(
-	ctx context.Context,
-	regionID uint64,
-) (scatterDone bool, needRescatter bool, scatterErr error) {
-	return true, false, nil
+func (c *testSplitClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
+	return 0, nil
 }
 
 func cloneRegion(region *split.RegionInfo) *split.RegionInfo {
@@ -473,7 +407,7 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
 	if len(errPat) != 0 {
 		require.Error(t, err)
-		require.Regexp(t, errPat, err.Error())
+		require.ErrorContains(t, err, errPat)
 		return
 	}
 	require.NoError(t, err)
@@ -512,9 +446,14 @@ func newCheckScatterClient(inner *testSplitClient) *checkScatterClient {
 	}
 }
 
-func (c *checkScatterClient) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
-	c.scatterCounter.Add(1)
-	return nil
+func (c *checkScatterClient) SplitWaitAndScatter(
+	ctx context.Context,
+	regionInfo *split.RegionInfo,
+	keys [][]byte,
+) (*split.RegionInfo, []*split.RegionInfo, error) {
+	r, rs, err := c.testSplitClient.SplitWaitAndScatter(ctx, regionInfo, keys)
+	c.scatterCounter.Add(int32(len(rs)))
+	return r, rs, err
 }
 
 func (c *checkScatterClient) GetRegionByID(ctx context.Context, regionID uint64) (*split.RegionInfo, error) {
@@ -650,7 +589,7 @@ func (h *splitRegionEpochNotMatchHook) BeforeSplitRegion(ctx context.Context, re
 }
 
 func TestBatchSplitByRangesEpochNotMatch(t *testing.T) {
-	doTestBatchSplitRegionByRanges(context.Background(), t, &splitRegionEpochNotMatchHook{}, "batch split regions failed: epoch not match", defaultHook{})
+	doTestBatchSplitRegionByRanges(context.Background(), t, &splitRegionEpochNotMatchHook{}, "epoch not match", defaultHook{})
 }
 
 // return epoch not match error in every other call
@@ -735,34 +674,6 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 		[]byte("a19"), []byte("a20"), []byte("b"),
 	}
 	checkRegionRanges(t, regions, result)
-}
-
-type reportAfterSplitHook struct {
-	noopHook
-	ch chan<- struct{}
-}
-
-func (h *reportAfterSplitHook) AfterSplitRegion(ctx context.Context, region *split.RegionInfo, keys [][]byte, resultRegions []*split.RegionInfo, err error) ([]*split.RegionInfo, error) {
-	h.ch <- struct{}{}
-	return resultRegions, err
-}
-
-func TestBatchSplitByRangeCtxCanceled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	ch := make(chan struct{})
-	// cancel ctx after the first region split success.
-	go func() {
-		i := 0
-		for range ch {
-			if i == 0 {
-				cancel()
-			}
-			i++
-		}
-	}()
-
-	doTestBatchSplitRegionByRanges(ctx, t, &reportAfterSplitHook{ch: ch}, "context canceled", defaultHook{})
-	close(ch)
 }
 
 func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
@@ -933,154 +844,4 @@ func TestStoreWriteLimiter(t *testing.T) {
 		}(uint64(i))
 	}
 	wg.Wait()
-}
-
-type scatterRegionCli struct {
-	split.SplitClient
-
-	respM    map[uint64][]*pdpb.GetOperatorResponse
-	scatterM map[uint64]int
-}
-
-func newScatterRegionCli() *scatterRegionCli {
-	return &scatterRegionCli{
-		respM:    make(map[uint64][]*pdpb.GetOperatorResponse),
-		scatterM: make(map[uint64]int),
-	}
-}
-
-func (c *scatterRegionCli) ScatterRegion(_ context.Context, regionInfo *split.RegionInfo) error {
-	c.scatterM[regionInfo.Region.Id]++
-	return nil
-}
-
-func (c *scatterRegionCli) GetOperator(_ context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
-	ret := c.respM[regionID][0]
-	c.respM[regionID] = c.respM[regionID][1:]
-	return ret, nil
-}
-
-func (c *scatterRegionCli) IsScatterRegionFinished(ctx context.Context, regionID uint64) (scatterDone bool, needRescatter bool, scatterErr error) {
-	resp, _ := c.GetOperator(ctx, regionID)
-	return split.IsScatterRegionFinished(resp)
-}
-
-func TestWaitForScatterRegions(t *testing.T) {
-	ctx := context.Background()
-
-	regionCnt := 6
-	regions := make([]*split.RegionInfo, 0, regionCnt)
-	for i := 1; i <= regionCnt; i++ {
-		regions = append(regions, &split.RegionInfo{
-			Region: &metapb.Region{
-				Id: uint64(i),
-			},
-		})
-	}
-	checkRespDrained := func(cli *scatterRegionCli) {
-		for i := 1; i <= regionCnt; i++ {
-			require.Len(t, cli.respM[uint64(i)], 0)
-		}
-	}
-	checkNoRetry := func(cli *scatterRegionCli) {
-		for i := 1; i <= regionCnt; i++ {
-			require.Equal(t, 0, cli.scatterM[uint64(i)])
-		}
-	}
-
-	cli := newScatterRegionCli()
-	cli.respM[1] = []*pdpb.GetOperatorResponse{
-		{Header: &pdpb.ResponseHeader{Error: &pdpb.Error{Type: pdpb.ErrorType_REGION_NOT_FOUND}}},
-	}
-	cli.respM[2] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("not-scatter-region")},
-	}
-	cli.respM[3] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
-	}
-	cli.respM[4] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
-	}
-	cli.respM[5] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_CANCEL},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_CANCEL},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_CANCEL},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
-		{Desc: []byte("not-scatter-region")},
-	}
-	// should trigger a retry
-	cli.respM[6] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_REPLACE},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
-	}
-
-	local := &Backend{splitCli: cli}
-	cnt, err := local.waitForScatterRegions(ctx, regions)
-	require.NoError(t, err)
-	require.Equal(t, 6, cnt)
-	for i := 1; i <= 4; i++ {
-		require.Equal(t, 0, cli.scatterM[uint64(i)])
-	}
-	require.Equal(t, 3, cli.scatterM[uint64(5)])
-	require.Equal(t, 1, cli.scatterM[uint64(6)])
-	checkRespDrained(cli)
-
-	// test non-retryable error
-
-	cli = newScatterRegionCli()
-	cli.respM[1] = []*pdpb.GetOperatorResponse{
-		{Header: &pdpb.ResponseHeader{Error: &pdpb.Error{Type: pdpb.ErrorType_REGION_NOT_FOUND}}},
-	}
-	cli.respM[2] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("not-scatter-region")},
-	}
-	// mimic non-retryable error
-	cli.respM[3] = []*pdpb.GetOperatorResponse{
-		{Header: &pdpb.ResponseHeader{Error: &pdpb.Error{Type: pdpb.ErrorType_DATA_COMPACTED}}},
-	}
-	local = &Backend{splitCli: cli}
-	cnt, err = local.waitForScatterRegions(ctx, regions)
-	require.ErrorContains(t, err, "get operator error: DATA_COMPACTED")
-	require.Equal(t, 2, cnt)
-	checkRespDrained(cli)
-	checkNoRetry(cli)
-
-	// test backoff is timed-out
-
-	backup := split.WaitRegionOnlineAttemptTimes
-	split.WaitRegionOnlineAttemptTimes = 2
-	t.Cleanup(func() {
-		split.WaitRegionOnlineAttemptTimes = backup
-	})
-
-	cli = newScatterRegionCli()
-	cli.respM[1] = []*pdpb.GetOperatorResponse{
-		{Header: &pdpb.ResponseHeader{Error: &pdpb.Error{Type: pdpb.ErrorType_REGION_NOT_FOUND}}},
-	}
-	cli.respM[2] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("not-scatter-region")},
-	}
-	cli.respM[3] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
-	}
-	cli.respM[4] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING},
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING}, // first retry
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_RUNNING}, // second retry
-	}
-	cli.respM[5] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("not-scatter-region")},
-	}
-	cli.respM[6] = []*pdpb.GetOperatorResponse{
-		{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS},
-	}
-	local = &Backend{splitCli: cli}
-	cnt, err = local.waitForScatterRegions(ctx, regions)
-	require.ErrorContains(t, err, "wait for scatter region timeout, print the first unfinished region id:4")
-	require.Equal(t, 5, cnt)
-	checkRespDrained(cli)
-	checkNoRetry(cli)
 }

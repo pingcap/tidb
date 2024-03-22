@@ -91,7 +91,7 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 		if valid, failReason := job.IsValidToAnalyze(
 			sctx,
 		); !valid {
-			statslogutil.StatsLogger().Info(
+			statslogutil.SingletonStatsSamplerLogger().Info(
 				"Table is not ready to analyze",
 				zap.String("failReason", failReason),
 				zap.Stringer("job", job),
@@ -116,7 +116,7 @@ func (r *Refresher) PickOneTableAndAnalyzeByPriority() bool {
 		// Only analyze one table each time.
 		return true
 	}
-	statslogutil.StatsLogger().Info(
+	statslogutil.SingletonStatsSamplerLogger().Info(
 		"No table to analyze",
 	)
 	return false
@@ -202,12 +202,11 @@ func (r *Refresher) RebuildTableAnalysisJobQueue() error {
 						// We apply a penalty to larger tables, which can potentially result in a negative weight.
 						// To prevent this, we filter out any negative weights. Under normal circumstances, table sizes should not be negative.
 						if weight <= 0 {
-							statslogutil.StatsLogger().Info(
-								"Table is not ready to analyze",
-								zap.String("reason", "weight is not positive"),
+							statslogutil.SingletonStatsSamplerLogger().Warn(
+								"Table gets a negative weight",
+								zap.Float64("weight", weight),
 								zap.Stringer("job", job),
 							)
-							return
 						}
 						job.SetWeight(weight)
 						// Push the job onto the queue.
@@ -370,7 +369,7 @@ func CalculateChangePercentage(
 	tblStats *statistics.Table,
 	autoAnalyzeRatio float64,
 ) float64 {
-	if !exec.TableAnalyzed(tblStats) {
+	if !tblStats.IsAnalyzed() {
 		return unanalyzedTableDefaultChangePercentage
 	}
 
@@ -424,23 +423,12 @@ func findLastAnalyzeTime(
 	tblStats *statistics.Table,
 	currentTs uint64,
 ) time.Time {
-	maxVersion := uint64(0)
-	for _, idx := range tblStats.Indices {
-		if idx.IsAnalyzed() {
-			maxVersion = max(maxVersion, idx.LastUpdateVersion)
-		}
-	}
-	for _, col := range tblStats.Columns {
-		if col.IsAnalyzed() {
-			maxVersion = max(maxVersion, col.LastUpdateVersion)
-		}
-	}
 	// Table is not analyzed, compose a fake version.
-	if maxVersion == 0 {
+	if !tblStats.IsAnalyzed() {
 		phy := oracle.GetTimeFromTS(currentTs)
 		return phy.Add(unanalyzedTableDefaultLastUpdateDuration)
 	}
-	return oracle.GetTimeFromTS(maxVersion)
+	return oracle.GetTimeFromTS(tblStats.LastAnalyzeVersion)
 }
 
 // CheckIndexesNeedAnalyze checks if the indexes of the table need to be analyzed.
@@ -450,14 +438,14 @@ func CheckIndexesNeedAnalyze(
 ) []string {
 	// If table is not analyzed, we need to analyze whole table.
 	// So we don't need to check indexes.
-	if !exec.TableAnalyzed(tblStats) {
+	if !tblStats.IsAnalyzed() {
 		return nil
 	}
 
 	indexes := make([]string, 0, len(tblInfo.Indices))
 	// Check if missing index stats.
 	for _, idx := range tblInfo.Indices {
-		if _, ok := tblStats.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
+		if _, ok := tblStats.Indices[idx.ID]; !ok && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
 			indexes = append(indexes, idx.Name.O)
 		}
 	}
@@ -582,7 +570,7 @@ func CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(
 		// Find all the partitions that need to analyze this index.
 		names := make([]string, 0, len(partitionStats))
 		for pIDAndName, tblStats := range partitionStats {
-			if _, ok := tblStats.Indices[idx.ID]; !ok {
+			if _, ok := tblStats.Indices[idx.ID]; !ok && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
 				names = append(names, pIDAndName.Name)
 			}
 		}

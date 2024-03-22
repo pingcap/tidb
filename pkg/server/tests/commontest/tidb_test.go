@@ -1071,7 +1071,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 			sqlStr := mc.GetSQL(s.SQLDigest)
 			encodedPlan := mc.GetPlan(s.PlanDigest)
 			// Normalize the user SQL before check.
-			normalizedSQL := parser.Normalize(sql)
+			normalizedSQL := parser.Normalize(sql, "ON")
 			require.Equalf(t, normalizedSQL, sqlStr, "sql: %v", sql)
 			// decode plan before check.
 			normalizedPlan, err := plancodec.DecodeNormalizedPlan(encodedPlan)
@@ -2959,6 +2959,7 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 
 	// Prepare Server
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
@@ -2966,7 +2967,7 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 1000)
+	<-server2.RunInGoTestChan
 	defer func() {
 		server.Close()
 	}()

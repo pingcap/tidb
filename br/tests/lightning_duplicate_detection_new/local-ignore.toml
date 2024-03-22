@@ -1,5 +1,0 @@
-[conflict]
-max-record-rows = 1000
-
-[tikv-importer]
-on-duplicate = "ignore"

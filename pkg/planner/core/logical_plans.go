@@ -1446,7 +1446,7 @@ type DataSource struct {
 	possibleAccessPaths []*util.AccessPath
 
 	// The data source may be a partition, rather than a real table.
-	isPartition     bool
+	partitionDefIdx *int
 	physicalTableID int64
 	partitionNames  []model.CIStr
 
