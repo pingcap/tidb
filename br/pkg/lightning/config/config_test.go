@@ -993,7 +993,7 @@ func TestAdjustConflictStrategy(t *testing.T) {
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = true
 	cfg.Conflict.PrecheckConflictBeforeImport = true
-	require.ErrorContains(t, cfg.Adjust(ctx), `conflict.strategy cannot be used with tikv-importer.parallel-import and tikv-importer.backend = "local" and conflict.precheck-conflict-before-import = true`)
+	require.NoError(t, cfg.Adjust(ctx))
 
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ReplaceOnDup

@@ -61,10 +61,10 @@ type versionAndTimestamp struct {
 
 // Data is the core data struct of infoschema V2.
 type Data struct {
-	// For the TableByName API, sorted by {dbName, tableName, tableID} => schemaVersion
+	// For the TableByName API, sorted by {dbName, tableName, schemaVersion} => tableID
 	//
 	// If the schema version +1 but a specific table does not change, the old record is
-	// kept and no new {dbName, tableName, tableID} => schemaVersion+1 record been added.
+	// kept and no new {dbName, tableName, schemaVersion+1} => tableID record been added.
 	//
 	// It means as long as we can find an item in it, the item is available, even through the
 	// schema version maybe smaller than required.
@@ -72,12 +72,12 @@ type Data struct {
 	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
 	byName *btree.BTreeG[tableItem]
 
-	// For the TableByID API, sorted by {tableID}
+	// For the TableByID API, sorted by {tableID, schemaVersion} => dbID
 	// To reload model.TableInfo, we need both table ID and database ID for meta kv API.
 	// It provides the tableID => databaseID mapping.
 	//
 	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
-	// But this mapping should be synced with byName.
+	// But this mapping MUST be synced with byName.
 	byID *btree.BTreeG[tableItem]
 
 	// For the SchemaByName API, sorted by {dbName, schemaVersion} => model.DBInfo
@@ -165,6 +165,7 @@ func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 
 func (isd *Data) remove(item tableItem) {
 	item.tomb = true
+	isd.byID.Set(item)
 	isd.byName.Set(item)
 	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
 }
@@ -197,7 +198,7 @@ func compareByID(a, b tableItem) bool {
 		return false
 	}
 
-	return a.dbID < b.dbID
+	return a.schemaVersion < b.schemaVersion
 }
 
 func compareByName(a, b tableItem) bool {
@@ -212,13 +213,6 @@ func compareByName(a, b tableItem) bool {
 		return true
 	}
 	if a.tableName > b.tableName {
-		return false
-	}
-
-	if a.tableID < b.tableID {
-		return true
-	}
-	if a.tableID > b.tableID {
 		return false
 	}
 
@@ -306,7 +300,7 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	}
 
 	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
-	itm, ok := search(is.byID, is.infoSchema.schemaMetaVersion, tableItem{tableID: id, dbID: math.MaxInt64}, eq)
+	itm, ok := search(is.byID, is.infoSchema.schemaMetaVersion, tableItem{tableID: id, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
 		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
 		return nil, false
@@ -318,6 +312,13 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 			return
 		}
 		return nil, false
+	}
+	// get cache with old key
+	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
+	tbl, found = is.tableCache.Get(oldKey)
+	if found && tbl != nil {
+		is.tableCache.Set(key, tbl)
+		return tbl, true
 	}
 
 	// Maybe the table is evicted? need to reload.
@@ -347,7 +348,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	}
 
 	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
-	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, tableID: math.MaxInt64}, eq)
+	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
 		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
 		return nil, ErrTableNotExists.GenWithStackByArgs(schema, tbl)
@@ -357,6 +358,14 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	key := tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion}
 	res, found := is.tableCache.Get(key)
 	if found && res != nil {
+		return res, nil
+	}
+
+	// get cache with old key
+	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
+	res, found = is.tableCache.Get(oldKey)
+	if found && res != nil {
+		is.tableCache.Set(key, res)
 		return res, nil
 	}
 
@@ -714,6 +723,9 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 		return nil
 	}
 
+	// The old DBInfo still holds a reference to old table info, we need to remove it.
+	b.deleteReferredForeignKeysV2(dbInfo, tableID)
+
 	b.infoData.remove(tableItem{
 		dbName:        dbInfo.Name.L,
 		dbID:          dbInfo.ID,
@@ -722,9 +734,17 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 		schemaVersion: diff.Version,
 	})
 
-	// The old DBInfo still holds a reference to old table info, we need to remove it.
-	b.deleteReferredForeignKeys(dbInfo, tableID)
 	return affected
+}
+
+func (b *Builder) deleteReferredForeignKeysV2(dbInfo *model.DBInfo, tableID int64) {
+	for _, tbl := range b.infoschemaV2.SchemaTables(dbInfo.Name) {
+		tblInfo := tbl.Meta()
+		if tblInfo.ID == tableID {
+			b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
+			break
+		}
+	}
 }
 
 func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model.SchemaDiff) error {

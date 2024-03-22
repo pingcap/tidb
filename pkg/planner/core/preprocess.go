@@ -678,12 +678,18 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
 			if op.Tp == ast.ColumnOptionDefaultValue {
 				if tmp, ok := op.Expr.(*driver.ValueExpr); ok {
 					if !tmp.Datum.IsNull() {
-						return hasAutoIncrement, errors.Errorf("Invalid default value for '%s'", colDef.Name.Name.O)
+						return hasAutoIncrement, types.ErrInvalidDefault.GenWithStackByArgs(colDef.Name.Name.O)
+					}
+				}
+				if tmp, ok := op.Expr.(*ast.FuncCallExpr); ok {
+					if tmp.FnName.L == "current_date" {
+						return hasAutoIncrement, types.ErrInvalidDefault.GenWithStackByArgs(colDef.Name.Name.O)
 					}
 				}
 			}
 		}
 	}
+
 	if colDef.Options[index].Tp == ast.ColumnOptionDefaultValue && len(colDef.Options) != index+1 {
 		if tmp, ok := colDef.Options[index].Expr.(*driver.ValueExpr); ok {
 			if tmp.Datum.IsNull() {
