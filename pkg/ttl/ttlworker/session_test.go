@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,8 +37,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var idAllocator atomic.Int64
+
 func newMockTTLTbl(t *testing.T, name string) *cache.PhysicalTable {
 	tblInfo := &model.TableInfo{
+		ID:   idAllocator.Add(1),
 		Name: model.NewCIStr(name),
 		Columns: []*model.ColumnInfo{
 			{

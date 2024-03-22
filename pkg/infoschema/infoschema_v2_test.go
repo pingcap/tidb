@@ -68,6 +68,14 @@ func TestV2Basic(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, getTableInfo)
 
+	// negative id should always be seen as not exists
+	getTableInfo, ok = is.TableByID(-1)
+	require.False(t, ok)
+	require.Nil(t, getTableInfo)
+	getDBInfo, ok = is.SchemaByID(-1)
+	require.False(t, ok)
+	require.Nil(t, getDBInfo)
+
 	require.Equal(t, int64(2), is.SchemaMetaVersion())
 	// TODO: support FindTableByPartitionID.
 }

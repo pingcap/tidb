@@ -104,7 +104,11 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 		tables: make(map[string]table.Table),
 	}
 	result.schemaMap["test"] = tableNames
+	tableIDs := make(map[int64]struct{})
 	for _, tb := range tbList {
+		_, ok := tableIDs[tb.ID]
+		intest.Assert(!ok)
+		tableIDs[tb.ID] = struct{}{}
 		tb.DBID = dbInfo.ID
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
@@ -232,6 +236,10 @@ func SchemaByTable(is InfoSchema, tableInfo *model.TableInfo) (val *model.DBInfo
 }
 
 func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
+	if !tableIDIsValid(id) {
+		return nil, false
+	}
+
 	slice := is.sortedTablesBuckets[tableBucketIdx(id)]
 	idx := slice.searchTable(id)
 	if idx == -1 {
@@ -668,6 +676,10 @@ func (ts *SessionExtendedInfoSchema) TableByName(schema, table model.CIStr) (tab
 
 // TableByID implements InfoSchema.TableByID
 func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
+	if !tableIDIsValid(id) {
+		return nil, false
+	}
+
 	if ts.LocalTemporaryTables != nil {
 		if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
 			return tbl, true
