@@ -186,7 +186,7 @@ func TestTestDataLockWaits(t *testing.T) {
 		"6B657934 <nil> 7 8 <nil> <nil>"))
 }
 
-func SubTestDataLockWaitsPrivilege(t *testing.T) {
+func TestDataLockWaitsPrivilege(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
@@ -291,7 +291,7 @@ func TestSelectClusterTable(t *testing.T) {
 	tk.MustQuery("select instance from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.Rows(instanceAddr))
 }
 
-func SubTestSelectClusterTablePrivilege(t *testing.T) {
+func TestSelectClusterTablePrivilege(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
