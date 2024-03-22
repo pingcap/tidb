@@ -159,6 +159,10 @@ func (d *Datum) GetUint64() uint64 {
 // SetUint64 sets uint64 value.
 func (d *Datum) SetUint64(i uint64) {
 	d.k = KindUint64
+	if i > uint64(math.MaxInt64) {
+		d.i = math.MaxInt64
+		return
+	}
 	d.i = int64(i)
 }
 

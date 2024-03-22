@@ -151,3 +151,23 @@ func TestNDVGroupCols(t *testing.T) {
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func TestTest50235(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE tlff7fd271 (
+  col_45 bit(3) NOT NULL DEFAULT b'101',
+  col_46 year(4) NOT NULL DEFAULT '2016',
+  col_47 double NOT NULL DEFAULT '2508.393214016021',
+  col_48 timestamp NOT NULL DEFAULT '2025-11-27 00:00:00',
+  KEY idx_15 (col_45,col_47),
+  PRIMARY KEY (col_46,col_45,col_48) /*T![clustered_index] NONCLUSTERED */,
+  KEY idx_17 (col_45,col_46,col_47),
+  UNIQUE KEY idx_18 (col_45,col_48,col_46)
+);`)
+	tk.MustQuery("desc SELECT `tlff7fd271`.`col_46` AS `r0` FROM `tlff7fd271` where `col_46` <= 16212511333665770580;").Check(
+		testkit.Rows(
+			"IndexReader_6 3323.33 root  index:IndexRangeScan_5",
+			"└─IndexRangeScan_5 3323.33 cop[tikv] table:tlff7fd271, index:PRIMARY(col_46, col_45, col_48) range:[-inf,2155], keep order:false, stats:pseudo"))
+}
