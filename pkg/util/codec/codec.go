@@ -395,11 +395,11 @@ func encodeHashChunkRowIdx(typeCtx types.Context, row chunk.Row, tp *types.Field
 type SerializeMode int
 
 const (
-	None SerializeMode = iota
-	// IgnoreIntegerSign when serialize integer column, if the join key is <signed, signed> or <unsigned, unsigned>,
+	Normal SerializeMode = iota
+	// NeedSignFlag when serialize integer column, if the join key is <signed, signed> or <unsigned, unsigned>,
 	// the unsigned flag can be ignored, if the join key is <unsigned, signed> or <signed, unsigned>
 	// the unsigned flag can not be ignored, if the unsigned flag can not be ignored, the key can not be inlined
-	IgnoreIntegerSign
+	NeedSignFlag
 	// KeepStringLength when serialize string column, if the string column can use raw data as the key, then it can be inlined,
 	// in this case, the string length should be included in the serialized key
 	KeepStringLength
@@ -422,7 +422,7 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			if canSkip(i) {
 				continue
 			}
-			if serializeMode == None {
+			if serializeMode == NeedSignFlag {
 				if !mysql.HasUnsignedFlag(tp.GetFlag()) && v < 0 {
 					serializedKeysVector[i] = append(serializedKeysVector[i], intFlag)
 				} else {
