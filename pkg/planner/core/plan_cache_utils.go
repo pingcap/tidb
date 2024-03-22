@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -184,12 +185,15 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	paramStmt.Accept(features)
 
 	// Collect table information for metadata lock.
-	names := bindinfo.CollectTableNames(paramStmt)
+	names, err := domain.ExtractTableNames(ctx, sctx, []ast.StmtNode{paramStmt}, model.NewCIStr(sctx.GetSessionVars().CurrentDB))
+	if err != nil {
+		return nil, nil, 0, err
+	}
 	dbName := make([]model.CIStr, 0, len(names))
 	tbls := make([]table.Table, 0, len(names))
-	for _, name := range names {
-		dbName = append(dbName, name.Schema)
-		tbl, err := is.TableByName(name.Schema, name.Name)
+	for pair := range names {
+		dbName = append(dbName, model.NewCIStr(pair.DBName))
+		tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
 		if err != nil {
 			return nil, nil, 0, err
 		}
