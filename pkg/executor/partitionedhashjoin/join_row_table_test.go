@@ -15,6 +15,7 @@
 package partitionedhashjoin
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -28,136 +29,59 @@ func TestFixedOffsetInRowLayout(t *testing.T) {
 }
 
 func TestJoinTableMetaKeyMode(t *testing.T) {
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	uintTp := types.NewFieldType(mysql.TypeLonglong)
 	uintTp.AddFlag(mysql.UnsignedFlag)
+	yearTp := types.NewFieldType(mysql.TypeYear)
+	durationTp := types.NewFieldType(mysql.TypeDuration)
+	enumTp := types.NewFieldType(mysql.TypeEnum)
+	enumWithIntFlag := types.NewFieldType(mysql.TypeEnum)
+	enumWithIntFlag.AddFlag(mysql.EnumSetAsIntFlag)
+	setTp := types.NewFieldType(mysql.TypeSet)
+	bitTp := types.NewFieldType(mysql.TypeBit)
+	jsonTp := types.NewFieldType(mysql.TypeJSON)
+	floatTp := types.NewFieldType(mysql.TypeFloat)
 	doubleTp := types.NewFieldType(mysql.TypeDouble)
 	stringTp := types.NewFieldType(mysql.TypeVarString)
 	dateTp := types.NewFieldType(mysql.TypeDatetime)
 	decimalTp := types.NewFieldType(mysql.TypeNewDecimal)
 
-	buildKeyIndex := make([]int, 0)
-	buildTypes := make([]*types.FieldType, 0)
-	buildKeyTypes := make([]*types.FieldType, 0)
-	probeKeyTypes := make([]*types.FieldType, 0)
-	columnsUsedByOtherCondition := make([]int, 0)
-	outputColumns := make([]int, 0)
-	needUsedFlag := false
-
-	resetInputArgs := func() {
-		buildKeyIndex = buildKeyIndex[:0]
-		buildTypes = buildTypes[:0]
-		buildKeyTypes = buildKeyTypes[:0]
-		probeKeyTypes = probeKeyTypes[:0]
-		columnsUsedByOtherCondition = columnsUsedByOtherCondition[:0]
-		outputColumns = outputColumns[:0]
-		needUsedFlag = false
+	type testCase struct {
+		buildKeyIndex []int
+		buildTypes    []*types.FieldType
+		buildKeyTypes []*types.FieldType
+		probeKeyTypes []*types.FieldType
+		keyMode       keyMode
 	}
 
-	// intkey = intkey, OneInt64
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, intTp)
-	buildTypes = append(buildTypes, uintTp)
-	buildKeyTypes = append(buildKeyTypes, intTp)
-	probeKeyTypes = append(probeKeyTypes, intTp)
-	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, OneInt64, meta.keyMode)
-	// uintkey = uintkey, OneInt64
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, uintTp)
-	buildTypes = append(buildTypes, intTp)
-	buildKeyTypes = append(buildKeyTypes, uintTp)
-	probeKeyTypes = append(probeKeyTypes, uintTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, OneInt64, meta.keyMode)
-	// intkey = uintkey, FixedSerializedKey
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, uintTp)
-	buildTypes = append(buildTypes, intTp)
-	buildKeyTypes = append(buildKeyTypes, uintTp)
-	probeKeyTypes = append(probeKeyTypes, intTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, FixedSerializedKey, meta.keyMode)
-	// uintkey = intkey, FixedSerializedKey
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, intTp)
-	buildTypes = append(buildTypes, uintTp)
-	buildKeyTypes = append(buildKeyTypes, intTp)
-	probeKeyTypes = append(probeKeyTypes, uintTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, FixedSerializedKey, meta.keyMode)
-	// multiple intkey, FixedSerializedKey
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildKeyIndex = append(buildKeyIndex, 1)
-	buildTypes = append(buildTypes, intTp)
-	buildTypes = append(buildTypes, intTp)
-	buildKeyTypes = append(buildKeyTypes, intTp)
-	buildKeyTypes = append(buildKeyTypes, intTp)
-	probeKeyTypes = append(probeKeyTypes, intTp)
-	probeKeyTypes = append(probeKeyTypes, intTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, FixedSerializedKey, meta.keyMode)
-	// doublekey = doublekey, FixedSerializedKey
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, doubleTp)
-	buildKeyTypes = append(buildKeyTypes, doubleTp)
-	probeKeyTypes = append(probeKeyTypes, doubleTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, FixedSerializedKey, meta.keyMode)
-	// datekey = datekey, FixedSerializedKey
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, dateTp)
-	buildKeyTypes = append(buildKeyTypes, dateTp)
-	probeKeyTypes = append(probeKeyTypes, dateTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, FixedSerializedKey, meta.keyMode)
-	// decimalkey = decimalkey, FixedSerializedKey
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, decimalTp)
-	buildKeyTypes = append(buildKeyTypes, decimalTp)
-	probeKeyTypes = append(probeKeyTypes, decimalTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, FixedSerializedKey, meta.keyMode)
-	// multiple fixed key, FixedSerializedKey
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildKeyIndex = append(buildKeyIndex, 1)
-	buildTypes = append(buildTypes, decimalTp)
-	buildTypes = append(buildTypes, dateTp)
-	buildKeyTypes = append(buildKeyTypes, decimalTp)
-	buildKeyTypes = append(buildKeyTypes, dateTp)
-	probeKeyTypes = append(probeKeyTypes, decimalTp)
-	probeKeyTypes = append(probeKeyTypes, dateTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, FixedSerializedKey, meta.keyMode)
-	// stringkey = stringkey, variableSerializedKey
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, stringTp)
-	buildKeyTypes = append(buildKeyTypes, stringTp)
-	probeKeyTypes = append(probeKeyTypes, stringTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, VariableSerializedKey, meta.keyMode)
-	// mixed of fixed key and var length key, variableSerializedKey
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildKeyIndex = append(buildKeyIndex, 1)
-	buildTypes = append(buildTypes, intTp)
-	buildTypes = append(buildTypes, stringTp)
-	buildKeyTypes = append(buildKeyTypes, intTp)
-	buildKeyTypes = append(buildKeyTypes, stringTp)
-	probeKeyTypes = append(probeKeyTypes, intTp)
-	probeKeyTypes = append(probeKeyTypes, stringTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, VariableSerializedKey, meta.keyMode)
+	testCases := []testCase{
+		{[]int{0}, []*types.FieldType{tinyTp}, []*types.FieldType{tinyTp}, []*types.FieldType{tinyTp}, OneInt64},
+		{[]int{0}, []*types.FieldType{yearTp}, []*types.FieldType{yearTp}, []*types.FieldType{yearTp}, OneInt64},
+		{[]int{0}, []*types.FieldType{durationTp}, []*types.FieldType{durationTp}, []*types.FieldType{yearTp}, OneInt64},
+		{[]int{0}, []*types.FieldType{enumTp}, []*types.FieldType{enumTp}, []*types.FieldType{enumTp}, VariableSerializedKey},
+		{[]int{0}, []*types.FieldType{enumWithIntFlag}, []*types.FieldType{enumWithIntFlag}, []*types.FieldType{enumWithIntFlag}, OneInt64},
+		{[]int{0}, []*types.FieldType{setTp}, []*types.FieldType{setTp}, []*types.FieldType{setTp}, VariableSerializedKey},
+		{[]int{0}, []*types.FieldType{bitTp}, []*types.FieldType{bitTp}, []*types.FieldType{bitTp}, OneInt64},
+		{[]int{0}, []*types.FieldType{jsonTp}, []*types.FieldType{jsonTp}, []*types.FieldType{jsonTp}, VariableSerializedKey},
+		{[]int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, OneInt64},
+		{[]int{0}, []*types.FieldType{uintTp}, []*types.FieldType{uintTp}, []*types.FieldType{uintTp}, OneInt64},
+		{[]int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, []*types.FieldType{uintTp}, FixedSerializedKey},
+		{[]int{0}, []*types.FieldType{uintTp}, []*types.FieldType{uintTp}, []*types.FieldType{intTp}, FixedSerializedKey},
+		{[]int{0}, []*types.FieldType{floatTp}, []*types.FieldType{floatTp}, []*types.FieldType{floatTp}, FixedSerializedKey},
+		{[]int{0}, []*types.FieldType{doubleTp}, []*types.FieldType{doubleTp}, []*types.FieldType{doubleTp}, FixedSerializedKey},
+		{[]int{0}, []*types.FieldType{dateTp}, []*types.FieldType{dateTp}, []*types.FieldType{dateTp}, OneInt64},
+		{[]int{0}, []*types.FieldType{decimalTp}, []*types.FieldType{decimalTp}, []*types.FieldType{decimalTp}, VariableSerializedKey},
+		{[]int{0}, []*types.FieldType{stringTp}, []*types.FieldType{stringTp}, []*types.FieldType{stringTp}, VariableSerializedKey},
+		{[]int{0, 1}, []*types.FieldType{dateTp, intTp}, []*types.FieldType{dateTp, intTp}, []*types.FieldType{dateTp, intTp}, FixedSerializedKey},
+		{[]int{0, 1}, []*types.FieldType{intTp, intTp}, []*types.FieldType{intTp, intTp}, []*types.FieldType{intTp, intTp}, FixedSerializedKey},
+		{[]int{0, 1}, []*types.FieldType{intTp, stringTp}, []*types.FieldType{intTp, stringTp}, []*types.FieldType{intTp, stringTp}, VariableSerializedKey},
+	}
+
+	for index, test := range testCases {
+		meta := newTableMeta(test.buildKeyIndex, test.buildTypes, test.buildKeyTypes, test.probeKeyTypes, nil, []int{}, false)
+		require.Equal(t, test.keyMode, meta.keyMode, "test index: "+strconv.Itoa(index))
+	}
 }
 
 func TestJoinTableMetaKeyInlinedAndFixed(t *testing.T) {
@@ -171,106 +95,30 @@ func TestJoinTableMetaKeyInlinedAndFixed(t *testing.T) {
 	dateTp := types.NewFieldType(mysql.TypeDatetime)
 	decimalTp := types.NewFieldType(mysql.TypeNewDecimal)
 
-	buildKeyIndex := make([]int, 0)
-	buildTypes := make([]*types.FieldType, 0)
-	buildKeyTypes := make([]*types.FieldType, 0)
-	probeKeyTypes := make([]*types.FieldType, 0)
-	columnsUsedByOtherCondition := make([]int, 0)
-	outputColumns := make([]int, 0)
-	needUsedFlag := false
-
-	resetInputArgs := func() {
-		buildKeyIndex = buildKeyIndex[:0]
-		buildTypes = buildTypes[:0]
-		buildKeyTypes = buildKeyTypes[:0]
-		probeKeyTypes = probeKeyTypes[:0]
-		columnsUsedByOtherCondition = columnsUsedByOtherCondition[:0]
-		outputColumns = outputColumns[:0]
-		needUsedFlag = false
+	type testCase struct {
+		buildKeyIndex         []int
+		buildTypes            []*types.FieldType
+		buildKeyTypes         []*types.FieldType
+		probeKeyTypes         []*types.FieldType
+		isJoinKeysInlined     bool
+		isJoinKeysFixedLength bool
+		joinKeysLength        int
 	}
-	// intkey = intkey is inlined fix size key
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, intTp)
-	buildKeyTypes = append(buildKeyTypes, intTp)
-	probeKeyTypes = append(probeKeyTypes, intTp)
-	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, true, meta.isJoinKeysInlined)
-	require.Equal(t, true, meta.isJoinKeysFixedLength)
-	require.Equal(t, 8, meta.joinKeysLength)
-	// uintkey = uintkey is inlined fix size key
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, uintTp)
-	buildKeyTypes = append(buildKeyTypes, uintTp)
-	probeKeyTypes = append(probeKeyTypes, uintTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, true, meta.isJoinKeysInlined)
-	require.Equal(t, true, meta.isJoinKeysFixedLength)
-	require.Equal(t, 8, meta.joinKeysLength)
-	// multiple intkey is inlined fix size key
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildKeyIndex = append(buildKeyIndex, 1)
-	buildTypes = append(buildTypes, intTp)
-	buildTypes = append(buildTypes, intTp)
-	buildKeyTypes = append(buildKeyTypes, intTp)
-	buildKeyTypes = append(buildKeyTypes, intTp)
-	probeKeyTypes = append(probeKeyTypes, intTp)
-	probeKeyTypes = append(probeKeyTypes, intTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, true, meta.isJoinKeysInlined)
-	require.Equal(t, true, meta.isJoinKeysFixedLength)
-	require.Equal(t, 16, meta.joinKeysLength)
-	// intkey = uintkey is non-inlined fix size key
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, uintTp)
-	buildKeyTypes = append(buildKeyTypes, uintTp)
-	probeKeyTypes = append(probeKeyTypes, intTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, false, meta.isJoinKeysInlined)
-	require.Equal(t, true, meta.isJoinKeysFixedLength)
-	// sign flag + raw data
-	require.Equal(t, 9, meta.joinKeysLength)
-	// binary string is inlined variable size key
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, binaryStringTp)
-	buildKeyTypes = append(buildKeyTypes, binaryStringTp)
-	probeKeyTypes = append(probeKeyTypes, binaryStringTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, true, meta.isJoinKeysInlined)
-	require.Equal(t, false, meta.isJoinKeysFixedLength)
-	require.Equal(t, -1, meta.joinKeysLength)
-	// double key is non-inlined fix size key
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, doubleTp)
-	buildKeyTypes = append(buildKeyTypes, doubleTp)
-	probeKeyTypes = append(probeKeyTypes, doubleTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, false, meta.isJoinKeysInlined)
-	require.Equal(t, true, meta.isJoinKeysFixedLength)
-	require.Equal(t, 8, meta.joinKeysLength)
-	// date key is non-inlined fix size key
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, dateTp)
-	buildKeyTypes = append(buildKeyTypes, dateTp)
-	probeKeyTypes = append(probeKeyTypes, dateTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, false, meta.isJoinKeysInlined)
-	require.Equal(t, true, meta.isJoinKeysFixedLength)
-	require.Equal(t, 8, meta.joinKeysLength)
-	// decimal is non-inlined variable size key
-	resetInputArgs()
-	buildKeyIndex = append(buildKeyIndex, 0)
-	buildTypes = append(buildTypes, decimalTp)
-	buildKeyTypes = append(buildKeyTypes, decimalTp)
-	probeKeyTypes = append(probeKeyTypes, decimalTp)
-	meta = newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, outputColumns, needUsedFlag)
-	require.Equal(t, false, meta.isJoinKeysInlined)
-	require.Equal(t, false, meta.isJoinKeysFixedLength)
-	require.Equal(t, -1, meta.joinKeysLength)
+
+	testCases := []testCase{
+		{[]int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, true, true, 8},
+		{[]int{0}, []*types.FieldType{uintTp}, []*types.FieldType{uintTp}, []*types.FieldType{uintTp}, true, true, 8},
+		{[]int{0}, []*types.FieldType{uintTp}, []*types.FieldType{uintTp}, []*types.FieldType{intTp}, false, true, 9},
+		{[]int{0}, []*types.FieldType{binaryStringTp}, []*types.FieldType{binaryStringTp}, []*types.FieldType{binaryStringTp}, true, false, -1},
+		{[]int{0}, []*types.FieldType{doubleTp}, []*types.FieldType{doubleTp}, []*types.FieldType{doubleTp}, false, true, 8},
+		{[]int{0}, []*types.FieldType{dateTp}, []*types.FieldType{dateTp}, []*types.FieldType{dateTp}, false, true, 8},
+		{[]int{0}, []*types.FieldType{decimalTp}, []*types.FieldType{decimalTp}, []*types.FieldType{decimalTp}, false, false, -1},
+	}
+
+	for index, test := range testCases {
+		meta := newTableMeta(test.buildKeyIndex, test.buildTypes, test.buildKeyTypes, test.probeKeyTypes, nil, []int{}, false)
+		require.Equal(t, test.isJoinKeysInlined, meta.isJoinKeysInlined, "test index: "+strconv.Itoa(index))
+		require.Equal(t, test.isJoinKeysFixedLength, meta.isJoinKeysFixedLength, "test index: "+strconv.Itoa(index))
+		require.Equal(t, test.joinKeysLength, meta.joinKeysLength, "test index: "+strconv.Itoa(index))
+	}
 }
