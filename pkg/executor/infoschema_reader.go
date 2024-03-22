@@ -879,10 +879,7 @@ func (e *hugeMemTableRetriever) setDataForColumnsWithOneTable(
 	}
 
 	e.dataForColumnsInTable(ctx, sctx, schema, table, priv, extractor)
-	if len(e.rows) >= e.batch {
-		return true
-	}
-	return false
+	return len(e.rows) >= e.batch
 }
 
 func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
