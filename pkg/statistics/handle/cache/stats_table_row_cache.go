@@ -148,7 +148,7 @@ func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
 func (c *StatsTableRowCache) EstimateDataLength(table *model.TableInfo) (
 	rowCount uint64, avgRowLength uint64, dataLength uint64, indexLength uint64) {
 	if table.GetPartitionInfo() == nil {
-		rowCount := c.GetTableRows(table.ID)
+		rowCount = c.GetTableRows(table.ID)
 		dataLength, indexLength = c.GetDataAndIndexLength(table, table.ID, rowCount)
 	} else {
 		for _, pi := range table.GetPartitionInfo().Definitions {
