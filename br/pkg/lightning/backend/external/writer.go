@@ -44,6 +44,11 @@ var (
 	multiFileStatNum           = 500
 	defaultPropSizeDist        = 1 * size.MB
 	defaultPropKeysDist uint64 = 8 * 1024
+	// Tested on GCP 16c/32c node, 32~64 workers used up all network bandwidth for
+	// part-size in range 5~20M, but not all thread will upload at same time.
+	// this value might not be optimal.
+	// TODO need data on AWS and other machine types
+	maxUploadWorkersPerThread = 8
 
 	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
 	// if the overlap ratio is greater than this threshold, we will merge the files.
@@ -106,7 +111,6 @@ type WriterBuilder struct {
 	groupOffset     int
 	memSizeLimit    uint64
 	blockSize       int
-	writeBatchCount uint64
 	propSizeDist    uint64
 	propKeysDist    uint64
 	onClose         OnCloseFunc
@@ -116,12 +120,11 @@ type WriterBuilder struct {
 // NewWriterBuilder creates a WriterBuilder.
 func NewWriterBuilder() *WriterBuilder {
 	return &WriterBuilder{
-		memSizeLimit:    DefaultMemSizeLimit,
-		blockSize:       DefaultBlockSize,
-		writeBatchCount: 8 * 1024,
-		propSizeDist:    defaultPropSizeDist,
-		propKeysDist:    defaultPropKeysDist,
-		onClose:         dummyOnCloseFunc,
+		memSizeLimit: DefaultMemSizeLimit,
+		blockSize:    DefaultBlockSize,
+		propSizeDist: defaultPropSizeDist,
+		propKeysDist: defaultPropKeysDist,
+		onClose:      dummyOnCloseFunc,
 	}
 }
 
@@ -131,12 +134,6 @@ func NewWriterBuilder() *WriterBuilder {
 // When the writer is OneFileWriter SetMemorySizeLimit sets the preAllocated memory buffer size.
 func (b *WriterBuilder) SetMemorySizeLimit(size uint64) *WriterBuilder {
 	b.memSizeLimit = size
-	return b
-}
-
-// SetWriterBatchCount sets the batch count of the writer.
-func (b *WriterBuilder) SetWriterBatchCount(count uint64) *WriterBuilder {
-	b.writeBatchCount = count
 	return b
 }
 
@@ -594,12 +591,18 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	err error,
 ) {
 	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(w.currentSeq))
-	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(5 * size.MB)})
+	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{
+		Concurrency: 20,
+		PartSize:    MinUploadPartSize,
+	})
 	if err != nil {
 		return "", "", nil, nil, err
 	}
 	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
-	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(5 * size.MB)})
+	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{
+		Concurrency: 20,
+		PartSize:    MinUploadPartSize,
+	})
 	if err != nil {
 		_ = dataWriter.Close(ctx)
 		return "", "", nil, nil, err
