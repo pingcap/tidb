@@ -26,7 +26,6 @@ go_library(
         "//pkg/sessiontxn/isolation/metrics",
         "//pkg/sessiontxn/staleread",
         "//pkg/table/temptable",
-        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
