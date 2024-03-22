@@ -572,6 +572,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
+	// The pipelined txn will may be flushed in background, not touch the options to avoid races.
 	if !s.txn.IsPipelined() {
 		// to avoid session set overlap the txn set.
 		if s.GetDiskFullOpt() != kvrpcpb.DiskFullOpt_NotAllowedOnFull {
