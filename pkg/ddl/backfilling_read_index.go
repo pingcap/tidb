@@ -240,7 +240,8 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewAddIndexIngestPipeline(
-		opCtx, d.store, d.sessPool, r.bc, engines, sessCtx, tbl, r.indexes, start, end, totalRowCount, counter, r.job.ReorgMeta)
+		opCtx, d.store, d.sessPool, r.bc, engines, sessCtx, r.job.ID,
+		tbl, r.indexes, start, end, totalRowCount, counter, r.job.ReorgMeta)
 }
 
 func (r *readIndexExecutor) buildExternalStorePipeline(

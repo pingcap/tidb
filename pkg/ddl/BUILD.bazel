@@ -117,6 +117,7 @@ go_library(
         "//pkg/sessiontxn",
         "//pkg/statistics",
         "//pkg/statistics/handle",
+        "//pkg/statistics/handle/cache",
         "//pkg/statistics/handle/util",
         "//pkg/store/copr",
         "//pkg/store/driver/backoff",
