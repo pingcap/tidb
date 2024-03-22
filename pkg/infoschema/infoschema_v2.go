@@ -291,13 +291,6 @@ func (is *infoschemaV2) base() *infoSchema {
 }
 
 func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
-	// Get from the cache.
-	key := tableCacheKey{id, is.infoSchema.schemaMetaVersion}
-	tbl, found := is.tableCache.Get(key)
-	if found && tbl != nil {
-		return tbl, true
-	}
-
 	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
 	itm, ok := search(is.byID, is.infoSchema.schemaMetaVersion, tableItem{tableID: id, dbID: math.MaxInt64}, eq)
 	if !ok {
@@ -311,6 +304,13 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 			return
 		}
 		return nil, false
+	}
+
+	// Get from the cache.
+	key := tableCacheKey{id, itm.schemaVersion}
+	tbl, found := is.tableCache.Get(key)
+	if found && tbl != nil {
+		return tbl, true
 	}
 
 	// Maybe the table is evicted? need to reload.
@@ -347,7 +347,11 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	}
 
 	// Get from the cache.
-	key := tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion}
+	// Note: using itm.schemaVersion instead of is.infoSchema.schemaMetaVersion here
+	// when is.infoSchema.schemaMetaVersion and itm.schemaVersion differs, it means
+	// that during [itm.schemaVersion, is.infoSchema.schemaMetaVersion] there is no schema changes on this table.
+	// So it's safe to use the old table from cache.
+	key := tableCacheKey{itm.tableID, itm.schemaVersion}
 	res, found := is.tableCache.Get(key)
 	if found && res != nil {
 		return res, nil
