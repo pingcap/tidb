@@ -41,6 +41,11 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/metrics"
+>>>>>>> 07ef0094860 (server, metrics: remove the connection count on server, only use the metrics (#51996))
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -2823,6 +2828,7 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 }
 
 func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) error {
+	originalResourceGroup := e.Ctx().GetSessionVars().ResourceGroupName
 	if s.Name.L != "" {
 		if _, ok := e.is.ResourceGroupByName(s.Name); !ok {
 			return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(s.Name.O)
@@ -2830,6 +2836,11 @@ func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) er
 		e.Ctx().GetSessionVars().ResourceGroupName = s.Name.L
 	} else {
 		e.Ctx().GetSessionVars().ResourceGroupName = resourcegroup.DefaultResourceGroupName
+	}
+	newResourceGroup := e.Ctx().GetSessionVars().ResourceGroupName
+	if originalResourceGroup != newResourceGroup {
+		metrics.ConnGauge.WithLabelValues(originalResourceGroup).Dec()
+		metrics.ConnGauge.WithLabelValues(newResourceGroup).Inc()
 	}
 	return nil
 }
