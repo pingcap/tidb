@@ -17,11 +17,12 @@ package sortexec
 import (
 	"container/heap"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 type multiWayMergeSource interface {
-	init(*multiWayMergeImpl)
+	init(*multiWayMergeImpl) error
 	next(int) (chunk.Row, error)
 	getPartitionNum() int
 }
@@ -30,7 +31,7 @@ type memorySource struct {
 	sortedRowsIters []*chunk.Iterator4Slice
 }
 
-func (m *memorySource) init(multiWayMerge *multiWayMergeImpl) {
+func (m *memorySource) init(multiWayMerge *multiWayMergeImpl) error {
 	for i := range m.sortedRowsIters {
 		row := m.sortedRowsIters[i].Begin()
 		if row.IsEmpty() {
@@ -39,6 +40,7 @@ func (m *memorySource) init(multiWayMerge *multiWayMergeImpl) {
 		multiWayMerge.elements = append(multiWayMerge.elements, rowWithPartition{row: row, partitionID: i})
 	}
 	heap.Init(multiWayMerge)
+	return nil
 }
 
 func (m *memorySource) next(partitionID int) (chunk.Row, error) {
@@ -50,6 +52,58 @@ func (m *memorySource) getPartitionNum() int {
 }
 
 type diskSource struct {
+	sortedRowsInDisk []*chunk.DataInDiskByChunks
+	cursors          []*dataCursor
+}
+
+func (d *diskSource) init(multiWayMerge *multiWayMergeImpl) error {
+	inDiskNum := len(d.sortedRowsInDisk)
+	d.cursors = make([]*dataCursor, 0, inDiskNum)
+	for i := 0; i < inDiskNum; i++ {
+		chk, err := d.sortedRowsInDisk[i].GetChunk(0)
+		if err != nil {
+			return err
+		}
+		cursor := NewDataCursor()
+		cursor.setChunk(chk, 0)
+		d.cursors = append(d.cursors, cursor)
+		row := cursor.begin()
+		if row.IsEmpty() {
+			continue
+		}
+		multiWayMerge.elements = append(multiWayMerge.elements, rowWithPartition{row: row, partitionID: i})
+	}
+	heap.Init(multiWayMerge)
+	return nil
+}
+
+func (d *diskSource) next(partitionID int) (chunk.Row, error) {
+	newRow := d.cursors[partitionID].next()
+	if newRow.IsEmpty() {
+		// Try to fetch more data from the disk
+		success, err := reloadCursor(d.cursors[partitionID], d.sortedRowsInDisk[partitionID])
+		if err != nil {
+			return chunk.Row{}, err
+		}
+
+		if !success {
+			return chunk.Row{}, nil
+		}
+
+		// Get new row
+		newRow = d.cursors[partitionID].begin()
+		if newRow.IsEmpty() {
+			return chunk.Row{}, errors.New("Get an empty row")
+		}
+	}
+	return newRow, nil
+}
+
+func (d *diskSource) getPartitionNum() int {
+	return len(d.sortedRowsInDisk)
+}
+
+type partitionSource struct {
 }
 
 type multiWayMergeImpl struct {
@@ -99,8 +153,8 @@ func newMultiWayMerger(
 	}
 }
 
-func (m *multiWayMerger) init() {
-	m.source.init(m.multiWayMerge)
+func (m *multiWayMerger) init() error {
+	return m.source.init(m.multiWayMerge)
 }
 
 func (m *multiWayMerger) next() (chunk.Row, error) {

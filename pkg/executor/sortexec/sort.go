@@ -21,7 +21,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -321,67 +320,30 @@ func (e *SortExec) appendResultToChunkInUnparallelMode(req *chunk.Chunk) error {
 }
 
 func (e *SortExec) generateResultWithMultiWayMerge() error {
-	inDiskNum := len(e.Parallel.spillHelper.sortedRowsInDisk)
-	multiWayMerge := &multiWayMergeImpl{
-		lessRowFunction: e.lessRow,
-		elements:        make([]rowWithPartition, 0, inDiskNum),
+	multiWayMerge := newMultiWayMerger(&diskSource{sortedRowsInDisk: e.Parallel.spillHelper.sortedRowsInDisk}, e.lessRow)
+
+	err := multiWayMerge.init()
+	if err != nil {
+		return err
 	}
 
-	cursors := make([]*dataCursor, 0, inDiskNum)
-
-	// Init multiWayMerge
-	for i := 0; i < inDiskNum; i++ {
-		chk, err := e.Parallel.spillHelper.sortedRowsInDisk[i].GetChunk(0)
+	for {
+		row, err := multiWayMerge.next()
 		if err != nil {
-			return err
+			return nil
 		}
-		cursor := NewDataCursor()
-		cursor.setChunk(chk, 0)
-		cursors = append(cursors, cursor)
-		row := cursor.begin()
-		if row.IsEmpty() {
-			continue
-		}
-		multiWayMerge.elements = append(multiWayMerge.elements, rowWithPartition{row: row, partitionID: i})
-	}
-	heap.Init(multiWayMerge)
 
-	// multi-way merge the data in disk
-	for multiWayMerge.Len() > 0 {
-		elem := multiWayMerge.elements[0]
+		if row.IsEmpty() {
+			return nil
+		}
+
 		select {
 		case <-e.finishCh:
 			return nil
-		case e.Parallel.resultChannel <- rowWithError{row: elem.row}:
+		case e.Parallel.resultChannel <- rowWithError{row: row}:
 		}
-
-		partitionID := elem.partitionID
-		newRow := cursors[partitionID].next()
-		if newRow.IsEmpty() {
-			// Try to fetch more data from the disk
-			success, err := reloadCursor(cursors[partitionID], e.Parallel.spillHelper.sortedRowsInDisk[partitionID])
-			if err != nil {
-				return err
-			}
-
-			if !success {
-				// All data in this inDisk has been consumed
-				heap.Remove(multiWayMerge, 0)
-				continue
-			}
-
-			// Get new row
-			newRow = cursors[partitionID].begin()
-			if newRow.IsEmpty() {
-				return errors.New("Get an empty row")
-			}
-		}
-		multiWayMerge.elements[0].row = newRow
-		heap.Fix(multiWayMerge, 0)
-
 		injectParallelSortRandomFail(1)
 	}
-	return nil
 }
 
 // We call this function when sorted rows are in disk
@@ -424,7 +386,7 @@ func (e *SortExec) generateResultFromMemory() bool {
 		// Sort has been closed
 		return false
 	}
-	e.Parallel.merger.init()
+	_ = e.Parallel.merger.init()
 
 	maxChunkSize := e.MaxChunkSize()
 	resBuf := make([]rowWithError, 0, maxChunkSize)

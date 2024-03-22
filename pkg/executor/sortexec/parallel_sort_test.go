@@ -89,7 +89,7 @@ func parallelSortTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, s
 	// ctx.GetSessionVars().EnableParallelSort = true
 
 	if exe == nil {
-		exe = buildSortExec(ctx, sortCase, dataSource)
+		exe = buildSortExec(sortCase, dataSource)
 	}
 	dataSource.PrepareChunks()
 	resultChunks := executeSortExecutor(t, exe, true)
@@ -108,7 +108,7 @@ func failpointTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sort
 	// TODO use variable to choose parallel mode after system variable is added
 	// ctx.GetSessionVars().EnableParallelSort = true
 	if exe == nil {
-		exe = buildSortExec(ctx, sortCase, dataSource)
+		exe = buildSortExec(sortCase, dataSource)
 	}
 	dataSource.PrepareChunks()
 	executeInFailpoint(t, exe, 0, nil)
@@ -123,8 +123,8 @@ func TestParallelSort(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
 
 	schema := expression.NewSchema(sortCase.Columns()...)
-	dataSource := buildDataSource(ctx, sortCase, schema)
-	exe := buildSortExec(ctx, sortCase, dataSource)
+	dataSource := buildDataSource(sortCase, schema)
+	exe := buildSortExec(sortCase, dataSource)
 	for i := 0; i < 10; i++ {
 		parallelSortTest(t, ctx, nil, schema, dataSource, sortCase)
 		parallelSortTest(t, ctx, exe, schema, dataSource, sortCase)
@@ -136,13 +136,13 @@ func TestFailpoint(t *testing.T) {
 	rowNum := 65536
 	sortCase := &testutil.SortCase{Rows: rowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 	schema := expression.NewSchema(sortCase.Columns()...)
-	dataSource := buildDataSource(ctx, sortCase, schema)
+	dataSource := buildDataSource(sortCase, schema)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
 
 	testNum := 30
-	exe := buildSortExec(ctx, sortCase, dataSource)
+	exe := buildSortExec(sortCase, dataSource)
 	for i := 0; i < testNum; i++ {
 		failpointTest(t, ctx, nil, sortCase, dataSource)
 		failpointTest(t, ctx, exe, sortCase, dataSource)

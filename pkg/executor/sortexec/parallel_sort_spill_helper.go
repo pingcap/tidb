@@ -137,7 +137,7 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 
 	source := &memorySource{sortedRowsIters: sortedRowsIters}
 	merger := newMultiWayMerger(source, p.lessRowFunc)
-	merger.init()
+	_ = merger.init()
 	return p.spillImpl(merger)
 }
 
