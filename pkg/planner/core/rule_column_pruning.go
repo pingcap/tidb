@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -397,6 +396,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		}
 	}
 	appendColumnPruneTraceStep(ds, prunedColumns, opt)
+	var addedSpec bool = false
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
 	if ds.schema.Len() == 0 {
@@ -405,6 +405,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		handleCol, handleColInfo = preferKeyColumnFromTable(ds, originSchemaColumns, originColumns)
 		ds.Columns = append(ds.Columns, handleColInfo)
 		ds.schema.Append(handleCol)
+		addedSpec = true
 	}
 	// ref: https://github.com/pingcap/tidb/issues/44579
 	// when first entering columnPruner, we kept a column-a in datasource since upper agg function count(a) is used.
@@ -413,6 +414,16 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	// 		extra col, in this way, handle col is useful again, otherwise, _tidb_rowid will be filled.
 	if ds.handleCols != nil && ds.handleCols.IsInt() && ds.schema.ColumnIndex(ds.handleCols.GetCol(0)) == -1 {
 		ds.handleCols = nil
+	}
+	if ds.SCtx().GetSessionVars().AllowProjectionPushDown && !addedSpec && ds.schema.Len() > len(parentUsedCols) {
+		proj := LogicalProjection{
+			Exprs: expression.Column2Exprs(parentUsedCols),
+		}.Init(ds.SCtx(), ds.QueryBlockOffset())
+		// Clone the schema here, because the schema may be changed by column pruning rules.
+
+		proj.SetSchema(expression.NewSchema(parentUsedCols...))
+		proj.SetChildren(ds)
+		return proj, nil
 	}
 	return ds, nil
 }

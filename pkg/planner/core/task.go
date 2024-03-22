@@ -518,8 +518,6 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 		lTask, rTask = p.convertPartitionKeysIfNeed(lTask, rTask)
 	}
 	p.SetChildren(lTask.plan(), rTask.plan())
-	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
-
 	// outer task is the task that will pass its MPPPartitionType to the join result
 	// for broadcast inner join, it should be the non-broadcast side, since broadcast side is always the build side, so
 	// just use the probe side is ok.
@@ -544,6 +542,17 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 		partTp:   outerTask.partTp,
 		hashCols: outerTask.hashCols,
 	}
+	defaultSchema := BuildPhysicalJoinSchema(p.JoinType, p)
+	if p.SCtx().GetSessionVars().AllowProjectionPushDown && p.schema.Len() < defaultSchema.Len() && p.schema.Len() != 0 {
+		// Join schema can be pruned, add projection here
+		proj := PhysicalProjection{
+			Exprs: expression.Column2Exprs(p.schema.Columns),
+		}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
+
+		proj.SetSchema(p.Schema().Clone())
+		attachPlan2Task(proj, task)
+	}
+	p.schema = defaultSchema
 	return task
 }
 
