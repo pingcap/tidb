@@ -15,8 +15,6 @@
 package common
 
 import (
-	"math"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/codec"
 )
@@ -114,8 +112,7 @@ func (DupDetectKeyAdapter) EncodedLen(key []byte, rowID []byte) int {
 
 var _ KeyAdapter = DupDetectKeyAdapter{}
 
-// static vars for rowID
 var (
-	MinRowID  = EncodeIntRowID(math.MinInt64)
-	ZeroRowID = EncodeIntRowID(0)
+	// MinRowID is the minimum rowID value after DupDetectKeyAdapter.Encode().
+	MinRowID = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0}
 )

@@ -22,7 +22,7 @@ import (
 )
 
 func TestSplitDataFiles(t *testing.T) {
-	allPaths := make([]string, 0, 100)
+	allPaths := make([]string, 0, 110)
 	for i := 0; i < cap(allPaths); i++ {
 		allPaths = append(allPaths, fmt.Sprintf("%d", i))
 	}
@@ -101,4 +101,25 @@ func TestSplitDataFiles(t *testing.T) {
 			require.Equal(t, c.result, result)
 		})
 	}
+
+	bak := MaxMergingFilesPerThread
+	t.Cleanup(func() {
+		MaxMergingFilesPerThread = bak
+	})
+	MaxMergingFilesPerThread = 10
+	require.Equal(t, [][]string{
+		allPaths[:10], allPaths[10:19], allPaths[19:28], allPaths[28:37],
+		allPaths[37:46], allPaths[46:55], allPaths[55:64], allPaths[64:73],
+		allPaths[73:82], allPaths[82:91],
+	}, splitDataFiles(allPaths[:91], 8))
+	require.Equal(t, [][]string{
+		allPaths[:10], allPaths[10:20], allPaths[20:30], allPaths[30:40],
+		allPaths[40:50], allPaths[50:60], allPaths[60:70], allPaths[70:80],
+		allPaths[80:90], allPaths[90:99],
+	}, splitDataFiles(allPaths[:99], 8))
+	require.Equal(t, [][]string{
+		allPaths[:10], allPaths[10:20], allPaths[20:29], allPaths[29:38],
+		allPaths[38:47], allPaths[47:56], allPaths[56:65], allPaths[65:74],
+		allPaths[74:83], allPaths[83:92], allPaths[92:101],
+	}, splitDataFiles(allPaths[:101], 8))
 }

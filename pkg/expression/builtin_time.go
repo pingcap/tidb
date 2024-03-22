@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -6781,12 +6782,13 @@ func (c *tidbCurrentTsoFunctionClass) getFunction(ctx BuildContext, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTiDBCurrentTsoSig{bf}
+	sig := &builtinTiDBCurrentTsoSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTiDBCurrentTsoSig struct {
 	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinTiDBCurrentTsoSig) Clone() builtinFunc {
@@ -6795,9 +6797,17 @@ func (b *builtinTiDBCurrentTsoSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinTiDBCurrentTsoSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
 // evalInt evals currentTSO().
 func (b *builtinTiDBCurrentTsoSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
-	tso, _ := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), "tidb_current_ts")
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+	tso, _ := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), "tidb_current_ts")
 	itso, _ := strconv.ParseInt(tso, 10, 64)
 	return itso, false, nil
 }

@@ -1241,10 +1241,11 @@ func TestHJBuildAndProbeHint4TiFlash(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		tableName := tblInfo.Name.L
+	for _, tbl := range is.SchemaTables(db.Name) {
+		table := tbl.Meta()
+		tableName := table.Name.L
 		if tableName == "t1" || tableName == "t2" || tableName == "t3" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			table.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
 				Available: true,
 			}
@@ -1283,7 +1284,8 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "employee" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -1332,7 +1334,8 @@ func TestCountStarForTiFlash(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		tableName := tblInfo.Name.L
 		if tableName == "t" || tableName == "t_pick_row_id" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
@@ -1427,7 +1430,8 @@ func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		tableName := tblInfo.Name.L
 		if tableName == "tbl_15" || tableName == "tbl_16" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{

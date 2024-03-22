@@ -533,32 +533,6 @@ func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schem
 	return nil
 }
 
-func fetchColumnsFromStatsCache(table *model.TableInfo) (rowCount uint64, avgRowLength uint64, dataLength uint64, indexLength uint64) {
-	cache := cache.TableRowStatsCache
-	if table.GetPartitionInfo() == nil {
-		rowCount = cache.GetTableRows(table.ID)
-		dataLength, indexLength = cache.GetDataAndIndexLength(table, table.ID, rowCount)
-	} else {
-		for _, pi := range table.GetPartitionInfo().Definitions {
-			piRowCnt := cache.GetTableRows(pi.ID)
-			rowCount += piRowCnt
-			parDataLen, parIndexLen := cache.GetDataAndIndexLength(table, pi.ID, piRowCnt)
-			dataLength += parDataLen
-			indexLength += parIndexLen
-		}
-	}
-	avgRowLength = uint64(0)
-	if rowCount != 0 {
-		avgRowLength = dataLength / rowCount
-	}
-
-	if table.IsSequence() {
-		// sequence is always 1 row regardless of stats.
-		rowCount = 1
-	}
-	return
-}
-
 func (e *memtableRetriever) updateStatsCacheIfNeed() bool {
 	for _, col := range e.columns {
 		// only the following columns need stats cahce.
@@ -638,11 +612,21 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 
 				var rowCount, avgRowLength, dataLength, indexLength uint64
 				if useStatsCache {
-					err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
-					if err != nil {
-						return err
+					if table.GetPartitionInfo() == nil {
+						err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+						if err != nil {
+							return err
+						}
+					} else {
+						// needs to update all partitions for partition table.
+						for _, pi := range table.GetPartitionInfo().Definitions {
+							err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
+							if err != nil {
+								return err
+							}
+						}
 					}
-					rowCount, avgRowLength, dataLength, indexLength = fetchColumnsFromStatsCache(table)
+					rowCount, avgRowLength, dataLength, indexLength = cache.TableRowStatsCache.EstimateDataLength(table)
 				}
 
 				record := types.MakeDatums(
@@ -775,37 +759,98 @@ func (e *memtableRetriever) setDataFromTiDBCheckConstraints(sctx sessionctx.Cont
 	return nil
 }
 
+type hugeMemTableRetriever struct {
+	dummyCloser
+	extractor          *plannercore.ColumnsTableExtractor
+	table              *model.TableInfo
+	columns            []*model.ColumnInfo
+	retrieved          bool
+	initialized        bool
+	rows               [][]types.Datum
+	dbs                []*model.DBInfo
+	curTables          []table.Table
+	dbsIdx             int
+	tblIdx             int
+	viewMu             syncutil.RWMutex
+	viewSchemaMap      map[int64]*expression.Schema // table id to view schema
+	viewOutputNamesMap map[int64]types.NameSlice    // table id to view output names
+	batch              int
+	is                 infoschema.InfoSchema
+}
+
+// retrieve implements the infoschemaRetriever interface
+func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.retrieved {
+		return nil, nil
+	}
+
+	if !e.initialized {
+		e.is = sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+		dbs := e.is.AllSchemas()
+		slices.SortFunc(dbs, model.LessDBInfo)
+		e.dbs = dbs
+		e.initialized = true
+		e.rows = make([][]types.Datum, 0, 1024)
+		e.batch = 1024
+	}
+
+	var err error
+	if e.table.Name.O == infoschema.TableColumns {
+		err = e.setDataForColumns(ctx, sctx, e.extractor)
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.retrieved = len(e.rows) == 0
+
+	return adjustColumns(e.rows, e.columns, e.table), nil
+}
+
 func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context, extractor *plannercore.ColumnsTableExtractor) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	e.rows = e.rows[:0]
-	batch := 1024
 	for ; e.dbsIdx < len(e.dbs); e.dbsIdx++ {
 		schema := e.dbs[e.dbsIdx]
-		for e.tblIdx < len(schema.Tables) {
-			table := schema.Tables[e.tblIdx]
+		var table *model.TableInfo
+		if len(e.curTables) == 0 {
+			e.curTables = e.is.SchemaTables(schema.Name)
+		}
+		for e.tblIdx < len(e.curTables) {
+			table = e.curTables[e.tblIdx].Meta()
 			e.tblIdx++
-			hasPrivs := false
-			var priv mysql.PrivilegeType
-			if checker != nil {
-				for _, p := range mysql.AllColumnPrivs {
-					if checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", p) {
-						hasPrivs = true
-						priv |= p
-					}
-				}
-				if !hasPrivs {
-					continue
-				}
-			}
-
-			e.dataForColumnsInTable(ctx, sctx, schema, table, priv, extractor)
-			if len(e.rows) >= batch {
+			if e.setDataForColumnsWithOneTable(ctx, sctx, extractor, schema, table, checker) {
 				return nil
 			}
 		}
 		e.tblIdx = 0
+		e.curTables = e.curTables[:0]
 	}
 	return nil
+}
+
+func (e *hugeMemTableRetriever) setDataForColumnsWithOneTable(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	extractor *plannercore.ColumnsTableExtractor,
+	schema *model.DBInfo,
+	table *model.TableInfo,
+	checker privilege.Manager) bool {
+	hasPrivs := false
+	var priv mysql.PrivilegeType
+	if checker != nil {
+		for _, p := range mysql.AllColumnPrivs {
+			if checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", p) {
+				hasPrivs = true
+				priv |= p
+			}
+		}
+		if !hasPrivs {
+			return false
+		}
+	}
+
+	e.dataForColumnsInTable(ctx, sctx, schema, table, priv, extractor)
+	return len(e.rows) >= e.batch
 }
 
 func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
@@ -3079,49 +3124,6 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 	}
 
 	return res, nil
-}
-
-type hugeMemTableRetriever struct {
-	dummyCloser
-	extractor          *plannercore.ColumnsTableExtractor
-	table              *model.TableInfo
-	columns            []*model.ColumnInfo
-	retrieved          bool
-	initialized        bool
-	rows               [][]types.Datum
-	dbs                []*model.DBInfo
-	dbsIdx             int
-	tblIdx             int
-	viewMu             syncutil.RWMutex
-	viewSchemaMap      map[int64]*expression.Schema // table id to view schema
-	viewOutputNamesMap map[int64]types.NameSlice    // table id to view output names
-}
-
-// retrieve implements the infoschemaRetriever interface
-func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if e.retrieved {
-		return nil, nil
-	}
-
-	if !e.initialized {
-		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-		dbs := is.AllSchemas()
-		slices.SortFunc(dbs, model.LessDBInfo)
-		e.dbs = dbs
-		e.initialized = true
-		e.rows = make([][]types.Datum, 0, 1024)
-	}
-
-	var err error
-	if e.table.Name.O == infoschema.TableColumns {
-		err = e.setDataForColumns(ctx, sctx, e.extractor)
-	}
-	if err != nil {
-		return nil, err
-	}
-	e.retrieved = len(e.rows) == 0
-
-	return adjustColumns(e.rows, e.columns, e.table), nil
 }
 
 func adjustColumns(input [][]types.Datum, outColumns []*model.ColumnInfo, table *model.TableInfo) [][]types.Datum {
