@@ -533,8 +533,7 @@ func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts u
 		tblInfo, err := m.GetTable(dbID, tblID)
 
 		if err != nil {
-			// TODO load table panic!!!
-			panic(err)
+			return nil, err
 		}
 
 		// table removed.
