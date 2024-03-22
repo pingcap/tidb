@@ -827,32 +827,20 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 	e.rows = e.rows[:0]
 	for ; e.dbsIdx < len(e.dbs); e.dbsIdx++ {
 		schema := e.dbs[e.dbsIdx]
-		useV2 := false
 		var table *model.TableInfo
-		var tableCnt int
-		if variable.SchemaCacheSize.Load() > 0 && len(e.curTables) == 0 {
+		if len(e.curTables) == 0 {
 			e.curTables = e.is.SchemaTables(schema.Name)
-			useV2 = true
-			tableCnt = len(e.curTables)
-		} else {
-			tableCnt = len(schema.Tables)
 		}
 
-		for e.tblIdx < tableCnt {
-			if useV2 {
-				table = e.curTables[e.tblIdx].Meta()
-			} else {
-				table = schema.Tables[e.tblIdx]
-			}
+		for e.tblIdx < len(e.curTables) {
+			table = e.curTables[e.tblIdx].Meta()
 			e.tblIdx++
 			if e.setDataForColumnsWithOneTable(ctx, sctx, extractor, schema, table, checker) {
 				return nil
 			}
 		}
 		e.tblIdx = 0
-		if useV2 {
-			e.curTables = e.curTables[:0]
-		}
+		e.curTables = e.curTables[:0]
 	}
 	return nil
 }
