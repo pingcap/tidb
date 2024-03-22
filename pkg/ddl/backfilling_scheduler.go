@@ -524,8 +524,8 @@ func expectedIngestWorkerCnt(tblInfo *model.TableInfo) (readerCnt, writerCnt int
 	rowSize := []uint64{200, 500, 1000, 3000, math.MaxUint64}
 	for i, s := range rowSize {
 		if avgRowLen <= s {
-			readerCnt = int(float64(workerCnt) * readerRatio[i])
-			writerCnt = workerCnt
+			readerCnt = max(int(float64(workerCnt)*readerRatio[i]), 1)
+			writerCnt = max(workerCnt, 1)
 			break
 		}
 	}
