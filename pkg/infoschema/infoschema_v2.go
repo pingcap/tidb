@@ -312,6 +312,13 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 		}
 		return nil, false
 	}
+	// get cache with old key
+	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
+	tbl, found = is.tableCache.Get(oldKey)
+	if found && tbl != nil {
+		is.tableCache.Set(key, tbl)
+		return tbl, true
+	}
 
 	// Maybe the table is evicted? need to reload.
 	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
@@ -350,6 +357,14 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	key := tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion}
 	res, found := is.tableCache.Get(key)
 	if found && res != nil {
+		return res, nil
+	}
+
+	// get cache with old key
+	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
+	res, found = is.tableCache.Get(oldKey)
+	if found && res != nil {
+		is.tableCache.Set(key, res)
 		return res, nil
 	}
 
