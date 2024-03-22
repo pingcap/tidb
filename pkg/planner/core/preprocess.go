@@ -1571,7 +1571,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	if !p.skipLockMDL() {
-		table, _, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx.GetPlanCtx(), model.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.sctx.GetPlanCtx(), model.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
 			return
@@ -1788,35 +1788,35 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	return false
 }
 
-func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, bool, error) {
+func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
-		return tbl, false, nil
+		return tbl, nil
 	}
 	if is.SchemaMetaVersion() == 0 {
-		return tbl, false, nil
+		return tbl, nil
 	}
 	skipLock := false
 	if sctx.GetSessionVars().SnapshotInfoschema != nil {
-		return tbl, false, nil
+		return tbl, nil
 	}
 	if sctx.GetSessionVars().TxnCtx.IsStaleness {
-		return tbl, false, nil
+		return tbl, nil
 	}
 	if tbl.Meta().TempTableType == model.TempTableLocal {
 		// Don't attach, don't lock.
-		return tbl, false, nil
+		return tbl, nil
 	} else if tbl.Meta().TempTableType == model.TempTableGlobal {
 		skipLock = true
 	}
 	if IsAutoCommitTxn(sctx.GetSessionVars()) && sctx.GetSessionVars().StmtCtx.IsReadOnly {
-		return tbl, false, nil
+		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
 				// Already attach.
-				return tbl, false, nil
+				return tbl, nil
 			}
 		}
 
@@ -1836,7 +1836,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 			if !skipLock {
 				sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
 			}
-			return nil, false, err
+			return nil, err
 		}
 		if !skipLock {
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)
@@ -1864,7 +1864,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 					allocs := autoid.NewAllocatorsFromTblInfo(dom, dbInfo.ID, copyTableInfo)
 					tbl, err = table.TableFromMeta(allocs, copyTableInfo)
 					if err != nil {
-						return nil, false, err
+						return nil, err
 					}
 				}
 			}
@@ -1885,7 +1885,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 					if !skipLock {
 						sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
 					}
-					return nil, false, domain.ErrInfoSchemaChanged.GenWithStack("public column %s has changed", col.Name)
+					return nil, domain.ErrInfoSchemaChanged.GenWithStack("public column %s has changed", col.Name)
 				}
 			}
 		}
@@ -1893,23 +1893,23 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 		se, ok := is.(*infoschema.SessionExtendedInfoSchema)
 		if !ok {
 			logutil.BgLogger().Error("InfoSchema is not SessionExtendedInfoSchema", zap.Stack("stack"))
-			return nil, false, errors.New("InfoSchema is not SessionExtendedInfoSchema")
+			return nil, errors.New("InfoSchema is not SessionExtendedInfoSchema")
 		}
 		db, _ := infoschema.SchemaByTable(domainSchema, tbl.Meta())
 		err = se.UpdateTableInfo(db, tbl)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		curTxn, err := sctx.Txn(false)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		if curTxn.Valid() {
 			curTxn.SetOption(kv.TableToColumnMaps, nil)
 		}
-		return tbl, true, nil
+		return tbl, nil
 	}
-	return tbl, false, nil
+	return tbl, nil
 }
 
 // skipLockMDL returns true if the preprocessor should skip the lock of MDL.

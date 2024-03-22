@@ -173,11 +173,12 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	if stmtCtx.UseCache {
 		// Acquire the metadata lock and update the schema version.
 		for i := 0; i < len(stmt.dbName); i++ {
-			_, change, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+			prevVersion := stmt.tbls[i].Meta().TableVersion
+			tbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
 			if err != nil {
 				return nil, nil, err
 			}
-			if change {
+			if tbl.Meta().TableVersion != prevVersion {
 				// Handle the case that the schema is updated for select statement.
 				sctx.GetSessionVars().StmtCtx.ForceSetSkipPlanCache(errors.NewNoStackError("schema changed before adding the metadata lock"))
 				break
