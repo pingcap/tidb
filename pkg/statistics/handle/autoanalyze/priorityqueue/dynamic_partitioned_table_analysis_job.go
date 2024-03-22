@@ -114,9 +114,6 @@ func (j *DynamicPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 func (j *DynamicPartitionedTableAnalysisJob) IsValidToAnalyze(
 	sctx sessionctx.Context,
 ) (bool, string) {
-	if valid, failReason := isValidWeight(j.Weight); !valid {
-		return false, failReason
-	}
 	// Check whether the table or partition is valid to analyze.
 	if len(j.Partitions) > 0 || len(j.PartitionIndexes) > 0 {
 		// Any partition is invalid to analyze, the whole table is invalid to analyze.
@@ -156,10 +153,10 @@ func (j *DynamicPartitionedTableAnalysisJob) String() string {
 			"\tGlobal Table: %s\n"+
 			"\tGlobal TableID: %d\n"+
 			"\tTableStatsVer: %d\n"+
-			"\tChangePercentage: %.2f\n"+
+			"\tChangePercentage: %.6f\n"+
 			"\tTableSize: %.2f\n"+
 			"\tLastAnalysisDuration: %s\n"+
-			"\tWeight: %.4f\n",
+			"\tWeight: %.6f\n",
 		j.getAnalyzeType(),
 		strings.Join(j.Partitions, ", "),
 		j.PartitionIndexes,

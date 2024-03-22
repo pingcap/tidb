@@ -638,9 +638,19 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 
 				var rowCount, avgRowLength, dataLength, indexLength uint64
 				if useStatsCache {
-					err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
-					if err != nil {
-						return err
+					if table.GetPartitionInfo() == nil {
+						err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+						if err != nil {
+							return err
+						}
+					} else {
+						// needs to update all partitions for partition table.
+						for _, pi := range table.GetPartitionInfo().Definitions {
+							err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
+							if err != nil {
+								return err
+							}
+						}
 					}
 					rowCount, avgRowLength, dataLength, indexLength = fetchColumnsFromStatsCache(table)
 				}

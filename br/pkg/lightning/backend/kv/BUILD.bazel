@@ -42,6 +42,7 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util/chunk",
+        "//pkg/util/codec",
         "//pkg/util/topsql/stmtstats",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",

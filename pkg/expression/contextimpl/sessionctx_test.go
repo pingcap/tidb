@@ -95,6 +95,7 @@ func getProvider[T context.OptionalEvalPropProvider](
 	require.True(t, ok)
 	p, ok := val.(T)
 	require.True(t, ok)
+	require.Equal(t, key, p.Desc().Key())
 	return p
 }
 
@@ -111,4 +112,20 @@ func TestEvalContextImplWithSessionCtxForOptProps(t *testing.T) {
 	user, roles := getProvider[contextopt.CurrentUserPropProvider](t, impl, context.OptPropCurrentUser)()
 	require.Equal(t, ctx.GetSessionVars().User, user)
 	require.Equal(t, ctx.GetSessionVars().ActiveRoles, roles)
+
+	// test for OptPropSessionVars
+	gotVars := getProvider[*contextopt.SessionVarsPropProvider](t, impl, context.OptPropSessionVars).GetSessionVars()
+	require.Same(t, ctx.GetSessionVars(), gotVars)
+
+	// test for OptPropAdvisoryLock
+	lockProvider := getProvider[*contextopt.AdvisoryLockPropProvider](t, impl, context.OptPropAdvisoryLock)
+	gotCtx, ok := lockProvider.AdvisoryLockContext.(*mock.Context)
+	require.True(t, ok)
+	require.Same(t, ctx, gotCtx)
+
+	// test for OptPropDDLOwnerInfo
+	ddlInfoProvider := getProvider[contextopt.DDLOwnerInfoProvider](t, impl, context.OptPropDDLOwnerInfo)
+	require.False(t, ddlInfoProvider())
+	ctx.SetIsDDLOwner(true)
+	require.True(t, ddlInfoProvider())
 }
