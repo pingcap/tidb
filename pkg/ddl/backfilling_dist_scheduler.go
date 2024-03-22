@@ -466,32 +466,42 @@ func generateMergePlan(
 ) ([][]byte, error) {
 	// check data files overlaps,
 	// if data files overlaps too much, we need a merge step.
-	multiStats := make([]external.MultipleFilesStat, 0, 100)
+	var multiStatsGroup [][]external.MultipleFilesStat
 	var kvMetaGroups []*external.SortedKVMeta
 	err := forEachBackfillSubtaskMeta(taskHandle, task.ID, proto.BackfillStepReadIndex,
 		func(subtask *BackfillSubTaskMeta) {
 			if kvMetaGroups == nil {
 				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
+				multiStatsGroup = make([][]external.MultipleFilesStat, len(subtask.MetaGroups))
 			}
 			for i, g := range subtask.MetaGroups {
 				if kvMetaGroups[i] == nil {
 					kvMetaGroups[i] = &external.SortedKVMeta{}
+					multiStatsGroup[i] = make([]external.MultipleFilesStat, 0, 100)
 				}
 				kvMetaGroups[i].Merge(g)
-				multiStats = append(multiStats, g.MultipleFilesStats...)
+				multiStatsGroup[i] = append(multiStatsGroup[i], g.MultipleFilesStats...)
 			}
 		})
 	if err != nil {
 		return nil, err
 	}
-	if skipMergeSort(multiStats) {
+
+	allSkip := true
+	for _, multiStats := range multiStatsGroup {
+		if !skipMergeSort(multiStats) {
+			allSkip = false
+			break
+		}
+	}
+	if allSkip {
 		logger.Info("skip merge sort")
 		return nil, nil
 	}
 
-	// generate merge sort plan.
-	dataFiles := make([]string, 0, 1000)
+	metaArr := make([][]byte, 0, 16)
 	for i, g := range kvMetaGroups {
+		dataFiles := make([]string, 0, 1000)
 		if g == nil {
 			logger.Error("meet empty kv group when getting subtask summary",
 				zap.Int64("taskID", task.ID))
@@ -502,26 +512,24 @@ func generateMergePlan(
 				dataFiles = append(dataFiles, filePair[0])
 			}
 		}
-	}
+		start := 0
+		step := external.MergeSortFileCountStep
+		for start < len(dataFiles) {
+			end := start + step
+			if end > len(dataFiles) {
+				end = len(dataFiles)
+			}
+			m := &BackfillSubTaskMeta{
+				DataFiles: dataFiles[start:end],
+			}
+			metaBytes, err := json.Marshal(m)
+			if err != nil {
+				return nil, err
+			}
+			metaArr = append(metaArr, metaBytes)
 
-	start := 0
-	step := external.MergeSortFileCountStep
-	metaArr := make([][]byte, 0, 16)
-	for start < len(dataFiles) {
-		end := start + step
-		if end > len(dataFiles) {
-			end = len(dataFiles)
+			start = end
 		}
-		m := &BackfillSubTaskMeta{
-			DataFiles: dataFiles[start:end],
-		}
-		metaBytes, err := json.Marshal(m)
-		if err != nil {
-			return nil, err
-		}
-		metaArr = append(metaArr, metaBytes)
-
-		start = end
 	}
 	return metaArr, nil
 }

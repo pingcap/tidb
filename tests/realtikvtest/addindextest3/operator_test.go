@@ -188,6 +188,7 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 		mockBackendCtx,
 		[]ingest.Engine{mockEngine},
 		tk.Session(),
+		1, // job id
 		tbl.(table.PhysicalTable),
 		[]*model.IndexInfo{idxInfo},
 		startKey,
@@ -262,6 +263,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 			mockBackendCtx,
 			[]ingest.Engine{mockEngine},
 			tk.Session(),
+			1, // job id
 			tbl.(table.PhysicalTable),
 			[]*model.IndexInfo{idxInfo},
 			startKey,

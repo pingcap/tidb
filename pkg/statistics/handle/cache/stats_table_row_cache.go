@@ -143,6 +143,34 @@ func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
 	return nil
 }
 
+// EstimateDataLength returns the estimated data length in bytes of a given table info.
+// Returns row count, average row length, total data length, and all indexed column length.
+func (c *StatsTableRowCache) EstimateDataLength(table *model.TableInfo) (
+	rowCount uint64, avgRowLength uint64, dataLength uint64, indexLength uint64) {
+	if table.GetPartitionInfo() == nil {
+		rowCount = c.GetTableRows(table.ID)
+		dataLength, indexLength = c.GetDataAndIndexLength(table, table.ID, rowCount)
+	} else {
+		for _, pi := range table.GetPartitionInfo().Definitions {
+			piRowCnt := c.GetTableRows(pi.ID)
+			rowCount += piRowCnt
+			parDataLen, parIndexLen := c.GetDataAndIndexLength(table, pi.ID, piRowCnt)
+			dataLength += parDataLen
+			indexLength += parIndexLen
+		}
+	}
+	avgRowLength = uint64(0)
+	if rowCount != 0 {
+		avgRowLength = dataLength / rowCount
+	}
+
+	if table.IsSequence() {
+		// sequence is always 1 row regardless of stats.
+		rowCount = 1
+	}
+	return
+}
+
 func getRowCountTables(sctx sessionctx.Context, tableIDs ...int64) (map[int64]uint64, error) {
 	var rows []chunk.Row
 	var err error
