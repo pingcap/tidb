@@ -831,7 +831,6 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 		if len(e.curTables) == 0 {
 			e.curTables = e.is.SchemaTables(schema.Name)
 		}
-
 		for e.tblIdx < len(e.curTables) {
 			table = e.curTables[e.tblIdx].Meta()
 			e.tblIdx++
