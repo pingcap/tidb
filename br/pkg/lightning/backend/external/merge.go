@@ -3,13 +3,23 @@ package external
 import (
 	"context"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+)
+
+var (
+	// MaxMergingFilesPerThread is the maximum number of files that can be merged by a
+	// single thread. This value comes from the fact that 16 threads are ok to merge 4k
+	// files in parallel, so we set it to 250.
+	MaxMergingFilesPerThread = 250
+	// MinUploadPartSize is the minimum size of each part when uploading files to
+	// external storage, which is 5MiB for both S3 and GCS.
+	MinUploadPartSize int64 = 5 * units.MiB
 )
 
 // MergeOverlappingFiles reads from given files whose key range may overlap
@@ -19,24 +29,26 @@ func MergeOverlappingFiles(
 	paths []string,
 	store storage.ExternalStorage,
 	partSize int64,
-	readBufferSize int,
 	newFilePrefix string,
 	blockSize int,
-	memSizeLimit uint64,
-	writeBatchCount uint64,
 	onClose OnCloseFunc,
 	concurrency int,
 	checkHotspot bool,
 ) error {
 	dataFilesSlice := splitDataFiles(paths, concurrency)
+	// during encode&sort step, the writer-limit is aligned to block size, so we
+	// need align this too. the max additional written size per file is max-block-size.
+	// for max-block-size = 32MiB, adding (max-block-size * MaxMergingFilesPerThread)/10000 ~ 1MiB
+	// to part-size is enough.
+	partSize = max(MinUploadPartSize, partSize+units.MiB)
 
 	logutil.Logger(ctx).Info("start to merge overlapping files",
 		zap.Int("file-count", len(paths)),
 		zap.Int("file-groups", len(dataFilesSlice)),
-		zap.Int("concurrency", concurrency))
+		zap.Int("concurrency", concurrency),
+		zap.Int64("part-size", partSize))
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
-	partSize = max(int64(5*size.MB), partSize+int64(1*size.MB))
 	for _, files := range dataFilesSlice {
 		files := files
 		eg.Go(func() error {
@@ -45,12 +57,9 @@ func MergeOverlappingFiles(
 				files,
 				store,
 				partSize,
-				readBufferSize,
 				newFilePrefix,
 				uuid.New().String(),
-				memSizeLimit,
 				blockSize,
-				writeBatchCount,
 				onClose,
 				checkHotspot,
 			)
@@ -59,10 +68,11 @@ func MergeOverlappingFiles(
 	return eg.Wait()
 }
 
-// split input data files into max 'concurrency' shares evenly, if there are not
-// enough files, merge at least 2 files in one batch.
+// split input data files into multiple shares evenly, with the max number files
+// in each share MaxMergingFilesPerThread, if there are not enough files, merge at
+// least 2 files in one batch.
 func splitDataFiles(paths []string, concurrency int) [][]string {
-	shares := concurrency
+	shares := max((len(paths)+MaxMergingFilesPerThread-1)/MaxMergingFilesPerThread, concurrency)
 	if len(paths) < 2*concurrency {
 		shares = max(1, len(paths)/2)
 	}
@@ -91,30 +101,29 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 // accurately, here we only consider the memory used by our code, the estimate max
 // memory usage of this function is:
 //
-//	memSizeLimit
-//	+ 20 * partSize
-//	+ 20 * 5MiB(stat file, we might not use all part, as stat file is quite small)
-//	+ readBufferSize * len(paths)
+//	defaultOneWriterMemSizeLimit
+//	+ MaxMergingFilesPerThread * (X + defaultReadBufferSize)
+//	+ maxUploadWorkersPerThread * (data-part-size + 5MiB(stat-part-size))
 //	+ memory taken by concurrent reading if check-hotspot is enabled
 //
-// memSizeLimit = 256 MiB now.
-// partSize = index-kv-data-file-size / (10000 / MergeSortOverlapThreshold) for import into.
-// readBufferSize = 64 KiB now.
-// len(paths) >= kv-files-in-subtask(suppose MergeSortOverlapThreshold) / concurrency
+// where X is memory used for each read connection, it's http2 for GCP, X might be
+// 4 or more MiB, http1 for S3, it's smaller.
 //
-// TODO: seems it might OOM if partSize = 256 / (10000/4000) = 100 MiB, when write
-// external storage is slow.
+// with current default values, on machine with 2G per core, the estimate max memory
+// usage for import into is:
+//
+//	128 + 250 * (4 + 64/1024) + 8 * (25.6 + 5) ~ 1.36 GiB
+//	where 25.6 is max part-size when there is only data kv = 1024*250/10000 = 25.6MiB
+//
+// for add-index, it uses more memory as check-hotspot is enabled.
 func mergeOverlappingFilesInternal(
 	ctx context.Context,
 	paths []string,
 	store storage.ExternalStorage,
 	partSize int64,
-	readBufferSize int,
 	newFilePrefix string,
 	writerID string,
-	memSizeLimit uint64,
 	blockSize int,
-	writeBatchCount uint64,
 	onClose OnCloseFunc,
 	checkHotspot bool,
 ) (err error) {
@@ -127,7 +136,7 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot, 0)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, 0)
 	if err != nil {
 		return err
 	}
@@ -139,9 +148,8 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	writer := NewWriterBuilder().
-		SetMemorySizeLimit(memSizeLimit).
+		SetMemorySizeLimit(defaultOneWriterMemSizeLimit).
 		SetBlockSize(blockSize).
-		SetWriterBatchCount(writeBatchCount).
 		SetOnCloseFunc(onClose).
 		BuildOneFile(store, newFilePrefix, writerID)
 	err = writer.Init(ctx, partSize)

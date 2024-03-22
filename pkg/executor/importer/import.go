@@ -358,7 +358,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 	}
 
 	return &Plan{
-		DBName: plan.Table.Schema.O,
+		DBName: plan.Table.Schema.L,
 		DBID:   plan.Table.DBInfo.ID,
 
 		Path:                 plan.Path,
@@ -402,7 +402,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	p := &Plan{
 		TableInfo:        tbl.Meta(),
 		DesiredTableInfo: tbl.Meta(),
-		DBName:           plan.Table.Schema.O,
+		DBName:           plan.Table.Schema.L,
 		DBID:             plan.Table.DBInfo.ID,
 
 		Path:           plan.Path,

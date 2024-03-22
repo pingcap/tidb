@@ -79,14 +79,28 @@ func TestCheckRequirements(t *testing.T) {
 	tableObj, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
-	// source data file size = 0
 	c := &importer.LoadDataController{
 		Plan: &importer.Plan{
 			DBName:         "test",
 			DataSourceType: importer.DataSourceTypeFile,
+			TableInfo:      tableObj.Meta(),
 		},
 		Table: tableObj,
 	}
+
+	// create a dummy job
+	_, err = importer.CreateJob(ctx, conn, "test", "tttt", tableObj.Meta().ID, "root", &importer.ImportParameters{}, 0)
+	require.NoError(t, err)
+	// there is active job on the target table already
+	jobID, err := importer.CreateJob(ctx, conn, "test", "t", tableObj.Meta().ID, "root", &importer.ImportParameters{}, 0)
+	require.NoError(t, err)
+	err = c.CheckRequirements(ctx, conn)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "there is active job on the target table already")
+	// cancel the job
+	require.NoError(t, importer.CancelJob(ctx, conn, jobID))
+
+	// source data file size = 0
 	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataPreCheckFailed)
 
 	// make checkTotalFileSize pass

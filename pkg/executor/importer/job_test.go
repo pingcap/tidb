@@ -94,7 +94,7 @@ func TestJobHappyPath(t *testing.T) {
 		require.True(t, gotJobInfo.StartTime.IsZero())
 		require.True(t, gotJobInfo.EndTime.IsZero())
 		jobInfoEqual(t, jobInfo, gotJobInfo)
-		cnt, err := importer.GetActiveJobCnt(ctx, conn)
+		cnt, err := importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
 		require.NoError(t, err)
 		require.Equal(t, int64(1), cnt)
 
@@ -114,13 +114,13 @@ func TestJobHappyPath(t *testing.T) {
 		jobInfo.Status = "running"
 		jobInfo.Step = importer.JobStepImporting
 		jobInfoEqual(t, jobInfo, gotJobInfo)
-		cnt, err = importer.GetActiveJobCnt(ctx, conn)
+		cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
 		require.NoError(t, err)
 		require.Equal(t, int64(1), cnt)
 
 		// change job step
 		require.NoError(t, importer.Job2Step(ctx, conn, jobID, importer.JobStepValidating))
-		cnt, err = importer.GetActiveJobCnt(ctx, conn)
+		cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
 		require.NoError(t, err)
 		require.Equal(t, int64(1), cnt)
 
@@ -136,7 +136,7 @@ func TestJobHappyPath(t *testing.T) {
 		jobInfo.Summary = c.expectedSummary
 		jobInfo.ErrorMessage = c.expectedErrMsg
 		jobInfoEqual(t, jobInfo, gotJobInfo)
-		cnt, err = importer.GetActiveJobCnt(ctx, conn)
+		cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
 		require.NoError(t, err)
 		require.Equal(t, int64(0), cnt)
 
@@ -183,7 +183,7 @@ func TestGetAndCancelJob(t *testing.T) {
 	require.True(t, gotJobInfo.StartTime.IsZero())
 	require.True(t, gotJobInfo.EndTime.IsZero())
 	jobInfoEqual(t, jobInfo, gotJobInfo)
-	cnt, err := importer.GetActiveJobCnt(ctx, conn)
+	cnt, err := importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), cnt)
 
@@ -198,7 +198,7 @@ func TestGetAndCancelJob(t *testing.T) {
 	jobInfo.Status = "cancelled"
 	jobInfo.ErrorMessage = "cancelled by user"
 	jobInfoEqual(t, jobInfo, gotJobInfo)
-	cnt, err = importer.GetActiveJobCnt(ctx, conn)
+	cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), cnt)
 

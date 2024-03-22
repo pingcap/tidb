@@ -80,7 +80,6 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 		SetMemorySizeLimit(memSizeLimit).
 		SetBlockSize(blockSize).
 		SetOnCloseFunc(onClose).
-		SetWriterBatchCount(writeBatchCount).
 		SetPropSizeDistance(propSizeDist).
 		SetPropKeysDistance(propKeysDist).
 		Build(store, newFilePrefix, writerID)

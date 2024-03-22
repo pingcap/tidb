@@ -208,20 +208,18 @@ func (r *byteReader) switchToConcurrentReader() error {
 // containing those bytes. The content of returned slice may be changed after
 // next call.
 func (r *byteReader) readNBytes(n int) ([]byte, error) {
-	readLen, bs := r.next(n)
-	if readLen == n && len(bs) == 1 {
-		return bs[0], nil
-	}
-	// need to flatten bs
 	if n <= 0 {
 		return nil, errors.Errorf("illegal n (%d) when reading from external storage", n)
 	}
 	if n > int(size.GB) {
 		return nil, errors.Errorf("read %d bytes from external storage, exceed max limit %d", n, size.GB)
 	}
-	if n <= 0 {
-		return nil, errors.Errorf("illegal n (%d) when reading from external storage", n)
+
+	readLen, bs := r.next(n)
+	if readLen == n && len(bs) == 1 {
+		return bs[0], nil
 	}
+	// need to flatten bs
 	auxBuf := make([]byte, n)
 	for _, b := range bs {
 		copy(auxBuf[len(auxBuf)-n:], b)

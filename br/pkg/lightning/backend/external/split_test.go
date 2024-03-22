@@ -386,7 +386,6 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 			w := NewWriterBuilder().
 				SetMemorySizeLimit(DefaultMemSizeLimit).
 				SetBlockSize(32*units.MiB). // dataKVGroupBlockSize
-				SetWriterBatchCount(8*1024).
 				SetPropKeysDistance(8*1024).
 				SetPropSizeDistance(size.MB).
 				SetOnCloseFunc(onClose).

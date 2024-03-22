@@ -20,14 +20,19 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
+
+// defaultOneWriterMemSizeLimit is the memory size limit for one writer. OneWriter can write
+// data in stream, this memory limit is only used to avoid allocating too many times
+// for each KV pair.
+var defaultOneWriterMemSizeLimit uint64 = 128 * units.MiB
 
 // OneFileWriter is used to write data into external storage
 // with only one file for data and stat.
@@ -64,12 +69,16 @@ func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
 	err error,
 ) {
 	w.dataFile = filepath.Join(w.filenamePrefix, "one-file")
-	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20, PartSize: partSize})
+	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{
+		Concurrency: maxUploadWorkersPerThread,
+		PartSize:    partSize})
 	if err != nil {
 		return err
 	}
 	w.statFile = filepath.Join(w.filenamePrefix+statSuffix, "one-file")
-	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: 20, PartSize: int64(5 * size.MB)})
+	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{
+		Concurrency: maxUploadWorkersPerThread,
+		PartSize:    MinUploadPartSize})
 	if err != nil {
 		w.logger.Info("create stat writer failed",
 			zap.Error(err))

@@ -19,10 +19,17 @@ import (
 	"encoding/binary"
 	"io"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+)
+
+var (
+	// default read buf size of kvReader, this buf is split into 3 parts, 2 for prefetch
+	// from storage, 1 for read by user.
+	defaultReadBufferSize = 64 * units.KiB
 )
 
 type kvReader struct {

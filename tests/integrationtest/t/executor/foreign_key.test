@@ -377,3 +377,19 @@ disconnect conn1;
 set @@global.tidb_enable_foreign_key=default;
 set @@foreign_key_checks=default;
 
+# TestForeignKeyOtherSchema
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+create database executor__foreign_key_other_schema;
+use executor__foreign_key_other_schema;
+drop table if exists users;
+CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);
+use executor__foreign_key;
+drop table if exists orders;
+CREATE TABLE orders (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, doc JSON, FOREIGN KEY fk_user_id (user_id) REFERENCES executor__foreign_key_other_schema.users(id));
+alter table orders modify user_id int null;
+show create table orders;
+drop table if exists orders;
+drop database executor__foreign_key_other_schema;
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;

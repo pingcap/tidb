@@ -358,7 +358,7 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 		"  `b` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `fk` (`a`),\n" +
-		"  CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `test2`.`t2` (`id`)\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t2` (`id`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tblInfo := getTableInfo(t, dom, "test2", "t2")
 	tbReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
@@ -1053,8 +1053,8 @@ func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
 			"  `aa` int(11) DEFAULT NULL,\n" +
 			"  `bb` int(11) DEFAULT NULL,\n" +
 			"  KEY `fk_1` (`aa`),\n  KEY `fk_2` (`bb`),\n" +
-			"  CONSTRAINT `fk_1` FOREIGN KEY (`aa`) REFERENCES `test`.`t1` (`bb`),\n" +
-			"  CONSTRAINT `fk_2` FOREIGN KEY (`bb`) REFERENCES `test`.`t1` (`bb`)\n" +
+			"  CONSTRAINT `fk_1` FOREIGN KEY (`aa`) REFERENCES `t1` (`bb`),\n" +
+			"  CONSTRAINT `fk_2` FOREIGN KEY (`bb`) REFERENCES `t1` (`bb`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
