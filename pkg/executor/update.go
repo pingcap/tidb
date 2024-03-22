@@ -285,6 +285,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 			}
 		}
 		txn, err := e.Ctx().Txn(true)
+		// pipelined dml may already flush in background, don't touch it to avoid race.
 		if err == nil && !txn.IsPipelined() {
 			sc := e.Ctx().GetSessionVars().StmtCtx
 			txn.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
