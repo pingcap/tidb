@@ -1685,6 +1685,8 @@ func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
 	b.StopTimer()
 }
 
+// BenchmarkHashPartitionPruningPointSelect is not actually PointSelect,
+// it is full table scan with single partition pruning.
 func BenchmarkHashPartitionPruningPointSelect(b *testing.B) {
 	ctx := context.Background()
 	se, do, st := prepareBenchSession()
@@ -1711,6 +1713,362 @@ func BenchmarkHashPartitionPruningPointSelect(b *testing.B) {
 	b.StopTimer()
 }
 
+func runPointSelect(b *testing.B, se sessiontypes.Session, enablePlanCache bool) {
+	if enablePlanCache {
+		// Note: PointGet don't use the non-prepared plan cache!
+		mustExecute(se, "set tidb_enable_non_prepared_plan_cache = 1")
+	} else {
+		mustExecute(se, "set tidb_enable_non_prepared_plan_cache = 0")
+	}
+	hits := 0
+	ctx := context.Background()
+	alloc := chunk.NewAllocator()
+	b.ResetTimer()
+	query := "select * from t where id = 2330"
+	rs, err := se.Execute(ctx, "explain "+query)
+	if err != nil {
+		b.Fatal(err)
+	}
+	resStrings, err := ResultSetToStringSlice(ctx, se.(*session), rs[0])
+	if !strings.HasPrefix(resStrings[0][0], "Point_Get") {
+		logutil.BgLogger().Fatal("Not expected query plan", zap.String("query", query), zap.Any("explain", resStrings))
+	}
+
+	for i := 0; i < b.N; i++ {
+		rs, err = se.Execute(ctx, query)
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if i > 0 {
+			if se.GetSessionVars().FoundInPlanCache {
+				hits++
+			}
+		}
+		alloc.Reset()
+	}
+	b.StopTimer()
+	if hits > 0 {
+		logutil.BgLogger().Error("Not expected Plan Cache to be used with PointGet", zap.Int("hits", hits), zap.Int("b.N", b.N))
+	}
+}
+
+func runTestPointSelect(t *testing.T, se sessiontypes.Session, enablePlanCache bool) {
+	if enablePlanCache {
+		// Note: PointGet don't use the non-prepared plan cache!
+		mustExecute(se, "set tidb_enable_non_prepared_plan_cache = 1")
+	} else {
+		mustExecute(se, "set tidb_enable_non_prepared_plan_cache = 0")
+	}
+	hits := 0
+	ctx := context.Background()
+	alloc := chunk.NewAllocator()
+	query := "select * from t where id = 2330"
+	rs, err := se.Execute(ctx, "explain "+query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resStrings, err := ResultSetToStringSlice(ctx, se.(*session), rs[0])
+	if !strings.HasPrefix(resStrings[0][0], "Point_Get") {
+		logutil.BgLogger().Fatal("Not expected query plan", zap.String("query", query), zap.Any("explain", resStrings))
+	}
+
+	for i := 0; i < 1000; i++ {
+		rs, err = se.Execute(ctx, query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i > 0 {
+			if se.GetSessionVars().FoundInPlanCache {
+				hits++
+			}
+		}
+		alloc.Reset()
+	}
+	/*
+		if hits > 0 {
+			logutil.BgLogger().Error("Not expected Plan Cache to be used with PointGet", zap.Int("hits", hits), zap.Int("b.N", b.N))
+		}
+	*/
+}
+
+func runBatchPointSelect(b *testing.B, se sessiontypes.Session, enablePlanCache bool) {
+	ctx := context.Background()
+	if enablePlanCache {
+		mustExecute(se, "set tidb_enable_non_prepared_plan_cache = 1")
+	} else {
+		mustExecute(se, "set tidb_enable_non_prepared_plan_cache = 0")
+	}
+	hits := 0
+	alloc := chunk.NewAllocator()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t where id IN (1, 1111, 2330, 99999)")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
+		if err != nil {
+			b.Fatal(err)
+		}
+		alloc.Reset()
+	}
+	mustExecute(se, "set tidb_enable_non_prepared_plan_cache = 1")
+	for i := 0; i < b.N; i++ {
+		// IN (...) uses TryFastPlan, while this converts it to BatchPointGet
+		rs, err := se.Execute(ctx, "select * from t where id = 1 or id = 1111 or id = 2330 or id = 99999")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if i > 0 {
+			if se.GetSessionVars().FoundInPlanCache {
+				hits++
+			} else {
+				warns := se.GetSessionVars().StmtCtx.GetWarnings()
+				if len(warns) == 0 {
+					logutil.BgLogger().Fatal("No plan cache hit, and now warnings?")
+				}
+				logutil.BgLogger().Warn("No plan cache hit", zap.Any("warns", warns))
+			}
+		}
+		alloc.Reset()
+	}
+	b.StopTimer()
+	if hits < b.N/2 {
+		logutil.BgLogger().Error("Plan cache was not used enough", zap.Int("hits", hits), zap.Int("b.N", b.N))
+	}
+}
+
+func testPointGetPlanCache(t *testing.T, sql string) {
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, sql)
+	mustExecute(se, "analyze table t")
+	runTestPointSelect(t, se, true)
+}
+
+func benchmarkPointGetPlanCache(b *testing.B, sql string) {
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, sql)
+	mustExecute(se, "analyze table t")
+	b.Run("PointGetPlanCacheOff", func(b *testing.B) {
+		runPointSelect(b, se, false)
+	})
+	b.Run("PointGetPlanCacheOn", func(b *testing.B) {
+		runPointSelect(b, se, true)
+	})
+	b.Run("BatchPointGetPlanCacheOff", func(b *testing.B) {
+		runBatchPointSelect(b, se, false)
+	})
+	b.Run("BatchPointGetPlanCacheOn", func(b *testing.B) {
+		runBatchPointSelect(b, se, true)
+	})
+}
+
+func BenchmarkHashPartitionPointGet(b *testing.B) {
+	sql := `create table t (id int primary key, dt datetime) partition by hash(id) partitions 7`
+	benchmarkPointGetPlanCache(b, sql)
+}
+
+func BenchmarkKeyPartitionPointGet(b *testing.B) {
+	sql := `create table t (id int primary key, dt datetime) partition by key(id) partitions 7`
+	benchmarkPointGetPlanCache(b, sql)
+}
+
+func BenchmarkListPartitionPointGet(b *testing.B) {
+	sql := `create table t (id int primary key, dt datetime) partition by list(id)
+(partition p0 values in (1, 22, 44, 5555), partition p1 values in (2330, 43, 99999999, 23), partition p3 values in (99999, 1111, 2, 8))`
+	benchmarkPointGetPlanCache(b, sql)
+}
+
+func TestRangePartitionPointGet(t *testing.T) {
+	sql := `create table t (id int primary key) partition by range(id)
+(partition p0 values less than (10), partition p1 values less than (1000), partition p3 values less than (100000), partition pMax values less than (maxvalue))`
+	testPointGetPlanCache(t, sql)
+	testPointGetPlanCache(t, sql)
+	testPointGetPlanCache(t, sql)
+	testPointGetPlanCache(t, sql)
+	testPointGetPlanCache(t, sql)
+	testPointGetPlanCache(t, sql)
+	testPointGetPlanCache(t, sql)
+	testPointGetPlanCache(t, sql)
+	testPointGetPlanCache(t, sql)
+	testPointGetPlanCache(t, sql)
+	testPointGetPlanCache(t, sql)
+	testPointGetPlanCache(t, sql)
+	testPointGetPlanCache(t, sql)
+	testPointGetPlanCache(t, sql)
+	testPointGetPlanCache(t, sql)
+}
+
+func BenchmarkRangePartitionPointGet(b *testing.B) {
+	sql := `create table t (id int primary key, d varchar(255)) partition by range(id)
+(partition p0 values less than (10), partition p1 values less than (1000), partition p3 values less than (100000), partition pMax values less than (maxvalue))`
+	benchmarkPointGetPlanCache(b, sql)
+}
+
+func benchPreparedPointGet(b *testing.B, sql string) {
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, sql)
+	mustExecute(se, "insert t (pk) values (61),(62),(63),(64)")
+	mustExecute(se, "analyze table t")
+
+	b.Run("PointGetPlanCacheOff", func(b *testing.B) {
+		runPreparedPointGet(b, se, false)
+	})
+	b.Run("PointGetPlanCacheOn", func(b *testing.B) {
+		runPreparedPointGet(b, se, true)
+	})
+	b.Run("BatchPointGetPlanCacheOff", func(b *testing.B) {
+		runPreparedBatchPointGet(b, se, false)
+	})
+	b.Run("BatchPointGetPlanCacheOn", func(b *testing.B) {
+		runPreparedBatchPointGet(b, se, true)
+	})
+}
+
+func runPreparedPointGet(b *testing.B, se sessiontypes.Session, enablePlanCache bool) {
+	ctx := context.Background()
+	if enablePlanCache {
+		mustExecute(se, "set tidb_enable_prepared_plan_cache = 1")
+	} else {
+		mustExecute(se, "set tidb_enable_prepared_plan_cache = 0")
+	}
+	stmtID, _, _, err := se.PrepareStmt("select * from t where pk = ?")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	hits := 0
+	params := expression.Args2Expressions4Test(64)
+	alloc := chunk.NewAllocator()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if se.GetSessionVars().FoundInPlanCache {
+			hits++
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs, alloc)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if enablePlanCache && i > 0 {
+			if se.GetSessionVars().FoundInPlanCache {
+				hits++
+			} else {
+				warns := se.GetSessionVars().StmtCtx.GetWarnings()
+				/*
+					if len(warns) == 0 {
+						logutil.BgLogger().Fatal("No plan cache hit, and now warnings?")
+					}
+				*/
+				logutil.BgLogger().Warn("No plan cache hit", zap.Any("warns", warns))
+			}
+		}
+		alloc.Reset()
+	}
+	b.StopTimer()
+	if enablePlanCache && hits < b.N/2 {
+		logutil.BgLogger().Error("Plan cache was not used enough", zap.Int("hits", hits), zap.Int("b.N", b.N))
+	}
+}
+
+func runPreparedBatchPointGet(b *testing.B, se sessiontypes.Session, enablePlanCache bool) {
+	ctx := context.Background()
+	if enablePlanCache {
+		mustExecute(se, "set tidb_enable_prepared_plan_cache = 1")
+	} else {
+		mustExecute(se, "set tidb_enable_prepared_plan_cache = 0")
+	}
+
+	stmtID, _, _, err := se.PrepareStmt("select * from t where pk IN (?,?,?)")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	hits := 0
+	params := expression.Args2Expressions4Test(61, 64, 1)
+	alloc := chunk.NewAllocator()
+	stmtID, _, _, err = se.PrepareStmt("select * from t where pk IN (?,?,?)")
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if se.GetSessionVars().FoundInPlanCache {
+			hits++
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs, alloc)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if enablePlanCache && i > 0 {
+			if se.GetSessionVars().FoundInPlanCache {
+				hits++
+			} else {
+				warns := se.GetSessionVars().StmtCtx.GetWarnings()
+				if len(warns) == 0 {
+					logutil.BgLogger().Fatal("No plan cache hit, and now warnings?")
+				}
+				logutil.BgLogger().Warn("No plan cache hit", zap.Any("warns", warns))
+			}
+		}
+		alloc.Reset()
+	}
+	b.StopTimer()
+	if enablePlanCache && hits < b.N/2 {
+		logutil.BgLogger().Error("Plan cache was not used enough", zap.Int("hits", hits), zap.Int("b.N", b.N))
+	}
+}
+
+func BenchmarkHashPartitionPreparedPointGet(b *testing.B) {
+	benchPreparedPointGet(b, "create table t (pk int primary key) partition by hash (pk) partitions 7")
+}
+
+func BenchmarkHashExprPartitionPreparedPointGet(b *testing.B) {
+	benchPreparedPointGet(b, "create table t (pk int primary key) partition by hash (floor(pk*0.5)) partitions 7")
+}
+
+func BenchmarkRangePartitionPreparedPointGet(b *testing.B) {
+	benchPreparedPointGet(b, "create table t (pk int primary key, d varchar(255)) partition by range (pk) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100))")
+}
+
+func BenchmarkRangeExprPartitionPreparedPointGet(b *testing.B) {
+	benchPreparedPointGet(b, "create table t (pk int primary key, d varchar(255)) partition by range (floor(pk*0.5)*2) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100))")
+}
+
 func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 	ctx := context.Background()
 	se, do, st := prepareBenchSession()
@@ -1722,6 +2080,48 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 
 	alloc := chunk.NewAllocator()
 	mustExecute(se, `create table t (id int, dt datetime) partition by hash(id) partitions 1024;`)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t where id = 2330")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
+		if err != nil {
+			b.Fatal(err)
+		}
+		rs, err = se.Execute(ctx, "select * from t where id = 1233 or id = 1512")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
+		if err != nil {
+			b.Fatal(err)
+		}
+		rs, err = se.Execute(ctx, "select * from t where id in (117, 1233, 15678)")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
+		if err != nil {
+			b.Fatal(err)
+		}
+		alloc.Reset()
+	}
+	b.StopTimer()
+}
+
+func BenchmarkHashPartitionMultiPointSelect(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+
+	alloc := chunk.NewAllocator()
+	mustExecute(se, `create table t (id int primary key, dt datetime) partition by hash(id) partitions 64;`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where id = 2330")
@@ -1942,5 +2342,18 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkInsertIntoSelect,
 		BenchmarkCompileStmt,
 		BenchmarkAutoIncrement,
+		BenchmarkHashPartitionPointGet,
+		/*
+			BenchmarkHashPartitionBatchPointGet,
+			BenchmarkKeyPartitionPointGet,
+			BenchmarkKeyPartitionBatchPointGet,
+			BenchmarkListPartitionPointGet,
+			BenchmarkListPartitionBatchPointGet,
+			BenchmarkRangePartitionPointGet,
+			BenchmarkRangePartitionBatchPointGet,
+			BenchmarkHashPartitionPreparedPointGet,
+			BenchmarkHashExprPartitionPreparedPointGet,
+
+		*/
 	)
 }
