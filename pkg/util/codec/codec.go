@@ -424,9 +424,9 @@ func SerializeKeys(typeCtx types.Context, chk *chunk.Chunk, tp *types.FieldType,
 			}
 			if serializeMode == None {
 				if !mysql.HasUnsignedFlag(tp.GetFlag()) && v < 0 {
-					serializedKeysVector[i] = append(serializedKeysVector[i], varintFlag)
+					serializedKeysVector[i] = append(serializedKeysVector[i], intFlag)
 				} else {
-					serializedKeysVector[i] = append(serializedKeysVector[i], uvarintFlag)
+					serializedKeysVector[i] = append(serializedKeysVector[i], uintFlag)
 				}
 			}
 			serializedKeysVector[i] = append(serializedKeysVector[i], column.GetRaw(i)...)
