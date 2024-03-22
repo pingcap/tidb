@@ -101,7 +101,7 @@ run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
 run_sql 'DROP DATABASE IF EXISTS mytest'
 run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml" 2>&1 | grep "\`lightning_task_info\`.\`conflict_error_v3\`" | grep -q "5"
 run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_records'
-check_contains "COUNT(*): 1"
+check_contains "COUNT(*): 5"
 
 # Check conflict.threshold
 run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
