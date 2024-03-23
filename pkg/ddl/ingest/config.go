@@ -107,6 +107,7 @@ func generateLocalEngineConfig(id int64, dbName, tbName string) *backend.EngineC
 			Compact:            true,
 			CompactThreshold:   int64(compactMemory),
 			CompactConcurrency: compactConcurrency,
+			BlockSize:          16 * 1024, // using default for DDL
 		},
 		TableInfo: &checkpoints.TidbTableInfo{
 			ID:   id,
