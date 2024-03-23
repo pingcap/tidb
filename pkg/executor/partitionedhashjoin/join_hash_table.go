@@ -16,17 +16,15 @@ package partitionedhashjoin
 
 import (
 	"fmt"
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"sync/atomic"
 	"time"
-	"unsafe"
-
-	"github.com/cznic/mathutil"
 )
 
 type subTable struct {
 	rowData          *rowTable
-	hashTable        []unsafe.Pointer
+	hashTable        []uintptr
 	posMask          uint64
 	isRowTableEmpty  bool
 	isHashTableEmpty bool
@@ -42,7 +40,7 @@ func (s *hashStatistic) String() string {
 	return fmt.Sprintf("probe_collision:%v, build:%v", s.probeCollision, execdetails.FormatDuration(s.buildTableElapse))
 }
 
-func (st *subTable) lookup(hashValue uint64) unsafe.Pointer {
+func (st *subTable) lookup(hashValue uint64) uintptr {
 	return st.hashTable[hashValue&st.posMask]
 }
 
@@ -66,21 +64,21 @@ func newSubTable(table *rowTable) *subTable {
 		ret.isHashTableEmpty = true
 	}
 	capacity := mathutil.MaxUint64(nextPowerOfTwo(uint64(table.validKeyCount())), uint64(1024))
-	ret.hashTable = make([]unsafe.Pointer, capacity)
+	ret.hashTable = make([]uintptr, capacity)
 	ret.posMask = capacity - 1
 	return ret
 }
 
-func (st *subTable) updateHashValue(pos uint64, rowAddress unsafe.Pointer) {
+func (st *subTable) updateHashValue(pos uint64, rowAddress uintptr) {
 	prev := st.hashTable[pos]
 	st.hashTable[pos] = rowAddress
 	setNextRowAddress(rowAddress, prev)
 }
 
-func (st *subTable) atomicUpdateHashValue(pos uint64, rowAddress unsafe.Pointer) {
+func (st *subTable) atomicUpdateHashValue(pos uint64, rowAddress uintptr) {
 	for {
-		prev := atomic.LoadPointer(&st.hashTable[pos])
-		if atomic.CompareAndSwapPointer(&st.hashTable[pos], prev, rowAddress) {
+		prev := atomic.LoadUintptr(&st.hashTable[pos])
+		if atomic.CompareAndSwapUintptr(&st.hashTable[pos], prev, rowAddress) {
 			setNextRowAddress(rowAddress, prev)
 			break
 		}
@@ -127,7 +125,7 @@ type rowIter struct {
 	endPos     *rowPos
 }
 
-func (ri *rowIter) getValue() unsafe.Pointer {
+func (ri *rowIter) getValue() uintptr {
 	return ri.table.tables[ri.currentPos.subTableIndex].rowData.segments[ri.currentPos.rowSegmentIndex].rowLocations[ri.currentPos.rowIndex]
 }
 
@@ -220,7 +218,7 @@ func (jht *JoinHashTable) buildHashTable(partitionIndex int, startSegmentIndex i
 	jht.tables[partitionIndex].build(startSegmentIndex, segmentStep)
 }
 
-func (jht *JoinHashTable) lookup(hashValue uint64) unsafe.Pointer {
+func (jht *JoinHashTable) lookup(hashValue uint64) uintptr {
 	partitionIndex := hashValue % jht.partitionNumber
 	return jht.tables[partitionIndex].lookup(hashValue)
 }

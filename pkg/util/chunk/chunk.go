@@ -448,18 +448,18 @@ func appendCellByCell(dst *Column, src *Column, rowIdx int) {
 }
 
 // AppendCellFromRawData appends the cell from raw data
-func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer) unsafe.Pointer {
+func AppendCellFromRawData(dst *Column, rowData uintptr) uintptr {
 	if dst.isFixed() {
 		elemLen := len(dst.elemBuf)
-		dst.data = append(dst.data, hack.GetBytesFromPtr(rowData, elemLen)...)
-		rowData = unsafe.Add(rowData, elemLen)
+		dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Pointer(rowData), elemLen)...)
+		rowData = uintptr(unsafe.Add(unsafe.Pointer(rowData), elemLen))
 	} else {
-		elemLen := *(*uint64)(rowData)
+		elemLen := *(*uint64)(unsafe.Pointer(rowData))
 		if elemLen > 0 {
-			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, 8), int(elemLen))...)
+			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(unsafe.Pointer(rowData), 8), int(elemLen))...)
 		}
 		dst.offsets = append(dst.offsets, int64(len(dst.data)))
-		rowData = unsafe.Add(rowData, elemLen+8)
+		rowData = uintptr(unsafe.Add(unsafe.Pointer(rowData), elemLen+8))
 	}
 	dst.length++
 	return rowData
