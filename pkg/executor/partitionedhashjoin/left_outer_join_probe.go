@@ -89,7 +89,7 @@ func (j *leftOuterJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult)
 		currentRow := j.rowIter.getValue()
 		if !meta.isCurrentRowUsed(currentRow) {
 			// append build side of this row
-			j.appendBuildRowToChunkInternal(joinResult.Chk, j.lUsed, &rowInfo{rowStart: currentRow, rowData: nil, currentColumnIndex: 0}, -1, 0)
+			j.appendBuildRowToChunkInternal(joinResult.Chk, j.lUsed, &rowInfo{rowStart: currentRow, rowData: 0, currentColumnIndex: 0}, -1, 0)
 			joinResult.Chk.IncNumVirtualRows()
 			insertedRows++
 		}
@@ -189,12 +189,12 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 	startProbeRow := j.currentProbeRow
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
-		if j.matchedRowsHeaders[j.currentProbeRow] != nil {
+		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
 			// hash value match
 			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
-				rowInfo := &rowInfo{rowStart: candidateRow, rowData: nil, currentColumnIndex: 0}
+				rowInfo := &rowInfo{rowStart: candidateRow, rowData: 0, currentColumnIndex: 0}
 				currentRowData := j.appendBuildRowToChunk(joinedChk, rowInfo)
 				if j.ctx.hasOtherCondition() {
 					j.rowIndexInfos = append(j.rowIndexInfos, rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow, buildRowData: currentRowData})
@@ -239,12 +239,12 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 	length := 0
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
-		if j.matchedRowsHeaders[j.currentProbeRow] != nil {
+		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
 			// hash value match
 			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
-				rowInfo := &rowInfo{rowStart: candidateRow, rowData: nil, currentColumnIndex: 0}
+				rowInfo := &rowInfo{rowStart: candidateRow, rowData: 0, currentColumnIndex: 0}
 				currentRowData := j.appendBuildRowToChunk(joinedChk, rowInfo)
 				if j.ctx.hasOtherCondition() {
 					j.rowIndexInfos = append(j.rowIndexInfos, rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow, buildRowData: currentRowData})
