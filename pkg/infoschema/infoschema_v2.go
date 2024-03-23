@@ -47,6 +47,7 @@ type tableItem struct {
 type schemaItem struct {
 	schemaVersion int64
 	dbInfo        *model.DBInfo
+	tomb bool
 }
 
 func (si *schemaItem) Name() string {
@@ -169,24 +170,9 @@ func (isd *Data) remove(item tableItem) {
 	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
 }
 
-func (isd *Data) deleteDB(name model.CIStr) {
-	dbInfo, schemaVersion := isd.schemaByName(name)
-	isd.schemaMap.Delete(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
-}
-
-func (isd *Data) schemaByName(name model.CIStr) (res *model.DBInfo, schemaVersion int64) {
-	var dbInfo model.DBInfo
-	dbInfo.Name = name
-
-	isd.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaVersion: math.MaxInt64}, func(item schemaItem) bool {
-		if item.Name() != name.L {
-			return false
-		}
-		res = item.dbInfo
-		schemaVersion = item.schemaVersion
-		return false
-	})
-	return res, schemaVersion
+func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
+	item := schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo, tomb: true}
+	isd.schemaMap.Set(item)
 }
 
 func compareByID(a, b tableItem) bool {
@@ -375,8 +361,10 @@ func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok 
 			return false
 		}
 		if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
-			ok = true
-			val = item.dbInfo
+			if !item.tomb { // If the item is a tomb record, the database is dropped.
+				ok = true
+				val = item.dbInfo
+			}
 			return false
 		}
 		return true
@@ -693,7 +681,7 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
 		b.deleteBundle(b.infoSchema, id)
 		b.applyDropTableV2(diff, di, id, nil)
 	}
-	b.infoData.deleteDB(di.Name)
+	b.infoData.deleteDB(di, diff.Version)
 	return tableIDs
 }
 
@@ -745,7 +733,7 @@ func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model
 	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	newDBInfo.Charset = di.Charset
 	newDBInfo.Collate = di.Collate
-	b.infoschemaV2.deleteDB(di.Name)
+	b.infoschemaV2.deleteDB(di, diff.Version)
 	b.infoschemaV2.addDB(diff.Version, newDBInfo)
 	return nil
 }
@@ -763,7 +751,7 @@ func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.
 	}
 	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	newDBInfo.PlacementPolicyRef = di.PlacementPolicyRef
-	b.infoschemaV2.deleteDB(di.Name)
+	b.infoschemaV2.deleteDB(di, diff.Version)
 	b.infoschemaV2.addDB(diff.Version, newDBInfo)
 	return nil
 }
