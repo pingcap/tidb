@@ -413,20 +413,7 @@ func (is *infoschemaV2) AllSchemaNames() []model.CIStr {
 }
 
 func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
-	var ok bool
-	if isSpecialDB(schema.L) {
-		_, ok = is.Data.specials[schema.L]
-		return ok
-	}
-
-	// TODO: support different version
-	is.Data.schemaMap.Scan(func(item schemaItem) bool {
-		if item.dbInfo.Name.L == schema.L {
-			ok = true
-			return false
-		}
-		return true
-	})
+	_, ok := is.SchemaByName(schema)
 	return ok
 }
 
