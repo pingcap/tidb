@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
-const SizeOfNextPtr = int(unsafe.Sizeof(*new(unsafe.Pointer)))
+const SizeOfNextPtr = int(unsafe.Sizeof(uintptr(0)))
 const SizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
 const sizeOfUInt64 = int(unsafe.Sizeof(uint64(1)))
 const sizeOfFloat64 = int(unsafe.Sizeof(float64(1)))
@@ -56,10 +56,10 @@ type rowTableSegment struct {
 	   * join key is not inlined + have other conditions: columns used in other condition, rest columns that will be used as join output
 	   * join key is not inlined + no other conditions: columns that will be used as join output
 	*/
-	rawData         []byte           // the chunk of memory to save the row data
-	hashValues      []uint64         // the hash value of each rows
-	rowLocations    []unsafe.Pointer // the start address of each row
-	validJoinKeyPos []int            // the pos of rows that need to be inserted into hash table, used in hash table build
+	rawData         []byte    // the chunk of memory to save the row data
+	hashValues      []uint64  // the hash value of each rows
+	rowLocations    []uintptr // the start address of each row
+	validJoinKeyPos []int     // the pos of rows that need to be inserted into hash table, used in hash table build
 }
 
 const MAX_ROW_TABLE_SEGMENT_SIZE = 1024
@@ -69,7 +69,7 @@ func newRowTableSegment() *rowTableSegment {
 		// TODO: @XuHuaiyu if joinKeyIsInlined, the cap of rawData can be calculated
 		rawData:         make([]byte, 0),
 		hashValues:      make([]uint64, 0, MAX_ROW_TABLE_SEGMENT_SIZE),
-		rowLocations:    make([]unsafe.Pointer, 0, MAX_ROW_TABLE_SEGMENT_SIZE),
+		rowLocations:    make([]uintptr, 0, MAX_ROW_TABLE_SEGMENT_SIZE),
 		validJoinKeyPos: make([]int, 0, MAX_ROW_TABLE_SEGMENT_SIZE),
 	}
 }
@@ -82,12 +82,12 @@ func (rts *rowTableSegment) validKeyCount() uint64 {
 	return uint64(len(rts.validJoinKeyPos))
 }
 
-func setNextRowAddress(rowStart unsafe.Pointer, nextRowAddress unsafe.Pointer) {
-	*(*unsafe.Pointer)(rowStart) = nextRowAddress
+func setNextRowAddress(rowStart uintptr, nextRowAddress uintptr) {
+	*(*unsafe.Pointer)(unsafe.Pointer(rowStart)) = unsafe.Pointer(nextRowAddress)
 }
 
-func getNextRowAddress(rowStart unsafe.Pointer) unsafe.Pointer {
-	return *(*unsafe.Pointer)(rowStart)
+func getNextRowAddress(rowStart uintptr) uintptr {
+	return uintptr(*(*unsafe.Pointer)(unsafe.Pointer(rowStart)))
 }
 
 type JoinTableMeta struct {
@@ -128,34 +128,34 @@ type JoinTableMeta struct {
 	rowDataOffset int
 }
 
-func (meta *JoinTableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
-	return *(*uint64)(unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength))
+func (meta *JoinTableMeta) getSerializedKeyLength(rowStart uintptr) uint64 {
+	return *(*uint64)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr+meta.nullMapLength))
 }
 
-func (meta *JoinTableMeta) advanceToRowData(rowStart unsafe.Pointer) unsafe.Pointer {
+func (meta *JoinTableMeta) advanceToRowData(rowStart uintptr) uintptr {
 	if meta.rowDataOffset == -1 {
 		// variable length, non-inlined key
-		return unsafe.Add(rowStart, SizeOfNextPtr+meta.nullMapLength+SizeOfLengthField+int(meta.getSerializedKeyLength(rowStart)))
+		return uintptr(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr+meta.nullMapLength+SizeOfLengthField+int(meta.getSerializedKeyLength(rowStart))))
 	} else {
-		return unsafe.Add(rowStart, meta.rowDataOffset)
+		return uintptr(unsafe.Add(unsafe.Pointer(rowStart), meta.rowDataOffset))
 	}
 }
 
-func (meta *JoinTableMeta) isColumnNull(rowStart unsafe.Pointer, columnIndex int) bool {
+func (meta *JoinTableMeta) isColumnNull(rowStart uintptr, columnIndex int) bool {
 	byteIndex := (columnIndex + 1) / 8
 	bitIndex := (columnIndex + 1) % 8
-	return *(*uint8)(unsafe.Add(rowStart, SizeOfNextPtr+byteIndex))&(uint8(1)<<(7-bitIndex)) != uint8(0)
+	return *(*uint8)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr+byteIndex))&(uint8(1)<<(7-bitIndex)) != uint8(0)
 }
 
-func (meta *JoinTableMeta) setUsedFlag(rowStart unsafe.Pointer) {
-	addr := (*uint32)(unsafe.Add(rowStart, SizeOfNextPtr))
+func (meta *JoinTableMeta) setUsedFlag(rowStart uintptr) {
+	addr := (*uint32)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr))
 	value := atomic.LoadUint32(addr)
 	value |= meta.setUsedFlagMask
 	atomic.StoreUint32(addr, value)
 }
 
-func (meta *JoinTableMeta) isCurrentRowUsed(rowStart unsafe.Pointer) bool {
-	return (*(*uint32)(unsafe.Add(rowStart, SizeOfNextPtr)) & meta.setUsedFlagMask) == meta.setUsedFlagMask
+func (meta *JoinTableMeta) isCurrentRowUsed(rowStart uintptr) bool {
+	return (*(*uint32)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr)) & meta.setUsedFlagMask) == meta.setUsedFlagMask
 }
 
 type rowTable struct {
@@ -448,7 +448,7 @@ func (builder *rowTableBuilder) appendRemainingRowLocations(rowTables []*rowTabl
 		if len(startPosInRawData) > 0 {
 			seg := rowTables[partId].segments[len(rowTables[partId].segments)-1]
 			for _, pos := range startPosInRawData {
-				seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[pos]))
+				seg.rowLocations = append(seg.rowLocations, uintptr(unsafe.Pointer(&seg.rawData[pos])))
 			}
 			builder.startPosInRawData[partId] = builder.startPosInRawData[partId][:]
 		}
@@ -472,7 +472,7 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 			seg = rowTables[partIdx].segments[len(rowTables[partIdx].segments)-1]
 			if builder.crrntSizeOfRowTable[partIdx] >= MAX_ROW_TABLE_SEGMENT_SIZE {
 				for _, pos := range builder.startPosInRawData[partIdx] {
-					seg.rowLocations = append(seg.rowLocations, unsafe.Pointer(&seg.rawData[pos]))
+					seg.rowLocations = append(seg.rowLocations, uintptr(unsafe.Pointer(&seg.rawData[pos])))
 				}
 				builder.crrntSizeOfRowTable[partIdx] = 0
 				builder.startPosInRawData[partIdx] = builder.startPosInRawData[partIdx][:0]
