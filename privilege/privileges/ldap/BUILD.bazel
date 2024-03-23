@@ -11,10 +11,17 @@ go_library(
     importpath = "github.com/pingcap/tidb/privilege/privileges/ldap",
     visibility = ["//visibility:public"],
     deps = [
+<<<<<<< HEAD:privilege/privileges/ldap/BUILD.bazel
         "//privilege/conn",
+=======
+        "//pkg/privilege/conn",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+>>>>>>> d9406195cc1 (ldap: add timeout and retry-backoff for ldap (#51927)):pkg/privilege/privileges/ldap/BUILD.bazel
         "@com_github_go_ldap_ldap_v3//:ldap",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -24,5 +31,9 @@ go_test(
     srcs = ["ldap_common_test.go"],
     embed = [":ldap"],
     flaky = True,
+<<<<<<< HEAD:privilege/privileges/ldap/BUILD.bazel
+=======
+    shard_count = 4,
+>>>>>>> d9406195cc1 (ldap: add timeout and retry-backoff for ldap (#51927)):pkg/privilege/privileges/ldap/BUILD.bazel
     deps = ["@com_github_stretchr_testify//require"],
 )
