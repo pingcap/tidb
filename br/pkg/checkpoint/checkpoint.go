@@ -24,6 +24,7 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -846,13 +847,8 @@ func removeCheckpointData(ctx context.Context, s storage.ExternalStorage, subDir
 		zap.Int64("remove-size", removeSize),
 	)
 
-	maxFailedFilesNum := 16
-	failedFilesCount := struct {
-		lock  sync.Mutex
-		count int
-	}{
-		count: 0,
-	}
+	maxFailedFilesNum := int64(16)
+	var failedFilesCount atomic.Int64
 	pool := utils.NewWorkerPool(4, "checkpoint remove worker")
 	eg, gCtx := errgroup.WithContext(ctx)
 	for _, filename := range removedFileNames {
@@ -860,13 +856,9 @@ func removeCheckpointData(ctx context.Context, s storage.ExternalStorage, subDir
 		pool.ApplyOnErrorGroup(eg, func() error {
 			if err := s.DeleteFile(gCtx, name); err != nil {
 				log.Warn("failed to remove the file", zap.String("filename", name), zap.Error(err))
-				failedFilesCount.lock.Lock()
-				failedFilesCount.count += 1
-				if failedFilesCount.count >= maxFailedFilesNum {
-					failedFilesCount.lock.Unlock()
+				if failedFilesCount.Add(1) >= maxFailedFilesNum {
 					return errors.Annotate(err, "failed to delete too many files")
 				}
-				failedFilesCount.lock.Unlock()
 			}
 			return nil
 		})
