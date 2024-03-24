@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
+	kv2 "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -458,17 +459,17 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 	if ownerID != jobID {
 		sv.schemaVersionMu.Lock()
 		sv.lockOwner.Store(jobID)
-		if sv.etcdClient != nil && variable.EnableFastCreateTable.Load() {
-			se, err := concurrency.NewSession(sv.etcdClient)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			mu := concurrency.NewMutex(se, ddlSchemaVersionKeyLock)
-			if err := mu.Lock(sv.ctx); err != nil {
-				return errors.Trace(err)
-			}
-			sv.lockInfoMaps[jobID] = &etcdLockInfo{se: se, mu: mu}
-		}
+		//if sv.etcdClient != nil && variable.EnableFastCreateTable.Load() {
+		//	se, err := concurrency.NewSession(sv.etcdClient)
+		//	if err != nil {
+		//		return errors.Trace(err)
+		//	}
+		//	mu := concurrency.NewMutex(se, ddlSchemaVersionKeyLock)
+		//	if err := mu.Lock(sv.ctx); err != nil {
+		//		return errors.Trace(err)
+		//	}
+		//	sv.lockInfoMaps[jobID] = &etcdLockInfo{se: se, mu: mu}
+		//}
 	}
 	return nil
 }
@@ -477,24 +478,24 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
 	ownerID := sv.lockOwner.Load()
 	if ownerID == jobID {
-		if lockInfo, ok := sv.lockInfoMaps[jobID]; ok {
-			delete(sv.lockInfoMaps, jobID)
-			err := lockInfo.mu.Unlock(sv.ctx)
-		outer:
-			for err != nil {
-				logutil.BgLogger().Error("unlock schema version", zap.Error(err))
-				select {
-				case <-sv.ctx.Done():
-					break outer
-				case <-time.After(time.Second):
-				}
-				// retry unlock
-				err = lockInfo.mu.Unlock(sv.ctx)
-			}
-			if err := lockInfo.se.Close(); err != nil {
-				logutil.BgLogger().Error("close etcd session", zap.Error(err))
-			}
-		}
+		//if lockInfo, ok := sv.lockInfoMaps[jobID]; ok {
+		//	delete(sv.lockInfoMaps, jobID)
+		//	err := lockInfo.mu.Unlock(sv.ctx)
+		//outer:
+		//	for err != nil {
+		//		logutil.BgLogger().Error("unlock schema version", zap.Error(err))
+		//		select {
+		//		case <-sv.ctx.Done():
+		//			break outer
+		//		case <-time.After(time.Second):
+		//		}
+		//		// retry unlock
+		//		err = lockInfo.mu.Unlock(sv.ctx)
+		//	}
+		//	if err := lockInfo.se.Close(); err != nil {
+		//		logutil.BgLogger().Error("close etcd session", zap.Error(err))
+		//	}
+		//}
 		sv.lockOwner.Store(0)
 		sv.schemaVersionMu.Unlock()
 	}
@@ -799,7 +800,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	// reorg worker count at least 1 at most 10.
 	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	// local worker count at least 2 at most 10.
-	localCnt := min(max(runtime.GOMAXPROCS(0)/4, 2), localWorkerCnt)
+	localCnt := min(max(runtime.GOMAXPROCS(0)/2, 2), localWorkerCnt)
 	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), jobTypeReorg)
 	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), jobTypeGeneral)
 	d.localWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(localWorker), localCnt, localCnt, 0), jobTypeLocal)
@@ -985,6 +986,12 @@ func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 			}
 		})
 
+		key := []byte{0x6d, 0x4e, 0x65, 0x78, 0x74, 0x47, 0x6c, 0x6f, 0x62, 0xff, 0x61, 0x6c, 0x49, 0x44, 0x0, 0x0, 0x0, 0x0, 0xfb, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x73}
+		txn.SetOption(kv.Pessimistic, true)
+		lockCtx := kv2.NewLockCtx(txn.StartTS(), 50, time.Now())
+		if err := txn.LockKeys(ctx, lockCtx, key); err != nil {
+			return err
+		}
 		m := meta.NewMeta(txn)
 		var err error
 		ret, err = m.GenGlobalIDs(count)
@@ -1301,7 +1308,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 }
 
 func (d *ddl) callHookOnChanged(job *model.Job, err error) error {
-	if job.State == model.JobStateNone {
+	if job.State == model.JobStateNone || job.LocalMode {
 		// We don't call the hook if the job haven't run yet.
 		return err
 	}
