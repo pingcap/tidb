@@ -279,18 +279,12 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 	var minValue spans.Valued
 	thresholdTso := tsoBefore(threshold)
 	c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
-<<<<<<< HEAD
-		c.checkpoints.TraverseValuesLessThan(tsoBefore(threshold), func(v spans.Valued) bool {
-=======
 		vsf.TraverseValuesLessThan(thresholdTso, func(v spans.Valued) bool {
->>>>>>> 58e37356886 (log_backup: added more info for slow regions in log backup advancer (#51137))
 			targets = append(targets, v)
 			return true
 		})
 		minValue = vsf.Min()
 	})
-<<<<<<< HEAD
-=======
 	sctx, cancel := context.WithTimeout(ctx, time.Second)
 	// Always fetch the hint and update the metrics.
 	hint := c.fetchRegionHint(sctx, minValue.Key.StartKey)
@@ -304,7 +298,6 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 		zap.String("region-hint", hint),
 	)
 	cancel()
->>>>>>> 58e37356886 (log_backup: added more info for slow regions in log backup advancer (#51137))
 	if len(targets) == 0 {
 		return minValue, nil
 	}

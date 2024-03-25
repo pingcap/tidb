@@ -21,25 +21,7 @@ import (
 // log backup metrics.
 // see the `Help` field for details.
 var (
-<<<<<<< HEAD:metrics/log_backup.go
 	LastCheckpoint = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-=======
-	LastCheckpoint                    *prometheus.GaugeVec
-	AdvancerOwner                     prometheus.Gauge
-	AdvancerTickDuration              *prometheus.HistogramVec
-	GetCheckpointBatchSize            *prometheus.HistogramVec
-	RegionCheckpointRequest           *prometheus.CounterVec
-	RegionCheckpointFailure           *prometheus.CounterVec
-	RegionCheckpointSubscriptionEvent *prometheus.HistogramVec
-
-	LogBackupCurrentLastRegionID            prometheus.Gauge
-	LogBackupCurrentLastRegionLeaderStoreID prometheus.Gauge
-)
-
-// InitLogBackupMetrics initializes log backup metrics.
-func InitLogBackupMetrics() {
-	LastCheckpoint = NewGaugeVec(prometheus.GaugeOpts{
->>>>>>> 58e37356886 (log_backup: added more info for slow regions in log backup advancer (#51137)):pkg/metrics/log_backup.go
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "last_checkpoint",
@@ -84,21 +66,16 @@ func InitLogBackupMetrics() {
 		Name:      "region_checkpoint_event",
 		Help:      "The region flush event count.",
 	}, []string{"store"})
-<<<<<<< HEAD:metrics/log_backup.go
-)
-=======
-
-	LogBackupCurrentLastRegionID = NewGauge(prometheus.GaugeOpts{
+	LogBackupCurrentLastRegionID = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "current_last_region_id",
 		Help:      "The id of the region have minimal checkpoint ts in the current running task.",
 	})
-	LogBackupCurrentLastRegionLeaderStoreID = NewGauge(prometheus.GaugeOpts{
+	LogBackupCurrentLastRegionLeaderStoreID = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "current_last_region_leader_store_id",
 		Help:      "The leader's store id of the region have minimal checkpoint ts in the current running task.",
 	})
-}
->>>>>>> 58e37356886 (log_backup: added more info for slow regions in log backup advancer (#51137)):pkg/metrics/log_backup.go
+)
