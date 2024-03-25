@@ -117,7 +117,7 @@ type Context interface {
 	GetPlanCtx() planctx.PlanContext
 
 	// GetDistSQLCtx gets the distsql ctx of the current session
-	GetDistSQLCtx() distsqlctx.DistSQLContext
+	GetDistSQLCtx() *distsqlctx.DistSQLContext
 
 	GetSessionManager() util.SessionManager
 

@@ -150,7 +150,7 @@ func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.C
 	if err = e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 		return nil, err
 	}
-	ctx := distsql.WithSQLKvExecCounterInterceptor(context.TODO(), e.Ctx().GetSessionVars().StmtCtx)
+	ctx := distsql.WithSQLKvExecCounterInterceptor(context.TODO(), e.Ctx().GetSessionVars().StmtCtx.KvExecCounter)
 	res, err := distsql.Checksum(ctx, e.Ctx().GetClient(), req, e.Ctx().GetSessionVars().KVVars)
 	if err != nil {
 		return nil, err
@@ -287,7 +287,7 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, physicalTabl
 
 	var builder distsql.RequestBuilder
 	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
-	return builder.SetHandleRanges(ctx.GetSessionVars().StmtCtx, physicalTableID, c.tableInfo.IsCommonHandle, ranges).
+	return builder.SetHandleRanges(ctx.GetDistSQLCtx(), physicalTableID, c.tableInfo.IsCommonHandle, ranges).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.startTs).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
@@ -306,7 +306,7 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, physicalTabl
 
 	var builder distsql.RequestBuilder
 	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
-	return builder.SetIndexRanges(ctx.GetSessionVars().StmtCtx, physicalTableID, indexInfo.ID, ranges).
+	return builder.SetIndexRanges(ctx.GetDistSQLCtx(), physicalTableID, indexInfo.ID, ranges).
 		SetChecksumRequest(checksum).
 		SetStartTS(c.startTs).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).

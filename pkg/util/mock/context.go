@@ -249,8 +249,33 @@ func (c *Context) GetTableCtx() tbctx.MutateContext {
 }
 
 // GetDistSQLCtx returns the distsql context of the session
-func (c *Context) GetDistSQLCtx() distsqlctx.DistSQLContext {
-	return c
+func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
+	vars := c.GetSessionVars()
+	sc := vars.StmtCtx
+
+	return &distsqlctx.DistSQLContext{
+		AppendWarning:                        sc.AppendWarning,
+		InRestrictedSQL:                      sc.InRestrictedSQL,
+		Client:                               c.GetClient(),
+		EnabledRateLimitAction:               vars.EnabledRateLimitAction,
+		EnableChunkRPC:                       vars.EnableChunkRPC,
+		OriginalSQL:                          sc.OriginalSQL,
+		KVVars:                               vars.KVVars,
+		KvExecCounter:                        sc.KvExecCounter,
+		SessionMemTracker:                    vars.MemTracker,
+		Location:                             sc.TimeZone(),
+		RuntimeStatsColl:                     sc.RuntimeStatsColl,
+		SQLKiller:                            &vars.SQLKiller,
+		ErrCtx:                               sc.ErrCtx(),
+		TiFlashReplicaRead:                   vars.TiFlashReplicaRead,
+		TiFlashMaxThreads:                    vars.TiFlashMaxThreads,
+		TiFlashMaxBytesBeforeExternalJoin:    vars.TiFlashMaxBytesBeforeExternalJoin,
+		TiFlashMaxBytesBeforeExternalGroupBy: vars.TiFlashMaxBytesBeforeExternalGroupBy,
+		TiFlashMaxBytesBeforeExternalSort:    vars.TiFlashMaxBytesBeforeExternalSort,
+		TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
+		TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
+		ExecDetails:                          &sc.SyncExecDetails,
+	}
 }
 
 // Txn implements sessionctx.Context Txn interface.
