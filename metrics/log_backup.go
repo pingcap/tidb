@@ -66,4 +66,16 @@ var (
 		Name:      "region_checkpoint_event",
 		Help:      "The region flush event count.",
 	}, []string{"store"})
+	LogBackupCurrentLastRegionID = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "log_backup",
+		Name:      "current_last_region_id",
+		Help:      "The id of the region have minimal checkpoint ts in the current running task.",
+	})
+	LogBackupCurrentLastRegionLeaderStoreID = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "log_backup",
+		Name:      "current_last_region_leader_store_id",
+		Help:      "The leader's store id of the region have minimal checkpoint ts in the current running task.",
+	})
 )
