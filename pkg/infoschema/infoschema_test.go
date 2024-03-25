@@ -100,6 +100,7 @@ func TestBasic(t *testing.T) {
 
 	dbInfos := []*model.DBInfo{dbInfo}
 	internal.AddDB(t, re.Store(), dbInfo)
+	internal.AddTable(t, re.Store(), dbInfo, tblInfo)
 
 	builder, err := infoschema.NewBuilder(re, nil, infoschema.NewData()).InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
@@ -111,7 +112,9 @@ func TestBasic(t *testing.T) {
 	err = txn.Rollback()
 	require.NoError(t, err)
 
-	is := builder.Build(math.MaxUint64)
+	ver, err := re.Store().CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	is := builder.Build(ver.Ver)
 
 	schemaNames := infoschema.AllSchemaNames(is)
 	require.Len(t, schemaNames, 3)
@@ -179,7 +182,6 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 
-	internal.AddTable(t, re.Store(), dbInfo, tblInfo)
 	require.NoError(t, err)
 	txn, err = re.Store().Begin()
 	require.NoError(t, err)
@@ -218,13 +220,13 @@ func TestMockInfoSchema(t *testing.T) {
 
 func checkApplyCreateNonExistsSchemaDoesNotPanic(t *testing.T, txn kv.Transaction, builder *infoschema.Builder) {
 	m := meta.NewMeta(txn)
-	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 999})
+	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 999, Version: 1})
 	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
 }
 
 func checkApplyCreateNonExistsTableDoesNotPanic(t *testing.T, txn kv.Transaction, builder *infoschema.Builder, dbID int64) {
 	m := meta.NewMeta(txn)
-	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: dbID, TableID: 999})
+	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: dbID, TableID: 999, Version: 1})
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 }
 
@@ -523,8 +525,7 @@ func TestBuildBundle(t *testing.T) {
 	assertBundle(is, tbl1.Meta().ID, tb1Bundle)
 	assertBundle(is, tbl2.Meta().ID, nil)
 	assertBundle(is, p1.ID, p1Bundle)
-
-	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.SchemaMetaVersion())
+	builder, err := infoschema.NewBuilder(dom, nil, infoschema.NewData()).InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.SchemaMetaVersion())
 	require.NoError(t, err)
 	is2 := builder.Build(math.MaxUint64)
 	assertBundle(is2, tbl1.Meta().ID, tb1Bundle)
