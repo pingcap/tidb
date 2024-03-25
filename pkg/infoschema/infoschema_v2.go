@@ -390,6 +390,11 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 	return getTableInfo(tbl), ok
 }
 
+// SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
+func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
+	return getTableInfoList(is.SchemaTables(schema))
+}
+
 // FindTableInfoByPartitionID implements InfoSchema.FindTableInfoByPartitionID
 func (is *infoschemaV2) FindTableInfoByPartitionID(
 	partitionID int64,

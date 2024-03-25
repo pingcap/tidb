@@ -84,6 +84,20 @@ func TestV2Basic(t *testing.T) {
 	require.False(t, ok)
 	require.Nil(t, gotTblInfo)
 
+	tables := is.SchemaTables(schemaName)
+	require.Equal(t, 1, len(tables))
+	require.Equal(t, tblInfo.ID, tables[0].Meta().ID)
+
+	tblInfos := is.SchemaTableInfos(schemaName)
+	require.Equal(t, 1, len(tblInfos))
+	require.Same(t, tables[0].Meta(), tblInfos[0])
+
+	tables = is.SchemaTables(model.NewCIStr("notexist"))
+	require.Equal(t, 0, len(tables))
+
+	tblInfos = is.SchemaTableInfos(model.NewCIStr("notexist"))
+	require.Equal(t, 0, len(tblInfos))
+
 	require.Equal(t, int64(2), is.SchemaMetaVersion())
 	// TODO: support FindTableByPartitionID.
 }

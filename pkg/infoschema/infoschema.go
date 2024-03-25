@@ -260,6 +260,11 @@ func (is *infoSchema) FindTableInfoByPartitionID(
 	return getTableInfo(tbl), db, partDef
 }
 
+// SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
+func (is *infoSchema) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
+	return getTableInfoList(is.SchemaTables(schema))
+}
+
 // allocByID returns the Allocators of a table.
 func allocByID(is InfoSchema, id int64) (autoid.Allocators, bool) {
 	tbl, ok := is.TableByID(id)
@@ -371,7 +376,7 @@ func init() {
 		Tables:  infoSchemaTables,
 	}
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
-	util.GetSequenceByName = func(is any, schema, sequence model.CIStr) (util.SequenceTable, error) {
+	util.GetSequenceByName = func(is context.MetaOnlyInfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
 	}
 	mock.MockInfoschema = func(tbList []*model.TableInfo) context.MetaOnlyInfoSchema {
@@ -785,4 +790,16 @@ func getTableInfo(tbl table.Table) *model.TableInfo {
 		return nil
 	}
 	return tbl.Meta()
+}
+
+func getTableInfoList(tables []table.Table) []*model.TableInfo {
+	if tables == nil {
+		return nil
+	}
+
+	infoLost := make([]*model.TableInfo, 0, len(tables))
+	for _, tbl := range tables {
+		infoLost = append(infoLost, tbl.Meta())
+	}
+	return infoLost
 }

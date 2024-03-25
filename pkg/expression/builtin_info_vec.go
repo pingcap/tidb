@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -399,16 +400,24 @@ func (b *builtinTiDBDecodeKeySig) vecEvalString(ctx EvalContext, input *chunk.Ch
 		return err
 	}
 	result.ReserveString(n)
-	decode := func(ctx EvalContext, s string) string { return s }
-	if fn := ctx.Value(TiDBDecodeKeyFunctionKey); fn != nil {
-		decode = fn.(func(ctx EvalContext, s string) string)
+
+	is, err := b.GetDomainInfoSchema(ctx)
+	if err != nil {
+		return err
+	}
+
+	decode := DecodeKeyFromString
+	if decode == nil {
+		decode = func(_ types.Context, _ infoschema.MetaOnlyInfoSchema, s string) string {
+			return s
+		}
 	}
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(decode(ctx, buf.GetString(i)))
+		result.AppendString(decode(ctx.TypeCtx(), is, buf.GetString(i)))
 	}
 	return nil
 }

@@ -187,8 +187,15 @@ func TestBasic(t *testing.T) {
 	tbs := is.SchemaTables(dbName)
 	require.Len(t, tbs, 1)
 
+	tblInfos := is.SchemaTableInfos(dbName)
+	require.Len(t, tblInfos, 1)
+	require.Same(t, tbs[0].Meta(), tblInfos[0])
+
 	tbs = is.SchemaTables(noexist)
 	require.Len(t, tbs, 0)
+
+	tblInfos = is.SchemaTableInfos(noexist)
+	require.Len(t, tblInfos, 0)
 
 	// Make sure partitions table exists
 	tb, err = is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("partitions"))

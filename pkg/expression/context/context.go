@@ -19,8 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
-	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -47,22 +45,21 @@ type EvalContext interface {
 	TruncateWarnings(start int) []stmtctx.SQLWarn
 	// CurrentDB return the current database name
 	CurrentDB() string
+	// CurrentTime returns the current time.
+	// Multiple calls for CurrentTime() should return the same value for the same `CtxID`.
+	CurrentTime() (time.Time, error)
 	// GetMaxAllowedPacket returns the value of the 'max_allowed_packet' system variable.
 	GetMaxAllowedPacket() uint64
 	// GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
 	GetDefaultWeekFormatMode() string
 	// GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
 	GetDivPrecisionIncrement() int
-	// GetSessionVars gets the session variables.
-	GetSessionVars() *variable.SessionVars
-	// Value returns the value associated with this context for key.
-	Value(key fmt.Stringer) any
-	// GetStore returns the store of session.
-	GetStore() kv.Storage
-	// GetInfoSchema returns the current infoschema
-	GetInfoSchema() infoschema.MetaOnlyInfoSchema
-	// GetDomainInfoSchema returns the latest information schema in domain
-	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
+	// RequestVerification verifies user privilege
+	RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool
+	// RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.
+	RequestDynamicVerification(privName string, grantable bool) bool
+	// GetOptionalPropSet returns the optional properties provided by this context.
+	GetOptionalPropSet() OptionalEvalPropKeySet
 	// GetOptionalPropProvider gets the optional property provider by key
 	GetOptionalPropProvider(OptionalEvalPropKey) (OptionalEvalPropProvider, bool)
 }
