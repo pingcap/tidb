@@ -99,9 +99,21 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	}
 	cx.rdGrp.Add(3)
 
+<<<<<<< HEAD
 	eg.Go(func() error { return pauseGCKeeper(cx) })
 	eg.Go(func() error { return pauseSchedulerKeeper(cx) })
 	eg.Go(func() error { return pauseImporting(cx) })
+=======
+	initChan := make(chan struct{})
+	cx.run(func() error { return pauseGCKeeper(cx) })
+	cx.run(func() error {
+		log.Info("Pause scheduler waiting all connections established.")
+		<-initChan
+		log.Info("Pause scheduler noticed connections established.")
+		return pauseSchedulerKeeper(cx)
+	})
+	cx.run(func() error { return pauseAdminAndWaitApply(cx, initChan) })
+>>>>>>> 411e945da33 (operator: pause scheduler after all connections established (#51823))
 	go func() {
 		cx.rdGrp.Wait()
 		hintAllReady()
@@ -110,6 +122,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	return eg.Wait()
 }
 
+<<<<<<< HEAD
 func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
 	denyLightning := utils.NewSuspendImporting("prepare_for_snapshot_backup", cx.kvMgr)
 	if _, err := denyLightning.DenyAllStores(cx, cx.cfg.TTL); err != nil {
@@ -120,6 +133,26 @@ func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
 		err := denyLightning.Keeper(cx, cx.cfg.TTL)
 		if errors.Cause(err) != context.Canceled {
 			logutil.CL(cx).Warn("keeper encounters error.", logutil.ShortError(err))
+=======
+func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext, afterConnectionsEstablished chan<- struct{}) error {
+	env := preparesnap.CliEnv{
+		Cache: tikv.NewRegionCache(cx.pdMgr.GetPDClient()),
+		Mgr:   cx.kvMgr,
+	}
+	defer env.Cache.Close()
+	retryEnv := preparesnap.RetryAndSplitRequestEnv{Env: env}
+	begin := time.Now()
+	prep := preparesnap.New(retryEnv)
+	prep.LeaseDuration = cx.cfg.TTL
+	prep.AfterConnectionsEstablished = func() {
+		log.Info("All connections are stablished.")
+		close(afterConnectionsEstablished)
+	}
+
+	defer cx.cleanUpWith(func(ctx context.Context) {
+		if err := prep.Finalize(ctx); err != nil {
+			logutil.CL(ctx).Warn("failed to finalize the prepare stream", logutil.ShortError(err))
+>>>>>>> 411e945da33 (operator: pause scheduler after all connections established (#51823))
 		}
 		return cx.cleanUpWithErr(func(ctx context.Context) error {
 			for {
