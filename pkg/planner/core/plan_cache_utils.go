@@ -25,7 +25,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -46,9 +45,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/size"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
@@ -184,19 +185,21 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	features := new(PlanCacheQueryFeatures)
 	paramStmt.Accept(features)
 
-	// Collect table information for metadata lock.
-	names, err := domain.ExtractTableNames(ctx, sctx, []ast.StmtNode{paramStmt}, model.NewCIStr(sctx.GetSessionVars().CurrentDB))
-	if err != nil {
-		return nil, nil, 0, err
-	}
-	dbName := make([]model.CIStr, 0, len(names))
-	tbls := make([]table.Table, 0, len(names))
-	for pair := range names {
-		dbName = append(dbName, model.NewCIStr(pair.DBName))
-		tbl, err := is.TableByName(model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
-		if err != nil {
-			return nil, nil, 0, err
+	// Collect information for metadata lock.
+	mdlMap := make(map[int64]int64)
+	vars.GetRelatedTableForMDL().Range(func(key, value any) bool {
+		mdlMap[key.(int64)] = value.(int64)
+		return true
+	})
+	dbName := make([]model.CIStr, 0, len(mdlMap))
+	tbls := make([]table.Table, 0, len(mdlMap))
+	for id := range mdlMap {
+		tbl, ok := is.TableByID(id)
+		if !ok {
+			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))
+			return nil, nil, 0, errors.New("table not found in info schema")
 		}
+		dbName = append(dbName, tbl.Meta().Name)
 		tbls = append(tbls, tbl)
 	}
 
