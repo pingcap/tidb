@@ -227,7 +227,12 @@ func (c *Column) appendNullBitmap(notNull bool) {
 
 // BatchAppend append
 func (c *Column) BatchAppend(src *Column, pos, length int) {
-	c.appendMultiSameNullBitmap(!src.IsNull(pos), length)
+	notNull := !src.IsNull(pos)
+	if length == 1 {
+		c.appendNullBitmap(notNull)
+	} else {
+		c.appendMultiSameNullBitmap(!src.IsNull(pos), length)
+	}
 	if c.isFixed() {
 		elemLen := len(src.elemBuf)
 		offset := pos * elemLen
