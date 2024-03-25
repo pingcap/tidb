@@ -1098,3 +1098,20 @@ func TestMDLTruncateTable(t *testing.T) {
 	require.True(t, timetk2.After(timeMain))
 	require.True(t, timetk3.After(timeMain))
 }
+
+func TestDDLJobErrEntrySizeTooLarge(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockErrEntrySizeTooLarge", `1*return(true)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockErrEntrySizeTooLarge"))
+	})
+
+	tk.MustGetErrCode("rename table t to t1;", errno.ErrEntryTooLarge)
+	tk.MustExec("create table t1 (a int);")
+	tk.MustExec("alter table t add column b int;") // Should not block.
+}
