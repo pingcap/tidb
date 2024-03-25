@@ -211,7 +211,7 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 		} else {
 			j.appendOffsetAndLength(j.currentProbeRow, length)
 			length = 0
-			j.currentProbeRow++
+			j.advanceCurrentProbeRow()
 		}
 		remainCap--
 	}
@@ -262,7 +262,7 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 		} else {
 			j.appendOffsetAndLength(j.currentProbeRow, length)
 			length = 0
-			j.currentProbeRow++
+			j.advanceCurrentProbeRow()
 		}
 	}
 	j.appendOffsetAndLength(j.currentProbeRow, length)

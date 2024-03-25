@@ -50,7 +50,7 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, 
 		} else {
 			j.appendOffsetAndLength(j.currentProbeRow, length)
 			length = 0
-			j.currentProbeRow++
+			j.advanceCurrentProbeRow()
 		}
 	}
 
