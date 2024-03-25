@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -33,16 +34,20 @@ import (
 
 type mergeSortExecutor struct {
 	taskexecutor.EmptyStepExecutor
-	jobID               int64
-	idxNum              int
-	ptbl                table.PhysicalTable
-	cloudStoreURI       string
+	jobID         int64
+	idxNum        int
+	ptbl          table.PhysicalTable
+	store         kv.Storage
+	avgRowSize    int
+	cloudStoreURI string
+
 	mu                  sync.Mutex
 	subtaskSortedKVMeta *external.SortedKVMeta
 }
 
 func newMergeSortExecutor(
 	jobID int64,
+	store kv.Storage,
 	idxNum int,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
@@ -50,13 +55,15 @@ func newMergeSortExecutor(
 	return &mergeSortExecutor{
 		jobID:         jobID,
 		idxNum:        idxNum,
+		store:         store,
 		ptbl:          ptbl,
 		cloudStoreURI: cloudStoreURI,
 	}, nil
 }
 
-func (*mergeSortExecutor) Init(ctx context.Context) error {
+func (m *mergeSortExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("merge sort executor init subtask exec env")
+	m.avgRowSize = estimateRowSize(ctx, m.store, m.ptbl)
 	return nil
 }
 
@@ -85,7 +92,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	prefix := path.Join(strconv.Itoa(int(m.jobID)), strconv.Itoa(int(subtask.ID)))
-	partSize, err := getMergeSortPartSize(m.ptbl.Meta(), int(variable.GetDDLReorgWorkerCounter()), m.idxNum)
+	partSize, err := getMergeSortPartSize(m.avgRowSize, int(variable.GetDDLReorgWorkerCounter()), m.idxNum)
 	if err != nil {
 		return err
 	}

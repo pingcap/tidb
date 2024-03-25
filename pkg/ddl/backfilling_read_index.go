@@ -44,6 +44,7 @@ type readIndexExecutor struct {
 	ptbl    table.PhysicalTable
 	jc      *JobContext
 
+	avgRowSize      int
 	cloudStorageURI string
 
 	bc          ingest.BackendCtx
@@ -82,9 +83,10 @@ func newReadIndexExecutor(
 	}, nil
 }
 
-func (*readIndexExecutor) Init(_ context.Context) error {
+func (r *readIndexExecutor) Init(ctx context.Context) error {
 	logutil.BgLogger().Info("read index executor init subtask exec env",
 		zap.String("category", "ddl"))
+	r.avgRowSize = estimateRowSize(ctx, r.d.store, r.ptbl)
 	return nil
 }
 
@@ -241,7 +243,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewAddIndexIngestPipeline(
 		opCtx, d.store, d.sessPool, r.bc, engines, sessCtx, r.job.ID,
-		tbl, r.indexes, start, end, totalRowCount, counter, r.job.ReorgMeta)
+		tbl, r.indexes, start, end, totalRowCount, counter, r.job.ReorgMeta, r.avgRowSize)
 }
 
 func (r *readIndexExecutor) buildExternalStorePipeline(
@@ -282,5 +284,7 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		totalRowCount,
 		counter,
 		onClose,
-		r.job.ReorgMeta)
+		r.job.ReorgMeta,
+		r.avgRowSize,
+	)
 }
