@@ -14,17 +14,17 @@
 
 package task
 
-var _ TaskScheduler = &SimpleTaskScheduler{}
+var _ Scheduler = &SimpleTaskScheduler{}
 
-// TaskScheduler is a scheduling interface defined for serializing(single thread)/concurrent(multi thread) running.
-type TaskScheduler interface {
+// Scheduler is a scheduling interface defined for serializing(single thread)/concurrent(multi thread) running.
+type Scheduler interface {
 	ExecuteTasks()
 }
 
 // SimpleTaskScheduler is defined for serializing scheduling of memo tasks.
 type SimpleTaskScheduler struct {
 	Err          error
-	SchedulerCtx TaskSchedulerContext
+	SchedulerCtx SchedulerContext
 }
 
 // ExecuteTasks implements the interface of TaskScheduler.
@@ -46,8 +46,8 @@ func (s *SimpleTaskScheduler) ExecuteTasks() {
 	}
 }
 
-// TaskSchedulerContext is defined for scheduling logic calling, also facilitate interface-oriented coding and testing.
-type TaskSchedulerContext interface {
+// SchedulerContext is defined for scheduling logic calling, also facilitate interface-oriented coding and testing.
+type SchedulerContext interface {
 	// we exported the Stack interface here rather than the basic stack implementation.
 	getStack() Stack
 	// we exported the only one push action to user, Task is an interface definition.
