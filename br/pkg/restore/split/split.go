@@ -288,8 +288,8 @@ func (b *BackoffMayNotCountBackoffer) Attempt() int {
 }
 
 // GetSplitKeyPerRegion checks every input key is necessary to split region on
-// it. Returns a map from original region ID to split keys for each region. The
-// split keys are sorted in ascending order.
+// it. Returns a map from original region ID to split keys belongs to each
+// region.
 //
 // prerequisite:
 // - sortedKeys are sorted in ascending order.
