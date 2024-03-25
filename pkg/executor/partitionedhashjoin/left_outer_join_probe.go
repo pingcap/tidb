@@ -82,6 +82,7 @@ func (j *leftOuterJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult)
 	if j.rowIter == nil {
 		panic("scanRowTable before init")
 	}
+	j.cachedBuildRows = j.cachedBuildRows[:0]
 	meta := j.ctx.hashTableMeta
 	insertedRows := 0
 	remainCap := joinResult.Chk.RequiredRows() - joinResult.Chk.NumRows()
@@ -89,11 +90,14 @@ func (j *leftOuterJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult)
 		currentRow := j.rowIter.getValue()
 		if !meta.isCurrentRowUsed(currentRow) {
 			// append build side of this row
-			j.appendBuildRowToChunkInternal(joinResult.Chk, j.lUsed, &rowInfo{rowStart: currentRow, rowData: 0, currentColumnIndex: 0}, false, 0)
+			j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{buildRowStart: currentRow}, joinResult.Chk, 0)
 			joinResult.Chk.IncNumVirtualRows()
 			insertedRows++
 		}
 		j.rowIter.next()
+	}
+	if len(j.cachedBuildRows) > 0 {
+		j.batchConstructBuildRows(joinResult.Chk, 0)
 	}
 	// append probe side in batch
 	colOffset := len(j.lUsed)
@@ -133,17 +137,18 @@ func (j *leftOuterJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, j
 		}
 	}
 	if hasRemainCols {
+		j.cachedBuildRows = j.cachedBuildRows[:0]
 		markedJoined = true
+		meta := j.ctx.hashTableMeta
 		for index, result := range j.selected {
 			if result {
 				rowIndexInfo := j.rowIndexInfos[index]
 				j.isNotMatchedRows[rowIndexInfo.probeRowIndex] = false
-				j.appendBuildRowToChunk(chk, &rowInfo{
-					rowStart:           rowIndexInfo.buildRowStart,
-					rowData:            rowIndexInfo.buildRowData,
-					currentColumnIndex: j.ctx.hashTableMeta.columnCountNeededForOtherCondition,
-				})
+				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo, chk, meta.columnCountNeededForOtherCondition)
 			}
+		}
+		if len(j.cachedBuildRows) > 0 {
+			j.batchConstructBuildRows(chk, meta.columnCountNeededForOtherCondition)
 		}
 	}
 	if !markedJoined {
@@ -194,11 +199,8 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
-				rowInfo := &rowInfo{rowStart: candidateRow, rowData: 0, currentColumnIndex: 0}
-				currentRowData := j.appendBuildRowToChunk(joinedChk, rowInfo)
-				if j.ctx.hasOtherCondition() {
-					j.rowIndexInfos = append(j.rowIndexInfos, rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow, buildRowData: currentRowData})
-				} else {
+				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow}, joinedChk, 0)
+				if !j.ctx.hasOtherCondition() {
 					// has no other condition, key match mean join match
 					j.isNotMatchedRows[j.currentProbeRow] = false
 				}
@@ -214,6 +216,9 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 		remainCap--
 	}
 	j.appendOffsetAndLength(j.currentProbeRow, length)
+	if len(j.cachedBuildRows) > 0 {
+		j.batchConstructBuildRows(joinedChk, 0)
+	}
 	j.appendProbeRowToChunk(joinedChk, j.currentChunk)
 
 	if j.ctx.hasOtherCondition() {
@@ -244,11 +249,8 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
-				rowInfo := &rowInfo{rowStart: candidateRow, rowData: 0, currentColumnIndex: 0}
-				currentRowData := j.appendBuildRowToChunk(joinedChk, rowInfo)
-				if j.ctx.hasOtherCondition() {
-					j.rowIndexInfos = append(j.rowIndexInfos, rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow, buildRowData: currentRowData})
-				} else {
+				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow}, joinedChk, 0)
+				if !j.ctx.hasOtherCondition() {
 					// has no other condition, key match means join match
 					meta.setUsedFlag(candidateRow)
 				}
