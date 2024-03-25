@@ -12,11 +12,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 19,
-=======
     shard_count = 21,
->>>>>>> b8b3b927079 (planner: Comparing binary string with int caused issue in partition pruning (#52041))
     deps = [
         "//pkg/domain",
         "//pkg/parser",
