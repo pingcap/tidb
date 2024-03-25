@@ -28,6 +28,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -623,7 +624,7 @@ func (b *builtinInetNtoaSig) evalString(ctx EvalContext, row chunk.Row) (string,
 	ip := make(net.IP, net.IPv4len)
 	binary.BigEndian.PutUint32(ip, uint32(val))
 	ipv4 := ip.To4()
-	if ipv4 == nil {
+	if emptynil.IsNilSlice(ipv4) {
 		// Not a vaild ipv4 address.
 		return "", true, nil
 	}
@@ -674,18 +675,18 @@ func (b *builtinInet6AtonSig) evalString(ctx EvalContext, row chunk.Row) (string
 	}
 
 	ip := net.ParseIP(val)
-	if ip == nil {
+	if emptynil.IsNilSlice(ip) {
 		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton6")
 	}
 
 	var isMappedIpv6 bool
-	if ip.To4() != nil && strings.Contains(val, ":") {
+	if !emptynil.IsNilSlice(ip.To4()) && strings.Contains(val, ":") {
 		// mapped ipv6 address.
 		isMappedIpv6 = true
 	}
 
 	var result []byte
-	if isMappedIpv6 || ip.To4() == nil {
+	if isMappedIpv6 || emptynil.IsNilSlice(ip.To4()) {
 		result = make([]byte, net.IPv6len)
 	} else {
 		result = make([]byte, net.IPv4len)
@@ -695,7 +696,7 @@ func (b *builtinInet6AtonSig) evalString(ctx EvalContext, row chunk.Row) (string
 		copy(result[12:], ip.To4())
 		result[11] = 0xff
 		result[10] = 0xff
-	} else if ip.To4() == nil {
+	} else if emptynil.IsNilSlice(ip.To4()) {
 		copy(result, ip.To16())
 	} else {
 		copy(result, ip.To4())
@@ -748,7 +749,7 @@ func (b *builtinInet6NtoaSig) evalString(ctx EvalContext, row chunk.Row) (string
 		ip = fmt.Sprintf("::ffff:%s", ip)
 	}
 
-	if net.ParseIP(ip) == nil {
+	if emptynil.IsNilSlice(net.ParseIP(ip)) {
 		return "", true, nil
 	}
 
@@ -1021,7 +1022,7 @@ func (b *builtinIsIPv6Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 		return 0, err != nil, err
 	}
 	ip := net.ParseIP(val)
-	if ip != nil && !isIPv4(val) {
+	if !emptynil.IsNilSlice(ip) && !isIPv4(val) {
 		return 1, false, nil
 	}
 	return 0, false, nil

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -281,7 +282,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		// we should do insert the row,
 		// and key-values should be filled back to dupOldRowValues for the further row check,
 		// due to there may be duplicate keys inside the insert statement.
-		if newRows[i] != nil {
+		if !emptynil.IsNilSlice(newRows[i]) {
 			err := e.addRecord(ctx, newRows[i])
 			if err != nil {
 				return err
@@ -334,7 +335,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	if e.OnDuplicate != nil {
+	if !emptynil.IsNilSlice(e.OnDuplicate) {
 		e.initEvalBuffer4Dup()
 	}
 	if e.SelectExec != nil {

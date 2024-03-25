@@ -34,6 +34,7 @@ import (
 	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	planctximpl "github.com/pingcap/tidb/pkg/planner/contextimpl"
@@ -337,7 +338,7 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
 	vars.StmtCtx.SetErrLevels(errLevels)
 
-	if options.SysVars != nil {
+	if !emptynil.IsNilMap(options.SysVars) {
 		for k, v := range options.SysVars {
 			// since 6.3(current master) tidb checks whether we can set a system variable
 			// lc_time_names is a read-only variable for now, but might be implemented later,

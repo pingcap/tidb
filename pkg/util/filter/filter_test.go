@@ -21,7 +21,7 @@ import (
 )
 
 func cloneTables(tbs []*Table) []*Table {
-	if tbs == nil {
+	if len(tbs) == 0 {
 		return nil
 	}
 	newTbs := make([]*Table, 0, len(tbs))

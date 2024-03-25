@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -75,7 +76,7 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRo
 
 func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.Chunk) error {
 	defer func() {
-		if r.expectedRowsRet == nil {
+		if emptynil.IsNilSlice(r.expectedRowsRet) {
 			r.numNextCalled++
 			return
 		}

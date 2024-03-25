@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/storewatch"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
@@ -468,7 +469,7 @@ func (recovery *Recovery) MakeRecoveryPlan() error {
 		storeId := v.StoreId
 		maxId := storeId
 		for _, m := range v.RegionMetas {
-			if regions[m.RegionId] == nil {
+			if emptynil.IsNilSlice(regions[m.RegionId]) {
 				regions[m.RegionId] = make([]*RecoverRegion, 0, len(recovery.allStores))
 			}
 			regions[m.RegionId] = append(regions[m.RegionId], &RecoverRegion{m, storeId})

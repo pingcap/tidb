@@ -22,6 +22,7 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -440,8 +441,8 @@ func (m *HandleMap) Get(h Handle) (v any, ok bool) {
 	ints, strs := m.ints, m.strs
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
-		if (h.IsInt() && m.partitionInts[idx] == nil) ||
-			(!h.IsInt() && m.partitionStrs[idx] == nil) {
+		if (h.IsInt() && emptynil.IsNilMap(m.partitionInts[idx])) ||
+			(!h.IsInt() && emptynil.IsNilMap(m.partitionStrs[idx])) {
 			return nil, false
 		}
 		ints, strs = m.partitionInts[idx], m.partitionStrs[idx]
@@ -490,12 +491,12 @@ func (m *HandleMap) Set(h Handle, val any) {
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
 		if h.IsInt() {
-			if m.partitionInts[idx] == nil {
+			if emptynil.IsNilMap(m.partitionInts[idx]) {
 				m.partitionInts[idx] = make(map[int64]any)
 			}
 			ints = m.partitionInts[idx]
 		} else {
-			if m.partitionStrs[idx] == nil {
+			if emptynil.IsNilMap(m.partitionStrs[idx]) {
 				m.partitionStrs[idx] = make(map[string]strHandleVal)
 			}
 			strs = m.partitionStrs[idx]
@@ -516,8 +517,8 @@ func (m *HandleMap) Delete(h Handle) {
 	ints, strs := m.ints, m.strs
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
-		if (h.IsInt() && m.partitionInts[idx] == nil) ||
-			(!h.IsInt() && m.partitionStrs[idx] == nil) {
+		if (h.IsInt() && emptynil.IsNilMap(m.partitionInts[idx])) ||
+			(!h.IsInt() && emptynil.IsNilMap(m.partitionStrs[idx])) {
 			return
 		}
 		ints, strs = m.partitionInts[idx], m.partitionStrs[idx]
@@ -602,12 +603,12 @@ func (m *MemAwareHandleMap[V]) Get(h Handle) (v V, ok bool) {
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
 		if h.IsInt() {
-			if m.partitionInts[idx].M == nil {
+			if emptynil.IsNilMap(m.partitionInts[idx].M) {
 				return v, false
 			}
 			ints = m.partitionInts[idx]
 		} else {
-			if m.partitionStrs[idx].M == nil {
+			if emptynil.IsNilMap(m.partitionStrs[idx].M) {
 				return v, false
 			}
 			strs = m.partitionStrs[idx]
@@ -629,12 +630,12 @@ func (m *MemAwareHandleMap[V]) Set(h Handle, val V) int64 {
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
 		if h.IsInt() {
-			if m.partitionInts[idx].M == nil {
+			if emptynil.IsNilMap(m.partitionInts[idx].M) {
 				m.partitionInts[idx] = set.NewMemAwareMap[int64, V]()
 			}
 			ints = m.partitionInts[idx]
 		} else {
-			if m.partitionStrs[idx].M == nil {
+			if emptynil.IsNilMap(m.partitionStrs[idx].M) {
 				m.partitionStrs[idx] = set.NewMemAwareMap[string, strHandleValue[V]]()
 			}
 			strs = m.partitionStrs[idx]

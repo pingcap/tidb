@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -277,7 +278,7 @@ func collectHistNeededItems(histNeededColumns []model.StatsLoadItem, histNeededI
 
 func recordTableRuntimeStats(sctx PlanContext, tbls map[int64]struct{}) {
 	tblStats := sctx.GetSessionVars().StmtCtx.TableStats
-	if tblStats == nil {
+	if emptynil.IsNilMap(tblStats) {
 		tblStats = map[int64]any{}
 	}
 	for tblID := range tbls {

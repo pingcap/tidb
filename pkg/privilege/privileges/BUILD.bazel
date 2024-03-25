@@ -17,6 +17,7 @@ go_library(
         "//pkg/kv",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
+        "//pkg/parser/emptynil",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/privilege",

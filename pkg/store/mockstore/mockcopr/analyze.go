@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -102,7 +103,7 @@ func (h coprHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if values == nil {
+		if emptynil.IsNilSlice(values) {
 			break
 		}
 		var value []byte
@@ -164,7 +165,7 @@ func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	}
 	defVal := func(i int) ([]byte, error) {
 		col := columns[i]
-		if col.DefaultVal == nil {
+		if emptynil.IsNilSlice(col.DefaultVal) {
 			return nil, nil
 		}
 		// col.DefaultVal always be  varint `[flag]+[value]`.
@@ -261,7 +262,7 @@ func (e *analyzeColumnsExec) getNext(ctx context.Context) ([]types.Datum, error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if values == nil {
+	if emptynil.IsNilSlice(values) {
 		return nil, nil
 	}
 	datumRow := make([]types.Datum, 0, len(values))
@@ -278,7 +279,7 @@ func (e *analyzeColumnsExec) getNext(ctx context.Context) ([]types.Datum, error)
 func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	row, err := e.getNext(ctx)
-	if row == nil || err != nil {
+	if emptynil.IsNilSlice(row) || err != nil {
 		return errors.Trace(err)
 	}
 	for i := 0; i < len(row); i++ {

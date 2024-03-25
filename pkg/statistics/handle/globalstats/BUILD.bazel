@@ -13,6 +13,7 @@ go_library(
     deps = [
         "//pkg/infoschema",
         "//pkg/parser/ast",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",

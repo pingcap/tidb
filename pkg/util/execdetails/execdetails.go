@@ -28,6 +28,7 @@ import (
 
 	"github.com/influxdata/tdigest"
 	"github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -84,7 +85,7 @@ func (d *P90Summary) Reset() {
 
 // Merge merges DetailsNeedP90 into P90Summary.
 func (d *P90Summary) Merge(detail *DetailsNeedP90) {
-	if d.BackoffInfo == nil {
+	if emptynil.IsNilMap(d.BackoffInfo) {
 		d.Reset()
 	}
 	d.NumCopTasks++
@@ -1123,7 +1124,7 @@ func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 		context.maxRemoteStreamMs = other.maxRemoteStreamMs
 	}
 
-	if context.regionsOfInstance == nil {
+	if emptynil.IsNilMap(context.regionsOfInstance) {
 		context.regionsOfInstance = make(map[string]uint64)
 	}
 	for k, v := range other.regionsOfInstance {
@@ -1745,7 +1746,7 @@ func getUnit(d time.Duration) time.Duration {
 func MergeTiFlashRUConsumption(executionSummaries []*tipb.ExecutorExecutionSummary, ruDetails *util.RUDetails) error {
 	newRUDetails := util.NewRUDetails()
 	for _, summary := range executionSummaries {
-		if summary != nil && summary.GetRuConsumption() != nil {
+		if summary != nil && !emptynil.IsNilSlice(summary.GetRuConsumption()) {
 			tiflashRU := new(resource_manager.Consumption)
 			if err := tiflashRU.Unmarshal(summary.GetRuConsumption()); err != nil {
 				return err

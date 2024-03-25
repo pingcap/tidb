@@ -16,6 +16,7 @@ package cardinality
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -235,7 +236,7 @@ func GetColumnRowCount(sctx context.PlanContext, c *statistics.Column, ranges []
 			rangeVals := statistics.EnumRangeValues(lowVal, highVal, rg.LowExclude, rg.HighExclude)
 
 			// case 2: it's a small range && using ver1 stats
-			if rangeVals != nil {
+			if !emptynil.IsNilSlice(rangeVals) {
 				for _, val := range rangeVals {
 					cnt, err := equalRowCountOnColumn(sctx, c, val, lowEncoded, realtimeRowCount)
 					if err != nil {

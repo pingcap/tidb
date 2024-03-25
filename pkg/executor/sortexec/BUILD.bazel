@@ -65,6 +65,7 @@ go_test(
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/testutil",
         "//pkg/expression",
+        "//pkg/parser/emptynil",
         "//pkg/parser/mysql",
         "//pkg/planner/util",
         "//pkg/sessionctx/variable",

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
@@ -271,7 +272,7 @@ func (m *txnManager) OnStmtCommit(ctx context.Context) error {
 }
 
 func (m *txnManager) recordEvent(eventName string) {
-	if m.events == nil {
+	if emptynil.IsNilSlice(m.events) {
 		m.resetEvents()
 	}
 	m.events = append(m.events, event{event: eventName, duration: time.Since(m.lastInstant)})
@@ -279,7 +280,7 @@ func (m *txnManager) recordEvent(eventName string) {
 }
 
 func (m *txnManager) resetEvents() {
-	if m.events == nil {
+	if emptynil.IsNilSlice(m.events) {
 		m.events = make([]event, 0, 10)
 	} else {
 		m.events = m.events[:0]

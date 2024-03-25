@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -637,7 +638,7 @@ func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is info
 	}
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
-	if pi == nil || jsonTbl.Partitions == nil {
+	if pi == nil || emptynil.IsNilMap(jsonTbl.Partitions) {
 		err := s.loadStatsFromJSON(tableInfo, tableInfo.ID, jsonTbl)
 		if err != nil {
 			return errors.Trace(err)

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/planner/cascades"
 	pctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -226,7 +227,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	useBinding := enableUseBinding && isStmtNode && match
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		failpoint.Inject("SetBindingTimeToZero", func(val failpoint.Value) {
-			if val.(bool) && bindings != nil {
+			if val.(bool) && !emptynil.IsNilSlice(bindings) {
 				bindings = bindings.Copy()
 				for i := range bindings {
 					bindings[i].CreateTime = types.ZeroTime

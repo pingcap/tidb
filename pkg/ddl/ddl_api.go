@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1164,7 +1165,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	setOnUpdateNow := false
 	hasDefaultValue := false
 	hasNullFlag := false
-	if colDef.Options != nil {
+	if !emptynil.IsNilSlice(colDef.Options) {
 		length := types.UnspecifiedLength
 
 		keys := []*ast.IndexPartSpecification{
@@ -6490,10 +6491,10 @@ func shouldModifyTiFlashReplica(tbReplicaInfo *model.TiFlashReplicaInfo, replica
 // addHypoTiFlashReplicaIntoCtx adds this hypothetical tiflash replica into this ctx.
 func (*ddl) setHypoTiFlashReplica(ctx sessionctx.Context, schemaName, tableName model.CIStr, replicaInfo *ast.TiFlashReplicaSpec) error {
 	sctx := ctx.GetSessionVars()
-	if sctx.HypoTiFlashReplicas == nil {
+	if emptynil.IsNilMap(sctx.HypoTiFlashReplicas) {
 		sctx.HypoTiFlashReplicas = make(map[string]map[string]struct{})
 	}
-	if sctx.HypoTiFlashReplicas[schemaName.L] == nil {
+	if emptynil.IsNilMap(sctx.HypoTiFlashReplicas[schemaName.L]) {
 		sctx.HypoTiFlashReplicas[schemaName.L] = make(map[string]struct{})
 	}
 	if replicaInfo.Count > 0 { // add replicas
@@ -7153,7 +7154,7 @@ func (d *ddl) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 		return err
 	}
 
-	if schemas == nil {
+	if emptynil.IsNilSlice(schemas) {
 		return nil
 	}
 
@@ -7563,13 +7564,13 @@ func (*ddl) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName mo
 	sctx := ctx.GetSessionVars()
 	indexName := indexInfo.Name
 
-	if sctx.HypoIndexes == nil {
+	if emptynil.IsNilMap(sctx.HypoIndexes) {
 		sctx.HypoIndexes = make(map[string]map[string]map[string]*model.IndexInfo)
 	}
-	if sctx.HypoIndexes[schemaName.L] == nil {
+	if emptynil.IsNilMap(sctx.HypoIndexes[schemaName.L]) {
 		sctx.HypoIndexes[schemaName.L] = make(map[string]map[string]*model.IndexInfo)
 	}
-	if sctx.HypoIndexes[schemaName.L][tableName.L] == nil {
+	if emptynil.IsNilMap(sctx.HypoIndexes[schemaName.L][tableName.L]) {
 		sctx.HypoIndexes[schemaName.L][tableName.L] = make(map[string]*model.IndexInfo)
 	}
 	if _, exist := sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L]; exist {
@@ -7940,9 +7941,9 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 // dropHypoIndexFromCtx drops this hypo-index from this ctx.
 func (*ddl) dropHypoIndexFromCtx(ctx sessionctx.Context, schema, table, index model.CIStr, ifExists bool) error {
 	sctx := ctx.GetSessionVars()
-	if sctx.HypoIndexes != nil &&
-		sctx.HypoIndexes[schema.L] != nil &&
-		sctx.HypoIndexes[schema.L][table.L] != nil &&
+	if !emptynil.IsNilMap(sctx.HypoIndexes) &&
+		!emptynil.IsNilMap(sctx.HypoIndexes[schema.L]) &&
+		!emptynil.IsNilMap(sctx.HypoIndexes[schema.L][table.L]) &&
 		sctx.HypoIndexes[schema.L][table.L][index.L] != nil {
 		delete(sctx.HypoIndexes[schema.L][table.L], index.L)
 		return nil
@@ -8720,7 +8721,7 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 
 func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
 	var policyRefInfo *model.PolicyRefInfo
-	if spec.Options != nil {
+	if !emptynil.IsNilSlice(spec.Options) {
 		for _, op := range spec.Options {
 			switch op.Tp {
 			case ast.TableOptionPlacementPolicy:

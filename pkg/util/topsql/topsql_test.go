@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -302,7 +303,7 @@ func TestTopSQLPubSub(t *testing.T) {
 				records[string(rec.SqlDigest)] = rec
 			} else {
 				record := records[string(rec.SqlDigest)]
-				if rec.PlanDigest != nil {
+				if !emptynil.IsNilSlice(rec.PlanDigest) {
 					record.PlanDigest = rec.PlanDigest
 				}
 				record.Items = append(record.Items, rec.Items...)

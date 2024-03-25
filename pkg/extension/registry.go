@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 )
 
 type registry struct {
@@ -73,7 +74,7 @@ func (r *registry) RegisterFactory(name string, factory func() ([]Option, error)
 		return errors.Errorf("extension with name '%s' already registered", name)
 	}
 
-	if r.factories == nil {
+	if emptynil.IsNilMap(r.factories) {
 		r.factories = make(map[string]func() ([]Option, error))
 	}
 

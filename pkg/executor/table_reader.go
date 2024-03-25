@@ -35,6 +35,7 @@ import (
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -379,7 +380,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	}
 
 	// use sortedSelectResults here when pushDown limit for partition table.
-	if e.kvRangeBuilder != nil && e.byItems != nil {
+	if e.kvRangeBuilder != nil && !emptynil.IsNilSlice(e.byItems) {
 		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
 		if err != nil {
 			return nil, err
@@ -607,7 +608,7 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 		if err != nil {
 			return nil, err
 		}
-		if data != nil {
+		if !emptynil.IsNilSlice(data) {
 			return data, nil
 		}
 		tr.optionalFinished = true

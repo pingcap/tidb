@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -377,7 +378,7 @@ func TestExtensionStmtEvents(t *testing.T) {
 			}
 		case c.binaryExecute != 0:
 			err = conn.Dispatch(context.Background(), getExecuteBytes(c.binaryExecute, false, true, c.executeParams...))
-		case c.dispatchData != nil:
+		case !emptynil.IsNilSlice(c.dispatchData):
 			err = conn.Dispatch(context.Background(), c.dispatchData)
 		}
 
@@ -388,7 +389,7 @@ func TestExtensionStmtEvents(t *testing.T) {
 		}
 
 		subCases := c.multiQueryCases
-		if subCases == nil {
+		if emptynil.IsNilSlice(subCases) {
 			subCases = []stmtEventCase{c}
 		}
 
@@ -435,7 +436,7 @@ func TestExtensionStmtEvents(t *testing.T) {
 			require.Equal(t, subCase.originalText, record.originalText)
 			require.Equal(t, subCase.redactText, record.redactText)
 			require.Equal(t, subCase.affectedRows, record.affectedRows)
-			if subCase.tables == nil {
+			if emptynil.IsNilSlice(subCase.tables) {
 				subCase.tables = []stmtctx.TableEntry{}
 			}
 			sort.Slice(subCase.tables, func(i, j int) bool {

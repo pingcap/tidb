@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -137,7 +138,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		}
 	})
 
-	if e.instanceToStatusAddress == nil {
+	if emptynil.IsNilMap(e.instanceToStatusAddress) {
 		// Get cluster info.
 		e.instanceToStatusAddress = make(map[string]string)
 		e.statusToInstanceAddress = make(map[string]string)

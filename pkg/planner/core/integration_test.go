@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1024,7 +1025,7 @@ func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
 		for _, row := range rows {
 			buf := bytes.NewBufferString("")
 			_, _ = fmt.Fprintf(buf, "%s\n", row)
-			if matched := re.FindStringSubmatch(buf.String()); matched != nil {
+			if matched := re.FindStringSubmatch(buf.String()); !emptynil.IsNilSlice(matched) {
 				require.Equal(t, len(matched), 2)
 				c, err := strconv.ParseUint(matched[1], 10, 64)
 				require.NoError(t, err)

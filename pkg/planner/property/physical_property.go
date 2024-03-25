@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -316,7 +317,7 @@ func (p *PhysicalProperty) IsSortItemEmpty() bool {
 
 // HashCode calculates hash code for a PhysicalProperty object.
 func (p *PhysicalProperty) HashCode() []byte {
-	if p.hashcode != nil {
+	if !emptynil.IsNilSlice(p.hashcode) {
 		return p.hashcode
 	}
 	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8

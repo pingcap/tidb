@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -66,7 +67,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 	coveredByUniqueKey := false
 	var uniqueKey expression.KeyInfo
 	for _, key := range agg.children[0].Schema().Keys {
-		if schemaByGroupby.ColumnsIndices(key) != nil {
+		if !emptynil.IsNilSlice(schemaByGroupby.ColumnsIndices(key)) {
 			coveredByUniqueKey = true
 			uniqueKey = key
 			break
@@ -106,14 +107,14 @@ func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregati
 				schemaByDistinct := expression.NewSchema(cols...)
 				var uniqueKey expression.KeyInfo
 				for _, key := range agg.children[0].Schema().Keys {
-					if schemaByDistinct.ColumnsIndices(key) != nil {
+					if !emptynil.IsNilSlice(schemaByDistinct.ColumnsIndices(key)) {
 						distinctByUniqueKey = true
 						uniqueKey = key
 						break
 					}
 				}
 				for _, key := range agg.children[0].Schema().UniqueKeys {
-					if schemaByDistinct.ColumnsIndices(key) != nil {
+					if !emptynil.IsNilSlice(schemaByDistinct.ColumnsIndices(key)) {
 						distinctByUniqueKey = true
 						uniqueKey = key
 						break

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -1442,7 +1443,7 @@ func TestSubqueries(t *testing.T) {
 			var r [][]any
 			for _, t := range []string{"tinner", "thash", "trange"} {
 				q := fmt.Sprintf(`select * from touter where touter.a %v (select %v.b from %v where %v.a > touter.b and %v.c > %v)`, op, t, t, t, t, x)
-				if r == nil {
+				if emptynil.IsNilSlice(r) {
 					r = tk.MustQuery(q).Sort().Rows()
 				} else {
 					tk.MustQuery(q).Sort().Check(r)
@@ -1458,7 +1459,7 @@ func TestSubqueries(t *testing.T) {
 			var r [][]any
 			for _, t := range []string{"tinner", "thash", "trange"} {
 				q := fmt.Sprintf(`select * from touter where %v (select %v.b from %v where %v.a > touter.b and %v.c > %v)`, op, t, t, t, t, x)
-				if r == nil {
+				if emptynil.IsNilSlice(r) {
 					r = tk.MustQuery(q).Sort().Rows()
 				} else {
 					tk.MustQuery(q).Sort().Check(r)
@@ -1640,7 +1641,7 @@ func TestParallelApply(t *testing.T) {
 		x := rand.Intn(10000)
 		for _, tbl := range tbls {
 			q := fmt.Sprintf(`select * from touter where touter.a > (select %v(%v.b) from %v where %v.a%vtouter.b-%v)`, agg, tbl, tbl, tbl, op, x)
-			if r == nil {
+			if emptynil.IsNilSlice(r) {
 				r = tk.MustQuery(q).Sort().Rows()
 			} else {
 				tk.MustQuery(q).Sort().Check(r)
@@ -1712,7 +1713,7 @@ func TestDirectReadingWithUnionScan(t *testing.T) {
 			for _, tb := range []string{`trange`, `tnormal`, `thash`} {
 				q := fmt.Sprintf(sql, tb)
 				tk.MustHavePlan(q, `UnionScan`)
-				if result == nil {
+				if emptynil.IsNilSlice(result) {
 					result = tk.MustQuery(q).Sort().Rows()
 				} else {
 					tk.MustQuery(q).Sort().Check(result)

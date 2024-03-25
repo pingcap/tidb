@@ -29,6 +29,7 @@ import (
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
@@ -496,7 +497,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	case *ast.AggregateFuncExpr:
 		return enterWithPlanCtx(func(planCtx *exprRewriterPlanCtx) (ast.Node, bool) {
 			index, ok := -1, false
-			if planCtx.aggrMap != nil {
+			if !emptynil.IsNilMap(planCtx.aggrMap) {
 				index, ok = planCtx.aggrMap[v]
 			}
 			if ok {
@@ -591,7 +592,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		return enterWithPlanCtx(func(planCtx *exprRewriterPlanCtx) (ast.Node, bool) {
 			intest.AssertNotNil(planCtx)
 			index, ok := -1, false
-			if planCtx.windowMap != nil {
+			if !emptynil.IsNilMap(planCtx.windowMap) {
 				index, ok = planCtx.windowMap[v]
 			}
 			if !ok {
@@ -1075,7 +1076,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 			er.err = err
 			return v, true
 		}
-		if (row != nil && !v.Not) || (row == nil && v.Not) {
+		if (!emptynil.IsNilSlice(row) && !v.Not) || (emptynil.IsNilSlice(row) && v.Not) {
 			er.ctxStackAppend(expression.NewOne(), types.EmptyName)
 		} else {
 			er.ctxStackAppend(expression.NewZero(), types.EmptyName)

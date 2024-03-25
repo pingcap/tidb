@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -78,7 +79,7 @@ func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
 		mockSm, ok := sm.(*MockSessionManager)
 		if ok {
 			mockSm.mu.Lock()
-			if mockSm.Conn == nil {
+			if emptynil.IsNilMap(mockSm.Conn) {
 				mockSm.Conn = make(map[uint64]sessiontypes.Session)
 			}
 			mockSm.Conn[tk.session.GetSessionVars().ConnectionID] = tk.session

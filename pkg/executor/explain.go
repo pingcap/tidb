@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -71,7 +72,7 @@ func (e *ExplainExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.rows == nil {
+	if emptynil.IsNilSlice(e.rows) {
 		var err error
 		e.rows, err = e.generateExplainInfo(ctx)
 		if err != nil {

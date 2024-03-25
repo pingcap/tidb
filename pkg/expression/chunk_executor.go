@@ -16,6 +16,7 @@ package expression
 
 import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -419,7 +420,7 @@ func VectorizedFilterConsiderNull(ctx EvalContext, vecEnabled bool, filters []Ex
 	} else {
 		selected, isNull, err = rowBasedFilter(ctx, filters, iterator, selected, isNull)
 	}
-	if err != nil || sel == nil {
+	if err != nil || emptynil.IsNilSlice(sel) {
 		return selected, isNull, err
 	}
 
@@ -449,7 +450,7 @@ func rowBasedFilter(ctx EvalContext, filters []Expression, iterator *chunk.Itera
 	// After the function finished, then we reset the sel in input chunk.
 	// Then the caller will handle the input.sel and selected slices.
 	input := iterator.GetChunk()
-	if input.Sel() != nil {
+	if !emptynil.IsNilSlice(input.Sel()) {
 		defer input.SetSel(input.Sel())
 		input.SetSel(nil)
 		iterator = chunk.NewIterator4Chunk(input)
@@ -459,7 +460,7 @@ func rowBasedFilter(ctx EvalContext, filters []Expression, iterator *chunk.Itera
 	for i, numRows := 0, iterator.Len(); i < numRows; i++ {
 		selected = append(selected, true)
 	}
-	if isNull != nil {
+	if !emptynil.IsNilSlice(isNull) {
 		isNull = isNull[:0]
 		for i, numRows := 0, iterator.Len(); i < numRows; i++ {
 			isNull = append(isNull, false)
@@ -493,7 +494,7 @@ func rowBasedFilter(ctx EvalContext, filters []Expression, iterator *chunk.Itera
 				}
 				selected[row.Idx()] = selected[row.Idx()] && bVal
 			}
-			if isNull != nil {
+			if !emptynil.IsNilSlice(isNull) {
 				isNull[row.Idx()] = isNull[row.Idx()] || isNullResult
 			}
 		}

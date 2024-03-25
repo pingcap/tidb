@@ -16,6 +16,7 @@ go_library(
         "//br/pkg/utils",
         "//pkg/distsql",
         "//pkg/kv",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/sessionctx/variable",
         "//pkg/tablecodec",

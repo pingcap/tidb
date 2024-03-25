@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -644,7 +645,7 @@ func checkMDLInfo(jobID int64, pool *sess.Pool) (bool, int64, error) {
 func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
 	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
 	// we shouldn't replace RawArgs with the marshaling Args.
-	if meetErr && job.RawArgs != nil && job.Args == nil {
+	if meetErr && !emptynil.IsNilSlice(job.RawArgs) && emptynil.IsNilSlice(job.Args) {
 		// However, for multi-schema change, the args of the parent job is always nil.
 		// Since Job.Encode() can handle the sub-jobs properly, we can safely update the raw args.
 		return job.MultiSchemaInfo != nil

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1763,7 +1764,7 @@ func (s *ServerInfo) isLoopBackOrUnspecifiedAddr(addr string) bool {
 		return false
 	}
 	ip := net.ParseIP(tcpAddr.IP.String())
-	return ip != nil && (ip.IsUnspecified() || ip.IsLoopback())
+	return !emptynil.IsNilSlice(ip) && (ip.IsUnspecified() || ip.IsLoopback())
 }
 
 // ResolveLoopBackAddr exports for testing.

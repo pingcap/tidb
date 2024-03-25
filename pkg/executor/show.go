@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	parserformat "github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1101,10 +1102,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 
 	// consider hypo-indexes
 	hypoIndexes := ctx.GetSessionVars().HypoIndexes
-	if hypoIndexes != nil && dbName != nil {
+	if !emptynil.IsNilMap(hypoIndexes) && dbName != nil {
 		schemaName := dbName.L
 		tblName := tableInfo.Name.L
-		if hypoIndexes[schemaName] != nil && hypoIndexes[schemaName][tblName] != nil {
+		if !emptynil.IsNilMap(hypoIndexes[schemaName]) && !emptynil.IsNilMap(hypoIndexes[schemaName][tblName]) {
 			hypoIndexList := make([]*model.IndexInfo, 0, len(hypoIndexes[schemaName][tblName]))
 			for _, index := range hypoIndexes[schemaName][tblName] {
 				hypoIndexList = append(hypoIndexList, index)

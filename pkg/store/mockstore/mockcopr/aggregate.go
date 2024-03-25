@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -81,7 +82,7 @@ func (e *hashAggExec) innerNext(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if values == nil {
+	if emptynil.IsNilSlice(values) {
 		return false, nil
 	}
 	err = e.aggregate(values)
@@ -96,7 +97,7 @@ func (e *hashAggExec) Next(ctx context.Context) (value [][]byte, err error) {
 		e.execDetail.update(begin, value)
 	}(time.Now())
 	e.count++
-	if e.aggCtxsMap == nil {
+	if emptynil.IsNilMap(e.aggCtxsMap) {
 		e.aggCtxsMap = make(aggCtxsMapper)
 	}
 	if !e.executed {
@@ -287,7 +288,7 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 
 	e.tmpGroupByRow = e.tmpGroupByRow[:0]
 	matched, firstGroup := true, false
-	if e.nextGroupByRow == nil {
+	if emptynil.IsNilSlice(e.nextGroupByRow) {
 		matched, firstGroup = false, true
 	}
 	for i, item := range e.groupByExprs {
@@ -328,7 +329,7 @@ func (e *streamAggExec) Next(ctx context.Context) (retRow [][]byte, err error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if values == nil {
+		if emptynil.IsNilSlice(values) {
 			e.executed = true
 			if !e.hasData && len(e.groupByExprs) > 0 {
 				return nil, nil

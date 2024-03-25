@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -106,7 +107,7 @@ func (ss *Schemas) BackupSchemas(
 
 		var checksum *checkpoint.ChecksumItem
 		var exists bool = false
-		if ss.checkpointChecksum != nil && schema.tableInfo != nil {
+		if !emptynil.IsNilMap(ss.checkpointChecksum) && schema.tableInfo != nil {
 			checksum, exists = ss.checkpointChecksum[schema.tableInfo.ID]
 		}
 		workerPool.ApplyOnErrorGroup(errg, func() error {

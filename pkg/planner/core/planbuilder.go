@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
@@ -1075,10 +1076,10 @@ func getPossibleAccessPaths(ctx PlanContext, tableHints *hint.PlanHints, indexHi
 	}
 
 	// consider hypo TiFlash replicas
-	if ctx.GetSessionVars().StmtCtx.InExplainStmt && ctx.GetSessionVars().HypoTiFlashReplicas != nil {
+	if ctx.GetSessionVars().StmtCtx.InExplainStmt && !emptynil.IsNilMap(ctx.GetSessionVars().HypoTiFlashReplicas) {
 		hypoReplicas := ctx.GetSessionVars().HypoTiFlashReplicas
 		originalTableName := tblInfo.Name.L
-		if hypoReplicas[dbName.L] != nil {
+		if !emptynil.IsNilMap(hypoReplicas[dbName.L]) {
 			if _, ok := hypoReplicas[dbName.L][originalTableName]; ok {
 				publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
 			}
@@ -1101,7 +1102,7 @@ func getPossibleAccessPaths(ctx PlanContext, tableHints *hint.PlanHints, indexHi
 			if tblInfo.IsCommonHandle && index.Primary {
 				continue
 			}
-			if check && latestIndexes == nil {
+			if check && emptynil.IsNilMap(latestIndexes) {
 				latestIndexes, check, err = getLatestIndexInfo(ctx, tblInfo.ID, 0)
 				if err != nil {
 					return nil, err
@@ -1118,9 +1119,9 @@ func getPossibleAccessPaths(ctx PlanContext, tableHints *hint.PlanHints, indexHi
 
 	// consider hypo-indexes
 	hypoIndexes := ctx.GetSessionVars().HypoIndexes
-	if ctx.GetSessionVars().StmtCtx.InExplainStmt && hypoIndexes != nil {
+	if ctx.GetSessionVars().StmtCtx.InExplainStmt && !emptynil.IsNilMap(hypoIndexes) {
 		originalTableName := tblInfo.Name.L
-		if hypoIndexes[dbName.L] != nil && hypoIndexes[dbName.L][originalTableName] != nil {
+		if !emptynil.IsNilMap(hypoIndexes[dbName.L]) && !emptynil.IsNilMap(hypoIndexes[dbName.L][originalTableName]) {
 			for _, index := range hypoIndexes[dbName.L][originalTableName] {
 				publicPaths = append(publicPaths, &util.AccessPath{Index: index})
 			}
@@ -1151,7 +1152,7 @@ func getPossibleAccessPaths(ctx PlanContext, tableHints *hint.PlanHints, indexHi
 		hasScanHint = true
 
 		if !isolationReadEnginesHasTiKV {
-			if hint.IndexNames != nil {
+			if !emptynil.IsNilSlice(hint.IndexNames) {
 				engineVals, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBIsolationReadEngines)
 				err := fmt.Errorf("TiDB doesn't support index in the isolation read engines(value: '%v')", engineVals)
 				if i < indexHintsLen {
@@ -1164,7 +1165,7 @@ func getPossibleAccessPaths(ctx PlanContext, tableHints *hint.PlanHints, indexHi
 		// It is syntactically valid to omit index_list for USE INDEX, which means “use no indexes”.
 		// Omitting index_list for FORCE INDEX or IGNORE INDEX is a syntax error.
 		// See https://dev.mysql.com/doc/refman/8.0/en/index-hints.html.
-		if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
+		if emptynil.IsNilSlice(hint.IndexNames) && hint.HintType != ast.HintIgnore {
 			if path := getTablePath(publicPaths); path != nil {
 				hasUseOrForce = true
 				path.Forced = true
@@ -1659,7 +1660,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 				zap.String("table", tblInfo.Name.O))
 			continue
 		}
-		if check && latestIndexes == nil {
+		if check && emptynil.IsNilMap(latestIndexes) {
 			latestIndexes, check, err = getLatestIndexInfo(b.ctx, tblInfo.ID, b.is.SchemaMetaVersion())
 			if err != nil {
 				return nil, nil, err
@@ -3594,7 +3595,7 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 
 		igc.Columns = append(igc.Columns, columnName)
 		igc.Exprs = append(igc.Exprs, expr)
-		if onDups == nil {
+		if emptynil.IsNilMap(onDups) {
 			continue
 		}
 		for dep := range column.Dependences {
@@ -3680,7 +3681,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	var extraPriv mysql.PrivilegeType
 	if insert.IsReplace {
 		extraPriv = mysql.DeletePriv
-	} else if insert.OnDuplicate != nil {
+	} else if !emptynil.IsNilSlice(insert.OnDuplicate) {
 		extraPriv = mysql.UpdatePriv
 	}
 	if extraPriv != 0 {
@@ -4714,7 +4715,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		}
 		schema := plan.Schema()
 		names := plan.OutputNames()
-		if v.Cols == nil {
+		if emptynil.IsNilSlice(v.Cols) {
 			adjustOverlongViewColname(plan.(LogicalPlan))
 			v.Cols = make([]model.CIStr, len(schema.Columns))
 			for i, name := range names {

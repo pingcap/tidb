@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -707,7 +708,7 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
 
 func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
 	// Remove the table in temporaryTables
-	if b.infoSchemaMisc.temporaryTableIDs != nil {
+	if !emptynil.IsNilMap(b.infoSchemaMisc.temporaryTableIDs) {
 		delete(b.infoSchemaMisc.temporaryTableIDs, tableID)
 	}
 

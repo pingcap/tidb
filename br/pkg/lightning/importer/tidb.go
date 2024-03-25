@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -85,7 +86,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		variable.TiDBExplicitRequestSourceType: util.ExplicitTypeLightning,
 	}
 
-	if dsn.Vars != nil {
+	if !emptynil.IsNilMap(dsn.Vars) {
 		maps.Copy(vars, dsn.Vars)
 	}
 

@@ -25,6 +25,7 @@ go_library(
         "//pkg/config",
         "//pkg/domain/resourcegroup",
         "//pkg/errno",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",

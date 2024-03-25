@@ -17,6 +17,7 @@ go_library(
         "//pkg/kv",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
+        "//pkg/parser/emptynil",
         "//pkg/parser/format",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

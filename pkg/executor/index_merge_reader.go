@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -745,7 +746,7 @@ func (w *partialTableWorker) buildTableTask(handles []kv.Handle, retChk *chunk.C
 		partialPlanID: partialPlanID,
 	}
 
-	if w.prunedPartitions != nil {
+	if !emptynil.IsNilSlice(w.prunedPartitions) {
 		task.partitionTable = w.prunedPartitions[parTblIdx]
 	}
 
@@ -1827,7 +1828,7 @@ func (w *partialIndexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.C
 		partialPlanID: partialPlanID,
 	}
 
-	if w.prunedPartitions != nil {
+	if !emptynil.IsNilSlice(w.prunedPartitions) {
 		task.partitionTable = w.prunedPartitions[parTblIdx]
 	}
 

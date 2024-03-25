@@ -15,6 +15,7 @@ go_test(
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/meta/autoid",
+        "//pkg/parser/emptynil",
         "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/store/mockstore",

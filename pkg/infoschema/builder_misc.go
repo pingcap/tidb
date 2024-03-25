@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
@@ -96,7 +97,7 @@ func applyDropResourceGroup(b *Builder, m *meta.Meta, diff *model.SchemaDiff) []
 }
 
 func (b *Builder) addTemporaryTable(tblID int64) {
-	if b.infoSchema.temporaryTableIDs == nil {
+	if emptynil.IsNilMap(b.infoSchema.temporaryTableIDs) {
 		b.infoSchema.temporaryTableIDs = make(map[int64]struct{})
 	}
 	b.infoSchema.temporaryTableIDs[tblID] = struct{}{}

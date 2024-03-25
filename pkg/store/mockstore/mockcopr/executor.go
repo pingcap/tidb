@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -53,7 +54,7 @@ type execDetail struct {
 func (e *execDetail) update(begin time.Time, row [][]byte) {
 	e.timeProcessed += time.Since(begin)
 	e.numIterations++
-	if row != nil {
+	if !emptynil.IsNilSlice(row) {
 		e.numProducedRows++
 	}
 }
@@ -104,17 +105,17 @@ func (e *tableScanExec) GetSrcExec() executor {
 }
 
 func (e *tableScanExec) ResetCounts() {
-	if e.counts != nil {
+	if !emptynil.IsNilSlice(e.counts) {
 		e.start = e.cursor
 		e.counts[e.start] = 0
 	}
 }
 
 func (e *tableScanExec) Counts() []int64 {
-	if e.counts == nil {
+	if emptynil.IsNilSlice(e.counts) {
 		return nil
 	}
-	if e.seekKey == nil {
+	if emptynil.IsNilSlice(e.seekKey) {
 		return e.counts[e.start:e.cursor]
 	}
 	return e.counts[e.start : e.cursor+1]
@@ -132,10 +133,10 @@ func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 				return nil, errors.Trace(err)
 			}
 			e.cursor++
-			if value == nil {
+			if emptynil.IsNilSlice(value) {
 				continue
 			}
-			if e.counts != nil {
+			if !emptynil.IsNilSlice(e.counts) {
 				e.counts[e.cursor-1]++
 			}
 			return value, nil
@@ -144,12 +145,12 @@ func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if value == nil {
+		if emptynil.IsNilSlice(value) {
 			e.seekKey = nil
 			e.cursor++
 			continue
 		}
-		if e.counts != nil {
+		if !emptynil.IsNilSlice(e.counts) {
 			e.counts[e.cursor]++
 		}
 		return value, nil
@@ -178,7 +179,7 @@ func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) ([][]byte, error) {
 }
 
 func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
-	if e.seekKey == nil {
+	if emptynil.IsNilSlice(e.seekKey) {
 		if e.Desc {
 			e.seekKey = ran.EndKey
 		} else {
@@ -199,7 +200,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 		// TODO: Handle lock error.
 		return nil, errors.Trace(pair.Err)
 	}
-	if pair.Key == nil {
+	if emptynil.IsNilSlice(pair.Key) {
 		return nil, nil
 	}
 	if e.Desc {
@@ -261,17 +262,17 @@ func (e *indexScanExec) GetSrcExec() executor {
 }
 
 func (e *indexScanExec) ResetCounts() {
-	if e.counts != nil {
+	if !emptynil.IsNilSlice(e.counts) {
 		e.start = e.cursor
 		e.counts[e.start] = 0
 	}
 }
 
 func (e *indexScanExec) Counts() []int64 {
-	if e.counts == nil {
+	if emptynil.IsNilSlice(e.counts) {
 		return nil
 	}
-	if e.seekKey == nil {
+	if emptynil.IsNilSlice(e.seekKey) {
 		return e.counts[e.start:e.cursor]
 	}
 	return e.counts[e.start : e.cursor+1]
@@ -293,10 +294,10 @@ func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 				return nil, errors.Trace(err)
 			}
 			e.cursor++
-			if value == nil {
+			if emptynil.IsNilSlice(value) {
 				continue
 			}
-			if e.counts != nil {
+			if !emptynil.IsNilSlice(e.counts) {
 				e.counts[e.cursor-1]++
 			}
 		} else {
@@ -304,12 +305,12 @@ func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if value == nil {
+			if emptynil.IsNilSlice(value) {
 				e.cursor++
 				e.seekKey = nil
 				continue
 			}
-			if e.counts != nil {
+			if !emptynil.IsNilSlice(e.counts) {
 				e.counts[e.cursor]++
 			}
 		}
@@ -332,7 +333,7 @@ func (e *indexScanExec) getRowFromPoint(ran kv.KeyRange) ([][]byte, error) {
 }
 
 func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
-	if e.seekKey == nil {
+	if emptynil.IsNilSlice(e.seekKey) {
 		if e.Desc {
 			e.seekKey = ran.EndKey
 		} else {
@@ -353,7 +354,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 		// TODO: Handle lock error.
 		return nil, errors.Trace(pair.Err)
 	}
-	if pair.Key == nil {
+	if emptynil.IsNilSlice(pair.Key) {
 		return nil, nil
 	}
 	if e.Desc {
@@ -434,7 +435,7 @@ func (e *selectionExec) Next(ctx context.Context) (value [][]byte, err error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if value == nil {
+		if emptynil.IsNilSlice(value) {
 			return nil, nil
 		}
 
@@ -494,7 +495,7 @@ func (e *topNExec) innerNext(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if value == nil {
+	if emptynil.IsNilSlice(value) {
 		return false, nil
 	}
 	err = e.evalTopN(value)
@@ -598,7 +599,7 @@ func (e *limitExec) Next(ctx context.Context) (value [][]byte, err error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if value == nil {
+	if emptynil.IsNilSlice(value) {
 		return nil, nil
 	}
 	e.cursor++
@@ -607,7 +608,7 @@ func (e *limitExec) Next(ctx context.Context) (value [][]byte, err error) {
 
 func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 	offset, ok := colIDs[id]
-	if ok && data[offset] != nil {
+	if ok && !emptynil.IsNilSlice(data[offset]) {
 		return true
 	}
 	return false
@@ -622,7 +623,7 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if values == nil {
+	if emptynil.IsNilSlice(values) {
 		values = make([][]byte, len(colIDs))
 	}
 	// Fill the handle and null columns.

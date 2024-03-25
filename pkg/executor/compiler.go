@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -562,14 +563,14 @@ func getDbFromResultNode(resultNode ast.ResultSetNode) []string { // may have du
 	case *ast.Join:
 		if x.Left != nil {
 			dbs := getDbFromResultNode(x.Left)
-			if dbs != nil {
+			if !emptynil.IsNilSlice(dbs) {
 				dbLabels = append(dbLabels, dbs...)
 			}
 		}
 
 		if x.Right != nil {
 			dbs := getDbFromResultNode(x.Right)
-			if dbs != nil {
+			if !emptynil.IsNilSlice(dbs) {
 				dbLabels = append(dbLabels, dbs...)
 			}
 		}

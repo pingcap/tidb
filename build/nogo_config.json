@@ -476,7 +476,8 @@
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
-      "/cgo/": "ignore cgo"
+      "/cgo/": "ignore cgo",
+      "build/linter/emptynil/testdata/": "ignore testdata"
     }
   },
   "noloopclosure": {
@@ -1312,14 +1313,16 @@
       "external/": "no need to vet third party code"
     }
   },
-  "emptyslice": {
+  "emptynil": {
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
       "external/": "no need to vet third party code",
-      "build/linter/emptyslice/testdata/": "no need to vet the test inside the linter",
-      ".*\\.pb\\.go$": "ignore generated code"
+      "/cgo/": "no need to vet thrid party code for cgo",
+      "build/linter/emptynil/testdata/": "no need to vet the test inside the linter",
+      ".*\\.pb\\.go$": "ignore generated code",
+      "pkg/extension/enterprise/": "ignore extension code"
     }
   },
   "QF1002": {

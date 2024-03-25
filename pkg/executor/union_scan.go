@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -148,7 +149,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		// no more data.
-		if row == nil {
+		if emptynil.IsNilSlice(row) {
 			return nil
 		}
 		mutableRow.SetDatums(row...)
@@ -204,10 +205,10 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 
 	var row []types.Datum
 	var isSnapshotRow bool
-	if addedRow == nil {
+	if emptynil.IsNilSlice(addedRow) {
 		row = snapshotRow
 		isSnapshotRow = true
-	} else if snapshotRow == nil {
+	} else if emptynil.IsNilSlice(snapshotRow) {
 		row = addedRow
 	} else {
 		isSnapshotRowInt, err := us.compare(us.Ctx().GetSessionVars().StmtCtx, snapshotRow, addedRow)
@@ -221,7 +222,7 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 			row = addedRow
 		}
 	}
-	if row == nil {
+	if emptynil.IsNilSlice(row) {
 		return nil, nil
 	}
 
@@ -275,7 +276,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 }
 
 func (us *UnionScanExec) getAddedRow() ([]types.Datum, error) {
-	if us.cursor4AddRows == nil {
+	if emptynil.IsNilSlice(us.cursor4AddRows) {
 		var err error
 		us.cursor4AddRows, err = us.addedRowsIter.Next()
 		if err != nil {

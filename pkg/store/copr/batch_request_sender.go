@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -75,7 +76,7 @@ func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *tikv.RP
 	}
 	start := time.Now()
 	resp, err = ss.GetClient().SendRequest(ctx, rpcCtx.Addr, req, timout)
-	if ss.Stats != nil && ss.enableCollectExecutionInfo {
+	if !emptynil.IsNilMap(ss.Stats) && ss.enableCollectExecutionInfo {
 		tikv.RecordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
 	}
 	if err != nil {

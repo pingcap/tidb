@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -447,7 +448,7 @@ func TestTxnSavepoint1(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set session tidb_txn_mode='%v';", txnMode))
 		for idx, ca := range cases {
 			comment := fmt.Sprintf("idx: %v, %#v", idx, ca)
-			if ca.result == nil {
+			if emptynil.IsNilSlice(ca.result) {
 				if ca.err == "" {
 					tk.MustExec(ca.sql)
 				} else {

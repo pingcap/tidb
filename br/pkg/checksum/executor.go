@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -307,7 +308,7 @@ func sendChecksumRequest(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if data == nil {
+		if emptynil.IsNilSlice(data) {
 			break
 		}
 		checksum := &tipb.ChecksumResponse{}

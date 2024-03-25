@@ -8,6 +8,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
@@ -87,7 +88,7 @@ func TestAllocator(t *testing.T) {
 					Partition: &model.PartitionInfo{},
 				},
 			}
-			if c.partitions != nil {
+			if !emptynil.IsNilMap(c.partitions) {
 				for _, part := range c.partitions[id] {
 					table.Info.Partition.Definitions = append(table.Info.Partition.Definitions, model.PartitionDefinition{ID: part})
 				}

@@ -18,6 +18,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/kv",
+        "//pkg/parser/emptynil",
         "//pkg/store/mockstore/unistore/client",
         "//pkg/store/mockstore/unistore/config",
         "//pkg/store/mockstore/unistore/cophandler",
@@ -69,6 +70,7 @@ go_test(
     flaky = True,
     shard_count = 28,
     deps = [
+        "//pkg/parser/emptynil",
         "//pkg/store/mockstore/unistore/config",
         "//pkg/store/mockstore/unistore/lockstore",
         "//pkg/store/mockstore/unistore/tikv/kverrors",

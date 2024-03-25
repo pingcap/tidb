@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -37,7 +38,7 @@ func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBit
 		// if params had received via ComStmtSendLongData, use them directly.
 		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
 		// see clientConn#handleStmtSendLongData
-		if boundParams[i] != nil {
+		if !emptynil.IsNilSlice(boundParams[i]) {
 			params[i] = param.BinaryParam{
 				Tp:  mysql.TypeBlob,
 				Val: enc.DecodeInput(boundParams[i]),

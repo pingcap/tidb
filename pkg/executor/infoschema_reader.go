@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -3652,7 +3653,7 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 		err = errors.New("empty label rule type")
 		return
 	}
-	if rule.Labels == nil || len(rule.Labels) == 0 {
+	if emptynil.IsNilSlice(rule.Labels) || len(rule.Labels) == 0 {
 		err = errors.New("the label rule has no label")
 		return
 	}

@@ -19,6 +19,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +30,7 @@ type mockCacheKey struct {
 }
 
 func (mk *mockCacheKey) Hash() []byte {
-	if mk.hash != nil {
+	if !emptynil.IsNilSlice(mk.hash) {
 		return mk.hash
 	}
 	mk.hash = make([]byte, 8)

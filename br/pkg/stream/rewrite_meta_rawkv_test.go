@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -27,7 +28,7 @@ func mockGenGenGlobalID(ctx context.Context) (int64, error) {
 }
 
 func MockEmptySchemasReplace(midr *mockInsertDeleteRange, dbMap map[UpstreamID]*DBReplace) *SchemasReplace {
-	if dbMap == nil {
+	if emptynil.IsNilMap(dbMap) {
 		dbMap = make(map[UpstreamID]*DBReplace)
 	}
 	if midr == nil {

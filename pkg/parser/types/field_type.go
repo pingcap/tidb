@@ -22,6 +22,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
@@ -248,7 +249,7 @@ func (ft *FieldType) SetElemWithIsBinaryLit(idx int, element string, isBinaryLit
 	ft.elems[idx] = element
 	if isBinaryLit {
 		// Create the binary literal flags lazily.
-		if ft.elemsIsBinaryLit == nil {
+		if emptynil.IsNilSlice(ft.elemsIsBinaryLit) {
 			ft.elemsIsBinaryLit = make([]bool, len(ft.elems))
 		}
 		ft.elemsIsBinaryLit[idx] = true
@@ -270,7 +271,7 @@ func (ft *FieldType) GetElemIsBinaryLit(idx int) bool {
 
 // CleanElemIsBinaryLit cleans the binary literal flag of the element at index idx.
 func (ft *FieldType) CleanElemIsBinaryLit() {
-	if ft != nil && ft.elemsIsBinaryLit != nil {
+	if ft != nil {
 		ft.elemsIsBinaryLit = nil
 	}
 }

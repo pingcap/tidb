@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -102,18 +103,18 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 
 // WriteRow implements ingest.Writer.
 func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
-	if w.minKey == nil {
+	if emptynil.IsNilSlice(w.minKey) {
 		w.minKey = slices.Clone(idxKey)
 	}
 	// 1. encode data and write to kvStore.
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
 	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
-	if buf == nil {
+	if emptynil.IsNilSlice(buf) {
 		w.kvBuffer.Reset()
 		buf, _ = w.kvBuffer.AllocBytesWithSliceLocation(length)
 		// we now don't support KV larger than blockSize
-		if buf == nil {
+		if emptynil.IsNilSlice(buf) {
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
 		// 2. write statistics if one kvBuffer is used.

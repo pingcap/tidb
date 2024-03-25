@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -442,7 +443,7 @@ func EncodeCMSketchWithoutTopN(c *CMSketch) ([]byte, error) {
 
 // DecodeCMSketchAndTopN decode a CMSketch from the given byte slice.
 func DecodeCMSketchAndTopN(data []byte, topNRows []chunk.Row) (*CMSketch, *TopN, error) {
-	if data == nil && len(topNRows) == 0 {
+	if emptynil.IsNilSlice(data) && len(topNRows) == 0 {
 		return nil, nil, nil
 	}
 	if len(data) == 0 {
@@ -786,7 +787,7 @@ func (c *TopN) MemoryUsage() (sum int64) {
 // queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
 // If such elements does not in topn elements, nothing will happen and false will be returned.
 func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
-	if c == nil || c.TopN == nil {
+	if c == nil || emptynil.IsNilSlice(c.TopN) {
 		return false
 	}
 	idx := c.FindTopN(d)

@@ -20,6 +20,7 @@ import (
 
 	"github.com/dolthub/swiss"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -195,7 +196,7 @@ func EncodeFMSketch(c *FMSketch) ([]byte, error) {
 
 // DecodeFMSketch decode a FMSketch from the given byte slice.
 func DecodeFMSketch(data []byte) (*FMSketch, error) {
-	if data == nil {
+	if emptynil.IsNilSlice(data) {
 		return nil, nil
 	}
 	p := &tipb.FMSketch{}

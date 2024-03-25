@@ -19,6 +19,7 @@ go_library(
         "//pkg/expression",
         "//pkg/kv",
         "//pkg/parser/ast",
+        "//pkg/parser/emptynil",
         "//pkg/parser/format",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

@@ -36,6 +36,7 @@ import (
 	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -255,7 +256,7 @@ func generateNonPartitionPlan(
 	}
 
 	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.ddlCtx, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
-	if startKey == nil && endKey == nil {
+	if emptynil.IsNilSlice(startKey) && emptynil.IsNilSlice(endKey) {
 		// Empty table.
 		return nil, nil
 	}
@@ -351,7 +352,7 @@ func generateGlobalSortIngestPlan(
 		hasSubtasks := false
 		err := forEachBackfillSubtaskMeta(taskHandle, task.ID, step, func(subtask *BackfillSubTaskMeta) {
 			hasSubtasks = true
-			if kvMetaGroups == nil {
+			if emptynil.IsNilSlice(kvMetaGroups) {
 				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
 			}
 			for i, cur := range subtask.MetaGroups {
@@ -470,7 +471,7 @@ func generateMergePlan(
 	var kvMetaGroups []*external.SortedKVMeta
 	err := forEachBackfillSubtaskMeta(taskHandle, task.ID, proto.BackfillStepReadIndex,
 		func(subtask *BackfillSubTaskMeta) {
-			if kvMetaGroups == nil {
+			if emptynil.IsNilSlice(kvMetaGroups) {
 				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
 				multiStatsGroup = make([][]external.MultipleFilesStat, len(subtask.MetaGroups))
 			}

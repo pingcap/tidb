@@ -14,7 +14,11 @@
 
 package tracing
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
+)
 
 // PlanTrace indicates for the Plan trace information
 type PlanTrace struct {
@@ -32,7 +36,7 @@ type PlanTrace struct {
 
 // AppendChildrenID appends children ids
 func (p *PlanTrace) AppendChildrenID(ids ...int) {
-	if p.mapChildren == nil {
+	if emptynil.IsNilMap(p.mapChildren) {
 		p.mapChildren = make(map[int]struct{})
 	}
 	for _, id := range ids {

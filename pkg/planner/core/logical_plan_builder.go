@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -640,7 +641,7 @@ func extractTableAlias(p Plan, parentOffset int) *h.HintedTable {
 			blockAsNames = *p
 		}
 		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
-		if qbOffset != parentOffset && blockAsNames != nil && blockAsNames[qbOffset].TableName.L != "" {
+		if qbOffset != parentOffset && !emptynil.IsNilSlice(blockAsNames) && blockAsNames[qbOffset].TableName.L != "" {
 			qbOffset = parentOffset
 		}
 		dbName := firstName.DBName
@@ -787,7 +788,7 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *h.PlanHints) {
 		p.preferJoinType = 0
 	}
 	// set the join order
-	if hintInfo.LeadingJoinOrder != nil {
+	if !emptynil.IsNilSlice(hintInfo.LeadingJoinOrder) {
 		p.preferJoinOrder = hintInfo.MatchTableName([]*h.HintedTable{lhsAlias, rhsAlias}, hintInfo.LeadingJoinOrder)
 	}
 	// set hintInfo for further usage if this hint info can be used.
@@ -1034,7 +1035,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 		if err != nil {
 			return nil, err
 		}
-	} else if joinNode.Using != nil {
+	} else if !emptynil.IsNilSlice(joinNode.Using) {
 		err = b.buildUsingClause(joinPlan, leftPlan, rightPlan, joinNode)
 		if err != nil {
 			return nil, err
@@ -1129,7 +1130,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	}
 
 	// Check using clause with ambiguous columns.
-	if filter != nil {
+	if !emptynil.IsNilMap(filter) {
 		checkAmbiguous := func(names types.NameSlice) error {
 			columnNameInFilter := set.StringSet{}
 			for _, name := range names {
@@ -1511,7 +1512,7 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 		CorrelatedColUniqueID: correlatedColUniqueID,
 	}
 	if b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
-		if b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol == nil {
+		if emptynil.IsNilMap(b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol) {
 			b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = make(map[string]int, 1)
 		}
 		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[string(expr.HashCode())] = int(newCol.UniqueID)
@@ -2317,7 +2318,7 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byI
 		it = b.replaceGroupingFunc(it)
 
 		// check whether ORDER BY items show up in SELECT DISTINCT fields, see #12442
-		if hasDistinct && projExprs != nil {
+		if hasDistinct && !emptynil.IsNilSlice(projExprs) {
 			err = b.checkOrderByInDistinct(item, i, it, p, projExprs, oldLen)
 			if err != nil {
 				return nil, err
@@ -4142,7 +4143,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	// Some SQL statements define WINDOW but do not use them. But we also need to check the window specification list.
 	// For example: select id from t group by id WINDOW w AS (ORDER BY uids DESC) ORDER BY id;
 	// We don't use the WINDOW w, but if the 'uids' column is not in the table t, we still need to report an error.
-	if hasWindowFuncField || sel.WindowSpecs != nil {
+	if hasWindowFuncField || !emptynil.IsNilSlice(sel.WindowSpecs) {
 		if b.buildingRecursivePartForCTE {
 			return nil, plannererrors.ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
 		}
@@ -4264,7 +4265,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	var windowMapper map[*ast.WindowFuncExpr]int
-	if hasWindowFuncField || sel.WindowSpecs != nil {
+	if hasWindowFuncField || !emptynil.IsNilSlice(sel.WindowSpecs) {
 		windowFuncs := extractWindowFuncs(sel.Fields.Fields)
 		// we need to check the func args first before we check the window spec
 		err := b.checkWindowFuncArgs(ctx, p, windowFuncs, windowAggMap)
@@ -5079,7 +5080,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// Adding ExtraPhysTblIDCol for SelectLock (SELECT FOR UPDATE) is done when building SelectLock
 
-	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
+	if emptynil.IsNilMap(sessionVars.StmtCtx.TblInfo2UnionScan) {
 		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	}
 	sessionVars.StmtCtx.TblInfo2UnionScan[tableInfo] = dirty
@@ -5091,7 +5092,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 func (ds *DataSource) ExtractFD() *fd.FDSet {
 	// FD in datasource (leaf node) can be cached and reused.
 	// Once the all conditions are not equal to nil, built it again.
-	if ds.fdSet == nil || ds.allConds != nil {
+	if ds.fdSet == nil || !emptynil.IsNilSlice(ds.allConds) {
 		fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
 		allCols := intset.NewFastIntSet()
 		// should use the column's unique ID avoiding fdSet conflict.
@@ -5336,7 +5337,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 // checkRecursiveView checks whether this view is recursively defined.
 func (b *PlanBuilder) checkRecursiveView(dbName model.CIStr, tableName model.CIStr) (func(), error) {
 	viewFullName := dbName.L + "." + tableName.L
-	if b.buildingViewStack == nil {
+	if emptynil.IsNilMap(b.buildingViewStack) {
 		b.buildingViewStack = set.NewStringSet()
 	}
 	// If this view has already been on the building stack, it means
@@ -5486,7 +5487,7 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, t
 	// In the old version of VIEW implementation, tableInfo.View.Cols is used to
 	// store the origin columns' names of the underlying SelectStmt used when
 	// creating the view.
-	if tableInfo.View.Cols != nil {
+	if !emptynil.IsNilSlice(tableInfo.View.Cols) {
 		cols = cols[:0]
 		outputNamesOfUnderlyingSelect = outputNamesOfUnderlyingSelect[:0]
 		for _, info := range columnInfo {
@@ -5504,7 +5505,7 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, t
 	projNames := make(types.NameSlice, 0, len(tableInfo.Columns))
 	for i, name := range outputNamesOfUnderlyingSelect {
 		origColName := name.ColName
-		if tableInfo.View.Cols != nil {
+		if !emptynil.IsNilSlice(tableInfo.View.Cols) {
 			origColName = tableInfo.View.Cols[i]
 		}
 		projNames = append(projNames, &types.FieldName{

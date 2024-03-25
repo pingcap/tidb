@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -505,7 +506,7 @@ func ExpressionsSemanticEqual(expr1, expr2 Expression) bool {
 
 // simpleCanonicalizedHashCode is used to judge whether two expression is semantically equal.
 func simpleCanonicalizedHashCode(sf *ScalarFunction) {
-	if sf.canonicalhashcode != nil {
+	if !emptynil.IsNilSlice(sf.canonicalhashcode) {
 		sf.canonicalhashcode = sf.canonicalhashcode[:0]
 	}
 	sf.canonicalhashcode = append(sf.canonicalhashcode, scalarFunctionFlag)

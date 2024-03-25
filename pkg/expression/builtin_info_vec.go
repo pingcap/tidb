@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -166,7 +167,7 @@ func (b *builtinCurrentRoleSig) vecEvalString(ctx EvalContext, input *chunk.Chun
 		return err
 	}
 
-	if roles == nil {
+	if emptynil.IsNilSlice(roles) {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
 

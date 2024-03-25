@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -349,7 +350,7 @@ func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLim
 		g.firstBuild = false
 	}()
 
-	if g.stack == nil {
+	if emptynil.IsNilSlice(g.stack) {
 		g.stack = make([][]types.Datum, 0, len(g.tbl.KeyColumns))
 	}
 
@@ -379,11 +380,11 @@ func (g *ScanQueryGenerator) IsExhausted() bool {
 }
 
 func (g *ScanQueryGenerator) setStack(key []types.Datum) error {
-	if key == nil {
+	if emptynil.IsNilSlice(key) {
 		key = g.keyRangeStart
 	}
 
-	if key == nil {
+	if emptynil.IsNilSlice(key) {
 		g.stack = g.stack[:0]
 		return nil
 	}

@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -187,7 +188,7 @@ func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *stmtS
 func (ssbde *stmtSummaryByDigestEvicted) ToEvictedCountDatum() [][]types.Datum {
 	records := make([][]types.Datum, 0, ssbde.history.Len())
 	for e := ssbde.history.Back(); e != nil; e = e.Prev() {
-		if record := e.Value.(*stmtSummaryByDigestEvictedElement).toEvictedCountDatum(); record != nil {
+		if record := e.Value.(*stmtSummaryByDigestEvictedElement).toEvictedCountDatum(); !emptynil.IsNilSlice(record) {
 			records = append(records, record)
 		}
 	}

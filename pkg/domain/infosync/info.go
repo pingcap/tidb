@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -464,7 +465,7 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 	if isExist {
 		return progressCache, nil
 	}
-	if *tiFlashStores == nil {
+	if emptynil.IsNilMap(*tiFlashStores) {
 		// We need the up-to-date information about TiFlash stores.
 		// Since TiFlash Replica synchronize may happen immediately after new TiFlash stores are added.
 		tikvStats, err := is.tiflashReplicaManager.GetStoresStat(context.Background())
@@ -498,7 +499,7 @@ func pdResponseHandler(resp *http.Response, res any) error {
 		return err
 	}
 	if resp.StatusCode == http.StatusOK {
-		if res != nil && bodyBytes != nil {
+		if res != nil && !emptynil.IsNilSlice(bodyBytes) {
 			return json.Unmarshal(bodyBytes, res)
 		}
 		return nil

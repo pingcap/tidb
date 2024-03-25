@@ -51,7 +51,7 @@ const (
 
 // GetStr fetches the given key from the fix control map as a string type.
 func GetStr(fixControlMap map[uint64]string, key uint64) (value string, exists bool) {
-	if fixControlMap == nil {
+	if len(fixControlMap) == 0 {
 		return "", false
 	}
 	rawValue, ok := fixControlMap[key]
@@ -73,7 +73,7 @@ func GetStrWithDefault(fixControlMap map[uint64]string, key uint64, defaultVal s
 
 // GetBool fetches the given key from the fix control map as a boolean type.
 func GetBool(fixControlMap map[uint64]string, key uint64) (value bool, exists bool) {
-	if fixControlMap == nil {
+	if len(fixControlMap) == 0 {
 		return false, false
 	}
 	rawValue, ok := fixControlMap[key]
@@ -97,7 +97,7 @@ func GetBoolWithDefault(fixControlMap map[uint64]string, key uint64, defaultVal 
 
 // GetInt fetches the given key from the fix control map as an uint64 type.
 func GetInt(fixControlMap map[uint64]string, key uint64) (value int64, exists bool, parseErr error) {
-	if fixControlMap == nil {
+	if len(fixControlMap) == 0 {
 		return 0, false, nil
 	}
 	rawValue, ok := fixControlMap[key]
@@ -121,7 +121,7 @@ func GetIntWithDefault(fixControlMap map[uint64]string, key uint64, defaultVal i
 
 // GetFloat fetches the given key from the fix control map as a float64 type.
 func GetFloat(fixControlMap map[uint64]string, key uint64) (value float64, exists bool, parseErr error) {
-	if fixControlMap == nil {
+	if len(fixControlMap) == 0 {
 		return 0, false, nil
 	}
 	rawValue, ok := fixControlMap[key]

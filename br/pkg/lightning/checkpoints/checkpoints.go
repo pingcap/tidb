@@ -38,6 +38,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
@@ -1133,15 +1134,15 @@ func newFileCheckpointsDB(
 	}
 	// FIXME: patch for empty map may need initialize manually, because currently
 	// FIXME: a map of zero size -> marshall -> unmarshall -> become nil, see checkpoint_test.go
-	if cpdb.checkpoints.Checkpoints == nil {
+	if emptynil.IsNilMap(cpdb.checkpoints.Checkpoints) {
 		cpdb.checkpoints.Checkpoints = map[string]*checkpointspb.TableCheckpointModel{}
 	}
 	for _, table := range cpdb.checkpoints.Checkpoints {
-		if table.Engines == nil {
+		if emptynil.IsNilMap(table.Engines) {
 			table.Engines = map[int32]*checkpointspb.EngineCheckpointModel{}
 		}
 		for _, engine := range table.Engines {
-			if engine.Chunks == nil {
+			if emptynil.IsNilMap(engine.Chunks) {
 				engine.Chunks = map[string]*checkpointspb.ChunkCheckpointModel{}
 			}
 		}
@@ -1242,7 +1243,7 @@ func (cpdb *FileCheckpointsDB) Initialize(_ context.Context, cfg *config.Config,
 		LightningVer: build.ReleaseVersion,
 	}
 
-	if cpdb.checkpoints.Checkpoints == nil {
+	if emptynil.IsNilMap(cpdb.checkpoints.Checkpoints) {
 		cpdb.checkpoints.Checkpoints = make(map[string]*checkpointspb.TableCheckpointModel)
 	}
 

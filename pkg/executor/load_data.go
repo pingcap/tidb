@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -668,7 +669,7 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 }
 
 func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum) error {
-	if row == nil {
+	if emptynil.IsNilSlice(row) {
 		return nil
 	}
 	return w.addRecord(ctx, row)

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -183,7 +184,7 @@ func (e *InsertValues) initEvalBuffer() {
 }
 
 func (e *InsertValues) lazilyInitColDefaultValBuf() (ok bool) {
-	if e.colDefaultVals != nil {
+	if !emptynil.IsNilSlice(e.colDefaultVals) {
 		return true
 	}
 
@@ -576,7 +577,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 
 // getColDefaultValue gets the column default value.
 func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.Datum, err error) {
-	if !col.DefaultIsExpr && e.colDefaultVals != nil && e.colDefaultVals[idx].valid {
+	if !col.DefaultIsExpr && !emptynil.IsNilSlice(e.colDefaultVals) && e.colDefaultVals[idx].valid {
 		return e.colDefaultVals[idx].val, nil
 	}
 

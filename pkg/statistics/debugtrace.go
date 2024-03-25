@@ -17,6 +17,7 @@ package statistics
 import (
 	"slices"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/types"
@@ -88,7 +89,7 @@ func traceColStats(colStats *Column, id int64, out *statsTblColOrIdxInfo) {
 	out.Correlation = colStats.Correlation
 	out.StatsVer = colStats.StatsVer
 	out.LoadingStatus = colStats.StatsLoadedStatus.StatusToString()
-	if colStats.Histogram.Buckets == nil {
+	if emptynil.IsNilSlice(colStats.Histogram.Buckets) {
 		out.HistogramSize = -1
 	} else {
 		out.HistogramSize = len(colStats.Histogram.Buckets)
@@ -116,7 +117,7 @@ func traceIdxStats(idxStats *Index, id int64, out *statsTblColOrIdxInfo) {
 	out.Correlation = idxStats.Correlation
 	out.StatsVer = idxStats.StatsVer
 	out.LoadingStatus = idxStats.StatsLoadedStatus.StatusToString()
-	if idxStats.Histogram.Buckets == nil {
+	if emptynil.IsNilSlice(idxStats.Histogram.Buckets) {
 		out.HistogramSize = -1
 	} else {
 		out.HistogramSize = len(idxStats.Histogram.Buckets)

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/duration"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
@@ -258,7 +259,7 @@ func (c *ColumnInfo) SetOriginDefaultValue(value interface{}) error {
 
 // GetOriginDefaultValue gets the origin default value.
 func (c *ColumnInfo) GetOriginDefaultValue() interface{} {
-	if c.GetType() == mysql.TypeBit && c.OriginDefaultValueBit != nil {
+	if c.GetType() == mysql.TypeBit && !emptynil.IsNilSlice(c.OriginDefaultValueBit) {
 		// If the column type is BIT, both `OriginDefaultValue` and `DefaultValue` of ColumnInfo are corrupted,
 		// because the content before json.Marshal is INCONSISTENT with the content after json.Unmarshal.
 		return string(c.OriginDefaultValueBit)
@@ -289,7 +290,7 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 // Default value use to stored in DefaultValue field, but now,
 // bit type default value will store in DefaultValueBit for fix bit default value decode/encode bug.
 func (c *ColumnInfo) GetDefaultValue() interface{} {
-	if c.GetType() == mysql.TypeBit && c.DefaultValueBit != nil {
+	if c.GetType() == mysql.TypeBit && !emptynil.IsNilSlice(c.DefaultValueBit) {
 		return string(c.DefaultValueBit)
 	}
 	return c.DefaultValue
@@ -1282,7 +1283,7 @@ func (pi *PartitionInfo) SetStateByID(id int64, state SchemaState) {
 			return
 		}
 	}
-	if pi.States == nil {
+	if emptynil.IsNilSlice(pi.States) {
 		pi.States = make([]PartitionState, 0, 1)
 	}
 	pi.States = append(pi.States, newState)

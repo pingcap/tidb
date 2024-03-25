@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -410,7 +411,7 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 
 	// Test Next.
 	var response SelectResult
-	if planIDs == nil {
+	if emptynil.IsNilSlice(planIDs) {
 		response, err = Select(context.TODO(), sctx, request, colTypes)
 	} else {
 		response, err = SelectWithRuntimeStats(context.TODO(), sctx, request, colTypes, planIDs, 1)

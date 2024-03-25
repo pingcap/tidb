@@ -35,6 +35,7 @@ import (
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"go.uber.org/zap"
@@ -1143,10 +1144,10 @@ func buildCompactions(files []*fileMetadata, maxCompactionSize int) []*compactio
 	buckets := make([]kvStatsBucket, 0, len(files))
 	for _, file := range files {
 		buckets = append(buckets, file.kvStats.Histogram...)
-		if startKey == nil || bytes.Compare(file.startKey, startKey) < 0 {
+		if emptynil.IsNilSlice(startKey) || bytes.Compare(file.startKey, startKey) < 0 {
 			startKey = file.startKey
 		}
-		if endKey == nil || bytes.Compare(file.endKey, endKey) > 0 {
+		if emptynil.IsNilSlice(endKey) || bytes.Compare(file.endKey, endKey) > 0 {
 			endKey = file.endKey
 		}
 	}

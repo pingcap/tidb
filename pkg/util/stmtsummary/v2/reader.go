@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -125,7 +126,7 @@ func (r *MemReader) Rows() [][]types.Datum {
 			rows = append(rows, row)
 		}()
 	}
-	if r.checker.digests == nil {
+	if emptynil.IsNilMap(r.checker.digests) {
 		func() {
 			evicted.Lock()
 			defer evicted.Unlock()
@@ -412,7 +413,7 @@ func (c *stmtChecker) hasPrivilege(authUsers map[string]struct{}) bool {
 }
 
 func (c *stmtChecker) isDigestValid(digest string) bool {
-	if c.digests == nil {
+	if emptynil.IsNilMap(c.digests) {
 		return true
 	}
 	return c.digests.Exist(digest)

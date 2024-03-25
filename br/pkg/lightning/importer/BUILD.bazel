@@ -55,6 +55,7 @@ go_library(
         "//pkg/meta/autoid",
         "//pkg/parser",
         "//pkg/parser/ast",
+        "//pkg/parser/emptynil",
         "//pkg/parser/format",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

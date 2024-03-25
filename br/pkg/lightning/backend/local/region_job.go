@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -235,7 +236,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if firstKey == nil {
+	if emptynil.IsNilSlice(firstKey) {
 		j.convertStageTo(ingested)
 		log.FromContext(ctx).Debug("keys within region is empty, skip doIngest",
 			logutil.Key("start", j.keyRange.Start),
@@ -686,7 +687,7 @@ func (j *regionJob) convertStageOnIngestError(
 	case errPb.EpochNotMatch != nil:
 		j.lastRetryableErr = common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
 
-		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
+		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); !emptynil.IsNilSlice(currentRegions) {
 			var currentRegion *metapb.Region
 			for _, r := range currentRegions {
 				if insideRegion(r, j.writeResult.sstMeta) {

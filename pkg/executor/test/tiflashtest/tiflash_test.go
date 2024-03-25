@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -374,7 +375,7 @@ func TestTiFlashPartitionTableShuffledHashJoin(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", mode))
 			for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
 				q := fmt.Sprintf("select count(*) from %v t1 join %v t2 on t1.a=t2.a where %v", tbl, tbl, cond)
-				if res == nil {
+				if emptynil.IsNilSlice(res) {
 					res = tk.MustQuery(q).Sort().Rows()
 				} else {
 					tk.MustQuery(q).Check(res)
@@ -439,7 +440,7 @@ func TestTiFlashPartitionTableReader(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", mode))
 			for _, tbl := range []string{"thash", "trange", "tlist", "tnormal"} {
 				q := fmt.Sprintf("select * from %v where %v", tbl, cond)
-				if res == nil {
+				if emptynil.IsNilSlice(res) {
 					res = tk.MustQuery(q).Sort().Rows()
 				} else {
 					tk.MustQuery(q).Sort().Check(res)
@@ -990,7 +991,7 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 			for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
 				q := fmt.Sprintf("select /*+ HASH_AGG() */ count(*) from %v t1 where %v", tbl, cond)
 				tk.MustHavePlan(q, "HashAgg")
-				if res == nil {
+				if emptynil.IsNilSlice(res) {
 					res = tk.MustQuery(q).Sort().Rows()
 				} else {
 					tk.MustQuery(q).Check(res)
@@ -1059,7 +1060,7 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", mode))
 			for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
 				q := fmt.Sprintf("select count(*) from %v t1 join %v t2 on t1.a=t2.a where %v", tbl, tbl, cond)
-				if res == nil {
+				if emptynil.IsNilSlice(res) {
 					res = tk.MustQuery(q).Sort().Rows()
 				} else {
 					tk.MustQuery(q).Check(res)

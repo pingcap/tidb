@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -144,7 +145,7 @@ func TestWeakConsistencyRead(t *testing.T) {
 		for _, rs := range rss {
 			rs.Close()
 		}
-		if rows != nil {
+		if !emptynil.IsNilSlice(rows) {
 			tk.MustQuery(sql).Check(rows)
 		}
 		lastWeakConsistency := tk.Session().GetSessionVars().StmtCtx.WeakConsistency

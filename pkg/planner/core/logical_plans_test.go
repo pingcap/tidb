@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -2330,10 +2331,10 @@ func TestRollupExpand(t *testing.T) {
 	require.Equal(t, builder.currentBlockExpand != nil, true)
 	require.Equal(t, builder.currentBlockExpand.GID != nil, true)
 	require.Equal(t, builder.currentBlockExpand.GPos == nil, true)
-	require.Equal(t, builder.currentBlockExpand.LevelExprs == nil, true)
-	require.Equal(t, builder.currentBlockExpand.rollupGroupingSets != nil, true)
-	require.Equal(t, builder.currentBlockExpand.rollupID2GIDS == nil, true)
-	require.Equal(t, builder.currentBlockExpand.rollupGroupingIDs == nil, true)
+	require.Equal(t, emptynil.IsNilSlice(builder.currentBlockExpand.LevelExprs), true)
+	require.Equal(t, !emptynil.IsNilSlice(builder.currentBlockExpand.rollupGroupingSets), true)
+	require.Equal(t, emptynil.IsNilMap(builder.currentBlockExpand.rollupID2GIDS), true)
+	require.Equal(t, emptynil.IsNilSlice(builder.currentBlockExpand.rollupGroupingIDs), true)
 	require.Equal(t, builder.currentBlockExpand.GroupingMode == tipb.GroupingMode_ModeBitAnd, true)
 	require.Equal(t, builder.currentBlockExpand.ExtraGroupingColNames[0], "gid")
 	require.Equal(t, builder.currentBlockExpand.distinctSize, 3)
@@ -2344,7 +2345,7 @@ func TestRollupExpand(t *testing.T) {
 
 	expand := builder.currentBlockExpand
 	// after logical optimization, the current select block's expand will generate its level-projections.
-	require.Equal(t, builder.currentBlockExpand.LevelExprs != nil, true)
+	require.Equal(t, !emptynil.IsNilSlice(builder.currentBlockExpand.LevelExprs), true)
 	require.Equal(t, len(builder.currentBlockExpand.LevelExprs), 3)
 	// for grouping set {}: gid = '00' = 0
 	require.Equal(t, expression.ExplainExpressionList(expand.LevelExprs[0], expand.schema), "test.t.a, <nil>->Column#13, <nil>->Column#14, 0->gid")

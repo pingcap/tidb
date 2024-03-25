@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
@@ -402,7 +403,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 
 func testDAGPlanBuilderSplitAvg(t *testing.T, root core.PhysicalPlan) {
 	if p, ok := root.(*core.PhysicalTableReader); ok {
-		if p.TablePlans != nil {
+		if !emptynil.IsNilSlice(p.TablePlans) {
 			baseAgg := p.TablePlans[len(p.TablePlans)-1]
 			if agg, ok := baseAgg.(*core.PhysicalHashAgg); ok {
 				for i, aggfunc := range agg.AggFuncs {
@@ -418,7 +419,7 @@ func testDAGPlanBuilderSplitAvg(t *testing.T, root core.PhysicalPlan) {
 	}
 
 	childs := root.Children()
-	if childs == nil {
+	if emptynil.IsNilSlice(childs) {
 		return
 	}
 	for _, son := range childs {

@@ -44,6 +44,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	server_err "github.com/pingcap/tidb/pkg/server/err"
@@ -453,7 +454,7 @@ type compressedReader struct {
 }
 
 func (cr *compressedReader) Read(data []byte) (n int, err error) {
-	if cr.data == nil {
+	if emptynil.IsNilSlice(cr.data) {
 		var compressedHeader [7]byte
 		if _, err = io.ReadFull(cr.r, compressedHeader[:]); err != nil {
 			return

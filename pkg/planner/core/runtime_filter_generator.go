@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
@@ -96,7 +97,7 @@ func (generator *RuntimeFilterGenerator) generateRuntimeFilterInterval(hashJoinP
 			newRFList, targetColumnUniqueID := NewRuntimeFilter(generator.rfIDGenerator, eqPredicate, hashJoinPlan)
 			// update generator rf list
 			rfList := generator.columnUniqueIDToRF[targetColumnUniqueID]
-			if rfList == nil {
+			if emptynil.IsNilSlice(rfList) {
 				generator.columnUniqueIDToRF[targetColumnUniqueID] = newRFList
 			} else {
 				generator.columnUniqueIDToRF[targetColumnUniqueID] = append(generator.columnUniqueIDToRF[targetColumnUniqueID], newRFList...)

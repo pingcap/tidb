@@ -31,6 +31,7 @@ import (
 	autoid1 "github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -290,7 +291,7 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 		},
 		TLS: tlsConfig,
 	})
-	if store.GetCodec().GetKeyspace() != nil {
+	if !emptynil.IsNilSlice(store.GetCodec().GetKeyspace()) {
 		etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespaceSlash(store.GetCodec()))
 	}
 	if err != nil {

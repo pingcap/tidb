@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
@@ -284,10 +285,10 @@ func extractBestCNFItemRanges(sctx planctx.PlanContext, conds []expression.Expre
 }
 
 func unionColumnValues(lhs, rhs []*valueInfo) []*valueInfo {
-	if lhs == nil {
+	if emptynil.IsNilSlice(lhs) {
 		return rhs
 	}
-	if rhs != nil {
+	if !emptynil.IsNilSlice(rhs) {
 		for i, valInfo := range lhs {
 			if i >= len(rhs) {
 				break
@@ -658,7 +659,7 @@ func ExtractEqAndInCondition(sctx planctx.PlanContext, conditions []expression.E
 			continue
 		}
 		points[i] = allSinglePoints(sctx.GetSessionVars().StmtCtx, points[i])
-		if points[i] == nil {
+		if emptynil.IsNilSlice(points[i]) {
 			// There exists an interval whose length is larger than 0
 			accesses[i] = nil
 		} else if len(points[i]) == 0 { // Early termination if false expression found
@@ -756,7 +757,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				return FullRange(), nil, nil, true, nil
 			}
 			newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(d.sctx.GetExprCtx(), accesses...))
-			if res.ColumnValues != nil {
+			if !emptynil.IsNilSlice(res.ColumnValues) {
 				if i == 0 {
 					columnValues = res.ColumnValues
 				} else {

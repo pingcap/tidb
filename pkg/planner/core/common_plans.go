@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -905,7 +906,7 @@ func (e *Explain) RenderResult() error {
 
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache:
-		if e.Rows == nil || e.Analyze {
+		if emptynil.IsNilSlice(e.Rows) || e.Analyze {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
 			e.explainFlatPlanInRowFormat(flat)
 			if e.Analyze &&

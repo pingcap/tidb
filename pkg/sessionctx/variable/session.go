@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
@@ -288,7 +289,7 @@ func (tc *TransactionContext) updateShard(shardRand *rand.Rand) {
 
 // AddUnchangedKeyForLock adds an unchanged key for pessimistic lock.
 func (tc *TransactionContext) AddUnchangedKeyForLock(key []byte) {
-	if tc.unchangedKeys == nil {
+	if emptynil.IsNilMap(tc.unchangedKeys) {
 		tc.unchangedKeys = map[string]struct{}{}
 	}
 	tc.unchangedKeys[string(key)] = struct{}{}
@@ -307,11 +308,11 @@ func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key
 func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta int64, count int64, colSize map[int64]int64) {
 	tc.tdmLock.Lock()
 	defer tc.tdmLock.Unlock()
-	if tc.TableDeltaMap == nil {
+	if emptynil.IsNilMap(tc.TableDeltaMap) {
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
 	item := tc.TableDeltaMap[physicalTableID]
-	if item.ColSize == nil && colSize != nil {
+	if emptynil.IsNilMap(item.ColSize) && !emptynil.IsNilMap(colSize) {
 		item.ColSize = make(map[int64]int64, len(colSize))
 	}
 	item.Delta += delta
@@ -325,17 +326,17 @@ func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta i
 
 // GetKeyInPessimisticLockCache gets a key in pessimistic lock cache.
 func (tc *TransactionContext) GetKeyInPessimisticLockCache(key kv.Key) (val []byte, ok bool) {
-	if tc.pessimisticLockCache == nil && tc.CurrentStmtPessimisticLockCache == nil {
+	if emptynil.IsNilMap(tc.pessimisticLockCache) && emptynil.IsNilMap(tc.CurrentStmtPessimisticLockCache) {
 		return nil, false
 	}
-	if tc.CurrentStmtPessimisticLockCache != nil {
+	if !emptynil.IsNilMap(tc.CurrentStmtPessimisticLockCache) {
 		val, ok = tc.CurrentStmtPessimisticLockCache[string(key)]
 		if ok {
 			tc.PessimisticCacheHit++
 			return
 		}
 	}
-	if tc.pessimisticLockCache != nil {
+	if !emptynil.IsNilMap(tc.pessimisticLockCache) {
 		val, ok = tc.pessimisticLockCache[string(key)]
 		if ok {
 			tc.PessimisticCacheHit++
@@ -347,7 +348,7 @@ func (tc *TransactionContext) GetKeyInPessimisticLockCache(key kv.Key) (val []by
 // SetPessimisticLockCache sets a key value pair in pessimistic lock cache.
 // The value is buffered in the statement cache until the current statement finishes.
 func (tc *TransactionContext) SetPessimisticLockCache(key kv.Key, val []byte) {
-	if tc.CurrentStmtPessimisticLockCache == nil {
+	if emptynil.IsNilMap(tc.CurrentStmtPessimisticLockCache) {
 		tc.CurrentStmtPessimisticLockCache = make(map[string][]byte)
 	}
 	tc.CurrentStmtPessimisticLockCache[string(key)] = val
@@ -472,10 +473,10 @@ func (tc *TransactionContext) RollbackToSavepoint(name string) *SavepointRecord 
 // FlushStmtPessimisticLockCache merges the current statement pessimistic lock cache into transaction pessimistic lock
 // cache. The caller may need to clear the stmt cache itself.
 func (tc *TransactionContext) FlushStmtPessimisticLockCache() {
-	if tc.CurrentStmtPessimisticLockCache == nil {
+	if emptynil.IsNilMap(tc.CurrentStmtPessimisticLockCache) {
 		return
 	}
-	if tc.pessimisticLockCache == nil {
+	if emptynil.IsNilMap(tc.pessimisticLockCache) {
 		tc.pessimisticLockCache = make(map[string][]byte)
 	}
 	for key, val := range tc.CurrentStmtPessimisticLockCache {
@@ -1606,7 +1607,7 @@ func (s *SessionVars) initializePlanReplayerFinishedTaskKey() {
 
 // CheckPlanReplayerFinishedTaskKey check whether the key exists
 func (s *SessionVars) CheckPlanReplayerFinishedTaskKey(key replayer.PlanReplayerTaskKey) bool {
-	if s.PlanReplayerFinishedTaskKey == nil {
+	if emptynil.IsNilMap(s.PlanReplayerFinishedTaskKey) {
 		s.initializePlanReplayerFinishedTaskKey()
 		return false
 	}
@@ -2636,7 +2637,7 @@ func (s *SessionVars) LazyCheckKeyNotExists() bool {
 // GetTemporaryTable returns a TempTable by tableInfo.
 func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
 	if tblInfo.TempTableType != model.TempTableNone {
-		if s.TxnCtx.TemporaryTables == nil {
+		if emptynil.IsNilMap(s.TxnCtx.TemporaryTables) {
 			s.TxnCtx.TemporaryTables = make(map[int64]tableutil.TempTable)
 		}
 		tempTables := s.TxnCtx.TemporaryTables

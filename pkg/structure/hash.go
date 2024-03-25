@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 )
 
 // HashPair is the pair for (field, value) in a hash.
@@ -66,7 +67,7 @@ func (t *TxStructure) HInc(key []byte, field []byte, step int64) (int64, error) 
 	}
 	base := int64(0)
 	err := t.updateHash(key, field, func(oldValue []byte) ([]byte, error) {
-		if oldValue != nil {
+		if !emptynil.IsNilSlice(oldValue) {
 			var err error
 			base, err = strconv.ParseInt(string(oldValue), 10, 64)
 			if err != nil {
@@ -83,7 +84,7 @@ func (t *TxStructure) HInc(key []byte, field []byte, step int64) (int64, error) 
 // HGetInt64 gets int64 value of a hash field.
 func (t *TxStructure) HGetInt64(key []byte, field []byte) (int64, error) {
 	value, err := t.HGet(key, field)
-	if err != nil || value == nil {
+	if err != nil || emptynil.IsNilSlice(value) {
 		return 0, errors.Trace(err)
 	}
 
@@ -130,7 +131,7 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 			return errors.Trace(err)
 		}
 
-		if value != nil {
+		if !emptynil.IsNilSlice(value) {
 			if err = t.readWriter.Delete(dataKey); err != nil {
 				return errors.Trace(err)
 			}

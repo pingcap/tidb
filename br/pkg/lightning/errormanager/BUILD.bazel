@@ -14,6 +14,7 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/redact",
         "//br/pkg/utils",
+        "//pkg/parser/emptynil",
         "//pkg/parser/mysql",
         "//pkg/table",
         "//pkg/table/tables",

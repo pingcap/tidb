@@ -12,9 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package emptyslice
+package emptynil
 
-// IsNil asserts whether the given slice is nil.
-func IsNil[T any](arr []T) bool {
+// IsNilSlice asserts whether the given slice is nil.
+func IsNilSlice[T any](arr []T) bool {
 	return arr == nil
+}
+
+// IsNilMap asserts whether the given map is nil.
+func IsNilMap[K comparable, V any](m map[K]V) bool {
+	return m == nil
 }

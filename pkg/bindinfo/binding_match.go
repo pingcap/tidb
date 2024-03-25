@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/hint"
 )
@@ -66,7 +67,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	// record the normalization result into info to avoid repeat normalization next time.
 	var fuzzyDigest string
 	var tableNames []*ast.TableName
-	if info == nil || info.TableNames == nil || info.FuzzyDigest == "" {
+	if info == nil || emptynil.IsNilSlice(info.TableNames) || info.FuzzyDigest == "" {
 		_, fuzzyDigest = norm.NormalizeStmtForBinding(stmtNode, norm.WithFuzz(true))
 		tableNames = CollectTableNames(stmtNode)
 		if info != nil {

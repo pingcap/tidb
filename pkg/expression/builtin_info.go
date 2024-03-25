@@ -30,6 +30,7 @@ import (
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -253,7 +254,7 @@ func (b *builtinCurrentRoleSig) evalString(ctx EvalContext, row chunk.Row) (res 
 	if err != nil {
 		return "", true, err
 	}
-	if roles == nil {
+	if emptynil.IsNilSlice(roles) {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
 	if len(roles) == 0 {

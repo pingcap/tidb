@@ -18,6 +18,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -152,10 +153,10 @@ func checkColumnType(id int, col *Column) bool {
 		if cap(col.data) > MaxCachedLen {
 			return false
 		}
-		return col.elemBuf == nil
+		return emptynil.IsNilSlice(col.elemBuf)
 	}
 
-	if col.elemBuf == nil {
+	if emptynil.IsNilSlice(col.elemBuf) {
 		return false
 	}
 	return id == cap(col.elemBuf)

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -209,7 +210,7 @@ func (w *HashAggFinalWorker) restoreDataFromDisk(sctx sessionctx.Context) (eof b
 		return false, true
 	}
 
-	if w.partialResultMap == nil {
+	if emptynil.IsNilMap(w.partialResultMap) {
 		// All partitions have been restored
 		return true, false
 	}

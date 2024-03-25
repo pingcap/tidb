@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
@@ -265,7 +266,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 		invokes = 0
 		retryRows := c.task.doDelete(context.Background(), s)
 		require.Equal(t, 4, invokes)
-		if c.retryRows == nil {
+		if emptynil.IsNilSlice(c.retryRows) {
 			require.Nil(t, retryRows)
 		}
 		require.Equal(t, len(c.retryRows), len(retryRows))

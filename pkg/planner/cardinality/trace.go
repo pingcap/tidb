@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/context"
@@ -186,12 +187,12 @@ func recordUsedItemStatsStatus(sctx context.PlanContext, stats any, tableID, id 
 
 	var recordForColOrIdx map[int64]string
 	if isIndex {
-		if recordForTbl.IndexStatsLoadStatus == nil {
+		if emptynil.IsNilMap(recordForTbl.IndexStatsLoadStatus) {
 			recordForTbl.IndexStatsLoadStatus = make(map[int64]string, 1)
 		}
 		recordForColOrIdx = recordForTbl.IndexStatsLoadStatus
 	} else {
-		if recordForTbl.ColumnStatsLoadStatus == nil {
+		if emptynil.IsNilMap(recordForTbl.ColumnStatsLoadStatus) {
 			recordForTbl.ColumnStatsLoadStatus = make(map[int64]string, 1)
 		}
 		recordForColOrIdx = recordForTbl.ColumnStatsLoadStatus

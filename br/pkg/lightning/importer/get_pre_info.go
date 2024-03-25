@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -352,7 +353,7 @@ func (p *PreImportInfoGetterImpl) GetAllTableStructures(ctx context.Context, opt
 		o(getPreInfoCfg)
 	}
 	dbInfos = p.dbInfosCache
-	if dbInfos != nil && !getPreInfoCfg.ForceReloadCache {
+	if !emptynil.IsNilMap(dbInfos) && !getPreInfoCfg.ForceReloadCache {
 		return dbInfos, nil
 	}
 	dbInfos, err = LoadSchemaInfo(ctx, p.dbMetas, func(ctx context.Context, dbName string) ([]*model.TableInfo, error) {
@@ -824,7 +825,7 @@ func (p *PreImportInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Con
 		o(getPreInfoCfg)
 	}
 	sysVars = p.sysVarsCache
-	if sysVars != nil && !getPreInfoCfg.ForceReloadCache {
+	if !emptynil.IsNilMap(sysVars) && !getPreInfoCfg.ForceReloadCache {
 		return sysVars
 	}
 	sysVars = p.targetInfoGetter.GetTargetSysVariablesForImport(ctx)

@@ -9,6 +9,7 @@ go_library(
         "//pkg/domain/resourcegroup",
         "//pkg/errctx",
         "//pkg/parser",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
@@ -46,6 +47,7 @@ go_test(
     deps = [
         "//pkg/errctx",
         "//pkg/kv",
+        "//pkg/parser/emptynil",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",

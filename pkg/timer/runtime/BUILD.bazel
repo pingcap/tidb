@@ -10,6 +10,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/timer/runtime",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/parser/emptynil",
         "//pkg/timer/api",
         "//pkg/timer/metrics",
         "//pkg/util",

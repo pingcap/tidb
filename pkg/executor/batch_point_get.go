@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -230,7 +231,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
 			}
-			if idxKey == nil {
+			if emptynil.IsNilSlice(idxKey) {
 				continue
 			}
 			s := hack.String(idxKey)

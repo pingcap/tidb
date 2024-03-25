@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -189,7 +190,7 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		// DB scope:			mysql.DB
 		// Table scope:			mysql.Tables_priv
 		// Column scope:		mysql.Columns_priv
-		if e.AuthTokenOrTLSOptions != nil {
+		if !emptynil.IsNilSlice(e.AuthTokenOrTLSOptions) {
 			err = checkAndInitGlobalPriv(internalSession, user.User.Username, user.User.Hostname)
 			if err != nil {
 				return err

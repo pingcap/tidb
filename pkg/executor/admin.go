@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -203,7 +204,7 @@ type RecoverIndexExec struct {
 }
 
 func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
-	if e.colFieldTypes != nil {
+	if !emptynil.IsNilSlice(e.colFieldTypes) {
 		return e.colFieldTypes
 	}
 
@@ -402,7 +403,7 @@ func (e *RecoverIndexExec) buildIndexedValues(row chunk.Row, idxVals []types.Dat
 		return extractIdxVals(row, idxVals, fieldTypes, idxValLen), nil
 	}
 
-	if e.cols == nil {
+	if emptynil.IsNilSlice(e.cols) {
 		columns, _, err := expression.ColumnInfos2ColumnsAndNames(e.Ctx().GetExprCtx(), model.NewCIStr("mock"), e.table.Meta().Name, e.table.Meta().Columns, e.table.Meta())
 		if err != nil {
 			return nil, err
@@ -603,7 +604,7 @@ type CleanupIndexExec struct {
 }
 
 func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
-	if e.idxColFieldTypes != nil {
+	if !emptynil.IsNilSlice(e.idxColFieldTypes) {
 		return e.idxColFieldTypes
 	}
 	e.idxColFieldTypes = make([]*types.FieldType, 0, len(e.columns))

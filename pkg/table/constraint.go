@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -187,7 +188,7 @@ func ContainsAutoIncrementCol(cols []model.CIStr, tblInfo *model.TableInfo) bool
 
 // HasForeignKeyRefAction checks if there is foreign key with referential action in check constraints
 func HasForeignKeyRefAction(fkInfos []*model.FKInfo, constraints []*ast.Constraint, checkConstr *ast.Constraint, dependedCols []model.CIStr) error {
-	if fkInfos != nil {
+	if !emptynil.IsNilSlice(fkInfos) {
 		return checkForeignKeyRefActionByFKInfo(fkInfos, checkConstr, dependedCols)
 	}
 	for _, cons := range constraints {

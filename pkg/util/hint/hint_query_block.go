@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
@@ -106,7 +107,7 @@ func (p *QBHintHandler) checkQueryBlockHints(hints []*ast.TableOptimizerHint, of
 	if qbName == "" {
 		return
 	}
-	if p.QBNameToSelOffset == nil {
+	if emptynil.IsNilMap(p.QBNameToSelOffset) {
 		p.QBNameToSelOffset = make(map[string]int)
 	}
 	if _, ok := p.QBNameToSelOffset[qbName]; ok {
@@ -130,7 +131,7 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 			continue
 		}
 		usedHints[i] = true
-		if p.ViewQBNameToTable == nil {
+		if emptynil.IsNilMap(p.ViewQBNameToTable) {
 			p.ViewQBNameToTable = make(map[string][]ast.HintTable)
 			p.ViewQBNameUsed = make(map[string]struct{})
 		}
@@ -184,7 +185,7 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 		}
 
 		if ok {
-			if p.ViewQBNameToHints == nil {
+			if emptynil.IsNilMap(p.ViewQBNameToHints) {
 				p.ViewQBNameToHints = make(map[string][]*ast.TableOptimizerHint)
 			}
 			usedHints[i] = true
@@ -202,7 +203,7 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 
 // HandleUnusedViewHints handle the unused view hints.
 func (p *QBHintHandler) HandleUnusedViewHints() {
-	if p.ViewQBNameToTable != nil {
+	if len(p.ViewQBNameToTable) > 0 {
 		for qbName := range p.ViewQBNameToTable {
 			_, ok := p.ViewQBNameUsed[qbName]
 			if !ok && p.warnHandler != nil {
@@ -221,7 +222,7 @@ const (
 // getBlockName finds the offset of query block name. It uses 0 as offset for top level update or delete,
 // -1 for invalid block name.
 func (p *QBHintHandler) getBlockOffset(blockName model.CIStr) int {
-	if p.QBNameToSelOffset != nil {
+	if len(p.QBNameToSelOffset) > 0 {
 		level, ok := p.QBNameToSelOffset[blockName.L]
 		if ok {
 			return level
@@ -261,7 +262,7 @@ func (p *QBHintHandler) checkTableQBName(tables []ast.HintTable) bool {
 
 func (p *QBHintHandler) isHint4View(hint *ast.TableOptimizerHint) bool {
 	if hint.QBName.L != "" {
-		if p.ViewQBNameToTable != nil {
+		if !emptynil.IsNilMap(p.ViewQBNameToTable) {
 			_, ok := p.ViewQBNameToTable[hint.QBName.L]
 			return ok
 		}
@@ -280,7 +281,7 @@ func (p *QBHintHandler) isHint4View(hint *ast.TableOptimizerHint) bool {
 
 // GetCurrentStmtHints extracts all hints that take effects at current stmt.
 func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, currentOffset int) []*ast.TableOptimizerHint {
-	if p.QBOffsetToHints == nil {
+	if emptynil.IsNilMap(p.QBOffsetToHints) {
 		p.QBOffsetToHints = make(map[int][]*ast.TableOptimizerHint)
 	}
 	for _, hint := range hints {

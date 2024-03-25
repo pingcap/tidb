@@ -7,6 +7,7 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
@@ -50,7 +51,7 @@ func New(tables []*metautil.Table) *PreallocIDs {
 			max = t.Info.ID
 		}
 
-		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
+		if t.Info.Partition != nil && !emptynil.IsNilSlice(t.Info.Partition.Definitions) {
 			for _, part := range t.Info.Partition.Definitions {
 				if part.ID > max && part.ID < insaneTableIDThreshold {
 					max = part.ID
@@ -100,7 +101,7 @@ func (p *PreallocIDs) PreallocedFor(ti *model.TableInfo) bool {
 	if !p.Prealloced(ti.ID) {
 		return false
 	}
-	if ti.Partition != nil && ti.Partition.Definitions != nil {
+	if ti.Partition != nil && !emptynil.IsNilSlice(ti.Partition.Definitions) {
 		for _, part := range ti.Partition.Definitions {
 			if !p.Prealloced(part.ID) {
 				return false

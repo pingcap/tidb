@@ -23,6 +23,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser",
         "//pkg/parser/ast",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -630,7 +631,7 @@ type regionMeta struct {
 }
 
 func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
-	if uniqueRegionMap == nil {
+	if emptynil.IsNilMap(uniqueRegionMap) {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
 	// This is used to decode the int handle properly.
@@ -678,7 +679,7 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 }
 
 func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore helper.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
-	if uniqueRegionMap == nil {
+	if emptynil.IsNilMap(uniqueRegionMap) {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
 

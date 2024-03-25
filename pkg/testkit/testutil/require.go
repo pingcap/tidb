@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
@@ -43,10 +44,10 @@ func HandleEqual(t testing.TB, expected, actual kv.Handle, msgAndArgs ...any) {
 // If a and b is exactly the same except the order, it returns true.
 // In otherwise return false.
 func CompareUnorderedStringSlice(a []string, b []string) bool {
-	if a == nil && b == nil {
+	if emptynil.IsNilSlice(a) && emptynil.IsNilSlice(b) {
 		return true
 	}
-	if a == nil || b == nil {
+	if emptynil.IsNilSlice(a) || emptynil.IsNilSlice(b) {
 		return false
 	}
 	if len(a) != len(b) {

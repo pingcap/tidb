@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -833,7 +834,7 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 					i++
 					break
 				}
-				if path.ConstCols == nil || i >= len(path.ConstCols) || !path.ConstCols[i] {
+				if emptynil.IsNilSlice(path.ConstCols) || i >= len(path.ConstCols) || !path.ConstCols[i] {
 					break
 				}
 			}
@@ -1141,7 +1142,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			}
 			continue
 		}
-		if path.PartialIndexPaths != nil {
+		if !emptynil.IsNilSlice(path.PartialIndexPaths) {
 			candidates = append(candidates, ds.getIndexMergeCandidate(path, prop))
 			continue
 		}
@@ -1236,7 +1237,7 @@ func (ds *DataSource) getPruningInfo(candidates []*candidatePath, prop *property
 		return path.Index.Name.O
 	}
 	for _, cand := range candidates {
-		if cand.path.PartialIndexPaths != nil {
+		if !emptynil.IsNilSlice(cand.path.PartialIndexPaths) {
 			partialNames := make([]string, 0, len(cand.path.PartialIndexPaths))
 			for _, partialPath := range cand.path.PartialIndexPaths {
 				partialNames = append(partialNames, getSimplePathName(partialPath))
@@ -1390,7 +1391,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	cntPlan = 0
 	for _, candidate := range candidates {
 		path := candidate.path
-		if path.PartialIndexPaths != nil {
+		if !emptynil.IsNilSlice(path.PartialIndexPaths) {
 			idxMergeTask, err := ds.convertToIndexMergeScan(prop, candidate, opt)
 			if err != nil {
 				return nil, 0, err
@@ -1662,7 +1663,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		cop.needExtraProj = true
 		cop.originSchema = ds.Schema()
 	}
-	if remainingFilters != nil {
+	if !emptynil.IsNilSlice(remainingFilters) {
 		cop.rootTaskConds = remainingFilters
 	}
 	// after we lift the limitation of intersection and cop-type task in the code in this
@@ -1965,7 +1966,7 @@ func (ds *DataSource) isIndexCoveringCondition(condition expression.Expression, 
 }
 
 func (ds *DataSource) isSingleScan(indexColumns []*expression.Column, idxColLens []int) bool {
-	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan || ds.colsRequiringFullLen == nil {
+	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan || emptynil.IsNilSlice(ds.colsRequiringFullLen) {
 		// ds.colsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
 		// and ds.colsRequiringFullLen is nil, so we fall back to ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
 		return ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens)
@@ -2223,7 +2224,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	tableConds, newRootConds = expression.PushDownExprs(pctx, tableConds, kv.TiKV)
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
-	if indexConds != nil {
+	if !emptynil.IsNilSlice(indexConds) {
 		var selectivity float64
 		if path.CountAfterAccess > 0 {
 			selectivity = path.CountAfterIndex / path.CountAfterAccess

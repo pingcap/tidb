@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -74,7 +75,7 @@ func (h coprHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		if err != nil {
 			break
 		}
-		if row == nil {
+		if emptynil.IsNilSlice(row) {
 			break
 		}
 		rows = append(rows, row)
@@ -219,7 +220,7 @@ func (h coprHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 	}
 	defVal := func(i int) ([]byte, error) {
 		col := columns[i]
-		if col.DefaultVal == nil {
+		if emptynil.IsNilSlice(col.DefaultVal) {
 			return nil, nil
 		}
 		// col.DefaultVal always be  varint `[flag]+[value]`.

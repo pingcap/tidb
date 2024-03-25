@@ -23,6 +23,7 @@ go_library(
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/metrics",
+        "//pkg/parser/emptynil",
         "//pkg/parser/terror",
         "//pkg/sessionctx/variable",
         "//pkg/store/copr/metrics",
@@ -84,6 +85,7 @@ go_test(
     shard_count = 29,
     deps = [
         "//pkg/kv",
+        "//pkg/parser/emptynil",
         "//pkg/store/driver/backoff",
         "//pkg/testkit/testsetup",
         "//pkg/util/logutil",

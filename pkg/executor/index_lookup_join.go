@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -453,7 +454,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		return nil, nil
 	}
 	numChks := task.outerResult.NumChunks()
-	if ow.filter != nil {
+	if !emptynil.IsNilSlice(ow.filter) {
 		task.outerMatch = make([][]bool, task.outerResult.NumChunks())
 		var err error
 		exprCtx := ow.ctx.GetExprCtx()
@@ -575,7 +576,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 			if rowIdx == 0 {
 				iw.memTracker.Consume(types.EstimatedMemUsage(dLookUpKey, numRows))
 			}
-			if dHashKey == nil {
+			if emptynil.IsNilSlice(dHashKey) {
 				// Append null to make lookUpKeys the same length as outer Result.
 				task.encodedLookUpKeys[chkIdx].AppendNull(0)
 				continue
@@ -616,7 +617,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 }
 
 func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, rowIdx int) ([]types.Datum, []types.Datum, error) {
-	if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
+	if !emptynil.IsNilSlice(task.outerMatch) && !task.outerMatch[chkIdx][rowIdx] {
 		return nil, nil, nil
 	}
 	outerRow := task.outerResult.GetChunk(chkIdx).GetRow(rowIdx)

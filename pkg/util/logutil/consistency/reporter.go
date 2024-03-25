@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -50,7 +51,7 @@ var (
 
 // GetMvccByKey gets the MVCC value by key, and returns a json string including decoded data
 func GetMvccByKey(tikvStore helper.Storage, key kv.Key, decodeMvccFn func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]any)) string {
-	if key == nil {
+	if emptynil.IsNilSlice(key) {
 		return ""
 	}
 	h := helper.NewHelper(tikvStore)

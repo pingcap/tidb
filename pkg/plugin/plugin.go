@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -119,7 +120,7 @@ func (p *Plugin) DisableFlag(disable bool) {
 }
 
 func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins) error {
-	if p.RequireVersion != nil {
+	if !emptynil.IsNilMap(p.RequireVersion) {
 		for component, reqVer := range p.RequireVersion {
 			if ver, ok := tiPlugins.versions[component]; !ok || ver < reqVer {
 				return errRequireVersionCheckFail.GenWithStackByArgs(p.Name, component, reqVer, ver)
@@ -337,7 +338,7 @@ type staticPlugins struct {
 func (p *staticPlugins) Add(pluginName string, plugin func() *Manifest) error {
 	p.Lock()
 	defer p.Unlock()
-	if p.plugins == nil {
+	if emptynil.IsNilMap(p.plugins) {
 		p.plugins = make(map[string]func() *Manifest)
 	}
 

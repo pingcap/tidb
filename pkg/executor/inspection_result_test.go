@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -187,7 +188,7 @@ func parseTime(t *testing.T, se sessiontypes.Session, str string) types.Time {
 
 func createInspectionContext(t *testing.T, mockData map[string][][]types.Datum, configurations map[string]variable.TableSnapshot) context.Context {
 	// mock tikv configuration.
-	if configurations == nil {
+	if emptynil.IsNilMap(configurations) {
 		configurations = map[string]variable.TableSnapshot{}
 		configurations[infoschema.TableClusterConfig] = variable.TableSnapshot{
 			Rows: [][]types.Datum{

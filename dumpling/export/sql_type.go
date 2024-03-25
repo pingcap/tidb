@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
+
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 )
 
 var colTypeRowReceiverMap = map[string]func() RowReceiverStringer{}
@@ -237,7 +239,7 @@ type SQLTypeNumber struct {
 
 // WriteToBuffer implements Stringer.WriteToBuffer
 func (s SQLTypeNumber) WriteToBuffer(bf *bytes.Buffer, _ bool) {
-	if s.RawBytes != nil {
+	if !emptynil.IsNilSlice(s.RawBytes) {
 		bf.Write(s.RawBytes)
 	} else {
 		bf.WriteString(nullValue)
@@ -246,7 +248,7 @@ func (s SQLTypeNumber) WriteToBuffer(bf *bytes.Buffer, _ bool) {
 
 // WriteToBufferInCsv implements Stringer.WriteToBufferInCsv
 func (s SQLTypeNumber) WriteToBufferInCsv(bf *bytes.Buffer, _ bool, opt *csvOption) {
-	if s.RawBytes != nil {
+	if !emptynil.IsNilSlice(s.RawBytes) {
 		bf.Write(s.RawBytes)
 	} else {
 		bf.WriteString(opt.nullValue)
@@ -265,7 +267,7 @@ func (s *SQLTypeString) BindAddress(arg []any) {
 
 // WriteToBuffer implements Stringer.WriteToBuffer
 func (s *SQLTypeString) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
-	if s.RawBytes != nil {
+	if !emptynil.IsNilSlice(s.RawBytes) {
 		bf.Write(quotationMark)
 		escapeSQL(s.RawBytes, bf, escapeBackslash)
 		bf.Write(quotationMark)
@@ -276,7 +278,7 @@ func (s *SQLTypeString) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
 
 // WriteToBufferInCsv implements Stringer.WriteToBufferInCsv
 func (s *SQLTypeString) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool, opt *csvOption) {
-	if s.RawBytes != nil {
+	if !emptynil.IsNilSlice(s.RawBytes) {
 		bf.Write(opt.delimiter)
 		escapeCSV(s.RawBytes, bf, escapeBackslash, opt)
 		bf.Write(opt.delimiter)
@@ -297,7 +299,7 @@ func (s *SQLTypeBytes) BindAddress(arg []any) {
 
 // WriteToBuffer implements Stringer.WriteToBuffer
 func (s *SQLTypeBytes) WriteToBuffer(bf *bytes.Buffer, _ bool) {
-	if s.RawBytes != nil {
+	if !emptynil.IsNilSlice(s.RawBytes) {
 		fmt.Fprintf(bf, "x'%x'", s.RawBytes)
 	} else {
 		bf.WriteString(nullValue)
@@ -306,7 +308,7 @@ func (s *SQLTypeBytes) WriteToBuffer(bf *bytes.Buffer, _ bool) {
 
 // WriteToBufferInCsv implements Stringer.WriteToBufferInCsv
 func (s *SQLTypeBytes) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool, opt *csvOption) {
-	if s.RawBytes != nil {
+	if !emptynil.IsNilSlice(s.RawBytes) {
 		bf.Write(opt.delimiter)
 		switch opt.binaryFormat {
 		case BinaryFormatHEX:

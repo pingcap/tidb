@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
@@ -308,7 +309,7 @@ func isSelectStmtNonPrepCacheableFastCheck(sctx PlanContext, selectStmt *ast.Sel
 	}
 	if len(selectStmt.TableHints) > 0 || // hints
 		selectStmt.Having != nil || // having
-		selectStmt.WindowSpecs != nil || // window function
+		!emptynil.IsNilSlice(selectStmt.WindowSpecs) || // window function
 		(selectStmt.Limit != nil && !sctx.GetSessionVars().EnablePlanCacheForParamLimit) || // limit
 		selectStmt.SelectIntoOpt != nil { // select-into statement
 		return nil, false, "queries that have hints, having-clause, window-function are not supported"
@@ -606,7 +607,7 @@ func isPhysicalPlanCacheable(sctx PlanContext, p PhysicalPlan, paramNum, limitPa
 // getMaxParamLimit returns the maximum number of parameters for a query that can be cached in the Plan Cache.
 func getMaxParamLimit(sctx PlanContext) int {
 	v := 200
-	if sctx == nil || sctx.GetSessionVars() == nil || sctx.GetSessionVars().OptimizerFixControl == nil {
+	if sctx == nil || sctx.GetSessionVars() == nil || emptynil.IsNilMap(sctx.GetSessionVars().OptimizerFixControl) {
 		return v
 	}
 	n := fixcontrol.GetIntWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44823, int64(v))
@@ -622,7 +623,7 @@ func getMaxParamLimit(sctx PlanContext) int {
 func enablePlanCacheForGeneratedCols(sctx PlanContext) bool {
 	// disable this by default since it's not well tested.
 	defaultVal := true
-	if sctx == nil || sctx.GetSessionVars() == nil || sctx.GetSessionVars().GetOptimizerFixControlMap() == nil {
+	if sctx == nil || sctx.GetSessionVars() == nil || emptynil.IsNilMap(sctx.GetSessionVars().GetOptimizerFixControlMap()) {
 		return defaultVal
 	}
 	return fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45798, defaultVal)

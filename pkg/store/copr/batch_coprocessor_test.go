@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stathat/consistent"
@@ -118,7 +119,7 @@ func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
 		storeTasks := buildStoreTaskMap(storeCount)
 		regionInfos := buildRegionInfos(storeCount, regionCount, replicaNum)
 		tasks, _ := balanceBatchCopTaskWithContinuity(storeTasks, regionInfos, 20)
-		require.True(t, tasks == nil)
+		require.True(t, emptynil.IsNilSlice(tasks))
 	}
 }
 
@@ -126,13 +127,13 @@ func TestBalanceBatchCopTaskWithEmptyTaskSet(t *testing.T) {
 	{
 		var nilTaskSet []*batchCopTask
 		nilResult := balanceBatchCopTask(nil, nil, nilTaskSet, false, 0)
-		require.True(t, nilResult == nil)
+		require.True(t, emptynil.IsNilSlice(nilResult))
 	}
 
 	{
 		emptyTaskSet := make([]*batchCopTask, 0)
 		emptyResult := balanceBatchCopTask(nil, nil, emptyTaskSet, false, 0)
-		require.True(t, emptyResult != nil)
+		require.True(t, !emptynil.IsNilSlice(emptyResult))
 		require.True(t, len(emptyResult) == 0)
 	}
 }

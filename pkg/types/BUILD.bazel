@@ -46,6 +46,7 @@ go_library(
         "//pkg/errno",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/opcode",
@@ -103,6 +104,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/parser/charset",
+        "//pkg/parser/emptynil",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/testkit/testsetup",

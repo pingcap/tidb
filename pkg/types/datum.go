@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -87,7 +88,7 @@ func (d *Datum) Clone() *Datum {
 // Copy deep copies a Datum into destination.
 func (d *Datum) Copy(dst *Datum) {
 	*dst = *d
-	if d.b != nil {
+	if !emptynil.IsNilSlice(d.b) {
 		dst.b = make([]byte, len(d.b))
 		copy(dst.b, d.b)
 	}
@@ -257,7 +258,7 @@ var sink = func(s string) {
 
 // GetBytes gets bytes value.
 func (d *Datum) GetBytes() []byte {
-	if d.b != nil {
+	if !emptynil.IsNilSlice(d.b) {
 		return d.b
 	}
 	return []byte{}

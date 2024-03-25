@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -293,7 +294,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 			relatedCols := make([]*expression.Column, 0, 2)
 			for i, col := range columns {
 				relatedCols = append(relatedCols[:0], seedColumns[i])
-				if recursiveColumns != nil {
+				if !emptynil.IsNilSlice(recursiveColumns) {
 					relatedCols = append(relatedCols, recursiveColumns[i])
 				}
 				c.updateColMap(col, relatedCols)

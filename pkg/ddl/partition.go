@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -570,7 +571,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 			return err
 		}
 		pi.Expr = buf.String()
-	} else if s.ColumnNames != nil {
+	} else if !emptynil.IsNilSlice(s.ColumnNames) {
 		pi.Columns = make([]model.CIStr, 0, len(s.ColumnNames))
 		for _, cn := range s.ColumnNames {
 			pi.Columns = append(pi.Columns, cn.Name)

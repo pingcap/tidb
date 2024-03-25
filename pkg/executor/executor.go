@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -255,7 +256,7 @@ func (e *CommandDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 	numCurBatch := min(req.Capacity(), len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		req.AppendString(0, strconv.FormatInt(e.jobIDs[i], 10))
-		if e.errs != nil && e.errs[i] != nil {
+		if !emptynil.IsNilSlice(e.errs) && e.errs[i] != nil {
 			req.AppendString(1, fmt.Sprintf("error: %v", e.errs[i]))
 		} else {
 			req.AppendString(1, "successful")
@@ -442,7 +443,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		if job.BinlogInfo.TableInfo != nil {
 			tableName = job.BinlogInfo.TableInfo.Name.L
 		}
-		if job.BinlogInfo.MultipleTableInfos != nil {
+		if !emptynil.IsNilSlice(job.BinlogInfo.MultipleTableInfos) {
 			tablenames := new(strings.Builder)
 			for i, affect := range job.BinlogInfo.MultipleTableInfos {
 				if i > 0 {
@@ -1288,7 +1289,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 
 func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Key {
 	txnCtx := vars.TxnCtx
-	if txnCtx == nil || txnCtx.TemporaryTables == nil {
+	if txnCtx == nil || emptynil.IsNilMap(txnCtx.TemporaryTables) {
 		return keys
 	}
 
@@ -1365,7 +1366,7 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if begin == end {
 				break
 			}
-			if e.columnIdxsUsedByChild != nil {
+			if !emptynil.IsNilSlice(e.columnIdxsUsedByChild) {
 				req.Append(e.childResult.Prune(e.columnIdxsUsedByChild), int(begin), int(end))
 			} else {
 				req.Append(e.childResult, int(begin), int(end))
@@ -1392,7 +1393,7 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.cursor += batchSize
 
-	if e.columnIdxsUsedByChild != nil {
+	if !emptynil.IsNilSlice(e.columnIdxsUsedByChild) {
 		for i, childIdx := range e.columnIdxsUsedByChild {
 			if err = req.SwapColumn(i, e.childResult, childIdx); err != nil {
 				return err

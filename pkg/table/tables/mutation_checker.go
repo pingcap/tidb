@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -108,7 +109,7 @@ func CheckDataConsistency(
 	// 	}
 	// }
 
-	if rowInsertion.key != nil {
+	if !emptynil.IsNilSlice(rowInsertion.key) {
 		if err = checkHandleConsistency(rowInsertion, indexMutations, columnMaps.IndexIDToInfo, t.Meta()); err != nil {
 			return errors.Trace(err)
 		}
@@ -130,7 +131,7 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 	var insertionHandle kv.Handle
 	var err error
 
-	if rowInsertion.key == nil {
+	if emptynil.IsNilSlice(rowInsertion.key) {
 		return nil
 	}
 	insertionHandle, err = tablecodec.DecodeRowKey(rowInsertion.key)
@@ -254,7 +255,7 @@ func checkIndexKeys(
 		}
 
 		// reuse the underlying memory, save an allocation
-		if indexData == nil {
+		if emptynil.IsNilSlice(indexData) {
 			indexData = make([]types.Datum, 0, len(decodedIndexValues))
 		} else {
 			indexData = indexData[:0]
@@ -288,7 +289,7 @@ func checkRowInsertionConsistency(
 	sessVars *variable.SessionVars, rowToInsert []types.Datum, rowInsertion mutation,
 	columnIDToInfo map[int64]*model.ColumnInfo, columnIDToFieldType map[int64]*types.FieldType, tableName string,
 ) error {
-	if rowToInsert == nil {
+	if emptynil.IsNilSlice(rowToInsert) {
 		// it's a deletion
 		return nil
 	}
@@ -332,7 +333,7 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 			m := mutation{key, flags, data, 0}
 			if rowcodec.IsRowKey(key) {
 				if len(data) > 0 {
-					if rowInsertion.key == nil {
+					if emptynil.IsNilSlice(rowInsertion.key) {
 						rowInsertion = m
 					} else {
 						err = errors.Errorf(
@@ -435,7 +436,7 @@ func getOrBuildColumnMaps(
 	getter func() (map[int64]columnMaps, bool), setter func(map[int64]columnMaps), t *TableCommon,
 ) columnMaps {
 	tableMaps, ok := getter()
-	if !ok || tableMaps == nil {
+	if !ok || emptynil.IsNilMap(tableMaps) {
 		tableMaps = make(map[int64]columnMaps)
 	}
 	maps, ok := tableMaps[t.tableID]

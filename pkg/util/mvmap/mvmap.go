@@ -17,6 +17,7 @@ package mvmap
 import (
 	"bytes"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
@@ -154,7 +155,7 @@ func (m *MVMap) Get(key []byte, values [][]byte) [][]byte {
 		e := m.entryStore.get(entryAddr)
 		entryAddr = e.next
 		val := m.dataStore.get(e, key)
-		if val == nil {
+		if emptynil.IsNilSlice(val) {
 			continue
 		}
 		values = append(values, val)

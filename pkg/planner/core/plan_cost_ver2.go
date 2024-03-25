@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -744,7 +745,7 @@ func (p *PointGetPlan) getPlanCostVer2(taskType property.TaskType, option *PlanC
 		return p.planCostVer2, nil
 	}
 
-	if p.accessCols == nil { // from fast plan code path
+	if emptynil.IsNilSlice(p.accessCols) { // from fast plan code path
 		p.planCostVer2 = zeroCostVer2
 		p.planCostInit = true
 		return zeroCostVer2, nil
@@ -763,7 +764,7 @@ func (p *BatchPointGetPlan) getPlanCostVer2(taskType property.TaskType, option *
 		return p.planCostVer2, nil
 	}
 
-	if p.accessCols == nil { // from fast plan code path
+	if emptynil.IsNilSlice(p.accessCols) { // from fast plan code path
 		p.planCostVer2 = zeroCostVer2
 		p.planCostInit = true
 		return zeroCostVer2, nil

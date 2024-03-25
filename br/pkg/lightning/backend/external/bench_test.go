@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -69,7 +70,7 @@ func writePlainFile(s *writeTestSuite) {
 	writer, err := s.store.Create(ctx, filePath, nil)
 	intest.AssertNoError(err)
 	key, val, _ := s.source.next()
-	for key != nil {
+	for !emptynil.IsNilSlice(key) {
 		if offset+len(key)+len(val) > len(buf) {
 			flush(writer)
 		}
@@ -110,7 +111,7 @@ func writeExternalFile(s *writeTestSuite) {
 	}
 	writer := builder.Build(s.store, filePath, "writerID")
 	key, val, h := s.source.next()
-	for key != nil {
+	for !emptynil.IsNilSlice(key) {
 		err := writer.WriteRow(ctx, key, val, h)
 		intest.AssertNoError(err)
 		key, val, h = s.source.next()
@@ -142,7 +143,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 
 	key, val, _ := s.source.next()
 	minKey = key
-	for key != nil {
+	for !emptynil.IsNilSlice(key) {
 		maxKey = key
 		err := writer.WriteRow(ctx, key, val)
 		intest.AssertNoError(err)

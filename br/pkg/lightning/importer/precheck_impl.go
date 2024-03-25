@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
@@ -1034,12 +1035,12 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 	if len(rows) > 0 {
 		row = rows[0]
 	}
-	if colsFromDataFile == nil && len(row) == 0 {
+	if emptynil.IsNilSlice(colsFromDataFile) && len(row) == 0 {
 		log.FromContext(ctx).Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
 		return msgs, nil
 	}
 
-	if colsFromDataFile == nil {
+	if emptynil.IsNilSlice(colsFromDataFile) {
 		// when there is no columns name in data file. we must insert data in order.
 		// so the last several columns either can be ignored or has a default value.
 		for i := len(row); i < colCountFromTiDB; i++ {

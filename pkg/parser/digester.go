@@ -508,7 +508,7 @@ func (d *sqlDigester) isPrefixByUnary(currTok int) (isUnary bool) {
 		return
 	}
 	last := d.tokens.back(1)
-	if last == nil {
+	if len(last) == 0 {
 		return
 	}
 	// a[0] != '-' and a[0] != '+'
@@ -516,7 +516,7 @@ func (d *sqlDigester) isPrefixByUnary(currTok int) (isUnary bool) {
 		return
 	}
 	last2 := d.tokens.back(2)
-	if last2 == nil {
+	if len(last2) == 0 {
 		isUnary = true
 		return
 	}
@@ -577,7 +577,7 @@ func (d *sqlDigester) isOrderOrGroupBy() (orderOrGroupBy bool) {
 
 func (d *sqlDigester) isStarParam() (starParam bool) {
 	last := d.tokens.back(1)
-	if last == nil {
+	if len(last) == 0 {
 		starParam = false
 		return
 	}

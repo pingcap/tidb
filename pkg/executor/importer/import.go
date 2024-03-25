@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -912,7 +913,7 @@ func (e *LoadDataController) reorderColumns(columnNames []string) error {
 
 	reorderedColumns := make([]*table.Column, len(cols))
 
-	if columnNames == nil {
+	if emptynil.IsNilSlice(columnNames) {
 		return nil
 	}
 

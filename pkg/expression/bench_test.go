@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1958,7 +1959,7 @@ func genVecEvalBool(numCols int, colTypes, eTypes []types.EvalType) (CNFExprs, *
 	randGen := newDefaultRandGen()
 	for i := 0; i < numCols; i++ {
 		idx := randGen.Intn(len(eTypes))
-		if colTypes != nil {
+		if !emptynil.IsNilSlice(colTypes) {
 			for j := range eTypes {
 				if colTypes[i] == eTypes[j] {
 					idx = j

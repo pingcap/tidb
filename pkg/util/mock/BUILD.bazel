@@ -59,6 +59,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/kv",
+        "//pkg/parser/emptynil",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//assert",
         "@org_uber_go_goleak//:goleak",

@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/errno",
         "//pkg/kv",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/store/helper",

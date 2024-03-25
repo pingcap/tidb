@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -239,7 +240,7 @@ func (cli *TestServerClient) RunTestRegression(t *testing.T, overrider configOve
 		if err := dbt.GetDB().QueryRow("SELECT ?", b).Scan(&b); err != nil {
 			t.Fatal(err)
 		}
-		if b == nil {
+		if emptynil.IsNilSlice(b) {
 			require.Fail(t, "nil echo from non-nil input")
 		}
 	})
@@ -845,7 +846,7 @@ func (*TestServerClient) Rows(t *testing.T, rows *sql.Rows) []string {
 			if i > 0 {
 				buf.WriteString(" ")
 			}
-			if raw == nil {
+			if emptynil.IsNilSlice(raw) {
 				buf.WriteString("<nil>")
 			} else {
 				buf.Write(raw)

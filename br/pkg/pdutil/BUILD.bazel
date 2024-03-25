@@ -11,6 +11,7 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/httputil",
+        "//pkg/parser/emptynil",
         "//pkg/store/pdtypes",
         "//pkg/tablecodec",
         "//pkg/util/codec",

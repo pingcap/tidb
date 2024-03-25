@@ -31,6 +31,7 @@ import (
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -366,7 +367,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	if task.DebugTrace != nil {
+	if !emptynil.IsNilSlice(task.DebugTrace) {
 		if err = dumpDebugTrace(zw, task.DebugTrace); err != nil {
 			return err
 		}

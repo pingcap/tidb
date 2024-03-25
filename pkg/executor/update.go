@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -75,7 +76,7 @@ type UpdateExec struct {
 
 // prepare `handles`, `tableUpdatable`, `changed` to avoid re-computations.
 func (e *UpdateExec) prepare(row []types.Datum) (err error) {
-	if e.updatedRowKeys == nil {
+	if emptynil.IsNilMap(e.updatedRowKeys) {
 		e.updatedRowKeys = make(map[int]*kv.MemAwareHandleMap[bool])
 	}
 	e.handles = e.handles[:0]
@@ -118,7 +119,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 }
 
 func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) error {
-	if e.mergedRowData == nil {
+	if emptynil.IsNilMap(e.mergedRowData) {
 		e.mergedRowData = make(map[int64]*kv.MemAwareHandleMap[[]types.Datum])
 	}
 	var mergedData []types.Datum

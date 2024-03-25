@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
@@ -628,7 +629,7 @@ func (is *SessionTables) ensureSchema(db *model.DBInfo) *schemaTables {
 }
 
 func (is *SessionTables) schemaTables(schema model.CIStr) *schemaTables {
-	if is.schemaMap == nil {
+	if emptynil.IsNilMap(is.schemaMap) {
 		return nil
 	}
 

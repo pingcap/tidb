@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/structure"
@@ -513,7 +514,7 @@ func (m *Meta) GenSchemaVersions(count int64) (int64, error) {
 
 func (m *Meta) checkPolicyExists(policyKey []byte) error {
 	v, err := m.txn.HGet(mPolicies, policyKey)
-	if err == nil && v == nil {
+	if err == nil && emptynil.IsNilSlice(v) {
 		err = ErrPolicyNotExists.GenWithStack("policy doesn't exist")
 	}
 	return errors.Trace(err)
@@ -521,7 +522,7 @@ func (m *Meta) checkPolicyExists(policyKey []byte) error {
 
 func (m *Meta) checkPolicyNotExists(policyKey []byte) error {
 	v, err := m.txn.HGet(mPolicies, policyKey)
-	if err == nil && v != nil {
+	if err == nil && !emptynil.IsNilSlice(v) {
 		err = ErrPolicyExists.GenWithStack("policy already exists")
 	}
 	return errors.Trace(err)
@@ -529,7 +530,7 @@ func (m *Meta) checkPolicyNotExists(policyKey []byte) error {
 
 func (m *Meta) checkResourceGroupNotExists(groupKey []byte) error {
 	v, err := m.txn.HGet(mResourceGroups, groupKey)
-	if err == nil && v != nil {
+	if err == nil && !emptynil.IsNilSlice(v) {
 		err = ErrResourceGroupExists.GenWithStack("group already exists")
 	}
 	return errors.Trace(err)
@@ -537,7 +538,7 @@ func (m *Meta) checkResourceGroupNotExists(groupKey []byte) error {
 
 func (m *Meta) checkResourceGroupExists(groupKey []byte) error {
 	v, err := m.txn.HGet(mResourceGroups, groupKey)
-	if err == nil && v == nil {
+	if err == nil && emptynil.IsNilSlice(v) {
 		err = ErrResourceGroupNotExists.GenWithStack("group doesn't exist")
 	}
 	return errors.Trace(err)
@@ -545,7 +546,7 @@ func (m *Meta) checkResourceGroupExists(groupKey []byte) error {
 
 func (m *Meta) checkDBExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
-	if err == nil && v == nil {
+	if err == nil && emptynil.IsNilSlice(v) {
 		err = ErrDBNotExists.GenWithStack("database doesn't exist")
 	}
 	return errors.Trace(err)
@@ -553,7 +554,7 @@ func (m *Meta) checkDBExists(dbKey []byte) error {
 
 func (m *Meta) checkDBNotExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
-	if err == nil && v != nil {
+	if err == nil && !emptynil.IsNilSlice(v) {
 		err = ErrDBExists.GenWithStack("database already exists")
 	}
 	return errors.Trace(err)
@@ -561,7 +562,7 @@ func (m *Meta) checkDBNotExists(dbKey []byte) error {
 
 func (m *Meta) checkTableExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
-	if err == nil && v == nil {
+	if err == nil && emptynil.IsNilSlice(v) {
 		err = ErrTableNotExists.GenWithStack("table doesn't exist")
 	}
 	return errors.Trace(err)
@@ -569,7 +570,7 @@ func (m *Meta) checkTableExists(dbKey []byte, tableKey []byte) error {
 
 func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
-	if err == nil && v != nil {
+	if err == nil && !emptynil.IsNilSlice(v) {
 		err = ErrTableExists.GenWithStack("table already exists")
 	}
 	return errors.Trace(err)
@@ -1066,7 +1067,7 @@ func (m *Meta) ListDatabases() ([]*model.DBInfo, error) {
 func (m *Meta) GetDatabase(dbID int64) (*model.DBInfo, error) {
 	dbKey := m.dbKey(dbID)
 	value, err := m.txn.HGet(mDBs, dbKey)
-	if err != nil || value == nil {
+	if err != nil || emptynil.IsNilSlice(value) {
 		return nil, errors.Trace(err)
 	}
 
@@ -1105,7 +1106,7 @@ func (m *Meta) GetPolicy(policyID int64) (*model.PolicyInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if value == nil {
+	if emptynil.IsNilSlice(value) {
 		return nil, ErrPolicyNotExists.GenWithStack("policy id : %d doesn't exist", policyID)
 	}
 
@@ -1159,7 +1160,7 @@ func (m *Meta) GetResourceGroup(groupID int64) (*model.ResourceGroupInfo, error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if value == nil {
+	if emptynil.IsNilSlice(value) {
 		// the default group is not persistanted to tikv by default.
 		if groupID == defaultGroupID {
 			return defaultRGroupMeta, nil
@@ -1214,7 +1215,7 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 
 	tableKey := m.tableKey(tableID)
 	value, err := m.txn.HGet(dbKey, tableKey)
-	if err != nil || value == nil {
+	if err != nil || emptynil.IsNilSlice(value) {
 		return nil, errors.Trace(err)
 	}
 
@@ -1238,7 +1239,7 @@ func (m *Meta) CheckTableExists(dbID int64, tableID int64) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if v != nil {
+	if !emptynil.IsNilSlice(v) {
 		return true, nil
 	}
 
@@ -1289,7 +1290,7 @@ type JobListKeyType []byte
 
 func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 	value, err := m.txn.LIndex(key, index)
-	if err != nil || value == nil {
+	if err != nil || emptynil.IsNilSlice(value) {
 		return nil, errors.Trace(err)
 	}
 
@@ -1317,7 +1318,7 @@ func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job
 	}
 
 	values, err := m.txn.LGetAll(listKey)
-	if err != nil || values == nil {
+	if err != nil || emptynil.IsNilSlice(values) {
 		return nil, errors.Trace(err)
 	}
 
@@ -1355,7 +1356,7 @@ func (m *Meta) AddHistoryDDLJob(job *model.Job, updateRawArgs bool) error {
 
 func (m *Meta) getHistoryDDLJob(key []byte, id int64) (*model.Job, error) {
 	value, err := m.txn.HGet(key, m.jobIDKey(id))
-	if err != nil || value == nil {
+	if err != nil || emptynil.IsNilSlice(value) {
 		return nil, errors.Trace(err)
 	}
 
@@ -1546,7 +1547,7 @@ func (*Meta) TableNameKey(dbName string, tableName string) kv.Key {
 // CheckTableNameExists checks if the table name exists.
 func (m *Meta) CheckTableNameExists(name []byte) error {
 	v, err := m.txn.Get(name)
-	if err == nil && v == nil {
+	if err == nil && emptynil.IsNilSlice(v) {
 		err = ErrTableNotExists.FastGenByArgs(string(name))
 	}
 	return errors.Trace(err)
@@ -1555,7 +1556,7 @@ func (m *Meta) CheckTableNameExists(name []byte) error {
 // CheckTableNameNotExists checks if the table name not exists.
 func (m *Meta) CheckTableNameNotExists(name []byte) error {
 	v, err := m.txn.Get(name)
-	if err == nil && v != nil {
+	if err == nil && !emptynil.IsNilSlice(v) {
 		err = ErrTableExists.FastGenByArgs(string(name))
 	}
 	return errors.Trace(err)
@@ -1650,7 +1651,7 @@ func (m *Meta) GetRUStats() (*RUStats, error) {
 		return nil, errors.Trace(err)
 	}
 	var ruStats *RUStats
-	if data != nil {
+	if !emptynil.IsNilSlice(data) {
 		ruStats = &RUStats{}
 		if err = json.Unmarshal(data, &ruStats); err != nil {
 			return nil, errors.Trace(err)

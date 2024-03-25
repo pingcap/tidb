@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
@@ -686,7 +687,7 @@ func (t *copTask) convertToRootTaskImpl(ctx PlanContext) *rootTask {
 		}
 	}
 	newTask := &rootTask{}
-	if t.idxMergePartPlans != nil {
+	if !emptynil.IsNilSlice(t.idxMergePartPlans) {
 		p := PhysicalIndexMergeReader{
 			partialPlans:       t.idxMergePartPlans,
 			tablePlan:          t.tablePlan,

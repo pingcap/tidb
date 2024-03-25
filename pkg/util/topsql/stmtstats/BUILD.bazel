@@ -10,6 +10,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/topsql/stmtstats",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/parser/emptynil",
         "//pkg/util/topsql/state",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//tikvrpc/interceptor",

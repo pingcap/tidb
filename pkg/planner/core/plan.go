@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
@@ -741,7 +742,7 @@ func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 	if len(childSchema) == 1 {
 		for _, key := range childSchema[0].Keys {
 			indices := selfSchema.ColumnsIndices(key)
-			if indices == nil {
+			if emptynil.IsNilSlice(indices) {
 				continue
 			}
 			newKey := make([]*expression.Column, 0, len(key))

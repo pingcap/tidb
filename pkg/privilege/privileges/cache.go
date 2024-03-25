@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -253,7 +254,7 @@ func (g roleGraphEdgesTable) Find(user, host string) bool {
 		host = "%"
 	}
 	key := user + "@" + host
-	if g.roleList == nil {
+	if emptynil.IsNilMap(g.roleList) {
 		return false
 	}
 	_, ok := g.roleList[key]
@@ -619,11 +620,11 @@ func parseHostIPNet(s string) *net.IPNet {
 		return nil
 	}
 	hostIP := net.ParseIP(s[:i]).To4()
-	if hostIP == nil {
+	if emptynil.IsNilSlice(hostIP) {
 		return nil
 	}
 	maskIP := net.ParseIP(s[i+1:]).To4()
-	if maskIP == nil {
+	if emptynil.IsNilSlice(maskIP) {
 		return nil
 	}
 	mask := net.IPv4Mask(maskIP[0], maskIP[1], maskIP[2], maskIP[3])
@@ -769,7 +770,7 @@ func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.Resul
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	if p.Global == nil {
+	if emptynil.IsNilMap(p.Global) {
 		p.Global = make(map[string][]globalPrivRecord)
 	}
 	p.Global[value.User] = append(p.Global[value.User], value)
@@ -788,7 +789,7 @@ func (p *MySQLPrivilege) decodeGlobalGrantsTableRow(row chunk.Row, fs []*ast.Res
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	if p.Dynamic == nil {
+	if emptynil.IsNilMap(p.Dynamic) {
 		p.Dynamic = make(map[string][]dynamicPrivRecord)
 	}
 	p.Dynamic[value.User] = append(p.Dynamic[value.User], value)
@@ -935,7 +936,7 @@ func (record *baseRecord) hostMatch(s string) bool {
 		return false
 	}
 	ip := net.ParseIP(s).To4()
-	if ip == nil {
+	if emptynil.IsNilSlice(ip) {
 		return false
 	}
 	return record.hostIPNet.Contains(ip)

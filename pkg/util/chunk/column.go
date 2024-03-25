@@ -22,6 +22,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
@@ -138,7 +139,7 @@ func (c *Column) typeSize() int {
 }
 
 func (c *Column) isFixed() bool {
-	return c.elemBuf != nil
+	return !emptynil.IsNilSlice(c.elemBuf)
 }
 
 // Reset resets this Column according to the EvalType.
@@ -654,7 +655,7 @@ func (c *Column) SetRaw(rowID int, bs []byte) {
 
 // reconstruct reconstructs this Column by removing all filtered rows in it according to sel.
 func (c *Column) reconstruct(sel []int) {
-	if sel == nil {
+	if emptynil.IsNilSlice(sel) {
 		return
 	}
 	if c.isFixed() {
@@ -703,7 +704,7 @@ func (c *Column) reconstruct(sel []int) {
 // CopyReconstruct copies this Column to dst and removes unselected rows.
 // If dst is nil, it creates a new Column and returns it.
 func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
-	if sel == nil {
+	if emptynil.IsNilSlice(sel) {
 		return c.CopyConstruct(dst)
 	}
 

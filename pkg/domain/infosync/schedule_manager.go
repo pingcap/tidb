@@ -18,6 +18,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	pd "github.com/tikv/pd/client/http"
 )
 
@@ -54,7 +55,7 @@ func (mm *mockScheduleManager) GetScheduleConfig(context.Context) (map[string]an
 func (mm *mockScheduleManager) SetScheduleConfig(_ context.Context, config map[string]any) error {
 	mm.Lock()
 
-	if mm.schedules == nil {
+	if emptynil.IsNilMap(mm.schedules) {
 		mm.schedules = make(map[string]any)
 	}
 	for key, value := range config {

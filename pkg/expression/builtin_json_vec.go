@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
@@ -561,7 +562,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 			}
 		}
 		var pathExprs []types.JSONPathExpression
-		if pathBufs != nil {
+		if !emptynil.IsNilSlice(pathBufs) {
 			pathExprs = make([]types.JSONPathExpression, 0, len(b.args)-4)
 			for j := 0; j < len(b.args)-4; j++ {
 				if pathBufs[j].IsNull(i) {
@@ -1073,7 +1074,7 @@ func (b *builtinJSONMergeSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, r
 	}
 	for i := 0; i < len(b.args); i++ {
 		for j := 0; j < nr; j++ {
-			if jsonValues[j] == nil {
+			if emptynil.IsNilSlice(jsonValues[j]) {
 				continue
 			}
 			jsonValues[j] = append(jsonValues[j], argBuffers[i].GetJSON(j))
@@ -1082,7 +1083,7 @@ func (b *builtinJSONMergeSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, r
 
 	result.ReserveJSON(nr)
 	for i := 0; i < nr; i++ {
-		if jsonValues[i] == nil {
+		if emptynil.IsNilSlice(jsonValues[i]) {
 			result.AppendNull()
 			continue
 		}

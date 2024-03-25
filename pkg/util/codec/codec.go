@@ -24,6 +24,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -407,7 +408,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		i64s := column.Int64s()
 		for i, v := range i64s {
-			if sel != nil && !sel[i] {
+			if !emptynil.IsNilSlice(sel) && !sel[i] {
 				continue
 			}
 			if column.IsNull(i) {
@@ -429,7 +430,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 	case mysql.TypeFloat:
 		f32s := column.Float32s()
 		for i, f := range f32s {
-			if sel != nil && !sel[i] {
+			if !emptynil.IsNilSlice(sel) && !sel[i] {
 				continue
 			}
 			if column.IsNull(i) {
@@ -455,7 +456,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 		f64s := column.Float64s()
 		for i := range f64s {
 			f := f64s[i]
-			if sel != nil && !sel[i] {
+			if !emptynil.IsNilSlice(sel) && !sel[i] {
 				continue
 			}
 			if column.IsNull(i) {
@@ -478,7 +479,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 		}
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		for i := 0; i < rows; i++ {
-			if sel != nil && !sel[i] {
+			if !emptynil.IsNilSlice(sel) && !sel[i] {
 				continue
 			}
 			if column.IsNull(i) {
@@ -498,7 +499,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		ts := column.Times()
 		for i, t := range ts {
-			if sel != nil && !sel[i] {
+			if !emptynil.IsNilSlice(sel) && !sel[i] {
 				continue
 			}
 			if column.IsNull(i) {
@@ -522,7 +523,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 		}
 	case mysql.TypeDuration:
 		for i := 0; i < rows; i++ {
-			if sel != nil && !sel[i] {
+			if !emptynil.IsNilSlice(sel) && !sel[i] {
 				continue
 			}
 			if column.IsNull(i) {
@@ -542,7 +543,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 	case mysql.TypeNewDecimal:
 		ds := column.Decimals()
 		for i, d := range ds {
-			if sel != nil && !sel[i] {
+			if !emptynil.IsNilSlice(sel) && !sel[i] {
 				continue
 			}
 			if column.IsNull(i) {
@@ -564,7 +565,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 		}
 	case mysql.TypeEnum:
 		for i := 0; i < rows; i++ {
-			if sel != nil && !sel[i] {
+			if !emptynil.IsNilSlice(sel) && !sel[i] {
 				continue
 			}
 			if column.IsNull(i) {
@@ -592,7 +593,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 		}
 	case mysql.TypeSet:
 		for i := 0; i < rows; i++ {
-			if sel != nil && !sel[i] {
+			if !emptynil.IsNilSlice(sel) && !sel[i] {
 				continue
 			}
 			if column.IsNull(i) {
@@ -614,7 +615,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 		}
 	case mysql.TypeBit:
 		for i := 0; i < rows; i++ {
-			if sel != nil && !sel[i] {
+			if !emptynil.IsNilSlice(sel) && !sel[i] {
 				continue
 			}
 			if column.IsNull(i) {
@@ -635,7 +636,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 		}
 	case mysql.TypeJSON:
 		for i := 0; i < rows; i++ {
-			if sel != nil && !sel[i] {
+			if !emptynil.IsNilSlice(sel) && !sel[i] {
 				continue
 			}
 			if column.IsNull(i) {
@@ -655,7 +656,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 		}
 	case mysql.TypeNull:
 		for i := 0; i < rows; i++ {
-			if sel != nil && !sel[i] {
+			if !emptynil.IsNilSlice(sel) && !sel[i] {
 				continue
 			}
 			isNull[i] = !ignoreNull
@@ -757,7 +758,7 @@ func DecodeRange(b []byte, size int, idxColumnTypes []byte, loc *time.Location) 
 	i := 0
 	for len(b) > 1 {
 		var d types.Datum
-		if idxColumnTypes == nil {
+		if emptynil.IsNilSlice(idxColumnTypes) {
 			b, d, err = DecodeOne(b)
 		} else {
 			if i >= len(idxColumnTypes) {

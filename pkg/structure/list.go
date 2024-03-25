@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 )
 
 type listMeta struct {
@@ -224,7 +225,7 @@ func (t *TxStructure) loadListMeta(metaKey []byte) (listMeta, error) {
 	}
 
 	meta := listMeta{0, 0}
-	if v == nil {
+	if emptynil.IsNilSlice(v) {
 		return meta, nil
 	}
 

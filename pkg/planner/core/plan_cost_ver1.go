@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1121,7 +1122,7 @@ func (p *PhysicalTopN) getPlanCostVer1(taskType property.TaskType, option *PlanC
 // GetCost returns cost of the PointGetPlan.
 func (p *BatchPointGetPlan) GetCost(opt *physicalOptimizeOp) float64 {
 	cols := p.accessCols
-	if cols == nil {
+	if emptynil.IsNilSlice(cols) {
 		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
 	}
 	sessVars := p.SCtx().GetSessionVars()
@@ -1160,7 +1161,7 @@ func (p *BatchPointGetPlan) getPlanCostVer1(_ property.TaskType, option *PlanCos
 // GetAvgRowSize return the average row size.
 func (p *BatchPointGetPlan) GetAvgRowSize() float64 {
 	cols := p.accessCols
-	if cols == nil {
+	if emptynil.IsNilSlice(cols) {
 		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
 	}
 	if p.IndexInfo == nil {
@@ -1172,7 +1173,7 @@ func (p *BatchPointGetPlan) GetAvgRowSize() float64 {
 // GetCost returns cost of the PointGetPlan.
 func (p *PointGetPlan) GetCost(opt *physicalOptimizeOp) float64 {
 	cols := p.accessCols
-	if cols == nil {
+	if emptynil.IsNilSlice(cols) {
 		return 0 // the cost of PointGet generated in fast plan optimization is always 0
 	}
 	sessVars := p.SCtx().GetSessionVars()
@@ -1208,7 +1209,7 @@ func (p *PointGetPlan) getPlanCostVer1(_ property.TaskType, option *PlanCostOpti
 // GetAvgRowSize return the average row size.
 func (p *PointGetPlan) GetAvgRowSize() float64 {
 	cols := p.accessCols
-	if cols == nil {
+	if emptynil.IsNilSlice(cols) {
 		return 0 // the cost of PointGet generated in fast plan optimization is always 0
 	}
 	if p.IndexInfo == nil {

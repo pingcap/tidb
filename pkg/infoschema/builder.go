@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -171,7 +172,7 @@ func applyExchangeTablePartition(b *Builder, m *meta.Meta, diff *model.SchemaDif
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if diff.AffectedOpts == nil || diff.AffectedOpts[0].OldSchemaID == 0 {
+		if emptynil.IsNilSlice(diff.AffectedOpts) || diff.AffectedOpts[0].OldSchemaID == 0 {
 			return ntIDs, err
 		}
 		// Reload parition tabe.
@@ -290,7 +291,7 @@ func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSche
 }
 
 func (b *Builder) applyAffectedOpts(m *meta.Meta, tblIDs []int64, diff *model.SchemaDiff, tp model.ActionType) ([]int64, error) {
-	if diff.AffectedOpts != nil {
+	if !emptynil.IsNilSlice(diff.AffectedOpts) {
 		for _, opt := range diff.AffectedOpts {
 			affectedDiff := &model.SchemaDiff{
 				Version:     diff.Version,
@@ -740,7 +741,7 @@ func (b *Builder) applyDropTable(diff *model.SchemaDiff, dbInfo *model.DBInfo, t
 	b.infoSchema.sortedTablesBuckets[bucketIdx] = append(sortedTbls[0:idx], sortedTbls[idx+1:]...)
 
 	// Remove the table in temporaryTables
-	if b.infoSchema.temporaryTableIDs != nil {
+	if !emptynil.IsNilMap(b.infoSchema.temporaryTableIDs) {
 		delete(b.infoSchema.temporaryTableIDs, tableID)
 	}
 	// The old DBInfo still holds a reference to old table info, we need to remove it.

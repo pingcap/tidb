@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -347,7 +348,7 @@ func (t *TableCommon) WritableConstraint() []*table.Constraint {
 	if len(t.writableConstraints) > 0 {
 		return t.writableConstraints
 	}
-	if t.Constraints == nil {
+	if emptynil.IsNilSlice(t.Constraints) {
 		return nil
 	}
 	writeableConstraint := make([]*table.Constraint, 0, len(t.Constraints))
@@ -691,7 +692,7 @@ func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction
 // the inserting row has null value, AddRecord will skip it, so the rowLen will be different, so we need to adjust it.
 func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 	adjustLen := rowLen * 2
-	if writeBufs.AddRowValues == nil || cap(writeBufs.AddRowValues) < adjustLen {
+	if emptynil.IsNilSlice(writeBufs.AddRowValues) || cap(writeBufs.AddRowValues) < adjustLen {
 		writeBufs.AddRowValues = make([]types.Datum, adjustLen)
 	}
 	writeBufs.AddRowValues = writeBufs.AddRowValues[:adjustLen]
@@ -1917,7 +1918,7 @@ func appendColForChecksum(dst []rowcodec.ColData, t *TableCommon, c *model.Colum
 	if c.IsGenerated() && !c.GeneratedStored {
 		return dst
 	}
-	if dst == nil {
+	if emptynil.IsNilSlice(dst) {
 		dst = make([]rowcodec.ColData, 0, len(t.Columns))
 	}
 	return append(dst, rowcodec.ColData{ColumnInfo: c, Datum: d})

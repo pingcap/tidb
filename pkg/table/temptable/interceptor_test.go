@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -665,13 +666,13 @@ func TestInterceptorBatchGetTemporaryTableKeys(t *testing.T) {
 		}
 		snapKeys, result, err := inter.batchGetTemporaryTableKeys(ctx, c.keys)
 		require.NoError(t, err, i)
-		if c.snapKeys == nil {
+		if emptynil.IsNilSlice(c.snapKeys) {
 			require.Nil(t, snapKeys, i)
 		} else {
 			require.Equal(t, c.snapKeys, snapKeys, i)
 		}
 
-		if c.result == nil {
+		if emptynil.IsNilMap(c.result) {
 			require.Nil(t, result, i)
 		} else {
 			require.Equal(t, c.result, result, i)

@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -68,7 +69,7 @@ func NewDatumMapDecoder(columns []ColInfo, loc *time.Location) *DatumMapDecoder 
 
 // DecodeToDatumMap decodes byte slices to datum map.
 func (decoder *DatumMapDecoder) DecodeToDatumMap(rowData []byte, row map[int64]types.Datum) (map[int64]types.Datum, error) {
-	if row == nil {
+	if emptynil.IsNilMap(row) {
 		row = make(map[int64]types.Datum, len(decoder.columns))
 	}
 	err := decoder.fromBytes(rowData)

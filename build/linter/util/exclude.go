@@ -28,7 +28,7 @@ func shouldRun(passName string, fileName string) bool {
 		return true
 	}
 
-	if config.OnlyFiles != nil {
+	if len(config.OnlyFiles) > 0 {
 		for f := range config.OnlyFiles {
 			matched, err := regexp.MatchString(f, fileName)
 			if err != nil {
@@ -43,7 +43,7 @@ func shouldRun(passName string, fileName string) bool {
 		return false
 	}
 
-	if config.ExcludeFiles != nil {
+	if len(config.ExcludeFiles) > 0 {
 		for f := range config.ExcludeFiles {
 			matched, err := regexp.MatchString(f, fileName)
 			if err != nil {

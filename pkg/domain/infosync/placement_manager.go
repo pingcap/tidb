@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	pd "github.com/tikv/pd/client/http"
 )
 
@@ -103,7 +104,7 @@ func (m *mockPlacementManager) PutRuleBundles(_ context.Context, bundles []*plac
 	m.Lock()
 	defer m.Unlock()
 
-	if m.bundles == nil {
+	if emptynil.IsNilMap(m.bundles) {
 		m.bundles = make(map[string]*placement.Bundle)
 	}
 

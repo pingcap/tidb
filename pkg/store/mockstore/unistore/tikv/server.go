@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
@@ -692,7 +693,7 @@ func (svr *Server) BatchCoprocessor(req *coprocessor.BatchRequest, batchCopServe
 			ctx.finish()
 		}
 	}()
-	if req.TableRegions != nil {
+	if !emptynil.IsNilSlice(req.TableRegions) {
 		// Support PartitionTableScan for BatchCop
 		req.Regions = req.Regions[:]
 		for _, tr := range req.TableRegions {

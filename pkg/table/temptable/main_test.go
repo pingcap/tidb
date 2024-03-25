@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
@@ -142,7 +143,7 @@ func (r *mockedRetriever) SetData(data []*kv.Entry) *mockedRetriever {
 }
 
 func (r *mockedRetriever) InjectMethodError(method string, err error) *mockedRetriever {
-	if r.errorMap == nil {
+	if emptynil.IsNilMap(r.errorMap) {
 		r.errorMap = make(map[string]error)
 	}
 	r.errorMap[method] = err
@@ -247,7 +248,7 @@ func (r *mockedRetriever) appendInvoke(method string, args []any, ret []any) {
 }
 
 func (r *mockedRetriever) getMethodErr(method string) error {
-	if r.errorMap == nil {
+	if emptynil.IsNilMap(r.errorMap) {
 		return nil
 	}
 

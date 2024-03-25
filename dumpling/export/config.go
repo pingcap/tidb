@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -523,7 +524,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.New("--csv-separator is set to \"\". It must not be an empty string")
 	}
 
-	if conf.SessionParams == nil {
+	if emptynil.IsNilMap(conf.SessionParams) {
 		conf.SessionParams = make(map[string]any)
 	}
 

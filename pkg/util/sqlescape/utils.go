@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
@@ -176,7 +177,7 @@ func escapeSQL(sql string, args ...any) ([]byte, error) {
 					buf = escapeBytesBackslash(buf, v)
 					buf = append(buf, '\'')
 				case []byte:
-					if v == nil {
+					if emptynil.IsNilSlice(v) {
 						buf = append(buf, "NULL"...)
 					} else {
 						buf = append(buf, "_binary'"...)

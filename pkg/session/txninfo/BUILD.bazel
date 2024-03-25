@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/metrics",
+        "//pkg/parser/emptynil",
         "//pkg/parser/mysql",
         "//pkg/types",
         "//pkg/util/logutil",

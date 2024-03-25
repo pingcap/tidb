@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	copr_metrics "github.com/pingcap/tidb/pkg/store/copr/metrics"
@@ -359,7 +360,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	}
 
 	var builder taskBuilder
-	if req.StoreBatchSize > 0 && hints != nil {
+	if req.StoreBatchSize > 0 && !emptynil.IsNilSlice(hints) {
 		builder = newBatchTaskBuilder(bo, req, cache, req.ReplicaRead)
 	} else {
 		builder = newLegacyTaskBuilder(len(locs))
@@ -379,7 +380,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 			nextI := min(i+rangesPerTaskLimit, rLen)
 			hint := -1
 			// calculate the row count hint
-			if hints != nil {
+			if !emptynil.IsNilSlice(hints) {
 				startKey, endKey := loc.Ranges.RefAt(i).StartKey, loc.Ranges.RefAt(nextI-1).EndKey
 				// move to the previous range if startKey of current range is lower than endKey of previous location.
 				// In the following example, task1 will move origRangeIdx to region(i, z).
@@ -554,7 +555,7 @@ func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
 		b.tasks = append(b.tasks, batchedTask.task)
 		b.store2Idx[key] = len(b.tasks) - 1
 	} else {
-		if b.tasks[idx].batchTaskList == nil {
+		if emptynil.IsNilMap(b.tasks[idx].batchTaskList) {
 			b.tasks[idx].batchTaskList = make(map[uint64]*batchedCopTask, b.limit)
 			// disable paging for batched task.
 			b.tasks[idx].paging = false
@@ -1242,7 +1243,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 	req.StoreTp = getEndPointType(task.storeType)
 	startTime := time.Now()
-	if worker.kvclient.Stats == nil {
+	if emptynil.IsNilMap(worker.kvclient.Stats) {
 		worker.kvclient.Stats = make(map[tikvrpc.CmdType]*tikv.RPCRuntimeStats)
 	}
 	// set ReadReplicaScope and TxnScope so that req.IsStaleRead will be true when it's a global scope stale read.
@@ -1512,7 +1513,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		}
 	}()
 	appendRemainTasks := func(tasks ...*copTask) {
-		if remainTasks == nil {
+		if emptynil.IsNilSlice(remainTasks) {
 			// allocate size fo remain length
 			remainTasks = make([]*copTask, 0, len(tasks))
 		}
@@ -1704,16 +1705,16 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 		resp.pbResp.Data = data
 		if worker.req.Paging.Enable {
 			var start, end []byte
-			if cacheValue.PageStart != nil {
+			if !emptynil.IsNilSlice(cacheValue.PageStart) {
 				start = make([]byte, len(cacheValue.PageStart))
 				copy(start, cacheValue.PageStart)
 			}
-			if cacheValue.PageEnd != nil {
+			if !emptynil.IsNilSlice(cacheValue.PageEnd) {
 				end = make([]byte, len(cacheValue.PageEnd))
 				copy(end, cacheValue.PageEnd)
 			}
 			// When paging protocol is used, the response key range is part of the cache data.
-			if start != nil || end != nil {
+			if !emptynil.IsNilSlice(start) || !emptynil.IsNilSlice(end) {
 				resp.pbResp.Range = &coprocessor.KeyRange{
 					Start: start,
 					End:   end,
@@ -1734,7 +1735,7 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 	}
 	copr_metrics.CoprCacheCounterMiss.Add(1)
 	// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
-	if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
+	if !emptynil.IsNilSlice(cacheKey) && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
 		if resp.detail != nil {
 			if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime, task.pagingTaskIdx) {
 				data := make([]byte, len(resp.pbResp.Data))
@@ -1825,7 +1826,7 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 }
 
 func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer, rpcCtx *tikv.RPCContext) {
-	if worker.kvclient.Stats == nil {
+	if emptynil.IsNilMap(worker.kvclient.Stats) {
 		return
 	}
 	copStats := &CopRuntimeStats{}

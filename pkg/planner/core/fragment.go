@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -300,7 +301,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []PhysicalPlan, fo
 		lastChildIdx := len(x.children) - 1
 		// except the last child, those previous ones are all cte producer.
 		for i := 0; i < lastChildIdx; i++ {
-			if e.CTEGroups == nil {
+			if emptynil.IsNilMap(e.CTEGroups) {
 				e.CTEGroups = make(map[int]*cteGroupInFragment)
 			}
 			cteStorage := x.children[i].(*PhysicalCTEStorage)
@@ -448,7 +449,7 @@ func (f *Fragment) flipCTEReader(currentPlan PhysicalPlan) {
 // So we create the plan like ParentPlan->CTEReader->ExchangeReceiver.
 func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (err error) {
 	group := e.CTEGroups[cteReader.CTE.IDForStorage]
-	if group.StorageFragments == nil {
+	if emptynil.IsNilSlice(group.StorageFragments) {
 		group.CTEStorage.storageSender.SetChildren(group.CTEStorage.children...)
 		group.StorageTasks, group.StorageFragments, err = e.generateMPPTasksForExchangeSender(group.CTEStorage.storageSender)
 		if err != nil {

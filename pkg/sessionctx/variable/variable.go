@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"golang.org/x/exp/maps"
@@ -233,7 +234,7 @@ func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
 	// aliases. By skipping the validation function it means that things
 	// like duplicate warnings should not appear.
 
-	if sv.Aliases != nil {
+	if !emptynil.IsNilSlice(sv.Aliases) {
 		for _, aliasName := range sv.Aliases {
 			aliasSv := GetSysVar(aliasName)
 			if aliasSv.SetSession != nil {
@@ -258,7 +259,7 @@ func (sv *SysVar) SetGlobalFromHook(ctx context.Context, s *SessionVars, val str
 	// it will be with skipAliases=true. This helps break recursion because
 	// most aliases are reciprocal.
 
-	if !skipAliases && sv.Aliases != nil {
+	if !skipAliases && !emptynil.IsNilSlice(sv.Aliases) {
 		for _, aliasName := range sv.Aliases {
 			if err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(ctx, aliasName, val, true); err != nil {
 				return err

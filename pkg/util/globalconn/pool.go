@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 )
 
 const (
@@ -82,7 +83,7 @@ func (p *AutoIncPool) Get() (id uint64, ok bool) {
 		if p.cap < math.MaxUint64 {
 			id = id % p.cap
 		}
-		if p.existed != nil {
+		if !emptynil.IsNilMap(p.existed) {
 			p.mu.Lock()
 			_, occupied := p.existed[id]
 			if occupied {
@@ -99,7 +100,7 @@ func (p *AutoIncPool) Get() (id uint64, ok bool) {
 
 // Put id back to pool.
 func (p *AutoIncPool) Put(id uint64) (ok bool) {
-	if p.existed != nil {
+	if len(p.existed) > 0 {
 		p.mu.Lock()
 		delete(p.existed, id)
 		p.mu.Unlock()
@@ -109,7 +110,7 @@ func (p *AutoIncPool) Put(id uint64) (ok bool) {
 
 // Len implements IDPool interface.
 func (p *AutoIncPool) Len() int {
-	if p.existed != nil {
+	if !emptynil.IsNilMap(p.existed) {
 		p.mu.Lock()
 		length := len(p.existed)
 		p.mu.Unlock()

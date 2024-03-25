@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -49,7 +50,7 @@ type hashContext struct {
 }
 
 func (hc *hashContext) initHash(rows int) {
-	if hc.buf == nil {
+	if emptynil.IsNilSlice(hc.buf) {
 		hc.buf = make([]byte, 1)
 	}
 
@@ -493,7 +494,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 	}
 	for i := 0; i < numRows; i++ {
 		if isNAAJ {
-			if selected != nil && !selected[i] {
+			if !emptynil.IsNilSlice(selected) && !selected[i] {
 				continue
 			}
 			if hasNullMark[i] {
@@ -508,7 +509,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 				c.hashTable.Put(key, rowPtr)
 			}
 		} else {
-			if (selected != nil && !selected[i]) || c.hCtx.hasNull[i] {
+			if (!emptynil.IsNilSlice(selected) && !selected[i]) || c.hCtx.hasNull[i] {
 				continue
 			}
 			key := c.hCtx.hashVals[i].Sum64()

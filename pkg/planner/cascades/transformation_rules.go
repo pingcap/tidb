@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -198,7 +199,7 @@ func (*PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		return nil, false, false, nil
 	}
 	accesses, remained := ranger.DetachCondsForColumn(ts.SCtx(), sel.Conditions, ts.HandleCols.GetCol(0))
-	if accesses == nil {
+	if emptynil.IsNilSlice(accesses) {
 		return nil, false, false, nil
 	}
 	newTblScan := plannercore.LogicalTableScan{
@@ -251,7 +252,7 @@ func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		return nil, false, false, nil
 	}
 	conditions := sel.Conditions
-	if is.AccessConds != nil {
+	if !emptynil.IsNilSlice(is.AccessConds) {
 		// If we have already pushed some conditions down here,
 		// we merge old AccessConds with new conditions,
 		// to make sure this rule can be applied more than once.
@@ -2186,7 +2187,7 @@ func (*TransformAggToProj) Match(expr *memo.ExprIter) bool {
 	childGroup.BuildKeyInfo()
 	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
 	for _, key := range childGroup.Prop.Schema.Keys {
-		if schemaByGroupby.ColumnsIndices(key) != nil {
+		if !emptynil.IsNilSlice(schemaByGroupby.ColumnsIndices(key)) {
 			return true
 		}
 	}

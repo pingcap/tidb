@@ -21,6 +21,7 @@ go_library(
     deps = [
         "//pkg/parser/auth",
         "//pkg/parser/charset",
+        "//pkg/parser/emptynil",
         "//pkg/parser/format",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

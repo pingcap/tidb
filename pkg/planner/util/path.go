@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
@@ -275,7 +276,7 @@ func ExtractCol2Len(ctx expression.EvalContext, exprs []expression.Expression, i
 func extractCol2LenFromExpr(ctx expression.EvalContext, expr expression.Expression, idxCols []*expression.Column, idxColLens []int, col2Len Col2Len) {
 	switch v := expr.(type) {
 	case *expression.Column:
-		if idxCols == nil {
+		if emptynil.IsNilSlice(idxCols) {
 			col2Len[v.UniqueID] = types.UnspecifiedLength
 		} else {
 			for i, col := range idxCols {

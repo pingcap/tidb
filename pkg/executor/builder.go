@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
@@ -1398,7 +1399,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) exec.
 	}
 
 	defaultValues := v.DefaultValues
-	if defaultValues == nil {
+	if emptynil.IsNilSlice(defaultValues) {
 		if v.JoinType == plannercore.RightOuterJoin {
 			defaultValues = make([]types.Datum, leftExec.Schema().Len())
 		} else {
@@ -1517,7 +1518,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Ex
 			e.outerFilter = v.RightConditions
 			leftIsBuildSide = false
 		}
-		if defaultValues == nil {
+		if emptynil.IsNilSlice(defaultValues) {
 			defaultValues = make([]types.Datum, e.probeSideTupleFetcher.probeSideExec.Schema().Len())
 		}
 	} else {
@@ -1531,7 +1532,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Ex
 			e.outerFilter = v.LeftConditions
 			leftIsBuildSide = false
 		}
-		if defaultValues == nil {
+		if emptynil.IsNilSlice(defaultValues) {
 			defaultValues = make([]types.Datum, buildSideExec.Schema().Len())
 		}
 	}
@@ -2182,7 +2183,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor
 	otherConditions := append(expression.ScalarFuncs2Exprs(v.EqualConditions), expression.ScalarFuncs2Exprs(v.NAEqualConditions)...)
 	otherConditions = append(otherConditions, v.OtherConditions...)
 	defaultValues := v.DefaultValues
-	if defaultValues == nil {
+	if emptynil.IsNilSlice(defaultValues) {
 		defaultValues = make([]types.Datum, v.Children()[v.InnerChildIdx].Schema().Len())
 	}
 	outerExec, innerExec := leftChild, rightChild
@@ -2983,7 +2984,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		}
 	}
 	defaultValues := v.DefaultValues
-	if defaultValues == nil {
+	if emptynil.IsNilSlice(defaultValues) {
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
 	hasPrefixCol := false
@@ -3099,7 +3100,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		}
 	}
 	defaultValues := v.DefaultValues
-	if defaultValues == nil {
+	if emptynil.IsNilSlice(defaultValues) {
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
@@ -3483,7 +3484,7 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 	if len(lookUpContent) == 0 {
 		return nil, false, nil, nil
 	}
-	if lookUpContent[0].keyColIDs == nil {
+	if emptynil.IsNilSlice(lookUpContent[0].keyColIDs) {
 		return nil, false, nil, plannererrors.ErrInternal.GenWithStack("cannot get column IDs when dynamic pruning")
 	}
 	keyColOffsets := getPartitionKeyColOffsets(lookUpContent[0].keyColIDs, partitionTbl)
@@ -5336,7 +5337,7 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) exec.Ex
 	}
 
 	var partitionIDs []int64
-	if v.PartitionNames != nil {
+	if !emptynil.IsNilSlice(v.PartitionNames) {
 		if v.TableInfo.Partition == nil {
 			b.err = errors.Errorf("table:%s is not a partition table, but user specify partition name list:%+v", v.TableInfo.Name.O, v.PartitionNames)
 			return nil

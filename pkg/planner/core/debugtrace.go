@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
@@ -93,7 +94,7 @@ func DebugTraceReceivedCommand(s PlanContext, cmd byte, stmtNode ast.StmtNode) {
 	}
 	useCursor := sessionVars.HasStatusFlag(mysql.ServerStatusCursorExists)
 	// If none of them needs record, we don't need a executeInfo.
-	if binaryParams == nil && planCacheStmt == nil && !useCursor {
+	if emptynil.IsNilSlice(binaryParams) && planCacheStmt == nil && !useCursor {
 		return
 	}
 	execInfo := &executeInfo{}

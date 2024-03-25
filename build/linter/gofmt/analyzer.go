@@ -55,7 +55,7 @@ func run(pass *analysis.Pass) (any, error) {
 			return nil, fmt.Errorf("could not run gofmt: %w (%s)", err, f)
 		}
 
-		if diff == nil {
+		if len(diff) == 0 {
 			continue
 		}
 

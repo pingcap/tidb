@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1336,7 +1337,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	var recordWarning *terror.Error
 	// Since every updateColumnWorker handle their own work individually, we can cache warning in statement context when casting datum.
 	oldWarn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
-	if oldWarn == nil {
+	if emptynil.IsNilSlice(oldWarn) {
 		oldWarn = []stmtctx.SQLWarn{}
 	} else {
 		oldWarn = oldWarn[:0]

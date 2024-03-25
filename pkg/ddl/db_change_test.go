@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
@@ -822,7 +823,7 @@ func runTestInSchemaState(
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test_db_state")
 		rs, _ := tk.Exec(expectQuery.sql)
-		if expectQuery.rows == nil {
+		if emptynil.IsNilSlice(expectQuery.rows) {
 			require.Nil(t, rs)
 		} else {
 			rows := tk.ResultSetToResult(rs, fmt.Sprintf("sql:%s", expectQuery.sql))

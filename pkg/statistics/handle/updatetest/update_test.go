@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -729,7 +730,7 @@ func TestMergeTopN(t *testing.T) {
 			require.Equal(t, res[val], topNMeta.Count)
 			minTopNCnt = topNMeta.Count
 		}
-		if remainTopN != nil {
+		if !emptynil.IsNilSlice(remainTopN) {
 			cnt += len(remainTopN)
 			for _, remainTopNMeta := range remainTopN {
 				val, err := strconv.Atoi(string(remainTopNMeta.Encoded))

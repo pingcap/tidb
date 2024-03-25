@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -129,7 +130,7 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 				bindings = nil
 			}
 		}
-		if bindings != nil {
+		if !emptynil.IsNilSlice(bindings) {
 			for _, binding := range bindings {
 				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
 				if matched && numWildcards > 0 && sctx != nil && !enableFuzzyBinding {
@@ -331,7 +332,7 @@ func (c *bindingCache) set(key bindingCacheKey, value Bindings) (ok bool, err er
 		return
 	}
 	bindings := c.get(key)
-	if bindings != nil {
+	if !emptynil.IsNilSlice(bindings) {
 		// Remove the origin key-value pair.
 		mem -= calcBindCacheKVMem(key, bindings)
 	}
@@ -353,7 +354,7 @@ func (c *bindingCache) set(key bindingCacheKey, value Bindings) (ok bool, err er
 // Only other functions of the bindingCache can use this function.
 func (c *bindingCache) delete(key bindingCacheKey) bool {
 	bindings := c.get(key)
-	if bindings != nil {
+	if !emptynil.IsNilSlice(bindings) {
 		mem := calcBindCacheKVMem(key, bindings)
 		c.cache.Delete(key)
 		c.memTracker.Consume(-mem)

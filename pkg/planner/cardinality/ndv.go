@@ -18,6 +18,7 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -72,7 +73,7 @@ func EstimateColsNDVWithMatchedLen(cols []*expression.Column, schema *expression
 		return math.Max(groupNDV.NDV, ndv), len(groupNDV.Cols)
 	}
 	indices := schema.ColumnsIndices(cols)
-	if indices == nil {
+	if emptynil.IsNilSlice(indices) {
 		logutil.BgLogger().Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
 		return ndv, 1
 	}

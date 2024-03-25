@@ -15,6 +15,7 @@ go_library(
     deps = [
         "//pkg/domain",
         "//pkg/errno",
+        "//pkg/parser/emptynil",
         "//pkg/sessionctx/variable",
         "//pkg/util",
         "//pkg/util/dbterror",

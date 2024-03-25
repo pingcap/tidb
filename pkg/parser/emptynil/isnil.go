@@ -12,20 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package emptyslice_test
+package emptynil
 
-import (
-	"testing"
+// IsNilSlice asserts whether the given slice is nil.
+func IsNilSlice[T any](arr []T) bool {
+	return arr == nil
+}
 
-	"github.com/pingcap/tidb/build/linter/emptyslice"
-	"golang.org/x/tools/go/analysis/analysistest"
-)
-
-// TODO: investigate the CI environment and check how to run this test in CI.
-// The CI environment doesn't have `go` executable in $PATH.
-
-func Test(t *testing.T) {
-	testdata := analysistest.TestData()
-	pkgs := []string{"t", "github.com/pingcap/tidb/pkg/parser/emptyslice"}
-	analysistest.Run(t, testdata, emptyslice.Analyzer, pkgs...)
+// IsNilMap asserts whether the given map is nil.
+func IsNilMap[K comparable, V any](m map[K]V) bool {
+	return m == nil
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -288,7 +289,7 @@ func (p *PdController) pauseSchedulersAndConfigWith(
 		return nil, errors.Trace(err)
 	}
 	log.Info("pause scheduler successful at beginning", zap.Strings("name", schedulers))
-	if schedulerCfg != nil {
+	if !emptynil.IsNilMap(schedulerCfg) {
 		err = p.doPauseConfigs(ctx, schedulerCfg)
 		if err != nil {
 			log.Error("failed to pause config at beginning",
@@ -311,7 +312,7 @@ func (p *PdController) pauseSchedulersAndConfigWith(
 				if err != nil {
 					log.Warn("pause scheduler failed, ignore it and wait next time pause", zap.Error(err))
 				}
-				if schedulerCfg != nil {
+				if !emptynil.IsNilMap(schedulerCfg) {
 					err = p.doPauseConfigs(ctx, schedulerCfg)
 					if err != nil {
 						log.Warn("pause configs failed, ignore it and wait next time pause", zap.Error(err))

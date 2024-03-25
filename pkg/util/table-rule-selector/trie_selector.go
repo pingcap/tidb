@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 )
 
 //  1. asterisk character (*, also called "star") matches zero or more characters,
@@ -60,7 +61,7 @@ type Selector interface {
 type RuleSet []any
 
 func (r RuleSet) clone() RuleSet {
-	if r == nil {
+	if emptynil.IsNilSlice(r) {
 		return nil
 	}
 
@@ -364,7 +365,7 @@ func (t *trieSelector) insert(root *node, pattern string, rule any, insertType i
 	}
 
 	if rule != nil {
-		if insertType == Insert && entity.getRule() != nil {
+		if insertType == Insert && !emptynil.IsNilSlice(entity.getRule()) {
 			return nil, errors.AlreadyExistsf("pattern %s", pattern)
 		}
 		if insertType == Replace {
@@ -448,7 +449,7 @@ func (t *trieSelector) Remove(schema, table string) error {
 			return errors.Annotatef(err, "track schema/table %s/%s in table level", schema, table)
 		}
 
-		if tableItems[len(tableItems)-1].getRule() == nil {
+		if emptynil.IsNilSlice(tableItems[len(tableItems)-1].getRule()) {
 			return errors.NotFoundf("schema/table %s/%s in table level", schema, table)
 		}
 
@@ -458,7 +459,7 @@ func (t *trieSelector) Remove(schema, table string) error {
 		return nil
 	}
 
-	if schemaLeafItem.getRule() == nil {
+	if emptynil.IsNilSlice(schemaLeafItem.getRule()) {
 		return errors.NotFoundf("schema/table %s/%s in schema level", schema, table)
 	}
 
@@ -632,7 +633,7 @@ func (t *trieSelector) matchNode(n *node, s string, mr *matchedResult) {
 }
 
 func appendMatchedItem(entity item, mr *matchedResult) {
-	if entity.getRule() != nil {
+	if !emptynil.IsNilSlice(entity.getRule()) {
 		mr.rules = append(mr.rules, entity.getRule()...)
 	}
 
@@ -642,11 +643,11 @@ func appendMatchedItem(entity item, mr *matchedResult) {
 }
 
 func insertMatchedItemIntoMap(pattern string, entity item, rules map[string][]any, nodes map[string]*node) {
-	if rules != nil && entity.getRule() != nil {
+	if !emptynil.IsNilMap(rules) && !emptynil.IsNilSlice(entity.getRule()) {
 		rules[pattern] = entity.getRule()
 	}
 
-	if nodes != nil && entity.getNextLevel() != nil {
+	if !emptynil.IsNilMap(rules) && entity.getNextLevel() != nil {
 		nodes[pattern] = entity.getNextLevel()
 	}
 }

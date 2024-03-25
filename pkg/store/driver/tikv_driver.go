@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -268,7 +269,7 @@ const getAllMembersBackoff = 5000
 
 // EtcdAddrs returns etcd server addresses.
 func (s *tikvStore) EtcdAddrs() ([]string, error) {
-	if s.etcdAddrs == nil {
+	if emptynil.IsNilSlice(s.etcdAddrs) {
 		return nil, nil
 	}
 
