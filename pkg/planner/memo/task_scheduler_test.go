@@ -27,7 +27,7 @@ type TestSchedulerContext struct {
 	ts *TaskStack
 }
 
-func (t *TestSchedulerContext) getStack() *TaskStack {
+func (t *TestSchedulerContext) getStack() Stack {
 	return t.ts
 }
 
