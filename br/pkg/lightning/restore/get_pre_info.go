@@ -794,7 +794,7 @@ func (p *PreRestoreInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName 
 
 // FetchRemoteDBModels fetches the database structures from the remote target.
 // It implements the PreImportInfoGetter interface.
-func (p *PreImportInfoGetterImpl) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+func (p *PreRestoreInfoGetterImpl) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
 	return p.targetInfoGetter.FetchRemoteDBModels(ctx)
 }
 

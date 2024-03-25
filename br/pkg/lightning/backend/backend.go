@@ -289,6 +289,10 @@ func (be Backend) FetchRemoteTableModels(ctx context.Context, schemaName string)
 	return be.abstract.FetchRemoteTableModels(ctx, schemaName)
 }
 
+func (be Backend) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	return be.abstract.FetchRemoteDBModels(ctx)
+}
+
 func (be Backend) FlushAll(ctx context.Context) error {
 	return be.abstract.FlushAllEngines(ctx)
 }

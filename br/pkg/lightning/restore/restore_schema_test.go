@@ -134,15 +134,11 @@ func (s *restoreSchemaSuite) SetupSuite() {
 func (s *restoreSchemaSuite) SetupTest() {
 	s.controller, s.ctx = gomock.WithContext(context.Background(), s.T())
 	mockBackend := mock.NewMockBackend(s.controller)
-<<<<<<< HEAD:br/pkg/lightning/restore/restore_schema_test.go
 	mockBackend.EXPECT().
-=======
-	mockTargetInfoGetter.EXPECT().
 		FetchRemoteDBModels(gomock.Any()).
 		AnyTimes().
 		Return([]*model.DBInfo{{Name: model.NewCIStr("fakedb")}}, nil)
-	mockTargetInfoGetter.EXPECT().
->>>>>>> eea121309ac (lightning: skip CREATE DATABASE when downstream exists, and return error when parse failed (#51801)):br/pkg/lightning/importer/restore_schema_test.go
+	mockBackend.EXPECT().
 		FetchRemoteTableModels(gomock.Any(), gomock.Any()).
 		AnyTimes().
 		Return(s.tableInfos, nil)
