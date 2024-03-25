@@ -2568,8 +2568,9 @@ func renameIndexes(tblInfo *model.TableInfo, from, to model.CIStr) {
 
 func renameHiddenColumns(tblInfo *model.TableInfo, from, to model.CIStr) {
 	for _, col := range tblInfo.Columns {
-		if strings.Contains(col.Name.O, fmt.Sprintf("%s_%s", expressionIndexPrefix, from)) {
-			col.Name = model.NewCIStr(strings.ReplaceAll(col.Name.O, from.O, to.O))
+		if getExpressionIndexOriginName(col) == from.O {
+			col.Name.L = strings.Replace(col.Name.L, from.L, to.L, 1)
+			col.Name.O = strings.Replace(col.Name.O, from.O, to.O, 1)
 		}
 	}
 }

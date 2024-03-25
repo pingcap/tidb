@@ -2049,3 +2049,12 @@ func getChangingColumnOriginName(changingColumn *model.ColumnInfo) string {
 	}
 	return columnName[:pos]
 }
+
+func getExpressionIndexOriginName(expressionIdx *model.ColumnInfo) string {
+	columnName := strings.TrimPrefix(expressionIdx.Name.O, expressionIndexPrefix+"_")
+	var pos int
+	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
+		return columnName
+	}
+	return columnName[:pos]
+}
