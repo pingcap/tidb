@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"go.uber.org/atomic"
 	"io"
 	"strings"
 	"sync"
@@ -788,11 +789,8 @@ func (h *regionJobRetryHeap) Pop() any {
 // a heap of jobs internally based on the regionJob.waitUntil field.
 type regionJobRetryer struct {
 	// lock acquiring order: protectedClosed > protectedQueue > protectedToPutBack
-	protectedClosed struct {
-		mu     sync.Mutex
-		closed bool
-	}
-	protectedQueue struct {
+	protectedClosed atomic.Bool
+	protectedQueue  struct {
 		mu sync.Mutex
 		q  regionJobRetryHeap
 	}
@@ -873,9 +871,7 @@ func (q *regionJobRetryer) run(ctx context.Context) {
 
 // close is only internally used, caller should not use it.
 func (q *regionJobRetryer) close() {
-	q.protectedClosed.mu.Lock()
-	defer q.protectedClosed.mu.Unlock()
-	q.protectedClosed.closed = true
+	q.protectedClosed.Store(true)
 
 	if q.protectedToPutBack.toPutBack != nil {
 		q.protectedToPutBack.toPutBack.done(q.jobWg)
@@ -887,9 +883,7 @@ func (q *regionJobRetryer) close() {
 
 // push should not be blocked for long time in any cases.
 func (q *regionJobRetryer) push(job *regionJob) bool {
-	q.protectedClosed.mu.Lock()
-	defer q.protectedClosed.mu.Unlock()
-	if q.protectedClosed.closed {
+	if q.protectedClosed.Load() {
 		return false
 	}
 
