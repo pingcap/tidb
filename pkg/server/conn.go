@@ -412,7 +412,9 @@ func closeConn(cc *clientConn) error {
 
 			err = ctx.Close()
 		}
-		close(cc.writeChunksCh)
+		if cc.writeChunksCh != nil {
+			close(cc.writeChunksCh)
+		}
 	})
 	return err
 }
