@@ -148,6 +148,7 @@ nogo(
                "//build/linter/constructor",
                "//build/linter/deferrecover",
                "//build/linter/durationcheck",
+               "//build/linter/emptyslice",
                "//build/linter/etcdconfig",
                "//build/linter/exportloopref",
                "//build/linter/forcetypeassert",

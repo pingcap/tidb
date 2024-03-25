@@ -1312,6 +1312,16 @@
       "external/": "no need to vet third party code"
     }
   },
+  "emptyslice": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
+      "external/": "no need to vet third party code",
+      "build/linter/emptyslice/testdata/": "no need to vet the test inside the linter",
+      ".*\\.pb\\.go$": "ignore generated code"
+    }
+  },
   "QF1002": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
