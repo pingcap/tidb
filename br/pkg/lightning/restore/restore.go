@@ -701,16 +701,12 @@ loop:
 			var err error
 			if session == nil {
 				session, err = func() (*sql.Conn, error) {
-<<<<<<< HEAD:br/pkg/lightning/restore/restore.go
 					// TODO: support lightning in SQL
 					db, err := worker.glue.GetDB()
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
 					return db.Conn(worker.ctx)
-=======
-					return worker.db.Conn(worker.ctx)
->>>>>>> eea121309ac (lightning: skip CREATE DATABASE when downstream exists, and return error when parse failed (#51801)):br/pkg/lightning/importer/import.go
 				}()
 				if err != nil {
 					worker.wg.Done()
