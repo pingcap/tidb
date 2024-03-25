@@ -1816,7 +1816,7 @@ func runBatchPointSelect(b *testing.B, se sessiontypes.Session, enablePlanCache 
 	resStrings, err := ResultSetToStringSlice(ctx, se.(*session), rs[0])
 	expectPlanCacheHits := false
 	if !strings.HasPrefix(resStrings[0][0], "Batch_Point_Get") {
-		logutil.BgLogger().Error("expected Batch_Point_Get query plan", zap.String("query", query), zap.Any("explain", resStrings))
+		logutil.BgLogger().Warn("expected Batch_Point_Get query plan", zap.String("query", query), zap.Any("explain", resStrings))
 		expectPlanCacheHits = enablePlanCache
 	}
 
@@ -1973,6 +1973,8 @@ func BenchmarkRangeExprPartitionPointGet(b *testing.B) {
 (partition p0 values less than (10), partition p1 values less than (1000), partition p3 values less than (100000), partition pMax values less than (maxvalue))`
 	benchmarkPointGetPlanCache(b, sql)
 }
+
+// TODO: Add benchmarks for {RANGE|LIST} COLUMNS, both single columns and multi columns!!!
 
 func benchPreparedPointGet(b *testing.B, sql string) {
 	se, do, st := prepareBenchSession()
@@ -2400,17 +2402,19 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkCompileStmt,
 		BenchmarkAutoIncrement,
 		BenchmarkHashPartitionPointGet,
-		/*
-			BenchmarkHashPartitionBatchPointGet,
-			BenchmarkKeyPartitionPointGet,
-			BenchmarkKeyPartitionBatchPointGet,
-			BenchmarkListPartitionPointGet,
-			BenchmarkListPartitionBatchPointGet,
-			BenchmarkRangePartitionPointGet,
-			BenchmarkRangePartitionBatchPointGet,
-			BenchmarkHashPartitionPreparedPointGet,
-			BenchmarkHashExprPartitionPreparedPointGet,
-
-		*/
+		BenchmarkNonPartitionPointGet,
+		BenchmarkHashPartitionPointGet,
+		BenchmarkHashExprPartitionPointGet,
+		BenchmarkKeyPartitionPointGet,
+		BenchmarkListPartitionPointGet,
+		BenchmarkRangePartitionPointGet,
+		BenchmarkRangeExprPartitionPointGet,
+		BenchmarkNonPartitionPreparedPointGet,
+		BenchmarkHashPartitionPreparedPointGet,
+		BenchmarkHashExprPartitionPreparedPointGet,
+		BenchmarkListPartitionPreparedPointGet,
+		BenchmarkRangePartitionPreparedPointGet,
+		BenchmarkRangeExprPartitionPreparedPointGet,
+		BenchmarkHashPartitionMultiPointSelect,
 	)
 }
