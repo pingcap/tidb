@@ -16,11 +16,7 @@ package preparesnap
 
 import (
 	"context"
-<<<<<<< HEAD
-=======
-	"slices"
 	"sync"
->>>>>>> 02b277a6671 (operator: make gRPC connections synced (#52051))
 	"time"
 
 	"github.com/docker/go-units"
