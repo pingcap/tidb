@@ -163,11 +163,15 @@ func GetJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, user str
 
 // GetActiveJobCnt returns the count of active import jobs.
 // Active import jobs include pending and running jobs.
-func GetActiveJobCnt(ctx context.Context, conn sqlexec.SQLExecutor) (int64, error) {
+func GetActiveJobCnt(ctx context.Context, conn sqlexec.SQLExecutor, tableSchema, tableName string) (int64, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 
-	sql := `select count(1) from mysql.tidb_import_jobs where status in (%?, %?)`
-	rs, err := conn.ExecuteInternal(ctx, sql, jobStatusPending, JobStatusRunning)
+	sql := `select count(1) from mysql.tidb_import_jobs
+			where status in (%?, %?)
+				and table_schema = %? and table_name = %?;
+			`
+	rs, err := conn.ExecuteInternal(ctx, sql, jobStatusPending, JobStatusRunning,
+		tableSchema, tableName)
 	if err != nil {
 		return 0, err
 	}

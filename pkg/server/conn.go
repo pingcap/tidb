@@ -374,30 +374,23 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 }
 
 func (cc *clientConn) Close() error {
+	// Be careful, this function should be re-entrant. It might be called more than once for a single connection.
+	// Any logic which is not idempotent should be in closeConn() and wrapped with `cc.closeOnce.Do`, like decresing
+	// metrics, releasing resources, etc.
+	//
+	// TODO: avoid calling this function multiple times. It's not intuitive that a connection can be closed multiple
+	// times.
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
-	resourceGroupName, count := "", 0
-	if ctx := cc.getCtx(); ctx != nil {
-		resourceGroupName = ctx.GetSessionVars().ResourceGroupName
-		count = cc.server.ConnNumByResourceGroup[resourceGroupName]
-		if count <= 1 {
-			delete(cc.server.ConnNumByResourceGroup, resourceGroupName)
-		} else {
-			cc.server.ConnNumByResourceGroup[resourceGroupName]--
-		}
-	}
 	cc.server.rwlock.Unlock()
-	close(cc.writeChunksCh)
-	return closeConn(cc, resourceGroupName, count)
+	return closeConn(cc)
 }
 
 // closeConn is idempotent and thread-safe.
 // It will be called on the same `clientConn` more than once to avoid connection leak.
-func closeConn(cc *clientConn, resourceGroupName string, count int) error {
+func closeConn(cc *clientConn) error {
 	var err error
 	cc.closeOnce.Do(func() {
-		metrics.ConnGauge.WithLabelValues(resourceGroupName).Set(float64(count))
-
 		if cc.connectionID > 0 {
 			cc.server.dom.ReleaseConnID(cc.connectionID)
 			cc.connectionID = 0
@@ -411,24 +404,22 @@ func closeConn(cc *clientConn, resourceGroupName string, count int) error {
 			}
 		}
 		// Close statements and session
-		// This will release advisory locks, row locks, etc.
+		// At first, it'll decrese the count of connections in the resource group, update the corresponding gauge.
+		// Then it'll close the statements and session, which release advisory locks, row locks, etc.
 		if ctx := cc.getCtx(); ctx != nil {
+			resourceGroupName := ctx.GetSessionVars().ResourceGroupName
+			metrics.ConnGauge.WithLabelValues(resourceGroupName).Dec()
+
 			err = ctx.Close()
 		}
+		close(cc.writeChunksCh)
 	})
 	return err
 }
 
 func (cc *clientConn) closeWithoutLock() error {
 	delete(cc.server.clients, cc.connectionID)
-	name := cc.getCtx().GetSessionVars().ResourceGroupName
-	count := cc.server.ConnNumByResourceGroup[name]
-	if count <= 1 {
-		delete(cc.server.ConnNumByResourceGroup, name)
-	} else {
-		cc.server.ConnNumByResourceGroup[name]--
-	}
-	return closeConn(cc, name, count-1)
+	return closeConn(cc)
 }
 
 // writeInitialHandshake sends server version, connection ID, server capability, collation, server status

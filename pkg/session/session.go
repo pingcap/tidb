@@ -495,11 +495,6 @@ func (s *session) doCommit(ctx context.Context) error {
 		return nil
 	}
 
-	// to avoid session set overlap the txn set.
-	if s.GetDiskFullOpt() != kvrpcpb.DiskFullOpt_NotAllowedOnFull {
-		s.txn.SetDiskFullOpt(s.GetDiskFullOpt())
-	}
-
 	defer func() {
 		s.txn.changeToInvalid()
 		s.sessionVars.SetInTxn(false)
@@ -573,29 +568,38 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.txn.IsPipelined() && !s.GetSessionVars().TxnCtx.EnableMDL {
 		return errors.New("cannot commit pipelined transaction without Metadata Lock: MDL is OFF")
 	}
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
-	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
-	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
-	s.txn.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
-	if sessVars.StmtCtx.KvExecCounter != nil {
-		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
-		s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
-	}
-	// priority of the sysvar is lower than `start transaction with causal consistency only`
-	if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
-		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
-		// because the property is naturally holds:
-		// We guarantee the commitTS of any transaction must not exceed the next timestamp from the TSO.
-		// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
-		// of any previously committed transactions.
-		s.txn.SetOption(kv.GuaranteeLinearizability,
-			sessVars.TxnCtx.IsExplicit && sessVars.GuaranteeLinearizability)
-	}
-	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
-		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
+	// TODO: refactor SetOption usage to avoid race risk, should detect it in test.
+	// The pipelined txn will may be flushed in background, not touch the options to avoid races.
+	if !s.txn.IsPipelined() {
+		// to avoid session set overlap the txn set.
+		if s.GetDiskFullOpt() != kvrpcpb.DiskFullOpt_NotAllowedOnFull {
+			s.txn.SetDiskFullOpt(s.GetDiskFullOpt())
+		}
+		s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
+		s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+		s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
+		s.txn.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
+		if sessVars.StmtCtx.KvExecCounter != nil {
+			// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+			s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
+		}
+		// priority of the sysvar is lower than `start transaction with causal consistency only`
+		if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
+			// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
+			// because the property is naturally holds:
+			// We guarantee the commitTS of any transaction must not exceed the next timestamp from the TSO.
+			// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
+			// of any previously committed transactions.
+			s.txn.SetOption(kv.GuaranteeLinearizability,
+				sessVars.TxnCtx.IsExplicit && sessVars.GuaranteeLinearizability)
+		}
+		if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
+			s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
+		}
 	}
 
 	var txnSource uint64

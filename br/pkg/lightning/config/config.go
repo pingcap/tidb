@@ -1361,17 +1361,10 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported `%s` (%s)", strategyConfigFrom, c.Strategy)
 	}
-	if c.Strategy != NoneOnDup {
-		if i.ParallelImport && i.Backend == BackendLocal && c.PrecheckConflictBeforeImport {
-			return common.ErrInvalidConfig.GenWithStack(
-				`%s cannot be used with tikv-importer.parallel-import and tikv-importer.backend = "local" and conflict.precheck-conflict-before-import = true`,
-				strategyConfigFrom)
-		}
-		if !strategyFromDuplicateResolution && i.DuplicateResolution != NoneOnDup {
-			return common.ErrInvalidConfig.GenWithStack(
-				"%s cannot be used with tikv-importer.duplicate-resolution",
-				strategyConfigFrom)
-		}
+	if !strategyFromDuplicateResolution && c.Strategy != NoneOnDup && i.DuplicateResolution != NoneOnDup {
+		return common.ErrInvalidConfig.GenWithStack(
+			"%s cannot be used with tikv-importer.duplicate-resolution",
+			strategyConfigFrom)
 	}
 	if c.Strategy == IgnoreOnDup && i.Backend == BackendLocal {
 		return common.ErrInvalidConfig.GenWithStack(
