@@ -66,7 +66,7 @@ go_test(
     embed = [":ingest"],
     flaky = True,
     race = "on",
-    shard_count = 15,
+    shard_count = 17,
     deps = [
         "//pkg/config",
         "//pkg/ddl",

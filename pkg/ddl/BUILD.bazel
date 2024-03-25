@@ -117,6 +117,7 @@ go_library(
         "//pkg/statistics/handle",
         "//pkg/store/copr",
         "//pkg/store/driver/backoff",
+        "//pkg/store/driver/txn",
         "//pkg/store/helper",
         "//pkg/table",
         "//pkg/table/tables",
