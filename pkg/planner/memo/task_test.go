@@ -51,45 +51,87 @@ func TestTaskStack(t *testing.T) {
 
 func TestTaskFunctionality(t *testing.T) {
 	taskTaskPool := TaskStackPool.Get()
-	require.Equal(t, len(taskTaskPool.(*TaskStack).tasks), 0)
-	require.Equal(t, cap(taskTaskPool.(*TaskStack).tasks), 4)
-	taskStack := taskTaskPool.(*TaskStack)
-	taskStack.Push(&TestTaskImpl{a: 1})
-	taskStack.Push(&TestTaskImpl{a: 2})
-	one := taskStack.Pop()
+	require.Equal(t, len(taskTaskPool.(*taskStack).tasks), 0)
+	require.Equal(t, cap(taskTaskPool.(*taskStack).tasks), 4)
+	ts := taskTaskPool.(*taskStack)
+	ts.Push(&TestTaskImpl{a: 1})
+	ts.Push(&TestTaskImpl{a: 2})
+	one := ts.Pop()
 	require.Equal(t, one.desc(), "2")
-	one = taskStack.Pop()
+	one = ts.Pop()
 	require.Equal(t, one.desc(), "1")
 	// empty, pop nil.
-	one = taskStack.Pop()
+	one = ts.Pop()
 	require.Nil(t, one)
 
-	taskStack.Push(&TestTaskImpl{a: 3})
-	taskStack.Push(&TestTaskImpl{a: 4})
-	taskStack.Push(&TestTaskImpl{a: 5})
-	taskStack.Push(&TestTaskImpl{a: 6})
+	ts.Push(&TestTaskImpl{a: 3})
+	ts.Push(&TestTaskImpl{a: 4})
+	ts.Push(&TestTaskImpl{a: 5})
+	ts.Push(&TestTaskImpl{a: 6})
 	// no clean, put it back
 	TaskStackPool.Put(taskTaskPool)
 
 	// require again.
-	taskTaskPool = TaskStackPool.Get()
-	require.Equal(t, len(taskTaskPool.(*TaskStack).tasks), 4)
-	require.Equal(t, cap(taskTaskPool.(*TaskStack).tasks), 4)
+	ts = TaskStackPool.Get().(*taskStack)
+	require.Equal(t, len(ts.tasks), 4)
+	require.Equal(t, cap(ts.tasks), 4)
 	// clean the stack
-	one = taskStack.Pop()
+	one = ts.Pop()
 	require.Equal(t, one.desc(), "6")
-	one = taskStack.Pop()
+	one = ts.Pop()
 	require.Equal(t, one.desc(), "5")
-	one = taskStack.Pop()
+	one = ts.Pop()
 	require.Equal(t, one.desc(), "4")
-	one = taskStack.Pop()
+	one = ts.Pop()
 	require.Equal(t, one.desc(), "3")
-	one = taskStack.Pop()
+	one = ts.Pop()
 	require.Nil(t, one)
 
 	// self destroy.
-	taskStack.Destroy()
-	taskTaskPool = TaskStackPool.Get()
-	require.Equal(t, len(taskTaskPool.(*TaskStack).tasks), 0)
-	require.Equal(t, cap(taskTaskPool.(*TaskStack).tasks), 4)
+	ts.Destroy()
+	ts = TaskStackPool.Get().(*taskStack)
+	require.Equal(t, len(ts.tasks), 0)
+	require.Equal(t, cap(ts.tasks), 4)
+}
+
+// Benchmark result explanation:
+// On the right side of the function name, you have four values, 43803,27569 ns/op,24000 B/op and 2000 allocs/op
+// The former indicates the total number of times the loop was executed, while the latter is the average amount
+// of time each iteration took to complete, expressed in nanoseconds per operation. The third is the costed Byte
+// of each op, the last one is number of allocs of each op.
+
+// BenchmarkTestStack2Pointer-8   	   43802	     27569 ns/op	   24000 B/op	    2000 allocs/op
+// BenchmarkTestStack2Pointer-8   	   42889	     27017 ns/op	   24000 B/op	    2000 allocs/op
+// BenchmarkTestStack2Pointer-8   	   43009	     27524 ns/op	   24000 B/op	    2000 allocs/op
+func BenchmarkTestStack2Pointer(b *testing.B) {
+	stack := newTaskStack2WithCap(1000)
+	fill := func() {
+		for idx := int64(0); idx < 1000; idx++ {
+			stack.Push(&TestTaskImpl{a: idx})
+		}
+		for idx := int64(0); idx < 1000; idx++ {
+			stack.Pop()
+		}
+	}
+	for i := 0; i < b.N; i++ {
+		fill()
+	}
+}
+
+// BenchmarkTestStackInterface-8   	  108644	     10736 ns/op	    8000 B/op	    1000 allocs/op
+// BenchmarkTestStackInterface-8   	  110587	     10756 ns/op	    8000 B/op	    1000 allocs/op
+// BenchmarkTestStackInterface-8   	  109136	     10850 ns/op	    8000 B/op	    1000 allocs/op
+func BenchmarkTestStackInterface(b *testing.B) {
+	stack := newTaskStackWithCap(1000)
+	fill := func() {
+		for idx := int64(0); idx < 1000; idx++ {
+			stack.Push(&TestTaskImpl{a: idx})
+		}
+		for idx := int64(0); idx < 1000; idx++ {
+			stack.Pop()
+		}
+	}
+	for i := 0; i < b.N; i++ {
+		fill()
+	}
 }

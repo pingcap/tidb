@@ -104,11 +104,17 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 		tables: make(map[string]table.Table),
 	}
 	result.schemaMap["test"] = tableNames
-	tableIDs := make(map[int64]struct{})
+	var tableIDs map[int64]struct{}
 	for _, tb := range tbList {
-		_, ok := tableIDs[tb.ID]
-		intest.Assert(!ok)
-		tableIDs[tb.ID] = struct{}{}
+		intest.AssertFunc(func() bool {
+			if tableIDs == nil {
+				tableIDs = make(map[int64]struct{})
+			}
+			_, ok := tableIDs[tb.ID]
+			intest.Assert(!ok)
+			tableIDs[tb.ID] = struct{}{}
+			return true
+		})
 		tb.DBID = dbInfo.ID
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
@@ -359,7 +365,7 @@ func init() {
 		Tables:  infoSchemaTables,
 	}
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
-	util.GetSequenceByName = func(is any, schema, sequence model.CIStr) (util.SequenceTable, error) {
+	util.GetSequenceByName = func(is context.InfoSchemaMetaVersion, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
 	}
 	mock.MockInfoschema = func(tbList []*model.TableInfo) context.InfoSchemaMetaVersion {

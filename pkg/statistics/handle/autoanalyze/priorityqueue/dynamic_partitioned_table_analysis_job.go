@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -86,7 +87,7 @@ func NewDynamicPartitionedTableAnalysisJob(
 // Analyze analyzes the partitions or partition indexes.
 func (j *DynamicPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) error {
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
@@ -173,7 +174,7 @@ func (j *DynamicPartitionedTableAnalysisJob) String() string {
 func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) {
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 	needAnalyzePartitionNames := make([]any, 0, len(j.Partitions))
@@ -197,7 +198,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) {
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 

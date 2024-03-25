@@ -777,6 +777,10 @@ func pickBackfillType(ctx context.Context, job *model.Job) (model.ReorgType, err
 		return model.ReorgTypeTxn, nil
 	}
 	if ingest.LitInitialized {
+		if job.ReorgMeta.UseCloudStorage {
+			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
+			return model.ReorgTypeLitMerge, nil
+		}
 		available, err := ingest.LitBackCtxMgr.CheckAvailable()
 		if err != nil {
 			return model.ReorgTypeNone, err

@@ -260,8 +260,8 @@ func TestReadyForLockHBTimeoutJobTables(t *testing.T) {
 			tables := m.readyForLockHBTimeoutJobTables(se.Now())
 			if c.shouldSchedule {
 				assert.Len(t, tables, 1)
-				assert.Equal(t, int64(0), tables[0].ID)
-				assert.Equal(t, int64(0), tables[0].TableInfo.ID)
+				assert.Equal(t, tbl.ID, tables[0].ID)
+				assert.Equal(t, tbl.ID, tables[0].TableInfo.ID)
 			} else {
 				assert.Len(t, tables, 0)
 			}
