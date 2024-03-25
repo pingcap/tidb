@@ -14,9 +14,14 @@ const (
 	flagFullScanDiffTick    = "full-scan-tick"
 	flagAdvancingByCache    = "advancing-by-cache"
 	flagTryAdvanceThreshold = "try-advance-threshold"
+	flagCheckPointLagLimit  = "check-point-lag-limit"
 
 	DefaultConsistencyCheckTick = 5
 	DefaultTryAdvanceThreshold  = 4 * time.Minute
+<<<<<<< HEAD
+=======
+	DefaultCheckPointLagLimit   = 48 * time.Hour
+>>>>>>> 8492f75086f (br: Change default check point lag limit (#51906))
 	DefaultBackOffTime          = 5 * time.Second
 	DefaultTickInterval         = 12 * time.Second
 	DefaultFullScanTick         = 4
@@ -37,9 +42,20 @@ type Config struct {
 }
 
 func DefineFlagsForCheckpointAdvancerConfig(f *pflag.FlagSet) {
+<<<<<<< HEAD
 	f.Duration(flagBackoffTime, DefaultBackOffTime, "The gap between two retries.")
 	f.Duration(flagTickInterval, DefaultTickInterval, "From how long we trigger the tick (advancing the checkpoint).")
 	f.Duration(flagTryAdvanceThreshold, DefaultTryAdvanceThreshold, "If the checkpoint lag is greater than how long, we would try to poll TiKV for checkpoints.")
+=======
+	f.Duration(flagBackoffTime, DefaultBackOffTime,
+		"The gap between two retries.")
+	f.Duration(flagTickInterval, DefaultTickInterval,
+		"From how long we trigger the tick (advancing the checkpoint).")
+	f.Duration(flagTryAdvanceThreshold, DefaultTryAdvanceThreshold,
+		"If the checkpoint lag is greater than how long, we would try to poll TiKV for checkpoints.")
+	f.Duration(flagCheckPointLagLimit, DefaultCheckPointLagLimit,
+		"The maximum lag could be tolerated for the checkpoint lag.")
+>>>>>>> 8492f75086f (br: Change default check point lag limit (#51906))
 }
 
 func Default() Config {
@@ -61,6 +77,10 @@ func (conf *Config) GetFromFlags(f *pflag.FlagSet) error {
 		return err
 	}
 	conf.TryAdvanceThreshold, err = f.GetDuration(flagTryAdvanceThreshold)
+	if err != nil {
+		return err
+	}
+	conf.CheckPointLagLimit, err = f.GetDuration(flagCheckPointLagLimit)
 	if err != nil {
 		return err
 	}
