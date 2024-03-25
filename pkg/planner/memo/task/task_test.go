@@ -99,7 +99,7 @@ type taskStackForBench struct {
 	tasks []*Task
 }
 
-func newTaskStack2WithCap(c int) *taskStackForBench {
+func newTaskStackForBenchWithCap(c int) *taskStackForBench {
 	return &taskStackForBench{
 		tasks: make([]*Task, 0, c),
 	}
@@ -140,7 +140,7 @@ func (ts *taskStackForBench) Pop() Task {
 // BenchmarkTestStack2Pointer-8   	   42889	     27017 ns/op	   24000 B/op	    2000 allocs/op
 // BenchmarkTestStack2Pointer-8   	   43009	     27524 ns/op	   24000 B/op	    2000 allocs/op
 func BenchmarkTestStack2Pointer(b *testing.B) {
-	stack := newTaskStack2WithCap(1000)
+	stack := newTaskStackForBenchWithCap(1000)
 	fill := func() {
 		for idx := int64(0); idx < 1000; idx++ {
 			stack.Push(&TestTaskImpl{a: idx})
