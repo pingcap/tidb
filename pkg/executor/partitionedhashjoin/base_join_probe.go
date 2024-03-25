@@ -193,23 +193,22 @@ func (j *baseJoinProbe) prepareForProbe(chk *chunk.Chunk) (joinedChk *chunk.Chun
 }
 
 func (j *baseJoinProbe) appendBuildRowToChunk(chk *chunk.Chunk, rowInfo *rowInfo) (currentRowData uintptr) {
-	meta := j.ctx.hashTableMeta
 	if j.rightAsBuildSide {
 		if j.ctx.hasOtherCondition() {
-			return j.appendBuildRowToChunkInternal(chk, j.rUsedInOtherCondition, rowInfo, meta.columnCountNeededForOtherCondition, j.currentChunk.NumCols())
+			return j.appendBuildRowToChunkInternal(chk, j.rUsedInOtherCondition, rowInfo, true, j.currentChunk.NumCols())
 		} else {
-			return j.appendBuildRowToChunkInternal(chk, j.rUsed, rowInfo, -1, len(j.lUsed))
+			return j.appendBuildRowToChunkInternal(chk, j.rUsed, rowInfo, false, len(j.lUsed))
 		}
 	} else {
 		if j.ctx.hasOtherCondition() {
-			return j.appendBuildRowToChunkInternal(chk, j.lUsedInOtherCondition, rowInfo, meta.columnCountNeededForOtherCondition, 0)
+			return j.appendBuildRowToChunkInternal(chk, j.lUsedInOtherCondition, rowInfo, true, 0)
 		} else {
-			return j.appendBuildRowToChunkInternal(chk, j.lUsed, rowInfo, -1, 0)
+			return j.appendBuildRowToChunkInternal(chk, j.lUsed, rowInfo, false, 0)
 		}
 	}
 }
 
-func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols []int, rowInfo *rowInfo, columnsToAppend int, colOffset int) (currentRowData uintptr) {
+func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols []int, rowInfo *rowInfo, forOtherCondition bool, colOffset int) (currentRowData uintptr) {
 	if len(usedCols) == 0 {
 		return
 	}
@@ -218,11 +217,25 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 	}
 	colIndexMap := make(map[int]int)
 	for index, value := range usedCols {
-		colIndexMap[value] = index + colOffset
+		if forOtherCondition {
+			colIndexMap[value] = value + colOffset
+		} else {
+			colIndexMap[value] = index + colOffset
+		}
 	}
 	meta := j.ctx.hashTableMeta
-	if columnsToAppend < 0 {
-		columnsToAppend = len(meta.rowColumnsOrder)
+	columnsToAppend := len(meta.rowColumnsOrder)
+	if forOtherCondition {
+		columnsToAppend = meta.columnCountNeededForOtherCondition
+		if j.ctx.RightAsBuildSide {
+			for _, value := range j.rUsed {
+				colIndexMap[value] = value + colOffset
+			}
+		} else {
+			for _, value := range j.lUsed {
+				colIndexMap[value] = value + colOffset
+			}
+		}
 	}
 	for columnIndex := rowInfo.currentColumnIndex; columnIndex < len(meta.rowColumnsOrder) && columnIndex < columnsToAppend; columnIndex++ {
 		index, ok := colIndexMap[meta.rowColumnsOrder[columnIndex]]
@@ -247,28 +260,42 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 func (j *baseJoinProbe) appendProbeRowToChunk(chk *chunk.Chunk, probeChk *chunk.Chunk) {
 	if j.rightAsBuildSide {
 		if j.ctx.hasOtherCondition() {
-			j.appendProbeRowToChunkInternal(chk, probeChk, j.lUsedInOtherCondition, 0)
+			j.appendProbeRowToChunkInternal(chk, probeChk, j.lUsedInOtherCondition, 0, true)
 		} else {
-			j.appendProbeRowToChunkInternal(chk, probeChk, j.lUsed, 0)
+			j.appendProbeRowToChunkInternal(chk, probeChk, j.lUsed, 0, false)
 		}
 	} else {
 		if j.ctx.hasOtherCondition() {
-			j.appendProbeRowToChunkInternal(chk, probeChk, j.rUsedInOtherCondition, j.ctx.hashTableMeta.totalColumnNumber)
+			j.appendProbeRowToChunkInternal(chk, probeChk, j.rUsedInOtherCondition, j.ctx.hashTableMeta.totalColumnNumber, true)
 		} else {
-			j.appendProbeRowToChunkInternal(chk, probeChk, j.rUsed, len(j.lUsed))
+			j.appendProbeRowToChunkInternal(chk, probeChk, j.rUsed, len(j.lUsed), false)
 		}
 	}
 }
 
-func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk *chunk.Chunk, used []int, collOffset int) {
+func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk *chunk.Chunk, used []int, collOffset int, forOtherCondition bool) {
 	if len(used) == 0 || len(j.offsetAndLengthArray) == 0 {
 		return
 	}
-	for index, colIndex := range used {
-		srcCol := probeChk.Column(colIndex)
-		dstCol := chk.Column(index + collOffset)
-		for _, offsetAndLength := range j.offsetAndLengthArray {
-			dstCol.BatchAppend(srcCol, offsetAndLength.offset, offsetAndLength.length)
+	if forOtherCondition {
+		usedColumnMap := make(map[int]struct{})
+		for _, colIndex := range used {
+			if _, ok := usedColumnMap[colIndex]; !ok {
+				srcCol := probeChk.Column(colIndex)
+				dstCol := chk.Column(colIndex + collOffset)
+				for _, offsetAndLength := range j.offsetAndLengthArray {
+					dstCol.BatchAppend(srcCol, offsetAndLength.offset, offsetAndLength.length)
+				}
+				usedColumnMap[colIndex] = struct{}{}
+			}
+		}
+	} else {
+		for index, colIndex := range used {
+			srcCol := probeChk.Column(colIndex)
+			dstCol := chk.Column(index + collOffset)
+			for _, offsetAndLength := range j.offsetAndLengthArray {
+				dstCol.BatchAppend(srcCol, offsetAndLength.offset, offsetAndLength.length)
+			}
 		}
 	}
 }
@@ -313,7 +340,8 @@ func NewJoinProbe(ctx *PartitionedHashJoinCtx, workID uint, joinType core.JoinTy
 		base.nullKeyVector = make([]bool, 0, chunk.InitialCapacity)
 	}
 	if base.ctx.OtherCondition != nil {
-		base.tmpChk = chunk.NewEmptyChunk(joinedColumnTypes)
+		base.tmpChk = chunk.NewChunkWithCapacity(joinedColumnTypes, chunk.InitialCapacity)
+		base.tmpChk.SetInCompleteChunk(true)
 		base.selected = make([]bool, 0, chunk.InitialCapacity)
 		base.rowIndexInfos = make([]rowIndexInfo, 0, chunk.InitialCapacity)
 	}
