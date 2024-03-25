@@ -2590,9 +2590,21 @@ func encodeHandleFromRow(ctx expression.EvalContext, args []expression.Expressio
 	if is == nil {
 		return nil, false, errors.New("missing information schema")
 	}
+	tblName, partName := extractTablePartition(tblName)
 	tbl, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
 	if err != nil {
 		return nil, false, err
+	}
+	if part := tbl.GetPartitionedTable(); part != nil {
+		pid, err := tables.FindPartitionByName(tbl.Meta(), partName)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		tbl = part.GetPartition(pid)
+	} else {
+		if len(partName) != 0 {
+			return nil, false, errors.New("not partition table")
+		}
 	}
 	recordID, err := buildHandle(ctx, tbl.Meta(), args[2:], row)
 	if err != nil {
@@ -2600,6 +2612,18 @@ func encodeHandleFromRow(ctx expression.EvalContext, args []expression.Expressio
 	}
 	key := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), recordID)
 	return key, false, nil
+}
+
+func extractTablePartition(str string) (table, partition string) {
+	start := strings.IndexByte(str, '(')
+	if start == -1 {
+		return str, ""
+	}
+	end := strings.IndexByte(str, ')')
+	if end == -1 {
+		return str, ""
+	}
+	return str[:start], str[start+1 : end]
 }
 
 func buildHandle(ctx expression.EvalContext, tblInfo *model.TableInfo, pkArgs []expression.Expression, row chunk.Row) (kv.Handle, error) {
@@ -2681,7 +2705,7 @@ func encodeIndexKeyFromRow(ctx expression.EvalContext, args []expression.Express
 	if len(idxInfo.Columns)+pkLen != len(args)-3 {
 		return nil, false, errors.Errorf(
 			"column count mismatch, expected %d (index length + pk/rowid length), got %d",
-			len(idxInfo.Columns), len(args)-3)
+			len(idxInfo.Columns)+pkLen, len(args)-3)
 	}
 
 	handle, err := buildHandle(ctx, tblInfo, args[3+len(idxInfo.Columns):], row)
