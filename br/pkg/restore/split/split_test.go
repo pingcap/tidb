@@ -2,8 +2,10 @@
 package split
 
 import (
+	"bytes"
 	"context"
 	goerrors "errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -14,6 +16,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -315,4 +320,98 @@ func TestSplitCtxCancel(t *testing.T) {
 
 	_, _, err := client.SplitWaitAndScatter(ctx, &RegionInfo{}, [][]byte{{1}})
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestGetSplitKeyPerRegion(t *testing.T) {
+	// test case moved from BR
+	sortedKeys := [][]byte{
+		[]byte("b"),
+		[]byte("d"),
+		[]byte("g"),
+		[]byte("j"),
+		[]byte("l"),
+	}
+	sortedRegions := []*RegionInfo{
+		{
+			Region: &metapb.Region{
+				Id:       1,
+				StartKey: []byte("a"),
+				EndKey:   []byte("g"),
+			},
+		},
+		{
+			Region: &metapb.Region{
+				Id:       2,
+				StartKey: []byte("g"),
+				EndKey:   []byte("k"),
+			},
+		},
+		{
+			Region: &metapb.Region{
+				Id:       3,
+				StartKey: []byte("k"),
+				EndKey:   []byte("m"),
+			},
+		},
+	}
+	result := GetSplitKeyPerRegion(sortedKeys, sortedRegions, false)
+	require.Equal(t, 3, len(result))
+	require.Equal(t, [][]byte{[]byte("b"), []byte("d")}, result[1])
+	require.Equal(t, [][]byte{[]byte("g"), []byte("j")}, result[2])
+	require.Equal(t, [][]byte{[]byte("l")}, result[3])
+
+	// test case moved from lightning
+	sortedRegions = sortedRegions[:0]
+	tableID := int64(1)
+	peers := make([]*metapb.Peer, 1)
+	peers[0] = &metapb.Peer{
+		Id:      1,
+		StoreId: 1,
+	}
+	keys := []int64{10, 100, 500, 1000, 999999, -1}
+	start := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(0))
+	regionStart := codec.EncodeBytes([]byte{}, start)
+	for i, end := range keys {
+		var regionEndKey []byte
+		if end >= 0 {
+			endKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(end))
+			regionEndKey = codec.EncodeBytes([]byte{}, endKey)
+		}
+		region := &RegionInfo{
+			Region: &metapb.Region{
+				Id:          uint64(i),
+				Peers:       peers,
+				StartKey:    regionStart,
+				EndKey:      regionEndKey,
+				RegionEpoch: &metapb.RegionEpoch{ConfVer: 1, Version: 1},
+			},
+		}
+		sortedRegions = append(sortedRegions, region)
+		regionStart = regionEndKey
+	}
+
+	checkKeys := map[int64]int{
+		0:         -1,
+		5:         0,
+		99:        1,
+		100:       -1,
+		512:       3,
+		8888:      4,
+		999999:    -1,
+		100000000: 5,
+	}
+	expected := map[uint64][][]byte{}
+	sortedKeys = make([][]byte, 0, len(checkKeys))
+
+	for hdl, idx := range checkKeys {
+		key := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(hdl))
+		sortedKeys = append(sortedKeys, key)
+		if idx < 0 {
+			continue
+		}
+		expected[uint64(idx)] = append(expected[uint64(idx)], key)
+	}
+	slices.SortFunc(sortedKeys, bytes.Compare)
+	got := GetSplitKeyPerRegion(sortedKeys, sortedRegions, false)
+	require.Equal(t, expected, got)
 }

@@ -172,7 +172,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 		if err != nil {
 			return err
 		}
-		splitKeyMap := getSplitSortedKeysFromSortedRegions(splitContext, sortedKeys, regions)
+		splitKeyMap := split.GetSplitKeyPerRegion(sortedKeys, regions, splitContext.isRawKv)
 		regionMap := make(map[uint64]*split.RegionInfo)
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region
@@ -259,40 +259,6 @@ func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regi
 	defer cancel()
 	leftRegions, _ := rs.client.WaitRegionsScattered(ctx2, regionInfos)
 	return leftRegions
-}
-
-// TestGetSplitSortedKeysFromSortedRegionsTest is used only in unit test
-var TestGetSplitSortedKeysFromSortedRegionsTest = getSplitSortedKeysFromSortedRegions
-
-// getSplitSortedKeysFromSortedRegions checks if the sorted regions should be split by the end key of
-// the sorted ranges, and groups the split keys by region id.
-//
-// ASSERT: sortedRegions[0].StartKey <= sortedKeys[0]
-func getSplitSortedKeysFromSortedRegions(splitContext SplitContext, sortedKeys [][]byte, sortedRegions []*split.RegionInfo) map[uint64][][]byte {
-	splitKeyMap := make(map[uint64][][]byte)
-	curKeyIndex := 0
-	for _, region := range sortedRegions {
-		for ; curKeyIndex < len(sortedKeys); curKeyIndex += 1 {
-			if len(sortedKeys[curKeyIndex]) == 0 {
-				continue
-			}
-			splitKey := codec.EncodeBytesExt(nil, sortedKeys[curKeyIndex], splitContext.isRawKv)
-			// If splitKey is the boundary of the region
-			if bytes.Equal(splitKey, region.Region.GetStartKey()) {
-				continue
-			}
-			// If splitKey is not in a region
-			if !region.ContainsInterior(splitKey) {
-				break
-			}
-			splitKeys, ok := splitKeyMap[region.Region.GetId()]
-			if !ok {
-				splitKeys = make([][]byte, 0, 1)
-			}
-			splitKeyMap[region.Region.GetId()] = append(splitKeys, sortedKeys[curKeyIndex])
-		}
-	}
-	return splitKeyMap
 }
 
 func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *sst.RewriteRule) {

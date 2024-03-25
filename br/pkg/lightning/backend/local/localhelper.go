@@ -184,10 +184,10 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 					logutil.Key("lastRegionEnd", regions[len(regions)-1].Region.EndKey))
 				return errors.New("check split keys failed")
 			}
-			splitKeyMap = getSplitKeys(retryKeys, regions, log.FromContext(ctx))
+			splitKeyMap = split.GetSplitKeyPerRegion(retryKeys, regions, false)
 			retryKeys = retryKeys[:0]
 		} else {
-			splitKeyMap = getSplitKeysByRanges(ranges, regions, log.FromContext(ctx))
+			splitKeyMap = getSplitKeysByRanges(ranges, regions)
 		}
 
 		type splitInfo struct {
@@ -343,7 +343,7 @@ func (local *Backend) hasRegion(ctx context.Context, regionID uint64) (bool, err
 	return regionInfo != nil, nil
 }
 
-func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo, logger log.Logger) map[uint64][][]byte {
+func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo) map[uint64][][]byte {
 	checkKeys := make([][]byte, 0)
 	var lastEnd []byte
 	for _, rg := range ranges {
@@ -353,51 +353,7 @@ func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo, lo
 		checkKeys = append(checkKeys, rg.End)
 		lastEnd = rg.End
 	}
-	return getSplitKeys(checkKeys, regions, logger)
-}
-
-func getSplitKeys(checkKeys [][]byte, regions []*split.RegionInfo, logger log.Logger) map[uint64][][]byte {
-	splitKeyMap := make(map[uint64][][]byte)
-	for _, key := range checkKeys {
-		if region := needSplit(key, regions, logger); region != nil {
-			splitKeys, ok := splitKeyMap[region.Region.GetId()]
-			if !ok {
-				splitKeys = make([][]byte, 0, 1)
-			}
-			splitKeyMap[region.Region.GetId()] = append(splitKeys, key)
-			logger.Debug("get key for split region",
-				zap.Binary("key", key),
-				zap.Binary("startKey", region.Region.StartKey),
-				zap.Binary("endKey", region.Region.EndKey))
-		}
-	}
-	return splitKeyMap
-}
-
-// needSplit checks whether a key is necessary to split, if true returns the split region
-func needSplit(key []byte, regions []*split.RegionInfo, logger log.Logger) *split.RegionInfo {
-	// If splitKey is the max key.
-	if len(key) == 0 {
-		return nil
-	}
-	splitKey := codec.EncodeBytes([]byte{}, key)
-
-	idx := sort.Search(len(regions), func(i int) bool {
-		return beforeEnd(splitKey, regions[i].Region.EndKey)
-	})
-	if idx < len(regions) {
-		// If splitKey is in a region
-		if bytes.Compare(splitKey, regions[idx].Region.GetStartKey()) > 0 && beforeEnd(splitKey, regions[idx].Region.GetEndKey()) {
-			logger.Debug("need split",
-				zap.Binary("splitKey", key),
-				zap.Binary("encodedKey", splitKey),
-				zap.Binary("region start", regions[idx].Region.GetStartKey()),
-				zap.Binary("region end", regions[idx].Region.GetEndKey()),
-			)
-			return regions[idx]
-		}
-	}
-	return nil
+	return split.GetSplitKeyPerRegion(checkKeys, regions, false)
 }
 
 func beforeEnd(key []byte, end []byte) bool {
