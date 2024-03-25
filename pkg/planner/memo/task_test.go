@@ -51,47 +51,47 @@ func TestTaskStack(t *testing.T) {
 
 func TestTaskFunctionality(t *testing.T) {
 	taskTaskPool := TaskStackPool.Get()
-	require.Equal(t, len(taskTaskPool.(*TaskStack).tasks), 0)
-	require.Equal(t, cap(taskTaskPool.(*TaskStack).tasks), 4)
-	taskStack := taskTaskPool.(*TaskStack)
-	taskStack.Push(&TestTaskImpl{a: 1})
-	taskStack.Push(&TestTaskImpl{a: 2})
-	one := taskStack.Pop()
+	require.Equal(t, len(taskTaskPool.(*taskStack).tasks), 0)
+	require.Equal(t, cap(taskTaskPool.(*taskStack).tasks), 4)
+	ts := taskTaskPool.(*taskStack)
+	ts.Push(&TestTaskImpl{a: 1})
+	ts.Push(&TestTaskImpl{a: 2})
+	one := ts.Pop()
 	require.Equal(t, one.desc(), "2")
-	one = taskStack.Pop()
+	one = ts.Pop()
 	require.Equal(t, one.desc(), "1")
 	// empty, pop nil.
-	one = taskStack.Pop()
+	one = ts.Pop()
 	require.Nil(t, one)
 
-	taskStack.Push(&TestTaskImpl{a: 3})
-	taskStack.Push(&TestTaskImpl{a: 4})
-	taskStack.Push(&TestTaskImpl{a: 5})
-	taskStack.Push(&TestTaskImpl{a: 6})
+	ts.Push(&TestTaskImpl{a: 3})
+	ts.Push(&TestTaskImpl{a: 4})
+	ts.Push(&TestTaskImpl{a: 5})
+	ts.Push(&TestTaskImpl{a: 6})
 	// no clean, put it back
 	TaskStackPool.Put(taskTaskPool)
 
 	// require again.
-	taskTaskPool = TaskStackPool.Get()
-	require.Equal(t, len(taskTaskPool.(*TaskStack).tasks), 4)
-	require.Equal(t, cap(taskTaskPool.(*TaskStack).tasks), 4)
+	ts = TaskStackPool.Get().(*taskStack)
+	require.Equal(t, len(ts.tasks), 4)
+	require.Equal(t, cap(ts.tasks), 4)
 	// clean the stack
-	one = taskStack.Pop()
+	one = ts.Pop()
 	require.Equal(t, one.desc(), "6")
-	one = taskStack.Pop()
+	one = ts.Pop()
 	require.Equal(t, one.desc(), "5")
-	one = taskStack.Pop()
+	one = ts.Pop()
 	require.Equal(t, one.desc(), "4")
-	one = taskStack.Pop()
+	one = ts.Pop()
 	require.Equal(t, one.desc(), "3")
-	one = taskStack.Pop()
+	one = ts.Pop()
 	require.Nil(t, one)
 
 	// self destroy.
-	taskStack.Destroy()
-	taskTaskPool = TaskStackPool.Get()
-	require.Equal(t, len(taskTaskPool.(*TaskStack).tasks), 0)
-	require.Equal(t, cap(taskTaskPool.(*TaskStack).tasks), 4)
+	ts.Destroy()
+	ts = TaskStackPool.Get().(*taskStack)
+	require.Equal(t, len(ts.tasks), 0)
+	require.Equal(t, cap(ts.tasks), 4)
 }
 
 // Benchmark result explanation:

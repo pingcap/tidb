@@ -43,18 +43,18 @@ var TaskStackPool = sync.Pool{
 }
 
 // TaskStack is used to store the optimizing tasks created before or during the optimizing process.
-type TaskStack struct {
+type taskStack struct {
 	tasks []Task
 }
 
-func newTaskStack() *TaskStack {
-	return &TaskStack{
+func newTaskStack() *taskStack {
+	return &taskStack{
 		tasks: make([]Task, 0, 4),
 	}
 }
 
 // Destroy indicates that when stack itself is useless like in the end of optimizing phase, we can destroy ourselves.
-func (ts *TaskStack) Destroy() {
+func (ts *taskStack) Destroy() {
 	// when a taskStack itself is useless, we can destroy itself actively.
 	clear(ts.tasks)
 	TaskStackPool.Put(ts)
@@ -62,7 +62,7 @@ func (ts *TaskStack) Destroy() {
 
 // Desc is used to desc the detail info about current stack state.
 // when use customized stack to drive the tasks, the call-chain state is dived in the stack.
-func (ts *TaskStack) Desc() string {
+func (ts *taskStack) Desc() string {
 	var str strings.Builder
 	for _, one := range ts.tasks {
 		str.WriteString(one.desc())
@@ -72,12 +72,12 @@ func (ts *TaskStack) Desc() string {
 }
 
 // Len indicates the length of current stack.
-func (ts *TaskStack) Len() int {
+func (ts *taskStack) Len() int {
 	return len(ts.tasks)
 }
 
 // Pop indicates to pop one task out of the stack.
-func (ts *TaskStack) Pop() Task {
+func (ts *taskStack) Pop() Task {
 	if !ts.Empty() {
 		tmp := ts.tasks[len(ts.tasks)-1]
 		ts.tasks = ts.tasks[:len(ts.tasks)-1]
@@ -87,50 +87,50 @@ func (ts *TaskStack) Pop() Task {
 }
 
 // Push indicates to push one task into the stack.
-func (ts *TaskStack) Push(one Task) {
+func (ts *taskStack) Push(one Task) {
 	ts.tasks = append(ts.tasks, one)
 }
 
 // Empty indicates whether taskStack is empty.
-func (ts *TaskStack) Empty() bool {
+func (ts *taskStack) Empty() bool {
 	return ts.Len() == 0
 }
 
 // BenchTest required.
-func newTaskStackWithCap(c int) *TaskStack {
-	return &TaskStack{
+func newTaskStackWithCap(c int) *taskStack {
+	return &taskStack{
 		tasks: make([]Task, 0, c),
 	}
 }
 
 // TaskStack2 is used to store the optimizing tasks created before or during the optimizing process.
-type TaskStack2 struct {
+type taskStack2 struct {
 	tasks []*Task
 }
 
-func newTaskStack2WithCap(c int) *TaskStack2 {
-	return &TaskStack2{
+func newTaskStack2WithCap(c int) *taskStack2 {
+	return &taskStack2{
 		tasks: make([]*Task, 0, c),
 	}
 }
 
 // Push indicates to push one task into the stack.
-func (ts *TaskStack2) Push(one Task) {
+func (ts *taskStack2) Push(one Task) {
 	ts.tasks = append(ts.tasks, &one)
 }
 
 // Len indicates the length of current stack.
-func (ts *TaskStack2) Len() int {
+func (ts *taskStack2) Len() int {
 	return len(ts.tasks)
 }
 
 // Empty indicates whether taskStack is empty.
-func (ts *TaskStack2) Empty() bool {
+func (ts *taskStack2) Empty() bool {
 	return ts.Len() == 0
 }
 
 // Pop indicates to pop one task out of the stack.
-func (ts *TaskStack2) Pop() Task {
+func (ts *taskStack2) Pop() Task {
 	if !ts.Empty() {
 		tmp := ts.tasks[len(ts.tasks)-1]
 		ts.tasks = ts.tasks[:len(ts.tasks)-1]
