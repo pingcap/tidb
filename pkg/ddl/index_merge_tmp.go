@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -52,12 +53,9 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
 			// Found a value in the original index key.
 			err := checkTempIndexKey(txn, idxRecords[i], val, w.table)
 			if err != nil {
-<<<<<<< HEAD
-=======
 				if kv.ErrKeyExists.Equal(err) {
 					return driver.ExtractKeyExistsErrFromIndex(key, val, w.table.Meta(), w.currentIndex.ID)
 				}
->>>>>>> c1e3daebf18 (ddl: fix add index's merge with multi-schema optimization (#51747))
 				return errors.Trace(err)
 			}
 		} else if idxRecords[i].distinct {
@@ -187,24 +185,10 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-<<<<<<< HEAD
-	for _, idx := range w.indexes {
-		idx := idx // Make linter noloopclosure happy.
-		errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
-			taskCtx.addedCount = 0
-			taskCtx.scanCount = 0
-			txn.SetOption(kv.Priority, taskRange.priority)
-			if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(taskRange.getJobID()); tagger != nil {
-				txn.SetOption(kv.ResourceGroupTagger, tagger)
-			}
-			txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
-=======
->>>>>>> c1e3daebf18 (ddl: fix add index's merge with multi-schema optimization (#51747))
 
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
-		updateTxnEntrySizeLimitIfNeeded(txn)
 		txn.SetOption(kv.Priority, taskRange.priority)
 		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(taskRange.getJobID()); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)

@@ -309,8 +309,6 @@ func TestAddIndexIngestMultiSchemaChange(t *testing.T) {
 	tk.MustExec("alter table t add index idx_a(a), add index idx_ab(a, b), add index idx_d(d);")
 	tk.MustExec("admin check table t;")
 }
-<<<<<<< HEAD
-=======
 
 func TestAddIndexDuplicateMessage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -369,4 +367,3 @@ func TestMultiSchemaAddIndexMerge(t *testing.T) {
 	require.NoError(t, tk2Err)
 	tk.MustExec("admin check table t;")
 }
->>>>>>> c1e3daebf18 (ddl: fix add index's merge with multi-schema optimization (#51747))
