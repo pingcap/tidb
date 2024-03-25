@@ -47,6 +47,10 @@ type Chunk struct {
 
 	// requiredRows indicates how many rows the parent executor want.
 	requiredRows int
+
+	// inCompleteChunk means some of the columns in the chunk is not filled, used in
+	// join probe, the value will always be false unless set it explicitly
+	inCompleteChunk bool
 }
 
 // Capacity constants.
@@ -102,13 +106,14 @@ func New(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
 // created Chunk has the same data schema with the old Chunk.
 func renewWithCapacity(chk *Chunk, capacity, requiredRows int) *Chunk {
 	if chk.columns == nil {
-		return &Chunk{}
+		return &Chunk{inCompleteChunk: chk.inCompleteChunk}
 	}
 	return &Chunk{
-		columns:        renewColumns(chk.columns, capacity),
-		numVirtualRows: 0,
-		capacity:       capacity,
-		requiredRows:   requiredRows,
+		columns:         renewColumns(chk.columns, capacity),
+		numVirtualRows:  0,
+		capacity:        capacity,
+		requiredRows:    requiredRows,
+		inCompleteChunk: chk.inCompleteChunk,
 	}
 }
 
@@ -137,10 +142,11 @@ func renewColumns(oldCol []*Column, capacity int) []*Column {
 // but keep columns empty.
 func renewEmpty(chk *Chunk) *Chunk {
 	newChk := &Chunk{
-		columns:        nil,
-		numVirtualRows: chk.numVirtualRows,
-		capacity:       chk.capacity,
-		requiredRows:   chk.requiredRows,
+		columns:         nil,
+		numVirtualRows:  chk.numVirtualRows,
+		capacity:        chk.capacity,
+		requiredRows:    chk.requiredRows,
+		inCompleteChunk: chk.inCompleteChunk,
 	}
 	if chk.sel != nil {
 		newChk.sel = make([]int, len(chk.sel))
@@ -156,6 +162,11 @@ func (c *Chunk) resetForReuse() {
 	columns := c.columns[:0]
 	// Keep only the empty columns array space, reset other fields.
 	*c = Chunk{columns: columns}
+}
+
+// SetInCompleteChunk will set c.inCompleteChunk, used in join
+func (c *Chunk) SetInCompleteChunk(isInCompleteChunk bool) {
+	c.inCompleteChunk = isInCompleteChunk
 }
 
 // MemoryUsage returns the total memory usage of a Chunk in bytes.
@@ -368,7 +379,7 @@ func (c *Chunk) NumRows() int {
 	if c.sel != nil {
 		return len(c.sel)
 	}
-	if c.NumCols() == 0 {
+	if c.inCompleteChunk || c.NumCols() == 0 {
 		return c.numVirtualRows
 	}
 	return c.columns[0].length
