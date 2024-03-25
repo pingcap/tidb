@@ -911,7 +911,7 @@ var funcs = map[string]functionClass{
 
 	// TiDB internal function.
 	ast.TiDBDecodeKey:       &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},
-	ast.TiDBMVCCInfo:        &tidbMVCCInfoFunctionClass{baseFunctionClass{ast.TiDBMVCCInfo, 1, 1}},
+	ast.TiDBMVCCInfo:        &tidbMVCCInfoFunctionClass{baseFunctionClass: baseFunctionClass{ast.TiDBMVCCInfo, 1, 1}},
 	ast.TiDBEncodeRecordKey: &tidbEncodeRecordKeyClass{baseFunctionClass{ast.TiDBEncodeRecordKey, 3, -1}},
 	ast.TiDBEncodeIndexKey:  &tidbEncodeIndexKeyClass{baseFunctionClass{ast.TiDBEncodeIndexKey, 4, -1}},
 	// This function is used to show tidb-server version info.
