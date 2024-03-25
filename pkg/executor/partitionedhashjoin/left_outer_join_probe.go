@@ -89,7 +89,7 @@ func (j *leftOuterJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult)
 		currentRow := j.rowIter.getValue()
 		if !meta.isCurrentRowUsed(currentRow) {
 			// append build side of this row
-			j.appendBuildRowToChunkInternal(joinResult.Chk, j.lUsed, &rowInfo{rowStart: currentRow, rowData: 0, currentColumnIndex: 0}, -1, 0)
+			j.appendBuildRowToChunkInternal(joinResult.Chk, j.lUsed, &rowInfo{rowStart: currentRow, rowData: 0, currentColumnIndex: 0}, false, 0)
 			joinResult.Chk.IncNumVirtualRows()
 			insertedRows++
 		}
