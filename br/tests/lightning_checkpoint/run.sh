@@ -89,7 +89,7 @@ echo "******** Verify checkpoint no-op ********"
 run_lightning -d "$DBPATH" --enable-checkpoint=1
 run_sql "$PARTIAL_IMPORT_QUERY"
 check_contains "s: $(( (1000 * $CHUNK_COUNT + 1001) * $CHUNK_COUNT * $TABLE_COUNT ))"
-run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cppk`.table_v8 WHERE status >= 200'
+run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cppk`.table_v9 WHERE status >= 200'
 check_contains "count(*): $TABLE_COUNT"
 
 # Start importing the tables.
@@ -113,5 +113,5 @@ echo "******** Verify checkpoint no-op ********"
 run_lightning -d "$DBPATH" --enable-checkpoint=1
 run_sql "$PARTIAL_IMPORT_QUERY"
 check_contains "s: $(( (1000 * $CHUNK_COUNT + 1001) * $CHUNK_COUNT * $TABLE_COUNT ))"
-run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cppk`.table_v8 WHERE status >= 200'
+run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cppk`.table_v9 WHERE status >= 200'
 check_contains "count(*): $TABLE_COUNT"
