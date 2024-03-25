@@ -66,11 +66,7 @@ go_test(
     embed = [":ingest"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 15,
-=======
     shard_count = 17,
->>>>>>> c1e3daebf18 (ddl: fix add index's merge with multi-schema optimization (#51747))
     deps = [
         "//pkg/config",
         "//pkg/ddl",
