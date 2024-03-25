@@ -35,7 +35,11 @@ go_test(
     timeout = "short",
     srcs = ["prepare_test.go"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 7,
+=======
+    shard_count = 9,
+>>>>>>> 411e945da33 (operator: pause scheduler after all connections established (#51823))
     deps = [
         ":prepare_snap",
         "//br/pkg/utils",

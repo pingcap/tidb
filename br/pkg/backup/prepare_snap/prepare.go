@@ -91,6 +91,9 @@ type Preparer struct {
 	RetryBackoff  time.Duration
 	RetryLimit    int
 	LeaseDuration time.Duration
+
+	/* Observers. Initialize them before starting.*/
+	AfterConnectionsEstablished func()
 }
 
 func New(env Env) *Preparer {
@@ -158,6 +161,9 @@ func (p *Preparer) DriveLoopAndWaitPrepare(ctx context.Context) error {
 	if err := p.prepareConnections(ctx); err != nil {
 		log.Error("failed to prepare connections", logutil.ShortError(err))
 		return errors.Annotate(err, "failed to prepare connections")
+	}
+	if p.AfterConnectionsEstablished != nil {
+		p.AfterConnectionsEstablished()
 	}
 	if err := p.AdvanceState(ctx); err != nil {
 		log.Error("failed to check the progress of our work", logutil.ShortError(err))
