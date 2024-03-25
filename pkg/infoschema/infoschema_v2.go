@@ -410,7 +410,6 @@ func (is *infoschemaV2) allSchemas(visit func(*model.DBInfo)) {
 	for _, sc := range is.Data.specials {
 		visit(sc.dbInfo)
 	}
-	return
 }
 
 func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
