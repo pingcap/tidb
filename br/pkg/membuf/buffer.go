@@ -14,9 +14,7 @@
 
 package membuf
 
-import (
-	"unsafe"
-)
+import "unsafe"
 
 const (
 	defaultPoolSize  = 1024
@@ -144,9 +142,6 @@ type Buffer struct {
 
 	smallObjOverhead      int
 	smallObjOverheadCache int
-
-	// debug
-	ID string
 }
 
 // BufferOption configures a buffer.
