@@ -95,8 +95,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	util3 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/arena"
+	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -203,6 +203,18 @@ type clientConn struct {
 
 	// Proxy Protocol Enabled
 	ppEnabled bool
+
+	writeChunksOnce sync.Once
+	writeChunksCh   chan chunkErrorChan
+}
+
+type chunkErrorChan struct {
+	ctx        context.Context
+	rs         resultset.ResultSet
+	binary     bool
+	stmtDetail *execdetails.StmtExecDetails
+	chkCh      <-chan *chunk.Chunk
+	errCh      chan<- error
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -2313,21 +2325,21 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 }
 
 func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.ResultSet, binary bool, serverStatus uint16, stmtDetail *execdetails.StmtExecDetails) (firstNext bool, err error) {
+	cc.createWriteChunksGoroutine()
 	var (
-		data           = cc.alloc.AllocWithLen(4, 1024)
 		req            = rs.NewChunk(cc.chunkAlloc)
 		gotColumnInfo  = false
 		validNextCount = 0
 		chkCh          = make(chan *chunk.Chunk)
 		errCh          = make(chan error, 1)
 	)
+	cc.writeChunksCh <- chunkErrorChan{ctx, rs, binary, stmtDetail, chkCh, errCh}
 	firstNext = true
 	var start time.Time
 
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
-	wg := util3.WaitGroupWrapper{}
-	defer wg.Wait()
+	defer channel.Clear(errCh)
 	defer close(chkCh)
 	defer func() {
 		if finErr := rs.Finish(); err == nil {
@@ -2335,43 +2347,6 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 		}
 	}()
 	// Using different goroutines to call functions for rs.Next and cc.writePacket, to handling exit signals in time.
-	wg.Run(func() {
-		var err error
-		for {
-			req, ok := <-chkCh
-			if !ok {
-				return
-			}
-			reg := trace.StartRegion(ctx, "WriteClientConn")
-			if stmtDetail != nil {
-				start = time.Now()
-			}
-			rowCount := req.NumRows()
-			for i := 0; i < rowCount; i++ {
-				data = data[0:4]
-				if binary {
-					data, err = column.DumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
-				} else {
-					data, err = column.DumpTextRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
-				}
-				if err != nil {
-					reg.End()
-					errCh <- err
-					return
-				}
-				if err = cc.writePacket(data); err != nil {
-					reg.End()
-					errCh <- err
-					return
-				}
-			}
-			reg.End()
-			if stmtDetail != nil {
-				stmtDetail.WriteSQLRespDuration += time.Since(start)
-			}
-			errCh <- nil
-		}
-	})
 
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
@@ -2439,6 +2414,75 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 		}
 	}
 	return false, nil
+}
+
+func (cc *clientConn) createWriteChunksGoroutine() {
+	cc.writeChunksOnce.Do(func() {
+		cc.writeChunksCh = make(chan chunkErrorChan)
+		go func() {
+			var (
+				err        error
+				ctx        context.Context
+				start      time.Time
+				data       = cc.alloc.AllocWithLen(4, 1024)
+				rs         resultset.ResultSet
+				chkCh      <-chan *chunk.Chunk
+				errCh      chan<- error
+				stmtDetail *execdetails.StmtExecDetails
+				binary     bool
+			)
+			for {
+				chkerror, ok := <-cc.writeChunksCh
+				if !ok {
+					return
+				}
+				ctx = chkerror.ctx
+				rs = chkerror.rs
+				chkCh = chkerror.chkCh
+				errCh = chkerror.errCh
+				stmtDetail = chkerror.stmtDetail
+				binary = chkerror.binary
+
+				func() {
+					defer close(errCh)
+					for {
+						req, ok := <-chkCh
+						if !ok {
+							break
+						}
+						reg := trace.StartRegion(ctx, "WriteClientConn")
+						if stmtDetail != nil {
+							start = time.Now()
+						}
+						rowCount := req.NumRows()
+						for i := 0; i < rowCount; i++ {
+							data = data[0:4]
+							if binary {
+								data, err = column.DumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+							} else {
+								data, err = column.DumpTextRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+							}
+							if err != nil {
+								reg.End()
+								errCh <- err
+								break
+							}
+							if err = cc.writePacket(data); err != nil {
+								reg.End()
+								errCh <- err
+								break
+							}
+						}
+						reg.End()
+						if stmtDetail != nil {
+							stmtDetail.WriteSQLRespDuration += time.Since(start)
+						}
+						errCh <- err
+					}
+				}()
+			}
+		}()
+	})
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
