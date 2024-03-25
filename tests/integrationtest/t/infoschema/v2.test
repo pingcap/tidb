@@ -28,4 +28,16 @@ create database infoschema__v2;
 use infoschema__v2;
 create table t (a int, b int, PRIMARY KEY (a));
 
+drop database infoschema__v2;
+create database infoschema__v2;
+
+drop database infoschema__v2;
+create database infoschema__v2;
+
+drop database infoschema__v2;
+show databases like 'infoschema%';
+create database infoschema__v2;
+show databases like 'infoschema%';
+
+
 set @@global.tidb_schema_cache_size = default;

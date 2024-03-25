@@ -388,27 +388,44 @@ func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok 
 	return
 }
 
-func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
-	is.Data.schemaMap.Scan(func(item schemaItem) bool {
-		// TODO: version?
-		schemas = append(schemas, item.dbInfo)
+func (is *infoschemaV2) allSchemas(visit func (*model.DBInfo)) {
+	var last *model.DBInfo
+	is.Data.schemaMap.Reverse(func(item schemaItem) bool {
+		fmt.Println("scan item ===", *item.dbInfo, item.schemaVersion)
+		if item.schemaVersion > is.infoSchema.schemaMetaVersion {
+			// Skip the versions that we are not looking for.
+			return true
+		}
+
+		// Dedup the same db record of different versions.
+		if last != nil && last.Name == item.dbInfo.Name {
+			return true
+		}
+		last = item.dbInfo
+
+		if !item.tomb {
+			visit(item.dbInfo)
+		}
 		return true
 	})
 	for _, sc := range is.Data.specials {
-		schemas = append(schemas, sc.dbInfo)
+		visit(sc.dbInfo)
 	}
+	return
+}
+
+func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
+	is.allSchemas(func(di *model.DBInfo) {
+		schemas = append(schemas, di)
+	})
 	return
 }
 
 func (is *infoschemaV2) AllSchemaNames() []model.CIStr {
 	rs := make([]model.CIStr, 0, is.Data.schemaMap.Len())
-	is.Data.schemaMap.Scan(func(item schemaItem) bool {
-		rs = append(rs, item.dbInfo.Name)
-		return true
+	is.allSchemas(func(di *model.DBInfo) {
+		rs = append(rs, di.Name)
 	})
-	for _, sc := range is.Data.specials {
-		rs = append(rs, sc.dbInfo.Name)
-	}
 	return rs
 }
 
@@ -455,11 +472,13 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 		return nil, false
 	}
 
-	is.Data.schemaMap.Scan(func(item schemaItem) bool {
+	is.Data.schemaMap.Reverse(func(item schemaItem) bool {
 		if item.dbInfo.ID == id {
-			ok = true
-			dbInfo = item.dbInfo
-			return false
+			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
+				ok = !item.tomb
+				dbInfo = item.dbInfo
+				return false
+			}
 		}
 		return true
 	})
