@@ -80,6 +80,28 @@ func TestBackoffWithFatalError(t *testing.T) {
 	}, multierr.Errors(err))
 }
 
+func TestWithRetryReturnLastErr(t *testing.T) {
+	var counter int
+	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond, utils.NewDefaultContext())
+	gRPCError := status.Error(codes.Unavailable, "transport is closing")
+	err := utils.WithRetryReturnLastErr(context.Background(), func() error {
+		defer func() { counter++ }()
+		switch counter {
+		case 0:
+			return gRPCError // nolint:wrapcheck
+		case 1:
+			return berrors.ErrKVEpochNotMatch
+		case 2:
+			return berrors.ErrKVDownloadFailed
+		case 3:
+			return berrors.ErrKVRangeIsEmpty
+		}
+		return nil
+	}, backoffer)
+	require.Equal(t, 4, counter)
+	require.ErrorIs(t, berrors.ErrKVRangeIsEmpty, err)
+}
+
 func TestBackoffWithFatalRawGRPCError(t *testing.T) {
 	var counter int
 	canceledError := status.Error(codes.Canceled, "context canceled")
@@ -123,9 +145,12 @@ func TestPdBackoffWithRetryableError(t *testing.T) {
 		if counter == 2 {
 			return io.EOF
 		}
+		if counter == 6 {
+			return context.Canceled
+		}
 		return gRPCError
 	}, backoffer)
-	require.Equal(t, 16, counter)
+	require.Equal(t, 7, counter)
 	require.Equal(t, []error{
 		gRPCError,
 		gRPCError,
@@ -133,16 +158,7 @@ func TestPdBackoffWithRetryableError(t *testing.T) {
 		gRPCError,
 		gRPCError,
 		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
+		context.Canceled,
 	}, multierr.Errors(err))
 }
 

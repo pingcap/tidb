@@ -566,9 +566,19 @@ error = '''
 encode kv error in file %s at offset %d
 '''
 
+["Lightning:Restore:ErrFoundDataConflictRecords"]
+error = '''
+found data conflict records in table %s, primary key is '%s', row data is '%s'
+'''
+
 ["Lightning:Restore:ErrFoundDuplicateKey"]
 error = '''
 found duplicate key '%s', value '%s'
+'''
+
+["Lightning:Restore:ErrFoundIndexConflictRecords"]
+error = '''
+found index conflict records in table %s, index name is '%s', unique key is '%s', primary key is '%s'
 '''
 
 ["Lightning:Restore:ErrInvalidMetaStatus"]

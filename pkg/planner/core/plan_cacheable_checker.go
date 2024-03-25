@@ -650,14 +650,12 @@ func checkTableCacheable(ctx context.Context, sctx PlanContext, schema infoschem
 	}
 
 	if tb.Meta().GetPartitionInfo() != nil {
-		// Temporary disable prepared plan cache until https://github.com/pingcap/tidb/issues/33031
-		// is fixed and additional tests with dynamic partition prune mode has been added.
-		/*
-			if checker.sctx != nil && checker.sctx.GetSessionVars().UseDynamicPartitionPrune() {
-				return in, false // dynamic-mode for partition tables can use plan-cache
-			}
-		*/
-		return false, "query accesses partitioned tables is un-cacheable"
+		if sctx == nil || !sctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+			return false, "query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'"
+		}
+		if fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix33031, false) {
+			return false, "Fix33031 fix-control set and partitioned table"
+		}
 	}
 
 	if !enablePlanCacheForGeneratedCols(sctx) {

@@ -70,7 +70,7 @@ func TestPostProcessStepExecutor(t *testing.T) {
 
 	bytes, err := json.Marshal(stepMeta)
 	require.NoError(t, err)
-	executor := importinto.NewPostProcessStepExecutor(1, taskMeta, zap.NewExample())
+	executor := importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 
@@ -79,17 +79,17 @@ func TestPostProcessStepExecutor(t *testing.T) {
 	stepMeta.Checksum[-1] = tmp
 	bytes, err = json.Marshal(stepMeta)
 	require.NoError(t, err)
-	executor = importinto.NewPostProcessStepExecutor(1, taskMeta, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.ErrorContains(t, err, "checksum mismatched remote vs local")
 
 	taskMeta.Plan.Checksum = config.OpLevelOptional
-	executor = importinto.NewPostProcessStepExecutor(1, taskMeta, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 
 	taskMeta.Plan.Checksum = config.OpLevelOff
-	executor = importinto.NewPostProcessStepExecutor(1, taskMeta, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 }

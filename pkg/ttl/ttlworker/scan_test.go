@@ -135,7 +135,7 @@ func TestScanWorkerSchedule(t *testing.T) {
 	defer w.stopWithWait()
 
 	task := &ttlScanTask{
-		ctx: context.Background(),
+		ctx: cache.SetMockExpireTime(context.Background(), time.Now()),
 		tbl: tbl,
 		TTLTask: &cache.TTLTask{
 			ExpireTime: time.UnixMilli(0),
@@ -184,7 +184,7 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 	defer w.stopWithWait()
 
 	task := &ttlScanTask{
-		ctx: context.Background(),
+		ctx: cache.SetMockExpireTime(context.Background(), time.Now()),
 		tbl: tbl,
 		TTLTask: &cache.TTLTask{
 			ExpireTime: time.UnixMilli(0),
@@ -392,6 +392,7 @@ func (t *mockScanTask) execSQL(_ context.Context, sql string, _ ...any) ([]chunk
 
 func TestScanTaskDoScan(t *testing.T) {
 	task := newMockScanTask(t, 3)
+	task.ctx = cache.SetMockExpireTime(task.ctx, time.Now())
 	task.sqlRetry[1] = scanTaskExecuteSQLMaxRetry
 	task.runDoScanForTest(3, "")
 
@@ -412,13 +413,13 @@ func TestScanTaskDoScan(t *testing.T) {
 func TestScanTaskCheck(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 	pool := newMockSessionPool(t, tbl)
-	pool.se.evalExpire = time.UnixMilli(100)
 	pool.se.rows = newMockRows(t, types.NewFieldType(mysql.TypeInt24)).Append(12).Rows()
+	ctx := cache.SetMockExpireTime(context.Background(), time.Unix(100, 0))
 
 	task := &ttlScanTask{
-		ctx: context.Background(),
+		ctx: ctx,
 		TTLTask: &cache.TTLTask{
-			ExpireTime: time.UnixMilli(101).Add(time.Minute),
+			ExpireTime: time.Unix(101, 0).Add(time.Minute),
 		},
 		tbl:        tbl,
 		statistics: &ttlStatistics{},
@@ -427,14 +428,14 @@ func TestScanTaskCheck(t *testing.T) {
 	ch := make(chan *ttlDeleteTask, 1)
 	result := task.doScan(context.Background(), ch, pool)
 	require.Equal(t, task, result.task)
-	require.EqualError(t, result.err, "current expire time is after safe expire time. (60101 > 60100)")
+	require.EqualError(t, result.err, "current expire time is after safe expire time. (161 > 160)")
 	require.Equal(t, 0, len(ch))
 	require.Equal(t, "Total Rows: 0, Success Rows: 0, Error Rows: 0", task.statistics.String())
 
 	task = &ttlScanTask{
-		ctx: context.Background(),
+		ctx: ctx,
 		TTLTask: &cache.TTLTask{
-			ExpireTime: time.UnixMilli(100).Add(time.Minute),
+			ExpireTime: time.Unix(100, 0).Add(time.Minute),
 		},
 		tbl:        tbl,
 		statistics: &ttlStatistics{},

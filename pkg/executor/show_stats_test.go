@@ -282,7 +282,6 @@ func TestShowStatusSnapshot(t *testing.T) {
 	tk.MustExec("drop database if exists test;")
 	tk.MustExec("create database test;")
 	tk.MustExec("use test;")
-	tk.MustExec("create table t (a int);")
 
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -293,13 +292,17 @@ func TestShowStatusSnapshot(t *testing.T) {
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
 
-	snapshotTime := time.Now()
-
-	tk.MustExec("drop table t;")
-	tk.MustQuery("show table status;").Check(testkit.Rows())
-	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
-	result := tk.MustQuery("show table status;")
-	require.Equal(t, "t", result.Rows()[0][0])
+	for _, cacheSize := range []int{1024, 0} {
+		tk.MustExec("set @@global.tidb_schema_cache_size = ?", cacheSize)
+		tk.MustExec("create table t (a int);")
+		snapshotTime := time.Now()
+		tk.MustExec("drop table t;")
+		tk.MustQuery("show table status;").Check(testkit.Rows())
+		tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
+		result := tk.MustQuery("show table status;")
+		require.Equal(t, "t", result.Rows()[0][0])
+		tk.MustExec("set @@tidb_snapshot = null;")
+	}
 }
 
 func TestShowStatsExtended(t *testing.T) {

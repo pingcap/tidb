@@ -59,12 +59,12 @@ type infoSchema struct {
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
-
-	// schemaMetaVersion is the version of schema, and we should check version when change schema.
-	schemaMetaVersion int64
 }
 
 type infoSchemaMisc struct {
+	// schemaMetaVersion is the version of schema, and we should check version when change schema.
+	schemaMetaVersion int64
+
 	// ruleBundleMap stores all placement rules
 	ruleBundleMap map[int64]*placement.Bundle
 
@@ -151,16 +151,16 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 
 var _ InfoSchema = (*infoSchema)(nil)
 
+func (is *infoSchema) base() *infoSchema {
+	return is
+}
+
 func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
 	tableNames, ok := is.schemaMap[schema.L]
 	if !ok {
 		return
 	}
 	return tableNames.dbInfo, true
-}
-
-func (is *infoSchema) SchemaMetaVersion() int64 {
-	return is.schemaMetaVersion
 }
 
 func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
@@ -308,6 +308,10 @@ func (is *infoSchemaMisc) HasTemporaryTable() bool {
 	return len(is.temporaryTableIDs) != 0
 }
 
+func (is *infoSchemaMisc) SchemaMetaVersion() int64 {
+	return is.schemaMetaVersion
+}
+
 // GetSequenceByName gets the sequence by name.
 func GetSequenceByName(is InfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
 	tbl, err := is.TableByName(schema, sequence)
@@ -347,7 +351,7 @@ func init() {
 		Tables:  infoSchemaTables,
 	}
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
-	util.GetSequenceByName = func(is any, schema, sequence model.CIStr) (util.SequenceTable, error) {
+	util.GetSequenceByName = func(is context.InfoSchemaMetaVersion, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
 	}
 	mock.MockInfoschema = func(tbList []*model.TableInfo) context.InfoSchemaMetaVersion {

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -162,9 +163,6 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	if rewriter.schema == nil {
 		rewriter.schema = expression.NewSchema()
 	}
-	rewriter.sctx.SetValue(expression.TiDBDecodeKeyFunctionKey, decodeKeyFromString)
-	rewriter.sctx.SetValue(expression.TiDBEncodeRecordFunctionKey, encodeHandleFromRow)
-	rewriter.sctx.SetValue(expression.TiDBEncodeIndexFunctionKey, encodeIndexKeyFromRow)
 
 	expr, _, err := rewriteExprNode(rewriter, node, rewriter.asScalar)
 	if err != nil {
@@ -255,9 +253,6 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 			sctx: b.ctx.GetExprCtx(), ctx: ctx,
 			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, rollExpand: b.currentBlockExpand},
 		}
-		rewriter.sctx.SetValue(expression.TiDBDecodeKeyFunctionKey, decodeKeyFromString)
-		rewriter.sctx.SetValue(expression.TiDBEncodeRecordFunctionKey, encodeHandleFromRow)
-		rewriter.sctx.SetValue(expression.TiDBEncodeIndexFunctionKey, encodeIndexKeyFromRow)
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
 	}
@@ -2577,7 +2572,12 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 	return strings.ToLower(x) == ast.CurrentTimestamp
 }
 
-func encodeHandleFromRow(ctx expression.EvalContext, args []expression.Expression, row chunk.Row) (kv.Key, bool, error) {
+func encodeHandleFromRow(
+	ctx expression.EvalContext,
+	isVer infoschemactx.InfoSchemaMetaVersion,
+	args []expression.Expression,
+	row chunk.Row,
+) ([]byte, bool, error) {
 	dbName, isNull, err := args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return nil, isNull, err
@@ -2586,7 +2586,7 @@ func encodeHandleFromRow(ctx expression.EvalContext, args []expression.Expressio
 	if err != nil || isNull {
 		return nil, isNull, err
 	}
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	is := isVer.(infoschema.InfoSchema)
 	if is == nil {
 		return nil, false, errors.New("missing information schema")
 	}
@@ -2626,7 +2626,12 @@ func extractTablePartition(str string) (table, partition string) {
 	return str[:start], str[start+1 : end]
 }
 
-func buildHandle(ctx expression.EvalContext, tblInfo *model.TableInfo, pkArgs []expression.Expression, row chunk.Row) (kv.Handle, error) {
+func buildHandle(
+	ctx expression.EvalContext,
+	tblInfo *model.TableInfo,
+	pkArgs []expression.Expression,
+	row chunk.Row,
+) (kv.Handle, error) {
 	var recordID kv.Handle
 	if !tblInfo.IsCommonHandle {
 		h, _, err := pkArgs[0].EvalInt(ctx, row)
@@ -2668,7 +2673,12 @@ func buildHandle(ctx expression.EvalContext, tblInfo *model.TableInfo, pkArgs []
 	return recordID, nil
 }
 
-func encodeIndexKeyFromRow(ctx expression.EvalContext, args []expression.Expression, row chunk.Row) (kv.Key, bool, error) {
+func encodeIndexKeyFromRow(
+	ctx expression.EvalContext,
+	isVer infoschemactx.InfoSchemaMetaVersion,
+	args []expression.Expression,
+	row chunk.Row,
+) ([]byte, bool, error) {
 	dbName, isNull, err := args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return nil, isNull, err
@@ -2681,7 +2691,7 @@ func encodeIndexKeyFromRow(ctx expression.EvalContext, args []expression.Express
 	if err != nil || isNull {
 		return nil, isNull, err
 	}
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	is := isVer.(infoschema.InfoSchema)
 	if is == nil {
 		return nil, false, errors.New("missing information schema")
 	}
@@ -2733,11 +2743,10 @@ func encodeIndexKeyFromRow(ctx expression.EvalContext, args []expression.Express
 	return idxKey, false, err
 }
 
-func decodeKeyFromString(ctx expression.EvalContext, s string) string {
-	sc := ctx.GetSessionVars().StmtCtx
+func decodeKeyFromString(tc types.Context, isVer infoschemactx.InfoSchemaMetaVersion, s string) string {
 	key, err := hex.DecodeString(s)
 	if err != nil {
-		sc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
+		tc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
 		return s
 	}
 	// Auto decode byte if needed.
@@ -2746,41 +2755,41 @@ func decodeKeyFromString(ctx expression.EvalContext, s string) string {
 		key = bs
 	}
 	tableID := tablecodec.DecodeTableID(key)
-	if tableID == 0 {
-		sc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
+	if tableID <= 0 {
+		tc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
 		return s
 	}
 
-	is, ok := ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is, ok := isVer.(infoschema.InfoSchema)
 	if !ok {
-		sc.AppendWarning(errors.NewNoStackErrorf("infoschema not found when decoding key: %X", key))
+		tc.AppendWarning(errors.NewNoStackErrorf("infoschema not found when decoding key: %X", key))
 		return s
 	}
 	tbl, _ := infoschema.FindTableByTblOrPartID(is, tableID)
-	loc := ctx.GetSessionVars().Location()
+	loc := tc.Location()
 	if tablecodec.IsRecordKey(key) {
 		ret, err := decodeRecordKey(key, tableID, tbl, loc)
 		if err != nil {
-			sc.AppendWarning(err)
+			tc.AppendWarning(err)
 			return s
 		}
 		return ret
 	} else if tablecodec.IsIndexKey(key) {
 		ret, err := decodeIndexKey(key, tableID, tbl, loc)
 		if err != nil {
-			sc.AppendWarning(err)
+			tc.AppendWarning(err)
 			return s
 		}
 		return ret
 	} else if tablecodec.IsTableKey(key) {
 		ret, err := decodeTableKey(key, tableID, tbl)
 		if err != nil {
-			sc.AppendWarning(err)
+			tc.AppendWarning(err)
 			return s
 		}
 		return ret
 	}
-	sc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
+	tc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
 	return s
 }
 

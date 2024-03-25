@@ -59,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -395,7 +394,9 @@ func (rc *Client) InitCheckpointMetadataForLogRestore(ctx context.Context, taskN
 	return gcRatio, nil
 }
 
-func (rc *Client) allocTableIDs(ctx context.Context, tables []*metautil.Table) error {
+// AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
+// the download stage.
+func (rc *Client) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
 	rc.preallocedTableIDs = tidalloc.New(tables)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
@@ -539,7 +540,6 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 }
 
 func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
-	storeWorkerPoolMap := make(map[uint64]chan struct{})
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
 		log.Fatal("failed to get stores", zap.Error(err))
@@ -552,15 +552,11 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 		// ToDo remove it when token bucket is stable enough.
 		log.Info("use token bucket to control download and ingest flow")
 		useTokenBucket = true
-		for _, store := range stores {
-			ch := utils.BuildWorkerTokenChannel(concurrencyPerStore)
-			storeWorkerPoolMap[store.Id] = ch
-		}
 	}
 
 	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, storeWorkerPoolMap, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -576,9 +572,10 @@ func (rc *Client) InitBackupMeta(
 	c context.Context,
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
-	reader *metautil.MetaReader) error {
+	reader *metautil.MetaReader,
+	loadStats bool) error {
 	if rc.needLoadSchemas(backupMeta) {
-		databases, err := metautil.LoadBackupTables(c, reader)
+		databases, err := metautil.LoadBackupTables(c, reader, loadStats)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1026,11 +1023,6 @@ func (rc *Client) GoCreateTables(
 	}
 	outCh := make(chan CreatedTable, len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
-	if err := rc.allocTableIDs(ctx, tables); err != nil {
-		errCh <- err
-		close(outCh)
-		return outCh
-	}
 
 	var err error
 
@@ -1407,10 +1399,9 @@ func getGroupFiles(files []*backuppb.File, supportMulti bool) [][]*backuppb.File
 // SplitRanges implements TiKVRestorer.
 func (rc *Client) SplitRanges(ctx context.Context,
 	ranges []rtree.Range,
-	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 	isRawKv bool) error {
-	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
+	return SplitRanges(ctx, rc, ranges, updateCh, isRawKv)
 }
 
 func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int64]*RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
@@ -1418,7 +1409,7 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 	client := split.NewSplitClient(rc.GetPDClient(), rc.pdHTTPClient, rc.GetTLSConfig(), false)
@@ -1470,7 +1461,6 @@ func (rc *Client) WrapLogFilesIterWithCheckpoint(
 func (rc *Client) RestoreSSTFiles(
 	ctx context.Context,
 	tableIDWithFiles []TableIDWithFiles,
-	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 ) (err error) {
 	start := time.Now()
@@ -1505,6 +1495,7 @@ LOOPFORTABLE:
 	for _, tableIDWithFile := range tableIDWithFiles {
 		tableID := tableIDWithFile.TableID
 		files := tableIDWithFile.Files
+		rules := tableIDWithFile.RewriteRules
 		fileCount += len(files)
 		for rangeFiles, leftFiles = drainFilesByRange(files); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles) {
 			filesReplica := rangeFiles
@@ -1520,14 +1511,16 @@ LOOPFORTABLE:
 			restoreFn := func() error {
 				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.supportMultiIngest)
 				for _, filesGroup := range filesGroups {
-					if importErr := func(fs []*backuppb.File) error {
+					if importErr := func(fs []*backuppb.File) (err error) {
 						fileStart := time.Now()
 						defer func() {
-							log.Info("import files done", logutil.Files(filesGroup),
-								zap.Duration("take", time.Since(fileStart)))
-							updateCh.Inc()
+							if err == nil {
+								log.Info("import files done", logutil.Files(filesGroup),
+									zap.Duration("take", time.Since(fileStart)))
+								updateCh.Inc()
+							}
 						}()
-						return rc.fileImporter.ImportSSTFiles(ectx, fs, rewriteRules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
+						return rc.fileImporter.ImportSSTFiles(ectx, fs, rules, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion())
 					}(filesGroup); importErr != nil {
 						return errors.Trace(importErr)
 					}
@@ -1545,7 +1538,13 @@ LOOPFORTABLE:
 				return nil
 			}
 			if rc.granularity == string(CoarseGrained) {
+				rc.fileImporter.cond.L.Lock()
+				for rc.fileImporter.ShouldBlock() {
+					// wait for download worker notified
+					rc.fileImporter.cond.Wait()
+				}
 				eg.Go(restoreFn)
+				rc.fileImporter.cond.L.Unlock()
 			} else {
 				// if we are not use coarse granularity which means
 				// we still pipeline split & scatter regions and import sst files
@@ -1867,61 +1866,53 @@ func (rc *Client) GoUpdateMetaAndLoadStats(
 	inCh <-chan *CreatedTable,
 	errCh chan<- error,
 	statsConcurrency uint,
+	loadStats bool,
 ) chan *CreatedTable {
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan()
 	workers := utils.NewWorkerPool(statsConcurrency, "UpdateStats")
-	// The rc.db is not thread safe
-	var updateMetaLock sync.Mutex
 
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		oldTable := tbl.OldTable
-		// Not need to return err when failed because of update analysis-meta
-		restoreTS, err := rc.GetTSWithRetry(ctx)
-		if err != nil {
-			log.Error("getTS failed", zap.Error(err))
-		} else {
-			updateMetaLock.Lock()
-
-			log.Info("start update metas",
-				zap.Stringer("table", oldTable.Info.Name),
-				zap.Stringer("db", oldTable.DB.Name))
-			err = rc.db.UpdateStatsMeta(ctx, tbl.Table.ID, restoreTS, oldTable.TotalKvs)
-			if err != nil {
-				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
-			}
-
-			updateMetaLock.Unlock()
-		}
-
-		if oldTable.Stats != nil {
+		var statsErr error = nil
+		if loadStats && oldTable.Stats != nil {
 			log.Info("start loads analyze after validate checksum",
 				zap.Int64("old id", oldTable.Info.ID),
 				zap.Int64("new id", tbl.Table.ID),
 			)
 			start := time.Now()
 			// NOTICE: skip updating cache after load stats from json
-			if err := rc.statsHandler.LoadStatsFromJSONNoUpdate(ctx, rc.dom.InfoSchema(), oldTable.Stats, 0); err != nil {
-				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(err))
+			if statsErr = rc.statsHandler.LoadStatsFromJSONNoUpdate(ctx, rc.dom.InfoSchema(), oldTable.Stats, 0); statsErr != nil {
+				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(statsErr))
 			}
 			log.Info("restore stat done",
 				zap.Stringer("table", oldTable.Info.Name),
 				zap.Stringer("db", oldTable.DB.Name),
 				zap.Duration("cost", time.Since(start)))
-		} else if oldTable.StatsFileIndexes != nil {
+		} else if loadStats && len(oldTable.StatsFileIndexes) > 0 {
 			log.Info("start to load statistic data for each partition",
 				zap.Int64("old id", oldTable.Info.ID),
 				zap.Int64("new id", tbl.Table.ID),
 			)
 			start := time.Now()
 			rewriteIDMap := getTableIDMap(tbl.Table, tbl.OldTable.Info)
-			if err := metautil.RestoreStats(ctx, s, cipher, rc.statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); err != nil {
-				log.Error("analyze table failed", zap.Any("table", oldTable.StatsFileIndexes), zap.Error(err))
+			if statsErr = metautil.RestoreStats(ctx, s, cipher, rc.statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); statsErr != nil {
+				log.Error("analyze table failed", zap.Any("table", oldTable.StatsFileIndexes), zap.Error(statsErr))
 			}
 			log.Info("restore statistic data done",
 				zap.Stringer("table", oldTable.Info.Name),
 				zap.Stringer("db", oldTable.DB.Name),
 				zap.Duration("cost", time.Since(start)))
+		}
+
+		if statsErr != nil || !loadStats || (oldTable.Stats == nil && len(oldTable.StatsFileIndexes) == 0) {
+			// Not need to return err when failed because of update analysis-meta
+			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
+			// the total kvs contains the index kvs, but the stats meta needs the count of rows
+			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
+			if statsErr = rc.statsHandler.SaveMetaToStorage(tbl.Table.ID, count, 0, "br restore"); statsErr != nil {
+				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(statsErr))
+			}
 		}
 		return nil
 	}, func() {
@@ -2157,7 +2148,7 @@ func (rc *Client) ResetRestoreLabels(ctx context.Context) error {
 	if !rc.isOnline {
 		return nil
 	}
-	log.Info("start reseting store labels")
+	log.Info("start resetting store labels")
 	return rc.toolClient.SetStoresLabel(ctx, rc.restoreStores, restoreLabelKey, "")
 }
 
@@ -2256,7 +2247,7 @@ func (rc *Client) ResetPlacementRules(ctx context.Context, tables []*model.Table
 	if !rc.isOnline || len(rc.restoreStores) == 0 {
 		return nil
 	}
-	log.Info("start reseting placement rules")
+	log.Info("start resetting placement rules")
 	var failedTables []int64
 	for _, t := range tables {
 		err := rc.toolClient.DeletePlacementRule(ctx, "pd", rc.getRuleID(t.ID))
@@ -2803,7 +2794,7 @@ func initFullBackupTables(
 	// read full backup databases to get map[table]table.Info
 	reader := metautil.NewMetaReader(backupMeta, s, nil)
 
-	databases, err := metautil.LoadBackupTables(ctx, reader)
+	databases, err := metautil.LoadBackupTables(ctx, reader, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

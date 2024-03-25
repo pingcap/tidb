@@ -620,7 +620,7 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 
 func execute(ctx context.Context, s sessionctx.Context, query string) ([]chunk.Row, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
-	rs, err := s.(sqlexec.SQLExecutor).ExecuteInternal(ctx, query)
+	rs, err := s.GetSQLExecutor().ExecuteInternal(ctx, query)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

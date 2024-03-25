@@ -88,10 +88,11 @@ func inContainer(path string) bool {
 		lines := strings.Split(string(v), "\n")
 		for _, line := range lines {
 			v := strings.Split(line, " ")
-			// check mount point is on overlay or not.
+			// check mount point of root dir is on overlay or not.
 			// v[4] means `mount point`, v[8] means `filesystem type`.
 			// see details from https://man7.org/linux/man-pages/man5/proc.5.html
-			if len(v) >= 8 && v[4] == "\\" && v[8] == "overlay" {
+			// TODO: enhance this check, as overlay is not the only storage driver for container.
+			if len(v) > 8 && v[4] == "/" && v[8] == "overlay" {
 				log.Info(fmt.Sprintf("TiDB runs in a container, mount info: %s", line))
 				return true
 			}

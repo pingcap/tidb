@@ -23,6 +23,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 )
 
@@ -87,7 +88,7 @@ func DigestNormalized(normalized string) (digest *Digest) {
 // for example, when "ON": Normalize('select 1 from b where a = 1') => 'select ? from b where a = ?'
 // for example, when "MARKER": Normalize('select 1 from b where a = 1') => 'select ‹1› from b where a = ‹1›'
 func Normalize(sql string, redact string) (result string) {
-	if redact == "" || redact == "OFF" {
+	if redact == "" || redact == errors.RedactLogDisable {
 		return sql
 	}
 	d := digesterPool.Get().(*sqlDigester)
@@ -115,7 +116,7 @@ func NormalizeForBinding(sql string, forPlanReplayerReload bool) (result string)
 // for example: Normalize('select /*+ use_index(t, primary) */ 1 from b where a = 1') => 'select /*+ use_index(t, primary) */ ? from b where a = ?'
 func NormalizeKeepHint(sql string) (result string) {
 	d := digesterPool.Get().(*sqlDigester)
-	result = d.doNormalize(sql, "ON", true)
+	result = d.doNormalize(sql, errors.RedactLogEnable, true)
 	digesterPool.Put(d)
 	return
 }
@@ -167,7 +168,7 @@ func (d *sqlDigester) doDigestNormalized(normalized string) (digest *Digest) {
 }
 
 func (d *sqlDigester) doDigest(sql string) (digest *Digest) {
-	d.normalize(sql, "ON", false, false, false)
+	d.normalize(sql, errors.RedactLogEnable, false, false, false)
 	d.hasher.Write(d.buffer.Bytes())
 	d.buffer.Reset()
 	digest = NewDigest(d.hasher.Sum(nil))
@@ -183,14 +184,14 @@ func (d *sqlDigester) doNormalize(sql string, redact string, keepHint bool) (res
 }
 
 func (d *sqlDigester) doNormalizeForBinding(sql string, keepHint bool, forPlanReplayerReload bool) (result string) {
-	d.normalize(sql, "ON", keepHint, true, forPlanReplayerReload)
+	d.normalize(sql, errors.RedactLogEnable, keepHint, true, forPlanReplayerReload)
 	result = d.buffer.String()
 	d.buffer.Reset()
 	return
 }
 
 func (d *sqlDigester) doNormalizeDigest(sql string) (normalized string, digest *Digest) {
-	d.normalize(sql, "ON", false, false, false)
+	d.normalize(sql, errors.RedactLogEnable, false, false, false)
 	normalized = d.buffer.String()
 	d.hasher.Write(d.buffer.Bytes())
 	d.buffer.Reset()
@@ -200,7 +201,7 @@ func (d *sqlDigester) doNormalizeDigest(sql string) (normalized string, digest *
 }
 
 func (d *sqlDigester) doNormalizeDigestForBinding(sql string) (normalized string, digest *Digest) {
-	d.normalize(sql, "ON", false, true, false)
+	d.normalize(sql, errors.RedactLogEnable, false, true, false)
 	normalized = d.buffer.String()
 	d.hasher.Write(d.buffer.Bytes())
 	d.buffer.Reset()
@@ -324,7 +325,7 @@ func (d *sqlDigester) reduceLit(currTok *token, redact string, forBinding bool, 
 		return
 	}
 
-	if redact == "MARKER" && !forBinding && !forPlanReplayer {
+	if redact == errors.RedactLogMarker && !forBinding && !forPlanReplayer {
 		switch currTok.lit {
 		case "?", "*":
 			return

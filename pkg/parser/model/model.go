@@ -1250,6 +1250,7 @@ func (pi *PartitionInfo) Clone() *PartitionInfo {
 }
 
 // GetNameByID gets the partition name by ID.
+// TODO: Remove the need for this function!
 func (pi *PartitionInfo) GetNameByID(id int64) string {
 	definitions := pi.Definitions
 	// do not convert this loop to `for _, def := range definitions`.
@@ -1771,9 +1772,16 @@ func (cis *CIStr) MemoryUsage() (sum int64) {
 
 // TableItemID is composed by table ID and column/index ID
 type TableItemID struct {
-	TableID int64
-	ID      int64
-	IsIndex bool
+	TableID          int64
+	ID               int64
+	IsIndex          bool
+	IsSyncLoadFailed bool
+}
+
+// StatsLoadItem represents the load unit for statistics's memory loading.
+type StatsLoadItem struct {
+	TableItemID
+	FullLoad bool
 }
 
 // PolicyRefInfo is the struct to refer the placement policy.
@@ -1913,6 +1921,10 @@ func (p *PlacementSettings) String() string {
 
 	if len(p.LearnerConstraints) > 0 {
 		writeSettingStringToBuilder(sb, "LEARNER_CONSTRAINTS", p.LearnerConstraints)
+	}
+
+	if len(p.SurvivalPreferences) > 0 {
+		writeSettingStringToBuilder(sb, "SURVIVAL_PREFERENCES", p.SurvivalPreferences)
 	}
 
 	return sb.String()

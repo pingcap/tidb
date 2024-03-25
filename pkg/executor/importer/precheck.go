@@ -43,15 +43,30 @@ var GetEtcdClient = getEtcdClient
 
 // CheckRequirements checks the requirements for IMPORT INTO.
 // we check the following things here:
-//  1. target table should be empty
-//  2. no CDC or PiTR tasks running
+//   - when import from file
+//     1. there is no active job on the target table
+//     2. the total file size > 0
+//     3. if global sort, thread count >= 16 and have required privileges
+//   - target table should be empty
+//   - no CDC or PiTR tasks running
 //
-// todo: check if there's running lightning tasks?
 // we check them one by one, and return the first error we meet.
 func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec.SQLExecutor) error {
 	if e.DataSourceType == DataSourceTypeFile {
+		cnt, err := GetActiveJobCnt(ctx, conn, e.Plan.DBName, e.Plan.TableInfo.Name.L)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if cnt > 0 {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("there is active job on the target table already")
+		}
 		if err := e.checkTotalFileSize(); err != nil {
 			return err
+		}
+		// run global sort with < 16 thread might OOM on merge step
+		// TODO: remove this limit after control memory usage.
+		if e.IsGlobalSort() && e.ThreadCnt < 16 {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("global sort requires at least 16 threads")
 		}
 	}
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
