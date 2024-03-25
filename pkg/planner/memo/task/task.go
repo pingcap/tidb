@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package memo
+package task
 
 import (
 	"strings"
@@ -101,40 +101,4 @@ func newTaskStackWithCap(c int) *taskStack {
 	return &taskStack{
 		tasks: make([]Task, 0, c),
 	}
-}
-
-// TaskStack2 is used to store the optimizing tasks created before or during the optimizing process.
-type taskStack2 struct {
-	tasks []*Task
-}
-
-func newTaskStack2WithCap(c int) *taskStack2 {
-	return &taskStack2{
-		tasks: make([]*Task, 0, c),
-	}
-}
-
-// Push indicates to push one task into the stack.
-func (ts *taskStack2) Push(one Task) {
-	ts.tasks = append(ts.tasks, &one)
-}
-
-// Len indicates the length of current stack.
-func (ts *taskStack2) Len() int {
-	return len(ts.tasks)
-}
-
-// Empty indicates whether taskStack is empty.
-func (ts *taskStack2) Empty() bool {
-	return ts.Len() == 0
-}
-
-// Pop indicates to pop one task out of the stack.
-func (ts *taskStack2) Pop() Task {
-	if !ts.Empty() {
-		tmp := ts.tasks[len(ts.tasks)-1]
-		ts.tasks = ts.tasks[:len(ts.tasks)-1]
-		return *tmp
-	}
-	return nil
 }

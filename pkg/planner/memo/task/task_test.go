@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package memo
+package task
 
 import (
 	"strconv"
@@ -92,6 +92,42 @@ func TestTaskFunctionality(t *testing.T) {
 	ts = TaskStackPool.Get().(*taskStack)
 	require.Equal(t, len(ts.tasks), 0)
 	require.Equal(t, cap(ts.tasks), 4)
+}
+
+// TaskStack2 is used to store the optimizing tasks created before or during the optimizing process.
+type taskStackForBench struct {
+	tasks []*Task
+}
+
+func newTaskStack2WithCap(c int) *taskStackForBench {
+	return &taskStackForBench{
+		tasks: make([]*Task, 0, c),
+	}
+}
+
+// Push indicates to push one task into the stack.
+func (ts *taskStackForBench) Push(one Task) {
+	ts.tasks = append(ts.tasks, &one)
+}
+
+// Len indicates the length of current stack.
+func (ts *taskStackForBench) Len() int {
+	return len(ts.tasks)
+}
+
+// Empty indicates whether taskStack is empty.
+func (ts *taskStackForBench) Empty() bool {
+	return ts.Len() == 0
+}
+
+// Pop indicates to pop one task out of the stack.
+func (ts *taskStackForBench) Pop() Task {
+	if !ts.Empty() {
+		tmp := ts.tasks[len(ts.tasks)-1]
+		ts.tasks = ts.tasks[:len(ts.tasks)-1]
+		return *tmp
+	}
+	return nil
 }
 
 // Benchmark result explanation:
