@@ -97,9 +97,9 @@ func (ts *TaskStack) Empty() bool {
 }
 
 // BenchTest required.
-func newTaskStackWithCap(cap int) *TaskStack {
+func newTaskStackWithCap(c int) *TaskStack {
 	return &TaskStack{
-		tasks: make([]Task, 0, cap),
+		tasks: make([]Task, 0, c),
 	}
 }
 
@@ -108,9 +108,9 @@ type TaskStack2 struct {
 	tasks []*Task
 }
 
-func newTaskStack2WithCap(cap int) *TaskStack2 {
+func newTaskStack2WithCap(c int) *TaskStack2 {
 	return &TaskStack2{
-		tasks: make([]*Task, 0, cap),
+		tasks: make([]*Task, 0, c),
 	}
 }
 
