@@ -19,7 +19,8 @@ import (
 	"sync"
 )
 
-// Task is an interface defined for all type of optimizing work: exploring, implementing, deriving-stats, join-reordering and so on.
+// Task is an interface defined for all type of optimizing work: exploring, implementing,
+// deriving-stats, join-reordering and so on.
 type Task interface {
 	// task self executing logic
 	execute() error
