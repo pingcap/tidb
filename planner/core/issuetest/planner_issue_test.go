@@ -152,3 +152,18 @@ FROM
   LEFT JOIN tmp3 c2 ON c2.id = '1' 
   LEFT JOIN tmp3 c3 ON c3.id = '1';`).Check(testkit.Rows("1 1", "1 1"))
 }
+
+func TestIssue51560(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists A, B, C")
+	tk.MustExec("create table A(a int primary key, b int);")
+	tk.MustExec("create table B(b int primary key);")
+	tk.MustExec("create table C(c int primary key, b int);")
+	tk.MustExec("insert into A values (2, 1), (3, 2);")
+	tk.MustExec("insert into B values (1), (2);")
+
+	tk.MustQuery("select b.b from A a left join (B b left join C c on b.b = c.b) on b.b = a.b where a.a in (2, 3);").Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select b.b from A a left join (B b left join C c on b.b = c.b) on b.b = a.b where a.a in (2, 3, null);").Sort().Check(testkit.Rows("1", "2"))
+}
