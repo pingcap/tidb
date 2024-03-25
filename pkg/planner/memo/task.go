@@ -27,6 +27,14 @@ type Task interface {
 	desc() string
 }
 
+// Stack is abstract definition of task container.(TaskStack is a kind of array stack implementation of it)
+type Stack interface {
+	Push(one Task)
+	Pop() Task
+	Empty() bool
+	Destroy()
+}
+
 // TaskStackPool is initialized for memory saving by reusing taskStack.
 var TaskStackPool = sync.Pool{
 	New: func() any {

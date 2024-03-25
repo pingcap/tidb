@@ -48,6 +48,8 @@ func (s *SimpleTaskScheduler) ExecuteTasks() {
 
 // TaskSchedulerContext is defined for scheduling logic calling, also facilitate interface-oriented coding and testing.
 type TaskSchedulerContext interface {
-	getStack() *TaskStack
+	// we exported the Stack interface here rather than the basic stack implementation.
+	getStack() Stack
+	// we exported the only one push action to user, Task is an interface definition.
 	pushTask(task Task)
 }
