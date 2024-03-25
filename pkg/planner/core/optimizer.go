@@ -1354,6 +1354,7 @@ var DefaultDisabledLogicalRulesList *atomic.Value
 func init() {
 	expression.EvalSimpleAst = evalAstExpr
 	expression.BuildSimpleExpr = buildSimpleExpr
+	expression.DecodeKeyFromString = decodeKeyFromString
 	plannerutil.EvalAstExprWithPlanCtx = evalAstExprWithPlanCtx
 	plannerutil.RewriteAstExprWithPlanCtx = rewriteAstExprWithPlanCtx
 	DefaultDisabledLogicalRulesList = new(atomic.Value)

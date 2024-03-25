@@ -276,7 +276,7 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	if path != "" {
 		require.NoError(t, controller.InitDataStore(ctx))
 	}
-	ti, err := importer.NewTableImporterForTest(ctx, controller, "11", store, &storeHelper{kvStore: store})
+	ti, err := importer.NewTableImporterForTest(ctx, controller, "11", &storeHelper{kvStore: store})
 	require.NoError(t, err)
 	return ti
 }
@@ -296,6 +296,7 @@ func TestProcessChunkWith(t *testing.T) {
 	sourceData := []byte("1,2,3\n4,5,6\n7,8,9\n")
 	require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
 
+	keyspace := store.GetCodec().GetKeyspace()
 	t.Run("file chunk", func(t *testing.T) {
 		chunkInfo := &checkpoints.ChunkCheckpoint{
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
@@ -307,7 +308,7 @@ func TestProcessChunkWith(t *testing.T) {
 		kvWriter := mock.NewMockEngineWriter(ctrl)
 		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		progress := importer.NewProgress()
-		checksum := verify.NewKVGroupChecksumWithKeyspace(store.GetCodec())
+		checksum := verify.NewKVGroupChecksumWithKeyspace(keyspace)
 		err := importer.ProcessChunkWithWriter(ctx, chunkInfo, ti, kvWriter, kvWriter, progress, zap.NewExample(), checksum)
 		require.NoError(t, err)
 		require.Len(t, progress.GetColSize(), 3)
@@ -339,7 +340,7 @@ func TestProcessChunkWith(t *testing.T) {
 		kvWriter := mock.NewMockEngineWriter(ctrl)
 		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		progress := importer.NewProgress()
-		checksum := verify.NewKVGroupChecksumWithKeyspace(store.GetCodec())
+		checksum := verify.NewKVGroupChecksumWithKeyspace(keyspace)
 		err := importer.ProcessChunkWithWriter(ctx, chunkInfo, ti, kvWriter, kvWriter, progress, zap.NewExample(), checksum)
 		require.NoError(t, err)
 		require.Len(t, progress.GetColSize(), 3)
