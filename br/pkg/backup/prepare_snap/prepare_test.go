@@ -21,6 +21,7 @@ import (
 	"io"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -456,3 +457,71 @@ func TestSplitEnv(t *testing.T) {
 	require.Equal(t, cc.PrepareClient.(*counterClient).send, 1)
 	require.ElementsMatch(t, cc.PrepareClient.(*counterClient).regions, tinyRequest.Regions)
 }
+<<<<<<< HEAD
+=======
+
+func TestConnectionDelay(t *testing.T) {
+	req := require.New(t)
+	pdc := fakeCluster(t, 3, dummyRegions(100)...)
+	ms := newTestEnv(pdc)
+	called := 0
+	delayConn := make(chan struct{})
+	blocked := make(chan struct{}, 64)
+	ms.connectDelay = func(i uint64) <-chan struct{} {
+		called += 1
+		if called == 2 {
+			blocked <- struct{}{}
+			return delayConn
+		}
+		return nil
+	}
+	ctx := context.Background()
+	prep := New(ms)
+	connectionPrepareResult := make(chan error)
+	go func() {
+		connectionPrepareResult <- prep.PrepareConnections(ctx)
+	}()
+	<-blocked
+	ms.mu.Lock()
+	nonNilStore := 0
+	for id, store := range ms.stores {
+		// We must not create and lease (i.e. reject admin command from any tikv) here.
+		if store != nil {
+			req.True(store.leaseUntil.Before(time.Now()), "%d->%s", id, store.leaseUntil)
+			nonNilStore += 1
+		}
+	}
+	req.GreaterOrEqual(nonNilStore, 2)
+	ms.mu.Unlock()
+	delayConn <- struct{}{}
+	req.NoError(<-connectionPrepareResult)
+}
+
+func TestHooks(t *testing.T) {
+	req := require.New(t)
+	pdc := fakeCluster(t, 3, dummyRegions(100)...)
+	pauseWaitApply := make(chan struct{})
+	ms := newTestEnv(pdc)
+	ms.onCreateStore = func(ms *mockStore) {
+		ms.onWaitApply = func(r *metapb.Region) error {
+			<-pauseWaitApply
+			return nil
+		}
+	}
+	adv := New(ms)
+	connectionsEstablished := new(atomic.Bool)
+	adv.AfterConnectionsEstablished = func() {
+		connectionsEstablished.Store(true)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- adv.DriveLoopAndWaitPrepare(context.Background())
+	}()
+	req.Eventually(connectionsEstablished.Load, 1*time.Second, 100*time.Millisecond)
+	close(pauseWaitApply)
+	req.NoError(<-errCh)
+	ms.AssertSafeForBackup(t)
+	req.NoError(adv.Finalize(context.Background()))
+	ms.AssertIsNormalMode(t)
+}
+>>>>>>> 411e945da33 (operator: pause scheduler after all connections established (#51823))
