@@ -287,7 +287,7 @@ func (b *BackoffMayNotCountBackoffer) Attempt() int {
 	return b.state.Attempt()
 }
 
-// GetSplitKeyPerRegion checks every input key is necessary to split region on
+// GetSplitKeysOfRegions checks every input key is necessary to split region on
 // it. Returns a map from original region ID to split keys belongs to each
 // region.
 //
@@ -296,7 +296,7 @@ func (b *BackoffMayNotCountBackoffer) Attempt() int {
 // - sortedRegions are continuous and sorted in ascending order by start key.
 // - sortedRegions can cover all keys in sortedKeys.
 // PaginateScanRegion should satisfy the above prerequisites.
-func GetSplitKeyPerRegion(sortedKeys [][]byte, sortedRegions []*RegionInfo, isRawKV bool) map[uint64][][]byte {
+func GetSplitKeysOfRegions(sortedKeys [][]byte, sortedRegions []*RegionInfo, isRawKV bool) map[uint64][][]byte {
 	splitKeyMap := make(map[uint64][][]byte, len(sortedRegions))
 	curKeyIndex := 0
 	for _, region := range sortedRegions {

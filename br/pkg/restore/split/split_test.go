@@ -354,7 +354,7 @@ func TestGetSplitKeyPerRegion(t *testing.T) {
 			},
 		},
 	}
-	result := GetSplitKeyPerRegion(sortedKeys, sortedRegions, false)
+	result := GetSplitKeysOfRegions(sortedKeys, sortedRegions, false)
 	require.Equal(t, 3, len(result))
 	require.Equal(t, [][]byte{[]byte("b"), []byte("d")}, result[1])
 	require.Equal(t, [][]byte{[]byte("g"), []byte("j")}, result[2])
@@ -412,6 +412,6 @@ func TestGetSplitKeyPerRegion(t *testing.T) {
 		expected[uint64(idx)] = append(expected[uint64(idx)], key)
 	}
 	slices.SortFunc(sortedKeys, bytes.Compare)
-	got := GetSplitKeyPerRegion(sortedKeys, sortedRegions, false)
+	got := GetSplitKeysOfRegions(sortedKeys, sortedRegions, false)
 	require.Equal(t, expected, got)
 }

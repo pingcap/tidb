@@ -172,7 +172,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 		if err != nil {
 			return err
 		}
-		splitKeyMap := split.GetSplitKeyPerRegion(sortedKeys, regions, splitContext.isRawKv)
+		splitKeyMap := split.GetSplitKeysOfRegions(sortedKeys, regions, splitContext.isRawKv)
 		regionMap := make(map[uint64]*split.RegionInfo)
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region

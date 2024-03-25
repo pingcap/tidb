@@ -184,7 +184,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 					logutil.Key("lastRegionEnd", regions[len(regions)-1].Region.EndKey))
 				return errors.New("check split keys failed")
 			}
-			splitKeyMap = split.GetSplitKeyPerRegion(retryKeys, regions, false)
+			splitKeyMap = split.GetSplitKeysOfRegions(retryKeys, regions, false)
 			retryKeys = retryKeys[:0]
 		} else {
 			splitKeyMap = getSplitKeysByRanges(ranges, regions)
@@ -353,7 +353,7 @@ func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo) ma
 		checkKeys = append(checkKeys, rg.End)
 		lastEnd = rg.End
 	}
-	return split.GetSplitKeyPerRegion(checkKeys, regions, false)
+	return split.GetSplitKeysOfRegions(checkKeys, regions, false)
 }
 
 func beforeEnd(key []byte, end []byte) bool {
