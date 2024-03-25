@@ -425,6 +425,7 @@ func TestIssue49438(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists tx`)
 	tk.MustExec(`create table tx (a int, b json, key k(a, (cast(b as date array))))`)
 	tk.MustExec(`select 1 from tx where a in (1)`) // no error
 }
