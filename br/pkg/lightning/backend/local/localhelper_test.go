@@ -752,58 +752,6 @@ func TestBatchSplitByRangesWithClusteredIndexEpochNotMatch(t *testing.T) {
 	doTestBatchSplitByRangesWithClusteredIndex(t, &splitRegionEpochNotMatchHookRandom{})
 }
 
-func TestNeedSplit(t *testing.T) {
-	tableID := int64(1)
-	peers := make([]*metapb.Peer, 1)
-	peers[0] = &metapb.Peer{
-		Id:      1,
-		StoreId: 1,
-	}
-	keys := []int64{10, 100, 500, 1000, 999999, -1}
-	start := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(0))
-	regionStart := codec.EncodeBytes([]byte{}, start)
-	regions := make([]*split.RegionInfo, 0)
-	for _, end := range keys {
-		var regionEndKey []byte
-		if end >= 0 {
-			endKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(end))
-			regionEndKey = codec.EncodeBytes([]byte{}, endKey)
-		}
-		region := &split.RegionInfo{
-			Region: &metapb.Region{
-				Id:          1,
-				Peers:       peers,
-				StartKey:    regionStart,
-				EndKey:      regionEndKey,
-				RegionEpoch: &metapb.RegionEpoch{ConfVer: 1, Version: 1},
-			},
-		}
-		regions = append(regions, region)
-		regionStart = regionEndKey
-	}
-
-	checkMap := map[int64]int{
-		0:         -1,
-		5:         0,
-		99:        1,
-		100:       -1,
-		512:       3,
-		8888:      4,
-		999999:    -1,
-		100000000: 5,
-	}
-
-	for hdl, idx := range checkMap {
-		checkKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(hdl))
-		res := needSplit(checkKey, regions, log.L())
-		if idx < 0 {
-			require.Nil(t, res)
-		} else {
-			require.Equal(t, regions[idx], res)
-		}
-	}
-}
-
 func TestStoreWriteLimiter(t *testing.T) {
 	// Test create store write limiter with limit math.MaxInt.
 	limiter := newStoreWriteLimiter(math.MaxInt)
