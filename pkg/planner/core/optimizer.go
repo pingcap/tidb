@@ -1355,6 +1355,8 @@ func init() {
 	expression.EvalSimpleAst = evalAstExpr
 	expression.BuildSimpleExpr = buildSimpleExpr
 	expression.DecodeKeyFromString = decodeKeyFromString
+	expression.EncodeRecordKeyFromRow = encodeHandleFromRow
+	expression.EncodeIndexKeyFromRow = encodeIndexKeyFromRow
 	plannerutil.EvalAstExprWithPlanCtx = evalAstExprWithPlanCtx
 	plannerutil.RewriteAstExprWithPlanCtx = rewriteAstExprWithPlanCtx
 	DefaultDisabledLogicalRulesList = new(atomic.Value)

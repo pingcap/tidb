@@ -20,6 +20,7 @@ package expression
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -57,6 +59,9 @@ var (
 	_ functionClass = &tidbVersionFunctionClass{}
 	_ functionClass = &tidbIsDDLOwnerFunctionClass{}
 	_ functionClass = &tidbDecodePlanFunctionClass{}
+	_ functionClass = &tidbMVCCInfoFunctionClass{}
+	_ functionClass = &tidbEncodeRecordKeyClass{}
+	_ functionClass = &tidbEncodeIndexKeyClass{}
 	_ functionClass = &tidbDecodeKeyFunctionClass{}
 	_ functionClass = &tidbDecodeSQLDigestsFunctionClass{}
 	_ functionClass = &nextValFunctionClass{}
@@ -78,6 +83,9 @@ var (
 	_ builtinFunc = &builtinVersionSig{}
 	_ builtinFunc = &builtinTiDBVersionSig{}
 	_ builtinFunc = &builtinRowCountSig{}
+	_ builtinFunc = &builtinTiDBMVCCInfoSig{}
+	_ builtinFunc = &builtinTiDBEncodeRecordKeySig{}
+	_ builtinFunc = &builtinTiDBEncodeIndexKeySig{}
 	_ builtinFunc = &builtinTiDBDecodeKeySig{}
 	_ builtinFunc = &builtinTiDBDecodeSQLDigestsSig{}
 	_ builtinFunc = &builtinNextValSig{}
@@ -892,6 +900,173 @@ func (b *builtinRowCountSig) evalInt(ctx EvalContext, row chunk.Row) (res int64,
 	return res, false, nil
 }
 
+type tidbMVCCInfoFunctionClass struct {
+	baseFunctionClass
+	contextopt.KVStorePropReader
+}
+
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (c *tidbMVCCInfoFunctionClass) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return c.KVStorePropReader.RequiredOptionalEvalProps()
+}
+
+func (c *tidbMVCCInfoFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	store, err := c.GetKVStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	hStore, ok := store.(helper.Storage)
+	if !ok {
+		return nil, errors.New("storage is not a helper.Storage")
+	}
+	sig := &builtinTiDBMVCCInfoSig{baseBuiltinFunc: bf, helper: helper.NewHelper(hStore)}
+	return sig, nil
+}
+
+type builtinTiDBMVCCInfoSig struct {
+	baseBuiltinFunc
+	helper *helper.Helper
+}
+
+func (b *builtinTiDBMVCCInfoSig) Clone() builtinFunc {
+	newSig := &builtinTiDBMVCCInfoSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.helper = helper.NewHelper(b.helper.Store)
+	return newSig
+}
+
+// evalString evals a builtinTiDBMVCCInfoSig.
+func (b *builtinTiDBMVCCInfoSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	s, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+
+	encodedKey, err := hex.DecodeString(s)
+	if err != nil {
+		return "", false, err
+	}
+	resp, err := b.helper.GetMvccByEncodedKey(encodedKey)
+	if err != nil {
+		return "", false, err
+	}
+	js, err := json.Marshal(resp)
+	if err != nil {
+		return "", false, err
+	}
+	return string(js), false, nil
+}
+
+type tidbEncodeRecordKeyClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbEncodeRecordKeyClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	evalTps := make([]types.EvalType, 0, len(args))
+	evalTps = append(evalTps, types.ETString, types.ETString)
+	for _, arg := range args[2:] {
+		evalTps = append(evalTps, arg.GetType().EvalType())
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, evalTps...)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinTiDBEncodeRecordKeySig{baseBuiltinFunc: bf}
+	return sig, nil
+}
+
+type builtinTiDBEncodeRecordKeySig struct {
+	baseBuiltinFunc
+	contextopt.InfoSchemaPropReader
+}
+
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinTiDBEncodeRecordKeySig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.InfoSchemaPropReader.RequiredOptionalEvalProps()
+}
+
+func (b *builtinTiDBEncodeRecordKeySig) Clone() builtinFunc {
+	newSig := &builtinTiDBEncodeRecordKeySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinTiDBEncodeRecordKeySig.
+func (b *builtinTiDBEncodeRecordKeySig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	is, err := b.GetDomainInfoSchema(ctx)
+	if err != nil {
+		return "", true, err
+	}
+	if EncodeRecordKeyFromRow == nil {
+		return "", false, errors.New("EncodeRecordKeyFromRow is not initialized")
+	}
+	recordKey, isNull, err := EncodeRecordKeyFromRow(ctx, is, b.args, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	return hex.EncodeToString(recordKey), false, nil
+}
+
+type tidbEncodeIndexKeyClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbEncodeIndexKeyClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	evalTps := make([]types.EvalType, 0, len(args))
+	evalTps = append(evalTps, types.ETString, types.ETString, types.ETString)
+	for _, arg := range args[3:] {
+		evalTps = append(evalTps, arg.GetType().EvalType())
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, evalTps...)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinTiDBEncodeIndexKeySig{baseBuiltinFunc: bf}
+	return sig, nil
+}
+
+type builtinTiDBEncodeIndexKeySig struct {
+	baseBuiltinFunc
+	contextopt.InfoSchemaPropReader
+}
+
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinTiDBEncodeIndexKeySig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.InfoSchemaPropReader.RequiredOptionalEvalProps()
+}
+
+func (b *builtinTiDBEncodeIndexKeySig) Clone() builtinFunc {
+	newSig := &builtinTiDBEncodeIndexKeySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinTiDBEncodeIndexKeySig.
+func (b *builtinTiDBEncodeIndexKeySig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	is, err := b.GetDomainInfoSchema(ctx)
+	if err != nil {
+		return "", true, err
+	}
+	if EncodeIndexKeyFromRow == nil {
+		return "", false, errors.New("EncodeIndexKeyFromRow is not initialized")
+	}
+	idxKey, isNull, err := EncodeIndexKeyFromRow(ctx, is, b.args, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	return hex.EncodeToString(idxKey), false, nil
+}
+
 type tidbDecodeKeyFunctionClass struct {
 	baseFunctionClass
 }
@@ -910,6 +1085,12 @@ func (c *tidbDecodeKeyFunctionClass) getFunction(ctx BuildContext, args []Expres
 
 // DecodeKeyFromString is used to decode key by expressions
 var DecodeKeyFromString func(types.Context, infoschema.InfoSchemaMetaVersion, string) string
+
+// EncodeRecordKeyFromRow is used to encode record key by expressions.
+var EncodeRecordKeyFromRow func(ctx EvalContext, isVer infoschema.InfoSchemaMetaVersion, args []Expression, row chunk.Row) ([]byte, bool, error)
+
+// EncodeIndexKeyFromRow is used to encode index key by expressions.
+var EncodeIndexKeyFromRow func(ctx EvalContext, isVer infoschema.InfoSchemaMetaVersion, args []Expression, row chunk.Row) ([]byte, bool, error)
 
 type builtinTiDBDecodeKeySig struct {
 	baseBuiltinFunc
