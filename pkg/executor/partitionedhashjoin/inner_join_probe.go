@@ -41,11 +41,7 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, 
 			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// key matched, convert row to column for build side
-				rowInfo := &rowInfo{rowStart: candidateRow, rowData: 0, currentColumnIndex: 0}
-				currentRowData := j.appendBuildRowToChunk(joinedChk, rowInfo)
-				if j.ctx.hasOtherCondition() {
-					j.rowIndexInfos = append(j.rowIndexInfos, rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow, buildRowData: currentRowData})
-				}
+				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow}, joinedChk, 0)
 				length++
 				remainCap--
 				joinedChk.IncNumVirtualRows()
@@ -58,6 +54,9 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, 
 		}
 	}
 
+	if len(j.cachedBuildRows) > 0 {
+		j.batchConstructBuildRows(joinedChk, 0)
+	}
 	j.appendOffsetAndLength(j.currentProbeRow, length)
 	j.appendProbeRowToChunk(joinedChk, j.currentChunk)
 
@@ -133,15 +132,15 @@ func (j *innerJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joined
 		}
 	}
 	if hasRemainCols {
+		j.cachedBuildRows = j.cachedBuildRows[:0]
 		// build column that is not in joinedChk
 		for index, result := range j.selected {
 			if result {
-				j.appendBuildRowToChunk(chk, &rowInfo{
-					rowStart:           j.rowIndexInfos[index].buildRowStart,
-					rowData:            j.rowIndexInfos[index].buildRowData,
-					currentColumnIndex: j.ctx.hashTableMeta.columnCountNeededForOtherCondition,
-				})
+				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(j.rowIndexInfos[index], chk, j.ctx.hashTableMeta.columnCountNeededForOtherCondition)
 			}
+		}
+		if len(j.cachedBuildRows) > 0 {
+			j.batchConstructBuildRows(chk, j.ctx.hashTableMeta.columnCountNeededForOtherCondition)
 		}
 	}
 	return
