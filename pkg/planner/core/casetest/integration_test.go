@@ -421,6 +421,14 @@ func TestFixControl45132(t *testing.T) {
 	tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
 }
 
+func TestIssue49438(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table tx (a int, b json, key k(a, (cast(b as date array))))`)
+	tk.MustExec(`select 1 from tx where a in (1)`) // no error
+}
+
 func TestIssue52023(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
