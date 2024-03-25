@@ -71,6 +71,7 @@ type baseJoinProbe struct {
 
 	currentChunk       *chunk.Chunk
 	matchedRowsHeaders []uintptr // the start address of each matched rows
+	hashValues         []uint64  // the start address of each matched rows
 	currentRowsPos     []uintptr // the current address of each matched rows
 	serializedKeys     [][]byte  // used for save serialized keys
 	filterVector       []bool    // if there is filter before probe, filterVector saves the filter result
@@ -102,6 +103,13 @@ func (j *baseJoinProbe) IsCurrentChunkProbeDone() bool {
 	return j.currentChunk == nil || j.currentProbeRow >= j.chunkRows
 }
 
+func (j *baseJoinProbe) advanceCurrentProbeRow() {
+	j.currentProbeRow++
+	if j.currentProbeRow < j.chunkRows {
+		j.matchedRowsHeaders[j.currentProbeRow] = j.ctx.joinHashTable.lookup(j.hashValues[j.currentProbeRow])
+	}
+}
+
 func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	if j.currentChunk != nil {
 		if j.currentProbeRow < j.chunkRows {
@@ -109,13 +117,17 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 	j.currentChunk = chk
-	j.currentProbeRow = 0
 	rows := chk.NumRows()
 	j.chunkRows = rows
 	if cap(j.matchedRowsHeaders) >= rows {
 		j.matchedRowsHeaders = j.matchedRowsHeaders[:rows]
 	} else {
 		j.matchedRowsHeaders = make([]uintptr, rows)
+	}
+	if cap(j.hashValues) >= rows {
+		j.hashValues = j.hashValues[:rows]
+	} else {
+		j.hashValues = make([]uint64, rows)
 	}
 	if j.ctx.ProbeFilter != nil {
 		if cap(j.filterVector) >= rows {
@@ -166,8 +178,11 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		// As the golang doc described, `Hash.Write` never returns an error.
 		// See https://golang.org/pkg/hash/#Hash
 		_, _ = hash.Write(j.serializedKeys[i])
-		j.matchedRowsHeaders[i] = j.ctx.joinHashTable.lookup(hash.Sum64())
+		j.hashValues[i] = hash.Sum64()
+		//j.matchedRowsHeaders[i] = j.ctx.joinHashTable.lookup(hash.Sum64())
 	}
+	j.currentProbeRow = 0
+	j.matchedRowsHeaders[j.currentProbeRow] = j.ctx.joinHashTable.lookup(j.hashValues[j.currentProbeRow])
 	return
 }
 
@@ -351,6 +366,7 @@ func NewJoinProbe(ctx *PartitionedHashJoinCtx, workID uint, joinType core.JoinTy
 	}
 	base.cachedBuildRows = make([]rowIndexInfo, 0, BATCH_BUILD_ROW_SIZE)
 	base.matchedRowsHeaders = make([]uintptr, 0, chunk.InitialCapacity)
+	base.hashValues = make([]uint64, 0, chunk.InitialCapacity)
 	base.serializedKeys = make([][]byte, 0, chunk.InitialCapacity)
 	if base.ctx.ProbeFilter != nil {
 		base.filterVector = make([]bool, 0, chunk.InitialCapacity)
