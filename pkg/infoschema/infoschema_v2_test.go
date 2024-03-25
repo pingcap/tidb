@@ -60,6 +60,14 @@ func TestV2Basic(t *testing.T) {
 	require.NotNil(t, getTableInfo)
 	require.True(t, is.TableExists(schemaName, tableName))
 
+	gotTblInfo, err := is.TableInfoByName(schemaName, tableName)
+	require.NoError(t, err)
+	require.Same(t, gotTblInfo, getTableInfo.Meta())
+
+	gotTblInfo, err = is.TableInfoByName(schemaName, model.NewCIStr("notexist"))
+	require.Error(t, err)
+	require.Nil(t, gotTblInfo)
+
 	getDBInfo, ok = is.SchemaByID(dbInfo.ID)
 	require.True(t, ok)
 	require.Equal(t, dbInfo, getDBInfo)
@@ -67,6 +75,14 @@ func TestV2Basic(t *testing.T) {
 	getTableInfo, ok = is.TableByID(tblInfo.ID)
 	require.True(t, ok)
 	require.NotNil(t, getTableInfo)
+
+	gotTblInfo, ok = is.TableInfoByID(tblInfo.ID)
+	require.True(t, ok)
+	require.Same(t, gotTblInfo, getTableInfo.Meta())
+
+	gotTblInfo, ok = is.TableInfoByID(1234567)
+	require.False(t, ok)
+	require.Nil(t, gotTblInfo)
 
 	require.Equal(t, int64(2), is.SchemaMetaVersion())
 	// TODO: support FindTableByPartitionID.

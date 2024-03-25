@@ -181,3 +181,9 @@ func (i InfoStoreAdaptor) TableByName(schema, table model.CIStr) (t table.Table,
 	}
 	return tables.MockTableFromMeta(tableInfo), nil
 }
+
+// TableInfoByName implements the InfoSchema interface.
+// nolint:unused
+func (i InfoStoreAdaptor) TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error) {
+	return i.inner.TableByName(schema, table)
+}

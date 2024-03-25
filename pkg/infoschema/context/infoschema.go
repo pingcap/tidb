@@ -14,10 +14,20 @@
 
 package context
 
-// InfoSchemaMetaVersion is a workaround. Due to circular dependency,
-// can not return the complete interface. But SchemaMetaVersion is widely used for logging.
-// So we give a convenience for that.
-// FIXME: remove this interface
-type InfoSchemaMetaVersion interface {
+import "github.com/pingcap/tidb/pkg/parser/model"
+
+// MetaOnlyInfoSchema is a workaround.
+// Due to circular dependency cannot return the complete interface.
+// But MetaOnlyInfoSchema is widely used for scenes that require meta only, so we give a convenience for that.
+type MetaOnlyInfoSchema interface {
 	SchemaMetaVersion() int64
+	SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
+	SchemaExists(schema model.CIStr) bool
+	TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error)
+	TableInfoByID(id int64) (*model.TableInfo, bool)
+	FindTableInfoByPartitionID(partitionID int64) (*model.TableInfo, *model.DBInfo, *model.PartitionDefinition)
+	TableExists(schema, table model.CIStr) bool
+	SchemaByID(id int64) (*model.DBInfo, bool)
+	AllSchemas() []*model.DBInfo
+	AllSchemaNames() []model.CIStr
 }

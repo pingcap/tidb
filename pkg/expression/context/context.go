@@ -60,9 +60,9 @@ type EvalContext interface {
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 	// GetInfoSchema returns the current infoschema
-	GetInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetInfoSchema() infoschema.MetaOnlyInfoSchema
 	// GetDomainInfoSchema returns the latest information schema in domain
-	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
 	// GetOptionalPropProvider gets the optional property provider by key
 	GetOptionalPropProvider(OptionalEvalPropKey) (OptionalEvalPropProvider, bool)
 }
