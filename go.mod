@@ -108,6 +108,7 @@ require (
 	go.uber.org/atomic v1.10.0
 	go.uber.org/automaxprocs v1.5.3
 	go.uber.org/goleak v1.2.0
+	go.uber.org/mock v0.4.0
 	go.uber.org/multierr v1.8.0
 	go.uber.org/zap v1.23.0
 	golang.org/x/exp v0.0.0-20221023144134-a1e5550cf13e
