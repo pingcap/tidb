@@ -89,6 +89,8 @@ func NewEmptyColumn(ft *types.FieldType) *Column {
 	col := Column{}
 	if elemLen != VarElemLen {
 		col.elemBuf = make([]byte, elemLen)
+	} else {
+		col.offsets = append(col.offsets, 0)
 	}
 	return &col
 }
@@ -176,6 +178,8 @@ func (c *Column) reset() {
 	if len(c.offsets) > 0 {
 		// The first offset is always 0, it makes slicing the data easier, we need to keep it.
 		c.offsets = c.offsets[:1]
+	} else if !c.isFixed() {
+		c.offsets = append(c.offsets, 0)
 	}
 	c.data = c.data[:0]
 }
