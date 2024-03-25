@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/golang/mock/gomock"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -38,6 +37,7 @@ import (
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/mock/gomock"
 )
 
 type restoreSchemaSuite struct {
@@ -133,7 +133,7 @@ func (s *restoreSchemaSuite) SetupSuite() {
 //nolint:interfacer // change test case signature might cause Check failed to find this test case?
 func (s *restoreSchemaSuite) SetupTest() {
 	s.controller, s.ctx = gomock.WithContext(context.Background(), s.T())
-	mockBackend := mock.NewMockBackend(s.controller)
+	mockBackend := mock.NewMockAbstractBackend(s.controller)
 	mockBackend.EXPECT().
 		FetchRemoteDBModels(gomock.Any()).
 		AnyTimes().
