@@ -60,11 +60,23 @@ func (o *OptionalEvalPropProviders) Add(val context.OptionalEvalPropProvider) {
 		case context.OptPropSessionVars:
 			_, ok := val.(*SessionVarsPropProvider)
 			intest.Assert(ok)
+		case context.OptPropInfoSchema:
+			_, ok := val.(InfoSchemaPropProvider)
+			intest.Assert(ok)
+		case context.OptPropKVStore:
+			_, ok := val.(KVStorePropProvider)
+			intest.Assert(ok)
+		case context.OptPropSQLExecutor:
+			_, ok := val.(SQLExecutorPropProvider)
+			intest.Assert(ok)
 		case context.OptPropAdvisoryLock:
 			_, ok := val.(*AdvisoryLockPropProvider)
 			intest.Assert(ok)
 		case context.OptPropDDLOwnerInfo:
 			_, ok := val.(DDLOwnerInfoProvider)
+			intest.Assert(ok)
+		case context.OptPropSequenceOperator:
+			_, ok := val.(SequenceOperatorProvider)
 			intest.Assert(ok)
 		default:
 			intest.Assert(false)
