@@ -47,7 +47,7 @@ type tableItem struct {
 type schemaItem struct {
 	schemaVersion int64
 	dbInfo        *model.DBInfo
-	tomb bool
+	tomb          bool
 }
 
 func (si *schemaItem) Name() string {
@@ -388,10 +388,9 @@ func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok 
 	return
 }
 
-func (is *infoschemaV2) allSchemas(visit func (*model.DBInfo)) {
+func (is *infoschemaV2) allSchemas(visit func(*model.DBInfo)) {
 	var last *model.DBInfo
 	is.Data.schemaMap.Reverse(func(item schemaItem) bool {
-		fmt.Println("scan item ===", *item.dbInfo, item.schemaVersion)
 		if item.schemaVersion > is.infoSchema.schemaMetaVersion {
 			// Skip the versions that we are not looking for.
 			return true
