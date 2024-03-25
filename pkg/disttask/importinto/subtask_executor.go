@@ -70,7 +70,7 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 	})
 	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
 	sharedVars := e.mTtask.SharedVars
-	checksum := verify.NewKVGroupChecksumWithKeyspace(sharedVars.TableImporter.GetCodec())
+	checksum := verify.NewKVGroupChecksumWithKeyspace(sharedVars.TableImporter.GetKeySpace())
 	if sharedVars.TableImporter.IsLocalSort() {
 		if err := importer.ProcessChunk(
 			ctx,
