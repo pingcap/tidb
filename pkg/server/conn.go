@@ -387,6 +387,7 @@ func (cc *clientConn) Close() error {
 		}
 	}
 	cc.server.rwlock.Unlock()
+	close(cc.writeChunksCh)
 	return closeConn(cc, resourceGroupName, count)
 }
 
