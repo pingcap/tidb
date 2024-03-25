@@ -31,7 +31,7 @@ type SimpleTaskScheduler struct {
 func (s *SimpleTaskScheduler) ExecuteTasks() {
 	stack := s.SchedulerCtx.getStack()
 	defer func() {
-		// when step output of the scheduler, if the stack is empty, clean and release it.
+		// when step out of the scheduler, if the stack is empty, clean and release it.
 		if !stack.Empty() {
 			stack.Destroy()
 		}

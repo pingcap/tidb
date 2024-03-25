@@ -87,3 +87,46 @@ func (ts *TaskStack) Push(one Task) {
 func (ts *TaskStack) Empty() bool {
 	return ts.Len() == 0
 }
+
+// BenchTest required.
+func newTaskStackWithCap(cap int) *TaskStack {
+	return &TaskStack{
+		tasks: make([]Task, 0, cap),
+	}
+}
+
+// TaskStack2 is used to store the optimizing tasks created before or during the optimizing process.
+type TaskStack2 struct {
+	tasks []*Task
+}
+
+func newTaskStack2WithCap(cap int) *TaskStack2 {
+	return &TaskStack2{
+		tasks: make([]*Task, 0, cap),
+	}
+}
+
+// Push indicates to push one task into the stack.
+func (ts *TaskStack2) Push(one Task) {
+	ts.tasks = append(ts.tasks, &one)
+}
+
+// Len indicates the length of current stack.
+func (ts *TaskStack2) Len() int {
+	return len(ts.tasks)
+}
+
+// Empty indicates whether taskStack is empty.
+func (ts *TaskStack2) Empty() bool {
+	return ts.Len() == 0
+}
+
+// Pop indicates to pop one task out of the stack.
+func (ts *TaskStack2) Pop() Task {
+	if !ts.Empty() {
+		tmp := ts.tasks[len(ts.tasks)-1]
+		ts.tasks = ts.tasks[:len(ts.tasks)-1]
+		return *tmp
+	}
+	return nil
+}

@@ -93,3 +93,45 @@ func TestTaskFunctionality(t *testing.T) {
 	require.Equal(t, len(taskTaskPool.(*TaskStack).tasks), 0)
 	require.Equal(t, cap(taskTaskPool.(*TaskStack).tasks), 4)
 }
+
+// Benchmark result explanation:
+// On the right side of the function name, you have four values, 43803,27569 ns/op,24000 B/op and 2000 allocs/op
+// The former indicates the total number of times the loop was executed, while the latter is the average amount
+// of time each iteration took to complete, expressed in nanoseconds per operation. The third is the costed Byte
+// of each op, the last one is number of allocs of each op.
+
+// BenchmarkTestStack2Pointer-8   	   43802	     27569 ns/op	   24000 B/op	    2000 allocs/op
+// BenchmarkTestStack2Pointer-8   	   42889	     27017 ns/op	   24000 B/op	    2000 allocs/op
+// BenchmarkTestStack2Pointer-8   	   43009	     27524 ns/op	   24000 B/op	    2000 allocs/op
+func BenchmarkTestStack2Pointer(b *testing.B) {
+	stack := newTaskStack2WithCap(1000)
+	fill := func() {
+		for idx := int64(0); idx < 1000; idx++ {
+			stack.Push(&TestTaskImpl{a: idx})
+		}
+		for idx := int64(0); idx < 1000; idx++ {
+			stack.Pop()
+		}
+	}
+	for i := 0; i < b.N; i++ {
+		fill()
+	}
+}
+
+// BenchmarkTestStackInterface-8   	  108644	     10736 ns/op	    8000 B/op	    1000 allocs/op
+// BenchmarkTestStackInterface-8   	  110587	     10756 ns/op	    8000 B/op	    1000 allocs/op
+// BenchmarkTestStackInterface-8   	  109136	     10850 ns/op	    8000 B/op	    1000 allocs/op
+func BenchmarkTestStackInterface(b *testing.B) {
+	stack := newTaskStackWithCap(1000)
+	fill := func() {
+		for idx := int64(0); idx < 1000; idx++ {
+			stack.Push(&TestTaskImpl{a: idx})
+		}
+		for idx := int64(0); idx < 1000; idx++ {
+			stack.Pop()
+		}
+	}
+	for i := 0; i < b.N; i++ {
+		fill()
+	}
+}
