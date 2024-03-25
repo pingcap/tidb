@@ -50,7 +50,7 @@ func TestTaskStack(t *testing.T) {
 }
 
 func TestTaskFunctionality(t *testing.T) {
-	taskTaskPool := TaskStackPool.Get()
+	taskTaskPool := StackTaskPool.Get()
 	require.Equal(t, len(taskTaskPool.(*taskStack).tasks), 0)
 	require.Equal(t, cap(taskTaskPool.(*taskStack).tasks), 4)
 	ts := taskTaskPool.(*taskStack)
@@ -69,10 +69,10 @@ func TestTaskFunctionality(t *testing.T) {
 	ts.Push(&TestTaskImpl{a: 5})
 	ts.Push(&TestTaskImpl{a: 6})
 	// no clean, put it back
-	TaskStackPool.Put(taskTaskPool)
+	StackTaskPool.Put(taskTaskPool)
 
 	// require again.
-	ts = TaskStackPool.Get().(*taskStack)
+	ts = StackTaskPool.Get().(*taskStack)
 	require.Equal(t, len(ts.tasks), 4)
 	require.Equal(t, cap(ts.tasks), 4)
 	// clean the stack
@@ -89,7 +89,7 @@ func TestTaskFunctionality(t *testing.T) {
 
 	// self destroy.
 	ts.Destroy()
-	ts = TaskStackPool.Get().(*taskStack)
+	ts = StackTaskPool.Get().(*taskStack)
 	require.Equal(t, len(ts.tasks), 0)
 	require.Equal(t, cap(ts.tasks), 4)
 }

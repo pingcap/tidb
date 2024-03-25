@@ -35,8 +35,8 @@ type Stack interface {
 	Destroy()
 }
 
-// TaskStackPool is initialized for memory saving by reusing taskStack.
-var TaskStackPool = sync.Pool{
+// StackTaskPool is initialized for memory saving by reusing taskStack.
+var StackTaskPool = sync.Pool{
 	New: func() any {
 		return newTaskStack()
 	},
@@ -57,7 +57,7 @@ func newTaskStack() *taskStack {
 func (ts *taskStack) Destroy() {
 	// when a taskStack itself is useless, we can destroy itself actively.
 	clear(ts.tasks)
-	TaskStackPool.Put(ts)
+	StackTaskPool.Put(ts)
 }
 
 // Desc is used to desc the detail info about current stack state.
