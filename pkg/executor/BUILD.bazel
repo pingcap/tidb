@@ -356,6 +356,7 @@ go_test(
         "show_placement_test.go",
         "show_stats_test.go",
         "show_test.go",
+        "show_testkit_test.go",
         "shuffle_test.go",
         "slow_query_sql_test.go",
         "slow_query_test.go",

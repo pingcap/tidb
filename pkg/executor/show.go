@@ -114,7 +114,8 @@ type ShowExec struct {
 	GlobalScope bool // GlobalScope is used by show variables
 	Extended    bool // Used for `show extended columns from ...`
 
-	ImportJobID *int64
+	ImportJobID  *int64
+	WhereExprStr string
 }
 
 type showTableRegionRowItem struct {
@@ -2309,7 +2310,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		var err2 error
-		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
+		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.Ctx().GetSessionVars().User.String(), hasSuperPriv, e.WhereExprStr)
 		return err2
 	}); err != nil {
 		return err
