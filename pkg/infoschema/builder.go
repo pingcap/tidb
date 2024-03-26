@@ -30,11 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // Builder builds a new InfoSchema.
@@ -883,7 +883,7 @@ func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInf
 			return nil, errors.Trace(err)
 		}
 
-		err = t.Init(tmp.(sqlexec.SQLExecutor))
+		err = t.Init(tmp.(sessionctx.Context).GetSQLExecutor())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

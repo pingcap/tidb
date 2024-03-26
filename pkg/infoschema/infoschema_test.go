@@ -100,6 +100,7 @@ func TestBasic(t *testing.T) {
 
 	dbInfos := []*model.DBInfo{dbInfo}
 	internal.AddDB(t, re.Store(), dbInfo)
+	internal.AddTable(t, re.Store(), dbInfo, tblInfo)
 
 	builder, err := infoschema.NewBuilder(re, nil, infoschema.NewData()).InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
@@ -111,7 +112,9 @@ func TestBasic(t *testing.T) {
 	err = txn.Rollback()
 	require.NoError(t, err)
 
-	is := builder.Build(math.MaxUint64)
+	ver, err := re.Store().CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	is := builder.Build(ver.Ver)
 
 	schemaNames := infoschema.AllSchemaNames(is)
 	require.Len(t, schemaNames, 3)
@@ -157,29 +160,51 @@ func TestBasic(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, tb)
 
+	gotTblInfo, ok := is.TableInfoByID(tbID)
+	require.True(t, ok)
+	require.Same(t, tb.Meta(), gotTblInfo)
+
 	tb, ok = is.TableByID(dbID)
 	require.False(t, ok)
 	require.Nil(t, tb)
+
+	gotTblInfo, ok = is.TableInfoByID(dbID)
+	require.False(t, ok)
+	require.Nil(t, gotTblInfo)
 
 	tb, err = is.TableByName(dbName, tbName)
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 
+	gotTblInfo, err = is.TableInfoByName(dbName, tbName)
+	require.NoError(t, err)
+	require.Same(t, tb.Meta(), gotTblInfo)
+
 	_, err = is.TableByName(dbName, noexist)
 	require.Error(t, err)
+
+	gotTblInfo, err = is.TableInfoByName(dbName, noexist)
+	require.Error(t, err)
+	require.Nil(t, gotTblInfo)
 
 	tbs := is.SchemaTables(dbName)
 	require.Len(t, tbs, 1)
 
+	tblInfos := is.SchemaTableInfos(dbName)
+	require.Len(t, tblInfos, 1)
+	require.Same(t, tbs[0].Meta(), tblInfos[0])
+
 	tbs = is.SchemaTables(noexist)
 	require.Len(t, tbs, 0)
+
+	tblInfos = is.SchemaTableInfos(noexist)
+	require.Len(t, tblInfos, 0)
 
 	// Make sure partitions table exists
 	tb, err = is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("partitions"))
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 
-	internal.AddTable(t, re.Store(), dbInfo, tblInfo)
 	require.NoError(t, err)
 	txn, err = re.Store().Begin()
 	require.NoError(t, err)
@@ -218,13 +243,13 @@ func TestMockInfoSchema(t *testing.T) {
 
 func checkApplyCreateNonExistsSchemaDoesNotPanic(t *testing.T, txn kv.Transaction, builder *infoschema.Builder) {
 	m := meta.NewMeta(txn)
-	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 999})
+	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: 999, Version: 1})
 	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
 }
 
 func checkApplyCreateNonExistsTableDoesNotPanic(t *testing.T, txn kv.Transaction, builder *infoschema.Builder, dbID int64) {
 	m := meta.NewMeta(txn)
-	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: dbID, TableID: 999})
+	_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: dbID, TableID: 999, Version: 1})
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 }
 
@@ -237,7 +262,7 @@ func TestInfoTables(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	builder, err := infoschema.NewBuilder(re, nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	builder, err := infoschema.NewBuilder(re, nil, infoschema.NewData()).InitWithDBInfos(nil, nil, nil, 0)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 
@@ -523,8 +548,7 @@ func TestBuildBundle(t *testing.T) {
 	assertBundle(is, tbl1.Meta().ID, tb1Bundle)
 	assertBundle(is, tbl2.Meta().ID, nil)
 	assertBundle(is, p1.ID, p1Bundle)
-
-	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.SchemaMetaVersion())
+	builder, err := infoschema.NewBuilder(dom, nil, infoschema.NewData()).InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.SchemaMetaVersion())
 	require.NoError(t, err)
 	is2 := builder.Build(math.MaxUint64)
 	assertBundle(is2, tbl1.Meta().ID, tb1Bundle)
@@ -747,29 +771,66 @@ func TestLocalTemporaryTables(t *testing.T) {
 	tbl, err := is.TableByName(dbTest.Name, normalTbTestA.Meta().Name)
 	require.NoError(t, err)
 	require.Equal(t, tmpTbTestA, tbl)
+	gotTblInfo, err := is.TableInfoByName(dbTest.Name, normalTbTestA.Meta().Name)
+	require.NoError(t, err)
+	require.Same(t, tmpTbTestA.Meta(), gotTblInfo)
+
 	tbl, err = is.TableByName(dbTest.Name, normalTbTestB.Meta().Name)
 	require.NoError(t, err)
 	require.Equal(t, normalTbTestB.Meta(), tbl.Meta())
+	gotTblInfo, err = is.TableInfoByName(dbTest.Name, normalTbTestB.Meta().Name)
+	require.NoError(t, err)
+	require.Same(t, tbl.Meta(), gotTblInfo)
+
 	tbl, err = is.TableByName(db1.Name, tb11.Meta().Name)
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 	require.Nil(t, tbl)
+	gotTblInfo, err = is.TableInfoByName(dbTest.Name, tb11.Meta().Name)
+	require.True(t, infoschema.ErrTableNotExists.Equal(err))
+	require.Nil(t, gotTblInfo)
+
 	tbl, err = is.TableByName(db1.Name, tb12.Meta().Name)
 	require.NoError(t, err)
 	require.Equal(t, tb12, tbl)
+	gotTblInfo, err = is.TableInfoByName(db1.Name, tb12.Meta().Name)
+	require.NoError(t, err)
+	require.Same(t, tbl.Meta(), gotTblInfo)
 
 	// test TableByID
 	tbl, ok := is.TableByID(normalTbTestA.Meta().ID)
 	require.True(t, ok)
 	require.Equal(t, normalTbTestA.Meta(), tbl.Meta())
+	gotTblInfo, ok = is.TableInfoByID(normalTbTestA.Meta().ID)
+	require.True(t, ok)
+	require.Same(t, tbl.Meta(), gotTblInfo)
+
 	tbl, ok = is.TableByID(normalTbTestB.Meta().ID)
 	require.True(t, ok)
 	require.Equal(t, normalTbTestB.Meta(), tbl.Meta())
+	gotTblInfo, ok = is.TableInfoByID(normalTbTestB.Meta().ID)
+	require.True(t, ok)
+	require.Same(t, tbl.Meta(), gotTblInfo)
+
 	tbl, ok = is.TableByID(tmpTbTestA.Meta().ID)
 	require.True(t, ok)
 	require.Equal(t, tmpTbTestA, tbl)
+	gotTblInfo, ok = is.TableInfoByID(tmpTbTestA.Meta().ID)
+	require.True(t, ok)
+	require.Same(t, tbl.Meta(), gotTblInfo)
+
 	tbl, ok = is.TableByID(tb12.Meta().ID)
 	require.True(t, ok)
 	require.Equal(t, tb12, tbl)
+	gotTblInfo, ok = is.TableInfoByID(tb12.Meta().ID)
+	require.True(t, ok)
+	require.Same(t, tbl.Meta(), gotTblInfo)
+
+	tbl, ok = is.TableByID(1234567)
+	require.False(t, ok)
+	require.Nil(t, tbl)
+	gotTblInfo, ok = is.TableInfoByID(1234567)
+	require.False(t, ok)
+	require.Nil(t, gotTblInfo)
 
 	// test SchemaByTable
 	info, ok := is.SchemaByID(normalTbTestA.Meta().DBID)

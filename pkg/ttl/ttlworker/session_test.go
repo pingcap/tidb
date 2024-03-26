@@ -164,7 +164,7 @@ func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 	}
 }
 
-func (s *mockSession) GetDomainInfoSchema() infoschemactx.InfoSchemaMetaVersion {
+func (s *mockSession) GetDomainInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	return s.sessionInfoSchema
 }
 

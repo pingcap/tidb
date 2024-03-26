@@ -808,7 +808,7 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 
 func fetchRecordFromClusterStmtSummary(sctx PlanContext, planDigest string) ([]chunk.Row, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
-	exec, _ := sctx.(sqlexec.SQLExecutor)
+	exec := sctx.GetSQLExecutor()
 	fields := "stmt_type, schema_name, digest_text, sample_user, prepared, query_sample_text, charset, collation, plan_hint, plan_digest"
 	sql := fmt.Sprintf("select %s from information_schema.cluster_statements_summary where plan_digest = '%s' union distinct ", fields, planDigest) +
 		fmt.Sprintf("select %s from information_schema.cluster_statements_summary_history where plan_digest = '%s' ", fields, planDigest) +
@@ -1439,29 +1439,30 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		p.setSchemaAndNames(buildShowSlowSchema())
 		ret = p
 	case ast.AdminReloadExprPushdownBlacklist:
-		ret = &ReloadExprPushdownBlacklist{}
+		return &ReloadExprPushdownBlacklist{}, nil
 	case ast.AdminReloadOptRuleBlacklist:
-		ret = &ReloadOptRuleBlacklist{}
+		return &ReloadOptRuleBlacklist{}, nil
 	case ast.AdminPluginEnable:
-		ret = &AdminPlugins{Action: Enable, Plugins: as.Plugins}
+		return &AdminPlugins{Action: Enable, Plugins: as.Plugins}, nil
 	case ast.AdminPluginDisable:
-		ret = &AdminPlugins{Action: Disable, Plugins: as.Plugins}
+		return &AdminPlugins{Action: Disable, Plugins: as.Plugins}, nil
 	case ast.AdminFlushBindings:
-		ret = &SQLBindPlan{SQLBindOp: OpFlushBindings}
+		return &SQLBindPlan{SQLBindOp: OpFlushBindings}, nil
 	case ast.AdminCaptureBindings:
-		ret = &SQLBindPlan{SQLBindOp: OpCaptureBindings}
+		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
 	case ast.AdminEvolveBindings:
+		var err error
 		// The 'baseline evolution' only work in the test environment before the feature is GA.
 		if !config.CheckTableBeforeDrop {
-			return nil, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
+			err = errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 		}
-		ret = &SQLBindPlan{SQLBindOp: OpEvolveBindings}
+		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
 	case ast.AdminReloadBindings:
-		ret = &SQLBindPlan{SQLBindOp: OpReloadBindings}
+		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
 	case ast.AdminReloadStatistics:
-		ret = &Simple{Statement: as}
+		return &Simple{Statement: as}, nil
 	case ast.AdminFlushPlanCache:
-		ret = &Simple{Statement: as}
+		return &Simple{Statement: as}, nil
 	case ast.AdminSetBDRRole, ast.AdminUnsetBDRRole:
 		ret = &Simple{Statement: as}
 	case ast.AdminShowBDRRole:
@@ -2408,7 +2409,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 // getSavedAnalyzeOpts gets the analyze options which are saved in mysql.analyze_options.
 func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.TableInfo) (map[ast.AnalyzeOptionType]uint64, model.ColumnChoice, []*model.ColumnInfo, error) {
 	analyzeOptions := map[ast.AnalyzeOptionType]uint64{}
-	exec := b.ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := b.ctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select sample_num,sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id = %?", physicalID)
 	if err != nil {

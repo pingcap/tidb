@@ -977,7 +977,7 @@ func TestCapturePrivilege(t *testing.T) {
 	require.Len(t, rows, 0)
 	tk1.MustExec("select * from t1 where b=1")
 	tk1.MustExec("select * from t1 where b=1")
-	tk.MustExec("admin capture bindings")
+	tk1.MustExec("admin capture bindings")
 	rows = tk1.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 

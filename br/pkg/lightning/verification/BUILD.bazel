@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/common",
-        "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_zap//zapcore",
     ],
 )
@@ -22,6 +21,5 @@ go_test(
         ":verification",
         "//br/pkg/lightning/common",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv",
     ],
 )

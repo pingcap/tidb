@@ -93,8 +93,9 @@ func (p *PhysicalHashAgg) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.E
 	aggExec := &tipb.Aggregation{
 		GroupBy: groupByExprs,
 	}
+	pushDownCtx := GetPushDownCtx(p.SCtx())
 	for _, aggFunc := range p.AggFuncs {
-		agg, err := aggregation.AggFuncToPBExpr(ctx.GetExprCtx(), client, aggFunc, storeType)
+		agg, err := aggregation.AggFuncToPBExpr(pushDownCtx, aggFunc, storeType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -122,6 +123,7 @@ func (p *PhysicalHashAgg) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.E
 func (p *PhysicalStreamAgg) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()
 	exprCtx := ctx.GetExprCtx()
+	pushDownCtx := GetPushDownCtx(ctx)
 	groupByExprs, err := expression.ExpressionsToPBList(exprCtx, p.GroupByItems, client)
 	if err != nil {
 		return nil, err
@@ -130,7 +132,7 @@ func (p *PhysicalStreamAgg) ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb
 		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
-		agg, err := aggregation.AggFuncToPBExpr(exprCtx, client, aggFunc, storeType)
+		agg, err := aggregation.AggFuncToPBExpr(pushDownCtx, aggFunc, storeType)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

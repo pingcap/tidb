@@ -379,15 +379,15 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 3)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexFullScan.*", res.Rows()[2][0])
+	require.Len(t, res.Rows(), 2)
+	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[1][0])
 
 	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
 		"where col1 between -1696020282760139948 and -2619168038882941276 or col1 < -4004648990067362699;")
-	require.Len(t, res.Rows(), 3)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexFullScan.*", res.Rows()[2][0])
+	require.Len(t, res.Rows(), 2)
+	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[1][0])
 	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
 		"where col1 between 5516958330762833919 and 8551969118506051323 or col1 < 2887622822023883594;")
 	require.Len(t, res.Rows(), 2)

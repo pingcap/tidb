@@ -59,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -667,6 +666,16 @@ func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) 
 // SetConcurrency sets the concurrency of dbs tables files.
 func (rc *Client) SetConcurrency(c uint) {
 	log.Info("download worker pool", zap.Uint("size", c))
+	if rc.granularity == string(CoarseGrained) {
+		// we believe 32 is large enough for download worker pool.
+		// it won't reach the limit if sst files distribute evenly.
+		// when restore memory usage is still too high, we should reduce concurrencyPerStore
+		// to sarifice some speed to reduce memory usage.
+		count := uint(rc.storeCount) * rc.concurrencyPerStore * 32
+		log.Info("download coarse worker pool", zap.Uint("size", count))
+		rc.workerPool = utils.NewWorkerPool(count, "file")
+		return
+	}
 	rc.workerPool = utils.NewWorkerPool(c, "file")
 }
 
@@ -1410,7 +1419,7 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 	client := split.NewSplitClient(rc.GetPDClient(), rc.pdHTTPClient, rc.GetTLSConfig(), false)
@@ -1544,8 +1553,8 @@ LOOPFORTABLE:
 					// wait for download worker notified
 					rc.fileImporter.cond.Wait()
 				}
-				eg.Go(restoreFn)
 				rc.fileImporter.cond.L.Unlock()
+				rc.workerPool.ApplyOnErrorGroup(eg, restoreFn)
 			} else {
 				// if we are not use coarse granularity which means
 				// we still pipeline split & scatter regions and import sst files
