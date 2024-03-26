@@ -6,7 +6,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/sem",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config",
         "//pkg/parser/mysql",
+        "//pkg/privilege",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/util/logutil",
     ],
@@ -22,6 +25,7 @@ go_test(
     embed = [":sem"],
     flaky = True,
     deps = [
+        "//pkg/config",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/variable",
         "//pkg/testkit/testsetup",
