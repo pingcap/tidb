@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -581,11 +580,9 @@ func TestPipelinedDMLMemoryTest(t *testing.T) {
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
-	var wg sync.WaitGroup
 	for _, stmtType := range []string{"insert", "update", "delete"} {
-		wg.Add(1)
-		go func(stmtType string) {
-			defer wg.Done()
+		stmtType := stmtType
+		t.Run(stmtType, func(t *testing.T) {
 			table := fmt.Sprintf("t_%s", stmtType)
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
@@ -637,9 +634,8 @@ func TestPipelinedDMLMemoryTest(t *testing.T) {
 			case "delete":
 				tk.MustQuery(fmt.Sprintf("select count(*) from %s", table)).Check(testkit.Rows("0"))
 			}
-		}(stmtType)
+		})
 	}
-	wg.Wait()
 }
 
 func TestPipelinedDMLDisableRetry(t *testing.T) {
