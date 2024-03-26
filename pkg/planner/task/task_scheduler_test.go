@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package memo
+package task
 
 import (
 	"errors"
@@ -63,7 +63,7 @@ func TestSimpleTaskScheduler(t *testing.T) {
 	testScheduler.SchedulerCtx.pushTask(&TestTaskImpl2{a: 2})
 	testScheduler.SchedulerCtx.pushTask(&TestTaskImpl2{a: 3})
 
-	var testTaskScheduler TaskScheduler = testScheduler
+	var testTaskScheduler Scheduler = testScheduler
 	testTaskScheduler.ExecuteTasks()
 	require.NotNil(t, testScheduler.Err)
 	require.Equal(t, testScheduler.Err.Error(), "mock error at task id = 2")
