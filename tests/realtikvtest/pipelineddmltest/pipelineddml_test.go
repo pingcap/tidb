@@ -584,7 +584,7 @@ func TestPipelinedDMLInsertMemoryTest(t *testing.T) {
 	tk.MustExec("drop table if exists t1, _t1")
 	tk.MustExec("create table t1 (a int, b int, c varchar(128), unique index idx(b))")
 	tk.MustExec("create table _t1 like t1")
-	cnt := 1000
+	cnt := 100000
 
 	// insertStmt
 	buf := bytes.NewBuffer(make([]byte, 0, 10240))
@@ -599,9 +599,10 @@ func TestPipelinedDMLInsertMemoryTest(t *testing.T) {
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows(fmt.Sprintf("%d", cnt)))
 
 	// insert
-	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")    // query canceled by memory controller will return error.
-	tk.MustExec("set session tidb_mem_quota_query = 256 << 10") // 256KB limitation.
+	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")   // query canceled by memory controller will return error.
+	tk.MustExec("set session tidb_mem_quota_query = 10 << 20") // 10MB limitation.
 	tk.MustExec("set session tidb_max_chunk_size = 32")
+	tk.MustExec("set session tidb_distsql_scan_concurrency = 1")
 	insertStmt := "insert into _t1 select * from t1"
 	err := tk.ExecToErr(insertStmt)
 	require.Error(t, err)
@@ -611,7 +612,7 @@ func TestPipelinedDMLInsertMemoryTest(t *testing.T) {
 	tk.MustQuery("select count(*) from _t1").Check(testkit.Rows(fmt.Sprintf("%d", cnt)))
 
 	// update
-	tk.MustExec("set session tidb_mem_quota_query = 256 << 10") // 256KB limitation.
+	tk.MustExec("set session tidb_mem_quota_query = 20<< 20") // 20MB limitation.
 	updateStmt := "update _t1 set c = 'abcdefghijklmnopqrstuvwxyz1234567890,.?+-=_!@#$&*()_++++++'"
 	tk.MustExec("set session tidb_dml_type = standard")
 	err = tk.ExecToErr(updateStmt)
@@ -622,7 +623,7 @@ func TestPipelinedDMLInsertMemoryTest(t *testing.T) {
 	tk.MustQuery("select count(*) from _t1 where c = 'abcdefghijklmnopqrstuvwxyz1234567890,.?+-=_!@#$&*()_++++++'").Check(testkit.Rows(fmt.Sprintf("%d", cnt)))
 
 	// delete
-	tk.MustExec("set session tidb_mem_quota_query = 128 << 10") // 128KB limitation.
+	tk.MustExec("set session tidb_mem_quota_query = 10 << 20") // 10MB limitation.
 	deleteStmt := "delete from _t1"
 	tk.MustExec("set session tidb_dml_type = standard")
 	err = tk.ExecToErr(deleteStmt)
@@ -785,4 +786,22 @@ func TestRejectUnsupportedTables(t *testing.T) {
 	tk.MustExec("alter table cached cache")
 	tk.MustExec("insert into cached values(1)")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on cached tables. Fallback to standard mode")
+}
+
+func TestCacheTable1(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cached(a int)")
+	tk.MustExec("alter table cached cache")
+	tk.MustExec("insert into cached values(1)")
+}
+
+func TestCacheTable2(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table cached(a int)")
+	tk.MustExec("alter table cached cache")
+	tk.MustExec("insert into cached values(1)")
 }
