@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	brlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -296,26 +297,57 @@ func (b *BackoffMayNotCountBackoffer) Attempt() int {
 // - sortedRegions are continuous and sorted in ascending order by start key.
 // - sortedRegions can cover all keys in sortedKeys.
 // PaginateScanRegion should satisfy the above prerequisites.
-func GetSplitKeysOfRegions(sortedKeys [][]byte, sortedRegions []*RegionInfo, isRawKV bool) map[uint64][][]byte {
-	splitKeyMap := make(map[uint64][][]byte, len(sortedRegions))
+// TODO(lance6716): update comment
+func getSplitKeysOfRegions(
+	sortedKeys [][]byte,
+	sortedRegions []*RegionInfo,
+	isRawKV bool,
+) map[*RegionInfo][][]byte {
+	splitKeyMap := make(map[*RegionInfo][][]byte, len(sortedRegions))
 	curKeyIndex := 0
+	splitKey := codec.EncodeBytesExt(nil, sortedKeys[curKeyIndex], isRawKV)
+	moveRegionCnt := 0
+
 	for _, region := range sortedRegions {
-		for ; curKeyIndex < len(sortedKeys); curKeyIndex += 1 {
+		for {
 			if len(sortedKeys[curKeyIndex]) == 0 {
-				continue
+				// should not happen?
+				goto nextKey
 			}
-			splitKey := codec.EncodeBytesExt(nil, sortedKeys[curKeyIndex], isRawKV)
 			// If splitKey is the boundary of the region, don't need to split on it.
 			if bytes.Equal(splitKey, region.Region.GetStartKey()) {
-				continue
+				goto nextKey
 			}
-			// If splitKey is not in a region, we should move to the next region.
+			// If splitKey is not in this region, we should move to the next region.
 			if !region.ContainsInterior(splitKey) {
+				moveRegionCnt++
 				break
 			}
-			regionID := region.Region.GetId()
-			splitKeyMap[regionID] = append(splitKeyMap[regionID], sortedKeys[curKeyIndex])
+
+			//   key                  key
+			//    |                    |
+			// ---+--------------------+---
+			//         | region |
+			// if regions are already too small, maybe other nodes are also split regions,
+			// we don't need to split regions on these keys.
+			if moveRegionCnt <= 1 {
+				splitKeyMap[region] = append(splitKeyMap[region], sortedKeys[curKeyIndex])
+			}
+
+		nextKey:
+			curKeyIndex++
+			if curKeyIndex >= len(sortedKeys) {
+				return splitKeyMap
+			}
+			splitKey = codec.EncodeBytesExt(nil, sortedKeys[curKeyIndex], isRawKV)
+			moveRegionCnt = 0
 		}
 	}
+	brlog.L().Error("in getSplitKeysOfRegions, regions don't cover all keys",
+		zap.String("firstKey", hex.EncodeToString(sortedKeys[0])),
+		zap.String("lastKey", hex.EncodeToString(sortedKeys[len(sortedKeys)-1])),
+		zap.String("firstRegionStartKey", hex.EncodeToString(sortedRegions[0].Region.GetStartKey())),
+		zap.String("lastRegionEndKey", hex.EncodeToString(sortedRegions[len(sortedRegions)-1].Region.GetEndKey())),
+	)
 	return splitKeyMap
 }

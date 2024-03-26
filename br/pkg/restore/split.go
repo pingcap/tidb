@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -15,8 +14,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -159,65 +156,13 @@ func (rs *RegionSplitter) executeSplitByKeys(
 	scanStartKey []byte,
 	sortedKeys [][]byte,
 ) error {
-	var mutex sync.Mutex
 	startTime := time.Now()
-	minKey := codec.EncodeBytesExt(nil, scanStartKey, splitContext.isRawKv)
-	maxKey := codec.EncodeBytesExt(nil, sortedKeys[len(sortedKeys)-1], splitContext.isRawKv)
-	scatterRegions := make([]*split.RegionInfo, 0)
-	regionsMap := make(map[uint64]*split.RegionInfo)
 
-	err := utils.WithRetry(ctx, func() error {
-		clear(regionsMap)
-		regions, err := split.PaginateScanRegion(ctx, rs.client, minKey, maxKey, split.ScanRegionPaginationLimit)
-		if err != nil {
-			return err
-		}
-		splitKeyMap := split.GetSplitKeysOfRegions(sortedKeys, regions, splitContext.isRawKv)
-		regionMap := make(map[uint64]*split.RegionInfo)
-		for _, region := range regions {
-			regionMap[region.Region.GetId()] = region
-		}
-		workerPool := utils.NewWorkerPool(uint(splitContext.storeCount)+1, "split keys")
-		eg, ectx := errgroup.WithContext(ctx)
-		for regionID, splitKeys := range splitKeyMap {
-			region := regionMap[regionID]
-			keys := splitKeys
-			sctx := splitContext
-			workerPool.ApplyOnErrorGroup(eg, func() error {
-				log.Info("get split keys for split regions",
-					logutil.Region(region.Region), logutil.Keys(keys))
-				newRegions, err := rs.splitAndScatterRegions(ectx, region, keys, sctx.isRawKv)
-				if err != nil {
-					return err
-				}
-				if len(newRegions) != len(keys) {
-					log.Warn("split key count and new region count mismatch",
-						zap.Int("new region count", len(newRegions)),
-						zap.Int("split key count", len(keys)))
-				}
-				log.Info("scattered regions", zap.Int("count", len(newRegions)))
-				mutex.Lock()
-				for _, r := range newRegions {
-					regionsMap[r.Region.Id] = r
-				}
-				mutex.Unlock()
-				sctx.onSplit(keys)
-				return nil
-			})
-		}
-		err = eg.Wait()
-		if err != nil {
-			return err
-		}
-		for _, r := range regionsMap {
-			// merge all scatter regions
-			scatterRegions = append(scatterRegions, r)
-		}
-		return nil
-	}, newSplitBackoffer())
+	scatterRegions, err := rs.client.SplitWaitAndScatter(ctx, sortedKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	if len(scatterRegions) > 0 {
 		log.Info("finish splitting and scattering regions. and starts to wait", zap.Int("regions", len(scatterRegions)),
 			zap.Duration("take", time.Since(startTime)))
@@ -226,13 +171,6 @@ func (rs *RegionSplitter) executeSplitByKeys(
 		log.Info("finish splitting regions.", zap.Duration("take", time.Since(startTime)))
 	}
 	return nil
-}
-
-func (rs *RegionSplitter) splitAndScatterRegions(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte, _ bool,
-) ([]*split.RegionInfo, error) {
-	_, newRegions, err := rs.client.SplitWaitAndScatter(ctx, regionInfo, keys)
-	return newRegions, err
 }
 
 // waitRegionsScattered try to wait mutilple regions scatterd in 3 minutes.
@@ -422,7 +360,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 	}
 
 	helper.pool.ApplyOnErrorGroup(helper.eg, func() error {
-		newRegions, errSplit := regionSplitter.splitAndScatterRegions(ctx, region, splitPoints, false)
+		newRegions, errSplit := regionSplitter.client.SplitWaitAndScatterOnRegion(ctx, region, splitPoints)
 		if errSplit != nil {
 			log.Warn("failed to split the scaned region", zap.Error(errSplit))
 			_, startKey, _ := codec.DecodeBytes(region.Region.StartKey, nil)
@@ -687,33 +625,4 @@ func (splitIter *LogFilesIterWithSplitHelper) TryNext(ctx context.Context) iter.
 	res := iter.Emit(splitIter.buffer[splitIter.next])
 	splitIter.next += 1
 	return res
-}
-
-type splitBackoffer struct {
-	state utils.RetryState
-}
-
-func newSplitBackoffer() *splitBackoffer {
-	return &splitBackoffer{
-		state: utils.InitialRetryState(split.SplitRetryTimes, split.SplitRetryInterval, split.SplitMaxRetryInterval),
-	}
-}
-
-func (bo *splitBackoffer) NextBackoff(err error) time.Duration {
-	switch {
-	case berrors.ErrPDBatchScanRegion.Equal(err):
-		log.Warn("inconsistent region info get.", logutil.ShortError(err))
-		return time.Second
-	case strings.Contains(err.Error(), "no valid key"):
-		bo.state.GiveUp()
-		return 0
-	case berrors.ErrRestoreInvalidRange.Equal(err):
-		bo.state.GiveUp()
-		return 0
-	}
-	return bo.state.ExponentialBackoff()
-}
-
-func (bo *splitBackoffer) Attempt() int {
-	return bo.state.Attempt()
 }
