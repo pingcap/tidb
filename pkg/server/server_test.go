@@ -62,6 +62,7 @@ func TestOptimizerDebugTrace(t *testing.T) {
 		chunkAlloc: chunk.NewAllocator(),
 		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
+	defer cc.Close()
 	ctx := context.Background()
 	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 

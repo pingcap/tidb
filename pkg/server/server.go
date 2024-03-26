@@ -623,10 +623,10 @@ func (s *Server) closeListener() {
 // Close closes the server.
 func (s *Server) Close() {
 	s.startShutdown()
+	s.KillAllConnections()
 	s.rwlock.Lock() // // prevent new connections
 	defer s.rwlock.Unlock()
 	s.inShutdownMode.Store(true)
-	s.KillAllConnections()
 	s.closeListener()
 }
 

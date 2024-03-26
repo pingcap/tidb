@@ -612,6 +612,10 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	require.NoError(t, err)
 	defer server.Close()
 
+	domain, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(domain)
+
 	cc := &clientConn{
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
@@ -623,6 +627,7 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		chunkAlloc:   chunk.NewAllocator(),
 		capability:   capability,
 	}
+	defer cc.Close()
 	cc.SetCtx(tc)
 	for _, cs := range inputs {
 		inBytes := append([]byte{cs.com}, cs.in...)
@@ -696,6 +701,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 		alloc:      arena.NewAllocator(32 * 1024),
 		chunkAlloc: chunk.NewAllocator(),
 	}
+	defer closeConn(cc)
 	cc.SetCtx(tc)
 	srv := &Server{
 		clients: map[uint64]*clientConn{
@@ -997,6 +1003,7 @@ func TestTiFlashFallback(t *testing.T) {
 		chunkAlloc: chunk.NewAllocator(),
 		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
+	defer closeConn(cc)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1934,6 +1941,7 @@ func TestProcessInfoForExecuteCommand(t *testing.T) {
 		chunkAlloc: chunk.NewAllocator(),
 		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
+	defer closeConn(cc)
 	ctx := context.Background()
 
 	tk.MustExec("use test")
