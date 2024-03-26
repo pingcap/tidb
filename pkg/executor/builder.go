@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"math"
 	"slices"
 	"strconv"
@@ -1520,10 +1521,11 @@ func (b *executorBuilder) buildPartitionedHashJoin(v *plannercore.PhysicalHashJo
 		ProbeWorkers:          make([]*partitionedhashjoin.ProbeWorker, v.Concurrency),
 		BuildWorkers:          make([]*partitionedhashjoin.BuildWorker, v.Concurrency),
 		PartitionedHashJoinCtx: &partitionedhashjoin.PartitionedHashJoinCtx{
-			SessCtx:        b.ctx,
-			JoinType:       v.JoinType,
-			Concurrency:    v.Concurrency,
-			OtherCondition: v.OtherConditions,
+			SessCtx:         b.ctx,
+			JoinType:        v.JoinType,
+			Concurrency:     v.Concurrency,
+			OtherCondition:  v.OtherConditions,
+			PartitionNumber: mathutil.Min(int(v.Concurrency), 16),
 		},
 	}
 	e.PartitionedHashJoinCtx.RightAsBuildSide = true
