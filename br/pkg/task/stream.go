@@ -1467,6 +1467,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 		mgr.GetTLSConfig(),
 		keepaliveCfg,
 		false,
+		mgr.GetStoreCount(),
 	)
 	err = client.Init(g, mgr.GetStorage())
 	if err != nil {
