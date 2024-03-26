@@ -289,15 +289,13 @@ func (b *BackoffMayNotCountBackoffer) Attempt() int {
 }
 
 // GetSplitKeysOfRegions checks every input key is necessary to split region on
-// it. Returns a map from original region ID to split keys belongs to each
-// region.
+// it. Returns a map from region to split keys belongs to it.
 //
 // prerequisite:
 // - sortedKeys are sorted in ascending order.
 // - sortedRegions are continuous and sorted in ascending order by start key.
 // - sortedRegions can cover all keys in sortedKeys.
 // PaginateScanRegion should satisfy the above prerequisites.
-// TODO(lance6716): update comment
 func getSplitKeysOfRegions(
 	sortedKeys [][]byte,
 	sortedRegions []*RegionInfo,

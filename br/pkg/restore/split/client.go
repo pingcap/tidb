@@ -56,9 +56,15 @@ type SplitClient interface {
 	GetRegion(ctx context.Context, key []byte) (*RegionInfo, error)
 	// GetRegionByID gets a region by a region id.
 	GetRegionByID(ctx context.Context, regionID uint64) (*RegionInfo, error)
-	// SplitWaitAndScatter splits a region from a batch of keys, waits for the split
-	// is finished, and scatters the new regions. It will return the original region,
-	// new regions and error. The input keys should not be encoded.
+	// SplitWaitAndScatter splits related regions which contain the keys, and then
+	// scatter them, and return the new regions that can be used by
+	// WaitRegionsScattered.
+	//
+	// Internally, it will retry for a long time if TiKV is slow to fulfill it.
+	SplitWaitAndScatter(ctx context.Context, keys [][]byte) ([]*RegionInfo, error)
+	// SplitWaitAndScatterOnRegion splits a region from a batch of keys, waits for
+	// the split is finished, and scatters the new regions. It will return the
+	// original region, new regions and error. The input keys should not be encoded.
 	//
 	// The split step has a few retry times. If it meets error, the error is returned
 	// directly.
@@ -69,8 +75,6 @@ type SplitClient interface {
 	//
 	// The scatter step has a few retry times. If it meets error, it will log a
 	// warning and continue.
-	// TODO(lance6716): update comments
-	SplitWaitAndScatter(ctx context.Context, keys [][]byte) ([]*RegionInfo, error)
 	SplitWaitAndScatterOnRegion(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error)
 	// GetOperator gets the status of operator of the specified region.
 	GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
