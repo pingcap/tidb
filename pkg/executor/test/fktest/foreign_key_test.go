@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -1231,8 +1230,7 @@ func TestForeignKeyGenerateCascadeAST(t *testing.T) {
 		return sb.String()
 	}
 	checkStmtFn := func(stmt ast.StmtNode, sql string) {
-		exec, ok := tk.Session().(sqlexec.RestrictedSQLExecutor)
-		require.True(t, ok)
+		exec := tk.Session().GetRestrictedSQLExecutor()
 		expectedStmt, err := exec.ParseWithParams(context.Background(), sql)
 		require.NoError(t, err)
 		require.Equal(t, restoreFn(expectedStmt), restoreFn(stmt))

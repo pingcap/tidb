@@ -23,12 +23,17 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // PlanContext is the context for building plan.
 type PlanContext interface {
 	contextutil.ValueStoreContext
 	tablelock.TableLockReadContext
+	// GetSQLExecutor gets the SQLExecutor.
+	GetSQLExecutor() sqlexec.SQLExecutor
+	// GetRestrictedSQLExecutor gets the RestrictedSQLExecutor.
+	GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor
 	// GetExprCtx gets the expression context.
 	GetExprCtx() exprctx.BuildContext
 	// GetStore returns the store of session.
