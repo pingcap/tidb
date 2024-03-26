@@ -697,6 +697,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 		connectionID: connID,
 		server: &Server{
 			capability: defaultCapability,
+			dom:        dom,
 		},
 		alloc:      arena.NewAllocator(32 * 1024),
 		chunkAlloc: chunk.NewAllocator(),
