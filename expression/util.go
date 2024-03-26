@@ -384,14 +384,9 @@ func SetExprColumnInOperand(expr Expression) Expression {
 
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
-<<<<<<< HEAD:expression/util.go
+// TODO: remove this function and only use ColumnSubstituteImpl since this function swallows the error, which seems unsafe.
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
 	_, _, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, false)
-=======
-// TODO: remove this function and only use ColumnSubstituteImpl since this function swallows the error, which seems unsafe.
-func ColumnSubstitute(ctx sessionctx.Context, expr Expression, schema *Schema, newExprs []Expression) Expression {
-	_, _, resExpr := ColumnSubstituteImpl(ctx, expr, schema, newExprs, false)
->>>>>>> a0296bebe39 (planner: stop pushing Agg down through Projection if substitution fail (#50932)):pkg/expression/util.go
 	return resExpr
 }
 
