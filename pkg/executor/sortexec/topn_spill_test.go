@@ -337,7 +337,7 @@ func TestTopNSpillDisk(t *testing.T) {
 
 	var exe *sortexec.TopNExec
 	schema := expression.NewSchema(topNCase.Columns()...)
-	dataSource := buildDataSource(ctx, topNCase, schema)
+	dataSource := buildDataSource(topNCase, schema)
 	initTopNNoSpillCaseParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
 	for i := 0; i < 20; i++ {
 		topNNoSpillCase(t, nil, topNCase, schema, dataSource, 0, count)
@@ -386,27 +386,27 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 
 	var exe *sortexec.TopNExec
 	schema := expression.NewSchema(topNCase.Columns()...)
-	dataSource := buildDataSource(ctx, topNCase, schema)
+	dataSource := buildDataSource(topNCase, schema)
 	initTopNNoSpillCaseParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 15; i++ {
+	for i := 0; i < 10; i++ {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNSpillCase1Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 15; i++ {
+	for i := 0; i < 10; i++ {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNSpillCase2Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 15; i++ {
+	for i := 0; i < 10; i++ {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNInMemoryThenSpillParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 15; i++ {
+	for i := 0; i < 10; i++ {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 	}

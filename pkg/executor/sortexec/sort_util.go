@@ -47,7 +47,7 @@ type rowWithPartition struct {
 	partitionID int
 }
 
-func processPanicAndLog(errOutputChan chan rowWithError, r any) {
+func processPanicAndLog(errOutputChan chan<- rowWithError, r any) {
 	err := util.GetRecoverError(r)
 	errOutputChan <- rowWithError{err: err}
 	logutil.BgLogger().Error("executor panicked", zap.Error(err), zap.Stack("stack"))

@@ -164,14 +164,12 @@ func (t *topNSpillHelper) spill() (err error) {
 
 			chkNum := t.workers[idx].chkHeap.rowChunks.NumChunks()
 			rowNum := 0
-			eachChkLen := make([]int, 0)
 			for i := 0; i < chkNum; i++ {
 				chk := t.workers[idx].chkHeap.rowChunks.GetChunk(i)
 				rowNum += chk.NumRows()
-				eachChkLen = append(eachChkLen, chk.NumRows())
 			}
 
-			spillErr := t.spillHeap(t.workers[idx].chkHeap, rowNum, eachChkLen)
+			spillErr := t.spillHeap(t.workers[idx].chkHeap)
 			if spillErr != nil {
 				errChan <- spillErr
 			}
@@ -189,7 +187,7 @@ func (t *topNSpillHelper) spill() (err error) {
 	return nil
 }
 
-func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap, expectLen int, eachChkLen []int) error {
+func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 	if chkHeap.Len() <= 0 && chkHeap.rowChunks.Len() <= 0 {
 		return nil
 	}

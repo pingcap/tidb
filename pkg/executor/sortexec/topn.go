@@ -321,7 +321,7 @@ func (e *TopNExec) spillTopNExecHeap() error {
 	defer e.spillHelper.cond.Broadcast()
 	defer e.spillHelper.setNotSpilled()
 
-	err := e.spillHelper.spillHeap(e.chkHeap, -1, nil)
+	err := e.spillHelper.spillHeap(e.chkHeap)
 	if err != nil {
 		return err
 	}

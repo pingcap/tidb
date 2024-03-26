@@ -122,8 +122,6 @@ func (r *resultChecker) check(resultChunks []*chunk.Chunk, isTopN bool, offset u
 		return false
 	}
 
-	success := true
-
 	for _, chk := range resultChunks {
 		rowNum := chk.NumRows()
 		for i := 0; i < rowNum; i++ {
@@ -133,18 +131,14 @@ func (r *resultChecker) check(resultChunks []*chunk.Chunk, isTopN bool, offset u
 			expectRow := r.savedChunks[r.rowPtrs[cursor].ChkIdx].GetRow(int(r.rowPtrs[cursor].RowIdx))
 			expect := expectRow.ToString(fieldTypes)
 
-			// log.Info(fmt.Sprintf("expect: %s, res: %s", expect, res))
-
 			if res != expect {
-				// log.Info(fmt.Sprintf("test fails here: expect: %s, res: %s", expect, res))
-				// return false
-				success = false
+				return false
 			}
 			cursor++
 		}
 	}
 
-	return success
+	return true
 }
 
 func buildDataSource(sortCase *testutil.SortCase, schema *expression.Schema) *testutil.MockDataSource {

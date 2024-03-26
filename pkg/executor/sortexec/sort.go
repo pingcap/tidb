@@ -376,13 +376,7 @@ func (e *SortExec) generateResultFromDisk() error {
 		}
 		return nil
 	}
-	return generateResultWithMulWayMerge(
-		e.Parallel.spillHelper.sortedRowsInDisk,
-		e.Parallel.resultChannel,
-		e.finishCh,
-		e.lessRow,
-		-1,
-		0)
+	return e.generateResultWithMultiWayMerge()
 }
 
 // We call this function to generate result when sorted rows are in memory
