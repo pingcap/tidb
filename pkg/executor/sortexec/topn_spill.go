@@ -57,7 +57,8 @@ func newTopNSpillerHelper(
 	diskTracker *disk.Tracker,
 	fieldTypes []*types.FieldType,
 	workers []*topNWorker,
-	concurrencyNum int) *topNSpillHelper {
+	concurrencyNum int,
+) *topNSpillHelper {
 	lock := sync.Mutex{}
 	tmpSpillChunksChan := make(chan *chunk.Chunk, concurrencyNum)
 	for i := 0; i < len(workers); i++ {
@@ -77,6 +78,12 @@ func newTopNSpillerHelper(
 		workers:            workers,
 		bytesConsumed:      atomic.Int64{},
 		bytesLimit:         atomic.Int64{},
+	}
+}
+
+func (t *topNSpillHelper) close() {
+	for _, inDisk := range t.sortedRowsInDisk {
+		inDisk.Close()
 	}
 }
 

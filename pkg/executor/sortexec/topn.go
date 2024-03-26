@@ -125,8 +125,12 @@ func (e *TopNExec) Close() error {
 	channel.Clear(e.resultChannel)
 
 	e.chkHeap = nil
-	e.spillHelper = nil
 	e.spillAction = nil
+
+	if e.spillHelper != nil {
+		e.spillHelper.close()
+		e.spillHelper = nil
+	}
 
 	if e.memTracker != nil {
 		e.memTracker.ReplaceBytesUsed(0)
@@ -401,7 +405,7 @@ func (e *TopNExec) generateTopNResultsWithNoSpill() bool {
 	return false
 }
 
-func (e *TopNExec) generateResultWithMultiWayMerge() error {
+func (e *TopNExec) generateResultWithMultiWayMerge(offset int64, limit int64) error {
 	multiWayMerge := newMultiWayMerger(&diskSource{sortedRowsInDisk: e.spillHelper.sortedRowsInDisk}, e.lessRow)
 
 	err := multiWayMerge.init()
@@ -409,7 +413,12 @@ func (e *TopNExec) generateResultWithMultiWayMerge() error {
 		return err
 	}
 
+	outputRowNum := int64(0)
 	for {
+		if limit != -1 && outputRowNum >= limit {
+			return nil
+		}
+
 		row, err := multiWayMerge.next()
 		if err != nil {
 			return err
@@ -419,11 +428,14 @@ func (e *TopNExec) generateResultWithMultiWayMerge() error {
 			return nil
 		}
 
-		select {
-		case <-e.finishCh:
-			return nil
-		case e.resultChannel <- rowWithError{row: row}:
+		if outputRowNum >= offset {
+			select {
+			case <-e.finishCh:
+				return nil
+			case e.resultChannel <- rowWithError{row: row}:
+			}
 		}
+		outputRowNum++
 		injectParallelSortRandomFail(1)
 	}
 }
@@ -462,7 +474,7 @@ func (e *TopNExec) generateTopNResultsWithSpill() error {
 		}
 		return nil
 	}
-	return e.generateResultWithMultiWayMerge()
+	return e.generateResultWithMultiWayMerge(int64(e.Limit.Offset), int64(e.Limit.Offset+e.Limit.Count))
 }
 
 func (e *TopNExec) generateTopNResults() {
