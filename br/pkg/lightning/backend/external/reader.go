@@ -63,6 +63,7 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
+	output.size = 0
 	concurrences, startOffsets, err := getFilesReadConcurrency(
 		ctx,
 		store,
@@ -190,7 +191,7 @@ func readOneFile(
 	output.mu.Lock()
 	output.keysPerFile = append(output.keysPerFile, keys)
 	output.valuesPerFile = append(output.valuesPerFile, values)
-	output.size = size
+	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
 	return nil

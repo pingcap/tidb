@@ -43,9 +43,29 @@ func SetDDLReorgWorkerCounter(cnt int32) {
 	atomic.StoreInt32(&ddlReorgWorkerCounter, cnt)
 }
 
+// SetDDLReorgReaderCounter sets ddlReorgReaderCounter.
+func SetDDLReorgReaderCounter(cnt int32) {
+	atomic.StoreInt32(&ddlReorgReaderCounter, cnt)
+}
+
+// SetDDLReorgWriterCounter sets ddlReorgWriterCounter.
+func SetDDLReorgWriterCounter(cnt int32) {
+	atomic.StoreInt32(&ddlReorgWriterCounter, cnt)
+}
+
 // GetDDLReorgWorkerCounter gets ddlReorgWorkerCounter.
 func GetDDLReorgWorkerCounter() int32 {
 	return atomic.LoadInt32(&ddlReorgWorkerCounter)
+}
+
+// GetDDLReorgReaderCounter gets ddlReorgReaderCounter.
+func GetDDLReorgReaderCounter() int32 {
+	return atomic.LoadInt32(&ddlReorgReaderCounter)
+}
+
+// GetDDLReorgWriterCounter gets ddlReorgWriterCounter.
+func GetDDLReorgWriterCounter() int32 {
+	return atomic.LoadInt32(&ddlReorgWriterCounter)
 }
 
 // SetDDLFlashbackConcurrency sets ddlFlashbackConcurrency count.

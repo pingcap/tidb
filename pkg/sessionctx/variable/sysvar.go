@@ -740,6 +740,16 @@ var defaultSysVars = []*SysVar{
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 		return nil
 	}},
+
+	{Scope: ScopeGlobal, Name: TiDBDDLReorgReaderCount, Value: strconv.Itoa(DefTiDBDDLReorgWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: MaxConfigurableConcurrency, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		SetDDLReorgReaderCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBDDLReorgWriterCount, Value: strconv.Itoa(DefTiDBDDLReorgWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: MaxConfigurableConcurrency, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		SetDDLReorgWriterCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
+		return nil
+	}},
+
 	{Scope: ScopeGlobal, Name: TiDBDDLReorgBatchSize, Value: strconv.Itoa(DefTiDBDDLReorgBatchSize), Type: TypeUnsigned, MinValue: int64(MinDDLReorgBatchSize), MaxValue: uint64(MaxDDLReorgBatchSize), SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
 		return nil
@@ -2458,7 +2468,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	// This system var is set disk quota for lightning sort dir, from 100 GB to 1PB.
-	{Scope: ScopeGlobal, Name: TiDBDDLDiskQuota, Value: strconv.Itoa(DefTiDBDDLDiskQuota), Type: TypeInt, MinValue: DefTiDBDDLDiskQuota, MaxValue: 1024 * 1024 * DefTiDBDDLDiskQuota / 100, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+	{Scope: ScopeGlobal, Name: TiDBDDLDiskQuota, Value: strconv.Itoa(DefTiDBDDLDiskQuota), Type: TypeInt, MinValue: 1024 * 1024 * 1024, MaxValue: 1024 * 1024 * DefTiDBDDLDiskQuota / 100, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return strconv.FormatUint(DDLDiskQuota.Load(), 10), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		DDLDiskQuota.Store(TidbOptUint64(val, DefTiDBDDLDiskQuota))

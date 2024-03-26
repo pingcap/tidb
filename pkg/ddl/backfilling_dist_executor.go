@@ -44,6 +44,7 @@ type BackfillTaskMeta struct {
 	EleTypeKey []byte `json:"ele_type_key"`
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
+	EstimateRowSize int    `json:"estimate_row_size"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
@@ -107,15 +108,16 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		indexInfos = append(indexInfos, indexInfo)
 	}
 	cloudStorageURI := s.taskMeta.CloudStorageURI
+	estRowSize := s.taskMeta.EstimateRowSize
 
 	switch stage {
 	case proto.BackfillStepReadIndex:
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI)
+		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
-		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI)
+		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI, estRowSize)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
