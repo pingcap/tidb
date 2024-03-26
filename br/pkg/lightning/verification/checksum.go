@@ -19,7 +19,6 @@ import (
 	"hash/crc64"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -41,11 +40,10 @@ func NewKVChecksum() *KVChecksum {
 }
 
 // NewKVChecksumWithKeyspace creates a new KVChecksum with the given checksum and keyspace.
-func NewKVChecksumWithKeyspace(k tikv.Codec) *KVChecksum {
-	ks := k.GetKeyspace()
+func NewKVChecksumWithKeyspace(keyspace []byte) *KVChecksum {
 	return &KVChecksum{
-		base:      crc64.Update(0, ecmaTable, ks),
-		prefixLen: len(ks),
+		base:      crc64.Update(0, ecmaTable, keyspace),
+		prefixLen: len(keyspace),
 	}
 }
 
@@ -129,8 +127,8 @@ func (c *KVChecksum) MarshalJSON() ([]byte, error) {
 
 // KVGroupChecksum is KVChecksum(s) each for a data KV group or index KV groups.
 type KVGroupChecksum struct {
-	m     map[int64]*KVChecksum
-	codec tikv.Codec
+	m        map[int64]*KVChecksum
+	keyspace []byte
 }
 
 // DataKVGroupID represents the ID for data KV group, as index id starts from 1,
@@ -139,10 +137,10 @@ const DataKVGroupID = -1
 
 // NewKVGroupChecksumWithKeyspace creates a new KVGroupChecksum with the given
 // keyspace.
-func NewKVGroupChecksumWithKeyspace(k tikv.Codec) *KVGroupChecksum {
+func NewKVGroupChecksumWithKeyspace(keyspace []byte) *KVGroupChecksum {
 	m := make(map[int64]*KVChecksum, 8)
-	m[DataKVGroupID] = NewKVChecksumWithKeyspace(k)
-	return &KVGroupChecksum{m: m, codec: k}
+	m[DataKVGroupID] = NewKVChecksumWithKeyspace(keyspace)
+	return &KVGroupChecksum{m: m, keyspace: keyspace}
 }
 
 // NewKVGroupChecksumForAdd creates a new KVGroupChecksum, and it can't be used
@@ -165,7 +163,7 @@ func (c *KVGroupChecksum) UpdateOneDataKV(kv common.KvPair) {
 func (c *KVGroupChecksum) UpdateOneIndexKV(indexID int64, kv common.KvPair) {
 	cksum := c.m[indexID]
 	if cksum == nil {
-		cksum = NewKVChecksumWithKeyspace(c.codec)
+		cksum = NewKVChecksumWithKeyspace(c.keyspace)
 		c.m[indexID] = cksum
 	}
 	cksum.UpdateOne(kv)
@@ -184,11 +182,7 @@ func (c *KVGroupChecksum) getOrCreateOneGroup(id int64) *KVChecksum {
 	if ok {
 		return cksum
 	}
-	if c.codec == nil {
-		cksum = NewKVChecksum()
-	} else {
-		cksum = NewKVChecksumWithKeyspace(c.codec)
-	}
+	cksum = NewKVChecksumWithKeyspace(c.keyspace)
 	c.m[id] = cksum
 	return cksum
 }

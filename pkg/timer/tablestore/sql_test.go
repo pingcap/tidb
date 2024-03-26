@@ -582,6 +582,10 @@ type mockSession struct {
 	sqlexec.SQLExecutor
 }
 
+func (p *mockSession) GetSQLExecutor() sqlexec.SQLExecutor {
+	return p
+}
+
 func (p *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, _ error) {
 	ret := p.Called(ctx, sql, args)
 	if r := ret.Get(0); r != nil {

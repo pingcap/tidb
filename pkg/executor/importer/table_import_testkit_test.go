@@ -99,7 +99,6 @@ func TestImportFromSelectCleanup(t *testing.T) {
 		ctx,
 		controller,
 		"11",
-		store,
 		&storeHelper{kvStore: store},
 	)
 	require.NoError(t, err)

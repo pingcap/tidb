@@ -39,6 +39,7 @@ import (
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sli"
@@ -149,6 +150,31 @@ func (*Context) Execute(_ context.Context, _ string) ([]sqlexec.RecordSet, error
 // ExecuteStmt implements sqlexec.SQLExecutor ExecuteStmt interface.
 func (*Context) ExecuteStmt(_ context.Context, _ ast.StmtNode) (sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Supported")
+}
+
+// ParseWithParams implements sqlexec.RestrictedSQLExecutor ParseWithParams interface.
+func (*Context) ParseWithParams(_ context.Context, _ string, _ ...any) (ast.StmtNode, error) {
+	return nil, errors.Errorf("Not Supported")
+}
+
+// ExecRestrictedStmt implements sqlexec.RestrictedSQLExecutor ExecRestrictedStmt interface.
+func (*Context) ExecRestrictedStmt(_ context.Context, _ ast.StmtNode, _ ...sqlexec.OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error) {
+	return nil, nil, errors.Errorf("Not Supported")
+}
+
+// ExecRestrictedSQL implements sqlexec.RestrictedSQLExecutor ExecRestrictedSQL interface.
+func (*Context) ExecRestrictedSQL(_ context.Context, _ []sqlexec.OptionFuncAlias, _ string, _ ...any) ([]chunk.Row, []*ast.ResultField, error) {
+	return nil, nil, errors.Errorf("Not Supported")
+}
+
+// GetSQLExecutor returns the SQLExecutor.
+func (c *Context) GetSQLExecutor() sqlexec.SQLExecutor {
+	return c
+}
+
+// GetRestrictedSQLExecutor returns the RestrictedSQLExecutor.
+func (c *Context) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return c
 }
 
 // SetDiskFullOpt sets allowed options of current operation in each TiKV disk usage level.

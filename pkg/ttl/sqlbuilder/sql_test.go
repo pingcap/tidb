@@ -370,8 +370,7 @@ func TestFormatSQLDatum(t *testing.T) {
 		for j := range c.values {
 			rowID := fmt.Sprintf("%d-%d", i, j)
 			colName := fmt.Sprintf("col%d", i)
-			exec, ok := tk.Session().(sqlexec.SQLExecutor)
-			require.True(t, ok)
+			exec := tk.Session().GetSQLExecutor()
 			selectSQL := fmt.Sprintf("select %s from t where id='%s'", colName, rowID)
 			rs, err := exec.ExecuteInternal(ctx, selectSQL)
 			require.NoError(t, err, selectSQL)

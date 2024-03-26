@@ -486,6 +486,10 @@ func (m mockRestrictedSQLExecutor) ExecRestrictedSQL(ctx context.Context, opts [
 	return nil, nil, nil
 }
 
+func (m mockRestrictedSQLExecutor) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return m
+}
+
 func TestModifyFromNullToNotNull(t *testing.T) {
 	sql := "create table test.t (a int, b int);"
 	tracker := schematracker.NewSchemaTracker(2)

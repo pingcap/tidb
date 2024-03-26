@@ -73,7 +73,8 @@ func CalculateTsWithReadStaleness(sctx sessionctx.Context, readStaleness time.Du
 		return 0, err
 	}
 	tsVal := nowVal.Add(readStaleness)
-	minTsVal := expression.GetMinSafeTime(sctx.GetExprCtx())
+	sc := sctx.GetSessionVars().StmtCtx
+	minTsVal := expression.GetStmtMinSafeTime(sc, sctx.GetStore(), sc.TimeZone())
 	return oracle.GoTimeToTS(expression.CalAppropriateTime(tsVal, nowVal, minTsVal)), nil
 }
 

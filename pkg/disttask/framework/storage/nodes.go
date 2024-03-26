@@ -38,7 +38,7 @@ func (mgr *TaskManager) InitMeta(ctx context.Context, tidbID string, role string
 // if the record exists, update the cpu_count and role.
 func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, execID string, role string) error {
 	cpuCount := cpu.GetCPUCount()
-	_, err := sqlexec.ExecSQL(ctx, se, `
+	_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
 		on duplicate key
@@ -79,7 +79,7 @@ func (mgr *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) err
 
 		deleteSQL.WriteString(strings.Join(deleteElems, ", "))
 		deleteSQL.WriteString(")")
-		_, err := sqlexec.ExecSQL(ctx, se, deleteSQL.String())
+		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), deleteSQL.String())
 		return err
 	})
 }
@@ -122,7 +122,7 @@ func (mgr *TaskManager) GetAllNodes(ctx context.Context) ([]proto.ManagedNode, e
 }
 
 func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Context) ([]proto.ManagedNode, error) {
-	rs, err := sqlexec.ExecSQL(ctx, se, `
+	rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 		select host, role, cpu_count
 		from mysql.dist_framework_meta
 		order by host`)

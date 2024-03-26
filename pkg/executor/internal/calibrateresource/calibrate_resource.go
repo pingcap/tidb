@@ -268,7 +268,7 @@ var (
 )
 
 func (e *Executor) dynamicCalibrate(ctx context.Context, req *chunk.Chunk) error {
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 	startTs, endTs, err := e.parseCalibrateDuration(ctx)
 	if err != nil {
 		return err

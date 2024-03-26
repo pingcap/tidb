@@ -93,6 +93,7 @@ go_library(
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/lock",
         "//pkg/lock/context",

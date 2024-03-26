@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
@@ -286,7 +285,7 @@ func TestParseWithParams(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	se := tk.Session()
-	exec := se.(sqlexec.RestrictedSQLExecutor)
+	exec := se.GetRestrictedSQLExecutor()
 
 	// test compatibility with ExcuteInternal
 	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -79,7 +80,7 @@ func NewStaticPartitionTableAnalysisJob(
 // Analyze analyzes the specified static partition or indexes.
 func (j *StaticPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) error {
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
@@ -171,7 +172,7 @@ func (j *StaticPartitionedTableAnalysisJob) getAnalyzeType() analyzeType {
 func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartition(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) {
 	sql, params := j.GenSQLForAnalyzeStaticPartition()
 	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
@@ -180,7 +181,7 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartition(
 func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) {
 	if len(j.Indexes) == 0 {
 		return

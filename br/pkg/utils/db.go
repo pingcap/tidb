@@ -56,12 +56,7 @@ type DBExecutor interface {
 // 3. Telemetry of log backup feature usage (every 6 hours).
 // NOTE: this result shouldn't be cached by caller. because it may change every time in one cluster.
 func CheckLogBackupEnabled(ctx sessionctx.Context) bool {
-	executor, ok := ctx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		// shouldn't happen
-		log.Error("unable to translate executor from sessionctx", zap.String("category", "backup"))
-		return false
-	}
+	executor := ctx.GetRestrictedSQLExecutor()
 	enabled, err := IsLogBackupEnabled(executor)
 	if err != nil {
 		// if it failed by any reason. we can simply return true this time.

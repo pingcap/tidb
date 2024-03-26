@@ -438,13 +438,13 @@ func TestManagerScheduleLoop(t *testing.T) {
 					return
 				}
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
-					_, err := sqlexec.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
+					_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateRunning, proto.StepOne, task.ID)
 					return err
 				}))
 				<-waitChannels[task.Key]
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
-					_, err := sqlexec.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
+					_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateSucceed, proto.StepDone, task.ID)
 					return err
 				}))

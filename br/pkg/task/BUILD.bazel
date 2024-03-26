@@ -55,7 +55,6 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/mathutil",
-        "//pkg/util/sqlexec",
         "//pkg/util/table-filter",
         "@com_github_docker_go_units//:go-units",
         "@com_github_fatih_color//:color",

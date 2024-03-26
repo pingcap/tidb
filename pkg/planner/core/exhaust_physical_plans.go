@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -382,14 +381,6 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 	}
 }
 
-// ForceUseOuterBuild4Test is a test option to control forcing use outer input as build.
-// TODO: use hint and remove this variable
-var ForceUseOuterBuild4Test = atomic.NewBool(false)
-
-// ForcedHashLeftJoin4Test is a test option to force using HashLeftJoin
-// TODO: use hint and remove this variable
-var ForcedHashLeftJoin4Test = atomic.NewBool(false)
-
 func (p *LogicalJoin) shouldSkipHashJoin() bool {
 	return (p.preferJoinType&h.PreferNoHashJoin) > 0 || (p.SCtx().GetSessionVars().DisableHashJoin)
 }
@@ -398,6 +389,7 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return
 	}
+
 	forceLeftToBuild := ((p.preferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.preferJoinType & h.PreferRightAsHJProbe) > 0)
 	forceRightToBuild := ((p.preferJoinType & h.PreferRightAsHJBuild) > 0) || ((p.preferJoinType & h.PreferLeftAsHJProbe) > 0)
 	if forceLeftToBuild && forceRightToBuild {
@@ -411,45 +403,33 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 		if forceLeftToBuild || forceRightToBuild {
-			// Do not support specifying the build side.
+			// Do not support specifying the build and probe side for semi join.
 			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for %s, please check the hint", p.JoinType))
 			forceLeftToBuild = false
 			forceRightToBuild = false
 		}
 	case LeftOuterJoin:
-		if ForceUseOuterBuild4Test.Load() {
+		if !forceLeftToBuild {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+		}
+		if !forceRightToBuild {
 			joins = append(joins, p.getHashJoin(prop, 1, true))
-		} else {
-			if !forceLeftToBuild {
-				joins = append(joins, p.getHashJoin(prop, 1, false))
-			}
-			if !forceRightToBuild {
-				joins = append(joins, p.getHashJoin(prop, 1, true))
-			}
 		}
 	case RightOuterJoin:
-		if ForceUseOuterBuild4Test.Load() {
+		if !forceLeftToBuild {
 			joins = append(joins, p.getHashJoin(prop, 0, true))
-		} else {
-			if !forceLeftToBuild {
-				joins = append(joins, p.getHashJoin(prop, 0, true))
-			}
-			if !forceRightToBuild {
-				joins = append(joins, p.getHashJoin(prop, 0, false))
-			}
+		}
+		if !forceRightToBuild {
+			joins = append(joins, p.getHashJoin(prop, 0, false))
 		}
 	case InnerJoin:
-		if ForcedHashLeftJoin4Test.Load() {
+		if forceLeftToBuild {
+			joins = append(joins, p.getHashJoin(prop, 0, false))
+		} else if forceRightToBuild {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
 		} else {
-			if forceLeftToBuild {
-				joins = append(joins, p.getHashJoin(prop, 0, false))
-			} else if forceRightToBuild {
-				joins = append(joins, p.getHashJoin(prop, 1, false))
-			} else {
-				joins = append(joins, p.getHashJoin(prop, 1, false))
-				joins = append(joins, p.getHashJoin(prop, 0, false))
-			}
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+			joins = append(joins, p.getHashJoin(prop, 0, false))
 		}
 	}
 

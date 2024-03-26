@@ -16,7 +16,6 @@ go_library(
         "//pkg/planner/util",
         "//pkg/sessionctx",
         "//pkg/util/chunk",
-        "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_tikv_pd_client//resource_group/controller",

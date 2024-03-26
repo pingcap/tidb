@@ -51,7 +51,6 @@ go_library(
         "//pkg/util/mock",
         "//pkg/util/sem",
         "//pkg/util/set",
-        "//pkg/util/sqlexec",
         "//pkg/util/stmtsummary",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",

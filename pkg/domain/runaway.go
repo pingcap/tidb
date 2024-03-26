@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
@@ -287,7 +288,7 @@ func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (uint6
 	if err != nil {
 		return 0, errors.Annotate(err, "get session failed")
 	}
-	exec, _ := se.(sqlexec.SQLExecutor)
+	exec := se.(sessionctx.Context).GetSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
@@ -347,7 +348,8 @@ func (do *Domain) handleRunawayWatchDone(record *resourcegroup.QuarantineRecord)
 	if err != nil {
 		return errors.Annotate(err, "get session failed")
 	}
-	exec, _ := se.(sqlexec.SQLExecutor)
+	sctx, _ := se.(sessionctx.Context)
+	exec := sctx.GetSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
@@ -382,7 +384,8 @@ func (do *Domain) handleRemoveStaleRunawayWatch(record *resourcegroup.Quarantine
 	if err != nil {
 		return errors.Annotate(err, "get session failed")
 	}
-	exec, _ := se.(sqlexec.SQLExecutor)
+	sctx, _ := se.(sessionctx.Context)
+	exec := sctx.GetSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	_, err = exec.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
@@ -412,7 +415,8 @@ func execRestrictedSQL(sessPool *sessionPool, sql string, params []any) ([]chunk
 	if err != nil {
 		return nil, errors.Annotate(err, "get session failed")
 	}
-	exec := se.(sqlexec.RestrictedSQLExecutor)
+	sctx := se.(sessionctx.Context)
+	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	r, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
 		sql, params...,
@@ -484,7 +488,8 @@ func (s *runawaySyncer) getWatchRecord(reader *SystemTableReader, sqlGenFn func(
 	if err != nil {
 		return nil, errors.Annotate(err, "get session failed")
 	}
-	exec := se.(sqlexec.RestrictedSQLExecutor)
+	sctx := se.(sessionctx.Context)
+	exec := sctx.GetRestrictedSQLExecutor()
 	return getRunawayWatchRecord(exec, reader, sqlGenFn, push)
 }
 
@@ -496,7 +501,8 @@ func (s *runawaySyncer) getWatchDoneRecord(reader *SystemTableReader, sqlGenFn f
 	if err != nil {
 		return nil, errors.Annotate(err, "get session failed")
 	}
-	exec := se.(sqlexec.RestrictedSQLExecutor)
+	sctx := se.(sessionctx.Context)
+	exec := sctx.GetRestrictedSQLExecutor()
 	return getRunawayWatchDoneRecord(exec, reader, sqlGenFn, push)
 }
 

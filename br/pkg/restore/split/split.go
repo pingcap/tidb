@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
 )
 
@@ -284,4 +285,37 @@ func (b *BackoffMayNotCountBackoffer) NextBackoff(err error) time.Duration {
 // Attempt implements utils.Backoffer.
 func (b *BackoffMayNotCountBackoffer) Attempt() int {
 	return b.state.Attempt()
+}
+
+// GetSplitKeysOfRegions checks every input key is necessary to split region on
+// it. Returns a map from original region ID to split keys belongs to each
+// region.
+//
+// prerequisite:
+// - sortedKeys are sorted in ascending order.
+// - sortedRegions are continuous and sorted in ascending order by start key.
+// - sortedRegions can cover all keys in sortedKeys.
+// PaginateScanRegion should satisfy the above prerequisites.
+func GetSplitKeysOfRegions(sortedKeys [][]byte, sortedRegions []*RegionInfo, isRawKV bool) map[uint64][][]byte {
+	splitKeyMap := make(map[uint64][][]byte, len(sortedRegions))
+	curKeyIndex := 0
+	for _, region := range sortedRegions {
+		for ; curKeyIndex < len(sortedKeys); curKeyIndex += 1 {
+			if len(sortedKeys[curKeyIndex]) == 0 {
+				continue
+			}
+			splitKey := codec.EncodeBytesExt(nil, sortedKeys[curKeyIndex], isRawKV)
+			// If splitKey is the boundary of the region, don't need to split on it.
+			if bytes.Equal(splitKey, region.Region.GetStartKey()) {
+				continue
+			}
+			// If splitKey is not in a region, we should move to the next region.
+			if !region.ContainsInterior(splitKey) {
+				break
+			}
+			regionID := region.Region.GetId()
+			splitKeyMap[regionID] = append(splitKeyMap[regionID], sortedKeys[curKeyIndex])
+		}
+	}
+	return splitKeyMap
 }

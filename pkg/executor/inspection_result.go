@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 type (
@@ -143,7 +142,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		e.instanceToStatusAddress = make(map[string]string)
 		e.statusToInstanceAddress = make(map[string]string)
 		var rows []chunk.Row
-		exec := sctx.(sqlexec.RestrictedSQLExecutor)
+		exec := sctx.GetRestrictedSQLExecutor()
 		rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select instance,status_address from information_schema.cluster_info;")
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("get cluster info failed: %v", err))
@@ -252,7 +251,7 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.C
 		"storage.data-dir",
 		"storage.block-cache.capacity",
 	}
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select type, `key`, count(distinct value) as c from information_schema.cluster_config where `key` not in (%?) group by type, `key` having c > 1", ignoreConfigKey)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
@@ -335,7 +334,7 @@ func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionct
 	var results []inspectionResult
 	var rows []chunk.Row
 	sql := new(strings.Builder)
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	for _, cas := range cases {
 		if !filter.enable(cas.key) {
 			continue
@@ -371,7 +370,7 @@ func (c configInspection) checkTiKVBlockCacheSizeConfig(ctx context.Context, sct
 	if !filter.enable(item) {
 		return nil
 	}
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select instance,value from information_schema.cluster_config where type='tikv' and `key` = 'storage.block-cache.capacity'")
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
@@ -452,7 +451,7 @@ func (configInspection) convertReadableSizeToByteSize(sizeStr string) (uint64, e
 }
 
 func (versionInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	// check the configuration consistent
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select type, count(distinct git_hash) as c from information_schema.cluster_info group by type having c > 1;")
 	if err != nil {
@@ -608,7 +607,7 @@ func (criticalErrorInspection) inspectError(ctx context.Context, sctx sessionctx
 
 	condition := filter.timeRange.Condition()
 	var results []inspectionResult
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	sql := new(strings.Builder)
 	for _, rule := range rules {
 		if filter.enable(rule.item) {
@@ -666,7 +665,7 @@ func (criticalErrorInspection) inspectForServerDown(ctx context.Context, sctx se
 		return nil
 	}
 	condition := filter.timeRange.Condition()
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	sql := new(strings.Builder)
 	fmt.Fprintf(sql, `select t1.job,t1.instance, t2.min_time from
 		(select instance,job from metrics_schema.up %[1]s group by instance,job having max(value)-min(value)>0) as t1 join
@@ -811,7 +810,7 @@ func (thresholdCheckInspection) inspectThreshold1(ctx context.Context, sctx sess
 
 	condition := filter.timeRange.Condition()
 	var results []inspectionResult
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	sql := new(strings.Builder)
 	for _, rule := range rules {
 		if !filter.enable(rule.item) {
@@ -981,7 +980,7 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 	condition := filter.timeRange.Condition()
 	var results []inspectionResult
 	sql := new(strings.Builder)
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	for _, rule := range rules {
 		if !filter.enable(rule.item) {
 			continue
@@ -1175,7 +1174,7 @@ func (thresholdCheckInspection) inspectThreshold3(ctx context.Context, sctx sess
 
 func checkRules(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter, rules []ruleChecker) []inspectionResult {
 	var results []inspectionResult
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	for _, rule := range rules {
 		if !filter.enable(rule.getItem()) {
 			continue
@@ -1198,7 +1197,7 @@ func (thresholdCheckInspection) inspectForLeaderDrop(ctx context.Context, sctx s
 	threshold := 50.0
 	sql := new(strings.Builder)
 	fmt.Fprintf(sql, `select address,min(value) as mi,max(value) as mx from metrics_schema.pd_scheduler_store_status %s and type='leader_count' group by address having mx-mi>%v`, condition, threshold)
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {

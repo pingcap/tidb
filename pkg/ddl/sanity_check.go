@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -54,7 +53,7 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 
 func queryDeleteRangeCnt(sessPool *sess.Pool, jobID int64) (int, error) {
 	sctx, _ := sessPool.Get()
-	s, _ := sctx.(sqlexec.SQLExecutor)
+	s := sctx.GetSQLExecutor()
 	defer func() {
 		sessPool.Put(sctx)
 	}()

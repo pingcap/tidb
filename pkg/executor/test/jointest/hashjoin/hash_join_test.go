@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -200,8 +199,6 @@ func TestHashJoin(t *testing.T) {
 }
 
 func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
-	plannercore.ForceUseOuterBuild4Test.Store(true)
-	defer func() { plannercore.ForceUseOuterBuild4Test.Store(false) }()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -210,8 +207,8 @@ func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
 	tk.MustExec("create table s (a int,b int)")
 	tk.MustExec("insert into t values (11,11),(1,2)")
 	tk.MustExec("insert into s values (1,2),(2,1),(11,11)")
-	tk.MustQuery("select * from t left join s on s.a > t.a").Sort().Check(testkit.Rows("1 2 11 11", "1 2 2 1", "11 11 <nil> <nil>"))
-	tk.MustQuery("explain format = 'brief' select * from t left join s on s.a > t.a").Check(testkit.Rows(
+	tk.MustQuery("select /*+ HASH_JOIN_BUILD(t) */ * from t left join s on s.a > t.a").Sort().Check(testkit.Rows("1 2 11 11", "1 2 2 1", "11 11 <nil> <nil>"))
+	tk.MustQuery("explain format = 'brief' select /*+ HASH_JOIN_BUILD(t) */ * from t left join s on s.a > t.a").Check(testkit.Rows(
 		"HashJoin 99900000.00 root  CARTESIAN left outer join, other cond:gt(test.s.a, test.t.a)",
 		"├─TableReader(Build) 10000.00 root  data:TableFullScan",
 		"│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
@@ -223,8 +220,8 @@ func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
 	tk.MustExec("Create table t (a int, b int, key(b))")
 	tk.MustExec("Insert into s values (1,2),(2,1),(11,11)")
 	tk.MustExec("Insert into t values (11,2),(1,2),(5,2)")
-	tk.MustQuery("select /*+ INL_HASH_JOIN(s)*/ * from t left join s on s.b=t.b and s.a < t.a;").Sort().Check(testkit.Rows("1 2 <nil> <nil>", "11 2 1 2", "5 2 1 2"))
-	tk.MustQuery("explain format = 'brief' select /*+ INL_HASH_JOIN(s)*/ * from t left join s on s.b=t.b and s.a < t.a;").Check(testkit.Rows(
+	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t left join s on s.b=t.b and s.a < t.a;").Sort().Check(testkit.Rows("1 2 <nil> <nil>", "11 2 1 2", "5 2 1 2"))
+	tk.MustQuery("explain format = 'brief' select /*+ INL_HASH_JOIN(s) */ * from t left join s on s.b=t.b and s.a < t.a;").Check(testkit.Rows(
 		"IndexHashJoin 12475.01 root  left outer join, inner:IndexLookUp, outer key:test.t.b, inner key:test.s.b, equal cond:eq(test.t.b, test.s.b), other cond:lt(test.s.a, test.t.a)",
 		"├─TableReader(Build) 10000.00 root  data:TableFullScan",
 		"│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
@@ -239,8 +236,6 @@ func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 	// Two necessary factors to reproduce this issue:
 	// (1) taking HashLeftJoin, i.e., letting the probing tuple lay at the left side of joined tuples
 	// (2) the projection only contains a part of columns from the build side, i.e., pruning the same probe side
-	plannercore.ForcedHashLeftJoin4Test.Store(true)
-	defer func() { plannercore.ForcedHashLeftJoin4Test.Store(false) }()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -249,7 +244,7 @@ func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 	tk.MustExec("create table T (a int not null, b int, c int);")
 	tk.MustExec("insert into S values (0,1,2),(0,1,null),(0,1,2);")
 	tk.MustExec("insert into T values (0,10,2),(0,10,null),(1,10,2);")
-	tk.MustQuery("select T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
+	tk.MustQuery("select /*+ HASH_JOIN_BUILD(T) */ T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
 		"0 0 <nil>",
 		"0 0 <nil>",
 		"0 0 <nil>",
@@ -258,9 +253,9 @@ func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 		"0 0 2",
 	))
 	// NOTE: the HashLeftJoin should be kept
-	tk.MustQuery("explain format = 'brief' select T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
-		"Sort 12487.50 root  test.t.a, test.t.c",
-		"└─Projection 12487.50 root  test.t.a, test.t.a, test.t.c",
+	tk.MustQuery("explain format = 'brief' select /*+ HASH_JOIN_BUILD(T) */ T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
+		"Projection 12487.50 root  test.t.a, test.t.a, test.t.c",
+		"└─Sort 12487.50 root  test.t.a, test.t.c",
 		"  └─HashJoin 12487.50 root  inner join, equal:[eq(test.s.a, test.t.a)], other cond:lt(test.s.b, test.t.b)",
 		"    ├─TableReader(Build) 9990.00 root  data:Selection",
 		"    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
@@ -396,17 +391,13 @@ func TestIssue20270(t *testing.T) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	tk.MustExec("insert into t1 values(2,3),(4,4)")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/killedInJoin2Chunk", "return(true)"))
-	err := tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	err := tk.QueryToErr("select /*+ HASH_JOIN(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/killedInJoin2Chunk"))
-	plannercore.ForceUseOuterBuild4Test.Store(true)
-	defer func() {
-		plannercore.ForceUseOuterBuild4Test.Store(false)
-	}()
 	err = failpoint.Enable("github.com/pingcap/tidb/pkg/executor/killedInJoin2ChunkForOuterHashJoin", "return(true)")
 	require.NoError(t, err)
 	tk.MustExec("insert into t1 values(1,30),(2,40)")
-	err = tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	err = tk.QueryToErr("select /*+ HASH_JOIN_BUILD(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	require.Equal(t, exeerrors.ErrQueryInterrupted, err)
 	err = failpoint.Disable("github.com/pingcap/tidb/pkg/executor/killedInJoin2ChunkForOuterHashJoin")
 	require.NoError(t, err)

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/sli"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
@@ -70,6 +71,8 @@ type Context interface {
 	tablelock.TableLockContext
 	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	// ClearDiskFullOpt clear the disk full opt.
+	ClearDiskFullOpt()
 	// RollbackTxn rolls back the current transaction.
 	RollbackTxn(ctx context.Context)
 	// CommitTxn commits the current transaction.
@@ -97,6 +100,12 @@ type Context interface {
 	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
 
 	GetSessionVars() *variable.SessionVars
+
+	// GetSQLExecutor returns the sqlexec.SQLExecutor.
+	GetSQLExecutor() sqlexec.SQLExecutor
+
+	// GetRestrictedSQLExecutor returns the sqlexec.RestrictedSQLExecutor.
+	GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor
 
 	// GetExprCtx returns the expression context of the session.
 	GetExprCtx() exprctx.BuildContext
@@ -242,12 +251,4 @@ func ValidateStaleReadTS(ctx context.Context, sc *stmtctx.StatementContext, stor
 		return errors.Errorf("cannot set read timestamp to a future time")
 	}
 	return nil
-}
-
-// SysProcTracker is used to track background sys processes
-type SysProcTracker interface {
-	Track(id uint64, proc Context) error
-	UnTrack(id uint64)
-	GetSysProcessList() map[uint64]*util.ProcessInfo
-	KillSysProcess(id uint64)
 }

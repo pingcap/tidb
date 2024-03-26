@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -68,7 +67,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	var jobID, taskID int64
 	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		var err2 error
-		exec := se.(sqlexec.SQLExecutor)
+		exec := se.GetSQLExecutor()
 		jobID, err2 = importer.CreateJob(ctx, exec, plan.DBName, plan.TableInfo.Name.L, plan.TableInfo.ID,
 			plan.User, plan.Parameters, plan.TotalFileSize)
 		if err2 != nil {

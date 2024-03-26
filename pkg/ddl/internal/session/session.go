@@ -82,7 +82,7 @@ func (s *Session) Execute(ctx context.Context, query string, label string) ([]ch
 	if ctx.Value(kv.RequestSourceKey) == nil {
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	}
-	rs, err := s.Context.(sqlexec.SQLExecutor).ExecuteInternal(ctx, query)
+	rs, err := s.Context.GetSQLExecutor().ExecuteInternal(ctx, query)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

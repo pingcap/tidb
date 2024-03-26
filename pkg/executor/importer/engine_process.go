@@ -104,12 +104,12 @@ func ProcessChunkWithWriter(
 			}
 		}()
 		cp = NewFileChunkProcessor(
-			parser, encoder, tableImporter.GetCodec(), chunk, logger,
+			parser, encoder, tableImporter.GetKeySpace(), chunk, logger,
 			tableImporter.diskQuotaLock, dataWriter, indexWriter, groupChecksum,
 		)
 	case DataSourceTypeQuery:
 		cp = newQueryChunkProcessor(
-			tableImporter.rowCh, encoder, tableImporter.GetCodec(), logger,
+			tableImporter.rowCh, encoder, tableImporter.GetKeySpace(), logger,
 			tableImporter.diskQuotaLock, dataWriter, indexWriter, groupChecksum,
 		)
 	}

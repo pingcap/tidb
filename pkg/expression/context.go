@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -58,10 +59,13 @@ func errCtx(ctx EvalContext) errctx.Context {
 func location(ctx EvalContext) (loc *time.Location) {
 	loc = ctx.Location()
 	intest.AssertFunc(func() bool {
-		vars := ctx.GetSessionVars()
 		tc := ctx.TypeCtx()
 		intest.Assert(tc.Location() == loc)
-		intest.Assert(vars.Location() == loc)
+		if ctx.GetOptionalPropSet().Contains(context.OptPropSessionVars) {
+			vars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(ctx)
+			intest.AssertNoError(err)
+			intest.Assert(vars.Location() == loc)
+		}
 		return true
 	})
 	return

@@ -27,7 +27,7 @@ func (mgr *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		vars := se.GetSessionVars()
 		_, err := sqlexec.ExecSQL(ctx,
-			se,
+			se.GetSQLExecutor(),
 			`update mysql.tidb_background_subtask
 			 set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
 			 where id = %? and exec_id = %?`,
@@ -121,7 +121,7 @@ func (mgr *TaskManager) RunningSubtasksBack2Pending(ctx context.Context, subtask
 	}
 	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		for _, subtask := range subtasks {
-			_, err := sqlexec.ExecSQL(ctx, se, `
+			_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 				update mysql.tidb_background_subtask
 				set state = %?, state_update_time = unix_timestamp()
 				where id = %? and exec_id = %? and state = %?`,

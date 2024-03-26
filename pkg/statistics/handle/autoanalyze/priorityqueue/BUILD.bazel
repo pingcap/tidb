@@ -15,6 +15,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/sessionctx",
+        "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/statistics/handle/logutil",

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"go.uber.org/zap"
@@ -56,7 +57,7 @@ type AnalysisJob interface {
 	// Analyze executes the analyze statement within a transaction.
 	Analyze(
 		statsHandle statstypes.StatsHandle,
-		sysProcTracker sessionctx.SysProcTracker,
+		sysProcTracker sysproctrack.Tracker,
 	) error
 
 	// SetWeight sets the weight of the job.

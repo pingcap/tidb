@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -87,7 +88,7 @@ func LoadDoneDeleteRanges(ctx context.Context, sctx sessionctx.Context, safePoin
 }
 
 func loadDeleteRangesFromTable(ctx context.Context, sctx sessionctx.Context, table string, safePoint uint64) (ranges []DelRangeTask, _ error) {
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, loadDeleteRangeSQL, table, safePoint)
+	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, loadDeleteRangeSQL, table, safePoint)
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
@@ -130,13 +131,13 @@ func loadDeleteRangesFromTable(ctx context.Context, sctx sessionctx.Context, tab
 func CompleteDeleteRange(sctx sessionctx.Context, dr DelRangeTask, needToRecordDone bool) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
-	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "BEGIN")
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	if needToRecordDone {
-		_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
+		_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -146,27 +147,27 @@ func CompleteDeleteRange(sctx sessionctx.Context, dr DelRangeTask, needToRecordD
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "COMMIT")
+	_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, "COMMIT")
 	return errors.Trace(err)
 }
 
 // RemoveFromGCDeleteRange is exported for ddl pkg to use.
 func RemoveFromGCDeleteRange(sctx sessionctx.Context, jobID, elementID int64) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, completeDeleteRangeSQL, jobID, elementID)
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, completeDeleteRangeSQL, jobID, elementID)
 	return errors.Trace(err)
 }
 
 // RemoveMultiFromGCDeleteRange is exported for ddl pkg to use.
 func RemoveMultiFromGCDeleteRange(ctx context.Context, sctx sessionctx.Context, jobID int64) error {
-	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, completeDeleteMultiRangesSQL, jobID)
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, completeDeleteMultiRangesSQL, jobID)
 	return errors.Trace(err)
 }
 
 // DeleteDoneRecord removes a record from gc_delete_range_done table.
 func DeleteDoneRecord(sctx sessionctx.Context, dr DelRangeTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, deleteDoneRecordSQL, dr.JobID, dr.ElementID)
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, deleteDoneRecordSQL, dr.JobID, dr.ElementID)
 	return errors.Trace(err)
 }
 
@@ -175,7 +176,7 @@ func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, ol
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
 	return errors.Trace(err)
 }
 
@@ -194,7 +195,9 @@ func LoadDDLVars(ctx sessionctx.Context) error {
 // LoadGlobalVars loads global variable from mysql.global_variables.
 func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
-	if e, ok := sctx.(sqlexec.RestrictedSQLExecutor); ok {
+	// *mock.Context does not support SQL execution. Only do it when sctx is not `mock.Context`
+	if _, ok := sctx.(*mock.Context); !ok {
+		e := sctx.GetRestrictedSQLExecutor()
 		var buf strings.Builder
 		buf.WriteString(loadGlobalVars)
 		paramNames := make([]any, 0, len(varNames))
@@ -331,7 +334,7 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 		return v2, nil
 	})
 
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, getRaftKvVersionSQL)
+	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, getRaftKvVersionSQL)
 	if err != nil {
 		return false, err
 	}
