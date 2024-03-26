@@ -56,11 +56,11 @@ check_contains "Expression: cast(json_extract(\`custinfo\`, _utf8'$.zipcode') as
 
 ## check table test.pairs4
 run_sql "SHOW INDEX FROM test.pairs4 WHERE Key_name != 'PRIMARY';"
-check_not_contains "1" ## the result should be empty
+check_not_contains "1. row" ## the result should be empty
 
 ## check table test.pairs5
 run_sql "SHOW INDEX FROM test.pairs5;"
-check_not_contains "1" ## the result should be empty
+check_not_contains "1. row" ## the result should be empty
 
 ## check table test.pairs7
 run_sql "SHOW INDEX FROM test.pairs7 WHERE Key_name = 'zips2' AND Visible = 'YES';"
