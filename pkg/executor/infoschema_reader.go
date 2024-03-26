@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/pdhelper"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/contextimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -2718,11 +2717,9 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 		e.batchRetrieverHelper.batchSize = 1024
 	}
 
-	sqlExec, err := contextimpl.NewSQLExecutor(sctx)
-	if err != nil {
-		return nil, err
-	}
+	sqlExec := sctx.GetRestrictedSQLExecutor()
 
+	var err error
 	// The current TiDB node's address is needed by the CLUSTER_TIDB_TRX table.
 	var instanceAddr string
 	if e.table.Name.O == infoschema.ClusterTableTiDBTrx {
@@ -2871,12 +2868,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 				}
 			}
 
-			sqlExec, err := contextimpl.NewSQLExecutor(sctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			err = sqlRetriever.RetrieveGlobal(ctx, sqlExec)
+			err := sqlRetriever.RetrieveGlobal(ctx, sctx.GetRestrictedSQLExecutor())
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -3074,11 +3066,7 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 		}
 		// Retrieve the SQL texts if necessary.
 		if sqlRetriever != nil {
-			sqlExec, err := contextimpl.NewSQLExecutor(sctx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err1 := sqlRetriever.RetrieveGlobal(ctx, sqlExec)
+			err1 := sqlRetriever.RetrieveGlobal(ctx, sctx.GetRestrictedSQLExecutor())
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
