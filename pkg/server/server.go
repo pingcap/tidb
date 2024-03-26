@@ -626,6 +626,7 @@ func (s *Server) Close() {
 	s.rwlock.Lock() // // prevent new connections
 	defer s.rwlock.Unlock()
 	s.inShutdownMode.Store(true)
+	s.KillAllConnections()
 	s.closeListener()
 }
 
