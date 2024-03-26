@@ -15109,14 +15109,24 @@ DropSequenceStmt:
  *	[ RESTART [WITH | = ] restart ]
  ********************************************************************************************/
 AlterSequenceStmt:
-	"ALTER" "SEQUENCE" IfExists TableName AlterSequenceOptionList
+	"ALTER" "SEQUENCE" IfExists TableName AlterSequenceOptionList PartDefOptionList
 	{
 		$$ = &ast.AlterSequenceStmt{
 			IfExists:   $3.(bool),
 			Name:       $4.(*ast.TableName),
 			SeqOptions: $5.([]*ast.SequenceOption),
+			TblOptions: $6.([]*ast.TableOption),
 		}
 	}
+|	"ALTER" "SEQUENCE" IfExists TableName PartDefOptionList
+	{
+		$$ = &ast.AlterSequenceStmt{
+			IfExists:   $3.(bool),
+			Name:       $4.(*ast.TableName),
+			TblOptions: $5.([]*ast.TableOption),
+		}
+	}
+
 
 AlterSequenceOptionList:
 	AlterSequenceOption

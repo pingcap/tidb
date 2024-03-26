@@ -186,7 +186,7 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 	return sequenceInfo, nil
 }
 
-func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident, oldSequence *model.SequenceInfo) (bool, int64, error) {
+func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, tableOptions []*ast.TableOption, ident ast.Ident, oldSequence *model.SequenceInfo) (bool, int64, error) {
 	var (
 		restartFlag     bool
 		restartWithFlag bool
@@ -220,6 +220,16 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 			restartValue = op.IntValue
 		}
 	}
+	for _, op := range tableOptions {
+		switch op.Tp {
+		case ast.TableOptionComment:
+			oldSequence.Comment = op.StrValue
+		case ast.TableOptionEngine:
+			// TableOptionEngine will always be 'InnoDB', thus we do nothing in this branch to avoid error happening.
+		default:
+			return false, 0, dbterror.ErrSequenceUnsupportedTableOption.GenWithStackByArgs(op.StrValue)
+		}
+	}
 	if !validateSequenceOptions(oldSequence) {
 		return false, 0, dbterror.ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
 	}
@@ -236,9 +246,10 @@ func onAlterSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	schemaID := job.SchemaID
 	var (
 		sequenceOpts []*ast.SequenceOption
+		tblOptions   []*ast.TableOption
 		ident        ast.Ident
 	)
-	if err := job.DecodeArgs(&ident, &sequenceOpts); err != nil {
+	if err := job.DecodeArgs(&ident, &sequenceOpts, &tblOptions); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -252,7 +263,7 @@ func onAlterSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 	// Substitute the sequence info.
 	copySequenceInfo := *tblInfo.Sequence
-	restart, restartValue, err := alterSequenceOptions(sequenceOpts, ident, &copySequenceInfo)
+	restart, restartValue, err := alterSequenceOptions(sequenceOpts, tblOptions, ident, &copySequenceInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

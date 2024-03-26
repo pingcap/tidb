@@ -4725,6 +4725,7 @@ type AlterSequenceStmt struct {
 
 	IfExists   bool
 	SeqOptions []*SequenceOption
+	TblOptions []*TableOption
 }
 
 func (n *AlterSequenceStmt) Restore(ctx *format.RestoreCtx) error {
@@ -4739,6 +4740,12 @@ func (n *AlterSequenceStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while splicing AlterSequenceStmt SequenceOption: [%v]", i)
+		}
+	}
+	for i, option := range n.TblOptions {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing AlterSequenceStmt TableOption: [%v]", i)
 		}
 	}
 	return nil
