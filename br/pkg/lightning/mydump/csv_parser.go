@@ -347,7 +347,7 @@ func (parser *CSVParser) tryReadEscaped(bs byte) (bool, byte, error) {
 	return true, b, parser.replaceEOF(err, errDanglingBackslash)
 }
 
-// readQuoteToken reads a token inside quoted fields.
+// readQuotedToken reads a token inside quoted fields.
 func (parser *CSVParser) readQuotedToken(b byte) (csvToken, error) {
 	if ok, err := parser.tryReadCloseDelimiter(b); ok || err != nil {
 		return csvTokenDelimiter, err
