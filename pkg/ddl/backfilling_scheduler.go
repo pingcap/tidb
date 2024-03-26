@@ -608,14 +608,12 @@ func (a *taskIDAllocator) alloc() int {
 // This function tries to retrieve row size in following orders:
 //  1. statistic cache (require analyze table).
 //  2. region info's approximate key size / key number.
-func estimateRowSize(ctx context.Context, store kv.Storage, tbl table.Table) (count int) {
+func estimateRowSize(ctx context.Context, store kv.Storage, tbl table.Table) (sizeInBytes int) {
+	defer util.Recover(metrics.LabelDDL, "estimateRowSize", nil, false)
 	var gErr error
 	defer func() {
-		util.Recover(metrics.LabelDDL, "estimateRowSize", nil, false)
-		if gErr != nil {
-			logutil.Logger(ctx).Warn("cannot estimate row length", zap.Error(gErr))
-			count = 0
-		}
+		logutil.Logger(ctx).Info("estimate row size",
+			zap.Int64("tableID", tbl.Meta().ID), zap.Int("size", sizeInBytes), zap.Error(gErr))
 	}()
 	rowCount, avgRowLen, _, _ := cache.TableRowStatsCache.EstimateDataLength(tbl.Meta())
 	if rowCount != 0 {
@@ -623,7 +621,7 @@ func estimateRowSize(ctx context.Context, store kv.Storage, tbl table.Table) (co
 	}
 	hStore, ok := store.(helper.Storage)
 	if !ok {
-		gErr = errors.New("cannot estimate row length: not a helper.Storage")
+		gErr = errors.New("not a helper.Storage")
 		return 0
 	}
 	h := &helper.Helper{
