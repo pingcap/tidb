@@ -2257,7 +2257,8 @@ type ShowContents struct {
 	Extended    bool       // Used for `show extended columns from ...`
 	Limit       *ast.Limit // Used for limit Result Set row number.
 
-	ImportJobID *int64 // Used for SHOW LOAD DATA JOB <jobID>
+	ImportJobID  *int64 // Used for SHOW IMPORT JOB <jobID>
+	WhereExprStr string // Used by SHOW IMPORT JOBS WHERE <expr>
 }
 
 const emptyShowContentsSize = int64(unsafe.Sizeof(ShowContents{}))

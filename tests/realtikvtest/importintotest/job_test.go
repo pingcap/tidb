@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -182,6 +183,8 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job2", Hostname: "localhost"}, nil, nil, nil))
 	rows = s.tk.MustQuery("show import jobs").Rows()
 	checkJobsMatch(rows)
+	rows = s.tk.MustQuery(fmt.Sprintf("show import jobs where id = %s", result1[0][0])).Rows()
+	require.Len(s.T(), rows, 1)
 
 	// show running jobs with 2 subtasks
 	testkit.EnableFailPoint(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish", `return(true)`)

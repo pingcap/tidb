@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
@@ -3250,9 +3251,31 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		}
 	}
 	if show.Where != nil {
-		np, err = b.buildSelection(ctx, np, show.Where, nil)
-		if err != nil {
-			return nil, err
+		if show.Tp == ast.ShowImportJobs {
+			if show.Where.GetFlag()&ast.FlagHasSubquery != 0 {
+				return nil, dbterror.ErrNotSupportedYet.FastGenByArgs("subquery in WHERE clause")
+			}
+			// show import jobs has a physical table we can filter it directly
+			// not use outer selection which need all rows queried from the table first.
+			// so here we only check whether the WHERE is valid.
+			schemaBak, namesBak := p.schema, p.names
+			p.schema, p.names = buildShowImportJobsWhereSchema()
+			_, err := b.buildSelection(ctx, p, show.Where, nil)
+			if err != nil {
+				return nil, err
+			}
+			p.schema, p.names = schemaBak, namesBak
+			var sb strings.Builder
+			restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+			if err = show.Where.Restore(restoreCtx); err != nil {
+				return nil, err
+			}
+			p.WhereExprStr = sb.String()
+		} else {
+			np, err = b.buildSelection(ctx, np, show.Where, nil)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	if show.Limit != nil {
@@ -5097,6 +5120,22 @@ func buildShowWarningsSchema() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName(tblName, "Code", mysql.TypeLong, 19))
 	schema.Append(buildColumnWithName(tblName, "Message", mysql.TypeVarchar, 64))
 	return schema.col2Schema(), schema.names
+}
+
+// buildShowImportJobsWhereSchema builds column info that can be used in "SHOW IMPORT JOBS WHERE ..." statement.
+// names comes from 'mysql.tidb_import_jobs' table, we only allow user use part
+// of the columns now.
+func buildShowImportJobsWhereSchema() (*expression.Schema, types.NameSlice) {
+	return convert2OutputSchemasAndNames(
+		[]string{
+			"id", "create_time", "table_schema", "table_name",
+			"table_id", "created_by", "status",
+		},
+		[]byte{
+			mysql.TypeLonglong, mysql.TypeTimestamp, mysql.TypeString, mysql.TypeString,
+			mysql.TypeLonglong, mysql.TypeString, mysql.TypeString,
+		},
+	)
 }
 
 // buildShowSchema builds column info for ShowStmt including column name and type.
