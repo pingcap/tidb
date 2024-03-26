@@ -419,6 +419,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		proj := LogicalProjection{
 			Exprs: expression.Column2Exprs(parentUsedCols),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
+		proj.SetStats(ds.StatsInfo())
 		// Clone the schema here, because the schema may be changed by column pruning rules.
 
 		proj.SetSchema(expression.NewSchema(parentUsedCols...))
