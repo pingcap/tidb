@@ -16,7 +16,6 @@ package cascades
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/memo"
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )

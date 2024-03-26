@@ -16,12 +16,12 @@ package cascades
 
 import (
 	"container/list"
-	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/memo"
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )

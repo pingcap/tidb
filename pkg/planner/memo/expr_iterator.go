@@ -16,6 +16,7 @@ package memo
 
 import (
 	"container/list"
+
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 )
 
