@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 type mergeSortExecutor struct {
@@ -86,8 +85,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	prefix := path.Join(strconv.Itoa(int(m.jobID)), strconv.Itoa(int(subtask.ID)))
-
-	partSize, err := getMergeSortPartSize(int(variable.GetDDLReorgWorkerCounter()), m.idxNum)
+	partSize, err := getMergeSortPartSize(m.ptbl.Meta(), int(variable.GetDDLReorgWorkerCounter()), m.idxNum)
 	if err != nil {
 		return err
 	}
@@ -97,13 +95,8 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		sm.DataFiles,
 		store,
 		int64(partSize),
-		64*1024,
 		prefix,
 		external.DefaultBlockSize,
-		external.DefaultMemSizeLimit,
-		8*1024,
-		1*size.MB,
-		8*1024,
 		onClose,
 		int(variable.GetDDLReorgWorkerCounter()), true)
 }

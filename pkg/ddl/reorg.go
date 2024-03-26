@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -375,11 +374,12 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	}
 	defer w.sessPool.Put(ctx)
 
-	executor, ok := ctx.(sqlexec.RestrictedSQLExecutor)
-	// `mock.Context` is used in tests, which doesn't implement RestrictedSQLExecutor
-	if !ok {
+	// `mock.Context` is used in tests, which doesn't support sql exec
+	if _, ok := ctx.(*mock.Context); ok {
 		return statistics.PseudoRowCount
 	}
+
+	executor := ctx.GetRestrictedSQLExecutor()
 	var rows []chunk.Row
 	if tblInfo.Partition != nil && len(tblInfo.Partition.DroppingDefinitions) > 0 {
 		// if Reorganize Partition, only select number of rows from the selected partitions!

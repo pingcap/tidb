@@ -22,6 +22,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	litstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -184,6 +185,7 @@ func (m *Manager) handleTasksLoop() {
 		// service scope might change, so we call WithLabelValues every time.
 		metrics.DistTaskUsedSlotsGauge.WithLabelValues(variable.ServiceScope.Load()).
 			Set(float64(m.slotManager.usedSlots()))
+		metrics.GlobalSortUploadWorkerCount.Set(float64(litstorage.GetActiveUploadWorkerCount()))
 	}
 }
 

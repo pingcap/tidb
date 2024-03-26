@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -185,10 +184,10 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 					logutil.Key("lastRegionEnd", regions[len(regions)-1].Region.EndKey))
 				return errors.New("check split keys failed")
 			}
-			splitKeyMap = getSplitKeys(retryKeys, regions, log.FromContext(ctx))
+			splitKeyMap = split.GetSplitKeysOfRegions(retryKeys, regions, false)
 			retryKeys = retryKeys[:0]
 		} else {
-			splitKeyMap = getSplitKeysByRanges(ranges, regions, log.FromContext(ctx))
+			splitKeyMap = getSplitKeysByRanges(ranges, regions)
 		}
 
 		type splitInfo struct {
@@ -321,23 +320,6 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 	return nil
 }
 
-// ScatterRegion scatter the regions and retry if it fails. It returns error if can not scatter after max_retry.
-func (local *Backend) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
-	backoffer := split.NewWaitRegionOnlineBackoffer()
-	err := utils.WithRetry(ctx, func() error {
-		var failedErr error
-		err := local.splitCli.ScatterRegion(ctx, regionInfo)
-		if err != nil {
-			failedErr = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scatter region failed")
-		}
-		return failedErr
-	}, backoffer)
-	if err != nil {
-		log.FromContext(ctx).Warn("scatter region failed", zap.Error(ctx.Err()))
-	}
-	return err
-}
-
 // BatchSplitRegions will split regions by the given split keys and tries to
 // scatter new regions. If split/scatter fails because new region is not ready,
 // this function will not return error.
@@ -349,65 +331,8 @@ func (local *Backend) BatchSplitRegions(
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 		failpoint.Return(nil, nil, errors.New("retryable error"))
 	})
-	region, newRegions, err := local.splitCli.BatchSplitRegionsWithOrigin(ctx, region, keys)
-	if err != nil {
-		return nil, nil, errors.Annotatef(err, "batch split regions failed")
-	}
-	var failedErr error
-	splitRegions := newRegions
-	// wait for regions to be split
-	backoffer := split.NewWaitRegionOnlineBackoffer()
-	failedErr = utils.WithRetry(ctx, func() error {
-		retryRegions := make([]*split.RegionInfo, 0)
-		for _, region := range splitRegions {
-			// Wait for a while until the regions successfully splits.
-			ok, err2 := local.hasRegion(ctx, region.Region.Id)
-			if !ok || err2 != nil {
-				if err2 != nil {
-					log.FromContext(ctx).Warn("split region failed with error", zap.Uint64("regionID", region.Region.Id), zap.Error(err2))
-				}
-				retryRegions = append(retryRegions, region)
-				continue
-			}
-		}
-		if len(retryRegions) == 0 {
-			return nil
-		}
-		// if the number of becomes smaller, we can infer TiKV side really
-		// made some progress so don't increase the retry times.
-		if len(retryRegions) < len(splitRegions) {
-			backoffer.Stat.ReduceRetry()
-		}
-		log.FromContext(ctx).Warn("split region failed", zap.Int("regionCount", len(newRegions)),
-			zap.Int("failedCount", len(retryRegions)))
-		splitRegions = retryRegions
-		// although it's not PDBatchScanRegion, WaitRegionOnlineBackoffer will only
-		// check this error class so we simply reuse it. Will refine WaitRegionOnlineBackoffer
-		// later
-		failedErr = errors.Annotatef(berrors.ErrPDBatchScanRegion, "split region failed")
-		return failedErr
-	}, backoffer)
 
-	if failedErr != nil {
-		log.FromContext(ctx).Warn("split region failed for few regions", zap.Int("regionCount", len(newRegions)), zap.Int("failedCount", len(splitRegions)))
-	}
-
-	if ctx.Err() != nil {
-		return region, newRegions, ctx.Err()
-	}
-
-	// scatter regions
-	failedErr = nil
-	scatterRegions := newRegions
-	for _, region := range scatterRegions {
-		err = local.ScatterRegion(ctx, region)
-		if err != nil && failedErr == nil {
-			failedErr = err
-		}
-	}
-
-	// TODO: there's still change that we may skip scatter if the retry is timeout.
-	return region, newRegions, failedErr
+	return local.splitCli.SplitWaitAndScatter(ctx, region, keys)
 }
 
 func (local *Backend) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
@@ -418,7 +343,7 @@ func (local *Backend) hasRegion(ctx context.Context, regionID uint64) (bool, err
 	return regionInfo != nil, nil
 }
 
-func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo, logger log.Logger) map[uint64][][]byte {
+func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo) map[uint64][][]byte {
 	checkKeys := make([][]byte, 0)
 	var lastEnd []byte
 	for _, rg := range ranges {
@@ -428,51 +353,7 @@ func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo, lo
 		checkKeys = append(checkKeys, rg.End)
 		lastEnd = rg.End
 	}
-	return getSplitKeys(checkKeys, regions, logger)
-}
-
-func getSplitKeys(checkKeys [][]byte, regions []*split.RegionInfo, logger log.Logger) map[uint64][][]byte {
-	splitKeyMap := make(map[uint64][][]byte)
-	for _, key := range checkKeys {
-		if region := needSplit(key, regions, logger); region != nil {
-			splitKeys, ok := splitKeyMap[region.Region.GetId()]
-			if !ok {
-				splitKeys = make([][]byte, 0, 1)
-			}
-			splitKeyMap[region.Region.GetId()] = append(splitKeys, key)
-			logger.Debug("get key for split region",
-				zap.Binary("key", key),
-				zap.Binary("startKey", region.Region.StartKey),
-				zap.Binary("endKey", region.Region.EndKey))
-		}
-	}
-	return splitKeyMap
-}
-
-// needSplit checks whether a key is necessary to split, if true returns the split region
-func needSplit(key []byte, regions []*split.RegionInfo, logger log.Logger) *split.RegionInfo {
-	// If splitKey is the max key.
-	if len(key) == 0 {
-		return nil
-	}
-	splitKey := codec.EncodeBytes([]byte{}, key)
-
-	idx := sort.Search(len(regions), func(i int) bool {
-		return beforeEnd(splitKey, regions[i].Region.EndKey)
-	})
-	if idx < len(regions) {
-		// If splitKey is in a region
-		if bytes.Compare(splitKey, regions[idx].Region.GetStartKey()) > 0 && beforeEnd(splitKey, regions[idx].Region.GetEndKey()) {
-			logger.Debug("need split",
-				zap.Binary("splitKey", key),
-				zap.Binary("encodedKey", splitKey),
-				zap.Binary("region start", regions[idx].Region.GetStartKey()),
-				zap.Binary("region end", regions[idx].Region.GetEndKey()),
-			)
-			return regions[idx]
-		}
-	}
-	return nil
+	return split.GetSplitKeysOfRegions(checkKeys, regions, false)
 }
 
 func beforeEnd(key []byte, end []byte) bool {

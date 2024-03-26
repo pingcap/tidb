@@ -83,6 +83,9 @@ func CheckDataConsistency(
 	if t.Meta().GetPartitionInfo() != nil {
 		return nil
 	}
+	if txn.IsPipelined() {
+		return nil
+	}
 	if sh == 0 {
 		// some implementations of MemBuffer doesn't support staging, e.g. that in br/pkg/lightning/backend/kv
 		return nil

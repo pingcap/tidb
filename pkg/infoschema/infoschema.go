@@ -351,7 +351,7 @@ func init() {
 		Tables:  infoSchemaTables,
 	}
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
-	util.GetSequenceByName = func(is any, schema, sequence model.CIStr) (util.SequenceTable, error) {
+	util.GetSequenceByName = func(is context.InfoSchemaMetaVersion, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
 	}
 	mock.MockInfoschema = func(tbList []*model.TableInfo) context.InfoSchemaMetaVersion {

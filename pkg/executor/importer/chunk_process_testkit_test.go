@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/mock/gomock"
 )
 
@@ -99,7 +98,6 @@ func TestFileChunkProcess(t *testing.T) {
 	)
 	require.NoError(t, err)
 	diskQuotaLock := &syncutil.RWMutex{}
-	codec := tikv.NewCodecV1(tikv.ModeRaw)
 
 	t.Run("process success", func(t *testing.T) {
 		var dataKVCnt, indexKVCnt int
@@ -143,9 +141,9 @@ func TestFileChunkProcess(t *testing.T) {
 		chunkInfo := &checkpoints.ChunkCheckpoint{
 			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
-		checksum := verify.NewKVGroupChecksumWithKeyspace(codec)
+		checksum := verify.NewKVGroupChecksumWithKeyspace(nil)
 		processor := importer.NewFileChunkProcessor(
-			csvParser, encoder, codec,
+			csvParser, encoder, nil,
 			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum,
 		)
 		require.NoError(t, processor.Process(ctx))
@@ -181,7 +179,7 @@ func TestFileChunkProcess(t *testing.T) {
 			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
 		processor := importer.NewFileChunkProcessor(
-			csvParser, encoder, codec,
+			csvParser, encoder, nil,
 			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
 		)
 		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
@@ -206,7 +204,7 @@ func TestFileChunkProcess(t *testing.T) {
 			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
 		processor := importer.NewFileChunkProcessor(
-			csvParser, encoder, codec,
+			csvParser, encoder, nil,
 			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
 		)
 		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
@@ -230,7 +228,7 @@ func TestFileChunkProcess(t *testing.T) {
 			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
 		processor := importer.NewFileChunkProcessor(
-			csvParser, encoder, codec,
+			csvParser, encoder, nil,
 			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
 		)
 		require.ErrorContains(t, processor.Process(ctx), "data write error")
@@ -255,7 +253,7 @@ func TestFileChunkProcess(t *testing.T) {
 			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
 		processor := importer.NewFileChunkProcessor(
-			csvParser, encoder, codec,
+			csvParser, encoder, nil,
 			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
 		)
 		require.ErrorContains(t, processor.Process(ctx), "index write error")

@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -33,6 +34,7 @@ import (
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -366,6 +368,8 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	b.writerPool = writerPool
 	b.copReqSenderPool.chunkSender = writerPool
 	b.copReqSenderPool.adjustSize(readerCnt)
+	logutil.Logger(b.ctx).Info("setup ingest backfill workers",
+		zap.Int64("jobID", job.ID), zap.Int("reader", readerCnt), zap.Int("writer", writerCnt))
 	return nil
 }
 
@@ -501,15 +505,30 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.sessPool, b.checkpointMgr), nil
 }
 
-func (*ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
-	return expectedIngestWorkerCnt()
+func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
+	return expectedIngestWorkerCnt(b.tbl.Meta())
 }
 
-func expectedIngestWorkerCnt() (readerCnt, writerCnt int) {
+func expectedIngestWorkerCnt(tblInfo *model.TableInfo) (readerCnt, writerCnt int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
-	readerCnt = max(readerCnt, 1)
-	writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
+	rowCount, avgRowLen, _, _ := cache.TableRowStatsCache.EstimateDataLength(tblInfo)
+	if rowCount == 0 {
+		// Statistic data not exist, use default concurrency.
+		readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
+		readerCnt = max(readerCnt, 1)
+		writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
+		return readerCnt, writerCnt
+	}
+
+	readerRatio := []float64{0.5, 1, 2, 4, 8}
+	rowSize := []uint64{200, 500, 1000, 3000, math.MaxUint64}
+	for i, s := range rowSize {
+		if avgRowLen <= s {
+			readerCnt = max(int(float64(workerCnt)*readerRatio[i]), 1)
+			writerCnt = max(workerCnt, 1)
+			break
+		}
+	}
 	return readerCnt, writerCnt
 }
 

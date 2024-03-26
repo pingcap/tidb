@@ -172,7 +172,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 		if err != nil {
 			return err
 		}
-		splitKeyMap := getSplitSortedKeysFromSortedRegions(splitContext, sortedKeys, regions)
+		splitKeyMap := split.GetSplitKeysOfRegions(sortedKeys, regions, splitContext.isRawKv)
 		regionMap := make(map[uint64]*split.RegionInfo)
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region
@@ -229,47 +229,10 @@ func (rs *RegionSplitter) executeSplitByKeys(
 }
 
 func (rs *RegionSplitter) splitAndScatterRegions(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte, isRawKv bool,
+	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte, _ bool,
 ) ([]*split.RegionInfo, error) {
-	if len(keys) < 1 {
-		return []*split.RegionInfo{regionInfo}, nil
-	}
-
-	newRegions, err := rs.splitRegions(ctx, regionInfo, keys)
-	if err != nil {
-		if strings.Contains(err.Error(), "no valid key") {
-			for _, key := range keys {
-				// Region start/end keys are encoded. split_region RPC
-				// requires raw keys (without encoding).
-				log.Error("split regions no valid key",
-					logutil.Key("startKey", regionInfo.Region.StartKey),
-					logutil.Key("endKey", regionInfo.Region.EndKey),
-					logutil.Key("key", codec.EncodeBytesExt(nil, key, isRawKv)))
-			}
-		}
-		return nil, errors.Trace(err)
-	}
-	err2 := rs.client.ScatterRegions(ctx, append(newRegions, regionInfo))
-	if err2 != nil {
-		log.Warn("failed to scatter regions", zap.Error(err2))
-	}
-	return newRegions, nil
-}
-
-// splitRegions perform batchSplit on a region by keys
-// and then check the batch split success or not.
-func (rs *RegionSplitter) splitRegions(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
-) ([]*split.RegionInfo, error) {
-	if len(keys) == 0 {
-		return []*split.RegionInfo{regionInfo}, nil
-	}
-	newRegions, err := rs.client.BatchSplitRegions(ctx, regionInfo, keys)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	_ = rs.client.WaitRegionsSplit(ctx, newRegions)
-	return newRegions, nil
+	_, newRegions, err := rs.client.SplitWaitAndScatter(ctx, regionInfo, keys)
+	return newRegions, err
 }
 
 // waitRegionsScattered try to wait mutilple regions scatterd in 3 minutes.
@@ -296,40 +259,6 @@ func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regi
 	defer cancel()
 	leftRegions, _ := rs.client.WaitRegionsScattered(ctx2, regionInfos)
 	return leftRegions
-}
-
-// TestGetSplitSortedKeysFromSortedRegionsTest is used only in unit test
-var TestGetSplitSortedKeysFromSortedRegionsTest = getSplitSortedKeysFromSortedRegions
-
-// getSplitSortedKeysFromSortedRegions checks if the sorted regions should be split by the end key of
-// the sorted ranges, and groups the split keys by region id.
-//
-// ASSERT: sortedRegions[0].StartKey <= sortedKeys[0]
-func getSplitSortedKeysFromSortedRegions(splitContext SplitContext, sortedKeys [][]byte, sortedRegions []*split.RegionInfo) map[uint64][][]byte {
-	splitKeyMap := make(map[uint64][][]byte)
-	curKeyIndex := 0
-	for _, region := range sortedRegions {
-		for ; curKeyIndex < len(sortedKeys); curKeyIndex += 1 {
-			if len(sortedKeys[curKeyIndex]) == 0 {
-				continue
-			}
-			splitKey := codec.EncodeBytesExt(nil, sortedKeys[curKeyIndex], splitContext.isRawKv)
-			// If splitKey is the boundary of the region
-			if bytes.Equal(splitKey, region.Region.GetStartKey()) {
-				continue
-			}
-			// If splitKey is not in a region
-			if !region.ContainsInterior(splitKey) {
-				break
-			}
-			splitKeys, ok := splitKeyMap[region.Region.GetId()]
-			if !ok {
-				splitKeys = make([][]byte, 0, 1)
-			}
-			splitKeyMap[region.Region.GetId()] = append(splitKeys, sortedKeys[curKeyIndex])
-		}
-	}
-	return splitKeyMap
 }
 
 func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *sst.RewriteRule) {

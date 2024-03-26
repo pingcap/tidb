@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -6642,12 +6644,20 @@ func (c *tidbBoundedStalenessFunctionClass) getFunction(ctx BuildContext, args [
 		return nil, err
 	}
 	bf.setDecimalAndFlenForDatetime(3)
-	sig := &builtinTiDBBoundedStalenessSig{bf}
+	sig := &builtinTiDBBoundedStalenessSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTiDBBoundedStalenessSig struct {
 	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
+	contextopt.KVStorePropReader
+}
+
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinTiDBBoundedStalenessSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps() |
+		b.KVStorePropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinTiDBBoundedStalenessSig) Clone() builtinFunc {
@@ -6657,6 +6667,16 @@ func (b *builtinTiDBBoundedStalenessSig) Clone() builtinFunc {
 }
 
 func (b *builtinTiDBBoundedStalenessSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
+	store, err := b.GetKVStore(ctx)
+	if err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return types.ZeroTime, true, err
+	}
+
 	leftTime, isNull, err := b.args[0].EvalTime(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
@@ -6687,18 +6707,14 @@ func (b *builtinTiDBBoundedStalenessSig) evalTime(ctx EvalContext, row chunk.Row
 		return types.ZeroTime, true, nil
 	}
 	// Because the minimum unit of a TSO is millisecond, so we only need fsp to be 3.
-	return types.NewTime(types.FromGoTime(calAppropriateTime(minTime, maxTime, getMinSafeTime(ctx, timeZone))), mysql.TypeDatetime, 3), false, nil
+	return types.NewTime(types.FromGoTime(calAppropriateTime(minTime, maxTime, GetStmtMinSafeTime(vars.StmtCtx, store, timeZone))), mysql.TypeDatetime, 3), false, nil
 }
 
-// GetMinSafeTime get minSafeTime
-func GetMinSafeTime(ctx EvalContext) time.Time {
-	return getMinSafeTime(ctx, getTimeZone(ctx))
-}
-
-func getMinSafeTime(ctx EvalContext, timeZone *time.Location) time.Time {
+// GetStmtMinSafeTime get minSafeTime
+func GetStmtMinSafeTime(sc *stmtctx.StatementContext, store kv.Storage, timeZone *time.Location) time.Time {
 	var minSafeTS uint64
 	txnScope := config.GetTxnScopeFromConfig()
-	if store := ctx.GetStore(); store != nil {
+	if store != nil {
 		minSafeTS = store.GetMinSafeTS(txnScope)
 	}
 	// Inject mocked SafeTS for test.
@@ -6707,8 +6723,7 @@ func getMinSafeTime(ctx EvalContext, timeZone *time.Location) time.Time {
 		minSafeTS = uint64(injectTS)
 	})
 	// Try to get from the stmt cache to make sure this function is deterministic.
-	stmtCtx := ctx.GetSessionVars().StmtCtx
-	minSafeTS = stmtCtx.GetOrStoreStmtCache(stmtctx.StmtSafeTSCacheKey, minSafeTS).(uint64)
+	minSafeTS = sc.GetOrStoreStmtCache(stmtctx.StmtSafeTSCacheKey, minSafeTS).(uint64)
 	return oracle.GetTimeFromTS(minSafeTS).In(timeZone)
 }
 
@@ -6781,12 +6796,13 @@ func (c *tidbCurrentTsoFunctionClass) getFunction(ctx BuildContext, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTiDBCurrentTsoSig{bf}
+	sig := &builtinTiDBCurrentTsoSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTiDBCurrentTsoSig struct {
 	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
 }
 
 func (b *builtinTiDBCurrentTsoSig) Clone() builtinFunc {
@@ -6795,9 +6811,17 @@ func (b *builtinTiDBCurrentTsoSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinTiDBCurrentTsoSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
 // evalInt evals currentTSO().
 func (b *builtinTiDBCurrentTsoSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
-	tso, _ := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), "tidb_current_ts")
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+	tso, _ := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), "tidb_current_ts")
 	itso, _ := strconv.ParseInt(tso, 10, 64)
 	return itso, false, nil
 }

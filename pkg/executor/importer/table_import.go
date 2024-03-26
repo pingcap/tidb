@@ -61,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
@@ -199,7 +198,7 @@ func NewTableImporter(
 		},
 		encTable: tbl,
 		dbID:     e.DBID,
-		kvStore:  kvStore,
+		keyspace: kvStore.GetCodec().GetKeyspace(),
 		logger:   e.logger.With(zap.String("import-id", id)),
 		// this is the value we use for 50TiB data parallel import.
 		// this might not be the optimal value.
@@ -224,8 +223,7 @@ type TableImporter struct {
 	encTable table.Table
 	dbID     int64
 
-	// the kv store we get is a cached store, so we can't close it.
-	kvStore         tidbkv.Storage
+	keyspace        []byte
 	logger          *zap.Logger
 	regionSplitSize int64
 	regionSplitKeys int64
@@ -236,7 +234,7 @@ type TableImporter struct {
 }
 
 // NewTableImporterForTest creates a new table importer for test.
-func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, store tidbkv.Storage, helper local.StoreHelper) (*TableImporter, error) {
+func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, helper local.StoreHelper) (*TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -266,15 +264,14 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 		},
 		encTable:      tbl,
 		dbID:          e.DBID,
-		kvStore:       store,
 		logger:        e.logger.With(zap.String("import-id", id)),
 		diskQuotaLock: new(syncutil.RWMutex),
 	}, nil
 }
 
-// GetCodec gets the codec of the kv store.
-func (ti *TableImporter) GetCodec() tikv.Codec {
-	return ti.kvStore.GetCodec()
+// GetKeySpace gets the keyspace of the kv store.
+func (ti *TableImporter) GetKeySpace() []byte {
+	return ti.keyspace
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
@@ -659,14 +656,14 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 
 	var (
 		mu         sync.Mutex
-		checksum   = verify.NewKVGroupChecksumWithKeyspace(ti.GetCodec())
+		checksum   = verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
 		colSizeMap = make(map[int64]int64)
 	)
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	for i := 0; i < ti.ThreadCnt; i++ {
 		eg.Go(func() error {
 			chunkCheckpoint := checkpoints.ChunkCheckpoint{}
-			chunkChecksum := verify.NewKVGroupChecksumWithKeyspace(ti.GetCodec())
+			chunkChecksum := verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
 			progress := NewProgress()
 			defer func() {
 				mu.Lock()
@@ -906,7 +903,7 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 
 			// TODO: add resource group name
 
-			rs, err := sqlexec.ExecSQL(ctx, se, sql)
+			rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql)
 			if err != nil {
 				return err
 			}
