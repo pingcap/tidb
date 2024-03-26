@@ -19,12 +19,10 @@ import (
 	"math"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -34,10 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -51,28 +47,40 @@ var _ exprctx.BuildContext = struct {
 
 // ExprCtxExtendedImpl extends the sessionctx.Context to implement `expression.BuildContext`
 type ExprCtxExtendedImpl struct {
-	sctx  sessionctx.Context
-	props contextopt.OptionalEvalPropProviders
+	*SessionEvalContext
 }
 
 // NewExprExtendedImpl creates a new ExprCtxExtendedImpl.
 func NewExprExtendedImpl(sctx sessionctx.Context) *ExprCtxExtendedImpl {
-	impl := &ExprCtxExtendedImpl{sctx: sctx}
-	// set all optional properties
-	impl.setOptionalProp(currentUserProp(sctx))
-	impl.setOptionalProp(contextopt.NewSessionVarsProvider(sctx))
-	impl.setOptionalProp(infoSchemaProp(sctx))
-	impl.setOptionalProp(contextopt.KVStorePropProvider(sctx.GetStore))
-	impl.setOptionalProp(sqlExecutorProp(sctx))
-	impl.setOptionalProp(sequenceOperatorProp(sctx))
-	impl.setOptionalProp(contextopt.NewAdvisoryLockPropProvider(sctx))
-	impl.setOptionalProp(contextopt.DDLOwnerInfoProvider(sctx.IsDDLOwner))
-	// When EvalContext is created from a session, it should contain all the optional properties.
-	intest.Assert(impl.props.PropKeySet().IsFull())
-	return impl
+	return &ExprCtxExtendedImpl{
+		SessionEvalContext: NewSessionEvalContext(sctx),
+	}
 }
 
-func (ctx *ExprCtxExtendedImpl) setOptionalProp(prop exprctx.OptionalEvalPropProvider) {
+// SessionEvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.
+type SessionEvalContext struct {
+	sctx  sessionctx.Context
+	props contextopt.OptionalEvalPropProviders
+}
+
+// NewSessionEvalContext creates a new SessionEvalContext.
+func NewSessionEvalContext(sctx sessionctx.Context) *SessionEvalContext {
+	ctx := &SessionEvalContext{sctx: sctx}
+	// set all optional properties
+	ctx.setOptionalProp(currentUserProp(sctx))
+	ctx.setOptionalProp(contextopt.NewSessionVarsProvider(sctx))
+	ctx.setOptionalProp(infoSchemaProp(sctx))
+	ctx.setOptionalProp(contextopt.KVStorePropProvider(sctx.GetStore))
+	ctx.setOptionalProp(sqlExecutorProp(sctx))
+	ctx.setOptionalProp(sequenceOperatorProp(sctx))
+	ctx.setOptionalProp(contextopt.NewAdvisoryLockPropProvider(sctx))
+	ctx.setOptionalProp(contextopt.DDLOwnerInfoProvider(sctx.IsDDLOwner))
+	// When EvalContext is created from a session, it should contain all the optional properties.
+	intest.Assert(ctx.props.PropKeySet().IsFull())
+	return ctx
+}
+
+func (ctx *SessionEvalContext) setOptionalProp(prop exprctx.OptionalEvalPropProvider) {
 	intest.AssertFunc(func() bool {
 		return !ctx.props.Contains(prop.Desc().Key())
 	})
@@ -80,63 +88,63 @@ func (ctx *ExprCtxExtendedImpl) setOptionalProp(prop exprctx.OptionalEvalPropPro
 }
 
 // CtxID returns the context id.
-func (ctx *ExprCtxExtendedImpl) CtxID() uint64 {
+func (ctx *SessionEvalContext) CtxID() uint64 {
 	return ctx.sctx.GetSessionVars().StmtCtx.CtxID()
 }
 
 // SQLMode returns the sql mode
-func (ctx *ExprCtxExtendedImpl) SQLMode() mysql.SQLMode {
+func (ctx *SessionEvalContext) SQLMode() mysql.SQLMode {
 	return ctx.sctx.GetSessionVars().SQLMode
 }
 
 // TypeCtx returns the types.Context
-func (ctx *ExprCtxExtendedImpl) TypeCtx() types.Context {
+func (ctx *SessionEvalContext) TypeCtx() types.Context {
 	return ctx.sctx.GetSessionVars().StmtCtx.TypeCtx()
 }
 
 // ErrCtx returns the errctx.Context
-func (ctx *ExprCtxExtendedImpl) ErrCtx() errctx.Context {
+func (ctx *SessionEvalContext) ErrCtx() errctx.Context {
 	return ctx.sctx.GetSessionVars().StmtCtx.ErrCtx()
 }
 
 // Location returns the timezone info
-func (ctx *ExprCtxExtendedImpl) Location() *time.Location {
+func (ctx *SessionEvalContext) Location() *time.Location {
 	tc := ctx.TypeCtx()
 	return tc.Location()
 }
 
 // AppendWarning append warnings to the context.
-func (ctx *ExprCtxExtendedImpl) AppendWarning(err error) {
+func (ctx *SessionEvalContext) AppendWarning(err error) {
 	ctx.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 }
 
 // WarningCount gets warning count.
-func (ctx *ExprCtxExtendedImpl) WarningCount() int {
+func (ctx *SessionEvalContext) WarningCount() int {
 	return int(ctx.sctx.GetSessionVars().StmtCtx.WarningCount())
 }
 
 // TruncateWarnings truncates warnings begin from start and returns the truncated warnings.
-func (ctx *ExprCtxExtendedImpl) TruncateWarnings(start int) []stmtctx.SQLWarn {
+func (ctx *SessionEvalContext) TruncateWarnings(start int) []stmtctx.SQLWarn {
 	return ctx.sctx.GetSessionVars().StmtCtx.TruncateWarnings(start)
 }
 
 // CurrentDB returns the current database name
-func (ctx *ExprCtxExtendedImpl) CurrentDB() string {
+func (ctx *SessionEvalContext) CurrentDB() string {
 	return ctx.sctx.GetSessionVars().CurrentDB
 }
 
 // CurrentTime returns the current time
-func (ctx *ExprCtxExtendedImpl) CurrentTime() (time.Time, error) {
+func (ctx *SessionEvalContext) CurrentTime() (time.Time, error) {
 	return getStmtTimestamp(ctx.sctx)
 }
 
 // GetMaxAllowedPacket returns the value of the 'max_allowed_packet' system variable.
-func (ctx *ExprCtxExtendedImpl) GetMaxAllowedPacket() uint64 {
+func (ctx *SessionEvalContext) GetMaxAllowedPacket() uint64 {
 	return ctx.sctx.GetSessionVars().MaxAllowedPacket
 }
 
 // GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.
-func (ctx *ExprCtxExtendedImpl) GetDefaultWeekFormatMode() string {
+func (ctx *SessionEvalContext) GetDefaultWeekFormatMode() string {
 	mode, ok := ctx.sctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
 	if !ok || mode == "" {
 		return "0"
@@ -145,22 +153,22 @@ func (ctx *ExprCtxExtendedImpl) GetDefaultWeekFormatMode() string {
 }
 
 // GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
-func (ctx *ExprCtxExtendedImpl) GetDivPrecisionIncrement() int {
+func (ctx *SessionEvalContext) GetDivPrecisionIncrement() int {
 	return ctx.sctx.GetSessionVars().GetDivPrecisionIncrement()
 }
 
 // GetOptionalPropSet gets the optional property set from context
-func (ctx *ExprCtxExtendedImpl) GetOptionalPropSet() exprctx.OptionalEvalPropKeySet {
+func (ctx *SessionEvalContext) GetOptionalPropSet() exprctx.OptionalEvalPropKeySet {
 	return ctx.props.PropKeySet()
 }
 
 // GetOptionalPropProvider gets the optional property provider by key
-func (ctx *ExprCtxExtendedImpl) GetOptionalPropProvider(key exprctx.OptionalEvalPropKey) (exprctx.OptionalEvalPropProvider, bool) {
+func (ctx *SessionEvalContext) GetOptionalPropProvider(key exprctx.OptionalEvalPropKey) (exprctx.OptionalEvalPropProvider, bool) {
 	return ctx.props.Get(key)
 }
 
 // RequestVerification verifies user privilege
-func (ctx *ExprCtxExtendedImpl) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
+func (ctx *SessionEvalContext) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
 	checker := privilege.GetPrivilegeManager(ctx.sctx)
 	if checker == nil {
 		return true
@@ -169,7 +177,7 @@ func (ctx *ExprCtxExtendedImpl) RequestVerification(db, table, column string, pr
 }
 
 // RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.
-func (ctx *ExprCtxExtendedImpl) RequestDynamicVerification(privName string, grantable bool) bool {
+func (ctx *SessionEvalContext) RequestDynamicVerification(privName string, grantable bool) bool {
 	checker := privilege.GetPrivilegeManager(ctx.sctx)
 	if checker == nil {
 		return true
@@ -223,27 +231,9 @@ func infoSchemaProp(sctx sessionctx.Context) contextopt.InfoSchemaPropProvider {
 	}
 }
 
-type sqlExecutor struct {
-	exec sqlexec.RestrictedSQLExecutor
-}
-
-// NewSQLExecutor creates a new SQLExecutor.
-func NewSQLExecutor(sctx sessionctx.Context) (contextopt.SQLExecutor, error) {
-	if e, ok := sctx.(sqlexec.RestrictedSQLExecutor); ok {
-		return &sqlExecutor{exec: e}, nil
-	}
-	return nil, errors.Errorf("'%T' cannot be casted to sqlexec.RestrictedSQLExecutor", sctx)
-}
-
-func (e *sqlExecutor) ExecRestrictedSQL(
-	ctx context.Context, sql string, args ...any,
-) ([]chunk.Row, []*ast.ResultField, error) {
-	return e.exec.ExecRestrictedSQL(ctx, nil, sql, args...)
-}
-
 func sqlExecutorProp(sctx sessionctx.Context) contextopt.SQLExecutorPropProvider {
 	return func() (contextopt.SQLExecutor, error) {
-		return NewSQLExecutor(sctx)
+		return sctx.GetRestrictedSQLExecutor(), nil
 	}
 }
 
