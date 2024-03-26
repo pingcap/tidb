@@ -41,6 +41,7 @@ func TestV2Basic(t *testing.T) {
 	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
 	is.Data.add(tableItem{schemaName.L, dbInfo.ID, tableName.L, tblInfo.ID, 2, false}, internal.MockTable(t, r.Store(), tblInfo))
 	internal.AddTable(t, r.Store(), dbInfo, tblInfo)
+	is.base().schemaMetaVersion = 1
 	require.Equal(t, 1, len(is.AllSchemas()))
 	require.Equal(t, 0, len(is.SchemaTables(is.AllSchemas()[0].Name)))
 	ver, err := r.Store().CurrentVersion(kv.GlobalTxnScope)
