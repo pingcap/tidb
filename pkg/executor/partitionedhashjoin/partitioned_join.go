@@ -55,7 +55,7 @@ type PartitionedHashJoinCtx struct {
 	allocPool chunk.Allocator
 	// concurrency is the number of partition, build and join workers.
 	Concurrency     uint
-	partitionNumber int
+	PartitionNumber int
 	joinResultCh    chan *internalutil.HashjoinWorkerResult
 	// closeCh add a lock for closing executor.
 	closeCh       chan struct{}
@@ -150,8 +150,7 @@ type PartitionedHashJoinExec struct {
 	workerWg util.WaitGroupWrapper
 	waiterWg util.WaitGroupWrapper
 
-	prepared        bool
-	partitionNumber int
+	prepared bool
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -212,8 +211,6 @@ func (e *PartitionedHashJoinExec) Open(ctx context.Context) error {
 		return err
 	}
 	e.prepared = false
-	e.partitionNumber = mathutil.Min(int(e.Concurrency), 16)
-	e.PartitionedHashJoinCtx.partitionNumber = e.partitionNumber
 	if e.RightAsBuildSide {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
 			e.BuildKeyTypes, e.ProbeKeyTypes, e.RUsedInOtherCondition, e.RUsed, e.needUsedFlag())
@@ -339,7 +336,7 @@ func (fetcher *ProbeSideTupleFetcher) wait4BuildSide() (skipProbe bool, err erro
 }
 
 func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk) (err error) {
-	partitionNumber := w.HashJoinCtx.partitionNumber
+	partitionNumber := w.HashJoinCtx.PartitionNumber
 	hashTableMeta := w.HashJoinCtx.hashTableMeta
 	w.rowTables = make([]*rowTable, partitionNumber)
 
@@ -694,9 +691,9 @@ func (e *PartitionedHashJoinExec) handleFetchAndBuildHashTablePanic(r any) {
 }
 
 func (e *PartitionedHashJoinExec) mergeRowTables() ([]*rowTable, int) {
-	rowTables := make([]*rowTable, e.partitionNumber)
+	rowTables := make([]*rowTable, e.PartitionNumber)
 	totalSegmentCnt := 0
-	for i := uint(0); i < uint(e.partitionNumber); i++ {
+	for i := uint(0); i < uint(e.PartitionNumber); i++ {
 		rowTables[i] = newRowTable(e.hashTableMeta)
 	}
 	for _, w := range e.BuildWorkers {
@@ -713,11 +710,11 @@ func (e *PartitionedHashJoinExec) mergeRowTables() ([]*rowTable, int) {
 
 // checkBalance checks whether the segment count of each partition is balanced.
 func (e *PartitionedHashJoinExec) checkBalance(totalSegmentCnt int) bool {
-	isBalanced := e.Concurrency == uint(e.partitionNumber)
+	isBalanced := e.Concurrency == uint(e.PartitionNumber)
 	if !isBalanced {
 		return false
 	}
-	avgSegCnt := totalSegmentCnt / e.partitionNumber
+	avgSegCnt := totalSegmentCnt / e.PartitionNumber
 	balanceThreshold := int(float64(avgSegCnt) * 0.8)
 	subTables := e.PartitionedHashJoinCtx.joinHashTable.tables
 
