@@ -64,7 +64,7 @@ type Context struct {
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
 	sm            util.SessionManager
-	is            infoschema.InfoSchemaMetaVersion
+	is            infoschema.MetaOnlyInfoSchema
 	values        map[fmt.Stringer]any
 	sessionVars   *variable.SessionVars
 	tblctx        *tbctximpl.TableContextImpl
@@ -275,13 +275,13 @@ func (c *Context) GetMPPClient() kv.MPPClient {
 }
 
 // GetInfoSchema implements sessionctx.Context GetInfoSchema interface.
-func (c *Context) GetInfoSchema() infoschema.InfoSchemaMetaVersion {
+func (c *Context) GetInfoSchema() infoschema.MetaOnlyInfoSchema {
 	vars := c.GetSessionVars()
-	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchemaMetaVersion); ok {
+	if snap, ok := vars.SnapshotInfoschema.(infoschema.MetaOnlyInfoSchema); ok {
 		return snap
 	}
 	if vars.TxnCtx != nil && vars.InTxn() {
-		if is, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchemaMetaVersion); ok {
+		if is, ok := vars.TxnCtx.InfoSchema.(infoschema.MetaOnlyInfoSchema); ok {
 			return is
 		}
 	}
@@ -292,10 +292,10 @@ func (c *Context) GetInfoSchema() infoschema.InfoSchemaMetaVersion {
 }
 
 // MockInfoschema only serves for test.
-var MockInfoschema func(tbList []*model.TableInfo) infoschema.InfoSchemaMetaVersion
+var MockInfoschema func(tbList []*model.TableInfo) infoschema.MetaOnlyInfoSchema
 
 // GetDomainInfoSchema returns the latest information schema in domain
-func (c *Context) GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion {
+func (c *Context) GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema {
 	if c.is == nil {
 		c.is = MockInfoschema(nil)
 	}
@@ -529,7 +529,7 @@ func (c *Context) InSandBoxMode() bool {
 }
 
 // SetInfoSchema is to set info shema for the test.
-func (c *Context) SetInfoSchema(is infoschema.InfoSchemaMetaVersion) {
+func (c *Context) SetInfoSchema(is infoschema.MetaOnlyInfoSchema) {
 	c.is = is
 }
 

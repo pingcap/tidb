@@ -223,7 +223,7 @@ func currentUserProp(sctx sessionctx.Context) exprctx.OptionalEvalPropProvider {
 }
 
 func infoSchemaProp(sctx sessionctx.Context) contextopt.InfoSchemaPropProvider {
-	return func(isDomain bool) infoschema.InfoSchemaMetaVersion {
+	return func(isDomain bool) infoschema.MetaOnlyInfoSchema {
 		if isDomain {
 			return sctx.GetDomainInfoSchema()
 		}

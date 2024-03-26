@@ -2571,7 +2571,7 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 	return strings.ToLower(x) == ast.CurrentTimestamp
 }
 
-func decodeKeyFromString(tc types.Context, isVer infoschemactx.InfoSchemaMetaVersion, s string) string {
+func decodeKeyFromString(tc types.Context, isVer infoschemactx.MetaOnlyInfoSchema, s string) string {
 	key, err := hex.DecodeString(s)
 	if err != nil {
 		tc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
