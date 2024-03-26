@@ -343,7 +343,6 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: db.ID, TableID: tblID, Version: 1})
 			require.NoError(t, err)
 		}
-
 	}
 
 	createNormalTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
