@@ -318,7 +318,7 @@ func TestSplitCtxCancel(t *testing.T) {
 		client: mockCli,
 	}
 
-	_, _, err := client.SplitWaitAndScatter(ctx, &RegionInfo{}, [][]byte{{1}})
+	_, err := client.SplitWaitAndScatterOnRegion(ctx, &RegionInfo{}, [][]byte{{1}})
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -354,11 +354,11 @@ func TestGetSplitKeyPerRegion(t *testing.T) {
 			},
 		},
 	}
-	result := GetSplitKeysOfRegions(sortedKeys, sortedRegions, false)
+	result := getSplitKeysOfRegions(sortedKeys, sortedRegions, false)
 	require.Equal(t, 3, len(result))
-	require.Equal(t, [][]byte{[]byte("b"), []byte("d")}, result[1])
-	require.Equal(t, [][]byte{[]byte("g"), []byte("j")}, result[2])
-	require.Equal(t, [][]byte{[]byte("l")}, result[3])
+	require.Equal(t, [][]byte{[]byte("b"), []byte("d")}, result[sortedRegions[0]])
+	require.Equal(t, [][]byte{[]byte("g"), []byte("j")}, result[sortedRegions[1]])
+	require.Equal(t, [][]byte{[]byte("l")}, result[sortedRegions[2]])
 
 	// test case moved from lightning
 	sortedRegions = sortedRegions[:0]
@@ -412,6 +412,9 @@ func TestGetSplitKeyPerRegion(t *testing.T) {
 		expected[uint64(idx)] = append(expected[uint64(idx)], key)
 	}
 	slices.SortFunc(sortedKeys, bytes.Compare)
-	got := GetSplitKeysOfRegions(sortedKeys, sortedRegions, false)
-	require.Equal(t, expected, got)
+	got := getSplitKeysOfRegions(sortedKeys, sortedRegions, false)
+	require.Equal(t, len(expected), len(got))
+	for region, gotKeys := range got {
+		require.Equal(t, expected[region.Region.GetId()], gotKeys)
+	}
 }
