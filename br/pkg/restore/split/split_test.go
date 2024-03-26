@@ -17,9 +17,12 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestScanRegionBackOfferWithSuccess(t *testing.T) {
@@ -417,4 +420,121 @@ func TestGetSplitKeyPerRegion(t *testing.T) {
 	for region, gotKeys := range got {
 		require.Equal(t, expected[region.Region.GetId()], gotKeys)
 	}
+}
+
+func checkRegionsBoundaries(t *testing.T, regions []*RegionInfo, expected [][]byte) {
+	require.Len(t, regions, len(expected)-1)
+	for i := 1; i < len(expected); i++ {
+		require.Equal(t, expected[i-1], regions[i-1].Region.StartKey)
+		require.Equal(t, expected[i], regions[i-1].Region.EndKey)
+	}
+}
+
+func TestPaginateScanRegion(t *testing.T) {
+	ctx := context.Background()
+	mockPDClient := newMockPDClientForSplit()
+	mockClient := &pdClient{
+		client: mockPDClient,
+	}
+
+	backup := WaitRegionOnlineAttemptTimes
+	WaitRegionOnlineAttemptTimes = 3
+	t.Cleanup(func() {
+		WaitRegionOnlineAttemptTimes = backup
+	})
+
+	// no region
+	_, err := PaginateScanRegion(ctx, mockClient, []byte{}, []byte{}, 3)
+	require.Error(t, err)
+	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
+	require.ErrorContains(t, err, "scan region return empty result")
+
+	// retry on error
+	mockPDClient.scanRegions.errors = []error{
+		status.Error(codes.Unavailable, "not leader"),
+	}
+	mockPDClient.SetRegions([][]byte{{}, {}})
+	got, err := PaginateScanRegion(ctx, mockClient, []byte{}, []byte{}, 3)
+	require.NoError(t, err)
+	checkRegionsBoundaries(t, got, [][]byte{{}, {}})
+
+	// test paginate
+	boundaries := [][]byte{{}, {1}, {2}, {3}, {4}, {5}, {6}, {7}, {8}, {}}
+	mockPDClient.SetRegions(boundaries)
+	got, err = PaginateScanRegion(ctx, mockClient, []byte{}, []byte{}, 3)
+	require.NoError(t, err)
+	checkRegionsBoundaries(t, got, boundaries)
+	got, err = PaginateScanRegion(ctx, mockClient, []byte{1}, []byte{}, 3)
+	require.NoError(t, err)
+	checkRegionsBoundaries(t, got, boundaries[1:])
+	got, err = PaginateScanRegion(ctx, mockClient, []byte{}, []byte{2}, 8)
+	require.NoError(t, err)
+	checkRegionsBoundaries(t, got, boundaries[:3]) // [, 1), [1, 2)
+	got, err = PaginateScanRegion(ctx, mockClient, []byte{4}, []byte{5}, 1)
+	require.NoError(t, err)
+	checkRegionsBoundaries(t, got, [][]byte{{4}, {5}})
+
+	// test start == end
+	got, err = PaginateScanRegion(ctx, mockClient, []byte{4}, []byte{4}, 1)
+	require.ErrorContains(t, err, "scan region return empty result")
+
+	// test start > end
+	got, err = PaginateScanRegion(ctx, mockClient, []byte{5}, []byte{4}, 5)
+	require.True(t, berrors.ErrInvalidRange.Equal(err))
+	require.ErrorContains(t, err, "startKey > endKey")
+
+	// test retry exhausted
+	mockPDClient.scanRegions.errors = []error{
+		status.Error(codes.Unavailable, "not leader"),
+		status.Error(codes.Unavailable, "not leader"),
+		status.Error(codes.Unavailable, "not leader"),
+	}
+	got, err = PaginateScanRegion(ctx, mockClient, []byte{4}, []byte{5}, 1)
+	require.ErrorContains(t, err, "not leader")
+
+	// test region not continuous
+	mockPDClient.regions = &pdtypes.RegionTree{}
+	mockPDClient.regions.SetRegion(&pdtypes.Region{
+		Meta: &metapb.Region{
+			Id:       1,
+			StartKey: []byte{1},
+			EndKey:   []byte{2},
+		},
+	})
+	mockPDClient.regions.SetRegion(&pdtypes.Region{
+		Meta: &metapb.Region{
+			Id:       4,
+			StartKey: []byte{4},
+			EndKey:   []byte{5},
+		},
+	})
+
+	_, err = PaginateScanRegion(ctx, mockClient, []byte{1}, []byte{5}, 3)
+	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
+	require.ErrorContains(t, err, "region 1's endKey not equal to next region 4's startKey")
+
+	// test region becomes continuous slowly
+	toAdd := []*pdtypes.Region{
+		{
+			Meta: &metapb.Region{
+				Id:       2,
+				StartKey: []byte{2},
+				EndKey:   []byte{3},
+			},
+		},
+		{
+			Meta: &metapb.Region{
+				Id:       3,
+				StartKey: []byte{3},
+				EndKey:   []byte{4},
+			},
+		},
+	}
+	mockPDClient.scanRegions.beforeHook = func() {
+		mockPDClient.regions.SetRegion(toAdd[0])
+		toAdd = toAdd[1:]
+	}
+	got, err = PaginateScanRegion(ctx, mockClient, []byte{1}, []byte{5}, 100)
+	require.NoError(t, err)
+	checkRegionsBoundaries(t, got, [][]byte{{1}, {2}, {3}, {4}, {5}})
 }

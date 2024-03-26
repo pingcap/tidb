@@ -106,9 +106,9 @@ func (c *testSplitClient) GetRegionByID(ctx context.Context, regionID uint64) (*
 	return region, nil
 }
 
-func (c *testSplitClient) SplitWaitAndScatter(
+func (c *testSplitClient) SplitWaitAndScatterOnRegion(
 	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
-) (*split.RegionInfo, []*split.RegionInfo, error) {
+) ([]*split.RegionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.splitCount.Inc()
@@ -117,23 +117,23 @@ func (c *testSplitClient) SplitWaitAndScatter(
 		regionInfo, keys = c.hook.BeforeSplitRegion(ctx, regionInfo, keys)
 	}
 	if len(keys) == 0 {
-		return nil, nil, errors.New("no valid key")
+		return nil, errors.New("no valid key")
 	}
 
 	select {
 	case <-ctx.Done():
-		return nil, nil, ctx.Err()
+		return nil, ctx.Err()
 	default:
 	}
 
 	newRegions := make([]*split.RegionInfo, 0)
 	target, ok := c.regions[regionInfo.Region.Id]
 	if !ok {
-		return nil, nil, errors.New("region not found")
+		return nil, errors.New("region not found")
 	}
 	if target.Region.RegionEpoch.Version != regionInfo.Region.RegionEpoch.Version ||
 		target.Region.RegionEpoch.ConfVer != regionInfo.Region.RegionEpoch.ConfVer {
-		return regionInfo, nil, errors.New("epoch not match")
+		return nil, errors.New("epoch not match")
 	}
 	splitKeys := make([][]byte, 0, len(keys))
 	for _, k := range keys {
@@ -170,7 +170,7 @@ func (c *testSplitClient) SplitWaitAndScatter(
 	}
 
 	if len(newRegions) == 0 {
-		return target, nil, errors.New("no valid key")
+		return nil, errors.New("no valid key")
 	}
 
 	var err error
@@ -178,7 +178,7 @@ func (c *testSplitClient) SplitWaitAndScatter(
 		newRegions, err = c.hook.AfterSplitRegion(ctx, target, keys, newRegions, nil)
 	}
 
-	return target, newRegions, err
+	return newRegions, err
 }
 
 func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
@@ -446,14 +446,14 @@ func newCheckScatterClient(inner *testSplitClient) *checkScatterClient {
 	}
 }
 
-func (c *checkScatterClient) SplitWaitAndScatter(
+func (c *checkScatterClient) SplitWaitAndScatterOnRegion(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
 	keys [][]byte,
-) (*split.RegionInfo, []*split.RegionInfo, error) {
-	r, rs, err := c.testSplitClient.SplitWaitAndScatter(ctx, regionInfo, keys)
+) ([]*split.RegionInfo, error) {
+	rs, err := c.testSplitClient.SplitWaitAndScatterOnRegion(ctx, regionInfo, keys)
 	c.scatterCounter.Add(int32(len(rs)))
-	return r, rs, err
+	return rs, err
 }
 
 func (c *checkScatterClient) GetRegionByID(ctx context.Context, regionID uint64) (*split.RegionInfo, error) {
