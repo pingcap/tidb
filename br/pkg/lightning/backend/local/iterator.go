@@ -180,15 +180,6 @@ type dupDBIter struct {
 	err        error
 }
 
-func (d *dupDBIter) Seek(key []byte) bool {
-	rawKey := d.keyAdapter.Encode(nil, key, common.ZeroRowID)
-	if d.err != nil || !d.iter.SeekGE(rawKey) {
-		return false
-	}
-	d.curKey, d.err = d.keyAdapter.Decode(d.curKey[:0], d.iter.Key())
-	return d.err == nil
-}
-
 func (d *dupDBIter) Error() error {
 	if d.err != nil {
 		return d.err

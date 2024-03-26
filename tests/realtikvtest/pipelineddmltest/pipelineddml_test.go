@@ -198,7 +198,8 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	// for explain and explain analyze
 	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&testkit.MockPumpClient{})
 	tk.MustExec("explain insert into t values(8, 8)")
-	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode")
+	// explain is read-only, so it doesn't warn.
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("explain analyze insert into t values(9, 9)")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with Binlog: BinlogClient != nil. Fallback to standard mode")
 	tk.Session().GetSessionVars().BinlogClient = nil

@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -116,7 +115,7 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 	defer CloseSession(newSCtx)
-	sqlExec := newSCtx.(sqlexec.SQLExecutor)
+	sqlExec := newSCtx.GetSQLExecutor()
 	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
 		return err2
 	}
@@ -155,7 +154,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	}
 	var info *importer.JobInfo
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
-		sqlExec := se.(sqlexec.SQLExecutor)
+		sqlExec := se.GetSQLExecutor()
 		var err2 error
 		info, err2 = importer.GetJob(ctx, sqlExec, jobID, e.Ctx().GetSessionVars().User.String(), false)
 		return err2
@@ -215,7 +214,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	}
 	defer CloseSession(newSCtx)
 
-	sqlExec := newSCtx.(sqlexec.SQLExecutor)
+	sqlExec := newSCtx.GetSQLExecutor()
 	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
 		return err2
 	}
@@ -331,7 +330,7 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) (err er
 func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, manager *fstorage.TaskManager, hasSuperPriv bool) error {
 	var info *importer.JobInfo
 	if err := manager.WithNewSession(func(se sessionctx.Context) error {
-		exec := se.(sqlexec.SQLExecutor)
+		exec := se.GetSQLExecutor()
 		var err2 error
 		info, err2 = importer.GetJob(ctx, exec, e.jobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
 		return err2

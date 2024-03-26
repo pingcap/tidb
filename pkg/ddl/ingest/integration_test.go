@@ -349,21 +349,26 @@ func TestMultiSchemaAddIndexMerge(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
-	tk.MustExec("create table t (a int, b int);")
-	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+	for _, createTableSQL := range []string{
+		"create table t (a int, b int);",
+		"create table t (a int, b int) PARTITION BY HASH (`a`) PARTITIONS 4;",
+	} {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec(createTableSQL)
+		tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
 
-	first := true
-	var tk2Err error
-	ingest.MockExecAfterWriteRow = func() {
-		if !first {
-			return
+		first := true
+		var tk2Err error
+		ingest.MockExecAfterWriteRow = func() {
+			if !first {
+				return
+			}
+			_, tk2Err = tk2.Exec("insert into t values (4, 4), (5, 5);")
+			first = false
 		}
-		_, tk2Err = tk2.Exec("insert into t values (4, 4);")
-		first = false
+		tk.MustExec("alter table t add index idx1(a), add index idx2(b);")
+		require.False(t, first)
+		require.NoError(t, tk2Err)
+		tk.MustExec("admin check table t;")
 	}
-
-	tk.MustExec("alter table t add index idx1(a), add index idx2(b);")
-	require.False(t, first)
-	require.NoError(t, tk2Err)
-	tk.MustExec("admin check table t;")
 }
