@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -37,7 +36,6 @@ type mergeSortExecutor struct {
 	jobID         int64
 	idxNum        int
 	ptbl          table.PhysicalTable
-	store         kv.Storage
 	avgRowSize    int
 	cloudStoreURI string
 
@@ -47,7 +45,6 @@ type mergeSortExecutor struct {
 
 func newMergeSortExecutor(
 	jobID int64,
-	store kv.Storage,
 	idxNum int,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
@@ -56,7 +53,6 @@ func newMergeSortExecutor(
 	return &mergeSortExecutor{
 		jobID:         jobID,
 		idxNum:        idxNum,
-		store:         store,
 		ptbl:          ptbl,
 		cloudStoreURI: cloudStoreURI,
 		avgRowSize:    avgRowSize,

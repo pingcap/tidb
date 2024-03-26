@@ -85,7 +85,7 @@ func newReadIndexExecutor(
 	}, nil
 }
 
-func (*readIndexExecutor) Init(ctx context.Context) error {
+func (*readIndexExecutor) Init(_ context.Context) error {
 	logutil.BgLogger().Info("read index executor init subtask exec env",
 		zap.String("category", "ddl"))
 	return nil
