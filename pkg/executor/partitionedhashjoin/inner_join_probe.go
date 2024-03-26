@@ -28,6 +28,7 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, 
 	if joinResult.Chk.IsFull() {
 		return true, joinResult
 	}
+	hasOtherCondition := j.ctx.hasOtherCondition()
 	joinedChk, remainCap, err := j.prepareForProbe(joinResult.Chk)
 	if err != nil {
 		joinResult.Err = err
@@ -41,10 +42,9 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, 
 			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// key matched, convert row to column for build side
-				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow}, joinedChk, 0)
+				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow}, joinedChk, 0, hasOtherCondition)
 				length++
 				remainCap--
-				joinedChk.IncNumVirtualRows()
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
@@ -55,7 +55,7 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, 
 	}
 
 	if len(j.cachedBuildRows) > 0 {
-		j.batchConstructBuildRows(joinedChk, 0)
+		j.batchConstructBuildRows(joinedChk, 0, hasOtherCondition)
 	}
 	j.appendOffsetAndLength(j.currentProbeRow, length)
 	j.appendProbeRowToChunk(joinedChk, j.currentChunk)
@@ -136,11 +136,11 @@ func (j *innerJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joined
 		// build column that is not in joinedChk
 		for index, result := range j.selected {
 			if result {
-				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(j.rowIndexInfos[index], chk, j.ctx.hashTableMeta.columnCountNeededForOtherCondition)
+				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(j.rowIndexInfos[index], chk, j.ctx.hashTableMeta.columnCountNeededForOtherCondition, false)
 			}
 		}
 		if len(j.cachedBuildRows) > 0 {
-			j.batchConstructBuildRows(chk, j.ctx.hashTableMeta.columnCountNeededForOtherCondition)
+			j.batchConstructBuildRows(chk, j.ctx.hashTableMeta.columnCountNeededForOtherCondition, false)
 		}
 	}
 	return
