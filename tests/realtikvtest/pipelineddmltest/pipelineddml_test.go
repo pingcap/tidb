@@ -787,21 +787,3 @@ func TestRejectUnsupportedTables(t *testing.T) {
 	tk.MustExec("insert into cached values(1)")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on cached tables. Fallback to standard mode")
 }
-
-func TestCacheTable1(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table cached(a int)")
-	tk.MustExec("alter table cached cache")
-	tk.MustExec("insert into cached values(1)")
-}
-
-func TestCacheTable2(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table cached(a int)")
-	tk.MustExec("alter table cached cache")
-	tk.MustExec("insert into cached values(1)")
-}
