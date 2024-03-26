@@ -401,6 +401,33 @@ func (e *TopNExec) generateTopNResultsWithNoSpill() bool {
 	return false
 }
 
+func (e *TopNExec) generateResultWithMultiWayMerge() error {
+	multiWayMerge := newMultiWayMerger(&diskSource{sortedRowsInDisk: e.spillHelper.sortedRowsInDisk}, e.lessRow)
+
+	err := multiWayMerge.init()
+	if err != nil {
+		return err
+	}
+
+	for {
+		row, err := multiWayMerge.next()
+		if err != nil {
+			return err
+		}
+
+		if row.IsEmpty() {
+			return nil
+		}
+
+		select {
+		case <-e.finishCh:
+			return nil
+		case e.resultChannel <- rowWithError{row: row}:
+		}
+		injectParallelSortRandomFail(1)
+	}
+}
+
 func (e *TopNExec) generateTopNResultsWithSpill() error {
 	inDiskNum := len(e.spillHelper.sortedRowsInDisk)
 	if inDiskNum == 0 {
@@ -435,14 +462,7 @@ func (e *TopNExec) generateTopNResultsWithSpill() error {
 		}
 		return nil
 	}
-	return generateResultWithMulWayMerge(
-		e.spillHelper.sortedRowsInDisk,
-		e.resultChannel,
-		e.finishCh,
-		e.lessRow,
-		int64(e.Limit.Offset),
-		int64(e.Limit.Offset+e.Limit.Count),
-	)
+	return e.generateResultWithMultiWayMerge()
 }
 
 func (e *TopNExec) generateTopNResults() {
