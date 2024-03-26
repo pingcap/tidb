@@ -62,6 +62,7 @@ go_test(
         "engine_test.go",
         "file_test.go",
         "iter_test.go",
+        "merge_test.go",
         "misc_bench_test.go",
         "onefile_writer_test.go",
         "reader_test.go",

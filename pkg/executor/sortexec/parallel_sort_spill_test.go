@@ -31,7 +31,7 @@ var hardLimit2 = hardLimit1 * 10
 
 func oneSpillCase(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
 	if exe == nil {
-		exe = buildSortExec(ctx, sortCase, dataSource)
+		exe = buildSortExec(sortCase, dataSource)
 	}
 	dataSource.PrepareChunks()
 	resultChunks := executeSortExecutor(t, exe, true)
@@ -47,7 +47,7 @@ func oneSpillCase(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortC
 
 func inMemoryThenSpill(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
 	if exe == nil {
-		exe = buildSortExec(ctx, sortCase, dataSource)
+		exe = buildSortExec(sortCase, dataSource)
 	}
 	dataSource.PrepareChunks()
 	resultChunks := executeSortExecutorAndManullyTriggerSpill(t, exe, hardLimit2, ctx.GetSessionVars().StmtCtx.MemTracker, true)
@@ -62,7 +62,7 @@ func inMemoryThenSpill(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, 
 
 func failpointNoMemoryDataTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
 	if exe == nil {
-		exe = buildSortExec(ctx, sortCase, dataSource)
+		exe = buildSortExec(sortCase, dataSource)
 	}
 	dataSource.PrepareChunks()
 	executeInFailpoint(t, exe, 0, nil)
@@ -70,7 +70,7 @@ func failpointNoMemoryDataTest(t *testing.T, ctx *mock.Context, exe *sortexec.So
 
 func failpointDataInMemoryThenSpillTest(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
 	if exe == nil {
-		exe = buildSortExec(ctx, sortCase, dataSource)
+		exe = buildSortExec(sortCase, dataSource)
 	}
 	dataSource.PrepareChunks()
 	executeInFailpoint(t, exe, hardLimit2, ctx.GetSessionVars().MemTracker)
@@ -93,8 +93,8 @@ func TestParallelSortSpillDisk(t *testing.T) {
 	// ctx.GetSessionVars().EnableParallelSort = true
 
 	schema := expression.NewSchema(sortCase.Columns()...)
-	dataSource := buildDataSource(ctx, sortCase, schema)
-	exe := buildSortExec(ctx, sortCase, dataSource)
+	dataSource := buildDataSource(sortCase, schema)
+	exe := buildSortExec(sortCase, dataSource)
 	for i := 0; i < 10; i++ {
 		oneSpillCase(t, ctx, nil, sortCase, schema, dataSource)
 		oneSpillCase(t, ctx, exe, sortCase, schema, dataSource)
@@ -127,8 +127,8 @@ func TestParallelSortSpillDiskFailpoint(t *testing.T) {
 	// ctx.GetSessionVars().EnableParallelSort = true
 
 	schema := expression.NewSchema(sortCase.Columns()...)
-	dataSource := buildDataSource(ctx, sortCase, schema)
-	exe := buildSortExec(ctx, sortCase, dataSource)
+	dataSource := buildDataSource(sortCase, schema)
+	exe := buildSortExec(sortCase, dataSource)
 	for i := 0; i < 20; i++ {
 		failpointNoMemoryDataTest(t, ctx, nil, sortCase, schema, dataSource)
 		failpointNoMemoryDataTest(t, ctx, exe, sortCase, schema, dataSource)

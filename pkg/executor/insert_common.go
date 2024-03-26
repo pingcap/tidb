@@ -1170,6 +1170,28 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 	return false
 }
 
+func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transaction, uk *keyValueWithDupInfo, replace bool, r toBeCheckedRow) (bool, error) {
+	if !replace {
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+		if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic && e.Ctx().GetSessionVars().LockUnchangedKeys {
+			txnCtx.AddUnchangedKeyForLock(uk.newKey)
+		}
+		return true, nil
+	}
+	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
+	if err != nil {
+		return false, err
+	}
+	if handle == nil {
+		return false, nil
+	}
+	_, err = e.removeRow(ctx, txn, handle, r, true)
+	if err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
 func (e *InsertValues) batchCheckAndInsert(
@@ -1214,7 +1236,6 @@ func (e *InsertValues) batchCheckAndInsert(
 	}
 
 	// append warnings and get no duplicated error rows
-CheckAndInsert:
 	for i, r := range toBeCheckedRows {
 		if r.ignored {
 			continue
@@ -1250,40 +1271,42 @@ CheckAndInsert:
 			}
 		}
 
+		rowInserted := false
 		for _, uk := range r.uniqueKeys {
 			_, err := txn.Get(ctx, uk.newKey)
-			if err == nil {
-				if !replace {
-					// If duplicate keys were found in BatchGet, mark row = nil.
-					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-					if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
-						e.Ctx().GetSessionVars().LockUnchangedKeys {
-						// lock duplicated unique key on insert-ignore
-						txnCtx.AddUnchangedKeyForLock(uk.newKey)
-					}
-					continue CheckAndInsert
-				}
-				_, handle, err := tables.FetchDuplicatedHandle(
-					ctx,
-					uk.newKey,
-					true,
-					txn,
-					e.Table.Meta().ID,
-					uk.commonHandle,
-				)
-				if err != nil {
-					return err
-				}
-				if handle == nil {
-					continue
-				}
-				_, err = e.removeRow(ctx, txn, handle, r, true)
-				if err != nil {
-					return err
-				}
-			} else if !kv.IsErrNotFound(err) {
+			if err != nil && !kv.IsErrNotFound(err) {
 				return err
 			}
+			if err == nil {
+				rowInserted, err = e.handleDuplicateKey(ctx, txn, uk, replace, r)
+				if err != nil {
+					return err
+				}
+				if rowInserted {
+					break
+				}
+				continue
+			}
+			if tablecodec.IsTempIndexKey(uk.newKey) {
+				tablecodec.TempIndexKey2IndexKey(uk.newKey)
+				_, err = txn.Get(ctx, uk.newKey)
+				if err != nil && !kv.IsErrNotFound(err) {
+					return err
+				}
+				if err == nil {
+					rowInserted, err = e.handleDuplicateKey(ctx, txn, uk, replace, r)
+					if err != nil {
+						return err
+					}
+					if rowInserted {
+						break
+					}
+				}
+			}
+		}
+
+		if rowInserted {
+			continue
 		}
 
 		// If row was checked with no duplicate keys,

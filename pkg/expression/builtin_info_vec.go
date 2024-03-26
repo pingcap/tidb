@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -53,8 +54,12 @@ func (b *builtinConnectionIDSig) vectorized() bool {
 }
 
 func (b *builtinConnectionIDSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	data, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
+
 	n := input.NumRows()
-	data := ctx.GetSessionVars()
 	if data == nil {
 		return errors.Errorf("Missing session variable in `builtinConnectionIDSig.vecEvalInt`")
 	}
@@ -88,10 +93,15 @@ func (b *builtinRowCountSig) vectorized() bool {
 // evalInt evals ROW_COUNT().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count
 func (b *builtinRowCountSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
+
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	res := ctx.GetSessionVars().StmtCtx.PrevAffectedRows
+	res := vars.StmtCtx.PrevAffectedRows
 	for i := 0; i < n; i++ {
 		i64s[i] = res
 	}
@@ -126,7 +136,10 @@ func (b *builtinCurrentResourceGroupSig) vectorized() bool {
 }
 
 func (b *builtinCurrentResourceGroupSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	data := ctx.GetSessionVars()
+	data, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
 	if data == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -207,7 +220,13 @@ func (b *builtinTiDBIsDDLOwnerSig) vectorized() bool {
 func (b *builtinTiDBIsDDLOwnerSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	var res int64
-	if ctx.IsDDLOwner() {
+
+	isOwner, err := b.IsDDLOwner(ctx)
+	if err != nil {
+		return err
+	}
+
+	if isOwner {
 		res = 1
 	}
 	result.ResizeInt64(n, false)
@@ -223,7 +242,11 @@ func (b *builtinFoundRowsSig) vectorized() bool {
 }
 
 func (b *builtinFoundRowsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	data := ctx.GetSessionVars()
+	data, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
+
 	if data == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -312,10 +335,15 @@ func (b *builtinLastInsertIDSig) vectorized() bool {
 }
 
 func (b *builtinLastInsertIDSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
+
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	res := int64(ctx.GetSessionVars().StmtCtx.PrevLastInsertID)
+	res := int64(vars.StmtCtx.PrevLastInsertID)
 	for i := 0; i < n; i++ {
 		i64s[i] = res
 	}
@@ -327,13 +355,17 @@ func (b *builtinLastInsertIDWithIDSig) vectorized() bool {
 }
 
 func (b *builtinLastInsertIDWithIDSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
 	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
 		return err
 	}
 	i64s := result.Int64s()
 	for i := len(i64s) - 1; i >= 0; i-- {
 		if !result.IsNull(i) {
-			ctx.GetSessionVars().SetLastInsertID(uint64(i64s[i]))
+			vars.SetLastInsertID(uint64(i64s[i]))
 			break
 		}
 	}
@@ -368,16 +400,24 @@ func (b *builtinTiDBDecodeKeySig) vecEvalString(ctx EvalContext, input *chunk.Ch
 		return err
 	}
 	result.ReserveString(n)
-	decode := func(ctx EvalContext, s string) string { return s }
-	if fn := ctx.Value(TiDBDecodeKeyFunctionKey); fn != nil {
-		decode = fn.(func(ctx EvalContext, s string) string)
+
+	is, err := b.GetDomainInfoSchema(ctx)
+	if err != nil {
+		return err
+	}
+
+	decode := DecodeKeyFromString
+	if decode == nil {
+		decode = func(_ types.Context, _ infoschema.InfoSchemaMetaVersion, s string) string {
+			return s
+		}
 	}
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(decode(ctx, buf.GetString(i)))
+		result.AppendString(decode(ctx.TypeCtx(), is, buf.GetString(i)))
 	}
 	return nil
 }

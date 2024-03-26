@@ -30,7 +30,6 @@ go_test(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/sqlescape",
-        "//pkg/util/sqlexec",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/coprocessor",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",

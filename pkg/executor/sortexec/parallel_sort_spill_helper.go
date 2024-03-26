@@ -55,6 +55,12 @@ func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldTyp
 	}
 }
 
+func (p *parallelSortSpillHelper) close() {
+	for _, inDisk := range p.sortedRowsInDisk {
+		inDisk.Close()
+	}
+}
+
 func (p *parallelSortSpillHelper) isNotSpilledNoLock() bool {
 	return p.spillStatus == notSpilled
 }
@@ -117,8 +123,12 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 				workerWaiter.Done()
 			}()
 
-			sortedRowsIters[idx] = chunk.NewIterator4Slice(nil)
-			sortedRowsIters[idx].Reset(p.sortExec.Parallel.workers[idx].sortLocalRows())
+			sortedRows, err := p.sortExec.Parallel.workers[idx].sortLocalRows()
+			if err != nil {
+				p.errOutputChan <- rowWithError{err: err}
+				return
+			}
+			sortedRowsIters[idx] = chunk.NewIterator4Slice(sortedRows)
 			injectParallelSortRandomFail(200)
 		}(i)
 	}
@@ -135,8 +145,9 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 		totalRows += sortedRowsIters[i].Len()
 	}
 
-	merger := newMultiWayMerger(sortedRowsIters, p.lessRowFunc)
-	merger.init()
+	source := &memorySource{sortedRowsIters: sortedRowsIters}
+	merger := newMultiWayMerger(source, p.lessRowFunc)
+	_ = merger.init()
 	return p.spillImpl(merger)
 }
 
@@ -176,7 +187,11 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 		injectParallelSortRandomFail(200)
 
 		for {
-			row := merger.next()
+			row, err := merger.next()
+			if err != nil {
+				p.errOutputChan <- rowWithError{err: err}
+				break
+			}
 			if row.IsEmpty() {
 				break
 			}

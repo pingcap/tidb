@@ -590,14 +590,14 @@ func (cr *chunkProcessor) deliverLoop(
 	hasMoreKVs := true
 	var startRealOffset, currRealOffset int64 // save to 0 at first
 
+	keyspace := keyspace.CodecV1.GetKeyspace()
+	if t.kvStore != nil {
+		keyspace = t.kvStore.GetCodec().GetKeyspace()
+	}
 	for hasMoreKVs {
-		c := keyspace.CodecV1
-		if t.kvStore != nil {
-			c = t.kvStore.GetCodec()
-		}
 		var (
-			dataChecksum  = verify.NewKVChecksumWithKeyspace(c)
-			indexChecksum = verify.NewKVChecksumWithKeyspace(c)
+			dataChecksum  = verify.NewKVChecksumWithKeyspace(keyspace)
+			indexChecksum = verify.NewKVChecksumWithKeyspace(keyspace)
 		)
 		var columns []string
 		var kvPacket []deliveredKVs

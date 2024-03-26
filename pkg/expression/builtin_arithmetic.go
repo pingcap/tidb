@@ -714,7 +714,7 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(ctx EvalContext, row chu
 	}
 
 	c := &types.MyDecimal{}
-	err = types.DecimalDiv(a, b, c, ctx.GetSessionVars().GetDivPrecisionIncrement())
+	err = types.DecimalDiv(a, b, c, ctx.GetDivPrecisionIncrement())
 	if err == types.ErrDivByZero {
 		return c, true, handleDivisionByZeroError(ctx)
 	} else if err == types.ErrTruncated {
@@ -829,7 +829,7 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(ctx EvalContext, row chun
 	}
 
 	c := &types.MyDecimal{}
-	err = types.DecimalDiv(num[0], num[1], c, ctx.GetSessionVars().GetDivPrecisionIncrement())
+	err = types.DecimalDiv(num[0], num[1], c, ctx.GetDivPrecisionIncrement())
 	if err == types.ErrDivByZero {
 		return 0, true, handleDivisionByZeroError(ctx)
 	}
