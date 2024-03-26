@@ -90,14 +90,13 @@ func (j *leftOuterJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult)
 		currentRow := j.rowIter.getValue()
 		if !meta.isCurrentRowUsed(currentRow) {
 			// append build side of this row
-			j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{buildRowStart: currentRow}, joinResult.Chk, 0)
-			joinResult.Chk.IncNumVirtualRows()
+			j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{buildRowStart: currentRow}, joinResult.Chk, 0, false)
 			insertedRows++
 		}
 		j.rowIter.next()
 	}
 	if len(j.cachedBuildRows) > 0 {
-		j.batchConstructBuildRows(joinResult.Chk, 0)
+		j.batchConstructBuildRows(joinResult.Chk, 0, false)
 	}
 	// append probe side in batch
 	colOffset := len(j.lUsed)
@@ -144,11 +143,11 @@ func (j *leftOuterJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, j
 			if result {
 				rowIndexInfo := j.rowIndexInfos[index]
 				j.isNotMatchedRows[rowIndexInfo.probeRowIndex] = false
-				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo, chk, meta.columnCountNeededForOtherCondition)
+				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo, chk, meta.columnCountNeededForOtherCondition, false)
 			}
 		}
 		if len(j.cachedBuildRows) > 0 {
-			j.batchConstructBuildRows(chk, meta.columnCountNeededForOtherCondition)
+			j.batchConstructBuildRows(chk, meta.columnCountNeededForOtherCondition, false)
 		}
 	}
 	if !markedJoined {
@@ -192,6 +191,7 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 	meta := j.ctx.hashTableMeta
 	length := 0
 	startProbeRow := j.currentProbeRow
+	hasOtherCondition := j.ctx.hasOtherCondition()
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
 		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
@@ -199,13 +199,12 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
-				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow}, joinedChk, 0)
-				if !j.ctx.hasOtherCondition() {
+				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow}, joinedChk, 0, hasOtherCondition)
+				if !hasOtherCondition {
 					// has no other condition, key match mean join match
 					j.isNotMatchedRows[j.currentProbeRow] = false
 				}
 				length++
-				joinedChk.IncNumVirtualRows()
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
@@ -215,10 +214,10 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 		}
 		remainCap--
 	}
-	j.appendOffsetAndLength(j.currentProbeRow, length)
 	if len(j.cachedBuildRows) > 0 {
-		j.batchConstructBuildRows(joinedChk, 0)
+		j.batchConstructBuildRows(joinedChk, 0, true)
 	}
+	j.appendOffsetAndLength(j.currentProbeRow, length)
 	j.appendProbeRowToChunk(joinedChk, j.currentChunk)
 
 	if j.ctx.hasOtherCondition() {
@@ -242,6 +241,7 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, remainCap int) (err error) {
 	meta := j.ctx.hashTableMeta
 	length := 0
+	hasOtherCondition := j.ctx.hasOtherCondition()
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
 		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
@@ -249,13 +249,12 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 			candidateRow := j.matchedRowsHeaders[j.currentProbeRow]
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// join key match
-				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow}, joinedChk, 0)
-				if !j.ctx.hasOtherCondition() {
+				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow}, joinedChk, 0, hasOtherCondition)
+				if !hasOtherCondition {
 					// has no other condition, key match means join match
 					meta.setUsedFlag(candidateRow)
 				}
 				length++
-				joinedChk.IncNumVirtualRows()
 				remainCap--
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
@@ -264,6 +263,9 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 			length = 0
 			j.advanceCurrentProbeRow()
 		}
+	}
+	if len(j.cachedBuildRows) > 0 {
+		j.batchConstructBuildRows(joinedChk, 0, hasOtherCondition)
 	}
 	j.appendOffsetAndLength(j.currentProbeRow, length)
 	j.appendProbeRowToChunk(joinedChk, j.currentChunk)
