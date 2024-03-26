@@ -416,9 +416,15 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
-			resultsCh <- &statistics.AnalyzeResults{
-				Err: getAnalyzePanicErr(r),
+			// If errExitCh is closed, it means the whole analyze task is aborted. So we do not need to send the result to resultsCh.
+			err := getAnalyzePanicErr(r)
+			select {
+			case resultsCh <- &statistics.AnalyzeResults{
+				Err: err,
 				Job: task.job,
+			}:
+			case <-e.errExitCh:
+				logutil.BgLogger().Error("analyze worker exits because the whole analyze task is aborted", zap.Error(err))
 			}
 		}
 	}()
