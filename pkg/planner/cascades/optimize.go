@@ -16,6 +16,7 @@ package cascades
 
 import (
 	"container/list"
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -32,7 +33,7 @@ var DefaultOptimizer = NewOptimizer()
 // Optimizer is the struct for cascades optimizer.
 type Optimizer struct {
 	transformationRuleBatches []TransformationRuleBatch
-	implementationRuleMap     map[memo.Operand][]ImplementationRule
+	implementationRuleMap     map[pattern.Operand][]ImplementationRule
 }
 
 // NewOptimizer returns a cascades optimizer with default transformation
@@ -51,7 +52,7 @@ func (opt *Optimizer) ResetTransformationRules(ruleBatches ...TransformationRule
 }
 
 // ResetImplementationRules resets the implementationRuleMap of the optimizer, and returns the optimizer.
-func (opt *Optimizer) ResetImplementationRules(rules map[memo.Operand][]ImplementationRule) *Optimizer {
+func (opt *Optimizer) ResetImplementationRules(rules map[pattern.Operand][]ImplementationRule) *Optimizer {
 	opt.implementationRuleMap = rules
 	return opt
 }
@@ -59,7 +60,7 @@ func (opt *Optimizer) ResetImplementationRules(rules map[memo.Operand][]Implemen
 // GetImplementationRules gets all the candidate implementation rules of the optimizer
 // for the logical plan node.
 func (opt *Optimizer) GetImplementationRules(node plannercore.LogicalPlan) []ImplementationRule {
-	return opt.implementationRuleMap[memo.GetOperand(node)]
+	return opt.implementationRuleMap[pattern.GetOperand(node)]
 }
 
 // FindBestPlan is the optimization entrance of the cascades planner. The
@@ -172,7 +173,7 @@ func (opt *Optimizer) exploreGroup(g *memo.Group, round int, ruleBatch Transform
 // findMoreEquiv finds and applies the matched transformation rules.
 func (*Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element, round int, ruleBatch TransformationRuleBatch) (eraseCur bool, err error) {
 	expr := elem.Value.(*memo.GroupExpr)
-	operand := memo.GetOperand(expr.ExprNode)
+	operand := pattern.GetOperand(expr.ExprNode)
 	for _, rule := range ruleBatch[operand] {
 		pattern := rule.GetPattern()
 		if !pattern.Operand.Match(operand) {

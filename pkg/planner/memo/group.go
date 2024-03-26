@@ -17,60 +17,12 @@ package memo
 import (
 	"container/list"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/property"
 )
-
-// EngineType is determined by whether it's above or below `Gather`s.
-// Plan will choose the different engine to be implemented/executed on according to its EngineType.
-// Different engine may support different operators with different cost, so we should design
-// different transformation and implementation rules for each engine.
-type EngineType uint
-
-const (
-	// EngineTiDB stands for groups which is above `Gather`s and will be executed in TiDB layer.
-	EngineTiDB EngineType = 1 << iota
-	// EngineTiKV stands for groups which is below `Gather`s and will be executed in TiKV layer.
-	EngineTiKV
-	// EngineTiFlash stands for groups which is below `Gather`s and will be executed in TiFlash layer.
-	EngineTiFlash
-)
-
-// EngineTypeSet is the bit set of EngineTypes.
-type EngineTypeSet uint
-
-const (
-	// EngineTiDBOnly is the EngineTypeSet for EngineTiDB only.
-	EngineTiDBOnly = EngineTypeSet(EngineTiDB)
-	// EngineTiKVOnly is the EngineTypeSet for EngineTiKV only.
-	EngineTiKVOnly = EngineTypeSet(EngineTiKV)
-	// EngineTiFlashOnly is the EngineTypeSet for EngineTiFlash only.
-	EngineTiFlashOnly = EngineTypeSet(EngineTiFlash)
-	// EngineTiKVOrTiFlash is the EngineTypeSet for (EngineTiKV | EngineTiFlash).
-	EngineTiKVOrTiFlash = EngineTypeSet(EngineTiKV | EngineTiFlash)
-	// EngineAll is the EngineTypeSet for all of the EngineTypes.
-	EngineAll = EngineTypeSet(EngineTiDB | EngineTiKV | EngineTiFlash)
-)
-
-// Contains checks whether the EngineTypeSet contains the EngineType.
-func (e EngineTypeSet) Contains(tp EngineType) bool {
-	return uint(e)&uint(tp) != 0
-}
-
-// String implements fmt.Stringer interface.
-func (e EngineType) String() string {
-	switch e {
-	case EngineTiDB:
-		return "EngineTiDB"
-	case EngineTiKV:
-		return "EngineTiKV"
-	case EngineTiFlash:
-		return "EngineTiFlash"
-	}
-	return "UnknownEngineType"
-}
 
 // ExploreMark is uses to mark whether a Group or GroupExpr has
 // been fully explored by a transformation rule batch.
@@ -96,13 +48,13 @@ func (m *ExploreMark) Explored(round int) bool {
 type Group struct {
 	Equivalents *list.List
 
-	FirstExpr    map[Operand]*list.Element
+	FirstExpr    map[pattern.Operand]*list.Element
 	Fingerprints map[string]*list.Element
 
 	ImplMap map[string]Implementation
 	Prop    *property.LogicalProperty
 
-	EngineType EngineType
+	EngineType pattern.EngineType
 
 	SelfFingerprint string
 
@@ -123,17 +75,17 @@ func NewGroupWithSchema(e *GroupExpr, s *expression.Schema) *Group {
 	g := &Group{
 		Equivalents:  list.New(),
 		Fingerprints: make(map[string]*list.Element),
-		FirstExpr:    make(map[Operand]*list.Element),
+		FirstExpr:    make(map[pattern.Operand]*list.Element),
 		ImplMap:      make(map[string]Implementation),
 		Prop:         prop,
-		EngineType:   EngineTiDB,
+		EngineType:   pattern.EngineTiDB,
 	}
 	g.Insert(e)
 	return g
 }
 
 // SetEngineType sets the engine type of the group.
-func (g *Group) SetEngineType(e EngineType) *Group {
+func (g *Group) SetEngineType(e pattern.EngineType) *Group {
 	g.EngineType = e
 	return g
 }
@@ -152,7 +104,7 @@ func (g *Group) Insert(e *GroupExpr) bool {
 		return false
 	}
 
-	operand := GetOperand(e.ExprNode)
+	operand := pattern.GetOperand(e.ExprNode)
 	var newEquiv *list.Element
 	mark, hasMark := g.FirstExpr[operand]
 	if hasMark {
@@ -174,12 +126,12 @@ func (g *Group) Delete(e *GroupExpr) {
 		return // Can not find the target GroupExpr.
 	}
 
-	operand := GetOperand(equiv.Value.(*GroupExpr).ExprNode)
+	operand := pattern.GetOperand(equiv.Value.(*GroupExpr).ExprNode)
 	if g.FirstExpr[operand] == equiv {
 		// The target GroupExpr is the first Element of the same Operand.
 		// We need to change the FirstExpr to the next Expr, or delete the FirstExpr.
 		nextElem := equiv.Next()
-		if nextElem != nil && GetOperand(nextElem.Value.(*GroupExpr).ExprNode) == operand {
+		if nextElem != nil && pattern.GetOperand(nextElem.Value.(*GroupExpr).ExprNode) == operand {
 			g.FirstExpr[operand] = nextElem
 		} else {
 			// There is no more GroupExpr of the Operand, so we should
@@ -197,7 +149,7 @@ func (g *Group) Delete(e *GroupExpr) {
 func (g *Group) DeleteAll() {
 	g.Equivalents = list.New()
 	g.Fingerprints = make(map[string]*list.Element)
-	g.FirstExpr = make(map[Operand]*list.Element)
+	g.FirstExpr = make(map[pattern.Operand]*list.Element)
 	g.SelfFingerprint = ""
 }
 
@@ -209,8 +161,8 @@ func (g *Group) Exists(e *GroupExpr) bool {
 
 // GetFirstElem returns the first Group expression which matches the Operand.
 // Return a nil pointer if there isn't.
-func (g *Group) GetFirstElem(operand Operand) *list.Element {
-	if operand == OperandAny {
+func (g *Group) GetFirstElem(operand pattern.Operand) *list.Element {
+	if operand == pattern.OperandAny {
 		return g.Equivalents.Front()
 	}
 	return g.FirstExpr[operand]

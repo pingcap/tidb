@@ -15,6 +15,7 @@
 package cascades
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"math"
 
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -38,7 +39,7 @@ type Enforcer interface {
 // GetEnforcerRules gets all candidate enforcer rules based
 // on required physical property.
 func GetEnforcerRules(g *memo.Group, prop *property.PhysicalProperty) (enforcers []Enforcer) {
-	if g.EngineType != memo.EngineTiDB {
+	if g.EngineType != pattern.EngineTiDB {
 		return
 	}
 	if !prop.IsSortItemEmpty() {

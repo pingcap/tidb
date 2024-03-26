@@ -16,6 +16,7 @@ package cascades
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -30,12 +31,12 @@ import (
 
 func TestGroupStringer(t *testing.T) {
 	optimizer := NewOptimizer()
-	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
-		memo.OperandSelection: {
+	optimizer.ResetTransformationRules(map[pattern.Operand][]Transformation{
+		pattern.OperandSelection: {
 			NewRulePushSelDownTiKVSingleGather(),
 			NewRulePushSelDownTableScan(),
 		},
-		memo.OperandDataSource: {
+		pattern.OperandDataSource: {
 			NewRuleEnumeratePaths(),
 		},
 	})

@@ -16,6 +16,7 @@ package cascades
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"math"
 	"testing"
 
@@ -116,8 +117,8 @@ func TestPreparePossibleProperties(t *testing.T) {
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 	optimizer := NewOptimizer()
 
-	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
-		memo.OperandDataSource: {
+	optimizer.ResetTransformationRules(map[pattern.Operand][]Transformation{
+		pattern.OperandDataSource: {
 			NewRuleEnumeratePaths(),
 		},
 	})
@@ -212,9 +213,9 @@ func TestAppliedRuleSet(t *testing.T) {
 	optimizer := NewOptimizer()
 
 	rule := fakeTransformation{}
-	rule.pattern = memo.NewPattern(memo.OperandProjection, memo.EngineAll)
-	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
-		memo.OperandProjection: {
+	rule.pattern = pattern.NewPattern(pattern.OperandProjection, memo.EngineAll)
+	optimizer.ResetTransformationRules(map[pattern.Operand][]Transformation{
+		pattern.OperandProjection: {
 			&rule,
 		},
 	})

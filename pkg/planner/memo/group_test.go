@@ -16,6 +16,7 @@ package memo
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -73,12 +74,12 @@ func TestGroupDeleteAll(t *testing.T) {
 	require.True(t, g.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0))))
 	require.True(t, g.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0))))
 	require.Equal(t, 3, g.Equivalents.Len())
-	require.NotNil(t, g.GetFirstElem(OperandProjection))
+	require.NotNil(t, g.GetFirstElem(pattern.OperandProjection))
 	require.True(t, g.Exists(expr))
 
 	g.DeleteAll()
 	require.Equal(t, 0, g.Equivalents.Len())
-	require.Nil(t, g.GetFirstElem(OperandProjection))
+	require.Nil(t, g.GetFirstElem(pattern.OperandProjection))
 	require.False(t, g.Exists(expr))
 }
 
@@ -170,9 +171,9 @@ func TestGroupGetFirstElem(t *testing.T) {
 	g.Insert(expr3)
 	g.Insert(expr4)
 
-	require.Equal(t, expr0, g.GetFirstElem(OperandProjection).Value.(*GroupExpr))
-	require.Equal(t, expr1, g.GetFirstElem(OperandLimit).Value.(*GroupExpr))
-	require.Equal(t, expr0, g.GetFirstElem(OperandAny).Value.(*GroupExpr))
+	require.Equal(t, expr0, g.GetFirstElem(pattern.OperandProjection).Value.(*GroupExpr))
+	require.Equal(t, expr1, g.GetFirstElem(pattern.OperandLimit).Value.(*GroupExpr))
+	require.Equal(t, expr0, g.GetFirstElem(pattern.OperandAny).Value.(*GroupExpr))
 }
 
 type fakeImpl struct {
@@ -204,28 +205,6 @@ func TestGetInsertGroupImpl(t *testing.T) {
 	require.Nil(t, g.GetImpl(orderProp))
 }
 
-func TestEngineTypeSet(t *testing.T) {
-	require.True(t, EngineAll.Contains(EngineTiDB))
-	require.True(t, EngineAll.Contains(EngineTiKV))
-	require.True(t, EngineAll.Contains(EngineTiFlash))
-
-	require.True(t, EngineTiDBOnly.Contains(EngineTiDB))
-	require.False(t, EngineTiDBOnly.Contains(EngineTiKV))
-	require.False(t, EngineTiDBOnly.Contains(EngineTiFlash))
-
-	require.False(t, EngineTiKVOnly.Contains(EngineTiDB))
-	require.True(t, EngineTiKVOnly.Contains(EngineTiKV))
-	require.False(t, EngineTiKVOnly.Contains(EngineTiFlash))
-
-	require.False(t, EngineTiFlashOnly.Contains(EngineTiDB))
-	require.False(t, EngineTiFlashOnly.Contains(EngineTiKV))
-	require.True(t, EngineTiFlashOnly.Contains(EngineTiFlash))
-
-	require.False(t, EngineTiKVOrTiFlash.Contains(EngineTiDB))
-	require.True(t, EngineTiKVOrTiFlash.Contains(EngineTiKV))
-	require.True(t, EngineTiKVOrTiFlash.Contains(EngineTiFlash))
-}
-
 func TestFirstElemAfterDelete(t *testing.T) {
 	ctx := plannercore.MockContext()
 	defer func() {
@@ -236,13 +215,13 @@ func TestFirstElemAfterDelete(t *testing.T) {
 	g := NewGroupWithSchema(oldExpr, expression.NewSchema())
 	newExpr := NewGroupExpr(plannercore.LogicalLimit{Count: 20}.Init(ctx, 0))
 	g.Insert(newExpr)
-	require.NotNil(t, g.GetFirstElem(OperandLimit))
-	require.Equal(t, oldExpr, g.GetFirstElem(OperandLimit).Value)
+	require.NotNil(t, g.GetFirstElem(pattern.OperandLimit))
+	require.Equal(t, oldExpr, g.GetFirstElem(pattern.OperandLimit).Value)
 	g.Delete(oldExpr)
-	require.NotNil(t, g.GetFirstElem(OperandLimit))
-	require.Equal(t, newExpr, g.GetFirstElem(OperandLimit).Value)
+	require.NotNil(t, g.GetFirstElem(pattern.OperandLimit))
+	require.Equal(t, newExpr, g.GetFirstElem(pattern.OperandLimit).Value)
 	g.Delete(newExpr)
-	require.Nil(t, g.GetFirstElem(OperandLimit))
+	require.Nil(t, g.GetFirstElem(pattern.OperandLimit))
 }
 
 func TestBuildKeyInfo(t *testing.T) {
