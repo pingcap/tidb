@@ -129,7 +129,7 @@ func (cfg *RestoreCommonConfig) adjust() {
 		cfg.MergeSmallRegionSizeBytes.Value = conn.DefaultMergeRegionSizeBytes
 	}
 	if len(cfg.Granularity) == 0 {
-		cfg.Granularity = string(restore.FineGrained)
+		cfg.Granularity = string(restore.CoarseGrained)
 	}
 	if !cfg.ConcurrencyPerStore.Modified {
 		cfg.ConcurrencyPerStore.Value = conn.DefaultImportNumGoroutines
