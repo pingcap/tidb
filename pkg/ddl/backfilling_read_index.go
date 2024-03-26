@@ -66,6 +66,7 @@ func newReadIndexExecutor(
 	jc *JobContext,
 	bcGetter func() (ingest.BackendCtx, error),
 	cloudStorageURI string,
+	avgRowSize int,
 ) (*readIndexExecutor, error) {
 	bc, err := bcGetter()
 	if err != nil {
@@ -79,14 +80,14 @@ func newReadIndexExecutor(
 		jc:              jc,
 		bc:              bc,
 		cloudStorageURI: cloudStorageURI,
+		avgRowSize:      avgRowSize,
 		curRowCount:     &atomic.Int64{},
 	}, nil
 }
 
-func (r *readIndexExecutor) Init(ctx context.Context) error {
+func (*readIndexExecutor) Init(ctx context.Context) error {
 	logutil.BgLogger().Info("read index executor init subtask exec env",
 		zap.String("category", "ddl"))
-	r.avgRowSize = estimateRowSize(ctx, r.d.store, r.ptbl)
 	return nil
 }
 

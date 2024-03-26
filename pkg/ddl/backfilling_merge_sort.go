@@ -51,6 +51,7 @@ func newMergeSortExecutor(
 	idxNum int,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
+	avgRowSize int,
 ) (*mergeSortExecutor, error) {
 	return &mergeSortExecutor{
 		jobID:         jobID,
@@ -58,12 +59,12 @@ func newMergeSortExecutor(
 		store:         store,
 		ptbl:          ptbl,
 		cloudStoreURI: cloudStoreURI,
+		avgRowSize:    avgRowSize,
 	}, nil
 }
 
-func (m *mergeSortExecutor) Init(ctx context.Context) error {
+func (*mergeSortExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("merge sort executor init subtask exec env")
-	m.avgRowSize = estimateRowSize(ctx, m.store, m.ptbl)
 	return nil
 }
 

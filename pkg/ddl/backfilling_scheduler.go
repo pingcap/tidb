@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"math"
 	"sync"
@@ -35,20 +34,14 @@ import (
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
-	"github.com/pingcap/tidb/pkg/util/size"
-	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
@@ -94,7 +87,7 @@ func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.P
 	jobCtx *JobContext) (backfillScheduler, error) {
 	if tp == typeAddIndexWorker && info.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		ctx = logutil.WithCategory(ctx, "ddl-ingest")
-		return newIngestBackfillScheduler(ctx, info, sessPool, tbl, false), nil
+		return newIngestBackfillScheduler(ctx, info, sessPool, tbl, false)
 	}
 	return newTxnBackfillScheduler(ctx, info, sessPool, tp, tbl, sessCtx, jobCtx)
 }
@@ -336,9 +329,19 @@ type ingestBackfillScheduler struct {
 	checkpointMgr *ingest.CheckpointManager
 }
 
-func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
-	sessPool *sess.Pool, tbl table.PhysicalTable, distribute bool) *ingestBackfillScheduler {
-	avgRowSize := estimateRowSize(ctx, info.d.store, tbl)
+func newIngestBackfillScheduler(
+	ctx context.Context,
+	info *reorgInfo,
+	sessPool *sess.Pool,
+	tbl table.PhysicalTable,
+	distribute bool,
+) (*ingestBackfillScheduler, error) {
+	sctx, err := sessPool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer sessPool.Put(sctx)
+	avgRowSize := estimateTableRowSize(ctx, info.d.store, sctx.GetRestrictedSQLExecutor(), tbl)
 	return &ingestBackfillScheduler{
 		ctx:        ctx,
 		reorgInfo:  info,
@@ -349,7 +352,7 @@ func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
 		resultCh:   make(chan *backfillResult, backfillTaskChanSize),
 		poolErr:    make(chan error),
 		distribute: distribute,
-	}
+	}, nil
 }
 
 func (b *ingestBackfillScheduler) setupWorkers() error {
@@ -602,77 +605,4 @@ func newTaskIDAllocator() *taskIDAllocator {
 func (a *taskIDAllocator) alloc() int {
 	a.id++
 	return a.id
-}
-
-// estimateRowSize estimates the row size in bytes of a table.
-// This function tries to retrieve row size in following orders:
-//  1. statistic cache (require analyze table).
-//  2. region info's approximate key size / key number.
-func estimateRowSize(ctx context.Context, store kv.Storage, tbl table.Table) (sizeInBytes int) {
-	defer util.Recover(metrics.LabelDDL, "estimateRowSize", nil, false)
-	var gErr error
-	defer func() {
-		logutil.Logger(ctx).Info("estimate row size",
-			zap.Int64("tableID", tbl.Meta().ID), zap.Int("size", sizeInBytes), zap.Error(gErr))
-	}()
-	rowCount, avgRowLen, _, _ := cache.TableRowStatsCache.EstimateDataLength(tbl.Meta())
-	if rowCount != 0 {
-		return int(avgRowLen)
-	}
-	hStore, ok := store.(helper.Storage)
-	if !ok {
-		gErr = errors.New("not a helper.Storage")
-		return 0
-	}
-	h := &helper.Helper{
-		Store:       hStore,
-		RegionCache: hStore.GetRegionCache(),
-	}
-	pdCli, err := h.TryGetPDHTTPClient()
-	if err != nil {
-		gErr = err
-		return 0
-	}
-	pid := tbl.Meta().ID
-	if part := tbl.GetPartitionedTable(); part != nil {
-		pid = part.Meta().ID
-	}
-	sk, ek := tablecodec.GetTableHandleKeyRange(pid)
-	sRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
-	if err != nil {
-		gErr = err
-		return 0
-	}
-	eRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, ek))
-	if err != nil {
-		gErr = err
-		return 0
-	}
-	sk, err = hex.DecodeString(sRegion.StartKey)
-	if err != nil {
-		gErr = err
-		return 0
-	}
-	ek, err = hex.DecodeString(eRegion.EndKey)
-	if err != nil {
-		gErr = err
-		return 0
-	}
-	// We use the second region to prevent the influence of the front and back tables.
-	regionLimit := 3
-	regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(sk, ek), regionLimit)
-	if err != nil {
-		gErr = err
-		return 0
-	}
-	if len(regionInfos.Regions) != regionLimit {
-		gErr = errors.New("less than 3 regions")
-		return 0
-	}
-	sample := regionInfos.Regions[1]
-	if sample.ApproximateKeys == 0 || sample.ApproximateSize == 0 {
-		gErr = errors.New("zero approximate size")
-		return 0
-	}
-	return int(uint64(sample.ApproximateSize)*size.MB) / int(sample.ApproximateKeys)
 }
