@@ -870,7 +870,7 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 					continue
 				}
-				if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) && sem.IsInvisibleGlobalSysVar(v.Name) {
+				if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) {
 					continue
 				}
 				checker := privilege.GetPrivilegeManager(e.Ctx())
@@ -900,7 +900,7 @@ func (e *ShowExec) fetchShowVariables(ctx context.Context) (err error) {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 			continue
 		}
-		if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) && sem.IsInvisibleSysVar(v.Name) {
+		if infoschema.SysVarHiddenForSem(e.Ctx(), v.Name) {
 			continue
 		}
 		checker := privilege.GetPrivilegeManager(e.Ctx())

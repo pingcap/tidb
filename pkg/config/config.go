@@ -631,12 +631,13 @@ type SEM struct {
 	RestrictedTables              []RestrictedTable                `toml:"restricted_tables" json:"restricted_tables"`
 }
 
-// RestrictedTable is a table restricted under Security Enhanced Mode.
+// RestrictedTable refers to the limitation of  tables in Security Enhanced Mode.
 type RestrictedTable struct {
 	Schema string `toml:"schema" json:"schema"`
 	Name   string `toml:"name" json:"name"`
 }
 
+// RestrictedVariable refers to the limitation of variables in Security Enhanced Mode.
 type RestrictedVariable struct {
 	Name            string `toml:"name" json:"name"`
 	Scope           string `toml:"scope" json:"scope"`

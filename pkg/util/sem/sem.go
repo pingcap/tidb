@@ -75,6 +75,7 @@ var (
 	sysMapMutex sync.RWMutex
 )
 
+// isResVarAdmin is a flag to check if the user has the RESTRICTED_VARIABLES_ADMIN privilege
 var isResVarAdmin int32 = 0
 
 // CheckResVarAdmin checks if the user has the RESTRICTED_VARIABLES_ADMIN privilege
@@ -206,6 +207,7 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 	return false
 }
 
+// IsInvisibleGlobalSysVar returns true if the sysvar needs to be hidden
 func IsInvisibleGlobalSysVar(varNameInLower string) bool {
 	if !IsInvisibleSysVar(varNameInLower) {
 		return false
@@ -219,6 +221,7 @@ func IsInvisibleGlobalSysVar(varNameInLower string) bool {
 	return false
 }
 
+// IsReadOnlySysVar returns true if the sysvar is read-only
 func IsReadOnlySysVar(varNameInLower string) bool {
 	cfg := config.GetGlobalConfig()
 	for _, resvarName := range cfg.Security.SEM.RestrictedVariables {
@@ -229,6 +232,7 @@ func IsReadOnlySysVar(varNameInLower string) bool {
 	return false
 }
 
+// IsReadOnlyGlobalSysVar returns true if the sysvar is read-only
 func IsReadOnlyGlobalSysVar(varNameInLower string) bool {
 	if !IsReadOnlySysVar(varNameInLower) {
 		return false
