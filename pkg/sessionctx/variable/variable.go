@@ -574,10 +574,7 @@ func IsVarExists(name string) bool {
 	name = strings.ToLower(name)
 	sysVarsLock.RLock()
 	defer sysVarsLock.RUnlock()
-	if sysVars[name] != nil {
-		return true
-	}
-	return false
+	return sysVars[name] != nil
 }
 
 // RegisterSysVar adds a sysvar to the SysVars list
