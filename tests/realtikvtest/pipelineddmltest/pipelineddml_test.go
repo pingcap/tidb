@@ -582,68 +582,62 @@ func TestPipelinedDMLMemoryTest(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	var wg sync.WaitGroup
-	for _, dmlType := range []string{"standard", "bulk"} {
-		for _, stmtType := range []string{"insert", "update", "delete"} {
-			wg.Add(1)
-			go func(dmlType string, stmtType string) {
-				defer wg.Done()
-				table := fmt.Sprintf("t_%s_%s", dmlType, stmtType)
-				tk := testkit.NewTestKit(t, store)
-				tk.MustExec("use test")
-				tk.MustExec("drop table if exists " + table)
-				tk.MustExec("create table " + table + " (a int, b int, c varchar(1024), unique index idx(b))")
-				if stmtType == "insert" {
-					tk.MustExec("create table _" + table + " like " + table)
-				}
+	for _, stmtType := range []string{"insert", "update", "delete"} {
+		wg.Add(1)
+		go func(stmtType string) {
+			defer wg.Done()
+			table := fmt.Sprintf("t_%s", stmtType)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("drop table if exists " + table)
+			tk.MustExec("create table " + table + " (a int, b int, c varchar(1024), unique index idx(b))")
+			if stmtType == "insert" {
+				tk.MustExec("create table _" + table + " like " + table)
+			}
 
-				cnt := 100000
-				buf := bytes.NewBuffer(make([]byte, 0, 10240))
-				fmt.Fprintf(buf, "insert into %s values ", table)
-				for i := 0; i < cnt; i++ {
-					if i > 0 {
-						buf.WriteString(", ")
-					}
-					buf.WriteString(fmt.Sprintf("(%d, %d, 'abcdefghijklmnopqrstuvwxyz1234567890,.?+-=_!@#$&*()_+')", i, i))
+			cnt := 100000
+			buf := bytes.NewBuffer(make([]byte, 0, 10240))
+			fmt.Fprintf(buf, "insert into %s values ", table)
+			for i := 0; i < cnt; i++ {
+				if i > 0 {
+					buf.WriteString(", ")
 				}
-				tk.MustExec(buf.String())
+				buf.WriteString(fmt.Sprintf("(%d, %d, 'abcdefghijklmnopqrstuvwxyz1234567890,.?+-=_!@#$&*()_+')", i, i))
+			}
+			tk.MustExec(buf.String())
 
-				tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'") // query canceled by memory controller will return error.
-				tk.MustExec("set session tidb_max_chunk_size = 32")
-				tk.MustExec("set session tidb_distsql_scan_concurrency = 1")
-				var stmt string
-				switch stmtType {
-				case "insert":
-					tk.MustExec("set session tidb_mem_quota_query = 10 << 20") // 10MB limitation.
-					stmt = fmt.Sprintf("insert into _%s select * from %s", table, table)
-				case "update":
-					tk.MustExec("set session tidb_mem_quota_query = 20 << 20") // 20MB limitation.
-					stmt = fmt.Sprintf("update %s set c = concat(c, '+')", table)
-				case "delete":
-					tk.MustExec("set session tidb_mem_quota_query = 10 << 20") // 10MB limitation.
-					stmt = fmt.Sprintf("delete from %s", table)
-				default:
-					t.Fatalf("unexpected stmt type %s", stmtType)
-				}
+			tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'") // query canceled by memory controller will return error.
+			tk.MustExec("set session tidb_max_chunk_size = 32")
+			tk.MustExec("set session tidb_distsql_scan_concurrency = 1")
+			var stmt string
+			switch stmtType {
+			case "insert":
+				tk.MustExec("set session tidb_mem_quota_query = 10 << 20") // 10MB limitation.
+				stmt = fmt.Sprintf("insert into _%s select * from %s", table, table)
+			case "update":
+				tk.MustExec("set session tidb_mem_quota_query = 20 << 20") // 20MB limitation.
+				stmt = fmt.Sprintf("update %s set c = concat(c, '+')", table)
+			case "delete":
+				tk.MustExec("set session tidb_mem_quota_query = 10 << 20") // 10MB limitation.
+				stmt = fmt.Sprintf("delete from %s", table)
+			}
 
-				tk.MustExec("set session tidb_dml_type = standard")
-				err := tk.ExecToErr(stmt)
-				require.Error(t, err)
-				require.True(t, strings.Contains(err.Error(), "Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again."), err.Error())
-				tk.MustExec("set session tidb_dml_type = bulk")
-				tk.MustExec(stmt)
+			tk.MustExec("set session tidb_dml_type = standard")
+			err := tk.ExecToErr(stmt)
+			require.Error(t, err)
+			require.True(t, strings.Contains(err.Error(), "Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again."), err.Error())
+			tk.MustExec("set session tidb_dml_type = bulk")
+			tk.MustExec(stmt)
 
-				switch stmtType {
-				case "insert":
-					tk.MustQuery(fmt.Sprintf("select count(*) from _%s", table)).Check(testkit.Rows(fmt.Sprintf("%d", cnt)))
-				case "update":
-					tk.MustQuery(fmt.Sprintf("select count(*) from %s where c like '%%++'", table)).Check(testkit.Rows(fmt.Sprintf("%d", cnt)))
-				case "delete":
-					tk.MustQuery(fmt.Sprintf("select count(*) from %s", table)).Check(testkit.Rows("0"))
-				default:
-					t.Fatalf("unexpected stmt type %s", stmtType)
-				}
-			}(dmlType, stmtType)
-		}
+			switch stmtType {
+			case "insert":
+				tk.MustQuery(fmt.Sprintf("select count(*) from _%s", table)).Check(testkit.Rows(fmt.Sprintf("%d", cnt)))
+			case "update":
+				tk.MustQuery(fmt.Sprintf("select count(*) from %s where c like '%%++'", table)).Check(testkit.Rows(fmt.Sprintf("%d", cnt)))
+			case "delete":
+				tk.MustQuery(fmt.Sprintf("select count(*) from %s", table)).Check(testkit.Rows("0"))
+			}
+		}(stmtType)
 	}
 	wg.Wait()
 }
