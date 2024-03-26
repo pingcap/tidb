@@ -94,6 +94,11 @@ const (
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
+
+	// stop region scheduling only fot regions that are currently importing
+	PauseRegionInAction = "region-in-action"
+	// stop region scheduling of the whole tables
+	PauseRegionByTable = "region-by-table"
 )
 
 var (
@@ -561,6 +566,7 @@ type TikvImporter struct {
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
+	PausePdSchedulerScope   string   `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 }
 
 type Checkpoint struct {
@@ -740,13 +746,14 @@ func NewConfig() *Config {
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
 		TikvImporter: TikvImporter{
-			Backend:             "",
-			OnDuplicate:         ReplaceOnDup,
-			MaxKVPairs:          4096,
-			SendKVPairs:         32768,
-			RegionSplitSize:     0,
-			DiskQuota:           ByteSize(math.MaxInt64),
-			DuplicateResolution: DupeResAlgNone,
+			Backend:               "",
+			OnDuplicate:           ReplaceOnDup,
+			MaxKVPairs:            4096,
+			SendKVPairs:           32768,
+			RegionSplitSize:       0,
+			DiskQuota:             ByteSize(math.MaxInt64),
+			DuplicateResolution:   DupeResAlgNone,
+			PausePdSchedulerScope: PauseRegionByTable,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,

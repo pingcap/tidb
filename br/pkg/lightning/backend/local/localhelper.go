@@ -109,6 +109,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 	skippedKeys := 0
 	var skipped_scatter bool
 	skipped_scatter = false
+
 	for i := 0; i < splitRetryTimes; i++ {
 		log.FromContext(ctx).Info("split and scatter region",
 			logutil.Key("minKey", minKey),

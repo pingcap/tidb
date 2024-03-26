@@ -595,7 +595,7 @@ func (be *tidbBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table
 	return nil
 }
 
-func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64, int64, int64) error {
+func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64, int64, int64, string) error {
 	return nil
 }
 
