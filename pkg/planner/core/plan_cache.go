@@ -170,6 +170,15 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		stmtCtx.ForceSetSkipPlanCache(errors.NewNoStackError(stmt.UncacheableReason))
 	}
 
+	var bindSQL string
+	if stmtCtx.UseCache {
+		var ignoreByBinding bool
+		bindSQL, ignoreByBinding = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+		if ignoreByBinding {
+			stmtCtx.SetSkipPlanCache(errors.Errorf("ignore plan cache by binding"))
+		}
+	}
+
 	if stmtCtx.UseCache {
 		// Acquire the metadata lock and update the schema version.
 		for i := 0; i < len(stmt.dbName); i++ {
@@ -177,18 +186,13 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 			tbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
 			if err != nil || tbl.Meta().TableVersion != prevVersion {
 				// Handle the case that the schema is updated for select statement.
-				sctx.GetSessionVars().StmtCtx.ForceSetSkipPlanCache(errors.NewNoStackError("schema changed before adding the metadata lock"))
+				latestSchemaVersion := domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
+				if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), stmt.StmtText,
+					stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
+					return nil, nil, err
+				}
 				break
 			}
-		}
-	}
-
-	var bindSQL string
-	if stmtCtx.UseCache {
-		var ignoreByBinding bool
-		bindSQL, ignoreByBinding = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
-		if ignoreByBinding {
-			stmtCtx.SetSkipPlanCache(errors.Errorf("ignore plan cache by binding"))
 		}
 	}
 
