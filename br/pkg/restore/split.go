@@ -61,9 +61,6 @@ type OnSplitFunc func(key [][]byte)
 func (rs *RegionSplitter) ExecuteSplit(
 	ctx context.Context,
 	ranges []rtree.Range,
-	storeCount int,
-	isRawKv bool,
-	onSplit OnSplitFunc,
 ) error {
 	if len(ranges) == 0 {
 		log.Info("skip split regions, no range")
@@ -95,18 +92,12 @@ func (rs *RegionSplitter) ExecuteSplit(
 	// need use first range's start key to scan region
 	// and the range size must be greater than 0 here
 	scanStartKey := sortedRanges[0].StartKey
-	sctx := SplitContext{
-		isRawKv:    isRawKv,
-		onSplit:    onSplit,
-		storeCount: storeCount,
-	}
 	// the range size must be greater than 0 here
-	return rs.executeSplitByRanges(ctx, sctx, scanStartKey, sortedKeys)
+	return rs.executeSplitByRanges(ctx, scanStartKey, sortedKeys)
 }
 
 func (rs *RegionSplitter) executeSplitByRanges(
 	ctx context.Context,
-	splitContext SplitContext,
 	scanStartKey []byte,
 	sortedKeys [][]byte,
 ) error {
@@ -126,7 +117,7 @@ func (rs *RegionSplitter) executeSplitByRanges(
 		if len(roughSortedSplitKeys) == 0 {
 			break
 		}
-		if err := rs.executeSplitByKeys(ctx, splitContext, roughScanStartKey, roughSortedSplitKeys); err != nil {
+		if err := rs.executeSplitByKeys(ctx, roughScanStartKey, roughSortedSplitKeys); err != nil {
 			return errors.Trace(err)
 		}
 		if curRegionIndex >= len(sortedKeys) {
@@ -138,7 +129,7 @@ func (rs *RegionSplitter) executeSplitByRanges(
 	log.Info("finish spliting regions roughly", zap.Duration("take", time.Since(startTime)))
 
 	// Then send split requests to each TiKV.
-	if err := rs.executeSplitByKeys(ctx, splitContext, scanStartKey, sortedKeys); err != nil {
+	if err := rs.executeSplitByKeys(ctx, scanStartKey, sortedKeys); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -152,7 +143,6 @@ func (rs *RegionSplitter) executeSplitByRanges(
 // 3. make sure new splitted regions are balanced.
 func (rs *RegionSplitter) executeSplitByKeys(
 	ctx context.Context,
-	splitContext SplitContext,
 	scanStartKey []byte,
 	sortedKeys [][]byte,
 ) error {
@@ -370,7 +360,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 				startKey = point
 			}
 
-			return regionSplitter.ExecuteSplit(ctx, ranges, 3, false, func([][]byte) {})
+			return regionSplitter.ExecuteSplit(ctx, ranges)
 		}
 		select {
 		case <-ctx.Done():

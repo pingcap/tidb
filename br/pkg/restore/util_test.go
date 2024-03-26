@@ -287,7 +287,7 @@ func TestPaginateScanRegion(t *testing.T) {
 
 	_, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{2}, []byte{1}, 3)
 	require.Error(t, err)
-	require.True(t, berrors.ErrRestoreInvalidRange.Equal(err))
+	require.True(t, berrors.ErrInvalidRange.Equal(err))
 	require.Regexp(t, ".*startKey > endKey.*", err.Error())
 
 	tc = NewTestClient(stores, regionMap, 0)

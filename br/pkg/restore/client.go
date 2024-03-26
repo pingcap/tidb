@@ -215,11 +215,16 @@ func NewRestoreClient(
 	tlsConf *tls.Config,
 	keepaliveConf keepalive.ClientParameters,
 	isRawKv bool,
+	storeCnt int,
 ) *Client {
+	var splitClientOpts []split.ClientOption
+	if isRawKv {
+		splitClientOpts = append(splitClientOpts, split.WithRawKV())
+	}
 	return &Client{
 		pdClient:           pdClient,
 		pdHTTPClient:       pdHTTPCli,
-		toolClient:         split.NewSplitClient(pdClient, pdHTTPCli, tlsConf, isRawKv),
+		toolClient:         split.NewSplitClient(pdClient, pdHTTPCli, tlsConf, uint(storeCnt+1), splitClientOpts...),
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
 		switchCh:           make(chan struct{}),
@@ -555,7 +560,17 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 		useTokenBucket = true
 	}
 
-	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
+	var splitClientOpts []split.ClientOption
+	if isRawKvMode {
+		splitClientOpts = append(splitClientOpts, split.WithRawKV())
+	}
+	metaClient := split.NewSplitClient(
+		rc.pdClient,
+		rc.pdHTTPClient,
+		rc.tlsConf,
+		uint(rc.GetStoreCount()),
+		splitClientOpts...,
+	)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
 }
@@ -1413,7 +1428,13 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int
 	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
-	client := split.NewSplitClient(rc.GetPDClient(), rc.pdHTTPClient, rc.GetTLSConfig(), false)
+
+	client := split.NewSplitClient(
+		rc.GetPDClient(),
+		rc.pdHTTPClient,
+		rc.GetTLSConfig(),
+		uint(rc.GetStoreCount()),
+	)
 	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
 }
 

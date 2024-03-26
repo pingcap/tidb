@@ -103,13 +103,12 @@ type SplitClient interface {
 
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
 type pdClient struct {
-	mu         sync.Mutex
-	client     pd.Client
-	httpCli    pdhttp.Client
-	tlsConf    *tls.Config
-	storeCache map[uint64]*metapb.Store
-	isRawKv    bool
-	// TODO(lance6716): assign them
+	mu               sync.Mutex
+	client           pd.Client
+	httpCli          pdhttp.Client
+	tlsConf          *tls.Config
+	storeCache       map[uint64]*metapb.Store
+	isRawKv          bool
 	splitConcurrency uint
 	onSplit          func([][]byte)
 
@@ -124,16 +123,36 @@ func NewSplitClient(
 	client pd.Client,
 	httpCli pdhttp.Client,
 	tlsConf *tls.Config,
-	isRawKv bool,
+	concurrency uint,
+	opts ...ClientOption,
 ) SplitClient {
 	cli := &pdClient{
-		client:     client,
-		httpCli:    httpCli,
-		tlsConf:    tlsConf,
-		storeCache: make(map[uint64]*metapb.Store),
-		isRawKv:    isRawKv,
+		client:           client,
+		httpCli:          httpCli,
+		tlsConf:          tlsConf,
+		storeCache:       make(map[uint64]*metapb.Store),
+		splitConcurrency: concurrency,
+	}
+	for _, opt := range opts {
+		opt(cli)
 	}
 	return cli
+}
+
+type ClientOption func(*pdClient)
+
+// WithRawKV indicates the client should use raw kv mode.
+func WithRawKV() ClientOption {
+	return func(c *pdClient) {
+		c.isRawKv = true
+	}
+}
+
+// WithOnSplit sets the callback function that will be called after each split.
+func WithOnSplit(fn func([][]byte)) ClientOption {
+	return func(c *pdClient) {
+		c.onSplit = fn
+	}
 }
 
 func (c *pdClient) needScatter(ctx context.Context) bool {
@@ -523,7 +542,6 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, sortedKeys [][]byte)
 					for end < len(splitKeys) &&
 						totalKeySize+len(splitKeys[end]) < maxBatchSplitSize &&
 						end-start < config.DefaultRegionSplitBatchSize {
-
 						totalKeySize += len(splitKeys[end])
 						end++
 					}
@@ -569,7 +587,7 @@ func newSplitBackoffer() *splitBackoffer {
 }
 
 func (bo *splitBackoffer) NextBackoff(err error) time.Duration {
-	if berrors.ErrRestoreInvalidRange.Equal(err) {
+	if berrors.ErrInvalidRange.Equal(err) {
 		bo.state.GiveUp()
 		return 0
 	}

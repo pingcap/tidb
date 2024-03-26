@@ -510,18 +510,25 @@ func SplitRanges(
 	updateCh glue.Progress,
 	isRawKv bool,
 ) error {
+	var splitClientOpts []split.ClientOption
+	if isRawKv {
+		splitClientOpts = append(splitClientOpts, split.WithRawKV())
+	}
+	splitClientOpts = append(splitClientOpts, split.WithOnSplit(func(keys [][]byte) {
+		for range keys {
+			updateCh.Inc()
+		}
+	}))
+
 	splitter := NewRegionSplitter(split.NewSplitClient(
 		client.GetPDClient(),
 		client.pdHTTPClient,
 		client.GetTLSConfig(),
-		isRawKv,
+		uint(client.GetStoreCount()),
+		splitClientOpts...,
 	))
 
-	return splitter.ExecuteSplit(ctx, ranges, client.GetStoreCount(), isRawKv, func(keys [][]byte) {
-		for range keys {
-			updateCh.Inc()
-		}
-	})
+	return splitter.ExecuteSplit(ctx, ranges)
 }
 
 func findMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb.RewriteRule {
@@ -772,7 +779,7 @@ func CheckConsistencyAndValidPeer(regionInfos []*RecoverRegionInfo) (map[uint64]
 		if !keyEq(prevEndKey, iter.Key().([]byte)) {
 			log.Error("regions are not adjacent", zap.Uint64("pre region", prevRegion), zap.Uint64("cur region", v.RegionId))
 			// TODO, some enhancement may need, a PoC or test may need for decision
-			return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange,
+			return nil, errors.Annotatef(berrors.ErrInvalidRange,
 				"invalid region range")
 		}
 		prevEndKey = v.EndKey
