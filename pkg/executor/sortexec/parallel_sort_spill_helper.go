@@ -55,6 +55,12 @@ func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldTyp
 	}
 }
 
+func (p *parallelSortSpillHelper) close() {
+	for _, inDisk := range p.sortedRowsInDisk {
+		inDisk.Close()
+	}
+}
+
 func (p *parallelSortSpillHelper) isNotSpilledNoLock() bool {
 	return p.spillStatus == notSpilled
 }
@@ -117,8 +123,12 @@ func (p *parallelSortSpillHelper) spill() (err error) {
 				workerWaiter.Done()
 			}()
 
-			sortedRowsIters[idx] = chunk.NewIterator4Slice(nil)
-			sortedRowsIters[idx].Reset(p.sortExec.Parallel.workers[idx].sortLocalRows())
+			sortedRows, err := p.sortExec.Parallel.workers[idx].sortLocalRows()
+			if err != nil {
+				p.errOutputChan <- rowWithError{err: err}
+				return
+			}
+			sortedRowsIters[idx] = chunk.NewIterator4Slice(sortedRows)
 			injectParallelSortRandomFail(200)
 		}(i)
 	}

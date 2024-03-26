@@ -93,7 +93,7 @@ func (p *parallelSortWorker) injectFailPointForParallelSortWorker(triggerFactor 
 	})
 }
 
-func (p *parallelSortWorker) multiWayMergeLocalSortedRows() []chunk.Row {
+func (p *parallelSortWorker) multiWayMergeLocalSortedRows() ([]chunk.Row, error) {
 	totalRowNum := 0
 	for _, rows := range p.localSortedRows {
 		totalRowNum += rows.Len()
@@ -101,7 +101,10 @@ func (p *parallelSortWorker) multiWayMergeLocalSortedRows() []chunk.Row {
 	resultSortedRows := make([]chunk.Row, 0, totalRowNum)
 	source := &memorySource{sortedRowsIters: p.localSortedRows}
 	p.merger = newMultiWayMerger(source, p.lessRowFunc)
-	_ = p.merger.init()
+	err := p.merger.init()
+	if err != nil {
+		return nil, err
+	}
 
 	for {
 		// It's impossible to return error here as rows are in memory
@@ -112,7 +115,7 @@ func (p *parallelSortWorker) multiWayMergeLocalSortedRows() []chunk.Row {
 		resultSortedRows = append(resultSortedRows, row)
 	}
 	p.localSortedRows = nil
-	return resultSortedRows
+	return resultSortedRows, nil
 }
 
 func (p *parallelSortWorker) sortBatchRows() {
@@ -121,7 +124,7 @@ func (p *parallelSortWorker) sortBatchRows() {
 	p.batchRows = make([]chunk.Row, 0, p.maxSortedRowsLimit)
 }
 
-func (p *parallelSortWorker) sortLocalRows() []chunk.Row {
+func (p *parallelSortWorker) sortLocalRows() ([]chunk.Row, error) {
 	// Handle Remaining batchRows whose row number is not over the `maxSortedRowsLimit`
 	if len(p.batchRows) > 0 {
 		p.sortBatchRows()
@@ -159,7 +162,12 @@ func (p *parallelSortWorker) fetchChunksAndSortImpl() bool {
 		if !ok {
 			p.injectFailPointForParallelSortWorker(100)
 			// Put local sorted rows into this iter who will be read by sort executor
-			p.sortedRowsIter.Reset(p.sortLocalRows())
+			sortedRows, err := p.sortLocalRows()
+			if err != nil {
+				p.errOutputChan <- rowWithError{err: err}
+				return false
+			}
+			p.sortedRowsIter.Reset(sortedRows)
 			return false
 		}
 		defer p.fetcherAndWorkerSyncer.Done()

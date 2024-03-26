@@ -95,7 +95,7 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	// TopN not initialize `e.finishCh` but it will call the Close function
+	// TopN not initializes `e.finishCh` but it will call the Close function
 	if e.finishCh != nil {
 		close(e.finishCh)
 	}
@@ -134,6 +134,7 @@ func (e *SortExec) Close() error {
 		if e.Parallel.spillAction != nil {
 			e.Parallel.spillAction.SetFinished()
 		}
+		e.Parallel.spillHelper.close()
 	}
 
 	if e.memTracker != nil {
@@ -329,7 +330,7 @@ func (e *SortExec) generateResultWithMultiWayMerge() error {
 	for {
 		row, err := multiWayMerge.next()
 		if err != nil {
-			return nil
+			return err
 		}
 
 		if row.IsEmpty() {
@@ -380,12 +381,15 @@ func (e *SortExec) generateResultFromDisk() error {
 
 // We call this function to generate result when sorted rows are in memory
 // Return true when spill is triggered
-func (e *SortExec) generateResultFromMemory() bool {
+func (e *SortExec) generateResultFromMemory() (bool, error) {
 	if e.Parallel.merger == nil {
 		// Sort has been closed
-		return false
+		return false, nil
 	}
-	_ = e.Parallel.merger.init()
+	err := e.Parallel.merger.init()
+	if err != nil {
+		return false, err
+	}
 
 	maxChunkSize := e.MaxChunkSize()
 	resBuf := make([]rowWithError, 0, maxChunkSize)
@@ -403,13 +407,13 @@ func (e *SortExec) generateResultFromMemory() bool {
 		}
 
 		if len(resBuf) == 0 {
-			return false
+			return false, nil
 		}
 
 		for _, row := range resBuf {
 			select {
 			case <-e.finishCh:
-				return false
+				return false, nil
 			case e.Parallel.resultChannel <- row:
 			}
 		}
@@ -417,7 +421,7 @@ func (e *SortExec) generateResultFromMemory() bool {
 		injectParallelSortRandomFail(3)
 
 		if idx%1000 == 0 && e.Parallel.spillHelper.isSpillNeeded() {
-			return true
+			return true, nil
 		}
 	}
 }
@@ -446,12 +450,17 @@ func (e *SortExec) generateResult(waitGroups ...*util.WaitGroupWrapper) {
 	}()
 
 	if !e.Parallel.spillHelper.isSpillTriggered() {
-		spillTriggered := e.generateResultFromMemory()
+		spillTriggered, err := e.generateResultFromMemory()
+		if err != nil {
+			e.Parallel.resultChannel <- rowWithError{err: err}
+			return
+		}
+
 		if !spillTriggered {
 			return
 		}
 
-		err := e.spillSortedRowsInMemory()
+		err = e.spillSortedRowsInMemory()
 		if err != nil {
 			e.Parallel.resultChannel <- rowWithError{err: err}
 			return
