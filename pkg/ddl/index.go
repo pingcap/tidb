@@ -2277,8 +2277,11 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 
 	var startKey, endKey kv.Key
 	if reorg.mergingTmpIdx {
-		indexID := reorg.currElement.ID
-		startKey, endKey = tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|indexID)
+		elements := reorg.elements
+		firstElemTempID := tablecodec.TempIndexPrefix | elements[0].ID
+		lastElemTempID := tablecodec.TempIndexPrefix | elements[len(elements)-1].ID
+		startKey = tablecodec.EncodeIndexSeekKey(pid, firstElemTempID, nil)
+		endKey = tablecodec.EncodeIndexSeekKey(pid, lastElemTempID, []byte{255})
 	} else {
 		currentVer, err := getValidCurrentVersion(reorg.d.store)
 		if err != nil {
