@@ -543,7 +543,7 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 		hashCols: outerTask.hashCols,
 	}
 	defaultSchema := BuildPhysicalJoinSchema(p.JoinType, p)
-	if p.SCtx().GetSessionVars().LimitPushDownThreshold == 101 && p.schema.Len() < defaultSchema.Len() && p.schema.Len() != 0 {
+	if p.SCtx().GetSessionVars().AllowAutoRandExplicitInsert && p.schema.Len() < defaultSchema.Len() && p.schema.Len() != 0 {
 		// Join schema can be pruned, add projection here
 		proj := PhysicalProjection{
 			Exprs: expression.Column2Exprs(p.schema.Columns),
