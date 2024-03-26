@@ -1243,9 +1243,78 @@ func (b *bucket4Merging) Clone() bucket4Merging {
 	return *result
 }
 
+// mergeBucket is a special case when we don't have the NDV info for buckets.
+// We don't need to deal with the NDV info.
+func mergeBucket(sc *stmtctx.StatementContext, left *bucket4Merging, right *bucket4Merging) (*bucket4Merging, error) {
+	res := right.Clone()
+	upperCompare, err := right.upper.Compare(sc.TypeCtx(), left.upper, collate.GetBinaryCollator())
+	if err != nil {
+		return nil, err
+	}
+	// __right__|
+	// _______left____|
+	// illegal order.
+	if upperCompare < 0 {
+		err := errors.Errorf("illegal bucket order")
+		statslogutil.StatsLogger().Warn("fail to mergeBucket", zap.Error(err))
+		return nil, err
+	}
+	//  ___right_|
+	//  ___left__|
+	// They have the same upper.
+	if upperCompare == 0 {
+		lowerCompare, err := right.lower.Compare(sc.TypeCtx(), left.lower, collate.GetBinaryCollator())
+		if err != nil {
+			return nil, err
+		}
+		if lowerCompare < 0 {
+			err := errors.Errorf("illegal bucket order")
+			statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
+			return nil, err
+		}
+		if lowerCompare == 0 {
+			return &res, nil
+		}
+		left.lower.Copy(res.lower)
+		return &res, nil
+	}
+	// ____right___|
+	// ____left__|
+	// right.upper > left.upper
+	lowerCompareUpper, err := right.lower.Compare(sc.TypeCtx(), left.upper, collate.GetBinaryCollator())
+	if err != nil {
+		return nil, err
+	}
+	//                  |_right_|
+	//  |___left____|
+	// `left` and `right` do not intersect
+	// We add right.ndv in `disjointNDV`, and let `right.ndv = left.ndv` be used for subsequent merge.
+	// This is because, for the merging of many buckets, we merge them from back to front.
+	if lowerCompareUpper >= 0 {
+		left.lower.Copy(res.lower)
+		return &res, nil
+	}
+	lowerCompare, err := right.lower.Compare(sc.TypeCtx(), left.lower, collate.GetBinaryCollator())
+	if err != nil {
+		return nil, err
+	}
+	//              |_______right_____|
+	// |_______left______________|
+	if lowerCompare >= 0 {
+		left.lower.Copy(res.lower)
+		return &res, nil
+	}
+	// |____________right______________|
+	//              |___left____|
+	return &res, nil
+}
+
 // mergeBucketNDV merges bucket NDV from tow bucket `right` & `left`.
 // Before merging, you need to make sure that when using (upper, lower) as the comparison key, `right` is greater than `left`
 func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *bucket4Merging) (*bucket4Merging, error) {
+	if left.NDV == 0 && right.NDV == 0 {
+		return mergeBucket(sc, left, right)
+	}
 	res := right.Clone()
 	if left.NDV == 0 {
 		return &res, nil
