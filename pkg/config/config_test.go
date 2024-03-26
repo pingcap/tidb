@@ -1148,11 +1148,22 @@ func TestSEMConfig(t *testing.T) {
 		require.NoError(t, os.Remove(configFile))
 	}(configFile)
 
-	_, err = f.WriteString("{\n    \"ver\": \"1\", \n    \"tidb_min_ver\": \"8.0\", \n     \"restricted_status\" " +
-		": [\n        {\n            \"name\": \"tidb_gc_leader_desc\",\n            \"restriction-type\":" +
-		" \"hidden\",\n            \"value\": \"\"\n        },\n       {\n         \"name\": \"tidb_gc_leader_uuid\",\n    " +
-		"     \"restriction-type\": \"replace\",\n         \"value\": \"xxxxxxxxxxx\"\n       }\n    ]," +
-		"\n    \"restricted_static_privileges_col\" : [\"Config_priv\"]\n}")
+	_, err = f.WriteString(`{
+    "restricted_status" : [
+        {
+            "name": "tidb_gc_leader_desc",
+            "restriction-type": "hidden",
+            "value": ""
+        },
+       {
+         "name": "tidb_gc_leader_uuid",
+         "restriction-type": "replace",
+         "value": "xxxxxxxxxxx"
+       }
+    ],
+
+    "restricted_static_privileges_col" : ["Config_priv"]
+	}`)
 
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())

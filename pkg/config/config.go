@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"io"
 	"math"
 	"os"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
@@ -623,8 +623,6 @@ type Security struct {
 
 // SEM is the Security Enhanced Mode configuration.
 type SEM struct {
-	Ver                           string                           `toml:"ver" json:"ver"`
-	TidbMinVer                    string                           `toml:"tidb-min-ver" json:"tidb-min-ver"`
 	RestrictedStatus              []RestrictedState                `toml:"restricted_status" json:"restricted_status"`
 	RestrictedStaticPrivilegesCol []string                         `toml:"restricted_static_privileges_col" json:"restricted_static_privileges_col"`
 	RestrictedStaticPrivileges    map[mysql.PrivilegeType]struct{} `toml:"restricted_static_privileges" json:"restricted_static_privileges"`
@@ -1552,7 +1550,7 @@ func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 // Load Security Enhanced Mode configuration via a JSON file.
 func loadSEMConfig(semConfigPath string) (*SEM, error) {
 	var semConfig SEM
-
+	//nolint: gosec
 	file, err := os.Open(semConfigPath)
 	if err != nil {
 		return &semConfig, err
