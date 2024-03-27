@@ -26,15 +26,7 @@ const (
 	downloadSSTWaitInterval    = 1 * time.Second
 	downloadSSTMaxWaitInterval = 4 * time.Second
 
-<<<<<<< HEAD
-	resetTSRetryTime       = 16
-=======
-	backupSSTRetryTimes      = 5
-	backupSSTWaitInterval    = 2 * time.Second
-	backupSSTMaxWaitInterval = 3 * time.Second
-
 	resetTSRetryTime       = 32
->>>>>>> d604b069399 (br: stop log when full restore failed (#51578))
 	resetTSWaitInterval    = 50 * time.Millisecond
 	resetTSMaxWaitInterval = 2 * time.Second
 
