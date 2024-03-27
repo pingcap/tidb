@@ -8,8 +8,8 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/stretchr/testify/require"
 )
 
