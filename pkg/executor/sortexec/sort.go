@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -121,8 +122,7 @@ func (e *SortExec) Close() error {
 		// Ensure that `generateResult()` has exited,
 		// or data race may happen as `generateResult()`
 		// will use `e.Parallel.workers` and `e.Parallel.merger`.
-		for range e.Parallel.resultChannel {
-		}
+		channel.Clear(e.Parallel.resultChannel)
 		for i := range e.Parallel.workers {
 			e.Parallel.workers[i].batchRows = nil
 			e.Parallel.workers[i].localSortedRows = nil
