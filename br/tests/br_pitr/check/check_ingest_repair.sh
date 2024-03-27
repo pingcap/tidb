@@ -70,8 +70,8 @@ check_contains "Column_name: nam\`;e"
 run_sql "SHOW INDEX FROM test.pairs7 WHERE Key_name = 'i2' AND Seq_in_index = 2 AND Visible = 'YES';"
 check_contains "Expression: \`nam\`\`;e\` * 2"
 
-## check table test.pairs10
-run_sql "SELECT count(*) AS RESCNT FROM INFORMATION_SCHEMA.TIDB_INDEXES WHERE INDEX_ID = 2 AND TABLE_NAME = 'pairs11' AND KEY_NAME = 'u1';"
+## check table test.pairs11
+run_sql "SELECT count(*) AS RESCNT FROM INFORMATION_SCHEMA.TIDB_INDEXES WHERE INDEX_ID = 1 AND TABLE_NAME = 'pairs11' AND KEY_NAME = 'u1';"
 check_contains "RESCNT: 2"
 
 # adjust some index to be visible
