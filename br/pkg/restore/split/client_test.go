@@ -32,11 +32,11 @@ func TestSplit(t *testing.T) {
 		splitKeys = append(splitKeys, []byte{'b', i})
 	}
 
-	regions, err := mockClient.SplitWaitAndScatter(ctx, splitKeys)
+	_, err := mockClient.SplitWaitAndScatter(ctx, splitKeys)
 	require.NoError(t, err)
 
 	// check split ranges
-	regions, err = PaginateScanRegion(ctx, mockClient, []byte{'b'}, []byte{'c'}, 5)
+	regions, err := PaginateScanRegion(ctx, mockClient, []byte{'b'}, []byte{'c'}, 5)
 	require.NoError(t, err)
 	result := [][]byte{
 		[]byte("b"), []byte("ba"), []byte("bb"), []byte("bba"), []byte("bbh"), []byte("bc"),

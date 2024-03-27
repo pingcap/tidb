@@ -327,9 +327,9 @@ func TestSplitCtxCancel(t *testing.T) {
 
 func TestGetSplitKeyPerRegion(t *testing.T) {
 	// test case moved from lightning
-	var sortedRegions []*RegionInfo
 	tableID := int64(1)
 	keys := []int64{1, 10, 100, 1000, 10000, -1}
+	sortedRegions := make([]*RegionInfo, 0, len(keys))
 	start := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(0))
 	regionStart := codec.EncodeBytes([]byte{}, start)
 	for i, end := range keys {
@@ -496,11 +496,11 @@ func TestPaginateScanRegion(t *testing.T) {
 	checkRegionsBoundaries(t, got, [][]byte{{4}, {5}})
 
 	// test start == end
-	got, err = PaginateScanRegion(ctx, mockClient, []byte{4}, []byte{4}, 1)
+	_, err = PaginateScanRegion(ctx, mockClient, []byte{4}, []byte{4}, 1)
 	require.ErrorContains(t, err, "scan region return empty result")
 
 	// test start > end
-	got, err = PaginateScanRegion(ctx, mockClient, []byte{5}, []byte{4}, 5)
+	_, err = PaginateScanRegion(ctx, mockClient, []byte{5}, []byte{4}, 5)
 	require.True(t, berrors.ErrInvalidRange.Equal(err))
 	require.ErrorContains(t, err, "startKey > endKey")
 
@@ -510,7 +510,7 @@ func TestPaginateScanRegion(t *testing.T) {
 		status.Error(codes.Unavailable, "not leader"),
 		status.Error(codes.Unavailable, "not leader"),
 	}
-	got, err = PaginateScanRegion(ctx, mockClient, []byte{4}, []byte{5}, 1)
+	_, err = PaginateScanRegion(ctx, mockClient, []byte{4}, []byte{5}, 1)
 	require.ErrorContains(t, err, "not leader")
 
 	// test region not continuous
