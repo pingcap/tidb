@@ -99,7 +99,7 @@ func (b *recordCntBackoffer) Attempt() int {
 }
 
 func TestScatterSequentiallyRetryCnt(t *testing.T) {
-	mockClient := newMockPDClientForSplit()
+	mockClient := NewMockPDClientForSplit()
 	mockClient.scatterRegion.eachRegionFailBefore = 7
 	client := pdClient{
 		needScatterVal: true,
@@ -130,7 +130,7 @@ func TestScatterSequentiallyRetryCnt(t *testing.T) {
 }
 
 func TestScatterBackwardCompatibility(t *testing.T) {
-	mockClient := newMockPDClientForSplit()
+	mockClient := NewMockPDClientForSplit()
 	mockClient.scatterRegions.notImplemented = true
 	client := pdClient{
 		needScatterVal: true,
@@ -153,11 +153,11 @@ func TestScatterBackwardCompatibility(t *testing.T) {
 	}
 	err := client.scatterRegions(ctx, regions)
 	require.NoError(t, err)
-	require.Equal(t, map[uint64]int{1: 1, 2: 1}, client.client.(*mockPDClientForSplit).scatterRegion.count)
+	require.Equal(t, map[uint64]int{1: 1, 2: 1}, client.client.(*MockPDClientForSplit).scatterRegion.count)
 }
 
 func TestWaitForScatterRegions(t *testing.T) {
-	mockPDCli := newMockPDClientForSplit()
+	mockPDCli := NewMockPDClientForSplit()
 	mockPDCli.scatterRegions.notImplemented = true
 	client := pdClient{
 		needScatterVal: true,
@@ -306,7 +306,7 @@ func TestBackoffMayNotCountBackoffer(t *testing.T) {
 func TestSplitCtxCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	mockCli := newMockPDClientForSplit()
+	mockCli := NewMockPDClientForSplit()
 	mockCli.splitRegions.hijacked = func() (bool, *kvrpcpb.SplitRegionResponse, error) {
 		cancel()
 		resp := &kvrpcpb.SplitRegionResponse{
@@ -453,7 +453,7 @@ func TestGetSplitKeyPerRegionSkipSmallRegions(t *testing.T) {
 
 func TestPaginateScanRegion(t *testing.T) {
 	ctx := context.Background()
-	mockPDClient := newMockPDClientForSplit()
+	mockPDClient := NewMockPDClientForSplit()
 	mockClient := &pdClient{
 		client: mockPDClient,
 	}

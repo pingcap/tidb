@@ -17,7 +17,6 @@ package local
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"math/rand"
 	"sort"
@@ -27,8 +26,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -287,164 +284,11 @@ func initTestSplitClient3Replica(keys [][]byte, hook clientHook) *testSplitClien
 	return newTestSplitClient(stores, regions, uint64(len(keys)), hook)
 }
 
-func checkRegionRanges(t *testing.T, regions []*split.RegionInfo, keys [][]byte) {
-	for i, r := range regions {
-		_, regionStart, _ := codec.DecodeBytes(r.Region.StartKey, []byte{})
-		_, regionEnd, _ := codec.DecodeBytes(r.Region.EndKey, []byte{})
-		require.Equal(t, keys[i], regionStart)
-		require.Equal(t, keys[i+1], regionEnd)
-	}
-}
-
 type clientHook interface {
 	BeforeSplitRegion(ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte) (*split.RegionInfo, [][]byte)
 	AfterSplitRegion(context.Context, *split.RegionInfo, [][]byte, []*split.RegionInfo, error) ([]*split.RegionInfo, error)
 	BeforeScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]byte, []byte, int)
 	AfterScanRegions([]*split.RegionInfo, error) ([]*split.RegionInfo, error)
-}
-
-type noopHook struct{}
-
-func (h *noopHook) BeforeSplitRegion(ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte) (*split.RegionInfo, [][]byte) {
-	delayTime := rand.Int31n(10) + 1
-	time.Sleep(time.Duration(delayTime) * time.Millisecond)
-	return regionInfo, keys
-}
-
-func (h *noopHook) AfterSplitRegion(c context.Context, r *split.RegionInfo, keys [][]byte, res []*split.RegionInfo, err error) ([]*split.RegionInfo, error) {
-	return res, err
-}
-
-func (h *noopHook) BeforeScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]byte, []byte, int) {
-	return key, endKey, limit
-}
-
-func (h *noopHook) AfterScanRegions(res []*split.RegionInfo, err error) ([]*split.RegionInfo, error) {
-	return res, err
-}
-
-type batchSplitHook interface {
-	setup(t *testing.T) func()
-	check(t *testing.T, cli *testSplitClient)
-}
-
-type defaultHook struct{}
-
-func (d defaultHook) setup(t *testing.T) func() {
-	oldSplitBackoffTime := splitRegionBaseBackOffTime
-	splitRegionBaseBackOffTime = time.Millisecond
-	return func() {
-		splitRegionBaseBackOffTime = oldSplitBackoffTime
-	}
-}
-
-func (d defaultHook) check(t *testing.T, cli *testSplitClient) {
-	// so with a batch split size of 4, there will be 7 time batch split
-	// 1. region: [aay, bba), keys: [b, ba, bb]
-	// 2. region: [bbh, cca), keys: [bc, bd, be, bf]
-	// 3. region: [bf, cca), keys: [bg, bh, bi, bj]
-	// 4. region: [bj, cca), keys: [bk, bl, bm, bn]
-	// 5. region: [bn, cca), keys: [bo, bp, bq, br]
-	// 6. region: [br, cca), keys: [bs, bt, bu, bv]
-	// 7. region: [bv, cca), keys: [bw, bx, by, bz]
-
-	// since it may encounter error retries, here only check the lower threshold.
-	require.GreaterOrEqual(t, cli.splitCount.Load(), int32(7))
-}
-
-func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clientHook, errPat string, splitHook batchSplitHook) {
-	if splitHook == nil {
-		splitHook = defaultHook{}
-	}
-	deferFunc := splitHook.setup(t)
-	defer deferFunc()
-
-	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
-	client := initTestSplitClient(keys, hook)
-	local := &Backend{
-		splitCli: client,
-		logger:   log.L(),
-	}
-	local.RegionSplitBatchSize = 4
-	local.RegionSplitConcurrency = 4
-
-	// current region ranges: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	rangeStart := codec.EncodeBytes([]byte{}, []byte("b"))
-	rangeEnd := codec.EncodeBytes([]byte{}, []byte("c"))
-	regions, err := split.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
-	require.NoError(t, err)
-	// regions is: [aay, bba), [bba, bbh), [bbh, cca)
-	checkRegionRanges(t, regions, [][]byte{[]byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca")})
-
-	// generate:  ranges [b, ba), [ba, bb), [bb, bc), ... [by, bz)
-	ranges := make([]common.Range, 0)
-	start := []byte{'b'}
-	for i := byte('a'); i <= 'z'; i++ {
-		end := []byte{'b', i}
-		ranges = append(ranges, common.Range{Start: start, End: end})
-		start = end
-	}
-
-	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
-	if len(errPat) != 0 {
-		require.Error(t, err)
-		require.ErrorContains(t, err, errPat)
-		return
-	}
-	require.NoError(t, err)
-	splitHook.check(t, client)
-
-	// check split ranges
-	regions, err = split.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
-	require.NoError(t, err)
-	result := [][]byte{
-		[]byte("b"), []byte("ba"), []byte("bb"), []byte("bba"), []byte("bbh"), []byte("bc"),
-		[]byte("bd"), []byte("be"), []byte("bf"), []byte("bg"), []byte("bh"), []byte("bi"), []byte("bj"),
-		[]byte("bk"), []byte("bl"), []byte("bm"), []byte("bn"), []byte("bo"), []byte("bp"), []byte("bq"),
-		[]byte("br"), []byte("bs"), []byte("bt"), []byte("bu"), []byte("bv"), []byte("bw"), []byte("bx"),
-		[]byte("by"), []byte("bz"), []byte("cca"),
-	}
-	checkRegionRanges(t, regions, result)
-}
-
-func TestSplitAndScatterRegionInBatches(t *testing.T) {
-	splitHook := defaultHook{}
-	deferFunc := splitHook.setup(t)
-	defer deferFunc()
-
-	keys := [][]byte{[]byte(""), []byte("a"), []byte("b"), []byte("")}
-	client := initTestSplitClient(keys, nil)
-	local := &Backend{
-		splitCli: client,
-		logger:   log.L(),
-	}
-	local.RegionSplitBatchSize = 4
-	local.RegionSplitConcurrency = 4
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	var ranges []common.Range
-	for i := 0; i < 20; i++ {
-		ranges = append(ranges, common.Range{
-			Start: []byte(fmt.Sprintf("a%02d", i)),
-			End:   []byte(fmt.Sprintf("a%02d", i+1)),
-		})
-	}
-
-	err := local.SplitAndScatterRegionInBatches(ctx, ranges, true, 4)
-	require.NoError(t, err)
-
-	rangeStart := codec.EncodeBytes([]byte{}, []byte("a"))
-	rangeEnd := codec.EncodeBytes([]byte{}, []byte("b"))
-	regions, err := split.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
-	require.NoError(t, err)
-	result := [][]byte{[]byte("a"), []byte("a00"), []byte("a01"), []byte("a02"), []byte("a03"), []byte("a04"),
-		[]byte("a05"), []byte("a06"), []byte("a07"), []byte("a08"), []byte("a09"), []byte("a10"), []byte("a11"),
-		[]byte("a12"), []byte("a13"), []byte("a14"), []byte("a15"), []byte("a16"), []byte("a17"), []byte("a18"),
-		[]byte("a19"), []byte("a20"), []byte("b"),
-	}
-	checkRegionRanges(t, regions, result)
 }
 
 func TestStoreWriteLimiter(t *testing.T) {

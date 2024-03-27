@@ -554,7 +554,10 @@ func NewBackend(
 		pdCli.GetServiceDiscovery(),
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
-	splitCli := split.NewSplitClient(pdCli, pdHTTPCli, tls.TLSConfig(), uint(config.RegionSplitConcurrency))
+	splitCli := split.NewSplitClient(
+		pdCli, pdHTTPCli, tls.TLSConfig(), uint(config.RegionSplitConcurrency),
+		split.WithSplitBatchSize(config.RegionSplitBatchSize),
+	)
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 	var writeLimiter StoreWriteLimiter
 	if config.StoreWriteBWLimit > 0 {
@@ -845,34 +848,36 @@ func (local *Backend) prepareAndSendJob(
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 		needSplit = true
 	})
-	logger := log.FromContext(ctx).With(zap.String("uuid", engine.ID())).Begin(zap.InfoLevel, "split and scatter ranges")
-	backOffTime := 10 * time.Second
-	maxbackoffTime := 120 * time.Second
-	for i := 0; i < maxRetryTimes; i++ {
-		failpoint.Inject("skipSplitAndScatter", func() {
-			failpoint.Break()
-		})
+	if needSplit {
+		logger := log.FromContext(ctx).With(zap.String("uuid", engine.ID())).Begin(zap.InfoLevel, "split and scatter ranges")
+		backOffTime := 10 * time.Second
+		maxbackoffTime := 120 * time.Second
+		for i := 0; i < maxRetryTimes; i++ {
+			failpoint.Inject("skipSplitAndScatter", func() {
+				failpoint.Break()
+			})
 
-		err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, needSplit, maxBatchSplitRanges)
-		if err == nil || common.IsContextCanceledError(err) {
-			break
-		}
+			err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, maxBatchSplitRanges)
+			if err == nil || common.IsContextCanceledError(err) {
+				break
+			}
 
-		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.String("engine ID", engine.ID()),
-			log.ShortError(err), zap.Int("retry", i))
-		select {
-		case <-time.After(backOffTime):
-		case <-ctx.Done():
-			return ctx.Err()
+			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.String("engine ID", engine.ID()),
+				log.ShortError(err), zap.Int("retry", i))
+			select {
+			case <-time.After(backOffTime):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			backOffTime *= 2
+			if backOffTime > maxbackoffTime {
+				backOffTime = maxbackoffTime
+			}
 		}
-		backOffTime *= 2
-		if backOffTime > maxbackoffTime {
-			backOffTime = maxbackoffTime
+		logger.End(zap.ErrorLevel, err)
+		if err != nil {
+			return err
 		}
-	}
-	logger.End(zap.ErrorLevel, err)
-	if err != nil {
-		return err
 	}
 
 	return local.generateAndSendJob(

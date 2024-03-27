@@ -53,7 +53,6 @@ var (
 func (local *Backend) SplitAndScatterRegionInBatches(
 	ctx context.Context,
 	ranges []common.Range,
-	needSplit bool,
 	batchCnt int,
 ) error {
 	for i := 0; i < len(ranges); i += batchCnt {
@@ -61,7 +60,7 @@ func (local *Backend) SplitAndScatterRegionInBatches(
 		if len(batch) > batchCnt {
 			batch = batch[:batchCnt]
 		}
-		if err := local.SplitAndScatterRegionByRanges(ctx, batch, needSplit); err != nil {
+		if err := local.SplitAndScatterRegionByRanges(ctx, batch); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -75,7 +74,6 @@ func (local *Backend) SplitAndScatterRegionInBatches(
 func (local *Backend) SplitAndScatterRegionByRanges(
 	ctx context.Context,
 	ranges []common.Range,
-	_ bool, // TODO(lance6716): move needSplit to caller
 ) (err error) {
 	if len(ranges) == 0 {
 		return nil

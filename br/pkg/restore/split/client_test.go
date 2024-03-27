@@ -23,7 +23,7 @@ func TestSplitScatterRawKV(t *testing.T) {
 		maxBatchSplitSize = backup
 	})
 
-	mockPDClient := newMockPDClientForSplit()
+	mockPDClient := NewMockPDClientForSplit()
 	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
 	mockPDClient.SetRegions(keys)
 	mockClient := &pdClient{
@@ -71,7 +71,7 @@ func TestSplitScatterRawKV(t *testing.T) {
 }
 
 func TestSplitMeetErrorAndRetry(t *testing.T) {
-	mockPDClient := newMockPDClientForSplit()
+	mockPDClient := NewMockPDClientForSplit()
 	keys := [][]byte{[]byte(""), []byte("a"), []byte("")}
 	mockPDClient.SetRegions(keys)
 	mockClient := &pdClient{
@@ -152,7 +152,7 @@ func TestSplitScatter(t *testing.T) {
 	}
 	keys = append(keys, tableEndKey, []byte(""))
 
-	mockPDClient := newMockPDClientForSplit()
+	mockPDClient := NewMockPDClientForSplit()
 	mockPDClient.SetRegions(keys)
 	mockClient := &pdClient{
 		client:           mockPDClient,

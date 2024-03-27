@@ -113,6 +113,7 @@ type pdClient struct {
 	storeCache       map[uint64]*metapb.Store
 	isRawKv          bool
 	splitConcurrency uint
+	splitBatchSize   int
 	onSplit          func([][]byte)
 
 	// FIXME when config changed during the lifetime of pdClient,
@@ -135,6 +136,7 @@ func NewSplitClient(
 		tlsConf:          tlsConf,
 		storeCache:       make(map[uint64]*metapb.Store),
 		splitConcurrency: concurrency,
+		splitBatchSize:   config.DefaultRegionSplitBatchSize,
 	}
 	for _, opt := range opts {
 		opt(cli)
@@ -155,6 +157,13 @@ func WithRawKV() ClientOption {
 func WithOnSplit(fn func([][]byte)) ClientOption {
 	return func(c *pdClient) {
 		c.onSplit = fn
+	}
+}
+
+// WithSplitBatchSize sets the batch size of split.
+func WithSplitBatchSize(size int) ClientOption {
+	return func(c *pdClient) {
+		c.splitBatchSize = size
 	}
 }
 
@@ -329,7 +338,7 @@ func sendSplitRegionRequest(
 	retry int,
 ) (bool, *kvrpcpb.SplitRegionResponse, error) {
 	if intest.InTest {
-		mockCli, ok := c.client.(*mockPDClientForSplit)
+		mockCli, ok := c.client.(*MockPDClientForSplit)
 		if ok {
 			return mockCli.SplitRegion(regionInfo, keys, c.isRawKv)
 		}
@@ -546,7 +555,7 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, sortedKeys [][]byte)
 				for end < len(splitKeys) {
 					for end < len(splitKeys) &&
 						totalKeySize+len(splitKeys[end]) < maxBatchSplitSize &&
-						end-start < config.DefaultRegionSplitBatchSize {
+						end-start < c.splitBatchSize {
 						totalKeySize += len(splitKeys[end])
 						end++
 					}

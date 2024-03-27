@@ -17,7 +17,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type mockPDClientForSplit struct {
+// MockPDClientForSplit is a mock PD client for testing split and scatter.
+type MockPDClientForSplit struct {
 	pd.Client
 
 	mu sync.Mutex
@@ -45,8 +46,9 @@ type mockPDClientForSplit struct {
 	}
 }
 
-func newMockPDClientForSplit() *mockPDClientForSplit {
-	ret := &mockPDClientForSplit{}
+// NewMockPDClientForSplit creates a new MockPDClientForSplit.
+func NewMockPDClientForSplit() *MockPDClientForSplit {
+	ret := &MockPDClientForSplit{}
 	ret.regions = &pdtypes.RegionTree{}
 	ret.scatterRegion.count = make(map[uint64]int)
 	return ret
@@ -56,14 +58,14 @@ func newRegionNotFullyReplicatedErr(regionID uint64) error {
 	return status.Errorf(codes.Unknown, "region %d is not fully replicated", regionID)
 }
 
-func (c *mockPDClientForSplit) SetRegions(boundaries [][]byte) []*metapb.Region {
+func (c *MockPDClientForSplit) SetRegions(boundaries [][]byte) []*metapb.Region {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	return c.setRegions(boundaries)
 }
 
-func (c *mockPDClientForSplit) setRegions(boundaries [][]byte) []*metapb.Region {
+func (c *MockPDClientForSplit) setRegions(boundaries [][]byte) []*metapb.Region {
 	ret := make([]*metapb.Region, 0, len(boundaries)-1)
 	for i := 1; i < len(boundaries); i++ {
 		c.lastRegionID++
@@ -80,7 +82,7 @@ func (c *mockPDClientForSplit) setRegions(boundaries [][]byte) []*metapb.Region 
 	return ret
 }
 
-func (c *mockPDClientForSplit) ScanRegions(
+func (c *MockPDClientForSplit) ScanRegions(
 	_ context.Context,
 	key, endKey []byte,
 	limit int,
@@ -110,7 +112,7 @@ func (c *mockPDClientForSplit) ScanRegions(
 	return ret, nil
 }
 
-func (c *mockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64, _ ...pd.GetRegionOption) (*pd.Region, error) {
+func (c *MockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64, _ ...pd.GetRegionOption) (*pd.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -125,7 +127,7 @@ func (c *mockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64,
 	return nil, errors.New("region not found")
 }
 
-func (c *mockPDClientForSplit) SplitRegion(
+func (c *MockPDClientForSplit) SplitRegion(
 	region *RegionInfo,
 	keys [][]byte,
 	isRawKV bool,
@@ -153,7 +155,7 @@ func (c *mockPDClientForSplit) SplitRegion(
 	return false, &kvrpcpb.SplitRegionResponse{Regions: newRegions}, nil
 }
 
-func (c *mockPDClientForSplit) ScatterRegion(_ context.Context, regionID uint64) error {
+func (c *MockPDClientForSplit) ScatterRegion(_ context.Context, regionID uint64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -164,7 +166,7 @@ func (c *mockPDClientForSplit) ScatterRegion(_ context.Context, regionID uint64)
 	return newRegionNotFullyReplicatedErr(regionID)
 }
 
-func (c *mockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uint64, _ ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
+func (c *MockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uint64, _ ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -175,7 +177,7 @@ func (c *mockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uin
 	return &pdpb.ScatterRegionResponse{}, nil
 }
 
-func (c *mockPDClientForSplit) GetOperator(_ context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
+func (c *MockPDClientForSplit) GetOperator(_ context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
