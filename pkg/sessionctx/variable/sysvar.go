@@ -3056,12 +3056,10 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(EnableCheckConstraint.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBSchemaCacheSize, Value: strconv.Itoa(DefTiDBSchemaCacheSize), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
-		// debug.PrintStack()
 		// It does not take effect immediately, but within a ddl lease, infoschema reload would cause the v2 to be used.
 		SchemaCacheSize.Store(TidbOptInt64(val, DefTiDBSchemaCacheSize))
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		// debug.PrintStack()
 		val := SchemaCacheSize.Load()
 		return strconv.FormatInt(val, 10), nil
 	}},

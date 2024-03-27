@@ -510,7 +510,6 @@ func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) 
 		// TODO: error could happen, so do not panic!
 		panic(err)
 	}
-
 	tables = make([]table.Table, 0, len(tblInfos))
 	for _, tblInfo := range tblInfos {
 		tbl, ok := is.TableByID(tblInfo.ID)
