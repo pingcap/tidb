@@ -514,15 +514,15 @@ func TestPaginateScanRegion(t *testing.T) {
 	require.ErrorContains(t, err, "not leader")
 
 	// test region not continuous
-	mockPDClient.regions = &pdtypes.RegionTree{}
-	mockPDClient.regions.SetRegion(&pdtypes.Region{
+	mockPDClient.Regions = &pdtypes.RegionTree{}
+	mockPDClient.Regions.SetRegion(&pdtypes.Region{
 		Meta: &metapb.Region{
 			Id:       1,
 			StartKey: []byte{1},
 			EndKey:   []byte{2},
 		},
 	})
-	mockPDClient.regions.SetRegion(&pdtypes.Region{
+	mockPDClient.Regions.SetRegion(&pdtypes.Region{
 		Meta: &metapb.Region{
 			Id:       4,
 			StartKey: []byte{4},
@@ -552,7 +552,7 @@ func TestPaginateScanRegion(t *testing.T) {
 		},
 	}
 	mockPDClient.scanRegions.beforeHook = func() {
-		mockPDClient.regions.SetRegion(toAdd[0])
+		mockPDClient.Regions.SetRegion(toAdd[0])
 		toAdd = toAdd[1:]
 	}
 	got, err = PaginateScanRegion(ctx, mockClient, []byte{1}, []byte{5}, 100)

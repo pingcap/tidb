@@ -23,7 +23,7 @@ type MockPDClientForSplit struct {
 
 	mu sync.Mutex
 
-	regions      *pdtypes.RegionTree
+	Regions      *pdtypes.RegionTree
 	lastRegionID uint64
 	scanRegions  struct {
 		errors     []error
@@ -49,7 +49,7 @@ type MockPDClientForSplit struct {
 // NewMockPDClientForSplit creates a new MockPDClientForSplit.
 func NewMockPDClientForSplit() *MockPDClientForSplit {
 	ret := &MockPDClientForSplit{}
-	ret.regions = &pdtypes.RegionTree{}
+	ret.Regions = &pdtypes.RegionTree{}
 	ret.scatterRegion.count = make(map[uint64]int)
 	return ret
 }
@@ -74,7 +74,7 @@ func (c *MockPDClientForSplit) setRegions(boundaries [][]byte) []*metapb.Region 
 			StartKey: boundaries[i-1],
 			EndKey:   boundaries[i],
 		}
-		c.regions.SetRegion(&pdtypes.Region{
+		c.Regions.SetRegion(&pdtypes.Region{
 			Meta: r,
 		})
 		ret = append(ret, r)
@@ -101,7 +101,7 @@ func (c *MockPDClientForSplit) ScanRegions(
 		c.scanRegions.beforeHook()
 	}
 
-	regions := c.regions.ScanRange(key, endKey, limit)
+	regions := c.Regions.ScanRange(key, endKey, limit)
 	ret := make([]*pd.Region, 0, len(regions))
 	for _, r := range regions {
 		ret = append(ret, &pd.Region{
@@ -116,7 +116,7 @@ func (c *MockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64,
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	for _, r := range c.regions.Regions {
+	for _, r := range c.Regions.Regions {
 		if r.Meta.Id == regionID {
 			return &pd.Region{
 				Meta:   r.Meta,

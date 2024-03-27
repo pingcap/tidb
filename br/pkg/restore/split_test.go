@@ -215,14 +215,26 @@ func TestRawSplit(t *testing.T) {
 			EndKey:   []byte{},
 		},
 	}
-	client := initTestClient(true)
+	mockPDClient := split.NewMockPDClientForSplit()
+	regionBoundaries := [][]byte{{}, {12}, {34}, {56}, {}}
+	mockPDClient.SetRegions(regionBoundaries)
+	splitClient := split.NewSplitClient(mockPDClient, nil, nil, 1, split.WithRawKV())
 	ctx := context.Background()
 
-	regionSplitter := NewRegionSplitter(client)
+	regionSplitter := NewRegionSplitter(splitClient)
 	err := regionSplitter.ExecuteSplit(ctx, ranges)
 	require.NoError(t, err)
-	regions := client.GetAllRegions()
-	expectedKeys := []string{"", "aay", "bba", "bbh", "cca", ""}
+	regions := make(map[uint64]*split.RegionInfo, len(mockPDClient.Regions.Regions))
+	for i, r := range mockPDClient.Regions.Regions {
+		regions[uint64(i)] = &split.RegionInfo{
+			Region: r.Meta,
+		}
+	}
+
+	expectedKeys := make([]string, 0, len(regionBoundaries))
+	for _, b := range regionBoundaries {
+		expectedKeys = append(expectedKeys, string(b))
+	}
 	if !validateRegionsExt(regions, expectedKeys, true) {
 		for _, region := range regions {
 			t.Logf("region: %v\n", region.Region)
