@@ -23,11 +23,11 @@ import (
 
 var (
 	WaitRegionOnlineAttemptTimes = config.DefaultRegionCheckBackoffLimit
+	splitRetryTimes              = 32
 )
 
 // Constants for split retry machinery.
 const (
-	SplitRetryTimes       = 32
 	SplitRetryInterval    = 50 * time.Millisecond
 	SplitMaxRetryInterval = 4 * time.Second
 

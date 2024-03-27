@@ -5,11 +5,18 @@ package split
 import (
 	"testing"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
-func TestSplitScatter(t *testing.T) {
+func TestSplitScatterRawKV(t *testing.T) {
 	backup := maxBatchSplitSize
 	maxBatchSplitSize = 7
 	t.Cleanup(func() {
@@ -21,7 +28,7 @@ func TestSplitScatter(t *testing.T) {
 	mockPDClient.SetRegions(keys)
 	mockClient := &pdClient{
 		client:           mockPDClient,
-		splitConcurrency: 1,
+		splitConcurrency: 10,
 		isRawKv:          true, // make tests more readable
 	}
 	ctx := context.Background()
@@ -61,4 +68,128 @@ func TestSplitScatter(t *testing.T) {
 	require.EqualValues(t, 9, mockPDClient.splitRegions.count)
 	// the old regions will not be scattered. They are [..., bba), [bba, bbh), [..., cca)
 	require.Equal(t, len(result)-3, mockPDClient.scatterRegions.regionCount)
+}
+
+func TestSplitMeetErrorAndRetry(t *testing.T) {
+	mockPDClient := newMockPDClientForSplit()
+	keys := [][]byte{[]byte(""), []byte("a"), []byte("")}
+	mockPDClient.SetRegions(keys)
+	mockClient := &pdClient{
+		client:           mockPDClient,
+		splitConcurrency: 1,
+		isRawKv:          true, // make tests more readable
+	}
+	ctx := context.Background()
+
+	// mimic the epoch change after the scan region before split region
+
+	mockPDClient.splitRegions.hijacked = func() (bool, *kvrpcpb.SplitRegionResponse, error) {
+		// clear self
+		mockPDClient.splitRegions.hijacked = nil
+		return false, nil, errors.New("epoch not match")
+	}
+
+	_, err := mockClient.SplitWaitAndScatter(ctx, [][]byte{{'b'}})
+	require.NoError(t, err)
+	regions, err := PaginateScanRegion(ctx, mockClient, []byte{'a'}, []byte{}, 5)
+	require.NoError(t, err)
+	checkRegionsBoundaries(t, regions, [][]byte{{'a'}, {'b'}, {}})
+	require.EqualValues(t, 2, mockPDClient.splitRegions.count)
+
+	// mimic "no valid key" error
+
+	mockPDClient.splitRegions.hijacked = func() (bool, *kvrpcpb.SplitRegionResponse, error) {
+		// clear self
+		mockPDClient.splitRegions.hijacked = nil
+		return false, nil, errors.New("no valid key")
+	}
+	mockPDClient.splitRegions.count = 0
+
+	_, err = mockClient.SplitWaitAndScatter(ctx, [][]byte{{'c'}})
+	require.NoError(t, err)
+	regions, err = PaginateScanRegion(ctx, mockClient, []byte{'b'}, []byte{}, 5)
+	require.NoError(t, err)
+	checkRegionsBoundaries(t, regions, [][]byte{{'b'}, {'c'}, {}})
+	require.EqualValues(t, 2, mockPDClient.splitRegions.count)
+
+	// test retry is also failed
+
+	backup := splitRetryTimes
+	splitRetryTimes = 3
+	t.Cleanup(func() {
+		splitRetryTimes = backup
+	})
+	mockPDClient.splitRegions.hijacked = func() (bool, *kvrpcpb.SplitRegionResponse, error) {
+		return false, nil, errors.New("no valid key")
+	}
+	_, err = mockClient.SplitWaitAndScatter(ctx, [][]byte{{'d'}})
+	require.ErrorContains(t, err, "no valid key")
+}
+
+func TestSplitScatter(t *testing.T) {
+	backup := maxBatchSplitSize
+	maxBatchSplitSize = 100
+	t.Cleanup(func() {
+		maxBatchSplitSize = backup
+	})
+
+	stmtCtx := stmtctx.NewStmtCtx()
+	tableID := int64(1)
+	tableStartKey := tablecodec.EncodeTablePrefix(tableID)
+	tableStartKey = codec.EncodeBytes(nil, tableStartKey)
+	tableEndKey := tablecodec.EncodeTablePrefix(tableID + 1)
+	tableEndKey = codec.EncodeBytes(nil, tableEndKey)
+	keys := [][]byte{[]byte(""), tableStartKey}
+	// pre split 3 regions [..., (0)), [(0), (1)), [(1), ...]
+	for i := int64(0); i < 2; i++ {
+		keyBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, types.NewIntDatum(i))
+		require.NoError(t, err)
+		h, err := kv.NewCommonHandle(keyBytes)
+		require.NoError(t, err)
+		key := tablecodec.EncodeRowKeyWithHandle(tableID, h)
+		key = codec.EncodeBytes(nil, key)
+		keys = append(keys, key)
+	}
+	keys = append(keys, tableEndKey, []byte(""))
+
+	mockPDClient := newMockPDClientForSplit()
+	mockPDClient.SetRegions(keys)
+	mockClient := &pdClient{
+		client:           mockPDClient,
+		splitConcurrency: 20,
+	}
+	ctx := context.Background()
+
+	// (0, 0), (0, 10000), ... (0, 90000), (1, 0), (1, 10000), ... (1, 90000)
+	splitKeys := make([][]byte, 0, 20)
+	for i := int64(0); i < 2; i++ {
+		for j := int64(0); j < 10; j++ {
+			keyBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, types.NewIntDatum(i), types.NewIntDatum(j*10000))
+			require.NoError(t, err)
+			h, err := kv.NewCommonHandle(keyBytes)
+			require.NoError(t, err)
+			key := tablecodec.EncodeRowKeyWithHandle(tableID, h)
+			splitKeys = append(splitKeys, key)
+		}
+	}
+
+	_, err := mockClient.SplitWaitAndScatter(ctx, splitKeys)
+	require.NoError(t, err)
+
+	// check split ranges
+	regions, err := PaginateScanRegion(ctx, mockClient, tableStartKey, tableEndKey, 5)
+	require.NoError(t, err)
+	expected := make([][]byte, 0, 24)
+	expected = append(expected, tableStartKey)
+	expected = append(expected, keys[2])
+	for _, k := range splitKeys[:10] {
+		expected = append(expected, codec.EncodeBytes(nil, k))
+	}
+	expected = append(expected, keys[3])
+	for _, k := range splitKeys[10:] {
+		expected = append(expected, codec.EncodeBytes(nil, k))
+	}
+	expected = append(expected, tableEndKey)
+
+	checkRegionsBoundaries(t, regions, expected)
 }

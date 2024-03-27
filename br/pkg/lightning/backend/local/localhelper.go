@@ -75,7 +75,7 @@ func (local *Backend) SplitAndScatterRegionInBatches(
 func (local *Backend) SplitAndScatterRegionByRanges(
 	ctx context.Context,
 	ranges []common.Range,
-	_ bool,
+	_ bool, // TODO(lance6716): move needSplit to caller
 ) (err error) {
 	if len(ranges) == 0 {
 		return nil

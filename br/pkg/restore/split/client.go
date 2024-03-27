@@ -331,7 +331,7 @@ func sendSplitRegionRequest(
 	if intest.InTest {
 		mockCli, ok := c.client.(*mockPDClientForSplit)
 		if ok {
-			return mockCli.SplitRegion(regionInfo, keys)
+			return mockCli.SplitRegion(regionInfo, keys, c.isRawKv)
 		}
 	}
 	var peer *metapb.Peer
@@ -529,7 +529,7 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, sortedKeys [][]byte)
 		if err != nil {
 			return err
 		}
-		brlog.FromContext(ctx).Info("paginate scan regions",
+		log.Info("paginate scan regions",
 			zap.Int("count", len(regions)),
 			logutil.Key("start", minKey),
 			logutil.Key("end", maxKey))
@@ -548,6 +548,11 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, sortedKeys [][]byte)
 						totalKeySize+len(splitKeys[end]) < maxBatchSplitSize &&
 						end-start < config.DefaultRegionSplitBatchSize {
 						totalKeySize += len(splitKeys[end])
+						end++
+					}
+
+					// in rare cases we may have a very large key that exceeds the maxBatchSplitSize.
+					if end < len(splitKeys) && start == end {
 						end++
 					}
 
@@ -590,7 +595,7 @@ type splitBackoffer struct {
 
 func newSplitBackoffer() *splitBackoffer {
 	return &splitBackoffer{
-		state: utils.InitialRetryState(SplitRetryTimes, SplitRetryInterval, SplitMaxRetryInterval),
+		state: utils.InitialRetryState(splitRetryTimes, SplitRetryInterval, SplitMaxRetryInterval),
 	}
 }
 

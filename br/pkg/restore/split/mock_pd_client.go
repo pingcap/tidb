@@ -4,12 +4,14 @@ package split
 
 import (
 	"context"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -17,6 +19,8 @@ import (
 
 type mockPDClientForSplit struct {
 	pd.Client
+
+	mu sync.Mutex
 
 	regions      *pdtypes.RegionTree
 	lastRegionID uint64
@@ -53,6 +57,13 @@ func newRegionNotFullyReplicatedErr(regionID uint64) error {
 }
 
 func (c *mockPDClientForSplit) SetRegions(boundaries [][]byte) []*metapb.Region {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.setRegions(boundaries)
+}
+
+func (c *mockPDClientForSplit) setRegions(boundaries [][]byte) []*metapb.Region {
 	ret := make([]*metapb.Region, 0, len(boundaries)-1)
 	for i := 1; i < len(boundaries); i++ {
 		c.lastRegionID++
@@ -75,6 +86,9 @@ func (c *mockPDClientForSplit) ScanRegions(
 	limit int,
 	_ ...pd.GetRegionOption,
 ) ([]*pd.Region, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if len(c.scanRegions.errors) > 0 {
 		err := c.scanRegions.errors[0]
 		c.scanRegions.errors = c.scanRegions.errors[1:]
@@ -97,6 +111,9 @@ func (c *mockPDClientForSplit) ScanRegions(
 }
 
 func (c *mockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64, _ ...pd.GetRegionOption) (*pd.Region, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	for _, r := range c.regions.Regions {
 		if r.Meta.Id == regionID {
 			return &pd.Region{
@@ -108,22 +125,38 @@ func (c *mockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64,
 	return nil, errors.New("region not found")
 }
 
-func (c *mockPDClientForSplit) SplitRegion(region *RegionInfo, keys [][]byte) (bool, *kvrpcpb.SplitRegionResponse, error) {
+func (c *mockPDClientForSplit) SplitRegion(
+	region *RegionInfo,
+	keys [][]byte,
+	isRawKV bool,
+) (bool, *kvrpcpb.SplitRegionResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	c.splitRegions.count++
 	if c.splitRegions.hijacked != nil {
 		return c.splitRegions.hijacked()
+	}
+
+	if !isRawKV {
+		for i := range keys {
+			keys[i] = codec.EncodeBytes(nil, keys[i])
+		}
 	}
 
 	newRegionBoundaries := make([][]byte, 0, len(keys)+2)
 	newRegionBoundaries = append(newRegionBoundaries, region.Region.StartKey)
 	newRegionBoundaries = append(newRegionBoundaries, keys...)
 	newRegionBoundaries = append(newRegionBoundaries, region.Region.EndKey)
-	newRegions := c.SetRegions(newRegionBoundaries)
+	newRegions := c.setRegions(newRegionBoundaries)
 	newRegions[0].Id = region.Region.Id
 	return false, &kvrpcpb.SplitRegionResponse{Regions: newRegions}, nil
 }
 
 func (c *mockPDClientForSplit) ScatterRegion(_ context.Context, regionID uint64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	c.scatterRegion.count[regionID]++
 	if c.scatterRegion.count[regionID] > c.scatterRegion.eachRegionFailBefore {
 		return nil
@@ -132,6 +165,9 @@ func (c *mockPDClientForSplit) ScatterRegion(_ context.Context, regionID uint64)
 }
 
 func (c *mockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uint64, _ ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.scatterRegions.notImplemented {
 		return nil, status.Error(codes.Unimplemented, "Ah, yep")
 	}
@@ -140,6 +176,9 @@ func (c *mockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uin
 }
 
 func (c *mockPDClientForSplit) GetOperator(_ context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	ret := c.getOperator.responses[regionID][0]
 	c.getOperator.responses[regionID] = c.getOperator.responses[regionID][1:]
 	return ret, nil
