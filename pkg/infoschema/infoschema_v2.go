@@ -278,6 +278,10 @@ func (is *infoschemaV2) base() *infoSchema {
 }
 
 func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
+	if !tableIDIsValid(id) {
+		return
+	}
+
 	// Get from the cache.
 	key := tableCacheKey{id, is.infoSchema.schemaMetaVersion}
 	tbl, found := is.tableCache.Get(key)

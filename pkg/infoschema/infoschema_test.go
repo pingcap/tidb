@@ -172,6 +172,14 @@ func TestBasic(t *testing.T) {
 	require.False(t, ok)
 	require.Nil(t, gotTblInfo)
 
+	tb, ok = is.TableByID(-12345)
+	require.False(t, ok)
+	require.Nil(t, tb)
+
+	gotTblInfo, ok = is.TableInfoByID(-12345)
+	require.False(t, ok)
+	require.Nil(t, gotTblInfo)
+
 	tb, err = is.TableByName(dbName, tbName)
 	require.NoError(t, err)
 	require.NotNil(t, tb)
@@ -186,6 +194,17 @@ func TestBasic(t *testing.T) {
 	gotTblInfo, err = is.TableInfoByName(dbName, noexist)
 	require.Error(t, err)
 	require.Nil(t, gotTblInfo)
+
+	// negative id should always be seen as not exists
+	tb, ok = is.TableByID(-1)
+	require.False(t, ok)
+	require.Nil(t, tb)
+	schema, ok = is.SchemaByID(-1)
+	require.False(t, ok)
+	require.Nil(t, schema)
+	gotTblInfo, ok = is.TableInfoByID(-1)
+	require.Nil(t, gotTblInfo)
+	require.False(t, ok)
 
 	tbs := is.SchemaTables(dbName)
 	require.Len(t, tbs, 1)
@@ -853,6 +872,14 @@ func TestLocalTemporaryTables(t *testing.T) {
 	require.Nil(t, info)
 	// SchemaByTable returns nil when the schema is not in the infoSchema and the table is an non-existing tmp table.
 	info, ok = is.SchemaByID(tb22.Meta().DBID)
+	require.False(t, ok)
+	require.Nil(t, info)
+
+	// negative id should always be seen as not exists
+	tbl, ok = is.TableByID(-1)
+	require.False(t, ok)
+	require.Nil(t, tbl)
+	info, ok = is.SchemaByID(-1)
 	require.False(t, ok)
 	require.Nil(t, info)
 }
