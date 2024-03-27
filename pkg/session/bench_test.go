@@ -1714,47 +1714,6 @@ func BenchmarkHashPartitionPruningPointSelect(b *testing.B) {
 	b.StopTimer()
 }
 
-func runPointSelect(b *testing.B, se sessiontypes.Session, enablePlanCache bool) {
-	if enablePlanCache {
-		// Note: PointGet don't use the non-prepared plan cache!
-		mustExecute(se, "set tidb_enable_non_prepared_plan_cache = 1")
-	} else {
-		mustExecute(se, "set tidb_enable_non_prepared_plan_cache = 0")
-	}
-	hits := 0
-	ctx := context.Background()
-	alloc := chunk.NewAllocator()
-	b.ResetTimer()
-	query := "select * from t where id = 2330"
-	rs, err := se.Execute(ctx, "explain "+query)
-	if err != nil {
-		b.Fatal(err)
-	}
-	resStrings, err := ResultSetToStringSlice(ctx, se.(*session), rs[0])
-	if !strings.HasPrefix(resStrings[0][0], "Point_Get") {
-		logutil.BgLogger().Fatal("expected Point_Get query plan", zap.String("query", query), zap.Any("explain", resStrings))
-	}
-
-	for i := 0; i < b.N; i++ {
-		rs, err = se.Execute(ctx, query)
-		if err != nil {
-			b.Fatal(err)
-		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if se.GetSessionVars().FoundInPlanCache {
-			hits++
-		}
-		alloc.Reset()
-	}
-	b.StopTimer()
-	if hits > 0 {
-		logutil.BgLogger().Error("Not expected Plan Cache to be used with PointGet", zap.Int("hits", hits), zap.Int("b.N", b.N))
-	}
-}
-
 func logIfNotExpectedPlanCache(enablePlanCache bool, i int, sessVars *variable.SessionVars) int {
 	FoundInPlanCache := sessVars.FoundInPlanCache
 	if !enablePlanCache || i == 0 {
@@ -1775,16 +1734,16 @@ func logIfNotExpectedPlanCache(enablePlanCache bool, i int, sessVars *variable.S
 	return 0
 }
 
-func runBatchPointSelect(b *testing.B, se sessiontypes.Session, enablePlanCache bool) {
+func runPointSelect(b *testing.B, se sessiontypes.Session, query, expectedPlan string, enablePlanCache bool) {
 	ctx := context.Background()
+	alloc := chunk.NewAllocator()
 	if enablePlanCache {
-		// Note: BatchPointGet don't use the non-prepared plan cache!
-		mustExecute(se, "set tidb_session_plan_cache_size = 0")
-
-		// Make sure to flush the plan cache, so previous benchmark can not be hit.
 		mustExecute(se, "set tidb_enable_non_prepared_plan_cache = 1")
-		alloc := chunk.NewAllocator()
-		rs, err := se.Execute(ctx, "select * from t where id = 1 or id = 9")
+		// Make sure to flush the plan cache, so previous benchmark can not be hit.
+		mustExecute(se, "set tidb_session_plan_cache_size = 0")
+		mustExecute(se, "create table tTemp (id int)")
+		mustExecute(se, "insert into tTemp values (1)")
+		rs, err := se.Execute(ctx, "select * from tTemp where id = 1 or id = 9")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1793,7 +1752,7 @@ func runBatchPointSelect(b *testing.B, se sessiontypes.Session, enablePlanCache 
 			b.Fatal(err)
 		}
 		alloc.Reset()
-		rs, err = se.Execute(ctx, "select * from t where id = 1 or id IN (2,5)")
+		rs, err = se.Execute(ctx, "select * from tTemp where id = 1 or id IN (2,5)")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1802,40 +1761,28 @@ func runBatchPointSelect(b *testing.B, se sessiontypes.Session, enablePlanCache 
 			b.Fatal(err)
 		}
 		alloc.Reset()
+		mustExecute(se, "drop table tTemp")
 		mustExecute(se, "set tidb_session_plan_cache_size = default")
 	} else {
 		mustExecute(se, "set tidb_enable_non_prepared_plan_cache = 0")
 	}
-
-	// IN (...) uses TryFastPlan, while this converts it to BatchPointGet
-	query := "select * from t where id = 1 or id = 1111 or id = 2330 or id = 99999"
 	rs, err := se.Execute(ctx, "explain "+query)
 	if err != nil {
 		b.Fatal(err)
 	}
+	// Note: [Batch]PointGet don't use the non-prepared plan cache,
+	// since it is already using the FastPlan!
+	expectHits := enablePlanCache && (expectedPlan != "Point_Get" && expectedPlan != "Batch_Point_Get")
+	checkHits := true
 	resStrings, err := ResultSetToStringSlice(ctx, se.(*session), rs[0])
-	expectPlanCacheHits := false
-	if !strings.HasPrefix(resStrings[0][0], "Batch_Point_Get") {
-		logutil.BgLogger().Warn("expected Batch_Point_Get query plan", zap.String("query", query), zap.Any("explain", resStrings))
-		expectPlanCacheHits = enablePlanCache
+	if !strings.HasPrefix(resStrings[0][0], expectedPlan) {
+		logutil.BgLogger().Error("expected Point_Get query plan", zap.String("query", query), zap.String("expectedPlan", expectedPlan), zap.Any("explain", resStrings))
+		checkHits = false
 	}
-
 	hits := 0
-	alloc := chunk.NewAllocator()
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		/*
-			rs, err := se.Execute(ctx, "select * from t where id IN (1, 1111, 2330, 99999)")
-			if err != nil {
-				b.Fatal(err)
-			}
-			_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
-			if err != nil {
-				b.Fatal(err)
-			}
-			hits += logIfNotExpectedPlanCache(expectPlanCacheHits, i, se.GetSessionVars())
-			alloc.Reset()
-		*/
 		rs, err = se.Execute(ctx, query)
 		if err != nil {
 			b.Fatal(err)
@@ -1844,146 +1791,184 @@ func runBatchPointSelect(b *testing.B, se sessiontypes.Session, enablePlanCache 
 		if err != nil {
 			b.Fatal(err)
 		}
-		hits += logIfNotExpectedPlanCache(expectPlanCacheHits, i, se.GetSessionVars())
+		if checkHits && se.GetSessionVars().FoundInPlanCache {
+			hits++
+		}
 		alloc.Reset()
 	}
 	b.StopTimer()
-	if expectPlanCacheHits && hits < b.N/2 {
-		logutil.BgLogger().Error("Plan cache was not used enough", zap.Int("hits", hits), zap.Int("b.N", b.N))
+	if !expectHits && checkHits && hits > 0 {
+		logutil.BgLogger().Error("Not expected Plan Cache to be used with PointGet", zap.Int("hits", hits), zap.Int("b.N", b.N))
+	}
+	if expectHits && checkHits && hits == 0 && b.N > 5 {
+		logutil.BgLogger().Error("expected Plan Cache to be used with PointSelect", zap.Int("hits", hits), zap.Int("b.N", b.N))
 	}
 }
 
-func runTestBench(t *testing.T, se sessiontypes.Session, enablePlanCache bool) {
-	ctx := context.Background()
-	if enablePlanCache {
-		mustExecute(se, "set tidb_enable_non_prepared_plan_cache = 1")
-	} else {
-		mustExecute(se, "set tidb_enable_non_prepared_plan_cache = 0")
-	}
-	hits := 0
-	alloc := chunk.NewAllocator()
-	for i := 0; i < 1000; i++ {
-		rs, err := se.Execute(ctx, "select * from t where id IN (1, 1111, 2330, 99999)")
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
-		if err != nil {
-			t.Fatal(err)
-		}
-		hits += logIfNotExpectedPlanCache(enablePlanCache, i, se.GetSessionVars())
-		alloc.Reset()
-		// IN (...) uses TryFastPlan, while this converts it to BatchPointGet
-		rs, err = se.Execute(ctx, "select * from t where id = 1 or id = 1111 or id = 2330 or id = 99999")
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
-		if err != nil {
-			t.Fatal(err)
-		}
-		hits += logIfNotExpectedPlanCache(enablePlanCache, i, se.GetSessionVars())
-		alloc.Reset()
-	}
-	if enablePlanCache && hits < 500 {
-		logutil.BgLogger().Error("Plan cache was not used enough", zap.Int("hits", hits))
-	}
-}
-
-func testPointGetPlanCache(t *testing.T, sql string) {
+func benchmarkPointGetPlanCache(b *testing.B, partitionBy string) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
 		do.Close()
 		st.Close()
 	}()
-	mustExecute(se, sql)
+	mustExecute(se, "CREATE TABLE t (id int primary key, d varchar(255), key (d)) "+partitionBy)
+	mustExecute(se, `insert into t (id) values (1), (8), (5000), (10000), (100000)`)
 	mustExecute(se, "analyze table t")
-	runTestBench(t, se, true)
-}
-
-func benchmarkPointGetPlanCache(b *testing.B, sql string) {
-	se, do, st := prepareBenchSession()
-	defer func() {
-		se.Close()
-		do.Close()
-		st.Close()
-	}()
-	mustExecute(se, sql)
-	mustExecute(se, `insert into t (id) values (1), (8), (5555), (99999), (99999999)`)
-	mustExecute(se, "analyze table t")
+	pointQuery := "select * from t where id = 1"
+	expectedPointPlan := "Point_Get"
 	b.Run("PointGetPlanCacheOn", func(b *testing.B) {
-		runPointSelect(b, se, true)
+		runPointSelect(b, se, pointQuery, expectedPointPlan, true)
 	})
 	b.Run("PointGetPlanCacheOff", func(b *testing.B) {
-		runPointSelect(b, se, false)
+		runPointSelect(b, se, pointQuery, expectedPointPlan, false)
 	})
+	// IN (...) uses TryFastPlan, which does not use Plan Cache
+	batchPointQuery := "select * from t where id = 1 or id = 5000 or id = 2 or id = 100000"
+	expectedPlan := "Batch_Point_Get"
+	if partitionBy != "" {
+		// Batch_Point_Get is not yet enabled for partitioned tables!
+		expectedPlan = "TableReader"
+	}
 	b.Run("BatchPointGetPlanCacheOn", func(b *testing.B) {
-		runBatchPointSelect(b, se, true)
+		runPointSelect(b, se, batchPointQuery, expectedPlan, true)
 	})
 	b.Run("BatchPointGetPlanCacheOff", func(b *testing.B) {
-		runBatchPointSelect(b, se, false)
+		runPointSelect(b, se, batchPointQuery, expectedPlan, false)
+	})
+
+	// Additional tests for IndexScan
+	mustExecute(se, `drop table t`)
+	mustExecute(se, "CREATE TABLE t (id int, d varchar(255), key idx_id (id), key(d)) "+partitionBy)
+	// Range using: 10, 1000, 100000, maxvalue
+	// Create 1k unique index entries, so it is cheaper with index lookup instead of table scan
+	mustExecute(se, `insert into t values (1,1),  (5000,5000), (10000,10000), (99900,99900)`)
+	mustExecute(se, `insert into t select id + 1, d from t `)   // 8
+	mustExecute(se, `insert into t select id + 2, d from t `)   // 16
+	mustExecute(se, `insert into t select id + 4, d from t `)   // 32
+	mustExecute(se, `insert into t select id + 8, d from t `)   // 64
+	mustExecute(se, `insert into t select id + 16, d from t `)  // 128
+	mustExecute(se, `insert into t select id + 32, d from t `)  // 256
+	mustExecute(se, `insert into t select id + 64, d from t `)  // 512
+	mustExecute(se, `insert into t select id + 128, d from t `) // 1024
+	mustExecute(se, "analyze table t")
+	expectedPointPlan = "IndexLookUp"
+	b.Run("IndexGetPlanCacheOn", func(b *testing.B) {
+		runPointSelect(b, se, pointQuery, expectedPointPlan, true)
+	})
+	b.Run("IndexGetPlanCacheOff", func(b *testing.B) {
+		runPointSelect(b, se, pointQuery, expectedPointPlan, false)
+	})
+	b.Run("BatchIndexGetPlanCacheOn", func(b *testing.B) {
+		runPointSelect(b, se, batchPointQuery, expectedPointPlan, true)
+	})
+	b.Run("BatchIndexGetPlanCacheOff", func(b *testing.B) {
+		runPointSelect(b, se, batchPointQuery, expectedPointPlan, false)
+	})
+
+	// Additional tests for TableScan
+	mustExecute(se, "alter table t drop index idx_id")
+	mustExecute(se, "analyze table t")
+	expectedPointPlan = "TableReader"
+	b.Run("TableGetPlanCacheOn", func(b *testing.B) {
+		runPointSelect(b, se, pointQuery, expectedPointPlan, true)
+	})
+	b.Run("TableGetPlanCacheOff", func(b *testing.B) {
+		runPointSelect(b, se, pointQuery, expectedPointPlan, false)
+	})
+	b.Run("BatchTableGetPlanCacheOn", func(b *testing.B) {
+		runPointSelect(b, se, batchPointQuery, expectedPointPlan, true)
+	})
+	b.Run("BatchTableGetPlanCacheOff", func(b *testing.B) {
+		runPointSelect(b, se, batchPointQuery, expectedPointPlan, false)
 	})
 }
 
 func BenchmarkNonPartitionPointGet(b *testing.B) {
-	sql := `create table t (id int primary key, dt datetime)`
-	benchmarkPointGetPlanCache(b, sql)
+	benchmarkPointGetPlanCache(b, "")
 }
 
 func BenchmarkHashPartitionPointGet(b *testing.B) {
-	sql := `create table t (id int primary key, dt datetime) partition by hash(id) partitions 7`
-	benchmarkPointGetPlanCache(b, sql)
+	partitionBy := `partition by hash(id) partitions 7`
+	benchmarkPointGetPlanCache(b, partitionBy)
 }
 
 func BenchmarkHashExprPartitionPointGet(b *testing.B) {
-	sql := `create table t (id int primary key, dt datetime) partition by hash(floor(id*0.5)) partitions 7`
-	benchmarkPointGetPlanCache(b, sql)
+	partitionBy := `partition by hash(floor(id*0.5)) partitions 7`
+	benchmarkPointGetPlanCache(b, partitionBy)
 }
 
 func BenchmarkKeyPartitionPointGet(b *testing.B) {
-	sql := `create table t (id int primary key, dt datetime) partition by key(id) partitions 7`
-	benchmarkPointGetPlanCache(b, sql)
+	partitionBy := `partition by key(id) partitions 7`
+	benchmarkPointGetPlanCache(b, partitionBy)
+}
+
+func benchmarkListPartitionPointGet(b *testing.B, useColumns bool) {
+	partitionBy := `partition by list`
+	if useColumns {
+		partitionBy += ` columns`
+	}
+	partitionBy += `(id) (`
+	ranges := []int{1, 5000, 10000, 99900}
+	for partID, i := range ranges {
+		vals := 256
+		partVals := make([]string, 0, vals)
+		for j := 0; j < vals; j++ {
+			partVals = append(partVals, strconv.Itoa(i+j))
+		}
+		if partID > 0 {
+			partitionBy += ","
+		}
+		partitionBy += "partition p" + strconv.Itoa(partID) + " values in (" + strings.Join(partVals, ",") + ")"
+	}
+	partitionBy += ")"
+
+	benchmarkPointGetPlanCache(b, partitionBy)
 }
 
 func BenchmarkListPartitionPointGet(b *testing.B) {
-	sql := `create table t (id int primary key, dt datetime) partition by list(id)
-(partition p0 values in (1, 22, 44, 5555), partition p1 values in (2330, 43, 99999999, 23), partition p3 values in (99999, 1111, 2, 8))`
-	benchmarkPointGetPlanCache(b, sql)
-}
-
-func TestBench(t *testing.T) {
-	/*
-			sql := `create table t (id int primary key) partition by range(id)
-		(partition p0 values less than (10), partition p1 values less than (1000), partition p3 values less than (100000), partition pMax values less than (maxvalue))`
-
-	*/
-	sql := `create table t (id int primary key, dt datetime)`
-	testPointGetPlanCache(t, sql)
+	benchmarkListPartitionPointGet(b, false)
 }
 
 func BenchmarkRangePartitionPointGet(b *testing.B) {
-	sql := `create table t (id int primary key, d varchar(255)) partition by range(id)
+	partitionBy := `partition by range(id)
 (partition p0 values less than (10), partition p1 values less than (1000), partition p3 values less than (100000), partition pMax values less than (maxvalue))`
-	benchmarkPointGetPlanCache(b, sql)
+	benchmarkPointGetPlanCache(b, partitionBy)
 }
 
 func BenchmarkRangeExprPartitionPointGet(b *testing.B) {
-	sql := `create table t (id int primary key, d varchar(255)) partition by range(floor(id*0.5))
+	partitionBy := `partition by range(floor(id*0.5))
 (partition p0 values less than (10), partition p1 values less than (1000), partition p3 values less than (100000), partition pMax values less than (maxvalue))`
-	benchmarkPointGetPlanCache(b, sql)
+	benchmarkPointGetPlanCache(b, partitionBy)
 }
 
-// TODO: Add benchmarks for {RANGE|LIST} COLUMNS, both single columns and multi columns!!!
+func BenchmarkRangeColumnPartitionPointGet(b *testing.B) {
+	partitionBy := `partition by range columns (id)
+(partition p0 values less than (10), partition p1 values less than (1000), partition p3 values less than (100000), partition pMax values less than (maxvalue))`
+	benchmarkPointGetPlanCache(b, partitionBy)
+}
 
-func benchPreparedPointGet(b *testing.B, sql string) {
+func BenchmarkListColumnPartitionPointGet(b *testing.B) {
+	benchmarkListPartitionPointGet(b, true)
+}
+
+// TODO: Add benchmarks for {RANGE|LIST} COLUMNS, multi columns!!!
+
+func BenchmarkRangeColumnsPartitionPointGet(b *testing.B) {
+	partitionBy := `partition by range columns (id, d))
+(partition p0 values less than (10, 10), partition p1 values less than (1000, 1000), partition p3 values less than (100000, 1), partition pMax values less than (maxvalue, maxvalue))`
+	benchmarkPointGetPlanCache(b, partitionBy)
+}
+
+func benchPreparedPointGet(b *testing.B, partitionBy string) {
 	se, do, st := prepareBenchSession()
 	defer func() {
 		se.Close()
 		do.Close()
 		st.Close()
 	}()
-	mustExecute(se, sql)
+
+	mustExecute(se, "CREATE TABLE t (pk int primary key, d varchar(255)) "+partitionBy)
 	mustExecute(se, "insert t (pk) values (61),(62),(63),(64)")
 	mustExecute(se, "analyze table t")
 
@@ -1999,8 +1984,47 @@ func benchPreparedPointGet(b *testing.B, sql string) {
 	b.Run("BatchPointGetPlanCacheOn", func(b *testing.B) {
 		runPreparedBatchPointGet(b, se, true)
 	})
+
+	// Additional ones for testing Index
+	mustExecute(se, "drop table t")
+	mustExecute(se, "CREATE TABLE t (pk int, d varchar(255), key(pk)) "+partitionBy)
+	mustExecute(se, "insert t (pk) values (61),(62),(63),(64)")
+	mustExecute(se, "analyze table t")
+
+	b.Run("IndexPointPlanCacheOff", func(b *testing.B) {
+		runPreparedPointGet(b, se, false)
+	})
+	b.Run("IndexPointPlanCacheOn", func(b *testing.B) {
+		runPreparedPointGet(b, se, true)
+	})
+	b.Run("IndexBatchPointPlanCacheOff", func(b *testing.B) {
+		runPreparedBatchPointGet(b, se, false)
+	})
+	b.Run("IndexBatchPointPlanCacheOn", func(b *testing.B) {
+		runPreparedBatchPointGet(b, se, true)
+	})
+	// Additional ones for testing TableScan
+
+	mustExecute(se, "drop table t")
+	mustExecute(se, "CREATE TABLE t (pk int, d varchar(255)) "+partitionBy)
+	mustExecute(se, "insert t (pk) values (61),(62),(63),(64)")
+	mustExecute(se, "analyze table t")
+
+	b.Run("TableScanPointPlanCacheOff", func(b *testing.B) {
+		runPreparedPointGet(b, se, false)
+	})
+	b.Run("TableScanPointPlanCacheOn", func(b *testing.B) {
+		runPreparedPointGet(b, se, true)
+	})
+	b.Run("TableScanBatchPlanCacheOff", func(b *testing.B) {
+		runPreparedBatchPointGet(b, se, false)
+	})
+	b.Run("TableScanBatchPlanCacheOn", func(b *testing.B) {
+		runPreparedBatchPointGet(b, se, true)
+	})
 }
 
+// TODO: combine runPreparedPointGet with runPreparedBatchPointGet!
 func runPreparedPointGet(b *testing.B, se sessiontypes.Session, enablePlanCache bool) {
 	ctx := context.Background()
 	if enablePlanCache {
@@ -2104,29 +2128,31 @@ func runPreparedBatchPointGet(b *testing.B, se sessiontypes.Session, enablePlanC
 }
 
 func BenchmarkNonPartitionPreparedPointGet(b *testing.B) {
-	benchPreparedPointGet(b, "create table t (pk int primary key)")
+	benchPreparedPointGet(b, "")
 }
 
 func BenchmarkHashPartitionPreparedPointGet(b *testing.B) {
-	benchPreparedPointGet(b, "create table t (pk int primary key) partition by hash (pk) partitions 7")
+	benchPreparedPointGet(b, "partition by hash (pk) partitions 7")
 }
 
 func BenchmarkHashExprPartitionPreparedPointGet(b *testing.B) {
-	benchPreparedPointGet(b, "create table t (pk int primary key) partition by hash (floor(pk*0.5)) partitions 7")
+	benchPreparedPointGet(b, "partition by hash (floor(pk*0.5)) partitions 7")
 }
 
 func BenchmarkListPartitionPreparedPointGet(b *testing.B) {
-	sql := `create table t (pk int primary key, dt datetime) partition by list(pk) (partition p0 values in (1,22,44,61,5555), partition p1 values in (2330,43,99999999,62,23), partition p3 values in (63,64,99999,1111,2,8))`
-	benchPreparedPointGet(b, sql)
+	partitionBy := `partition by list(pk) (partition p0 values in (1,22,44,61,5555), partition p1 values in (2330,43,99999999,62,23), partition p3 values in (63,64,99999,1111,2,8))`
+	benchPreparedPointGet(b, partitionBy)
 }
 
 func BenchmarkRangePartitionPreparedPointGet(b *testing.B) {
-	benchPreparedPointGet(b, "create table t (pk int primary key, d varchar(255)) partition by range (pk) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100))")
+	benchPreparedPointGet(b, "partition by range (pk) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100))")
 }
 
 func BenchmarkRangeExprPartitionPreparedPointGet(b *testing.B) {
-	benchPreparedPointGet(b, "create table t (pk int primary key, d varchar(255)) partition by range (floor(pk*0.5)*2) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100))")
+	benchPreparedPointGet(b, "partition by range (floor(pk*0.5)*2) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100))")
 }
+
+// TODO: Add benchmarks for {RANGE|LIST} COLUMNS, both single and multi columns!!!
 
 func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 	ctx := context.Background()
