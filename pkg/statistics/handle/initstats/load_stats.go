@@ -47,7 +47,7 @@ func NewLoadStats(
 	}
 }
 
-// Worker loads stats concurrently.
+// LoadStats loads stats concurrently.
 func (ls *Worker) LoadStats(is infoschema.InfoSchema, cache statstypes.StatsCache, rc sqlexec.RecordSet) {
 	concurrency := runtime.GOMAXPROCS(0)
 	for n := 0; n < concurrency; n++ {
