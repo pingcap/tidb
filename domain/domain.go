@@ -1930,6 +1930,10 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 func (do *Domain) initStats() {
 	statsHandle := do.StatsHandle()
 	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("panic when initiating stats", zap.Any("r", r),
+				zap.Stack("stack"))
+		}
 		close(statsHandle.InitStatsDone)
 	}()
 	t := time.Now()
@@ -1948,8 +1952,10 @@ func (do *Domain) loadStatsWorker() {
 		lease = 3 * time.Second
 	}
 	loadTicker := time.NewTicker(lease)
+	updStatsHealthyTicker := time.NewTicker(20 * lease)
 	defer func() {
 		loadTicker.Stop()
+		updStatsHealthyTicker.Stop()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
 	do.initStats()
@@ -1970,6 +1976,8 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
 			}
+		case <-updStatsHealthyTicker.C:
+			statsHandle.UpdateStatsHealthyMetrics()
 		case <-do.exit:
 			return
 		}

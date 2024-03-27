@@ -61,8 +61,13 @@ import (
 
 const defaultStatusPort = 10080
 
-func (s *Server) startStatusHTTP() {
+func (s *Server) startStatusHTTP() error {
+	err := s.initHTTPListener()
+	if err != nil {
+		return err
+	}
 	go s.startHTTPServer()
+	return nil
 }
 
 func serveError(w http.ResponseWriter, status int, txt string) {
@@ -539,7 +544,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	// If the server is in the process of shutting down, return a non-200 status.
 	// It is important not to return status{} as acquiring the s.ConnectionCount()
 	// acquires a lock that may already be held by the shutdown process.
-	if s.inShutdownMode {
+	if s.inShutdownMode || !s.health.Load() {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

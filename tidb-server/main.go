@@ -219,11 +219,6 @@ func main() {
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
 
-	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
-	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
-	// For regression of issue like https://github.com/pingcap/tidb/issues/28190
-	terror.RegisterFinish()
-
 	exited := make(chan struct{})
 	signal.SetupSignalHandler(func(graceful bool) {
 		svr.Close()
@@ -232,10 +227,7 @@ func main() {
 		close(exited)
 	})
 	topsql.SetupTopSQL()
-	if config.GetGlobalConfig().Performance.ForceInitStats {
-		<-dom.StatsHandle().InitStatsDone
-	}
-	terror.MustNil(svr.Run())
+	terror.MustNil(svr.Run(dom))
 	<-exited
 	syncLog()
 }

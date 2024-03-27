@@ -41,17 +41,17 @@ func TestDumpStatsAPI(t *testing.T) {
 	cfg.Status.StatusPort = client.statusPort
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
-
+	RunInGoTestChan = make(chan struct{})
 	server, err := NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
-
-	client.port = getPortFromTCPAddr(server.listener.Addr())
-	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-RunInGoTestChan
+	client.port = getPortFromTCPAddr(server.listener.Addr())
+	client.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	client.waitUntilServerOnline()
 
 	dom, err := session.GetDomain(store)

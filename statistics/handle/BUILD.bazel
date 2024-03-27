@@ -36,6 +36,7 @@ go_library(
         "//util/chunk",
         "//util/codec",
         "//util/collate",
+        "//util/hack",
         "//util/logutil",
         "//util/mathutil",
         "//util/memory",

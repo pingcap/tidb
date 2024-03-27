@@ -7984,3 +7984,65 @@ func TestIssue49526(t *testing.T) {
 	}
 	tk.MustQuery("select null as a union all select 'a' as a;").Sort().Check(testkit.Rows("<nil>", "a"))
 }
+
+func TestIssue49566(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (col bit(37) NOT NULL);")
+	tk.MustExec("insert into t (col) values(x'05d3a46d88'), (x'04dba3570c'), (x'0ed284dfee'), (x'12657141bf');")
+	tk.MustQuery("select hex(col), hex(reverse(col)) from t order by reverse(col);").Check(
+		testkit.Rows("4DBA3570C 0C57A3DB04", "5D3A46D88 886DA4D305", "12657141BF BF41716512", "ED284DFEE EEDF84D20E"))
+	tk.MustExec("drop table if exists t;")
+}
+
+func TestIssue50855(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (col bit(45) NOT NULL);")
+	tk.MustExec("insert into t2 (col) values(x'09a1441d083c');")
+	tk.MustQuery("select hex(r) from (select reverse(col) as r from t2 group by reverse(col)) as t;").Check(testkit.Rows("3C081D44A109"))
+	tk.MustQuery("select hex(r) from (select distinct reverse(col) as r from t2) as t;").Check(testkit.Rows("3C081D44A109"))
+	tk.MustExec("drop table if exists t2;")
+}
+
+func TestIssue50850(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t3;")
+	tk.MustExec("create table t3 (col1 double not null, col2 bit(8) NOT NULL);")
+	tk.MustExec("insert into t3 (col1, col2) values (2306.9705216860984, x'31'), (6779.239615471537, x'65'), (7601.530447792593, x'd5'), " +
+		"(7058.842877388801, x'a5'), (615.6011553350702, x'34'), (5613.036187642952, x'01'), (7047.649466854864, x'a6'), (8632.659024782468, x'5d'), " +
+		"(9546.629394674586, x'ff'), (2972.7118048537704, x'b1');")
+	tk.MustQuery("select hex(r) as r0 from (select ELT(2, col1, col2) as r from t3 group by ELT(2, col1, col2)) as t order by r0;").Check(
+		testkit.Rows("01", "31", "34", "5D", "65", "A5", "A6", "B1", "D5", "FF"))
+	tk.MustQuery("select hex(r) as r0 from (select distinct ELT(2, col1, col2) as r from t3) as t order by r0;").Check(
+		testkit.Rows("01", "31", "34", "5D", "65", "A5", "A6", "B1", "D5", "FF"))
+	tk.MustExec("drop table if exists t3;")
+}
+
+func TestIssue51765(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id varbinary(16))")
+	tk.MustExec("create table t1(id char(16) charset utf8mb4 collate utf8mb4_general_ci)")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec(`insert into t1 values ("Hello World")`)
+
+	tk.MustQuery("select collation(ifnull(concat(NULL), '~'))").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(ifnull(concat(NULL),ifnull(concat(NULL),'~')))").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(ifnull(concat(id),'~')) from t;").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(ifnull(concat(NULL),ifnull(concat(id),'~'))) from t;").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(ifnull(concat(id),ifnull(concat(id),'~'))) from t;").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(ifnull(concat(NULL),id)) from t1;").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(ifnull(concat(NULL),ifnull(concat(NULL),id))) from t1;").Check(testkit.Rows("utf8mb4_general_ci"))
+}

@@ -118,6 +118,7 @@ go_library(
         "@org_golang_google_grpc//channelz/service",
         "@org_golang_google_grpc//keepalive",
         "@org_golang_google_grpc//peer",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -214,6 +215,7 @@ go_test(
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
+        "@io_etcd_go_etcd_tests_v3//integration",
         "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",

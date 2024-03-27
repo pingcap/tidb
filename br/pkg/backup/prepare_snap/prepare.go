@@ -91,6 +91,9 @@ type Preparer struct {
 	RetryBackoff  time.Duration
 	RetryLimit    int
 	LeaseDuration time.Duration
+
+	/* Observers. Initialize them before starting.*/
+	AfterConnectionsEstablished func()
 }
 
 func New(env Env) *Preparer {
@@ -155,9 +158,12 @@ func (p *Preparer) DriveLoopAndWaitPrepare(ctx context.Context) error {
 		zap.Int("retry_limit", p.RetryLimit),
 		zap.Duration("lease_duration", p.LeaseDuration))
 	p.retryTime = 0
-	if err := p.prepareConnections(ctx); err != nil {
+	if err := p.PrepareConnections(ctx); err != nil {
 		log.Error("failed to prepare connections", logutil.ShortError(err))
 		return errors.Annotate(err, "failed to prepare connections")
+	}
+	if p.AfterConnectionsEstablished != nil {
+		p.AfterConnectionsEstablished()
 	}
 	if err := p.AdvanceState(ctx); err != nil {
 		log.Error("failed to check the progress of our work", logutil.ShortError(err))
@@ -370,7 +376,9 @@ func (p *Preparer) workOnPendingRanges(ctx context.Context) error {
 }
 
 func (p *Preparer) sendWaitApply(ctx context.Context, reqs pendingRequests) error {
+	logutil.CL(ctx).Info("about to send wait apply to stores", zap.Int("to-stores", len(reqs)))
 	for store, req := range reqs {
+		logutil.CL(ctx).Info("sending wait apply requests to store", zap.Uint64("store", store), zap.Int("regions", len(req.Regions)))
 		stream, err := p.streamOf(ctx, store)
 		if err != nil {
 			return errors.Annotatef(err, "failed to dial the store %d", store)
@@ -379,29 +387,36 @@ func (p *Preparer) sendWaitApply(ctx context.Context, reqs pendingRequests) erro
 		if err != nil {
 			return errors.Annotatef(err, "failed to send message to the store %d", store)
 		}
-		logutil.CL(ctx).Info("sent wait apply requests to store", zap.Uint64("store", store), zap.Int("regions", len(req.Regions)))
 	}
 	return nil
 }
 
 func (p *Preparer) streamOf(ctx context.Context, storeID uint64) (*prepareStream, error) {
-	s, ok := p.clients[storeID]
+	_, ok := p.clients[storeID]
 	if !ok {
+		log.Warn("stream of store found a store not established connection", zap.Uint64("store", storeID))
 		cli, err := p.env.ConnectToStore(ctx, storeID)
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to dial store %d", storeID)
 		}
-		s = new(prepareStream)
-		s.storeID = storeID
-		s.output = p.eventChan
-		s.leaseDuration = p.LeaseDuration
-		err = s.InitConn(ctx, cli)
-		if err != nil {
-			return nil, err
+		if err := p.createAndCacheStream(ctx, cli, storeID); err != nil {
+			return nil, errors.Annotatef(err, "failed to create and cache stream for store %d", storeID)
 		}
-		p.clients[storeID] = s
 	}
-	return s, nil
+	return p.clients[storeID], nil
+}
+
+func (p *Preparer) createAndCacheStream(ctx context.Context, cli PrepareClient, storeID uint64) error {
+	s := new(prepareStream)
+	s.storeID = storeID
+	s.output = p.eventChan
+	s.leaseDuration = p.LeaseDuration
+	err := s.InitConn(ctx, cli)
+	if err != nil {
+		return err
+	}
+	p.clients[storeID] = s
+	return nil
 }
 
 func (p *Preparer) pushWaitApply(reqs pendingRequests, region Region) {
@@ -414,17 +429,31 @@ func (p *Preparer) pushWaitApply(reqs pendingRequests, region Region) {
 	p.inflightReqs[region.GetMeta().Id] = *region.GetMeta()
 }
 
-func (p *Preparer) prepareConnections(ctx context.Context) error {
+// PrepareConnections prepares the connections for each store.
+// This will pause the admin commands for each store.
+func (p *Preparer) PrepareConnections(ctx context.Context) error {
 	log.Info("Preparing connections to stores.")
 	stores, err := p.env.GetAllLiveStores(ctx)
 	if err != nil {
 		return errors.Annotate(err, "failed to get all live stores")
 	}
+
+	log.Info("Start to initialize the connections.", zap.Int("stores", len(stores)))
+	clients := map[uint64]PrepareClient{}
 	for _, store := range stores {
-		_, err := p.streamOf(ctx, store.Id)
+		cli, err := p.env.ConnectToStore(ctx, store.Id)
 		if err != nil {
-			return errors.Annotatef(err, "failed to prepare connection to store %d", store.Id)
+			return errors.Annotatef(err, "failed to dial the store %d", store.Id)
+		}
+		clients[store.Id] = cli
+	}
+
+	for id, cli := range clients {
+		log.Info("Start to pause the admin commands.", zap.Uint64("store", id))
+		if err := p.createAndCacheStream(ctx, cli, id); err != nil {
+			return errors.Annotatef(err, "failed to create and cache stream for store %d", id)
 		}
 	}
+
 	return nil
 }
