@@ -27,19 +27,23 @@ type LogicalOptimizeOp struct {
 	tracer *tracing.LogicalOptimizeTracer
 }
 
+// TracerIsNil returns whether inside tracer is nil
 func (op *LogicalOptimizeOp) TracerIsNil() bool {
 	return op.tracer == nil
 }
 
+// DefaultLogicalOptimizeOption returns the default LogicalOptimizeOp.
 func DefaultLogicalOptimizeOption() *LogicalOptimizeOp {
 	return &LogicalOptimizeOp{}
 }
 
+// WithEnableOptimizeTracer attach the customized tracer to current LogicalOptimizeOp.
 func (op *LogicalOptimizeOp) WithEnableOptimizeTracer(tracer *tracing.LogicalOptimizeTracer) *LogicalOptimizeOp {
 	op.tracer = tracer
 	return op
 }
 
+// AppendBeforeRuleOptimize just appends a before-rule plan tracer.
 func (op *LogicalOptimizeOp) AppendBeforeRuleOptimize(index int, name string, planTrace *tracing.PlanTrace) {
 	if op == nil || op.tracer == nil {
 		return
@@ -47,6 +51,7 @@ func (op *LogicalOptimizeOp) AppendBeforeRuleOptimize(index int, name string, pl
 	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, planTrace)
 }
 
+// AppendStepToCurrent appends a step of current action.
 func (op *LogicalOptimizeOp) AppendStepToCurrent(id int, tp string, reason, action func() string) {
 	if op == nil || op.tracer == nil {
 		return
@@ -54,6 +59,7 @@ func (op *LogicalOptimizeOp) AppendStepToCurrent(id int, tp string, reason, acti
 	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason(), action())
 }
 
+// RecordFinalLogicalPlan records the final logical plan.
 func (op *LogicalOptimizeOp) RecordFinalLogicalPlan(planTrace *tracing.PlanTrace) {
 	if op == nil || op.tracer == nil {
 		return
