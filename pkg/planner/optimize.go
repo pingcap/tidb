@@ -16,7 +16,6 @@ package planner
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/util/sem"
 	"math"
 	"math/rand"
 	"sync"
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"go.uber.org/zap"
 )
