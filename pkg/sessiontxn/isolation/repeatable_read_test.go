@@ -224,6 +224,8 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 			Type:    sessiontxn.EnterNewTxnDefault,
 			TxnMode: ast.Pessimistic,
 		}))
+		// pessimistic-auto-commit txn is also causal consistency.
+		assert.causalConsistencyOnly = true
 		assert.Check(t)
 
 		// non-active txn and then active it

@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -707,7 +708,7 @@ type SessionVars struct {
 	ActiveRoles []*auth.RoleIdentity
 
 	RetryInfo *RetryInfo
-	//  TxnCtx Should be reset on transaction finished.
+	// TxnCtx Should be reset on transaction finished.
 	TxnCtx *TransactionContext
 	// TxnCtxMu is used to protect TxnCtx.
 	TxnCtxMu sync.Mutex
@@ -1581,6 +1582,9 @@ type SessionVars struct {
 	// DivPrecisionIncrement indicates the number of digits by which to increase the scale of the result
 	// of division operations performed with the / operator.
 	DivPrecisionIncrement int
+
+	// allowed when tikv disk full happened.
+	DiskFullOpt kvrpcpb.DiskFullOpt
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -2372,7 +2376,7 @@ func (s *SessionVars) SetTxnIsolationLevelOneShotStateForNextTxn() {
 	}
 }
 
-// IsPessimisticReadConsistency if true it means the statement is in an read consistency pessimistic transaction.
+// IsPessimisticReadConsistency if true it means the statement is in a read consistency pessimistic transaction.
 func (s *SessionVars) IsPessimisticReadConsistency() bool {
 	return s.TxnCtx.IsPessimistic && s.IsIsolation(ast.ReadCommitted)
 }
