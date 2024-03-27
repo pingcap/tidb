@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	coreUtil "github.com/pingcap/tidb/pkg/planner/core/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -193,7 +194,7 @@ func (*decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*e
 }
 
 // optimize implements logicalOptRule interface.
-func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *coreUtil.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	if apply, ok := p.(*LogicalApply); ok {
 		outerPlan := apply.children[0]
@@ -463,77 +464,77 @@ func (*decorrelateSolver) name() string {
 	return "decorrelate"
 }
 
-func appendApplySimplifiedTraceStep(p *LogicalApply, j *LogicalJoin, opt *logicalOptimizeOp) {
+func appendApplySimplifiedTraceStep(p *LogicalApply, j *LogicalJoin, opt *coreUtil.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v simplified into %v_%v", plancodec.TypeApply, p.ID(), plancodec.TypeJoin, j.ID())
 	}
 	reason := func() string {
 		return fmt.Sprintf("%v_%v hasn't any corelated column, thus the inner plan is non-correlated", p.TP(), p.ID())
 	}
-	opt.appendStepToCurrent(p.ID(), p.TP(), reason, action)
+	opt.AppendStepToCurrent(p.ID(), p.TP(), reason, action)
 }
 
-func appendRemoveSelectionTraceStep(p LogicalPlan, s *LogicalSelection, opt *logicalOptimizeOp) {
+func appendRemoveSelectionTraceStep(p LogicalPlan, s *LogicalSelection, opt *coreUtil.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", s.TP(), s.ID())
 	}
 	reason := func() string {
 		return fmt.Sprintf("%v_%v's conditions have been pushed into %v_%v", s.TP(), s.ID(), p.TP(), p.ID())
 	}
-	opt.appendStepToCurrent(s.ID(), s.TP(), reason, action)
+	opt.AppendStepToCurrent(s.ID(), s.TP(), reason, action)
 }
 
-func appendRemoveMaxOneRowTraceStep(m *LogicalMaxOneRow, opt *logicalOptimizeOp) {
+func appendRemoveMaxOneRowTraceStep(m *LogicalMaxOneRow, opt *coreUtil.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", m.TP(), m.ID())
 	}
 	reason := func() string {
 		return ""
 	}
-	opt.appendStepToCurrent(m.ID(), m.TP(), reason, action)
+	opt.AppendStepToCurrent(m.ID(), m.TP(), reason, action)
 }
 
-func appendRemoveLimitTraceStep(limit *LogicalLimit, opt *logicalOptimizeOp) {
+func appendRemoveLimitTraceStep(limit *LogicalLimit, opt *coreUtil.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", limit.TP(), limit.ID())
 	}
 	reason := func() string {
 		return fmt.Sprintf("%v_%v in 'exists' subquery need to remove in order to keep plan optimal", limit.TP(), limit.ID())
 	}
-	opt.appendStepToCurrent(limit.ID(), limit.TP(), reason, action)
+	opt.AppendStepToCurrent(limit.ID(), limit.TP(), reason, action)
 }
 
-func appendRemoveProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *logicalOptimizeOp) {
+func appendRemoveProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *coreUtil.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", proj.TP(), proj.ID())
 	}
 	reason := func() string {
 		return fmt.Sprintf("%v_%v's columns all substituted into %v_%v", proj.TP(), proj.ID(), p.TP(), p.ID())
 	}
-	opt.appendStepToCurrent(proj.ID(), proj.TP(), reason, action)
+	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
-func appendMoveProjTraceStep(p *LogicalApply, np LogicalPlan, proj *LogicalProjection, opt *logicalOptimizeOp) {
+func appendMoveProjTraceStep(p *LogicalApply, np LogicalPlan, proj *LogicalProjection, opt *coreUtil.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v is moved as %v_%v's parent", proj.TP(), proj.ID(), np.TP(), np.ID())
 	}
 	reason := func() string {
 		return fmt.Sprintf("%v_%v's join type is %v, not semi join", p.TP(), p.ID(), p.JoinType.String())
 	}
-	opt.appendStepToCurrent(proj.ID(), proj.TP(), reason, action)
+	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
-func appendRemoveSortTraceStep(sort *LogicalSort, opt *logicalOptimizeOp) {
+func appendRemoveSortTraceStep(sort *LogicalSort, opt *coreUtil.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v removed from plan tree", sort.TP(), sort.ID())
 	}
 	reason := func() string {
 		return ""
 	}
-	opt.appendStepToCurrent(sort.ID(), sort.TP(), reason, action)
+	opt.AppendStepToCurrent(sort.ID(), sort.TP(), reason, action)
 }
 
-func appendPullUpAggTraceStep(p *LogicalApply, np LogicalPlan, agg *LogicalAggregation, opt *logicalOptimizeOp) {
+func appendPullUpAggTraceStep(p *LogicalApply, np LogicalPlan, agg *LogicalAggregation, opt *coreUtil.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v pulled up as %v_%v's parent, and %v_%v's join type becomes %v",
 			agg.TP(), agg.ID(), np.TP(), np.ID(), p.TP(), p.ID(), p.JoinType.String())
@@ -542,22 +543,22 @@ func appendPullUpAggTraceStep(p *LogicalApply, np LogicalPlan, agg *LogicalAggre
 		return fmt.Sprintf("%v_%v's functions haven't any group by items and %v_%v's join type isn't %v or %v, and hasn't any conditions",
 			agg.TP(), agg.ID(), p.TP(), p.ID(), InnerJoin.String(), LeftOuterJoin.String())
 	}
-	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
+	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func appendAddProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *logicalOptimizeOp) {
+func appendAddProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *coreUtil.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v is added as %v_%v's parent", proj.TP(), proj.ID(), p.TP(), p.ID())
 	}
 	reason := func() string {
 		return ""
 	}
-	opt.appendStepToCurrent(proj.ID(), proj.TP(), reason, action)
+	opt.AppendStepToCurrent(proj.ID(), proj.TP(), reason, action)
 }
 
 func appendModifyAggTraceStep(outerPlan LogicalPlan, p *LogicalApply, agg *LogicalAggregation, sel *LogicalSelection,
 	appendedGroupByCols *expression.Schema, appendedAggFuncs []*aggregation.AggFuncDesc,
-	eqCondWithCorCol []*expression.ScalarFunction, opt *logicalOptimizeOp) {
+	eqCondWithCorCol []*expression.ScalarFunction, opt *coreUtil.LogicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v's groupby items added [", agg.TP(), agg.ID()))
 		for i, col := range appendedGroupByCols.Columns {
@@ -595,5 +596,5 @@ func appendModifyAggTraceStep(outerPlan LogicalPlan, p *LogicalApply, agg *Logic
 			outerPlan.TP(), outerPlan.ID(), p.TP(), p.ID())
 		return buffer.String()
 	}
-	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
+	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }

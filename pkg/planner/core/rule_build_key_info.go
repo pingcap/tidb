@@ -21,11 +21,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	coreUtil "github.com/pingcap/tidb/pkg/planner/core/util"
 )
 
 type buildKeySolver struct{}
 
-func (*buildKeySolver) optimize(_ context.Context, p LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (*buildKeySolver) optimize(_ context.Context, p LogicalPlan, _ *coreUtil.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	buildKeyInfo(p)
 	return p, planChanged, nil

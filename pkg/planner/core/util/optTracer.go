@@ -27,6 +27,10 @@ type LogicalOptimizeOp struct {
 	tracer *tracing.LogicalOptimizeTracer
 }
 
+func (op *LogicalOptimizeOp) TracerIsNil() bool {
+	return op.tracer == nil
+}
+
 func DefaultLogicalOptimizeOption() *LogicalOptimizeOp {
 	return &LogicalOptimizeOp{}
 }
