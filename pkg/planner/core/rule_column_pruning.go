@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -415,14 +416,11 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	if ds.handleCols != nil && ds.handleCols.IsInt() && ds.schema.ColumnIndex(ds.handleCols.GetCol(0)) == -1 {
 		ds.handleCols = nil
 	}
-	if !addOneHandle && ds.schema.Len() > len(parentUsedCols) &&
-		(ds.SCtx().GetSessionVars().IsMPPEnforced() || ds.SCtx().GetSessionVars().AllowProjectionPushDown) {
+	if !addOneHandle && ds.schema.Len() > len(parentUsedCols) && ds.SCtx().GetSessionVars().IsMPPEnforced() {
 		proj := LogicalProjection{
 			Exprs: expression.Column2Exprs(parentUsedCols),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		proj.SetStats(ds.StatsInfo())
-		// Clone the schema here, because the schema may be changed by column pruning rules.
-
 		proj.SetSchema(expression.NewSchema(parentUsedCols...))
 		proj.SetChildren(ds)
 		return proj, nil
