@@ -105,10 +105,10 @@ func TestOptionalEvalPropProviders(t *testing.T) {
 			}
 		case context.OptPropInfoSchema:
 			type mockIsType struct {
-				infoschema.InfoSchemaMetaVersion
+				infoschema.MetaOnlyInfoSchema
 			}
 			var is1, is2 mockIsType
-			p = InfoSchemaPropProvider(func(isDomain bool) infoschema.InfoSchemaMetaVersion {
+			p = InfoSchemaPropProvider(func(isDomain bool) infoschema.MetaOnlyInfoSchema {
 				if isDomain {
 					return &is1
 				}

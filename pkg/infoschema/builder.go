@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // Builder builds a new InfoSchema.
@@ -970,9 +971,10 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 }
 
 func tableBucketIdx(tableID int64) int {
+	intest.Assert(tableID > 0)
 	return int(tableID % bucketCount)
 }
 
 func tableIDIsValid(tableID int64) bool {
-	return tableID != 0
+	return tableID > 0
 }

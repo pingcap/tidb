@@ -186,16 +186,20 @@
     ```
 
     ```shell
-    $curl http://127.0.0.1:10080/mvcc/key/test/t1/1
+    $curl http://127.0.0.1:10080/mvcc/key/test/t/1
     {
-        "info": {
-            "writes": [
-                {
-                    "commit_ts": 405179368526053380,
-                    "short_value": "CAICAkE=",
-                    "start_ts": 405179368526053377
-                }
-            ]
+        "key": "74800000000000006E5F728000000000000001",
+        "region_id": 4,
+        "value": {
+            "info": {
+                "writes": [
+                    {
+                        "start_ts": 448662063415296001,
+                        "commit_ts": 448662063415296003,
+                        "short_value": "gAABAAAAAQEAAQ=="
+                    }
+                ]
+            }
         }
     }
     ```

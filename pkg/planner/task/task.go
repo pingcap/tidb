@@ -12,14 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package memo
+package task
 
 import (
 	"strings"
 	"sync"
 )
 
-// Task is an interface defined for all type of optimizing work: exploring, implementing, deriving-stats, join-reordering and so on.
+// Task is an interface defined for all type of optimizing work: exploring, implementing,
+// deriving-stats, join-reordering and so on.
 type Task interface {
 	// task self executing logic
 	execute() error
@@ -35,8 +36,8 @@ type Stack interface {
 	Destroy()
 }
 
-// TaskStackPool is initialized for memory saving by reusing taskStack.
-var TaskStackPool = sync.Pool{
+// StackTaskPool is initialized for memory saving by reusing taskStack.
+var StackTaskPool = sync.Pool{
 	New: func() any {
 		return newTaskStack()
 	},
@@ -57,7 +58,7 @@ func newTaskStack() *taskStack {
 func (ts *taskStack) Destroy() {
 	// when a taskStack itself is useless, we can destroy itself actively.
 	clear(ts.tasks)
-	TaskStackPool.Put(ts)
+	StackTaskPool.Put(ts)
 }
 
 // Desc is used to desc the detail info about current stack state.
@@ -101,40 +102,4 @@ func newTaskStackWithCap(c int) *taskStack {
 	return &taskStack{
 		tasks: make([]Task, 0, c),
 	}
-}
-
-// TaskStack2 is used to store the optimizing tasks created before or during the optimizing process.
-type taskStack2 struct {
-	tasks []*Task
-}
-
-func newTaskStack2WithCap(c int) *taskStack2 {
-	return &taskStack2{
-		tasks: make([]*Task, 0, c),
-	}
-}
-
-// Push indicates to push one task into the stack.
-func (ts *taskStack2) Push(one Task) {
-	ts.tasks = append(ts.tasks, &one)
-}
-
-// Len indicates the length of current stack.
-func (ts *taskStack2) Len() int {
-	return len(ts.tasks)
-}
-
-// Empty indicates whether taskStack is empty.
-func (ts *taskStack2) Empty() bool {
-	return ts.Len() == 0
-}
-
-// Pop indicates to pop one task out of the stack.
-func (ts *taskStack2) Pop() Task {
-	if !ts.Empty() {
-		tmp := ts.tasks[len(ts.tasks)-1]
-		ts.tasks = ts.tasks[:len(ts.tasks)-1]
-		return *tmp
-	}
-	return nil
 }

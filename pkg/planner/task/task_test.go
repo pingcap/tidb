@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package memo
+package task
 
 import (
 	"strconv"
@@ -50,7 +50,7 @@ func TestTaskStack(t *testing.T) {
 }
 
 func TestTaskFunctionality(t *testing.T) {
-	taskTaskPool := TaskStackPool.Get()
+	taskTaskPool := StackTaskPool.Get()
 	require.Equal(t, len(taskTaskPool.(*taskStack).tasks), 0)
 	require.Equal(t, cap(taskTaskPool.(*taskStack).tasks), 4)
 	ts := taskTaskPool.(*taskStack)
@@ -69,10 +69,10 @@ func TestTaskFunctionality(t *testing.T) {
 	ts.Push(&TestTaskImpl{a: 5})
 	ts.Push(&TestTaskImpl{a: 6})
 	// no clean, put it back
-	TaskStackPool.Put(taskTaskPool)
+	StackTaskPool.Put(taskTaskPool)
 
 	// require again.
-	ts = TaskStackPool.Get().(*taskStack)
+	ts = StackTaskPool.Get().(*taskStack)
 	require.Equal(t, len(ts.tasks), 4)
 	require.Equal(t, cap(ts.tasks), 4)
 	// clean the stack
@@ -89,9 +89,45 @@ func TestTaskFunctionality(t *testing.T) {
 
 	// self destroy.
 	ts.Destroy()
-	ts = TaskStackPool.Get().(*taskStack)
+	ts = StackTaskPool.Get().(*taskStack)
 	require.Equal(t, len(ts.tasks), 0)
 	require.Equal(t, cap(ts.tasks), 4)
+}
+
+// TaskStack2 is used to store the optimizing tasks created before or during the optimizing process.
+type taskStackForBench struct {
+	tasks []*Task
+}
+
+func newTaskStackForBenchWithCap(c int) *taskStackForBench {
+	return &taskStackForBench{
+		tasks: make([]*Task, 0, c),
+	}
+}
+
+// Push indicates to push one task into the stack.
+func (ts *taskStackForBench) Push(one Task) {
+	ts.tasks = append(ts.tasks, &one)
+}
+
+// Len indicates the length of current stack.
+func (ts *taskStackForBench) Len() int {
+	return len(ts.tasks)
+}
+
+// Empty indicates whether taskStack is empty.
+func (ts *taskStackForBench) Empty() bool {
+	return ts.Len() == 0
+}
+
+// Pop indicates to pop one task out of the stack.
+func (ts *taskStackForBench) Pop() Task {
+	if !ts.Empty() {
+		tmp := ts.tasks[len(ts.tasks)-1]
+		ts.tasks = ts.tasks[:len(ts.tasks)-1]
+		return *tmp
+	}
+	return nil
 }
 
 // Benchmark result explanation:
@@ -104,7 +140,7 @@ func TestTaskFunctionality(t *testing.T) {
 // BenchmarkTestStack2Pointer-8   	   42889	     27017 ns/op	   24000 B/op	    2000 allocs/op
 // BenchmarkTestStack2Pointer-8   	   43009	     27524 ns/op	   24000 B/op	    2000 allocs/op
 func BenchmarkTestStack2Pointer(b *testing.B) {
-	stack := newTaskStack2WithCap(1000)
+	stack := newTaskStackForBenchWithCap(1000)
 	fill := func() {
 		for idx := int64(0); idx < 1000; idx++ {
 			stack.Push(&TestTaskImpl{a: idx})

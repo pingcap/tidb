@@ -43,9 +43,9 @@ func SingletonStatsSamplerLogger() *zap.Logger {
 	init := func() {
 		if samplerLogger == nil {
 			// Create a new zapcore sampler with options
-			// This will log the first 2 log entries with the same level and message in a minute and ignore the rest of the logs.
+			// This will log the first log entries with the same level and message in 5 minutes and ignore the rest of the logs.
 			sampler := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-				return zapcore.NewSamplerWithOptions(core, time.Minute, 2, 0)
+				return zapcore.NewSamplerWithOptions(core, 5*time.Minute, 1, 0)
 			})
 			samplerLogger = StatsLogger().WithOptions(sampler)
 		}
