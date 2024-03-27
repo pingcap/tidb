@@ -168,10 +168,10 @@
           "TableReader_18 0.80 root  MppVersion: 2, data:ExchangeSender_17",
           "└─ExchangeSender_17 0.80 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin_16 0.80 mpp[tiflash]  Null-aware anti semi join, equal:[eq(test.t1.k1, test.t2.k1)]",
-          "    ├─ExchangeReceiver_13(Build) 1.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender_12 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─TableFullScan_11 1.00 mpp[tiflash] table:t2 keep order:false",
-          "    └─TableFullScan_10(Probe) 1.00 mpp[tiflash] table:t1 keep order:false"
+          "    ├─ExchangeReceiver_12(Build) 1.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_11 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan_10 1.00 mpp[tiflash] table:t1 keep order:false",
+          "    └─TableFullScan_13(Probe) 1.00 mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
