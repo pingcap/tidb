@@ -73,6 +73,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/timeutil"
+	uatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -144,6 +145,7 @@ type Server struct {
 	statusServer   *http.Server
 	grpcServer     *grpc.Server
 	inShutdownMode bool
+	health         *uatomic.Bool
 
 	sessionMapMutex     sync.Mutex
 	internalSessions    map[interface{}]struct{}
@@ -212,6 +214,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		globalConnID:      util.NewGlobalConnID(0, true),
 		internalSessions:  make(map[interface{}]struct{}, 100),
 		printMDLLogTime:   time.Now(),
+		health:            uatomic.NewBool(false),
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -428,6 +431,7 @@ func (s *Server) Run(dom *domain.Domain) error {
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
 		close(RunInGoTestChan)
 	}
+	s.health.Store(true)
 	err = <-errChan
 	if err != nil {
 		return err
