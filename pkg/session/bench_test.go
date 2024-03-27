@@ -1805,6 +1805,29 @@ func runPointSelect(b *testing.B, se sessiontypes.Session, query, expectedPlan s
 	}
 }
 
+func preparePointGet(se sessiontypes.Session, partitionBy string) {
+	mustExecute(se, "CREATE TABLE t (id int primary key, d varchar(255), key (d)) "+partitionBy)
+	mustExecute(se, `insert into t (id) values (1), (8), (5000), (10000), (100000)`)
+	mustExecute(se, "analyze table t")
+}
+
+func prepareIndexLookup(se sessiontypes.Session, partitionBy string) {
+	mustExecute(se, `drop table t`)
+	mustExecute(se, "CREATE TABLE t (id int, d varchar(255), key idx_id (id), key(d)) "+partitionBy)
+	// Range using: 10, 1000, 100000, maxvalue
+	// Create 1k unique index entries, so it is cheaper with index lookup instead of table scan
+	mustExecute(se, `insert into t values (1,1),  (5000,5000), (10000,10000), (99900,99900)`)
+	mustExecute(se, `insert into t select id + 1, d from t `)   // 8
+	mustExecute(se, `insert into t select id + 2, d from t `)   // 16
+	mustExecute(se, `insert into t select id + 4, d from t `)   // 32
+	mustExecute(se, `insert into t select id + 8, d from t `)   // 64
+	mustExecute(se, `insert into t select id + 16, d from t `)  // 128
+	mustExecute(se, `insert into t select id + 32, d from t `)  // 256
+	mustExecute(se, `insert into t select id + 64, d from t `)  // 512
+	mustExecute(se, `insert into t select id + 128, d from t `) // 1024
+	mustExecute(se, "analyze table t")
+}
+
 func benchmarkPointGetPlanCache(b *testing.B, partitionBy string) {
 	se, do, st := prepareBenchSession()
 	defer func() {
@@ -1812,9 +1835,7 @@ func benchmarkPointGetPlanCache(b *testing.B, partitionBy string) {
 		do.Close()
 		st.Close()
 	}()
-	mustExecute(se, "CREATE TABLE t (id int primary key, d varchar(255), key (d)) "+partitionBy)
-	mustExecute(se, `insert into t (id) values (1), (8), (5000), (10000), (100000)`)
-	mustExecute(se, "analyze table t")
+	preparePointGet(se, partitionBy)
 	pointQuery := "select * from t where id = 1"
 	expectedPointPlan := "Point_Get"
 	b.Run("PointGetPlanCacheOn", func(b *testing.B) {
@@ -1838,20 +1859,7 @@ func benchmarkPointGetPlanCache(b *testing.B, partitionBy string) {
 	})
 
 	// Additional tests for IndexScan
-	mustExecute(se, `drop table t`)
-	mustExecute(se, "CREATE TABLE t (id int, d varchar(255), key idx_id (id), key(d)) "+partitionBy)
-	// Range using: 10, 1000, 100000, maxvalue
-	// Create 1k unique index entries, so it is cheaper with index lookup instead of table scan
-	mustExecute(se, `insert into t values (1,1),  (5000,5000), (10000,10000), (99900,99900)`)
-	mustExecute(se, `insert into t select id + 1, d from t `)   // 8
-	mustExecute(se, `insert into t select id + 2, d from t `)   // 16
-	mustExecute(se, `insert into t select id + 4, d from t `)   // 32
-	mustExecute(se, `insert into t select id + 8, d from t `)   // 64
-	mustExecute(se, `insert into t select id + 16, d from t `)  // 128
-	mustExecute(se, `insert into t select id + 32, d from t `)  // 256
-	mustExecute(se, `insert into t select id + 64, d from t `)  // 512
-	mustExecute(se, `insert into t select id + 128, d from t `) // 1024
-	mustExecute(se, "analyze table t")
+	prepareIndexLookup(se, partitionBy)
 	expectedPointPlan = "IndexLookUp"
 	b.Run("IndexGetPlanCacheOn", func(b *testing.B) {
 		runPointSelect(b, se, pointQuery, expectedPointPlan, true)
@@ -1903,12 +1911,12 @@ func BenchmarkKeyPartitionPointGet(b *testing.B) {
 	benchmarkPointGetPlanCache(b, partitionBy)
 }
 
-func benchmarkListPartitionPointGet(b *testing.B, useColumns bool) {
+func getListPartitionDef(expr string, useColumns bool) string {
 	partitionBy := `partition by list`
 	if useColumns {
 		partitionBy += ` columns`
 	}
-	partitionBy += `(id) (`
+	partitionBy += `(` + expr + `) (`
 	ranges := []int{1, 5000, 10000, 99900}
 	for partID, i := range ranges {
 		vals := 256
@@ -1916,18 +1924,27 @@ func benchmarkListPartitionPointGet(b *testing.B, useColumns bool) {
 		for j := 0; j < vals; j++ {
 			partVals = append(partVals, strconv.Itoa(i+j))
 		}
+		if expr != "" && i == 1 {
+			// for floor(id*0.5)*2
+			partVals = append(partVals, "0")
+		}
 		if partID > 0 {
 			partitionBy += ","
 		}
 		partitionBy += "partition p" + strconv.Itoa(partID) + " values in (" + strings.Join(partVals, ",") + ")"
 	}
 	partitionBy += ")"
-
-	benchmarkPointGetPlanCache(b, partitionBy)
+	return partitionBy
 }
 
 func BenchmarkListPartitionPointGet(b *testing.B) {
-	benchmarkListPartitionPointGet(b, false)
+	partitionBy := getListPartitionDef("id", false)
+	benchmarkPointGetPlanCache(b, partitionBy)
+}
+
+func BenchmarkListExprPartitionPointGet(b *testing.B) {
+	partitionBy := getListPartitionDef("floor(id*0.5)*2", false)
+	benchmarkPointGetPlanCache(b, partitionBy)
 }
 
 func BenchmarkRangePartitionPointGet(b *testing.B) {
@@ -1949,96 +1966,28 @@ func BenchmarkRangeColumnPartitionPointGet(b *testing.B) {
 }
 
 func BenchmarkListColumnPartitionPointGet(b *testing.B) {
-	benchmarkListPartitionPointGet(b, true)
+	partitionBy := getListPartitionDef("id", true)
+	benchmarkPointGetPlanCache(b, partitionBy)
 }
 
 // TODO: Add benchmarks for {RANGE|LIST} COLUMNS, multi columns!!!
 
-func BenchmarkRangeColumnsPartitionPointGet(b *testing.B) {
-	partitionBy := `partition by range columns (id, d))
-(partition p0 values less than (10, 10), partition p1 values less than (1000, 1000), partition p3 values less than (100000, 1), partition pMax values less than (maxvalue, maxvalue))`
-	benchmarkPointGetPlanCache(b, partitionBy)
-}
-
-func benchPreparedPointGet(b *testing.B, partitionBy string) {
-	se, do, st := prepareBenchSession()
-	defer func() {
-		se.Close()
-		do.Close()
-		st.Close()
-	}()
-
-	mustExecute(se, "CREATE TABLE t (pk int primary key, d varchar(255)) "+partitionBy)
-	mustExecute(se, "insert t (pk) values (61),(62),(63),(64)")
-	mustExecute(se, "analyze table t")
-
-	b.Run("PointGetPlanCacheOff", func(b *testing.B) {
-		runPreparedPointGet(b, se, false)
-	})
-	b.Run("PointGetPlanCacheOn", func(b *testing.B) {
-		runPreparedPointGet(b, se, true)
-	})
-	b.Run("BatchPointGetPlanCacheOff", func(b *testing.B) {
-		runPreparedBatchPointGet(b, se, false)
-	})
-	b.Run("BatchPointGetPlanCacheOn", func(b *testing.B) {
-		runPreparedBatchPointGet(b, se, true)
-	})
-
-	// Additional ones for testing Index
-	mustExecute(se, "drop table t")
-	mustExecute(se, "CREATE TABLE t (pk int, d varchar(255), key(pk)) "+partitionBy)
-	mustExecute(se, "insert t (pk) values (61),(62),(63),(64)")
-	mustExecute(se, "analyze table t")
-
-	b.Run("IndexPointPlanCacheOff", func(b *testing.B) {
-		runPreparedPointGet(b, se, false)
-	})
-	b.Run("IndexPointPlanCacheOn", func(b *testing.B) {
-		runPreparedPointGet(b, se, true)
-	})
-	b.Run("IndexBatchPointPlanCacheOff", func(b *testing.B) {
-		runPreparedBatchPointGet(b, se, false)
-	})
-	b.Run("IndexBatchPointPlanCacheOn", func(b *testing.B) {
-		runPreparedBatchPointGet(b, se, true)
-	})
-	// Additional ones for testing TableScan
-
-	mustExecute(se, "drop table t")
-	mustExecute(se, "CREATE TABLE t (pk int, d varchar(255)) "+partitionBy)
-	mustExecute(se, "insert t (pk) values (61),(62),(63),(64)")
-	mustExecute(se, "analyze table t")
-
-	b.Run("TableScanPointPlanCacheOff", func(b *testing.B) {
-		runPreparedPointGet(b, se, false)
-	})
-	b.Run("TableScanPointPlanCacheOn", func(b *testing.B) {
-		runPreparedPointGet(b, se, true)
-	})
-	b.Run("TableScanBatchPlanCacheOff", func(b *testing.B) {
-		runPreparedBatchPointGet(b, se, false)
-	})
-	b.Run("TableScanBatchPlanCacheOn", func(b *testing.B) {
-		runPreparedBatchPointGet(b, se, true)
-	})
-}
-
-// TODO: combine runPreparedPointGet with runPreparedBatchPointGet!
-func runPreparedPointGet(b *testing.B, se sessiontypes.Session, enablePlanCache bool) {
+func runPreparedPointSelect(b *testing.B, se sessiontypes.Session, query string, enablePlanCache bool, args ...any) {
 	ctx := context.Background()
 	if enablePlanCache {
 		mustExecute(se, "set tidb_enable_prepared_plan_cache = 1")
 	} else {
 		mustExecute(se, "set tidb_enable_prepared_plan_cache = 0")
 	}
-	stmtID, _, _, err := se.PrepareStmt("select * from t where pk = ?")
+	// TODO: add check for actual EXPLAIN, so the plan is what is expected
+	// see runPointSelect
+	stmtID, _, _, err := se.PrepareStmt(query)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	hits := 0
-	params := expression.Args2Expressions4Test(64)
+	params := expression.Args2Expressions4Test(args...)
 	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -2074,57 +2023,64 @@ func runPreparedPointGet(b *testing.B, se sessiontypes.Session, enablePlanCache 
 	}
 }
 
-func runPreparedBatchPointGet(b *testing.B, se sessiontypes.Session, enablePlanCache bool) {
-	ctx := context.Background()
-	if enablePlanCache {
-		mustExecute(se, "set tidb_enable_prepared_plan_cache = 1")
-	} else {
-		mustExecute(se, "set tidb_enable_prepared_plan_cache = 0")
-	}
+func benchPreparedPointGet(b *testing.B, partitionBy string) {
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
 
-	stmtID, _, _, err := se.PrepareStmt("select * from t where pk IN (?,?,?)")
-	if err != nil {
-		b.Fatal(err)
-	}
+	preparePointGet(se, partitionBy)
+	pointQuery := "select * from t where id = ?"
+	pointArgs := 1
+	b.Run("PointGetPlanCacheOff", func(b *testing.B) {
+		runPreparedPointSelect(b, se, pointQuery, false, pointArgs)
+	})
+	b.Run("PointGetPlanCacheOn", func(b *testing.B) {
+		runPreparedPointSelect(b, se, pointQuery, true, pointArgs)
+	})
+	batchPointQuery := "select * from t where id IN (?,?,?)"
+	batchArgs := []any{2, 10000, 1}
+	b.Run("BatchPointGetPlanCacheOff", func(b *testing.B) {
+		runPreparedPointSelect(b, se, batchPointQuery, false, batchArgs...)
+	})
+	b.Run("BatchPointGetPlanCacheOn", func(b *testing.B) {
+		runPreparedPointSelect(b, se, batchPointQuery, true, batchArgs...)
+	})
 
-	hits := 0
-	params := expression.Args2Expressions4Test(61, 64, 1)
-	alloc := chunk.NewAllocator()
-	stmtID, _, _, err = se.PrepareStmt("select * from t where pk IN (?,?,?)")
-	if err != nil {
-		b.Fatal(err)
-	}
-	warns := se.GetSessionVars().StmtCtx.GetWarnings()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if se.GetSessionVars().FoundInPlanCache {
-			hits++
-		}
-		_, err = drainRecordSet(ctx, se.(*session), rs, alloc)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if enablePlanCache && i > 0 {
-			if se.GetSessionVars().FoundInPlanCache {
-				hits++
-			} else {
-				warns = se.GetSessionVars().StmtCtx.GetWarnings()
-				if len(warns) == 0 {
-					logutil.BgLogger().Fatal("No plan cache hit, and now warnings?")
-				}
-				logutil.BgLogger().Warn("No plan cache hit", zap.Any("warns", warns))
-			}
-		}
-		alloc.Reset()
-	}
-	b.StopTimer()
-	if enablePlanCache && hits < b.N/2 {
-		logutil.BgLogger().Error("Plan cache was not used enough", zap.Int("hits", hits), zap.Int("b.N", b.N), zap.Any("warns", warns))
-	}
+	// Additional ones for testing Index
+	prepareIndexLookup(se, partitionBy)
+
+	b.Run("IndexPointPlanCacheOff", func(b *testing.B) {
+		runPreparedPointSelect(b, se, pointQuery, false, pointArgs)
+	})
+	b.Run("IndexPointPlanCacheOn", func(b *testing.B) {
+		runPreparedPointSelect(b, se, pointQuery, true, pointArgs)
+	})
+	b.Run("IndexBatchPointPlanCacheOff", func(b *testing.B) {
+		runPreparedPointSelect(b, se, batchPointQuery, false, batchArgs...)
+	})
+	b.Run("IndexBatchPointPlanCacheOn", func(b *testing.B) {
+		runPreparedPointSelect(b, se, batchPointQuery, true, batchArgs...)
+	})
+	// Additional ones for testing TableScan
+
+	mustExecute(se, "alter table t drop index idx_id")
+	mustExecute(se, "analyze table t")
+
+	b.Run("TableScanPointPlanCacheOff", func(b *testing.B) {
+		runPreparedPointSelect(b, se, pointQuery, false, pointArgs)
+	})
+	b.Run("TableScanPointPlanCacheOn", func(b *testing.B) {
+		runPreparedPointSelect(b, se, pointQuery, true, pointArgs)
+	})
+	b.Run("TableScanBatchPlanCacheOff", func(b *testing.B) {
+		runPreparedPointSelect(b, se, batchPointQuery, false, batchArgs...)
+	})
+	b.Run("TableScanBatchPlanCacheOn", func(b *testing.B) {
+		runPreparedPointSelect(b, se, batchPointQuery, true, batchArgs...)
+	})
 }
 
 func BenchmarkNonPartitionPreparedPointGet(b *testing.B) {
@@ -2132,24 +2088,38 @@ func BenchmarkNonPartitionPreparedPointGet(b *testing.B) {
 }
 
 func BenchmarkHashPartitionPreparedPointGet(b *testing.B) {
-	benchPreparedPointGet(b, "partition by hash (pk) partitions 7")
+	benchPreparedPointGet(b, "partition by hash (id) partitions 7")
 }
 
 func BenchmarkHashExprPartitionPreparedPointGet(b *testing.B) {
-	benchPreparedPointGet(b, "partition by hash (floor(pk*0.5)) partitions 7")
+	benchPreparedPointGet(b, "partition by hash (floor(id*0.5)) partitions 7")
 }
 
 func BenchmarkListPartitionPreparedPointGet(b *testing.B) {
-	partitionBy := `partition by list(pk) (partition p0 values in (1,22,44,61,5555), partition p1 values in (2330,43,99999999,62,23), partition p3 values in (63,64,99999,1111,2,8))`
+	partitionBy := getListPartitionDef("id", false)
+	benchPreparedPointGet(b, partitionBy)
+}
+
+func BenchmarkListExprPartitionPreparedPointGet(b *testing.B) {
+	partitionBy := getListPartitionDef("floor(id*0.5)*2", false)
+	benchPreparedPointGet(b, partitionBy)
+}
+
+func BenchmarkListColumnPartitionPreparedPointGet(b *testing.B) {
+	partitionBy := getListPartitionDef("id", true)
 	benchPreparedPointGet(b, partitionBy)
 }
 
 func BenchmarkRangePartitionPreparedPointGet(b *testing.B) {
-	benchPreparedPointGet(b, "partition by range (pk) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100))")
+	benchPreparedPointGet(b, "partition by range (id) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100), partition pMax values less than (maxvalue))")
+}
+
+func BenchmarkRangeColumnPartitionPreparedPointGet(b *testing.B) {
+	benchPreparedPointGet(b, "partition by range columns (id) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100), partition pMax values less than (maxvalue))")
 }
 
 func BenchmarkRangeExprPartitionPreparedPointGet(b *testing.B) {
-	benchPreparedPointGet(b, "partition by range (floor(pk*0.5)*2) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100))")
+	benchPreparedPointGet(b, "partition by range (floor(id*0.5)*2) (partition p0 values less than (10), partition p1 values less than (63), partition p3 values less than (100), partition pMax values less than (maxvalue))")
 }
 
 // TODO: Add benchmarks for {RANGE|LIST} COLUMNS, both single and multi columns!!!
