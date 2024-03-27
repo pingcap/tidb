@@ -155,3 +155,13 @@ show create table test.issue50972_2;
 show create table test.issue50972_3;
 drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
 
+# TestExchangePartitionAfterDropForeignKey
+drop table if exists parent, child, child_with_partition;
+create table parent (id int unique);
+create table child (id int, parent_id int, foreign key (parent_id) references parent(id));
+create table child_with_partition(id int, parent_id int) partition by range(id) (partition p1 values less than (100));
+-- error 1740
+alter table child_with_partition exchange partition p1 with table child;
+alter table child drop foreign key fk_1;
+alter table child drop key fk_1;
+alter table child_with_partition exchange partition p1 with table child;
