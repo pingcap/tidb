@@ -145,14 +145,11 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		currentUser := e.Ctx().GetSessionVars().User
 		checker := privilege.GetPrivilegeManager(e.Ctx())
 		hasRestrictedPrivAdmin := checker.RequestDynamicVerificationWithUser("RESTRICTED_PRIV_ADMIN", false, currentUser)
-
 		for _, priv := range e.Privs {
-
 			if priv.Priv != mysql.ExtendedPriv && sem.IsStaticPermissionRestricted(priv.Priv) {
 				if !hasRestrictedPrivAdmin {
 					return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_PRIV_ADMIN")
 				}
-
 				for _, user := range e.Users {
 					if !checker.RequestDynamicVerificationWithUser("RESTRICTED_PRIV_ADMIN", false, user.User) {
 						return plannererrors.ErrRecipientAccessDenied.GenWithStackByArgs("RESTRICTED_PRIV_ADMIN")
