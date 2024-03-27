@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
-	"github.com/pingcap/tidb/pkg/statistics/handle/loadstats"
+	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -77,6 +77,12 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache,
 	tables, err := cache.NewStatsCacheImpl(h)
 	if err != nil {
 		return nil, err
+	}
+	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
+		ls := initstats.NewLoadStats(rc.Next, h.initStatsMeta4Chunk)
+		ls.LoadStats(is, tables, rc)
+		ls.Wait()
+		return tables, nil
 	}
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
@@ -237,7 +243,7 @@ func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statsty
 	}
 	defer terror.Call(rc.Close)
 	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
-		ls := loadstats.NewLoadStats(rc.Next, h.initStatsHistograms4ChunkLite)
+		ls := initstats.NewLoadStats(rc.Next, h.initStatsHistograms4ChunkLite)
 		ls.LoadStats(is, cache, rc)
 		ls.Wait()
 		return nil
@@ -266,7 +272,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 	}
 	defer terror.Call(rc.Close)
 	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
-		ls := loadstats.NewLoadStats(rc.Next, h.initStatsHistograms4Chunk)
+		ls := initstats.NewLoadStats(rc.Next, h.initStatsHistograms4Chunk)
 		ls.LoadStats(is, cache, rc)
 		ls.Wait()
 		return nil
@@ -321,7 +327,7 @@ func (h *Handle) initStatsTopN(cache statstypes.StatsCache) error {
 	}
 	defer terror.Call(rc.Close)
 	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
-		ls := loadstats.NewLoadStats(rc.Next, func(_ infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+		ls := initstats.NewLoadStats(rc.Next, func(_ infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 			h.initStatsTopN4Chunk(cache, iter)
 		})
 		ls.LoadStats(nil, cache, rc)
@@ -453,7 +459,7 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 	}
 	defer terror.Call(rc.Close)
 	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
-		ls := loadstats.NewLoadStats(rc.Next, func(_ infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+		ls := initstats.NewLoadStats(rc.Next, func(_ infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 			h.initStatsBuckets4Chunk(cache, iter)
 		})
 		ls.LoadStats(nil, cache, rc)
