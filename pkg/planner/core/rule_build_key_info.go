@@ -16,17 +16,17 @@ package core
 
 import (
 	"context"
-	coreUtil "github.com/pingcap/tidb/pkg/planner/util"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/util"
 )
 
 type buildKeySolver struct{}
 
-func (*buildKeySolver) optimize(_ context.Context, p LogicalPlan, _ *coreUtil.LogicalOptimizeOp) (LogicalPlan, bool, error) {
+func (*buildKeySolver) optimize(_ context.Context, p LogicalPlan, _ *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	buildKeyInfo(p)
 	return p, planChanged, nil
