@@ -25,6 +25,7 @@ type mockPDClientForSplit struct {
 		beforeHook func()
 	}
 	splitRegions struct {
+		count    int
 		hijacked func() (bool, *kvrpcpb.SplitRegionResponse, error)
 	}
 	scatterRegion struct {
@@ -107,6 +108,7 @@ func (c *mockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64,
 }
 
 func (c *mockPDClientForSplit) SplitRegion(region *RegionInfo, keys [][]byte) (bool, *kvrpcpb.SplitRegionResponse, error) {
+	c.splitRegions.count++
 	if c.splitRegions.hijacked != nil {
 		return c.splitRegions.hijacked()
 	}
@@ -116,6 +118,7 @@ func (c *mockPDClientForSplit) SplitRegion(region *RegionInfo, keys [][]byte) (b
 	newRegionBoundaries = append(newRegionBoundaries, keys...)
 	newRegionBoundaries = append(newRegionBoundaries, region.Region.EndKey)
 	newRegions := c.SetRegions(newRegionBoundaries)
+	newRegions[0].Id = region.Region.Id
 	return false, &kvrpcpb.SplitRegionResponse{Regions: newRegions}, nil
 }
 

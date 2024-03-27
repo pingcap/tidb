@@ -520,39 +520,6 @@ func TestMissingScatter(t *testing.T) {
 	require.Equal(t, len(result)-3, int(checkClient.scatterCounter.Load()))
 }
 
-type batchSizeHook struct{}
-
-func (h batchSizeHook) setup(t *testing.T) func() {
-	oldSizeLimit := maxBatchSplitSize
-	oldSplitBackoffTime := splitRegionBaseBackOffTime
-	maxBatchSplitSize = 6
-	splitRegionBaseBackOffTime = time.Millisecond
-	return func() {
-		maxBatchSplitSize = oldSizeLimit
-		splitRegionBaseBackOffTime = oldSplitBackoffTime
-	}
-}
-
-func (h batchSizeHook) check(t *testing.T, cli *testSplitClient) {
-	// so with a batch split key size of 6, there will be 9 time batch split
-	// 1. region: [aay, bba), keys: [b, ba, bb]
-	// 2. region: [bbh, cca), keys: [bc, bd, be]
-	// 3. region: [bf, cca), keys: [bf, bg, bh]
-	// 4. region: [bj, cca), keys: [bi, bj, bk]
-	// 5. region: [bj, cca), keys: [bl, bm, bn]
-	// 6. region: [bn, cca), keys: [bo, bp, bq]
-	// 7. region: [bn, cca), keys: [br, bs, bt]
-	// 9. region: [br, cca), keys: [bu, bv, bw]
-	// 10. region: [bv, cca), keys: [bx, by, bz]
-
-	// since it may encounter error retries, here only check the lower threshold.
-	require.Equal(t, int32(9), cli.splitCount.Load())
-}
-
-func TestBatchSplitRegionByRangesKeySizeLimit(t *testing.T) {
-	doTestBatchSplitRegionByRanges(context.Background(), t, nil, "", batchSizeHook{})
-}
-
 type scanRegionEmptyHook struct {
 	noopHook
 	cnt int

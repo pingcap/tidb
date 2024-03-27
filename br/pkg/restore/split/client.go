@@ -43,6 +43,9 @@ import (
 
 const (
 	splitRegionMaxRetryTime = 4
+)
+
+var (
 	// the max total key size in a split region batch.
 	// our threshold should be smaller than TiKV's raft max entry size(default is 8MB).
 	maxBatchSplitSize = 6 * units.MiB
@@ -568,6 +571,9 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, sortedKeys [][]byte)
 						c.onSplit(keys)
 					}
 					start = end
+					totalKeySize = 0
+					// the keys of next split batch are located in the right-most region.
+					region = newRegions[len(newRegions)-1]
 				}
 
 				return nil

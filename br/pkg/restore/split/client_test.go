@@ -10,6 +10,12 @@ import (
 )
 
 func TestSplit(t *testing.T) {
+	backup := maxBatchSplitSize
+	maxBatchSplitSize = 7
+	t.Cleanup(func() {
+		maxBatchSplitSize = backup
+	})
+
 	mockPDClient := newMockPDClientForSplit()
 	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
 	mockPDClient.SetRegions(keys)
@@ -40,4 +46,17 @@ func TestSplit(t *testing.T) {
 		[]byte("by"), []byte("bz"), []byte("cca"),
 	}
 	checkRegionsBoundaries(t, regions, result)
+
+	// so with a batch split key size of 6, there will be 9 time batch split
+	// 1. region: [aay, bba), keys: [b, ba, bb]
+	// 2. region: [bbh, cca), keys: [bc, bd, be]
+	// 3. region: [bf, cca), keys: [bf, bg, bh]
+	// 4. region: [bj, cca), keys: [bi, bj, bk]
+	// 5. region: [bj, cca), keys: [bl, bm, bn]
+	// 6. region: [bn, cca), keys: [bo, bp, bq]
+	// 7. region: [bn, cca), keys: [br, bs, bt]
+	// 8. region: [br, cca), keys: [bu, bv, bw]
+	// 9. region: [bv, cca), keys: [bx, by, bz]
+
+	require.EqualValues(t, 9, mockPDClient.splitRegions.count)
 }
