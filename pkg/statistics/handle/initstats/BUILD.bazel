@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "loadstats",
+    name = "initstats",
     srcs = ["load_stats.go"],
-    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/loadstats",
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/initstats",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/infoschema",
