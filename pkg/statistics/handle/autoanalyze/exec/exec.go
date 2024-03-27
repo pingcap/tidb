@@ -19,9 +19,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -47,7 +49,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 func AutoAnalyze(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 	statsVer int,
 	sql string,
 	params ...any,
@@ -76,7 +78,7 @@ func AutoAnalyze(
 func execAnalyzeStmt(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 	statsVer int,
 	sql string,
 	params ...any,
@@ -91,21 +93,6 @@ func execAnalyzeStmt(
 		sqlexec.ExecOptionWithSysProcTrack(statsHandle.AutoAnalyzeProcID(), sysProcTracker.Track, sysProcTracker.UnTrack),
 	}
 	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
-}
-
-// TableAnalyzed checks if any column or index of the table has been analyzed.
-func TableAnalyzed(tbl *statistics.Table) bool {
-	for _, col := range tbl.Columns {
-		if col.IsAnalyzed() {
-			return true
-		}
-	}
-	for _, idx := range tbl.Indices {
-		if idx.IsAnalyzed() {
-			return true
-		}
-	}
-	return false
 }
 
 // GetAutoAnalyzeParameters gets the auto analyze parameters from mysql.global_variables.
@@ -129,4 +116,21 @@ func ParseAutoAnalyzeRatio(ratio string) float64 {
 		return variable.DefAutoAnalyzeRatio
 	}
 	return math.Max(autoAnalyzeRatio, 0)
+}
+
+// ParseAutoAnalysisWindow parses the time window for auto analysis.
+// It parses the times in UTC location.
+func ParseAutoAnalysisWindow(start, end string) (time.Time, time.Time, error) {
+	if start == "" {
+		start = variable.DefAutoAnalyzeStartTime
+	}
+	if end == "" {
+		end = variable.DefAutoAnalyzeEndTime
+	}
+	s, err := time.ParseInLocation(variable.FullDayTimeFormat, start, time.UTC)
+	if err != nil {
+		return s, s, errors.Trace(err)
+	}
+	e, err := time.ParseInLocation(variable.FullDayTimeFormat, end, time.UTC)
+	return s, e, err
 }

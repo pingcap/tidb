@@ -833,7 +833,7 @@ func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *model.CIStr, ta
 	}
 	var results sqlexec.RecordSet
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	if results, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, params...); err != nil {
+	if results, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, sql, params...); err != nil {
 		logutil.BgLogger().Error(`ExecuteInternal`, zap.Error(err))
 	} else if results != nil {
 		messages = make([]*SchemaTableStorage, 0)

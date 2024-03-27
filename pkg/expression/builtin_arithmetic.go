@@ -58,10 +58,6 @@ var (
 	_ builtinFunc = &builtinArithmeticModDecimalSig{}
 )
 
-// precIncrement indicates the number of digits by which to increase the scale of the result of division operations
-// performed with the / operator.
-const precIncrement = 4
-
 // isConstantBinaryLiteral return true if expr is constant binary literal
 func isConstantBinaryLiteral(expr Expression) bool {
 	if types.IsBinaryStr(expr.GetType()) {
@@ -139,7 +135,7 @@ func setFlenDecimal4RealOrDecimal(retTp *types.FieldType, arg0, arg1 Expression,
 	}
 }
 
-func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.FieldType) {
+func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.FieldType, divPrecIncrement int) {
 	var deca, decb = a.GetDecimal(), b.GetDecimal()
 	if deca == types.UnspecifiedFsp {
 		deca = 0
@@ -147,13 +143,13 @@ func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.Fi
 	if decb == types.UnspecifiedFsp {
 		decb = 0
 	}
-	retTp.SetDecimalUnderLimit(deca + precIncrement)
+	retTp.SetDecimalUnderLimit(deca + divPrecIncrement)
 	if a.GetFlen() == types.UnspecifiedLength {
 		retTp.SetFlen(mysql.MaxDecimalWidth)
 		return
 	}
 	aPrec := types.DecimalLength2Precision(a.GetFlen(), a.GetDecimal(), mysql.HasUnsignedFlag(a.GetFlag()))
-	retTp.SetFlenUnderLimit(aPrec + decb + precIncrement)
+	retTp.SetFlenUnderLimit(aPrec + decb + divPrecIncrement)
 	retTp.SetFlenUnderLimit(types.Precision2LengthNoTruncation(retTp.GetFlen(), retTp.GetDecimal(), mysql.HasUnsignedFlag(retTp.GetFlag())))
 }
 
@@ -665,7 +661,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp)
+	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp, ctx.GetSessionVars().GetDivPrecisionIncrement())
 	sig := &builtinArithmeticDivideDecimalSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DivideDecimal)
 	return sig, nil
@@ -718,7 +714,7 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(ctx EvalContext, row chu
 	}
 
 	c := &types.MyDecimal{}
-	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
+	err = types.DecimalDiv(a, b, c, ctx.GetDivPrecisionIncrement())
 	if err == types.ErrDivByZero {
 		return c, true, handleDivisionByZeroError(ctx)
 	} else if err == types.ErrTruncated {
@@ -833,7 +829,7 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(ctx EvalContext, row chun
 	}
 
 	c := &types.MyDecimal{}
-	err = types.DecimalDiv(num[0], num[1], c, types.DivFracIncr)
+	err = types.DecimalDiv(num[0], num[1], c, ctx.GetDivPrecisionIncrement())
 	if err == types.ErrDivByZero {
 		return 0, true, handleDivisionByZeroError(ctx)
 	}

@@ -65,6 +65,12 @@ lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml ./br/pkg/lightning/...
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/overview.json
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/performance_overview.json
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb.json
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_resource_control.json
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_runtime.json
+	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb_summary.json
 
 license:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \
@@ -620,6 +626,13 @@ bazel_importintotest4: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //tests/realtikvtest/importintotest4/...
+	./build/jenkins_collect_coverage.sh
+
+# on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
+bazel_pipelineddmltest: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/pipelineddmltest/...
 	./build/jenkins_collect_coverage.sh
 
 bazel_lint: bazel_prepare

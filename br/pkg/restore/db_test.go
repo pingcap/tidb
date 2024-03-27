@@ -384,7 +384,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 		},
 		nil, nil, 1)
 	require.Nil(t, err)
-	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build(math.MaxUint64))
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 0, len(dbs))
 
@@ -396,7 +396,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 		},
 		nil, nil, 1)
 	require.Nil(t, err)
-	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build(math.MaxUint64))
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 1, len(dbs))
 
@@ -406,13 +406,13 @@ func TestGetExistedUserDBs(t *testing.T) {
 			{Name: model.NewCIStr("d1")},
 			{
 				Name:   model.NewCIStr("test"),
-				Tables: []*model.TableInfo{{Name: model.NewCIStr("t1"), State: model.StatePublic}},
+				Tables: []*model.TableInfo{{ID: 1, Name: model.NewCIStr("t1"), State: model.StatePublic}},
 				State:  model.StatePublic,
 			},
 		},
 		nil, nil, 1)
 	require.Nil(t, err)
-	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build(math.MaxUint64))
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 2, len(dbs))
 }
@@ -425,5 +425,5 @@ func TestGetExistedUserDBs(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	require.Equal(t, int64(185), session.CurrentBootstrapVersion)
+	require.Equal(t, int64(195), session.CurrentBootstrapVersion)
 }

@@ -89,7 +89,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	}
 
 	// Add `` for some names like `table name`.
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := ctx.GetRestrictedSQLExecutor()
 	tblCnt, err := getCount(exec, snapshot, "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
 	if err != nil {
 		return 0, 0, errors.Trace(err)

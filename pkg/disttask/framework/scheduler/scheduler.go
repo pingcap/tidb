@@ -95,7 +95,7 @@ var MockOwnerChange func()
 
 // NewBaseScheduler creates a new BaseScheduler.
 func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseScheduler {
-	logger := log.L().With(zap.Int64("task-id", task.ID), zap.Stringer("task-type", task.Type))
+	logger := log.L().With(zap.Int64("task-id", task.ID), zap.Stringer("task-type", task.Type), zap.Bool("allocated-slots", param.allocatedSlots))
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.serverID))
 	}
@@ -179,6 +179,10 @@ func (s *BaseScheduler) scheduleTask() {
 				continue
 			}
 			task := *s.GetTask()
+			// TODO: refine failpoints below.
+			failpoint.Inject("exitScheduler", func() {
+				failpoint.Return()
+			})
 			failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
 				if val.(bool) && task.State == proto.TaskStateRunning {
 					err := s.taskMgr.CancelTask(s.ctx, task.ID)
@@ -222,12 +226,35 @@ func (s *BaseScheduler) scheduleTask() {
 					return
 				}
 			case proto.TaskStateResuming:
+				// Case with 2 nodes.
+				// Here is the timeline
+				// 1. task in pausing state.
+				// 2. node1 and node2 start schedulers with task in pausing state without allocatedSlots.
+				// 3. node1's scheduler transfer the node from pausing to paused state.
+				// 4. resume the task.
+				// 5. node2 scheduler call refreshTask and get task with resuming state.
+				if !s.allocatedSlots {
+					s.logger.Info("scheduler exit since not allocated slots", zap.Stringer("state", task.State))
+					return
+				}
 				err = s.onResuming()
 			case proto.TaskStateReverting:
 				err = s.onReverting()
 			case proto.TaskStatePending:
 				err = s.onPending()
 			case proto.TaskStateRunning:
+				// Case with 2 nodes.
+				// Here is the timeline
+				// 1. task in pausing state.
+				// 2. node1 and node2 start schedulers with task in pausing state without allocatedSlots.
+				// 3. node1's scheduler transfer the node from pausing to paused state.
+				// 4. resume the task.
+				// 5. node1 start another scheduler and transfer the node from resuming to running state.
+				// 6. node2 scheduler call refreshTask and get task with running state.
+				if !s.allocatedSlots {
+					s.logger.Info("scheduler exit since not allocated slots", zap.Stringer("state", task.State))
+					return
+				}
 				err = s.onRunning()
 			case proto.TaskStateSucceed, proto.TaskStateReverted, proto.TaskStateFailed:
 				s.onFinished()
@@ -424,7 +451,7 @@ func (s *BaseScheduler) switch2NextStep() error {
 		return s.handlePlanErr(err)
 	}
 
-	if err = s.scheduleSubTask(nextStep, metas, eligibleNodes); err != nil {
+	if err = s.scheduleSubTask(&task, nextStep, metas, eligibleNodes); err != nil {
 		return err
 	}
 	task.Step = nextStep
@@ -435,10 +462,10 @@ func (s *BaseScheduler) switch2NextStep() error {
 }
 
 func (s *BaseScheduler) scheduleSubTask(
+	task *proto.Task,
 	subtaskStep proto.Step,
 	metas [][]byte,
 	eligibleNodes []string) error {
-	task := s.GetTask()
 	s.logger.Info("schedule subtasks",
 		zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, subtaskStep)),

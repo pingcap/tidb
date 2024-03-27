@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
 )
 
@@ -97,7 +98,7 @@ func PaginateScanRegion(
 	var (
 		lastRegions []*RegionInfo
 		err         error
-		backoffer   = NewWaitRegionOnlineBackoffer().(*WaitRegionOnlineBackoffer)
+		backoffer   = NewWaitRegionOnlineBackoffer()
 	)
 	_ = utils.WithRetry(ctx, func() error {
 		regions := make([]*RegionInfo, 0, 16)
@@ -208,7 +209,7 @@ type WaitRegionOnlineBackoffer struct {
 }
 
 // NewWaitRegionOnlineBackoffer create a backoff to wait region online.
-func NewWaitRegionOnlineBackoffer() utils.Backoffer {
+func NewWaitRegionOnlineBackoffer() *WaitRegionOnlineBackoffer {
 	return &WaitRegionOnlineBackoffer{
 		Stat: utils.InitialRetryState(
 			WaitRegionOnlineAttemptTimes,
@@ -220,6 +221,7 @@ func NewWaitRegionOnlineBackoffer() utils.Backoffer {
 
 // NextBackoff returns a duration to wait before retrying again
 func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
+	// TODO(lance6716): why we only backoff when the error is ErrPDBatchScanRegion?
 	if berrors.ErrPDBatchScanRegion.Equal(err) {
 		// it needs more time to wait splitting the regions that contains data in PITR.
 		// 2s * 150
@@ -231,11 +233,89 @@ func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
 		})
 		return delayTime
 	}
-	b.Stat.StopRetry()
+	b.Stat.GiveUp()
 	return 0
 }
 
 // Attempt returns the remain attempt times
 func (b *WaitRegionOnlineBackoffer) Attempt() int {
 	return b.Stat.Attempt()
+}
+
+// BackoffMayNotCountBackoffer is a backoffer but it may not increase the retry
+// counter. It should be used with ErrBackoff or ErrBackoffAndDontCount.
+type BackoffMayNotCountBackoffer struct {
+	state utils.RetryState
+}
+
+var (
+	ErrBackoff             = errors.New("found backoff error")
+	ErrBackoffAndDontCount = errors.New("found backoff error but don't count")
+)
+
+// NewBackoffMayNotCountBackoffer creates a new backoffer that may backoff or retry.
+//
+// TODO: currently it has the same usage as NewWaitRegionOnlineBackoffer so we
+// don't expose its inner settings.
+func NewBackoffMayNotCountBackoffer() *BackoffMayNotCountBackoffer {
+	return &BackoffMayNotCountBackoffer{
+		state: utils.InitialRetryState(
+			WaitRegionOnlineAttemptTimes,
+			time.Millisecond*10,
+			time.Second*2,
+		),
+	}
+}
+
+// NextBackoff implements utils.Backoffer. For BackoffMayNotCountBackoffer, only
+// ErrBackoff and ErrBackoffAndDontCount is meaningful.
+func (b *BackoffMayNotCountBackoffer) NextBackoff(err error) time.Duration {
+	if errors.ErrorEqual(err, ErrBackoff) {
+		return b.state.ExponentialBackoff()
+	}
+	if errors.ErrorEqual(err, ErrBackoffAndDontCount) {
+		delay := b.state.ExponentialBackoff()
+		b.state.ReduceRetry()
+		return delay
+	}
+	b.state.GiveUp()
+	return 0
+}
+
+// Attempt implements utils.Backoffer.
+func (b *BackoffMayNotCountBackoffer) Attempt() int {
+	return b.state.Attempt()
+}
+
+// GetSplitKeysOfRegions checks every input key is necessary to split region on
+// it. Returns a map from original region ID to split keys belongs to each
+// region.
+//
+// prerequisite:
+// - sortedKeys are sorted in ascending order.
+// - sortedRegions are continuous and sorted in ascending order by start key.
+// - sortedRegions can cover all keys in sortedKeys.
+// PaginateScanRegion should satisfy the above prerequisites.
+func GetSplitKeysOfRegions(sortedKeys [][]byte, sortedRegions []*RegionInfo, isRawKV bool) map[uint64][][]byte {
+	splitKeyMap := make(map[uint64][][]byte, len(sortedRegions))
+	curKeyIndex := 0
+	for _, region := range sortedRegions {
+		for ; curKeyIndex < len(sortedKeys); curKeyIndex += 1 {
+			if len(sortedKeys[curKeyIndex]) == 0 {
+				continue
+			}
+			splitKey := codec.EncodeBytesExt(nil, sortedKeys[curKeyIndex], isRawKV)
+			// If splitKey is the boundary of the region, don't need to split on it.
+			if bytes.Equal(splitKey, region.Region.GetStartKey()) {
+				continue
+			}
+			// If splitKey is not in a region, we should move to the next region.
+			if !region.ContainsInterior(splitKey) {
+				break
+			}
+			regionID := region.Region.GetId()
+			splitKeyMap[regionID] = append(splitKeyMap[regionID], sortedKeys[curKeyIndex])
+		}
+	}
+	return splitKeyMap
 }

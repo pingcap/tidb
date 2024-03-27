@@ -116,7 +116,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		return errors.Trace(err)
 	}
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, reader); err != nil {
+	if err = client.InitBackupMeta(c, backupMeta, u, reader, true); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -137,8 +137,8 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	}
 	summary.CollectInt("restore files", len(files))
 
-	ranges, _, err := restore.MergeFileRanges(
-		files, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value)
+	ranges, _, err := restore.MergeAndRewriteFileRanges(
+		files, nil, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -153,7 +153,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		!cfg.LogProgress)
 
 	// RawKV restore does not need to rewrite keys.
-	err = restore.SplitRanges(ctx, client, ranges, nil, updateCh, true)
+	err = restore.SplitRanges(ctx, client, ranges, updateCh, true)
 	if err != nil {
 		return errors.Trace(err)
 	}

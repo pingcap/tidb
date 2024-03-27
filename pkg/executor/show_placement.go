@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	pd "github.com/tikv/pd/client/http"
 )
 
@@ -110,7 +109,7 @@ func (*showPlacementLabelsResultBuilder) sortMapKeys(m map[string]any) []string 
 }
 
 func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "SELECT DISTINCT LABEL FROM %n.%n", "INFORMATION_SCHEMA", infoschema.TableTiKVStoreStatus)
 	if err != nil {
 		return errors.Trace(err)
@@ -155,7 +154,7 @@ func (e *ShowExec) fetchShowPlacementForDB(ctx context.Context) (err error) {
 	}
 
 	if placement != nil {
-		state, err := fetchDBScheduleState(ctx, nil, dbInfo)
+		state, err := e.fetchDBScheduleState(ctx, nil, dbInfo)
 		if err != nil {
 			return err
 		}
@@ -332,7 +331,7 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 		}
 
 		if placement != nil {
-			state, err := fetchDBScheduleState(ctx, scheduleState, dbInfo)
+			state, err := e.fetchDBScheduleState(ctx, scheduleState, dbInfo)
 			if err != nil {
 				return err
 			}
@@ -341,6 +340,22 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 	}
 
 	return nil
+}
+
+func (e *ShowExec) fetchDBScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, db *model.DBInfo) (infosync.PlacementScheduleState, error) {
+	state := infosync.PlacementScheduleStateScheduled
+	for _, table := range e.is.SchemaTables(db.Name) {
+		tbl := table.Meta()
+		schedule, err := fetchTableScheduleState(ctx, scheduleState, tbl)
+		if err != nil {
+			return state, err
+		}
+		state = accumulateState(state, schedule)
+		if state != infosync.PlacementScheduleStateScheduled {
+			break
+		}
+	}
+	return state, nil
 }
 
 type tableRowSet struct {
@@ -499,21 +514,6 @@ func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosy
 	}
 
 	return schedule, nil
-}
-
-func fetchDBScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, db *model.DBInfo) (infosync.PlacementScheduleState, error) {
-	state := infosync.PlacementScheduleStateScheduled
-	for _, table := range db.Tables {
-		schedule, err := fetchTableScheduleState(ctx, scheduleState, table)
-		if err != nil {
-			return state, err
-		}
-		state = accumulateState(state, schedule)
-		if state != infosync.PlacementScheduleStateScheduled {
-			break
-		}
-	}
-	return state, nil
 }
 
 func accumulateState(curr, news infosync.PlacementScheduleState) infosync.PlacementScheduleState {

@@ -748,6 +748,12 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 func compareCandidates(sctx PlanContext, prop *property.PhysicalProperty, lhs, rhs *candidatePath) int {
+	// Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
+	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
+	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
+		return 0
+	}
+
 	// This rule is empirical but not always correct.
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
 	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
@@ -1020,17 +1026,18 @@ func (ds *DataSource) matchPropForIndexMergeAlternatives(path *util.AccessPath, 
 	}
 	// path.ShouldBeKeptCurrentFilter record that whether there are some part of the cnf item couldn't be pushed down to tikv already.
 	shouldKeepCurrentFilter := path.KeepIndexMergeORSourceFilter
+	pushDownCtx := GetPushDownCtx(ds.SCtx())
 	for _, path := range determinedIndexPartialPaths {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
 		if len(path.TableFilters) > 0 {
-			if !expression.CanExprsPushDown(ds.SCtx().GetExprCtx(), path.TableFilters, ds.SCtx().GetClient(), kv.TiKV) {
+			if !expression.CanExprsPushDown(pushDownCtx, path.TableFilters, kv.TiKV) {
 				// if this table filters can't be pushed down, all of them should be kept in the table side, cleaning the lookup side here.
 				path.TableFilters = nil
 			}
 			shouldKeepCurrentFilter = true
 		}
 		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
-		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx().GetExprCtx(), path.IndexFilters, ds.SCtx().GetClient(), kv.TiKV) {
+		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(pushDownCtx, path.IndexFilters, kv.TiKV) {
 			shouldKeepCurrentFilter = true
 			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
 			path.IndexFilters = nil
@@ -1441,18 +1448,22 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				}
 			}
 		}
-		var hashPartColName *model.CIStr
-		if tblInfo := ds.table.Meta(); canConvertPointGet && tblInfo.GetPartitionInfo() != nil {
+		if canConvertPointGet && ds.table.Meta().GetPartitionInfo() != nil {
 			// partition table with dynamic prune not support batchPointGet
+			// Due to sorting?
 			if canConvertPointGet && len(path.Ranges) > 1 && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				canConvertPointGet = false
 			}
 			if canConvertPointGet && len(path.Ranges) > 1 {
+				// TODO: This is now implemented, but to decrease
+				// the impact of supporting plan cache for patitioning,
+				// this is not yet enabled.
+				// TODO: just remove this if block and update/add tests...
 				// We can only build batch point get for hash partitions on a simple column now. This is
 				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
 				// the `getPhysID()` function. Once we optimize that part, we can come back and enable
 				// BatchPointGet plan for more cases.
-				hashPartColName = getHashOrKeyPartitionColumnName(ds.SCtx(), tblInfo)
+				hashPartColName := getHashOrKeyPartitionColumnName(ds.SCtx(), ds.table.Meta())
 				if hashPartColName == nil {
 					canConvertPointGet = false
 				}
@@ -1460,10 +1471,19 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			if canConvertPointGet {
 				// If the schema contains ExtraPidColID, do not convert to point get.
 				// Because the point get executor can not handle the extra partition ID column now.
+				// I.e. Global Index is used
 				for _, col := range ds.schema.Columns {
 					if col.ID == model.ExtraPidColID {
 						canConvertPointGet = false
 						break
+					}
+				}
+				if path != nil && path.Index != nil && path.Index.Global {
+					// Don't convert to point get during ddl
+					// TODO: Revisit truncate partition and global index
+					if len(ds.tableInfo.GetPartitionInfo().DroppingDefinitions) > 0 ||
+						len(ds.tableInfo.GetPartitionInfo().AddingDefinitions) > 0 {
+						canConvertPointGet = false
 					}
 				}
 			}
@@ -1483,7 +1503,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				if len(path.Ranges) == 1 {
 					pointGetTask = ds.convertToPointGet(prop, candidate)
 				} else {
-					pointGetTask = ds.convertToBatchPointGet(prop, candidate, hashPartColName)
+					pointGetTask = ds.convertToBatchPointGet(prop, candidate)
 				}
 
 				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
@@ -1781,7 +1801,7 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 		Columns:         slices.Clone(ds.Columns),
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
-		isPartition:     ds.isPartition,
+		isPartition:     ds.partitionDefIdx != nil,
 		physicalTableID: ds.physicalTableID,
 		HandleCols:      ds.handleCols,
 		tblCols:         ds.TblCols,
@@ -1802,7 +1822,7 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 	}
 	var currentTopPlan PhysicalPlan = ts
 	if len(tableFilters) > 0 {
-		pushedFilters, remainingFilters := extractFiltersForIndexMerge(ds.SCtx().GetExprCtx(), ds.SCtx().GetClient(), tableFilters)
+		pushedFilters, remainingFilters := extractFiltersForIndexMerge(GetPushDownCtx(ds.SCtx()), tableFilters)
 		pushedFilters1, remainingFilters1 := SplitSelCondsWithVirtualColumn(pushedFilters)
 		pushedFilters = pushedFilters1
 		remainingFilters = append(remainingFilters, remainingFilters1...)
@@ -1868,13 +1888,13 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 //
 //	But the new Selection should exclude the exprs that can NOT be pushed to ALL the storage engines.
 //	Because these exprs have already been put in another Selection(check rule_predicate_push_down).
-func extractFiltersForIndexMerge(ctx expression.BuildContext, client kv.Client, filters []expression.Expression) (pushed []expression.Expression, remaining []expression.Expression) {
+func extractFiltersForIndexMerge(ctx expression.PushDownContext, filters []expression.Expression) (pushed []expression.Expression, remaining []expression.Expression) {
 	for _, expr := range filters {
-		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, client, kv.TiKV) {
+		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, kv.TiKV) {
 			pushed = append(pushed, expr)
 			continue
 		}
-		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, client, kv.UnSpecified) {
+		if expression.CanExprsPushDown(ctx, []expression.Expression{expr}, kv.UnSpecified) {
 			remaining = append(remaining, expr)
 		}
 	}
@@ -2023,7 +2043,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
 			DBName:          ds.DBName,
-			isPartition:     ds.isPartition,
+			isPartition:     ds.partitionDefIdx != nil,
 			physicalTableID: ds.physicalTableID,
 			tblCols:         ds.TblCols,
 			tblColHists:     ds.TblColHists,
@@ -2196,10 +2216,11 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
 
 	var newRootConds []expression.Expression
-	indexConds, newRootConds = expression.PushDownExprs(is.SCtx().GetExprCtx(), indexConds, is.SCtx().GetClient(), kv.TiKV)
+	pctx := GetPushDownCtx(is.SCtx())
+	indexConds, newRootConds = expression.PushDownExprs(pctx, indexConds, kv.TiKV)
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
-	tableConds, newRootConds = expression.PushDownExprs(is.SCtx().GetExprCtx(), tableConds, is.SCtx().GetClient(), kv.TiKV)
+	tableConds, newRootConds = expression.PushDownExprs(pctx, tableConds, kv.TiKV)
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
 	if indexConds != nil {
@@ -2297,7 +2318,7 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 		Columns:         ds.Columns,
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
-		isPartition:     ds.isPartition,
+		isPartition:     ds.partitionDefIdx != nil,
 		physicalTableID: ds.physicalTableID,
 		Ranges:          s.Ranges,
 		AccessCondition: s.AccessConds,
@@ -2323,7 +2344,7 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(_ *expression.Schema, stats *pro
 		AccessCondition:  s.AccessConds,
 		Ranges:           s.Ranges,
 		dataSourceSchema: ds.schema,
-		isPartition:      ds.isPartition,
+		isPartition:      ds.partitionDefIdx != nil,
 		physicalTableID:  ds.physicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.getPKIsHandleCol(),
@@ -2552,45 +2573,20 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		LockWaitTime:     ds.SCtx().GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
 	}.Init(ds.SCtx(), ds.tableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())
-	var partitionDef *model.PartitionDefinition
-	pi := ds.tableInfo.GetPartitionInfo()
-	if ds.isPartition {
-		// static prune
-		if pi != nil {
-			for i := range pi.Definitions {
-				def := pi.Definitions[i]
-				if def.ID == ds.physicalTableID {
-					partitionDef = &def
-					break
-				}
-			}
-		}
-		if partitionDef == nil {
-			return invalidTask
-		}
-	} else if pi != nil {
-		// dynamic prune
-		idxs, err := PartitionPruning(ds.SCtx(), ds.table.GetPartitionedTable(), ds.allConds, ds.partitionNames, ds.TblCols, ds.names)
-		if err != nil {
-			return invalidTask
-		}
-		if len(idxs) == 1 && idxs[0] == FullRange {
-			if len(pi.Definitions) != 1 {
-				return invalidTask
-			}
-			partitionDef = &pi.Definitions[0]
-		} else if len(idxs) == 1 {
-			partitionDef = &pi.Definitions[idxs[0]]
-		} else {
-			return invalidTask
-		}
+	if ds.partitionDefIdx != nil {
+		pointGetPlan.PartitionIdx = ds.partitionDefIdx
 	}
+	pointGetPlan.PartitionNames = ds.partitionNames
 	rTsk := &rootTask{p: pointGetPlan}
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.GetFlag())
-		pointGetPlan.PartitionDef = partitionDef
 		pointGetPlan.accessCols = ds.TblCols
+		hc, err := ds.handleCols.ResolveIndices(ds.schema)
+		if err != nil {
+			return invalidTask
+		}
+		pointGetPlan.HandleColOffset = hc.GetCol(0).Index
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sel := PhysicalSelection{
@@ -2604,7 +2600,6 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.IdxCols = candidate.path.IdxCols
 		pointGetPlan.IdxColLens = candidate.path.IdxColLens
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
-		pointGetPlan.PartitionDef = partitionDef
 		if candidate.path.IsSingleScan {
 			pointGetPlan.accessCols = candidate.path.IdxCols
 		} else {
@@ -2623,7 +2618,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	return rTsk
 }
 
-func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath, hashPartColName *model.CIStr) (task task) {
+func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, candidate *candidatePath) (task task) {
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
@@ -2640,9 +2635,11 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		TblInfo:          ds.TableInfo(),
 		KeepOrder:        !prop.IsSortItemEmpty(),
 		Columns:          ds.Columns,
-		SinglePart:       ds.isPartition,
-		PartTblID:        ds.physicalTableID,
-		PartitionExpr:    getPartitionExpr(ds.SCtx(), ds.TableInfo()),
+		PartitionNames:   ds.partitionNames,
+	}
+	if ds.partitionDefIdx != nil {
+		batchPointGetPlan.SinglePartition = true
+		batchPointGetPlan.PartitionIdxs = []int{*ds.partitionDefIdx}
 	}
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.SortItems[0].Desc
@@ -2653,6 +2650,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
 		batchPointGetPlan.accessCols = ds.TblCols
+		batchPointGetPlan.HandleColOffset = ds.handleCols.GetCol(0).Index
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			batchPointGetPlan.Init(ds.SCtx(), ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.QueryBlockOffset())
@@ -2666,7 +2664,6 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		batchPointGetPlan.IndexInfo = candidate.path.Index
 		batchPointGetPlan.IdxCols = candidate.path.IdxCols
 		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
-		batchPointGetPlan.PartitionColPos = getColumnPosInIndex(candidate.path.Index, hashPartColName)
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}
@@ -2699,7 +2696,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats *property.StatsInfo) *mppTask {
 	filterCondition, rootTaskConds := SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
-	filterCondition, newRootConds = expression.PushDownExprs(ts.SCtx().GetExprCtx(), filterCondition, ts.SCtx().GetClient(), ts.StoreType)
+	filterCondition, newRootConds = expression.PushDownExprs(GetPushDownCtx(ts.SCtx()), filterCondition, ts.StoreType)
 	mpp.rootTaskConds = append(rootTaskConds, newRootConds...)
 
 	ts.filterCondition = filterCondition
@@ -2715,7 +2712,7 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
 	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
-	ts.filterCondition, newRootConds = expression.PushDownExprs(ts.SCtx().GetExprCtx(), ts.filterCondition, ts.SCtx().GetClient(), ts.StoreType)
+	ts.filterCondition, newRootConds = expression.PushDownExprs(GetPushDownCtx(ts.SCtx()), ts.filterCondition, ts.StoreType)
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
 	// Add filter condition to table plan now.
@@ -2749,7 +2746,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		Columns:         slices.Clone(ds.Columns),
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
-		isPartition:     ds.isPartition,
+		isPartition:     ds.partitionDefIdx != nil,
 		physicalTableID: ds.physicalTableID,
 		Ranges:          path.Ranges,
 		AccessCondition: path.AccessConds,
@@ -2798,7 +2795,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		AccessCondition:  path.AccessConds,
 		Ranges:           path.Ranges,
 		dataSourceSchema: ds.schema,
-		isPartition:      ds.isPartition,
+		isPartition:      ds.partitionDefIdx != nil,
 		physicalTableID:  ds.physicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.getPKIsHandleCol(),

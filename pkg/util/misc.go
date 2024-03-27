@@ -39,6 +39,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -167,12 +168,10 @@ func SyntaxWarn(err error) error {
 	}
 	logutil.BgLogger().Debug("syntax error", zap.Error(err))
 
-	// If the warn is already a terror with stack, pass it through.
-	if errors.HasStack(err) {
-		cause := errors.Cause(err)
-		if _, ok := cause.(*terror.Error); ok {
-			return err
-		}
+	// If the "err" is already a terror, pass it through.
+	cause := errors.Cause(err)
+	if _, ok := cause.(*terror.Error); ok {
+		return err
 	}
 
 	return parser.ErrParse.FastGenByArgs(syntaxErrorPrefix, err.Error())
@@ -446,7 +445,7 @@ func init() {
 }
 
 // GetSequenceByName could be used in expression package without import cycle problem.
-var GetSequenceByName func(is any, schema, sequence model.CIStr) (SequenceTable, error)
+var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence model.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.

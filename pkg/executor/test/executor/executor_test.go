@@ -2254,7 +2254,7 @@ func TestHistoryReadInTxn(t *testing.T) {
 
 				// After `ExecRestrictedSQL` with a specified snapshot and use current session, the original snapshot ts should not be reset
 				// See issue: https://github.com/pingcap/tidb/issues/34529
-				exec := tk.Session().(sqlexec.RestrictedSQLExecutor)
+				exec := tk.Session().GetRestrictedSQLExecutor()
 				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 				rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(ts2), sqlexec.ExecOptionUseCurSession}, "select * from his_t0 where id=1")
 				require.NoError(t, err)
@@ -2797,8 +2797,17 @@ func TestIssue38756(t *testing.T) {
 }
 
 func TestIssue50043(t *testing.T) {
+	testIssue50043WithInitSQL(t, "")
+}
+
+func TestIssue50043WithPipelinedDML(t *testing.T) {
+	testIssue50043WithInitSQL(t, "set @@tidb_dml_type=bulk")
+}
+
+func testIssue50043WithInitSQL(t *testing.T, initSQL string) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(initSQL)
 	// Test simplified case by update.
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2),unique key idx2 ( c1 ));")
@@ -2895,4 +2904,28 @@ func TestIssue51324(t *testing.T) {
 	tk.MustExec("insert ignore into t (id) values (11),(12),(3) on duplicate key update id = id+10")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value", "Warning 1364 Field 'b' doesn't have a default value", "Warning 1364 Field 'c' doesn't have a default value", "Warning 1364 Field 'd' doesn't have a default value"))
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("13 <nil> <nil> 0 0", "21 1 <nil> 0 1", "22 1 <nil> 0 1"))
+}
+
+func TestDecimalDivPrecisionIncrement(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a decimal(3,0), b decimal(3,0))")
+	tk.MustExec("insert into t values (8, 7), (9, 7)")
+	tk.MustQuery("select a/b from t").Check(testkit.Rows("1.1429", "1.2857"))
+
+	tk.MustExec("set div_precision_increment = 7")
+	tk.MustQuery("select a/b from t").Check(testkit.Rows("1.1428571", "1.2857143"))
+
+	tk.MustExec("set div_precision_increment = 30")
+	tk.MustQuery("select a/b from t").Check(testkit.Rows("1.142857142857142857142857142857", "1.285714285714285714285714285714"))
+
+	tk.MustExec("set div_precision_increment = 4")
+	tk.MustQuery("select avg(a) from t").Check(testkit.Rows("8.5000"))
+
+	tk.MustExec("set div_precision_increment = 4")
+	tk.MustQuery("select avg(a/b) from t").Check(testkit.Rows("1.21428571"))
+
+	tk.MustExec("set div_precision_increment = 10")
+	tk.MustQuery("select avg(a/b) from t").Check(testkit.Rows("1.21428571428571428550"))
 }

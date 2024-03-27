@@ -81,10 +81,13 @@ type LogConfig struct {
 
 	// SlowQueryFile filename, default to File log config on empty.
 	SlowQueryFile string
+
+	// GeneralLogFile filenanme, default to File log config on empty.
+	GeneralLogFile string
 }
 
 // NewLogConfig creates a LogConfig.
-func NewLogConfig(level, format, slowQueryFile string, fileCfg FileLogConfig, disableTimestamp bool, opts ...func(*log.Config)) *LogConfig {
+func NewLogConfig(level, format, slowQueryFile string, generalLogFile string, fileCfg FileLogConfig, disableTimestamp bool, opts ...func(*log.Config)) *LogConfig {
 	c := &LogConfig{
 		Config: log.Config{
 			Level:            level,
@@ -92,7 +95,8 @@ func NewLogConfig(level, format, slowQueryFile string, fileCfg FileLogConfig, di
 			DisableTimestamp: disableTimestamp,
 			File:             fileCfg.FileLogConfig,
 		},
-		SlowQueryFile: slowQueryFile,
+		SlowQueryFile:  slowQueryFile,
+		GeneralLogFile: generalLogFile,
 	}
 	for _, opt := range opts {
 		opt(&c.Config)
@@ -113,6 +117,9 @@ const (
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
 var SlowQueryLogger = log.L()
 
+// GeneralLogger is used to log general log, InitLogger will modify it according to config file.
+var GeneralLogger = log.L()
+
 // InitLogger initializes a logger with cfg.
 func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 	opts = append(opts, zap.AddStacktrace(zapcore.FatalLevel))
@@ -124,6 +131,12 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 
 	// init dedicated logger for slow query log
 	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// init dedicated logger for general log
+	GeneralLogger, _, err = newGeneralLogger(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -170,6 +183,11 @@ func ReplaceLogger(cfg *LogConfig, opts ...zap.Option) error {
 	}
 
 	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	GeneralLogger, _, err = newGeneralLogger(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}

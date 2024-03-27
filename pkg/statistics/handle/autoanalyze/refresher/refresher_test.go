@@ -233,6 +233,7 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 	handle := dom.StatsHandle()
 	sysProcTracker := dom.SysProcTracker()
 	r := refresher.NewRefresher(handle, sysProcTracker)
+	r.RebuildTableAnalysisJobQueue()
 	// No jobs in the queue.
 	r.PickOneTableAndAnalyzeByPriority()
 	// The table is not analyzed.
@@ -244,22 +245,26 @@ func TestPickOneTableAndAnalyzeByPriorityWithFailedAnalysis(t *testing.T) {
 	require.True(t, tblStats1.Pseudo)
 
 	// Add a job to the queue.
-	job1 := &priorityqueue.TableAnalysisJob{
-		TableID:          tbl1.Meta().ID,
-		TableSchema:      "test",
-		TableName:        "t1",
-		ChangePercentage: 0.5,
-		Weight:           1,
+	job1 := &priorityqueue.NonPartitionedTableAnalysisJob{
+		TableID:     tbl1.Meta().ID,
+		TableSchema: "test",
+		TableName:   "t1",
+		Weight:      1,
+		Indicators: priorityqueue.Indicators{
+			ChangePercentage: 0.5,
+		},
 	}
 	r.Jobs.Push(job1)
 	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
-	job2 := &priorityqueue.TableAnalysisJob{
-		TableID:          tbl2.Meta().ID,
-		TableSchema:      "test",
-		TableName:        "t2",
-		ChangePercentage: 0.5,
-		Weight:           0.9,
+	job2 := &priorityqueue.NonPartitionedTableAnalysisJob{
+		TableID:     tbl2.Meta().ID,
+		TableSchema: "test",
+		TableName:   "t2",
+		Weight:      0.9,
+		Indicators: priorityqueue.Indicators{
+			ChangePercentage: 0.5,
+		},
 	}
 	r.Jobs.Push(job2)
 	// Add a failed job to t1.
@@ -344,10 +349,11 @@ func TestRebuildTableAnalysisJobQueue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, r.Jobs.Len())
 	job1 := r.Jobs.Pop()
-	require.Equal(t, 1.2, math.Round(job1.Weight*10)/10)
-	require.Equal(t, float64(1), job1.ChangePercentage)
-	require.Equal(t, float64(6*2), job1.TableSize)
-	require.GreaterOrEqual(t, job1.LastAnalysisDuration, time.Duration(0))
+	indicators := job1.GetIndicators()
+	require.Equal(t, 1.2, math.Round(job1.GetWeight()*10)/10)
+	require.Equal(t, float64(1), indicators.ChangePercentage)
+	require.Equal(t, float64(6*2), indicators.TableSize)
+	require.GreaterOrEqual(t, indicators.LastAnalysisDuration, time.Duration(0))
 }
 
 func TestCalculateChangePercentage(t *testing.T) {
@@ -375,6 +381,12 @@ func TestCalculateChangePercentage(t *testing.T) {
 			StatsVer: 2,
 		},
 	}
+	bothUnanalyzedMap := statistics.NewColAndIndexExistenceMap(0, 0)
+	bothAnalyzedMap := statistics.NewColAndIndexExistenceMap(2, 2)
+	bothAnalyzedMap.InsertCol(1, nil, true)
+	bothAnalyzedMap.InsertCol(2, nil, true)
+	bothAnalyzedMap.InsertIndex(1, nil, true)
+	bothAnalyzedMap.InsertIndex(2, nil, true)
 	tests := []struct {
 		name             string
 		tblStats         *statistics.Table
@@ -390,6 +402,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 					Columns:       unanalyzedColumns,
 					Indices:       unanalyzedIndices,
 				},
+				ColAndIdxExistenceMap: bothUnanalyzedMap,
 			},
 			autoAnalyzeRatio: 0.5,
 			want:             1,
@@ -404,6 +417,8 @@ func TestCalculateChangePercentage(t *testing.T) {
 					Indices:       analyzedIndices,
 					ModifyCount:   (exec.AutoAnalyzeMinCnt + 1) * 2,
 				},
+				ColAndIdxExistenceMap: bothAnalyzedMap,
+				LastAnalyzeVersion:    1,
 			},
 			autoAnalyzeRatio: 0.5,
 			want:             2,
@@ -434,6 +449,7 @@ func TestGetTableLastAnalyzeDuration(t *testing.T) {
 				},
 			},
 		},
+		LastAnalyzeVersion: lastUpdateTs,
 	}
 	// 2024-01-01 10:00:00
 	currentTime := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
@@ -458,6 +474,9 @@ func TestGetTableLastAnalyzeDurationForUnanalyzedTable(t *testing.T) {
 }
 
 func TestCheckIndexesNeedAnalyze(t *testing.T) {
+	analyzedMap := statistics.NewColAndIndexExistenceMap(1, 0)
+	analyzedMap.InsertCol(1, nil, true)
+	analyzedMap.InsertIndex(1, nil, false)
 	tests := []struct {
 		name     string
 		tblInfo  *model.TableInfo
@@ -475,7 +494,7 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 					},
 				},
 			},
-			tblStats: &statistics.Table{},
+			tblStats: &statistics.Table{ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 0)},
 			want:     nil,
 		},
 		{
@@ -499,6 +518,8 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 						},
 					},
 				},
+				ColAndIdxExistenceMap: analyzedMap,
+				LastAnalyzeVersion:    1,
 			},
 			want: []string{"index1"},
 		},
@@ -519,6 +540,11 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 	// 2023-12-31 10:00:00
 	lastUpdateTime := time.Date(2023, 12, 31, 10, 0, 0, 0, time.UTC)
 	lastUpdateTs := oracle.GoTimeToTS(lastUpdateTime)
+	unanalyzedMap := statistics.NewColAndIndexExistenceMap(0, 0)
+	analyzedMap := statistics.NewColAndIndexExistenceMap(2, 1)
+	analyzedMap.InsertCol(1, nil, true)
+	analyzedMap.InsertCol(2, nil, true)
+	analyzedMap.InsertIndex(1, nil, true)
 	tests := []struct {
 		name                       string
 		tblInfo                    *model.TableInfo
@@ -559,6 +585,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 						Pseudo:        false,
 						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
 					},
+					ColAndIdxExistenceMap: unanalyzedMap,
 				},
 				{
 					ID:   2,
@@ -568,6 +595,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 						Pseudo:        false,
 						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
 					},
+					ColAndIdxExistenceMap: unanalyzedMap,
 				},
 			},
 			defs: []model.PartitionDefinition{
@@ -630,7 +658,9 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:               currentTs,
+					ColAndIdxExistenceMap: analyzedMap,
+					LastAnalyzeVersion:    lastUpdateTs,
 				},
 				{
 					ID:   2,
@@ -655,7 +685,9 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:               currentTs,
+					ColAndIdxExistenceMap: analyzedMap,
+					LastAnalyzeVersion:    lastUpdateTs,
 				},
 			},
 			defs: []model.PartitionDefinition{
@@ -718,7 +750,9 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:               currentTs,
+					ColAndIdxExistenceMap: analyzedMap,
+					LastAnalyzeVersion:    lastUpdateTs,
 				},
 				{
 					ID:   2,
@@ -743,7 +777,9 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version: currentTs,
+					Version:               currentTs,
+					ColAndIdxExistenceMap: analyzedMap,
+					LastAnalyzeVersion:    lastUpdateTs,
 				},
 			},
 			defs: []model.PartitionDefinition{
@@ -780,6 +816,9 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			require.Equal(t, tt.wantAvgChangePercentage, gotAvgChangePercentage)
 			require.Equal(t, tt.wantAvgSize, gotAvgSize)
 			require.Equal(t, tt.wantAvgLastAnalyzeDuration, gotAvgLastAnalyzeDuration)
+			// Sort the partitions.
+			sort.Strings(tt.wantPartitions)
+			sort.Strings(gotPartitions)
 			require.Equal(t, tt.wantPartitions, gotPartitions)
 		})
 	}
@@ -819,6 +858,7 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 				ModifyCount:   0,
 				Indices:       map[int64]*statistics.Index{},
 			},
+			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 0),
 		},
 		{
 			ID:   2,
@@ -834,8 +874,10 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 					},
 				},
 			},
+			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 1),
 		},
 	}
+
 	partitionIndexes := refresher.CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(&tblInfo, partitionStats)
 	expected := map[string][]string{"index1": {"p0", "p1"}, "index2": {"p0"}}
 	require.Equal(t, len(expected), len(partitionIndexes))

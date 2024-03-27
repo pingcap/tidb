@@ -271,6 +271,9 @@ type StatsReadWriter interface {
 	// SaveTableStatsToStorage saves the stats of a table to storage.
 	SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
 
+	// SaveMetaToStorage saves the stats meta of a table to storage.
+	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
+
 	// InsertColStats2KV inserts columns stats to kv.
 	InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error)
 
@@ -363,9 +366,9 @@ type StatsReadWriter interface {
 
 // NeededItemTask represents one needed column/indices with expire time.
 type NeededItemTask struct {
-	ToTimeout   time.Time
-	ResultCh    chan stmtctx.StatsLoadResult
-	TableItemID model.TableItemID
+	ToTimeout time.Time
+	ResultCh  chan stmtctx.StatsLoadResult
+	Item      model.StatsLoadItem
 }
 
 // StatsLoad is used to load stats concurrently
@@ -380,7 +383,7 @@ type StatsLoad struct {
 // StatsSyncLoad implement the sync-load feature.
 type StatsSyncLoad interface {
 	// SendLoadRequests sends load requests to the channel.
-	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.TableItemID, timeout time.Duration) error
+	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.StatsLoadItem, timeout time.Duration) error
 
 	// SyncWaitStatsLoad will wait for the load requests to finish.
 	SyncWaitStatsLoad(sc *stmtctx.StatementContext) error

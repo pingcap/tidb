@@ -1211,8 +1211,10 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) exec.Executor {
 		if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
 			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 		}
-		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}
+	// Needs to build the target plan, even if not executing it
+	// to get partition pruning.
+	explainExec.analyzeExec = b.build(v.TargetPlan)
 	return explainExec
 }
 
@@ -1709,7 +1711,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) exec.
 	exprCtx := b.ctx.GetExprCtx()
 	e := &aggregate.StreamAggExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
-		GroupChecker: vecgroupchecker.NewVecGroupChecker(exprCtx, v.GroupByItems),
+		GroupChecker: vecgroupchecker.NewVecGroupChecker(exprCtx, b.ctx.GetSessionVars().EnableVectorizedExpression, v.GroupByItems),
 		AggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 	}
 
@@ -2583,13 +2585,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		PartitionName:    task.PartitionName,
 		SampleRateReason: sampleRateReason,
 	}
-	var concurrency int
-	if b.ctx.GetSessionVars().InRestrictedSQL {
-		// In restricted SQL, we use the default value of DistSQLScanConcurrency. it is copied from tidb_sysproc_scan_concurrency.
-		concurrency = b.ctx.GetSessionVars().DistSQLScanConcurrency()
-	} else {
-		concurrency = b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
-	}
+	concurrency := b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2723,13 +2719,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
-	var concurrency int
-	if b.ctx.GetSessionVars().InRestrictedSQL {
-		// In restricted SQL, we use the default value of DistSQLScanConcurrency. it is copied from tidb_sysproc_scan_concurrency.
-		concurrency = b.ctx.GetSessionVars().DistSQLScanConcurrency()
-	} else {
-		concurrency = b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
-	}
+	concurrency := b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2879,6 +2869,12 @@ func (*executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) bool 
 		case *plannercore.PhysicalSelection:
 			for _, cond := range x.Conditions {
 				if len(expression.ExtractCorColumns(cond)) > 0 {
+					return true
+				}
+			}
+		case *plannercore.PhysicalProjection:
+			for _, expr := range x.Exprs {
+				if len(expression.ExtractCorColumns(expr)) > 0 {
 					return true
 				}
 			}
@@ -4680,7 +4676,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
 		exec := &PipelinedWindowExec{
 			BaseExecutor:   base,
-			groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx.GetExprCtx(), groupByItems),
+			groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx.GetExprCtx(), b.ctx.GetSessionVars().EnableVectorizedExpression, groupByItems),
 			numWindowFuncs: len(v.WindowFuncDescs),
 		}
 
@@ -4758,7 +4754,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 	}
 	return &WindowExec{BaseExecutor: base,
 		processor:      processor,
-		groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx.GetExprCtx(), groupByItems),
+		groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx.GetExprCtx(), b.ctx.GetSessionVars().EnableVectorizedExpression, groupByItems),
 		numWindowFuncs: len(v.WindowFuncDescs),
 	}
 }
@@ -4929,6 +4925,14 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			b.inSelectLockStmt = false
 		}()
 	}
+	handles, isTableDual := plan.PrunePartitionsAndValues(b.ctx)
+	if isTableDual {
+		// No matching partitions
+		return &TableDualExec{
+			BaseExecutorV2: exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), plan.Schema(), plan.ID()),
+			numDualRows:    0,
+		}
+	}
 
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
@@ -4941,12 +4945,10 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		desc:               plan.Desc,
 		lock:               plan.Lock,
 		waitTime:           plan.LockWaitTime,
-		partExpr:           plan.PartitionExpr,
-		partPos:            plan.PartitionColPos,
-		planPhysIDs:        plan.PartitionIDs,
-		singlePart:         plan.SinglePart,
-		partTblID:          plan.PartTblID,
 		columns:            plan.Columns,
+		handles:            handles,
+		idxVals:            plan.IndexValues,
+		partitionNames:     plan.PartitionNames,
 	}
 
 	e.snapshot, err = b.getSnapshot()
@@ -4997,63 +4999,21 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	if e.lock {
 		b.hasLock = true
 	}
-
-	var capacity int
-	if plan.IndexInfo != nil && !isCommonHandleRead(plan.TblInfo, plan.IndexInfo) {
-		e.idxVals = plan.IndexValues
-		capacity = len(e.idxVals)
-	} else {
-		// `SELECT a FROM t WHERE a IN (1, 1, 2, 1, 2)` should not return duplicated rows
-		handles := make([]kv.Handle, 0, len(plan.Handles))
-		dedup := kv.NewHandleMap()
-		// Used for clear paritionIDs of duplicated rows.
-		dupPartPos := 0
-		if plan.IndexInfo == nil {
-			for idx, handle := range plan.Handles {
-				if _, found := dedup.Get(handle); found {
-					continue
-				}
-				dedup.Set(handle, true)
-				handles = append(handles, handle)
-				if len(plan.PartitionIDs) > 0 {
-					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
-					dupPartPos++
-				}
-			}
+	if pi := plan.TblInfo.GetPartitionInfo(); pi != nil && len(plan.PartitionIdxs) > 0 {
+		defs := plan.TblInfo.GetPartitionInfo().Definitions
+		if plan.SinglePartition {
+			e.singlePartID = defs[plan.PartitionIdxs[0]].ID
 		} else {
-			for idx, value := range plan.IndexValues {
-				if datumsContainNull(value) {
-					continue
-				}
-				handleBytes, err := EncodeUniqueIndexValuesForKey(e.Ctx(), e.tblInfo, plan.IndexInfo, value)
-				if err != nil {
-					if kv.ErrNotExist.Equal(err) {
-						continue
-					}
-					b.err = err
-					return nil
-				}
-				handle, err := kv.NewCommonHandle(handleBytes)
-				if err != nil {
-					b.err = err
-					return nil
-				}
-				if _, found := dedup.Get(handle); found {
-					continue
-				}
-				dedup.Set(handle, true)
-				handles = append(handles, handle)
-				if len(plan.PartitionIDs) > 0 {
-					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
-					dupPartPos++
-				}
+			e.planPhysIDs = make([]int64, len(plan.PartitionIdxs))
+			for i, idx := range plan.PartitionIdxs {
+				e.planPhysIDs[i] = defs[idx].ID
 			}
 		}
-		e.handles = handles
-		if dupPartPos > 0 {
-			e.planPhysIDs = e.planPhysIDs[:dupPartPos]
-		}
-		capacity = len(e.handles)
+	}
+
+	capacity := len(e.handles)
+	if capacity == 0 {
+		capacity = len(e.idxVals)
 	}
 	e.SetInitCap(capacity)
 	e.SetMaxChunkSize(capacity)

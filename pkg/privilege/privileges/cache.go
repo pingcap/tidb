@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"go.uber.org/zap"
 )
@@ -582,7 +581,7 @@ func (p *MySQLPrivilege) LoadDefaultRoles(ctx sessionctx.Context) error {
 func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	decodeTableRow func(chunk.Row, []*ast.ResultField) error) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1633,7 +1632,7 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 
 // Handle wraps MySQLPrivilege providing thread safe access.
 type Handle struct {
-	priv atomic.Value
+	priv atomic.Pointer[MySQLPrivilege]
 }
 
 // NewHandle returns a Handle.
@@ -1643,7 +1642,7 @@ func NewHandle() *Handle {
 
 // Get the MySQLPrivilege for read.
 func (h *Handle) Get() *MySQLPrivilege {
-	return h.priv.Load().(*MySQLPrivilege)
+	return h.priv.Load()
 }
 
 // Update loads all the privilege info from kv storage.

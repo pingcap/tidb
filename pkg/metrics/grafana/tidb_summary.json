@@ -163,7 +163,7 @@
                      "expr": "tidb_server_connections{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{instance}}",
+                     "legendFormat": "{{instance}} {{resource_group}}",
                      "refId": "A"
                   },
                   {
@@ -258,6 +258,13 @@
                      "intervalFactor": 2,
                      "legendFormat": "{{instance}}",
                      "refId": "A"
+                  },
+                  {
+                     "expr": "tidb_server_maxprocs{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "quota-{{instance}}",
+                     "refId": "B"
                   }
                ],
                "thresholds": [ ],
@@ -351,6 +358,13 @@
                      "intervalFactor": 2,
                      "legendFormat": "HeapInuse-{{instance}}",
                      "refId": "B"
+                  },
+                  {
+                     "expr": "tidb_server_memory_quota_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "quota-{{instance}}",
+                     "refId": "C"
                   }
                ],
                "thresholds": [ ],

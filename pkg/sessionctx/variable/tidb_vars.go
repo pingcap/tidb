@@ -948,6 +948,10 @@ const (
 
 	// TiDBSchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
 	TiDBSchemaCacheSize = "tidb_schema_cache_size"
+
+	// DivPrecisionIncrement indicates the number of digits by which to increase the scale of the result of
+	// division operations performed with the / operator.
+	DivPrecisionIncrement = "div_precision_increment"
 )
 
 // TiDB vars that have only global scope
@@ -1150,10 +1154,12 @@ const (
 	// Any idle transaction will be killed after being idle for `tidb_idle_transaction_timeout` seconds.
 	// This is similar to https://docs.percona.com/percona-server/5.7/management/innodb_kill_idle_trx.html and https://mariadb.com/kb/en/transaction-timeouts/
 	TiDBIdleTransactionTimeout = "tidb_idle_transaction_timeout"
-	// TiDBEnableParallelSort indicates if parallel sort is enabled.
-	TiDBEnableParallelSort = "enable_parallel_sort"
 	// TiDBLowResolutionTSOUpdateInterval defines how often to refresh low resolution timestamps.
 	TiDBLowResolutionTSOUpdateInterval = "tidb_low_resolution_tso_update_interval"
+	// TiDBDMLType indicates the execution type of DML in TiDB.
+	// The value can be STANDARD, BULK.
+	// Currently, the BULK mode only affects auto-committed DML.
+	TiDBDMLType = "tidb_dml_type"
 )
 
 // TiDB intentional limits
@@ -1361,7 +1367,7 @@ const (
 	DefTiDBBatchDMLIgnoreError                     = false
 	DefTiDBMemQuotaAnalyze                         = -1
 	DefTiDBEnableAutoAnalyze                       = true
-	DefTiDBEnableAutoAnalyzePriorityQueue          = false
+	DefTiDBEnableAutoAnalyzePriorityQueue          = true
 	DefTiDBMemOOMAction                            = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                      = 12 * 60 * 60
 	DefTiDBEnablePrepPlanCache                     = true
@@ -1476,10 +1482,11 @@ const (
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
-	DefEnableParallelSort                             = false
 	DefTiDBTxnEntrySizeLimit                          = 0
 	DefTiDBSchemaCacheSize                            = 0
 	DefTiDBLowResolutionTSOUpdateInterval             = 2000
+	DefDivPrecisionIncrement                          = 4
+	DefTiDBDMLType                                    = "STANDARD"
 )
 
 // Process global variables.

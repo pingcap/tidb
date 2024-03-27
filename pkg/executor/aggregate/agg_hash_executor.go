@@ -184,7 +184,7 @@ func (e *HashAggExec) Close() error {
 	}
 	if e.parallelExecValid {
 		// `Close` may be called after `Open` without calling `Next` in test.
-		if !e.prepared.Load() {
+		if e.prepared.CompareAndSwap(false, true) {
 			close(e.inputCh)
 			for _, ch := range e.partialOutputChs {
 				close(ch)

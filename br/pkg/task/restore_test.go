@@ -39,6 +39,10 @@ type mockPDClient struct {
 	pd.Client
 }
 
+func (m mockPDClient) GetClusterID(_ context.Context) uint64 {
+	return 1
+}
+
 func (m mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	return []*metapb.Store{}, nil
 }
@@ -256,6 +260,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 			&backuppb.CipherInfo{
 				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 			}),
+		true,
 	)
 	require.NoError(t, err)
 	return dbs
