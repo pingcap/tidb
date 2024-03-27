@@ -292,7 +292,7 @@ type streamMgr struct {
 
 func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool) (*streamMgr, error) {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, true, conn.StreamVersionChecker)
+		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -401,7 +401,7 @@ func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.BRServiceSafePo
 	return nil
 }
 
-func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, error) {
+func (s *streamMgr) buildObserveRanges() ([]kv.KeyRange, error) {
 	dRanges, err := stream.BuildObserveDataRanges(
 		s.mgr.GetStorage(),
 		s.cfg.FilterStr,
@@ -421,7 +421,7 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 	return rs, nil
 }
 
-func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
+func (s *streamMgr) backupFullSchemas(ctx context.Context) error {
 	clusterVersion, err := s.mgr.GetClusterVersion(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -568,7 +568,16 @@ func RunStreamStart(
 		return errors.Trace(err)
 	}
 
-	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cli := streamhelper.NewMetaDataClient(etcdCLI)
+	defer func() {
+		if closeErr := cli.Close(); closeErr != nil {
+			log.Warn("failed to close etcd client", zap.Error(closeErr))
+		}
+	}()
 	// It supports single stream log task currently.
 	if count, err := cli.GetTaskCount(ctx); err != nil {
 		return errors.Trace(err)
@@ -617,12 +626,12 @@ func RunStreamStart(
 		if err = streamMgr.setLock(ctx); err != nil {
 			return errors.Trace(err)
 		}
-		if err = streamMgr.backupFullSchemas(ctx, g); err != nil {
+		if err = streamMgr.backupFullSchemas(ctx); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	ranges, err := streamMgr.buildObserveRanges(ctx)
+	ranges, err := streamMgr.buildObserveRanges()
 	if err != nil {
 		return errors.Trace(err)
 	} else if len(ranges) == 0 {
@@ -710,7 +719,16 @@ func RunStreamStop(
 	}
 	defer streamMgr.close()
 
-	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cli := streamhelper.NewMetaDataClient(etcdCLI)
+	defer func() {
+		if closeErr := cli.Close(); closeErr != nil {
+			log.Warn("failed to close etcd client", zap.Error(closeErr))
+		}
+	}()
 	// to add backoff
 	ti, err := cli.GetTask(ctx, cfg.TaskName)
 	if err != nil {
@@ -760,7 +778,16 @@ func RunStreamPause(
 	}
 	defer streamMgr.close()
 
-	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cli := streamhelper.NewMetaDataClient(etcdCLI)
+	defer func() {
+		if closeErr := cli.Close(); closeErr != nil {
+			log.Warn("failed to close etcd client", zap.Error(closeErr))
+		}
+	}()
 	// to add backoff
 	ti, isPaused, err := cli.GetTaskWithPauseStatus(ctx, cfg.TaskName)
 	if err != nil {
@@ -818,7 +845,16 @@ func RunStreamResume(
 	}
 	defer streamMgr.close()
 
-	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cli := streamhelper.NewMetaDataClient(etcdCLI)
+	defer func() {
+		if closeErr := cli.Close(); closeErr != nil {
+			log.Warn("failed to close etcd client", zap.Error(closeErr))
+		}
+	}()
 	// to add backoff
 	ti, isPaused, err := cli.GetTaskWithPauseStatus(ctx, cfg.TaskName)
 	if err != nil {
@@ -946,6 +982,11 @@ func RunStreamStatus(
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if closeErr := ctl.Close(); closeErr != nil {
+			log.Warn("failed to close etcd client", zap.Error(closeErr))
+		}
+	}()
 	return ctl.PrintStatusOfTask(ctx, cfg.TaskName)
 }
 
@@ -1112,7 +1153,7 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logInfo, err := getLogRangeWithStorage(ctx, &cfg.Config, s)
+	logInfo, err := getLogRangeWithStorage(ctx, s)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1182,7 +1223,7 @@ func RunStreamRestore(
 	}
 	// restore log.
 	cfg.adjustRestoreConfigForStreamRestore()
-	if err := restoreStream(ctx, g, cfg, curTaskInfo, logInfo.logMinTS, logInfo.logMaxTS); err != nil {
+	if err := restoreStream(ctx, g, cfg, curTaskInfo); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1194,7 +1235,6 @@ func restoreStream(
 	g glue.Glue,
 	cfg *RestoreConfig,
 	taskInfo *checkpoint.CheckpointTaskInfoForLogRestore,
-	logMinTS, logMaxTS uint64,
 ) (err error) {
 	var (
 		totalKVCount           uint64
@@ -1315,7 +1355,7 @@ func restoreStream(
 	}
 
 	// get full backup meta storage to generate rewrite rules.
-	fullBackupStorage, err := parseFullBackupTablesStorage(ctx, cfg)
+	fullBackupStorage, err := parseFullBackupTablesStorage(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1540,15 +1580,6 @@ func withProgress(p glue.Progress, cc func(p glue.Progress) error) error {
 	return cc(p)
 }
 
-// nolint: unused, deadcode
-func countIndices(ts map[int64]*metautil.Table) int64 {
-	result := int64(0)
-	for _, t := range ts {
-		result += int64(len(t.Info.Indices))
-	}
-	return result
-}
-
 type backupLogInfo struct {
 	logMaxTS  uint64
 	logMinTS  uint64
@@ -1564,12 +1595,11 @@ func getLogRange(
 	if err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
-	return getLogRangeWithStorage(ctx, cfg, s)
+	return getLogRangeWithStorage(ctx, s)
 }
 
 func getLogRangeWithStorage(
 	ctx context.Context,
-	cfg *Config,
 	s storage.ExternalStorage,
 ) (backupLogInfo, error) {
 	// logStartTS: Get log start ts from backupmeta file.
@@ -1653,7 +1683,6 @@ func getFullBackupTS(
 }
 
 func parseFullBackupTablesStorage(
-	ctx context.Context,
 	cfg *RestoreConfig,
 ) (*restore.FullBackupStorageConfig, error) {
 	var storageName string
@@ -1742,7 +1771,7 @@ func buildPauseSafePointName(taskName string) string {
 	return fmt.Sprintf("%s_pause_safepoint", taskName)
 }
 
-func checkPiTRRequirements(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *conn.Mgr) error {
+func checkPiTRRequirements(mgr *conn.Mgr) error {
 	userDBs := restore.GetExistedUserDBs(mgr.GetDomain())
 	if len(userDBs) > 0 {
 		userDBNames := make([]string, 0, len(userDBs))
@@ -1819,7 +1848,7 @@ func checkPiTRTaskInfo(
 			// Only when use checkpoint and not the first execution,
 			// skip checking requirements.
 			log.Info("check pitr requirements for the first execution")
-			if err := checkPiTRRequirements(ctx, g, cfg, mgr); err != nil {
+			if err := checkPiTRRequirements(mgr); err != nil {
 				if len(errTaskMsg) > 0 {
 					err = errors.Annotatef(err, "The current restore task is regarded as %s. "+
 						"If you ensure that no changes have been made to the cluster since the last execution, "+
