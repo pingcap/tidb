@@ -100,10 +100,7 @@ func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
 		// evaluated to constArg.Value after foldConstant(args[0]), it's not
 		// needed to be checked.
 		if constArg.Value.IsNull() {
-<<<<<<< HEAD:expression/constant_fold.go
-			return foldConstant(args[1])
-=======
-			foldedExpr, isConstant := foldConstant(ctx, args[1])
+			foldedExpr, isConstant := foldConstant(args[1])
 
 			// See https://github.com/pingcap/tidb/issues/51765. If the first argument can
 			// be folded into NULL, the collation of IFNULL should be the same as the second
@@ -112,7 +109,6 @@ func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
 			expr.GetType().SetCollate(args[1].GetType().GetCollate())
 
 			return foldedExpr, isConstant
->>>>>>> 7b8fd3729f7 (expression: set a collation according to the arguments for `ifnull` in constant folding (#52119)):pkg/expression/constant_fold.go
 		}
 		return constArg, isDeferred
 	}
