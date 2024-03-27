@@ -37,8 +37,8 @@ type Worker struct {
 	wg       util.WaitGroupWrapper
 }
 
-// NewLoadStats creates a new Worker.
-func NewLoadStats(
+// NewWorker creates a new Worker.
+func NewWorker(
 	taskFunc func(ctx context.Context, req *chunk.Chunk) error,
 	dealFunc func(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk)) *Worker {
 	return &Worker{
@@ -47,7 +47,7 @@ func NewLoadStats(
 	}
 }
 
-// LoadStats loads stats concurrently.
+// LoadStats loads stats concurrently when to init stats
 func (ls *Worker) LoadStats(is infoschema.InfoSchema, cache statstypes.StatsCache, rc sqlexec.RecordSet) {
 	concurrency := runtime.GOMAXPROCS(0)
 	for n := 0; n < concurrency; n++ {

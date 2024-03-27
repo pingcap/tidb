@@ -79,7 +79,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache,
 		return nil, err
 	}
 	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
-		ls := initstats.NewLoadStats(rc.Next, h.initStatsMeta4Chunk)
+		ls := initstats.NewWorker(rc.Next, h.initStatsMeta4Chunk)
 		ls.LoadStats(is, tables, rc)
 		ls.Wait()
 		return tables, nil
@@ -243,7 +243,7 @@ func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statsty
 	}
 	defer terror.Call(rc.Close)
 	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
-		ls := initstats.NewLoadStats(rc.Next, h.initStatsHistograms4ChunkLite)
+		ls := initstats.NewWorker(rc.Next, h.initStatsHistograms4ChunkLite)
 		ls.LoadStats(is, cache, rc)
 		ls.Wait()
 		return nil
@@ -272,7 +272,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 	}
 	defer terror.Call(rc.Close)
 	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
-		ls := initstats.NewLoadStats(rc.Next, h.initStatsHistograms4Chunk)
+		ls := initstats.NewWorker(rc.Next, h.initStatsHistograms4Chunk)
 		ls.LoadStats(is, cache, rc)
 		ls.Wait()
 		return nil
@@ -327,7 +327,7 @@ func (h *Handle) initStatsTopN(cache statstypes.StatsCache) error {
 	}
 	defer terror.Call(rc.Close)
 	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
-		ls := initstats.NewLoadStats(rc.Next, func(_ infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+		ls := initstats.NewWorker(rc.Next, func(_ infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 			h.initStatsTopN4Chunk(cache, iter)
 		})
 		ls.LoadStats(nil, cache, rc)
@@ -459,7 +459,7 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 	}
 	defer terror.Call(rc.Close)
 	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
-		ls := initstats.NewLoadStats(rc.Next, func(_ infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+		ls := initstats.NewWorker(rc.Next, func(_ infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 			h.initStatsBuckets4Chunk(cache, iter)
 		})
 		ls.LoadStats(nil, cache, rc)
