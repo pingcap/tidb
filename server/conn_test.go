@@ -1881,7 +1881,7 @@ func TestSeverHealth(t *testing.T) {
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
 	require.NoError(t, err)
-	require.True(t, server.inShutdownMode.Load(), "server should not be healthy")
+	require.False(t, server.health.Load(), "server should not be healthy")
 	go func() {
 		err = server.Run(nil)
 		require.NoError(t, err)
@@ -1890,5 +1890,5 @@ func TestSeverHealth(t *testing.T) {
 	for range RunInGoTestChan {
 		// wait for server to be healthy
 	}
-	require.False(t, server.inShutdownMode.Load(), "server should be healthy")
+	require.True(t, server.health.Load(), "server should be healthy")
 }
