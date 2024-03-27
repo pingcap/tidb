@@ -1013,24 +1013,16 @@ func EnablePyroscope() {
 		pyroscope.Start(pyroscope.Config{
 			ApplicationName:   "tidb",
 			ServerAddress:     os.Getenv("PYROSCOPE_SERVER_ADDRESS"),
-			Logger:            nil,
+			Logger:            pyroscope.StandardLogger,
 			AuthToken:         os.Getenv("PYROSCOPE_AUTH_TOKEN"),
 			TenantID:          os.Getenv("PYROSCOPE_TENANT_ID"),
 			BasicAuthUser:     os.Getenv("PYROSCOPE_BASIC_AUTH_USER"),
 			BasicAuthPassword: os.Getenv("PYROSCOPE_BASIC_AUTH_PASSWORD"),
 			ProfileTypes: []pyroscope.ProfileType{
 				pyroscope.ProfileCPU,
-				pyroscope.ProfileInuseObjects,
-				pyroscope.ProfileAllocObjects,
-				pyroscope.ProfileInuseSpace,
-				pyroscope.ProfileAllocSpace,
 				pyroscope.ProfileGoroutines,
-				pyroscope.ProfileMutexCount,
-				pyroscope.ProfileMutexDuration,
-				pyroscope.ProfileBlockCount,
-				pyroscope.ProfileBlockDuration,
 			},
-			HTTPHeaders: map[string]string{"X-Extra-Header": "extra-header-value"},
+			UploadRate: 30 * time.Second,
 		})
 	}
 }
