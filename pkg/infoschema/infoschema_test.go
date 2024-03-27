@@ -344,7 +344,8 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		State:  model.StatePublic,
 	}
 	dbInfos := []*model.DBInfo{dbInfo}
-	builder, err := infoschema.NewBuilder(re, nil, nil).InitWithDBInfos(dbInfos, nil, nil, 1)
+	data := infoschema.NewData()
+	builder, err := infoschema.NewBuilder(re, nil, data).InitWithDBInfos(dbInfos, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 	require.False(t, is.HasTemporaryTable())
@@ -364,7 +365,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		err := kv.RunInNewTxn(ctx, re.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			for _, change := range changes {
-				builder, err := infoschema.NewBuilder(re, nil, nil).InitWithOldInfoSchema(curIs)
+				builder, err := infoschema.NewBuilder(re, nil, data).InitWithOldInfoSchema(curIs)
 				require.NoError(t, err)
 				change(m, builder)
 				curIs = builder.Build(math.MaxUint64)
@@ -383,7 +384,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 				State:         model.StatePublic,
 			})
 			require.NoError(t, err)
-			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: db.ID, TableID: tblID})
+			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: db.ID, TableID: tblID, Version: 1})
 			require.NoError(t, err)
 		}
 	}
@@ -395,7 +396,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 				State: model.StatePublic,
 			})
 			require.NoError(t, err)
-			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: db.ID, TableID: tblID})
+			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: db.ID, TableID: tblID, Version: 1})
 			require.NoError(t, err)
 		}
 	}
@@ -404,7 +405,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 		return func(m *meta.Meta, builder *infoschema.Builder) {
 			err := m.DropTableOrView(db.ID, db.Name.L, tblID, "")
 			require.NoError(t, err)
-			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionDropTable, SchemaID: db.ID, TableID: tblID})
+			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionDropTable, SchemaID: db.ID, TableID: tblID, Version: 1})
 			require.NoError(t, err)
 		}
 	}
@@ -420,14 +421,14 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 				State:         model.StatePublic,
 			})
 			require.NoError(t, err)
-			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionTruncateTable, SchemaID: db.ID, OldTableID: tblID, TableID: newTblID})
+			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionTruncateTable, SchemaID: db.ID, OldTableID: tblID, TableID: newTblID, Version: 1})
 			require.NoError(t, err)
 		}
 	}
 
 	alterTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
 		return func(m *meta.Meta, builder *infoschema.Builder) {
-			_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionAddColumn, SchemaID: db.ID, TableID: tblID})
+			_, err := builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionAddColumn, SchemaID: db.ID, TableID: tblID, Version: 1})
 			require.NoError(t, err)
 		}
 	}
@@ -441,9 +442,16 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	require.True(t, newIS.HasTemporaryTable())
 
 	// full load
+	data = infoschema.NewData()
 	newDB, ok := newIS.SchemaByName(model.NewCIStr("test"))
+	tables := newIS.SchemaTables(newDB.Name)
+	tblInfos := make([]*model.TableInfo, 0, len(tables))
+	for _, table := range tables {
+		tblInfos = append(tblInfos, table.Meta())
+	}
+	newDB.Tables = tblInfos
 	require.True(t, ok)
-	builder, err = infoschema.NewBuilder(re, nil, nil).InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.SchemaMetaVersion())
+	builder, err = infoschema.NewBuilder(re, nil, data).InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.SchemaMetaVersion())
 	require.NoError(t, err)
 	require.True(t, builder.Build(math.MaxUint64).HasTemporaryTable())
 
