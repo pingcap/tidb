@@ -19,6 +19,7 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
 	"sync"
 	"testing"
