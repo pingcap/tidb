@@ -397,7 +397,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		}
 	}
 	appendColumnPruneTraceStep(ds, prunedColumns, opt)
-	var addOneHandle bool = false
+	addOneHandle := false
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
 	if ds.schema.Len() == 0 {
