@@ -279,15 +279,6 @@ func (is *infoSchema) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
 	return getTableInfoList(is.SchemaTables(schema))
 }
 
-// allocByID returns the Allocators of a table.
-func allocByID(is InfoSchema, id int64) (autoid.Allocators, bool) {
-	tbl, ok := is.TableByID(id)
-	if !ok {
-		return autoid.Allocators{}, false
-	}
-	return tbl.Allocators(nil), true
-}
-
 // AllSchemaNames returns all the schemas' names.
 func AllSchemaNames(is InfoSchema) (names []string) {
 	schemas := is.AllSchemaNames()

@@ -385,19 +385,18 @@ func dropTableForUpdate(b *Builder, newTableID, oldTableID int64, dbInfo *model.
 			// TODO: Check how this would work with ADD/REMOVE Partitioning,
 			// which may have AutoID not connected to tableID
 			// TODO: can there be _tidb_rowid AutoID per partition?
-			oldAllocs, _ := allocByID(b.infoSchema, oldTableID)
+			oldAllocs, _ := allocByID(b, oldTableID)
 			newAllocs = filterAllocators(diff, oldAllocs)
 		}
 
 		tmpIDs := tblIDs
 		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
-			oldRoDBInfo, ok := b.infoSchema.SchemaByID(diff.OldSchemaID)
+			oldDBInfo, ok := oldSchemaInfo(b, diff)
 			if !ok {
 				return nil, newAllocs, ErrDatabaseNotExists.GenWithStackByArgs(
 					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
 				)
 			}
-			oldDBInfo := b.getSchemaAndCopyIfNecessary(oldRoDBInfo.Name.L)
 			tmpIDs = applyDropTable(b, diff, oldDBInfo, oldTableID, tmpIDs)
 		} else {
 			tmpIDs = applyDropTable(b, diff, dbInfo, oldTableID, tmpIDs)
