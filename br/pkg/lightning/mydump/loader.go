@@ -91,11 +91,16 @@ type SourceFileMeta struct {
 	Type        SourceType
 	Compression Compression
 	SortKey     string
-	FileSize    int64
+	// FileSize is the size of the file in the storage.
+	FileSize int64
 	// WARNING: variables below are not persistent
 	ExtendData ExtendColumnData
-	RealSize   int64
-	Rows       int64 // only for parquet
+	// RealSize is same as FileSize if the file is not compressed and not parquet.
+	// If the file is compressed, RealSize is the estimated uncompressed size.
+	// If the file is parquet, RealSize is the estimated data size after convert
+	// to row oriented storage.
+	RealSize int64
+	Rows     int64 // only for parquet
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.
