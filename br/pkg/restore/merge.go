@@ -9,11 +9,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/tablecodec"
-=======
->>>>>>> 7cdab1935df (br: merge range in lightweight when snapshot restore (#50648))
 )
 
 const (
@@ -89,22 +84,7 @@ func MergeFileRanges(
 		}
 	}
 
-<<<<<<< HEAD
-	sortedRanges := rangeTree.GetSortedRanges()
-	for i := 1; i < len(sortedRanges); {
-		if !NeedsMerge(&sortedRanges[i-1], &sortedRanges[i], splitSizeBytes, splitKeyCount) {
-			i++
-			continue
-		}
-		sortedRanges[i-1].EndKey = sortedRanges[i].EndKey
-		sortedRanges[i-1].Files = append(sortedRanges[i-1].Files, sortedRanges[i].Files...)
-		// TODO: this is slow when there are lots of ranges need to merge.
-		sortedRanges = append(sortedRanges[:i], sortedRanges[i+1:]...)
-	}
-
-=======
 	sortedRanges := rangeTree.MergedRanges(splitSizeBytes, splitKeyCount)
->>>>>>> 7cdab1935df (br: merge range in lightweight when snapshot restore (#50648))
 	regionBytesAvg := totalBytes / uint64(totalRegions)
 	regionKeysAvg := totalKvs / uint64(totalRegions)
 	mergedRegionBytesAvg := totalBytes / uint64(len(sortedRanges))
