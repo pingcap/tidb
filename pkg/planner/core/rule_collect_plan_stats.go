@@ -16,13 +16,13 @@ package core
 
 import (
 	"context"
+	coreUtil "github.com/pingcap/tidb/pkg/planner/util"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	coreUtil "github.com/pingcap/tidb/pkg/planner/core/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"

@@ -18,12 +18,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	coreUtil "github.com/pingcap/tidb/pkg/planner/util"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	coreUtil "github.com/pingcap/tidb/pkg/planner/core/util"
 )
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated,

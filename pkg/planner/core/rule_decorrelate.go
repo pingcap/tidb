@@ -18,13 +18,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	coreUtil "github.com/pingcap/tidb/pkg/planner/util"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	coreUtil "github.com/pingcap/tidb/pkg/planner/core/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )

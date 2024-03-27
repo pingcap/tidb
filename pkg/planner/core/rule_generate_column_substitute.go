@@ -17,10 +17,10 @@ package core
 import (
 	"bytes"
 	"context"
+	coreUtil "github.com/pingcap/tidb/pkg/planner/util"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	coreUtil "github.com/pingcap/tidb/pkg/planner/core/util"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )

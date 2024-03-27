@@ -16,8 +16,7 @@ package core
 
 import (
 	"context"
-
-	coreUtil "github.com/pingcap/tidb/pkg/planner/core/util"
+	coreUtil "github.com/pingcap/tidb/pkg/planner/util"
 )
 
 type pushDownSequenceSolver struct {

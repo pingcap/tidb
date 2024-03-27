@@ -114,7 +114,6 @@ go_library(
         "//pkg/planner/core/internal",
         "//pkg/planner/core/internal/base",
         "//pkg/planner/core/metrics",
-        "//pkg/planner/core/util",
         "//pkg/planner/funcdep",
         "//pkg/planner/property",
         "//pkg/planner/util",

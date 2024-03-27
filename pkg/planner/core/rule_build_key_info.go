@@ -16,12 +16,12 @@ package core
 
 import (
 	"context"
+	coreUtil "github.com/pingcap/tidb/pkg/planner/util"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	coreUtil "github.com/pingcap/tidb/pkg/planner/core/util"
 )
 
 type buildKeySolver struct{}

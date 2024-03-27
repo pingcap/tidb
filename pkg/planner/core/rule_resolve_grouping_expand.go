@@ -16,8 +16,7 @@ package core
 
 import (
 	"context"
-
-	coreUtil "github.com/pingcap/tidb/pkg/planner/core/util"
+	coreUtil "github.com/pingcap/tidb/pkg/planner/util"
 )
 
 // For normal rollup Expand construction, its logical Expand should be bound
