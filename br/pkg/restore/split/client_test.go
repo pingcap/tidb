@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSplit(t *testing.T) {
+func TestSplitScatter(t *testing.T) {
 	backup := maxBatchSplitSize
 	maxBatchSplitSize = 7
 	t.Cleanup(func() {
@@ -59,4 +59,6 @@ func TestSplit(t *testing.T) {
 	// 9. region: [bv, cca), keys: [bx, by, bz]
 
 	require.EqualValues(t, 9, mockPDClient.splitRegions.count)
+	// the old regions will not be scattered. They are [..., bba), [bba, bbh), [..., cca)
+	require.Equal(t, len(result)-3, mockPDClient.scatterRegions.regionCount)
 }

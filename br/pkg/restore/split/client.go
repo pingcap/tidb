@@ -611,7 +611,7 @@ func (c *pdClient) SplitWaitAndScatterOnRegion(
 	ctx context.Context, region *RegionInfo, keys [][]byte,
 ) ([]*RegionInfo, error) {
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
-		failpoint.Return(nil, nil, errors.New("retryable error"))
+		failpoint.Return(nil, errors.New("retryable error"))
 	})
 
 	if len(keys) == 0 {

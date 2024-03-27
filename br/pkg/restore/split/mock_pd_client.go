@@ -34,6 +34,7 @@ type mockPDClientForSplit struct {
 	}
 	scatterRegions struct {
 		notImplemented bool
+		regionCount    int
 	}
 	getOperator struct {
 		responses map[uint64][]*pdpb.GetOperatorResponse
@@ -130,11 +131,12 @@ func (c *mockPDClientForSplit) ScatterRegion(_ context.Context, regionID uint64)
 	return newRegionNotFullyReplicatedErr(regionID)
 }
 
-func (c *mockPDClientForSplit) ScatterRegions(context.Context, []uint64, ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
+func (c *mockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uint64, _ ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
 	if c.scatterRegions.notImplemented {
 		return nil, status.Error(codes.Unimplemented, "Ah, yep")
 	}
-	return nil, nil
+	c.scatterRegions.regionCount += len(regionIDs)
+	return &pdpb.ScatterRegionResponse{}, nil
 }
 
 func (c *mockPDClientForSplit) GetOperator(_ context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
