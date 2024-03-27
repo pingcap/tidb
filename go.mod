@@ -59,6 +59,7 @@ require (
 	github.com/gordonklaus/ineffassign v0.1.0
 	github.com/gorilla/mux v1.8.0
 	github.com/gostaticanalysis/forcetypeassert v0.1.0
+	github.com/grafana/pyroscope-go v1.1.1
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/hashicorp/go-version v1.6.0
 	github.com/jedib0t/go-pretty/v6 v6.2.2
@@ -146,10 +147,7 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-require (
-	github.com/grafana/pyroscope-go v1.1.1 // indirect
-	github.com/grafana/pyroscope-go/godeltaprof v0.1.7 // indirect
-)
+require github.com/grafana/pyroscope-go/godeltaprof v0.1.7 // indirect
 
 require (
 	cloud.google.com/go v0.112.0 // indirect
