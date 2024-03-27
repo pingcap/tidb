@@ -370,8 +370,8 @@ func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
 }
 
 // checkImportTaskRunning checks whether there is any import task running.
-func (s *streamMgr) checkImportTaskRunning(ctx context.Context) error {
-	list, err := utils.GetImportTasksFrom(ctx, s.mgr.GetDomain().GetEtcdClient())
+func (s *streamMgr) checkImportTaskRunning(ctx context.Context, etcdCLI *clientv3.Client) error {
+	list, err := utils.GetImportTasksFrom(ctx, etcdCLI)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -427,7 +427,7 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	metaWriter := metautil.NewMetaWriter(s.bc.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, nil)
+	metaWriter := metautil.NewMetaWriter(s.bc.GetStorage(), metautil.MetaFileSize, true, metautil.MetaFile, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		// save log startTS to backupmeta file
 		m.StartVersion = s.cfg.StartTS
@@ -564,14 +564,15 @@ func RunStreamStart(
 	if err = streamMgr.adjustAndCheckStartTS(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	if err = streamMgr.checkImportTaskRunning(ctx); err != nil {
-		return errors.Trace(err)
-	}
 
 	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err = streamMgr.checkImportTaskRunning(ctx, etcdCLI); err != nil {
+		return errors.Trace(err)
+	}
+
 	cli := streamhelper.NewMetaDataClient(etcdCLI)
 	defer func() {
 		if closeErr := cli.Close(); closeErr != nil {
