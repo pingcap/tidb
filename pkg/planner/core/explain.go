@@ -378,9 +378,6 @@ func (p *PhysicalProjection) ExplainInfo() string {
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
-	for i, col := range p.Schema().Columns {
-		exprStr += fmt.Sprintf(", schema_%d: %s", i, col.String())
-	}
 	return exprStr
 }
 
@@ -990,9 +987,6 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 func (p *PhysicalExchangeReceiver) ExplainInfo() (res string) {
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		res = fmt.Sprintf("stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	for i, col := range p.Schema().Columns {
-		res += fmt.Sprintf(", schema_%d: %s", i, col.String())
 	}
 	return res
 }
