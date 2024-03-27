@@ -16,6 +16,7 @@ package planner
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"math"
 	"math/rand"
 	"sync"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"go.uber.org/zap"
 )
@@ -229,7 +229,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	useBinding := enableUseBinding && isStmtNode && match
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		if val, _err_ := failpoint.Eval(_curpkg_("SetBindingTimeToZero")); _err_ == nil {
+		failpoint.Inject("SetBindingTimeToZero", func(val failpoint.Value) {
 			if val.(bool) && bindings != nil {
 				bindings = bindings.Copy()
 				for i := range bindings {
@@ -237,7 +237,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 					bindings[i].UpdateTime = types.ZeroTime
 				}
 			}
-		}
+		})
 		debugtrace.RecordAnyValuesWithNames(pctx,
 			"Used binding", useBinding,
 			"Enable binding", enableUseBinding,
@@ -443,19 +443,19 @@ var planBuilderPool = sync.Pool{
 var optimizeCnt int
 
 func optimize(ctx context.Context, sctx pctx.PlanContext, node ast.Node, is infoschema.InfoSchema) (core.Plan, types.NameSlice, float64, error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("checkOptimizeCountOne")); _err_ == nil {
+	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
 		// only count the optimization for SQL with specified text
 		if testSQL, ok := val.(string); ok && testSQL == node.OriginalText() {
 			optimizeCnt++
 			if optimizeCnt > 1 {
-				return nil, nil, 0, errors.New("gofail wrong optimizerCnt error")
+				failpoint.Return(nil, nil, 0, errors.New("gofail wrong optimizerCnt error"))
 			}
 		}
-	}
-	if _, _err_ := failpoint.Eval(_curpkg_("mockHighLoadForOptimize")); _err_ == nil {
+	})
+	failpoint.Inject("mockHighLoadForOptimize", func() {
 		sqlPrefixes := []string{"select"}
 		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
-	}
+	})
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -545,9 +545,9 @@ func buildLogicalPlan(ctx context.Context, sctx pctx.PlanContext, node ast.Node,
 	sctx.GetSessionVars().MapScalarSubQ = nil
 	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 
-	if _, _err_ := failpoint.Eval(_curpkg_("mockRandomPlanID")); _err_ == nil {
+	failpoint.Inject("mockRandomPlanID", func() {
 		sctx.GetSessionVars().PlanID.Store(rand.Int31n(1000)) // nolint:gosec
-	}
+	})
 
 	// reset fields about rewrite
 	sctx.GetSessionVars().RewritePhaseInfo.Reset()

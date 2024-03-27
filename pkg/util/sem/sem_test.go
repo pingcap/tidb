@@ -15,9 +15,9 @@
 package sem
 
 import (
+	"github.com/pingcap/tidb/pkg/config"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/assert"

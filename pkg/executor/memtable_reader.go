@@ -21,6 +21,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"io"
 	"net/http"
 	"slices"
@@ -39,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -49,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/set"
 	pd "github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
@@ -179,12 +179,12 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		}
 	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
-	if val, _err_ := failpoint.Eval(_curpkg_("mockClusterConfigServerInfo")); _err_ == nil {
+	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
 			// erase the error
 			serversInfo, err = parseFailpointServerInfo(s), nil
 		}
-	}
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -410,13 +410,13 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
-	if val, _err_ := failpoint.Eval(_curpkg_("mockClusterLogServerInfo")); _err_ == nil {
+	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
 		// erase the error
 		err = nil
 		if s := val.(string); len(s) > 0 {
 			serversInfo = parseFailpointServerInfo(s)
 		}
-	}
+	})
 	if err != nil {
 		return nil, err
 	}
