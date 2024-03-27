@@ -2333,7 +2333,11 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
-	defer channel.Clear(errCh)
+	defer func() {
+		channel.Clear(errCh)
+		cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusWaitQueryFinished, false)
+		cc.ctx.UpdateProcessInfo()
+	}()
 	defer close(chkCh)
 	defer func() {
 		if finErr := rs.Finish(); err == nil {
@@ -2402,6 +2406,8 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 				break InnerFor
 			case <-ticker.C:
 				if err = cc.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+					cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusWaitQueryFinished, true)
+					cc.ctx.UpdateProcessInfo()
 					return false, err
 				}
 			}
