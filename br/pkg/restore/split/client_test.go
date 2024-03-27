@@ -29,6 +29,7 @@ func TestSplitScatterRawKV(t *testing.T) {
 	mockClient := &pdClient{
 		client:           mockPDClient,
 		splitConcurrency: 10,
+		splitBatchSize:   100,
 		isRawKv:          true, // make tests more readable
 	}
 	ctx := context.Background()
@@ -77,6 +78,7 @@ func TestSplitMeetErrorAndRetry(t *testing.T) {
 	mockClient := &pdClient{
 		client:           mockPDClient,
 		splitConcurrency: 1,
+		splitBatchSize:   100,
 		isRawKv:          true, // make tests more readable
 	}
 	ctx := context.Background()
@@ -157,6 +159,7 @@ func TestSplitScatter(t *testing.T) {
 	mockClient := &pdClient{
 		client:           mockPDClient,
 		splitConcurrency: 20,
+		splitBatchSize:   100,
 	}
 	ctx := context.Background()
 
