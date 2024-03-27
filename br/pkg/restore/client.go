@@ -377,7 +377,9 @@ func (rc *Client) InitCheckpointMetadataForLogRestore(ctx context.Context, taskN
 	return gcRatio, nil
 }
 
-func (rc *Client) allocTableIDs(ctx context.Context, tables []*metautil.Table) error {
+// AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
+// the download stage.
+func (rc *Client) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
 	rc.preallocedTableIDs = tidalloc.New(tables)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
@@ -955,11 +957,6 @@ func (rc *Client) GoCreateTables(
 	}
 	outCh := make(chan CreatedTable, len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
-	if err := rc.allocTableIDs(ctx, tables); err != nil {
-		errCh <- err
-		close(outCh)
-		return outCh
-	}
 
 	var err error
 
