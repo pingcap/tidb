@@ -526,6 +526,7 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, sortedKeys [][]byte)
 		return nil, nil
 	}
 
+	// TODO(lance6716): len(sortedKeys) == 1?
 	minKey := codec.EncodeBytesExt(nil, sortedKeys[0], c.isRawKv)
 	maxKey := codec.EncodeBytesExt(nil, sortedKeys[len(sortedKeys)-1], c.isRawKv)
 	mu := sync.Mutex{}
@@ -568,8 +569,10 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, sortedKeys [][]byte)
 					keys := splitKeys[start:end]
 					log.Info("get split keys for split regions",
 						logutil.Region(region.Region), logutil.Keys(keys))
+					// TODO(lance6716): add error handling to retry from scan or retry from split
 					newRegions, err2 := c.SplitWaitAndScatterOnRegion(eCtx, region, keys)
 					if err2 != nil {
+						log.Info("split and scatter region meet error, will retry", zap.Error(err2))
 						return err2
 					}
 					if len(newRegions) != len(keys) {
