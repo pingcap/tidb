@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	coreUtil "github.com/pingcap/tidb/pkg/planner/core/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -128,41 +129,6 @@ var optRuleList = []logicalOptRule{
 */
 var optInteractionRuleList = map[logicalOptRule]logicalOptRule{}
 
-type logicalOptimizeOp struct {
-	// tracer is goring to track optimize steps during rule optimizing
-	tracer *tracing.LogicalOptimizeTracer
-}
-
-func defaultLogicalOptimizeOption() *logicalOptimizeOp {
-	return &logicalOptimizeOp{}
-}
-
-func (op *logicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.LogicalOptimizeTracer) *logicalOptimizeOp {
-	op.tracer = tracer
-	return op
-}
-
-func (op *logicalOptimizeOp) appendBeforeRuleOptimize(index int, name string, before LogicalPlan) {
-	if op == nil || op.tracer == nil {
-		return
-	}
-	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, before.BuildPlanTrace())
-}
-
-func (op *logicalOptimizeOp) appendStepToCurrent(id int, tp string, reason, action func() string) {
-	if op == nil || op.tracer == nil {
-		return
-	}
-	op.tracer.AppendRuleTracerStepToCurrent(id, tp, reason(), action())
-}
-
-func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
-	if op == nil || op.tracer == nil {
-		return
-	}
-	op.tracer.RecordFinalLogicalPlan(final.BuildPlanTrace())
-}
-
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
 type logicalOptRule interface {
 	/* Return Parameters:
@@ -172,7 +138,7 @@ type logicalOptRule interface {
 		 The default value is false. It means that no interaction rule will be triggered.
 	3. error: If there is error during the rule optimizer, it will be thrown
 	*/
-	optimize(context.Context, LogicalPlan, *logicalOptimizeOp) (LogicalPlan, bool, error)
+	optimize(context.Context, LogicalPlan, *coreUtil.LogicalOptimizeOp) (LogicalPlan, bool, error)
 	name() string
 }
 
@@ -1157,14 +1123,14 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	opt := defaultLogicalOptimizeOption()
+	opt := coreUtil.DefaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
 	if vars.StmtCtx.EnableOptimizeTrace {
 		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
 		tracer := &tracing.LogicalOptimizeTracer{
 			Steps: make([]*tracing.LogicalRuleOptimizeTracer, 0),
 		}
-		opt = opt.withEnableOptimizeTracer(tracer)
+		opt = opt.WithEnableOptimizeTracer(tracer)
 		defer func() {
 			vars.StmtCtx.OptimizeTracer.Logical = tracer
 		}()
@@ -1178,7 +1144,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
+		opt.AppendBeforeRuleOptimize(i, rule.name(), logic.BuildPlanTrace())
 		var planChanged bool
 		logic, planChanged, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
@@ -1193,14 +1159,14 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 
 	// Trigger the interaction rule
 	for i, rule := range againRuleList {
-		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
+		opt.AppendBeforeRuleOptimize(i, rule.name(), logic.BuildPlanTrace())
 		logic, _, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	opt.recordFinalLogicalPlan(logic)
+	opt.RecordFinalLogicalPlan(logic.BuildPlanTrace())
 	return logic, err
 }
 

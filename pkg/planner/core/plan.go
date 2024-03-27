@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
+	coreUtil "github.com/pingcap/tidb/pkg/planner/core/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -270,10 +271,10 @@ type LogicalPlan interface {
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression, *logicalOptimizeOp) ([]expression.Expression, LogicalPlan)
+	PredicatePushDown([]expression.Expression, *coreUtil.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan)
 
 	// PruneColumns prunes the unused columns, and return the new logical plan if changed, otherwise it's same.
-	PruneColumns([]*expression.Column, *logicalOptimizeOp) (LogicalPlan, error)
+	PruneColumns([]*expression.Column, *coreUtil.LogicalOptimizeOp) (LogicalPlan, error)
 
 	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -292,16 +293,16 @@ type LogicalPlan interface {
 	BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema)
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
-	pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan
+	pushDownTopN(topN *LogicalTopN, opt *coreUtil.LogicalOptimizeOp) LogicalPlan
 
 	// deriveTopN derives an implicit TopN from a filter on row_number window function..
-	deriveTopN(opt *logicalOptimizeOp) LogicalPlan
+	deriveTopN(opt *coreUtil.LogicalOptimizeOp) LogicalPlan
 
 	// predicateSimplification consolidates different predcicates on a column and its equivalence classes.
-	predicateSimplification(opt *logicalOptimizeOp) LogicalPlan
+	predicateSimplification(opt *coreUtil.LogicalOptimizeOp) LogicalPlan
 
 	// constantPropagation generate new constant predicate according to column equivalence relation
-	constantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *logicalOptimizeOp) (newRoot LogicalPlan)
+	constantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *coreUtil.LogicalOptimizeOp) (newRoot LogicalPlan)
 
 	// pullUpConstantPredicates recursive find constant predicate, used for the constant propagation rule
 	pullUpConstantPredicates() []expression.Expression
@@ -775,7 +776,7 @@ func (*baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *coreUtil.LogicalOptimizeOp) (LogicalPlan, error) {
 	if len(p.children) == 0 {
 		return p.self, nil
 	}
