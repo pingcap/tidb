@@ -577,8 +577,6 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
-<<<<<<< HEAD
-=======
 	isLagged, err := c.isCheckpointLagged(ctx)
 	if err != nil {
 		return errors.Annotate(err, "failed to check timestamp")
@@ -604,7 +602,6 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 		log.Warn("update log backup GC safe point failed: stale.",
 			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint.safeTS()))
 	}
->>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 	return nil
 }
 

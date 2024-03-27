@@ -76,8 +76,6 @@ func (c constantRegions) Stores(ctx context.Context) ([]streamhelper.Store, erro
 	return nil, status.Error(codes.Unimplemented, "Unsupported operation")
 }
 
-<<<<<<< HEAD
-=======
 // Updates the service GC safe point for the cluster.
 // Returns the latest service GC safe point.
 // If the arguments is `0`, this would remove the service safe point.
@@ -90,7 +88,6 @@ func (c constantRegions) FetchCurrentTS(ctx context.Context) (uint64, error) {
 	return oracle.ComposeTS(time.Now().UnixMilli(), 0), nil
 }
 
->>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 func makeSubrangeRegions(keys ...string) constantRegions {
 	if len(keys) == 0 {
 		return nil

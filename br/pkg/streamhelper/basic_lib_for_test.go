@@ -26,14 +26,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/codec"
-=======
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/tikv/client-go/v2/oracle"
->>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -105,14 +100,10 @@ type fakeCluster struct {
 	regions   []*region
 	testCtx   *testing.T
 
-<<<<<<< HEAD
-	onGetClient func(uint64) error
-=======
 	onGetClient        func(uint64) error
 	onClearCache       func(uint64) error
 	serviceGCSafePoint uint64
 	currentTS          uint64
->>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 }
 
 func (r *region) splitAt(newID uint64, k string) *region {
@@ -267,8 +258,6 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 	return resp, nil
 }
 
-<<<<<<< HEAD
-=======
 // Updates the service GC safe point for the cluster.
 // Returns the latest service GC safe point.
 // If the arguments is `0`, this would remove the service safe point.
@@ -290,7 +279,6 @@ func (f *fakeCluster) FetchCurrentTS(ctx context.Context) (uint64, error) {
 	return f.currentTS, nil
 }
 
->>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 // RegionScan gets a list of regions, starts from the region that contains key.
 // Limit limits the maximum number of regions returned.
 func (f *fakeCluster) RegionScan(ctx context.Context, key []byte, endKey []byte, limit int) ([]streamhelper.RegionWithLeader, error) {

@@ -35,8 +35,6 @@ type TiKVClusterMeta interface {
 
 	// Stores returns the store metadata from the cluster.
 	Stores(ctx context.Context) ([]Store, error)
-<<<<<<< HEAD
-=======
 
 	// Updates the service GC safe point for the cluster.
 	// Returns the latest service GC safe point.
@@ -46,7 +44,6 @@ type TiKVClusterMeta interface {
 	BlockGCUntil(ctx context.Context, at uint64) (uint64, error)
 
 	FetchCurrentTS(ctx context.Context) (uint64, error)
->>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 }
 
 type Store struct {

@@ -76,10 +76,6 @@ func errorEvent(err error) TaskEvent {
 }
 
 func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (TaskEvent, error) {
-<<<<<<< HEAD
-	if !bytes.HasPrefix(event.Kv.Key, []byte(PrefixOfTask())) {
-		return TaskEvent{}, errors.Annotatef(berrors.ErrInvalidArgument, "the path isn't a task path (%s)", string(event.Kv.Key))
-=======
 	te := TaskEvent{}
 	var prefix string
 
@@ -93,7 +89,6 @@ func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (Ta
 		return TaskEvent{},
 			errors.Annotatef(berrors.ErrInvalidArgument, "the path isn't a task/pause path (%s)",
 				string(event.Kv.Key))
->>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 	}
 
 	switch {
@@ -161,14 +156,9 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 
 	// inner function def
 	collectRemaining := func() {
-<<<<<<< HEAD
-		log.Info("[log backup advancer] Start collecting remaining events in the channel.", zap.Int("remained", len(c)))
-		defer log.Info("[log backup advancer] Finish collecting remaining events in the channel.")
-=======
 		log.Info("Start collecting remaining events in the channel.", zap.String("category", "log backup advancer"),
 			zap.Int("remained", len(taskCh)))
 		defer log.Info("Finish collecting remaining events in the channel.", zap.String("category", "log backup advancer"))
->>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 		for {
 			if taskCh == nil && pauseCh == nil {
 				return
