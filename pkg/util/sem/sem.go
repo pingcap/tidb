@@ -76,7 +76,7 @@ var (
 )
 
 // isResVarAdmin is a flag to check if the user has the RESTRICTED_VARIABLES_ADMIN privilege
-var isResVarAdmin int32 = 0
+var isResVarAdmin int32
 
 // CheckResVarAdmin checks if the user has the RESTRICTED_VARIABLES_ADMIN privilege
 func CheckResVarAdmin(sctx sessionctx.Context) {
@@ -166,7 +166,7 @@ func IsEnabled() bool {
 func IsInvisibleSchema(dbName string) bool {
 	cfg := config.GetGlobalConfig()
 	for _, dbn := range cfg.Security.SEM.RestrictedDatabases {
-		if strings.ToLower(dbName) == strings.ToLower(dbn) {
+		if strings.EqualFold(dbName, dbn) {
 			return true
 		}
 	}
@@ -182,7 +182,7 @@ func IsInvisibleTable(dbLowerName, tblLowerName string) bool {
 	}
 
 	for _, tbl := range cfg.Security.SEM.RestrictedTables {
-		if strings.ToLower(dbLowerName) == strings.ToLower(tbl.Schema) && strings.ToLower(tblLowerName) == strings.ToLower(tbl.Name) {
+		if strings.EqualFold(dbLowerName, tbl.Schema) && strings.EqualFold(tblLowerName, tbl.Name) {
 			return true
 		}
 	}
@@ -198,7 +198,7 @@ func IsInvisibleStatusVar(varName string) bool {
 func IsInvisibleSysVar(varNameInLower string) bool {
 	cfg := config.GetGlobalConfig()
 	for _, resvarName := range cfg.Security.SEM.RestrictedVariables {
-		if strings.ToLower(varNameInLower) == strings.ToLower(resvarName.Name) {
+		if strings.EqualFold(varNameInLower, resvarName.Name) {
 			if resvarName.RestrictionType == "hidden" {
 				return true
 			}
@@ -214,7 +214,7 @@ func IsInvisibleGlobalSysVar(varNameInLower string) bool {
 	}
 	cfg := config.GetGlobalConfig()
 	for _, resvarName := range cfg.Security.SEM.RestrictedVariables {
-		if strings.ToLower(varNameInLower) == strings.ToLower(resvarName.Name) && strings.ToLower(resvarName.Scope) == "global" {
+		if strings.EqualFold(varNameInLower, resvarName.Name) && strings.EqualFold(resvarName.Scope, "global") {
 			return true
 		}
 	}
@@ -225,8 +225,8 @@ func IsInvisibleGlobalSysVar(varNameInLower string) bool {
 func IsReadOnlySysVar(varNameInLower string) bool {
 	cfg := config.GetGlobalConfig()
 	for _, resvarName := range cfg.Security.SEM.RestrictedVariables {
-		if strings.ToLower(varNameInLower) == strings.ToLower(resvarName.Name) {
-			return resvarName.Readonly == true
+		if strings.EqualFold(varNameInLower, resvarName.Name) {
+			return resvarName.Readonly
 		}
 	}
 	return false
@@ -239,8 +239,8 @@ func IsReadOnlyGlobalSysVar(varNameInLower string) bool {
 	}
 	cfg := config.GetGlobalConfig()
 	for _, resvarName := range cfg.Security.SEM.RestrictedVariables {
-		if strings.ToLower(varNameInLower) == strings.ToLower(resvarName.Name) && strings.ToLower(resvarName.Scope) == "global" {
-			return resvarName.Readonly == true
+		if strings.EqualFold(varNameInLower, resvarName.Name) && strings.EqualFold(resvarName.Scope, "global") {
+			return resvarName.Readonly
 		}
 	}
 	return false
