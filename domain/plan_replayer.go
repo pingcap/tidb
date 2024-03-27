@@ -276,9 +276,18 @@ type planReplayerTaskDumpHandle struct {
 	taskCH chan *PlanReplayerDumpTask
 }
 
+<<<<<<< HEAD
 // DrainTask drain a task for unit test
 func (h *planReplayerTaskDumpHandle) DrainTask() *PlanReplayerDumpTask {
 	return <-h.taskCH
+=======
+func (w *planReplayerTaskDumpWorker) run() {
+	logutil.BgLogger().Info("planReplayerTaskDumpWorker started.")
+	for task := range w.taskCH {
+		w.handleTask(task)
+	}
+	logutil.BgLogger().Info("planReplayerTaskDumpWorker exited.")
+>>>>>>> 22b43ff396 (domain: add timeout for updateStatsWorker exit process (#40434))
 }
 
 // HandlePlanReplayerDumpTask handled the task
