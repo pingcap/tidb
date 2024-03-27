@@ -175,7 +175,7 @@ func TestScanEmptyRegion(t *testing.T) {
 	regionSplitter := NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges)
 	// should not return error with only one range entry
 	require.NoError(t, err)
 }
@@ -199,7 +199,7 @@ func TestSplitAndScatter(t *testing.T) {
 		require.NoError(t, err)
 		ranges[i] = *tmp
 	}
-	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges)
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -223,7 +223,7 @@ func TestRawSplit(t *testing.T) {
 	ctx := context.Background()
 
 	regionSplitter := NewRegionSplitter(client)
-	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, true, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges)
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	expectedKeys := []string{"", "aay", "bba", "bbh", "cca", ""}
@@ -342,77 +342,6 @@ FindRegion:
 		return false
 	}
 	return true
-}
-
-func TestRegionConsistency(t *testing.T) {
-	cases := []struct {
-		startKey []byte
-		endKey   []byte
-		err      string
-		regions  []*split.RegionInfo
-	}{
-		{
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			"scan region return empty result, startKey: (.*?), endKey: (.*?)",
-			[]*split.RegionInfo{},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			"first region 1's startKey(.*?) > startKey(.*?)",
-			[]*split.RegionInfo{
-				{
-					Region: &metapb.Region{
-						Id:       1,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
-					},
-				},
-			},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("b")),
-			codec.EncodeBytes([]byte{}, []byte("e")),
-			"last region 100's endKey(.*?) < endKey(.*?)",
-			[]*split.RegionInfo{
-				{
-					Region: &metapb.Region{
-						Id:       100,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
-					},
-				},
-			},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("c")),
-			codec.EncodeBytes([]byte{}, []byte("e")),
-			"region 6's endKey not equal to next region 8's startKey(.*?)",
-			[]*split.RegionInfo{
-				{
-					Region: &metapb.Region{
-						Id:          6,
-						StartKey:    codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
-						RegionEpoch: nil,
-					},
-				},
-				{
-					Region: &metapb.Region{
-						Id:       8,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("e")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("f")),
-					},
-				},
-			},
-		},
-	}
-	for _, ca := range cases {
-		err := split.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions)
-		require.Error(t, err)
-		require.Regexp(t, ca.err, err.Error())
-	}
 }
 
 type fakeRestorer struct {

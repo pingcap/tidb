@@ -328,7 +328,7 @@ func sendSplitRegionRequest(
 	if intest.InTest {
 		mockCli, ok := c.client.(*mockPDClientForSplit)
 		if ok {
-			return mockCli.splitRegions.fn()
+			return mockCli.SplitRegion(regionInfo, keys)
 		}
 	}
 	var peer *metapb.Peer
@@ -535,6 +535,8 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, sortedKeys [][]byte)
 		workerPool := utils.NewWorkerPool(c.splitConcurrency, "split keys")
 		eg, eCtx := errgroup.WithContext(ctx)
 		for region, splitKeys := range splitKeyMap {
+			region := region
+			splitKeys := splitKeys
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				start, end := 0, 0
 				totalKeySize := 0

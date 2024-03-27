@@ -5,6 +5,7 @@ package split
 import (
 	"context"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -17,13 +18,14 @@ import (
 type mockPDClientForSplit struct {
 	pd.Client
 
-	regions     *pdtypes.RegionTree
-	scanRegions struct {
+	regions      *pdtypes.RegionTree
+	lastRegionID uint64
+	scanRegions  struct {
 		errors     []error
 		beforeHook func()
 	}
 	splitRegions struct {
-		fn func() (bool, *kvrpcpb.SplitRegionResponse, error)
+		hijacked func() (bool, *kvrpcpb.SplitRegionResponse, error)
 	}
 	scatterRegion struct {
 		eachRegionFailBefore int
@@ -48,16 +50,21 @@ func newRegionNotFullyReplicatedErr(regionID uint64) error {
 	return status.Errorf(codes.Unknown, "region %d is not fully replicated", regionID)
 }
 
-func (c *mockPDClientForSplit) SetRegions(boundaries [][]byte) {
+func (c *mockPDClientForSplit) SetRegions(boundaries [][]byte) []*metapb.Region {
+	ret := make([]*metapb.Region, 0, len(boundaries)-1)
 	for i := 1; i < len(boundaries); i++ {
+		c.lastRegionID++
+		r := &metapb.Region{
+			Id:       c.lastRegionID,
+			StartKey: boundaries[i-1],
+			EndKey:   boundaries[i],
+		}
 		c.regions.SetRegion(&pdtypes.Region{
-			Meta: &metapb.Region{
-				Id:       uint64(i),
-				StartKey: boundaries[i-1],
-				EndKey:   boundaries[i],
-			},
+			Meta: r,
 		})
+		ret = append(ret, r)
 	}
+	return ret
 }
 
 func (c *mockPDClientForSplit) ScanRegions(
@@ -85,6 +92,31 @@ func (c *mockPDClientForSplit) ScanRegions(
 		})
 	}
 	return ret, nil
+}
+
+func (c *mockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64, _ ...pd.GetRegionOption) (*pd.Region, error) {
+	for _, r := range c.regions.Regions {
+		if r.Meta.Id == regionID {
+			return &pd.Region{
+				Meta:   r.Meta,
+				Leader: r.Leader,
+			}, nil
+		}
+	}
+	return nil, errors.New("region not found")
+}
+
+func (c *mockPDClientForSplit) SplitRegion(region *RegionInfo, keys [][]byte) (bool, *kvrpcpb.SplitRegionResponse, error) {
+	if c.splitRegions.hijacked != nil {
+		return c.splitRegions.hijacked()
+	}
+
+	newRegionBoundaries := make([][]byte, 0, len(keys)+2)
+	newRegionBoundaries = append(newRegionBoundaries, region.Region.StartKey)
+	newRegionBoundaries = append(newRegionBoundaries, keys...)
+	newRegionBoundaries = append(newRegionBoundaries, region.Region.EndKey)
+	newRegions := c.SetRegions(newRegionBoundaries)
+	return false, &kvrpcpb.SplitRegionResponse{Regions: newRegions}, nil
 }
 
 func (c *mockPDClientForSplit) ScatterRegion(_ context.Context, regionID uint64) error {

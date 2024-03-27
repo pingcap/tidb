@@ -302,6 +302,7 @@ func getSplitKeysOfRegions(
 	isRawKV bool,
 ) map[*RegionInfo][][]byte {
 	splitKeyMap := make(map[*RegionInfo][][]byte, len(sortedRegions))
+	pendingSplitKeyMap := make(map[*RegionInfo][][]byte, 1)
 	curKeyIndex := 0
 	splitKey := codec.EncodeBytesExt(nil, sortedKeys[curKeyIndex], isRawKV)
 	moveRegionCnt := 0
@@ -322,19 +323,34 @@ func getSplitKeysOfRegions(
 				break
 			}
 
-			//   key                  key
-			//    |                    |
-			// ---+--------------------+---
-			//         | region |
-			// if regions are already too small, maybe other nodes are also split regions,
-			// we don't need to split regions on these keys.
-			if moveRegionCnt <= 1 {
+			//   key1      key2    key3
+			//    |    a    |    b  |
+			// ---+----+----+----+--+-----------
+			// region1 | region2 | region3 | region4
+			//
+			// key2 don't need to be split on. Considering the original region, we can have
+			// [key1, a), [a, b), [b, key3) rather than [key1, a), [a, key2), [key2, b), [b,
+			// key3)
+
+			if moveRegionCnt > 0 {
+				clear(pendingSplitKeyMap)
+				// save key2 in pendingSplitKeyMap. When we move to key3 we can check
+				// moveRegionCnt again to know if key2 can be skipped.
+				pendingSplitKeyMap[region] = append(pendingSplitKeyMap[region], sortedKeys[curKeyIndex])
+			} else {
+				for k, v := range pendingSplitKeyMap {
+					splitKeyMap[k] = append(splitKeyMap[k], v...)
+				}
 				splitKeyMap[region] = append(splitKeyMap[region], sortedKeys[curKeyIndex])
+				clear(pendingSplitKeyMap)
 			}
 
 		nextKey:
 			curKeyIndex++
 			if curKeyIndex >= len(sortedKeys) {
+				for k, v := range pendingSplitKeyMap {
+					splitKeyMap[k] = append(splitKeyMap[k], v...)
+				}
 				return splitKeyMap
 			}
 			splitKey = codec.EncodeBytesExt(nil, sortedKeys[curKeyIndex], isRawKV)

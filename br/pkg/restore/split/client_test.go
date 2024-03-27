@@ -5,50 +5,32 @@ package split
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/dumpling/context"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSplit(t *testing.T) {
-	mockClient := newMockPDClientForSplit()
+	mockPDClient := newMockPDClientForSplit()
 	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
-
-	client := initTestSplitClient(keys, hook)
-	local := &Backend{
-		splitCli: client,
-		logger:   log.L(),
+	mockPDClient.SetRegions(keys)
+	mockClient := &pdClient{
+		client:           mockPDClient,
+		splitConcurrency: 1,
+		isRawKv:          true, // make tests more readable
 	}
-	local.RegionSplitBatchSize = 4
-	local.RegionSplitConcurrency = 4
+	ctx := context.Background()
 
-	// current region ranges: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	rangeStart := codec.EncodeBytes([]byte{}, []byte("b"))
-	rangeEnd := codec.EncodeBytes([]byte{}, []byte("c"))
-	regions, err := split.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
-	require.NoError(t, err)
-	// regions is: [aay, bba), [bba, bbh), [bbh, cca)
-	checkRegionRanges(t, regions, [][]byte{[]byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca")})
-
-	// generate:  ranges [b, ba), [ba, bb), [bb, bc), ... [by, bz)
-	ranges := make([]common.Range, 0)
-	start := []byte{'b'}
+	// ranges [b, ba), [ba, bb), [bb, bc), ... [by, bz)
+	splitKeys := [][]byte{{'b'}}
 	for i := byte('a'); i <= 'z'; i++ {
-		end := []byte{'b', i}
-		ranges = append(ranges, common.Range{Start: start, End: end})
-		start = end
+		splitKeys = append(splitKeys, []byte{'b', i})
 	}
 
-	err = local.SplitAndScatterRegionByRanges(ctx, ranges, true)
-	if len(errPat) != 0 {
-		require.Error(t, err)
-		require.ErrorContains(t, err, errPat)
-		return
-	}
+	regions, err := mockClient.SplitWaitAndScatter(ctx, splitKeys)
 	require.NoError(t, err)
-	splitHook.check(t, client)
 
 	// check split ranges
-	regions, err = split.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
+	regions, err = PaginateScanRegion(ctx, mockClient, []byte{'b'}, []byte{'c'}, 5)
 	require.NoError(t, err)
 	result := [][]byte{
 		[]byte("b"), []byte("ba"), []byte("bb"), []byte("bba"), []byte("bbh"), []byte("bc"),
@@ -57,5 +39,5 @@ func TestSplit(t *testing.T) {
 		[]byte("br"), []byte("bs"), []byte("bt"), []byte("bu"), []byte("bv"), []byte("bw"), []byte("bx"),
 		[]byte("by"), []byte("bz"), []byte("cca"),
 	}
-	checkRegionRanges(t, regions, result)
+	checkRegionsBoundaries(t, regions, result)
 }
