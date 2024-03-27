@@ -180,12 +180,50 @@ func WithFileIterator(fileIter FileIterator) MDLoaderSetupOption {
 	}
 }
 
+// LoaderConfig is the configuration for constructing a MDLoader.
+type LoaderConfig struct {
+	// SourceID is the unique identifier for the data source, it's used in DM only.
+	// must be used together with Routes.
+	SourceID string
+	// SourceURL is the URL of the data source.
+	SourceURL string
+	// Routes is the routing rules for the tables, exclusive with FileRouters.
+	// it's deprecated in lightning, but still used in DM.
+	// when used this, DefaultFileRules must be true.
+	Routes config.Routes
+	// CharacterSet is the character set of the schema sql files.
+	CharacterSet string
+	// Filter is the filter for the tables, files related to filtered-out tables are not loaded.
+	// must be specified, else all tables are filtered out, see config.GetDefaultFilter.
+	Filter      []string
+	FileRouters []*config.FileRouteRule
+	// CaseSensitive indicates whether Routes and Filter are case-sensitive.
+	CaseSensitive bool
+	// DefaultFileRules indicates whether to use the default file routing rules.
+	// If it's true, the default file routing rules will be appended to the FileRouters.
+	// a little confusing, but it's true only when FileRouters is empty.
+	DefaultFileRules bool
+}
+
+// NewLoaderCfg creates loader config from lightning config.
+func NewLoaderCfg(cfg *config.Config) LoaderConfig {
+	return LoaderConfig{
+		SourceID:         cfg.Mydumper.SourceID,
+		SourceURL:        cfg.Mydumper.SourceDir,
+		Routes:           cfg.Routes,
+		CharacterSet:     cfg.Mydumper.CharacterSet,
+		Filter:           cfg.Mydumper.Filter,
+		FileRouters:      cfg.Mydumper.FileRouters,
+		CaseSensitive:    cfg.Mydumper.CaseSensitive,
+		DefaultFileRules: cfg.Mydumper.DefaultFileRules,
+	}
+}
+
 // MDLoader is for 'Mydumper File Loader', which loads the files in the data source and generates a set of metadata.
 type MDLoader struct {
-	store  storage.ExternalStorage
-	dbs    []*MDDatabaseMeta
-	filter filter.Filter
-	// router     *router.Table
+	store      storage.ExternalStorage
+	dbs        []*MDDatabaseMeta
+	filter     filter.Filter
 	router     *regexprrouter.RouteTable
 	fileRouter FileRouter
 	charSet    string
@@ -203,9 +241,9 @@ type mdLoaderSetup struct {
 	setupCfg      *MDLoaderSetupConfig
 }
 
-// NewMyDumpLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
-func NewMyDumpLoader(ctx context.Context, cfg *config.Config, opts ...MDLoaderSetupOption) (*MDLoader, error) {
-	u, err := storage.ParseBackend(cfg.Mydumper.SourceDir, nil)
+// NewLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
+func NewLoader(ctx context.Context, cfg LoaderConfig, opts ...MDLoaderSetupOption) (*MDLoader, error) {
+	u, err := storage.ParseBackend(cfg.SourceURL, nil)
 	if err != nil {
 		return nil, common.NormalizeError(err)
 	}
@@ -214,11 +252,11 @@ func NewMyDumpLoader(ctx context.Context, cfg *config.Config, opts ...MDLoaderSe
 		return nil, common.NormalizeError(err)
 	}
 
-	return NewMyDumpLoaderWithStore(ctx, cfg, s, opts...)
+	return NewLoaderWithStore(ctx, cfg, s, opts...)
 }
 
-// NewMyDumpLoaderWithStore constructs a MyDumper loader with the provided external storage that scanns the data source and constructs a set of metadatas.
-func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config,
+// NewLoaderWithStore constructs a MyDumper loader with the provided external storage that scanns the data source and constructs a set of metadatas.
+func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 	store storage.ExternalStorage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	var r *regexprrouter.RouteTable
 	var err error
@@ -234,27 +272,27 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config,
 		}
 	}
 
-	if len(cfg.Routes) > 0 && len(cfg.Mydumper.FileRouters) > 0 {
+	if len(cfg.Routes) > 0 && len(cfg.FileRouters) > 0 {
 		return nil, common.ErrInvalidConfig.GenWithStack("table route is deprecated, can't config both [routes] and [mydumper.files]")
 	}
 
 	if len(cfg.Routes) > 0 {
-		r, err = regexprrouter.NewRegExprRouter(cfg.Mydumper.CaseSensitive, cfg.Routes)
+		r, err = regexprrouter.NewRegExprRouter(cfg.CaseSensitive, cfg.Routes)
 		if err != nil {
 			return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid table route rule")
 		}
 	}
 
-	f, err := filter.Parse(cfg.Mydumper.Filter)
+	f, err := filter.Parse(cfg.Filter)
 	if err != nil {
 		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse filter failed")
 	}
-	if !cfg.Mydumper.CaseSensitive {
+	if !cfg.CaseSensitive {
 		f = filter.CaseInsensitive(f)
 	}
 
-	fileRouteRules := cfg.Mydumper.FileRouters
-	if cfg.Mydumper.DefaultFileRules {
+	fileRouteRules := cfg.FileRouters
+	if cfg.DefaultFileRules {
 		fileRouteRules = append(fileRouteRules, defaultFileRouteRules...)
 	}
 
@@ -267,12 +305,12 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config,
 		store:      store,
 		filter:     f,
 		router:     r,
-		charSet:    cfg.Mydumper.CharacterSet,
+		charSet:    cfg.CharacterSet,
 		fileRouter: fileRouter,
 	}
 
 	setup := mdLoaderSetup{
-		sourceID:      cfg.Mydumper.SourceID,
+		sourceID:      cfg.SourceID,
 		loader:        mdl,
 		dbIndexMap:    make(map[string]int),
 		tableIndexMap: make(map[filter.Table]int),
