@@ -16,6 +16,7 @@ package addindextest
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -51,4 +52,24 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	tk.MustExec("analyze table t;")
 	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
 	require.Equal(t, 67, size)
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (id bigint primary key, b text) partition by hash(id) partitions 4;")
+	for i := 1; i < 10; i++ {
+		insertSQL := fmt.Sprintf("insert into t values (%d, repeat('a', 10))", i*10000)
+		tk.MustExec(insertSQL)
+	}
+	tk.MustQuery("split table t between (0) and (1000000) regions 2;").Check(testkit.Rows("4 1"))
+	tk.MustExec("analyze table t;")
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
+	require.Equal(t, 19, size)
+	ptbl := tbl.GetPartitionedTable()
+	pids := ptbl.GetAllPartitionIDs()
+	for _, pid := range pids {
+		partition := ptbl.GetPartition(pid)
+		size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, partition)
+		require.Equal(t, 19, size)
+	}
 }

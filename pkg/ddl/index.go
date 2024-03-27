@@ -2272,9 +2272,6 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 		return 0, err
 	}
 	pid := tbl.Meta().ID
-	if part := tbl.GetPartitionedTable(); part != nil {
-		pid = part.Meta().ID
-	}
 	sk, ek := tablecodec.GetTableHandleKeyRange(pid)
 	sRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
 	if err != nil {
