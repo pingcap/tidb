@@ -1449,17 +1449,20 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			}
 			if canConvertPointGet && len(path.Ranges) > 1 {
 				// TODO: This is now implemented, but to decrease
-				// the impact of supporting plan cache for patitioning,
+				// the impact of supporting plan cache for partitioning,
 				// this is not yet enabled.
 				// TODO: just remove this if block and update/add tests...
 				// We can only build batch point get for hash partitions on a simple column now. This is
 				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
 				// the `getPhysID()` function. Once we optimize that part, we can come back and enable
 				// BatchPointGet plan for more cases.
-				hashPartColName := getHashOrKeyPartitionColumnName(ds.SCtx(), ds.table.Meta())
-				if hashPartColName == nil {
-					canConvertPointGet = false
+				if canConvertPointGet {
+					hashPartColName := getHashOrKeyPartitionColumnName(ds.SCtx(), ds.table.Meta())
+					if hashPartColName == nil {
+						canConvertPointGet = false
+					}
 				}
+
 			}
 			if canConvertPointGet {
 				// If the schema contains ExtraPidColID, do not convert to point get.
@@ -2642,7 +2645,11 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
 		batchPointGetPlan.accessCols = ds.TblCols
-		batchPointGetPlan.HandleColOffset = ds.handleCols.GetCol(0).Index
+		hc, err := ds.handleCols.ResolveIndices(ds.schema)
+		if err != nil {
+			return invalidTask
+		}
+		batchPointGetPlan.HandleColOffset = hc.GetCol(0).Index
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			batchPointGetPlan.Init(ds.SCtx(), ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.QueryBlockOffset())

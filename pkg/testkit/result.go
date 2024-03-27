@@ -169,14 +169,25 @@ func (res *Result) MultiCheckContain(expecteds []string) {
 
 // CheckNotContain checks whether the result doesn't contain the expected string
 func (res *Result) CheckNotContain(unexpected string) {
-	for _, row := range res.rows {
+	found := false
+	var result string
+	for i, row := range res.rows {
+		if i > 0 {
+			result += "\n"
+		}
 		for _, colValue := range row {
 			if strings.Contains(colValue, unexpected) {
-				comment := fmt.Sprintf("the result contain the unexepected %s", unexpected)
-				res.require.Equal(true, false, comment)
+				found = true
+			}
+			if result == "" {
+				result = colValue
+			} else {
+				result = result + " " + colValue
 			}
 		}
 	}
+	comment := fmt.Sprintf("%s\nthe result contain the unexepected '%s':\n%s", res.comment, unexpected, result)
+	res.require.Equal(false, found, comment)
 }
 
 // MultiCheckNotContain checks whether the result doesn't contain the strings in `expected`
