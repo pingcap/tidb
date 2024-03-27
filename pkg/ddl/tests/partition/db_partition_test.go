@@ -3041,6 +3041,10 @@ func TestRemoveKeyPartitioning(t *testing.T) {
 func TestRemoveListPartitioning(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
+		t.Skip("TODO: do not skip after solving https://github.com/pingcap/tidb/issues/52150")
+	}
+
 	h := dom.StatsHandle()
 	tk.MustExec("create database RemoveListPartitioning")
 	tk.MustExec("use RemoveListPartitioning")

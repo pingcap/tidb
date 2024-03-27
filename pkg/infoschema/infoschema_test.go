@@ -525,6 +525,13 @@ func TestBuildBundle(t *testing.T) {
 	assertBundle(is, tbl1.Meta().ID, tb1Bundle)
 	assertBundle(is, tbl2.Meta().ID, nil)
 	assertBundle(is, p1.ID, p1Bundle)
+
+	if len(db.Tables) == 0 {
+		tbls := is.SchemaTables(db.Name)
+		for _, tbl := range tbls {
+			db.Tables = append(db.Tables, tbl.Meta())
+		}
+	}
 	builder, err := infoschema.NewBuilder(dom, nil, infoschema.NewData()).InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.SchemaMetaVersion())
 	require.NoError(t, err)
 	is2 := builder.Build(math.MaxUint64)

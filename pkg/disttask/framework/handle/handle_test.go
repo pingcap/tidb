@@ -40,6 +40,10 @@ func TestHandle(t *testing.T) {
 
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
+	if gtk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
+		t.Skip("TODO: do not skip after solving https://github.com/pingcap/tidb/issues/52150")
+	}
+
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
 		return gtk.Session(), nil
 	}, 1, 1, time.Second)

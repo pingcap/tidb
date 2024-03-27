@@ -351,6 +351,9 @@ func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state
 func TestRenameTableAutoIDs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
+	if tk1.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
+		t.Skip("TODO: do not skip after solving https://github.com/pingcap/tidb/issues/52150")
+	}
 
 	dbName := "RenameTableAutoIDs"
 	tk1.MustExec(`create schema ` + dbName)

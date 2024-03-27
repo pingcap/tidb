@@ -105,6 +105,13 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Sessi
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
 	tk.session = NewSession(tk.t, tk.store)
+
+	if intest.InTest {
+		if rand.Intn(10) > 3 { // 70% chance to run infoschema v2
+			tk.MustExec("set @@global.tidb_schema_cache_size = 1024")
+		}
+	}
+
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }

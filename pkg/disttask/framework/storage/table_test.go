@@ -464,6 +464,10 @@ func TestGetActiveSubtasks(t *testing.T) {
 }
 
 func TestSubTaskTable(t *testing.T) {
+	if variable.SchemaCacheSize.Load() > 0 {
+		t.Skip("TODO: do not skip after solving https://github.com/pingcap/tidb/issues/52150")
+	}
+
 	_, sm, ctx := testutil.InitTableTest(t)
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
 	require.NoError(t, sm.InitMeta(ctx, ":4000", ""))
