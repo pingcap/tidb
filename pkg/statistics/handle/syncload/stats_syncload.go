@@ -126,6 +126,23 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	}
 	metrics.SyncLoadCounter.Inc()
 	timer := time.NewTimer(sc.StatsLoad.Timeout)
+	if rand.Int31n(10000) < 5 {
+		var tableID, colID int64
+		var isIndex bool
+		tot := 0
+		for _, col := range sc.StatsLoad.NeededItems {
+			tableID = col.TableID
+			colID = col.ID
+			isIndex = col.IsIndex
+			tot++
+		}
+		logutil.BgLogger().Warn("sync load stats",
+			zap.Int64("table id", tableID),
+			zap.Int64("col id", colID),
+			zap.Bool("is index", isIndex),
+			zap.Int("total items", tot),
+		)
+	}
 	defer timer.Stop()
 	for {
 		select {
