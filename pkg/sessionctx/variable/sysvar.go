@@ -1660,7 +1660,7 @@ var defaultSysVars = []*SysVar{
 	{
 		Scope:                   ScopeGlobal | ScopeSession,
 		Name:                    GroupConcatMaxLen,
-		Value:                   "1024",
+		Value:                   DefGroupConcatMaxLen,
 		IsHintUpdatableVerified: true,
 		Type:                    TypeUnsigned,
 		MinValue:                4,
@@ -1681,7 +1681,15 @@ var defaultSysVars = []*SysVar{
 				}
 			}
 			return normalizedValue, nil
-		}},
+		},
+		SetSession: func(sv *SessionVars, s string) error {
+			sv.GroupConcatMaxLen = s
+			return nil
+		},
+		GetSession: func(sv *SessionVars) (string, error) {
+			return sv.GroupConcatMaxLen, nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetConnection, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharacterSetConnection)
 	}, SetSession: func(s *SessionVars, val string) error {

@@ -15,14 +15,12 @@
 package aggregation
 
 import (
-	"context"
 	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -130,10 +128,7 @@ func AggFuncToPBExpr(ctx expression.PushDownContext, aggFunc *AggFuncDesc, store
 			orderBy = append(orderBy, pbArg)
 		}
 		// encode GroupConcatMaxLen
-		gcMaxLen, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.GroupConcatMaxLen)
-		if err != nil {
-			return nil, errors.Errorf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen)
-		}
+		gcMaxLen := ctx.GetGroupConcatMaxLen()
 		maxLen, err := strconv.ParseUint(gcMaxLen, 10, 64)
 		// Should never happen
 		if err != nil {
