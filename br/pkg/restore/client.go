@@ -609,7 +609,7 @@ func (rc *Client) GetDBSchema(dom *domain.Domain, dbName model.CIStr) (*model.DB
 }
 
 // CreateDatabases creates databases. If the client has the db pool, it would create it.
-func (rc *Client) CreateDatabases(ctx context.Context, dbs []*metautil.Database) error {
+func (rc *Client) CreateDatabases(ctx context.Context, dbs []*utils.Database) error {
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create database")
 		return nil
