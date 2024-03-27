@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/grafana/pyroscope-go"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -916,6 +917,7 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 }
 
 func setupMetrics() {
+	EnablePyroscope()
 	cfg := config.GetGlobalConfig()
 	// Enable the mutex profile, 1/10 of mutex blocking event sampling.
 	runtime.SetMutexProfileFraction(10)
@@ -1001,5 +1003,34 @@ func closeStmtSummary() {
 	instanceCfg := config.GetGlobalConfig().Instance
 	if instanceCfg.StmtSummaryEnablePersistent {
 		stmtsummaryv2.Close()
+	}
+}
+
+func EnablePyroscope() {
+	if os.Getenv("PYROSCOPE_SERVER_ADDRESS") != "" {
+		runtime.SetMutexProfileFraction(5)
+		runtime.SetBlockProfileRate(5)
+		pyroscope.Start(pyroscope.Config{
+			ApplicationName:   "tidb",
+			ServerAddress:     os.Getenv("PYROSCOPE_SERVER_ADDRESS"),
+			Logger:            nil,
+			AuthToken:         os.Getenv("PYROSCOPE_AUTH_TOKEN"),
+			TenantID:          os.Getenv("PYROSCOPE_TENANT_ID"),
+			BasicAuthUser:     os.Getenv("PYROSCOPE_BASIC_AUTH_USER"),
+			BasicAuthPassword: os.Getenv("PYROSCOPE_BASIC_AUTH_PASSWORD"),
+			ProfileTypes: []pyroscope.ProfileType{
+				pyroscope.ProfileCPU,
+				pyroscope.ProfileInuseObjects,
+				pyroscope.ProfileAllocObjects,
+				pyroscope.ProfileInuseSpace,
+				pyroscope.ProfileAllocSpace,
+				pyroscope.ProfileGoroutines,
+				pyroscope.ProfileMutexCount,
+				pyroscope.ProfileMutexDuration,
+				pyroscope.ProfileBlockCount,
+				pyroscope.ProfileBlockDuration,
+			},
+			HTTPHeaders: map[string]string{"X-Extra-Header": "extra-header-value"},
+		})
 	}
 }
