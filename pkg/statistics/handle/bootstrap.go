@@ -78,7 +78,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache,
 	if err != nil {
 		return nil, err
 	}
-	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
+	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		ls := initstats.NewWorker(rc.Next, h.initStatsMeta4Chunk)
 		ls.LoadStats(is, tables, rc)
 		ls.Wait()
@@ -242,7 +242,7 @@ func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statsty
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
+	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		ls := initstats.NewWorker(rc.Next, h.initStatsHistograms4ChunkLite)
 		ls.LoadStats(is, cache, rc)
 		ls.Wait()
@@ -271,7 +271,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
+	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		ls := initstats.NewWorker(rc.Next, h.initStatsHistograms4Chunk)
 		ls.LoadStats(is, cache, rc)
 		ls.Wait()
@@ -326,7 +326,7 @@ func (h *Handle) initStatsTopN(cache statstypes.StatsCache) error {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
+	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		ls := initstats.NewWorker(rc.Next, func(_ infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 			h.initStatsTopN4Chunk(cache, iter)
 		})
@@ -458,7 +458,7 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	if config.GetGlobalConfig().Performance.ConcurrencyInitStats {
+	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		ls := initstats.NewWorker(rc.Next, func(_ infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 			h.initStatsBuckets4Chunk(cache, iter)
 		})

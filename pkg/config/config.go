@@ -750,8 +750,8 @@ type Performance struct {
 	// of init stats the optimizer may make bad decisions due to pseudo stats.
 	ForceInitStats bool `toml:"force-init-stats" json:"force-init-stats"`
 
-	// ConcurrencyInitStats indicates whether to use concurrency to init stats.
-	ConcurrencyInitStats bool `toml:"concurrency-init-stats" json:"concurrency-init-stats"`
+	// ConcurrentlyInitStats indicates whether to use concurrency to init stats.
+	ConcurrentlyInitStats bool `toml:"concurrently-init-stats" json:"concurrently-init-stats"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -1019,7 +1019,7 @@ var defaultConf = Config{
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
-		ConcurrencyInitStats:              true,
+		ConcurrentlyInitStats:             true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
