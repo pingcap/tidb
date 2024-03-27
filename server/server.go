@@ -431,7 +431,7 @@ func (s *Server) Run(dom *domain.Domain) error {
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
 		close(RunInGoTestChan)
 	}
-	s.health.Store(false)
+	s.health.Store(true)
 	err = <-errChan
 	if err != nil {
 		return err
