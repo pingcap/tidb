@@ -214,7 +214,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		globalConnID:      util.NewGlobalConnID(0, true),
 		internalSessions:  make(map[interface{}]struct{}, 100),
 		printMDLLogTime:   time.Now(),
-		inShutdownMode:    uatomic.NewBool(false),
 		health:            uatomic.NewBool(false),
 	}
 	s.capability = defaultCapability
