@@ -352,11 +352,7 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalUnionScan) ExplainInfo() string {
-	exprStr := string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx(), p.Conditions))
-	for i, col := range p.Schema().Columns {
-		exprStr += fmt.Sprintf(", schema_%d: %s", i, col.String())
-	}
-	return exprStr
+	return string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx(), p.Conditions))
 }
 
 // ExplainInfo implements Plan interface.
@@ -364,9 +360,6 @@ func (p *PhysicalSelection) ExplainInfo() string {
 	exprStr := string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx(), p.Conditions))
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	for i, col := range p.Schema().Columns {
-		exprStr += fmt.Sprintf(", schema_%d: %s", i, col.String())
 	}
 	return exprStr
 }
@@ -504,9 +497,6 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 	}
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		fmt.Fprintf(builder, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	for i, col := range p.Schema().Columns {
-		fmt.Fprintf(builder, ", schema_%d: %s", i, col.String())
 	}
 	return builder.String()
 }
@@ -672,9 +662,6 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	}
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
-	}
-	for i, col := range p.Schema().Columns {
-		fmt.Fprintf(buffer, ", schema_%d: %s", i, col.String())
 	}
 
 	// for runtime filter

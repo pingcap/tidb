@@ -543,14 +543,28 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 		hashCols: outerTask.hashCols,
 	}
 	defaultSchema := BuildPhysicalJoinSchema(p.JoinType, p)
-	if p.SCtx().GetSessionVars().AllowAutoRandExplicitInsert && p.schema.Len() < defaultSchema.Len() && p.schema.Len() != 0 {
-		// Join schema can be pruned, add projection here
-		proj := PhysicalProjection{
-			Exprs: expression.Column2Exprs(p.schema.Columns),
-		}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
+	if p.schema.Len() < defaultSchema.Len() {
+		if p.schema.Len() > 0 {
+			proj := PhysicalProjection{
+				Exprs: expression.Column2Exprs(p.schema.Columns),
+			}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 
-		proj.SetSchema(p.Schema().Clone())
-		attachPlan2Task(proj, task)
+			proj.SetSchema(p.Schema().Clone())
+			attachPlan2Task(proj, task)
+		} else {
+			constOne := expression.NewOne()
+			expr := make([]expression.Expression, 0, 1)
+			expr = append(expr, constOne)
+			proj := PhysicalProjection{
+				Exprs: expr,
+			}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
+
+			proj.schema.Append(&expression.Column{
+				UniqueID: proj.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  constOne.GetType(),
+			})
+			attachPlan2Task(proj, task)
+		}
 	}
 	p.schema = defaultSchema
 	return task
