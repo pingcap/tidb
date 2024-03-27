@@ -213,7 +213,7 @@ func TestAppliedRuleSet(t *testing.T) {
 	optimizer := NewOptimizer()
 
 	rule := fakeTransformation{}
-	rule.pattern = pattern.NewPattern(pattern.OperandProjection, memo.EngineAll)
+	rule.pattern = pattern.NewPattern(pattern.OperandProjection, pattern.EngineAll)
 	optimizer.ResetTransformationRules(map[pattern.Operand][]Transformation{
 		pattern.OperandProjection: {
 			&rule,
