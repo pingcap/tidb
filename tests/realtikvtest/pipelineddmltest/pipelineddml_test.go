@@ -568,7 +568,7 @@ func TestPipelinedDMLCommitSkipSecondaries(t *testing.T) {
 	tk.MustQuery("select count(1) from t").Check(testkit.Rows("200"))
 }
 
-func TestPipelinedDMLMemoryTest(t *testing.T) {
+func TestPipelinedDMLMemory(t *testing.T) {
 	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushKeys", `return(10)`))
 	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBMinFlushSize", `return(128)`))
 	require.Nil(t, failpoint.Enable("tikvclient/pipelinedMemDBForceFlushSizeThreshold", `return(128)`))
