@@ -24,18 +24,19 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/memo"
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGroupStringer(t *testing.T) {
 	optimizer := NewOptimizer()
-	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
-		memo.OperandSelection: {
+	optimizer.ResetTransformationRules(map[pattern.Operand][]Transformation{
+		pattern.OperandSelection: {
 			NewRulePushSelDownTiKVSingleGather(),
 			NewRulePushSelDownTableScan(),
 		},
-		memo.OperandDataSource: {
+		pattern.OperandDataSource: {
 			NewRuleEnumeratePaths(),
 		},
 	})

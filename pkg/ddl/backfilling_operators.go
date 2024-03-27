@@ -112,11 +112,11 @@ func (ctx *OperatorCtx) OperatorErr() error {
 	return *err
 }
 
-func getWriterMemSize(idxNum int) (uint64, error) {
+func getWriterMemSize(avgRowSize int, idxNum int) (uint64, error) {
 	failpoint.Inject("mockWriterMemSize", func() {
 		failpoint.Return(1*size.GB, nil)
 	})
-	_, writerCnt := expectedIngestWorkerCnt()
+	_, writerCnt := expectedIngestWorkerCnt(avgRowSize)
 	memTotal, err := memory.MemTotal()
 	if err != nil {
 		return 0, err
@@ -131,12 +131,13 @@ func getWriterMemSize(idxNum int) (uint64, error) {
 	return memSize, nil
 }
 
-func getMergeSortPartSize(concurrency int, idxNum int) (uint64, error) {
-	writerMemSize, err := getWriterMemSize(idxNum)
+func getMergeSortPartSize(avgRowSize int, concurrency int, idxNum int) (uint64, error) {
+	writerMemSize, err := getWriterMemSize(avgRowSize, idxNum)
 	if err != nil {
 		return 0, nil
 	}
-	return writerMemSize / uint64(concurrency) / 10, nil
+	// Prevent part count being too large.
+	return writerMemSize / uint64(concurrency) / 10000 * uint64(external.MergeSortOverlapThreshold), nil
 }
 
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
@@ -147,12 +148,14 @@ func NewAddIndexIngestPipeline(
 	backendCtx ingest.BackendCtx,
 	engines []ingest.Engine,
 	sessCtx sessionctx.Context,
+	jobID int64,
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
 	totalRowCount *atomic.Int64,
 	metricCounter prometheus.Counter,
 	reorgMeta *model.DDLReorgMeta,
+	avgRowSize int,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -169,7 +172,7 @@ func NewAddIndexIngestPipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
-	readerCnt, writerCnt := expectedIngestWorkerCnt()
+	readerCnt, writerCnt := expectedIngestWorkerCnt(avgRowSize)
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
@@ -179,6 +182,11 @@ func NewAddIndexIngestPipeline(
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
 	operator.Compose[IndexWriteResult](ingestOp, sinkOp)
+
+	logutil.Logger(ctx).Info("build add index local storage operators",
+		zap.Int64("jobID", jobID),
+		zap.Int("reader", readerCnt),
+		zap.Int("writer", writerCnt))
 
 	return operator.NewAsyncPipeline(
 		srcOp, scanOp, ingestOp, sinkOp,
@@ -200,6 +208,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	metricCounter prometheus.Counter,
 	onClose external.OnCloseFunc,
 	reorgMeta *model.DDLReorgMeta,
+	avgRowSize int,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -216,7 +225,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
-	readerCnt, writerCnt := expectedIngestWorkerCnt()
+	readerCnt, writerCnt := expectedIngestWorkerCnt(avgRowSize)
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
 	if err != nil {
@@ -227,7 +236,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 
-	memSize, err := getWriterMemSize(len(indexes))
+	memSize, err := getWriterMemSize(avgRowSize, len(indexes))
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +250,11 @@ func NewWriteIndexToExternalStoragePipeline(
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, writeOp)
 	operator.Compose[IndexWriteResult](writeOp, sinkOp)
+
+	logutil.Logger(ctx).Info("build add index cloud storage operators",
+		zap.Int64("jobID", jobID),
+		zap.Int("reader", readerCnt),
+		zap.Int("writer", writerCnt))
 
 	return operator.NewAsyncPipeline(
 		srcOp, scanOp, writeOp, sinkOp,

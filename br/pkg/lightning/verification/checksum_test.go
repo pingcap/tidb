@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestChecksum(t *testing.T) {
@@ -79,21 +78,11 @@ func TestChecksumJSON(t *testing.T) {
 	require.Equal(t, []byte(`{"Checksum":{"checksum":7890,"size":123,"kvs":456}}`), res)
 }
 
-type mockCodec struct {
-	tikv.Codec
-	keyspace []byte
-}
-
-func (m *mockCodec) GetKeyspace() []byte {
-	return m.keyspace
-}
-
 func TestGroupChecksum(t *testing.T) {
-	codec := &mockCodec{}
 	kvPair := common.KvPair{Key: []byte("key"), Val: []byte("val")}
 	kvPair2 := common.KvPair{Key: []byte("key2"), Val: []byte("val2")}
 
-	c := verification.NewKVGroupChecksumWithKeyspace(codec)
+	c := verification.NewKVGroupChecksumWithKeyspace([]byte(""))
 	c.UpdateOneDataKV(kvPair)
 	c.UpdateOneIndexKV(1, kvPair2)
 	inner := c.GetInnerChecksums()
@@ -101,14 +90,13 @@ func TestGroupChecksum(t *testing.T) {
 	require.Equal(t, uint64(1), inner[1].SumKVS())
 	require.Equal(t, uint64(1), inner[verification.DataKVGroupID].SumKVS())
 
-	keyspaceCodec := &mockCodec{keyspace: []byte("keyspace")}
-	keyspaceC := verification.NewKVGroupChecksumWithKeyspace(keyspaceCodec)
+	keyspaceC := verification.NewKVGroupChecksumWithKeyspace([]byte("keyspace"))
 	keyspaceC.UpdateOneDataKV(kvPair)
 	keyspaceC.UpdateOneIndexKV(1, kvPair2)
 	keyspaceInner := keyspaceC.GetInnerChecksums()
 	require.NotEqual(t, inner, keyspaceInner)
 
-	c2 := verification.NewKVGroupChecksumWithKeyspace(codec)
+	c2 := verification.NewKVGroupChecksumWithKeyspace(nil)
 	c2.UpdateOneIndexKV(1, kvPair)
 	c2.UpdateOneIndexKV(2, kvPair2)
 	c.Add(c2)

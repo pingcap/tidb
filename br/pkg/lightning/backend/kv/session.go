@@ -428,7 +428,7 @@ func (se *Session) Value(key fmt.Stringer) any {
 func (*Session) StmtAddDirtyTableOP(_ int, _ int64, _ kv.Handle) {}
 
 // GetInfoSchema implements the sessionctx.Context interface.
-func (*Session) GetInfoSchema() infoschema.InfoSchemaMetaVersion {
+func (*Session) GetInfoSchema() infoschema.MetaOnlyInfoSchema {
 	return nil
 }
 
