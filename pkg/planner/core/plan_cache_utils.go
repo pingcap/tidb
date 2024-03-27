@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -44,9 +45,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/size"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
@@ -182,6 +185,29 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	features := new(PlanCacheQueryFeatures)
 	paramStmt.Accept(features)
 
+	// Collect information for metadata lock.
+	mdlMap := make(map[int64]int64)
+	vars.GetRelatedTableForMDL().Range(func(key, value any) bool {
+		mdlMap[key.(int64)] = value.(int64)
+		return true
+	})
+	dbName := make([]model.CIStr, 0, len(mdlMap))
+	tbls := make([]table.Table, 0, len(mdlMap))
+	for id := range mdlMap {
+		tbl, ok := is.TableByID(id)
+		if !ok {
+			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))
+			return nil, nil, 0, errors.New("table not found in info schema")
+		}
+		db, ok := is.SchemaByID(tbl.Meta().DBID)
+		if !ok {
+			logutil.BgLogger().Error("database not found in info schema", zap.Int64("dbID", tbl.Meta().DBID))
+			return nil, nil, 0, errors.New("database not found in info schema")
+		}
+		dbName = append(dbName, db.Name)
+		tbls = append(tbls, tbl)
+	}
+
 	preparedObj := &PlanCacheStmt{
 		PreparedAst:         prepared,
 		StmtDB:              vars.CurrentDB,
@@ -194,6 +220,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
 		QueryFeatures:       features,
+		dbName:              dbName,
+		tbls:                tbls,
 	}
 	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
@@ -471,6 +499,10 @@ type PlanCacheStmt struct {
 	//  NormalizedSQL4PC: select * from `test` . `t` where `a` > ? and `b` < ? --> schema name is added,
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
+
+	// dbName and tbls are used to add metadata lock.
+	dbName []model.CIStr
+	tbls   []table.Table
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.

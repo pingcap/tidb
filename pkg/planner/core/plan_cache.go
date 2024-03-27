@@ -138,6 +138,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmtAst.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
+
 	return nil
 }
 
@@ -178,11 +179,30 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
+	skip := false
+	if stmtCtx.UseCache {
+		// Acquire the metadata lock and update the schema version.
+		for i := 0; i < len(stmt.dbName); i++ {
+			prevVersion := stmt.tbls[i].Meta().TableVersion
+			tbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+			if err != nil || tbl.Meta().TableVersion != prevVersion {
+				// Handle the case that the schema is updated for select statement.
+				latestSchemaVersion := domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
+				if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), stmt.StmtText,
+					stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
+					return nil, nil, err
+				}
+				skip = true
+				break
+			}
+		}
+	}
+
 	// In rc or for update read, we need the latest schema version to decide whether we need to
 	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
 	var latestSchemaVersion int64
 
-	if stmtCtx.UseCache {
+	if stmtCtx.UseCache && !skip {
 		if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || stmt.ForUpdateRead {
 			// In Rc or ForUpdateRead, we should check if the information schema has been changed since
 			// last time. If it changed, we should rebuild the plan. Here, we use a different and more

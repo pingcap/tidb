@@ -542,6 +542,8 @@ type TableInfo struct {
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
 
+	TableVersion uint64 `json:"table_version"`
+
 	DBID int64 `json:"-"`
 }
 
