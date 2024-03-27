@@ -1356,7 +1356,7 @@ type builtinSetValSig struct {
 
 func (b *builtinSetValSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
 	return b.SequenceOperatorPropReader.RequiredOptionalEvalProps() |
-		b.SequenceOperatorPropReader.RequiredOptionalEvalProps()
+		b.SessionVarsPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinSetValSig) Clone() builtinFunc {
