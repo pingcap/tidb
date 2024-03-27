@@ -2217,6 +2217,9 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 	return err
 }
 
+// EstimateTableRowSizeForTest is used for test.
+var EstimateTableRowSizeForTest = estimateTableRowSize
+
 // estimateTableRowSize estimates the row size in bytes of a table.
 // This function tries to retrieve row size in following orders:
 //  1. AVG_ROW_LENGTH column from information_schema.tables.
