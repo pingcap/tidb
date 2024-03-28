@@ -21,8 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
@@ -74,34 +72,6 @@ var (
 	mapMutex    sync.Mutex
 	sysMapMutex sync.RWMutex
 )
-
-// isResVarAdmin is a flag to check if the user has the RESTRICTED_VARIABLES_ADMIN privilege
-var isResVarAdmin int32
-
-// CheckResVarAdmin checks if the user has the RESTRICTED_VARIABLES_ADMIN privilege
-func CheckResVarAdmin(sctx sessionctx.Context) {
-	if sctx == nil {
-		return
-	}
-	checker := privilege.GetPrivilegeManager(sctx)
-	sessionVars := sctx.GetSessionVars()
-	if sessionVars == nil || checker == nil {
-		return
-	}
-	resVarAdmin := checker.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false)
-	var val int32
-	if resVarAdmin {
-		val = 1
-	} else {
-		val = 0
-	}
-	atomic.StoreInt32(&isResVarAdmin, val)
-}
-
-// IsResVarAdmin returns true if the user has the RESTRICTED_VARIABLES_ADMIN privilege
-func IsResVarAdmin() bool {
-	return atomic.LoadInt32(&isResVarAdmin) == 1
-}
 
 // GetOrigVar Get original system variables
 func GetOrigVar(name string) string {
