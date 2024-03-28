@@ -1498,6 +1498,8 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 	buckets = buckets[:tail]
 
 	var sortError error
+	// Sort the bucket by upper bound first, then by lower bound.
+	// If bkt[i].upper = bkt[i+1].upper, then we'll get bkt[i].lower < bukt[i+1].lower.
 	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
 		res, err := i.upper.Compare(sc.TypeCtx(), j.upper, collate.GetBinaryCollator())
 		if err != nil {
@@ -1595,10 +1597,12 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 			globalBuckets = globalBuckets[:len(globalBuckets)-1]
 		}
 
+		leftMost := buckets[0].lower.Clone()
 		merged, err := mergePartitionBuckets(sc, buckets[:r])
 		if err != nil {
 			return nil, err
 		}
+		merged.lower = leftMost
 		globalBuckets = append(globalBuckets, merged)
 	}
 	for i := 0; i < len(buckets); i++ {

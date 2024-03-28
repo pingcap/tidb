@@ -516,7 +516,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 
 			// Merge histogram.
 			globalHg := &(a.globalStats.Hg[item.idx])
-			*globalHg, err = statistics.MergePartitionHist2GlobalHist(sctx, stmtCtx,allhg, poppedTopN,
+			*globalHg, err = statistics.MergePartitionHist2GlobalHist(sctx, stmtCtx, allhg, poppedTopN,
 				int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
 			if err != nil {
 				return err

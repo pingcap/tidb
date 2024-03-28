@@ -3089,7 +3089,6 @@ func TestAnalyzeMVIndex(t *testing.T) {
 }
 
 func TestAnalyzePartitionVerify(t *testing.T) {
-	t.Skip()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

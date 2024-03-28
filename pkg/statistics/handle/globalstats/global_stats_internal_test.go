@@ -351,6 +351,10 @@ func testIssues24349(testKit *testkit.TestKit) {
 	testKit.MustExec("create table t (a int, b int) partition by hash(a) partitions 3")
 	testKit.MustExec("insert into t values (0, 3), (0, 3), (0, 3), (0, 2), (1, 1), (1, 2), (1, 2), (1, 2), (1, 3), (1, 4), (2, 1), (2, 1)")
 	testKit.MustExec("analyze table t with 1 topn, 3 buckets")
+	testKit.MustQuery("show stats_topn where partition_name = 'global'").Sort().Check(testkit.Rows(
+		"test t global a 0 1 6",
+		"test t global b 0 2 4",
+	))
 	testKit.MustQuery("show stats_buckets where partition_name='global'").Check(testkit.Rows(
 		"test t global a 0 0 2 2 2 2 0",
 		"test t global b 0 0 2 2 1 1 0",
