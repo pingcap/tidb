@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	util2 "github.com/pingcap/tidb/pkg/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -87,7 +87,7 @@ func (ss *Schemas) BackupSchemas(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	workerPool := util2.NewWorkerPool(concurrency, "Schemas")
+	workerPool := tidbutil.NewWorkerPool(concurrency, "Schemas")
 	errg, ectx := errgroup.WithContext(ctx)
 	startAll := time.Now()
 	op := metautil.AppendSchema

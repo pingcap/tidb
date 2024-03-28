@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	util2 "github.com/pingcap/tidb/pkg/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
@@ -136,7 +136,7 @@ func TestStatsWriter(t *testing.T) {
 		statsFileIndexes, err := statsWriter.BackupStatsDone(ctx)
 		require.NoError(t, err)
 
-		controlWorker := util2.NewWorkerPool(2, "test")
+		controlWorker := tidbutil.NewWorkerPool(2, "test")
 		eg, ectx := errgroup.WithContext(ctx)
 		taskCh := make(chan *types.PartitionStatisticLoadTask)
 		controlWorker.ApplyOnErrorGroup(eg, func() error {

@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	util2 "github.com/pingcap/tidb/pkg/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/encrypt"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -121,7 +121,7 @@ func walkLeafMetaFile(
 		return nil
 	}
 	eg, ectx := errgroup.WithContext(ctx)
-	workers := util2.NewWorkerPool(8, "download files workers")
+	workers := tidbutil.NewWorkerPool(8, "download files workers")
 	for _, node_ := range file.MetaFiles {
 		node := node_
 		workers.ApplyOnErrorGroup(eg, func() error {
@@ -347,7 +347,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	go func() {
 		defer close(ch)
 		eg, ectx := errgroup.WithContext(cctx)
-		workers := util2.NewWorkerPool(8, "parse schema workers")
+		workers := tidbutil.NewWorkerPool(8, "parse schema workers")
 		for {
 			select {
 			case <-ectx.Done():

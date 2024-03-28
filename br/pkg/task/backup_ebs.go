@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
-	util2 "github.com/pingcap/tidb/pkg/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/multierr"
@@ -341,7 +341,7 @@ func isRegionsHasHole(allRegions []*metapb.Region) bool {
 
 func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*metapb.Store, mgr *conn.Mgr) ([]*metapb.Region, error) {
 	concurrency := min(len(allStores), common.MaxStoreConcurrency)
-	workerPool := util2.NewWorkerPool(uint(concurrency), "collect schedule info")
+	workerPool := tidbutil.NewWorkerPool(uint(concurrency), "collect schedule info")
 	eg, ectx := errgroup.WithContext(ctx)
 
 	// init this slice with guess that there are 100 leaders on each store

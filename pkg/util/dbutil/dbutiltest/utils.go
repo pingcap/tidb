@@ -13,6 +13,7 @@
 // limitations under the License.
 
 // Package dbutiltest is a package for some common used methods for db related testing.
+// we put it in a separate package to avoid cyclic import.
 package dbutiltest
 
 import (
