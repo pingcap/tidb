@@ -2583,10 +2583,9 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.GetFlag())
 		pointGetPlan.accessCols = ds.TblCols
 		found := false
-		var handleColOffset int
 		for i := range ds.Columns {
 			if ds.Columns[i].ID == ds.handleCols.GetCol(0).ID {
-				handleColOffset = ds.Columns[i].Offset
+				pointGetPlan.HandleColOffset = ds.Columns[i].Offset
 				found = true
 				break
 			}
@@ -2594,7 +2593,6 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		if !found {
 			return invalidTask
 		}
-		pointGetPlan.HandleColOffset = handleColOffset
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sel := PhysicalSelection{
