@@ -298,7 +298,7 @@ func (em *ErrorManager) RecordTypeError(
 		errMsg := encodeErr.Error()
 		logger = logger.With(
 			zap.Int64("offset", offset),
-			zap.String("row", redact.String(rowText)),
+			zap.String("row", redact.Value(rowText)),
 			zap.String("message", errMsg))
 
 		// put it into the database.

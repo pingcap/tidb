@@ -24,8 +24,8 @@ func NeedRedact() bool {
 	return mode != errors.RedactLogDisable && mode != ""
 }
 
-// String receives string argument and return omitted information if redact log enabled
-func String(arg string) string {
+// Value receives string argument and return omitted information if redact log enabled
+func Value(arg string) string {
 	if NeedRedact() {
 		return "?"
 	}

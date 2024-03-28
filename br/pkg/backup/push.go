@@ -192,7 +192,7 @@ func (push *pushDown) pushBackup(
 					}
 					return errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v at %s: %s",
 						store.GetId(),
-						redact.String(store.GetAddress()),
+						redact.Value(store.GetAddress()),
 						errMsg,
 					)
 				default:

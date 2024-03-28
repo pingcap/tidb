@@ -11,13 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package utils_test
+package cdcutil_test
 
 import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -39,7 +39,7 @@ func TestGetCDCChangefeedNameSet(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	nameSet, err := utils.GetCDCChangefeedNameSet(ctx, cli)
+	nameSet, err := cdcutil.GetCDCChangefeedNameSet(ctx, cli)
 	require.NoError(t, err)
 	require.True(t, nameSet.Empty())
 
@@ -61,7 +61,7 @@ func TestGetCDCChangefeedNameSet(t *testing.T) {
 	checkEtcdPut("/tidb/cdc/default/default/task/position/3ecd5c98-0148-4086-adfd-17641995e71f/test-1")
 	checkEtcdPut("/tidb/cdc/default/default/upstream/7168358383033671922")
 
-	nameSet, err = utils.GetCDCChangefeedNameSet(ctx, cli)
+	nameSet, err = cdcutil.GetCDCChangefeedNameSet(ctx, cli)
 	require.NoError(t, err)
 	require.False(t, nameSet.Empty())
 	require.Equal(t, "found CDC changefeed(s): cluster/namespace: default/default changefeed(s): [test], ",
@@ -80,7 +80,7 @@ func TestGetCDCChangefeedNameSet(t *testing.T) {
 	checkEtcdPut("/tidb/cdc/owner/223184ad80a88b0b")
 	checkEtcdPut("/tidb/cdc/task/position/f14cb04d-5ba1-410e-a59b-ccd796920e9d/test")
 
-	nameSet, err = utils.GetCDCChangefeedNameSet(ctx, cli)
+	nameSet, err = cdcutil.GetCDCChangefeedNameSet(ctx, cli)
 	require.NoError(t, err)
 	require.False(t, nameSet.Empty())
 	require.Equal(t, "found CDC changefeed(s): cluster/namespace: <nil> changefeed(s): [test], ",
@@ -99,7 +99,7 @@ func TestGetCDCChangefeedNameSet(t *testing.T) {
 		"/tidb/cdc/5402613591834624000/changefeed/info/test",
 		`{"upstream-id":7195826648407968958,"namespace":"default","changefeed-id":"test-1","sink-uri":"mysql://root@127.0.0.1:3306?time-zone=","create-time":"2023-02-03T15:23:34.773768+08:00","start-ts":439198420741652483,"target-ts":0,"admin-job-type":0,"sort-engine":"unified","sort-dir":"","config":{"memory-quota":1073741824,"case-sensitive":true,"enable-old-value":true,"force-replicate":false,"check-gc-safe-point":true,"enable-sync-point":false,"bdr-mode":false,"sync-point-interval":600000000000,"sync-point-retention":86400000000000,"filter":{"rules":["*.*"],"ignore-txn-start-ts":null,"event-filters":null},"mounter":{"worker-num":16},"sink":{"transaction-atomicity":"","protocol":"","dispatchers":null,"csv":{"delimiter":",","quote":"\"","null":"\\N","include-commit-ts":false},"column-selectors":null,"schema-registry":"","encoder-concurrency":16,"terminator":"\r\n","date-separator":"none","enable-partition-separator":false},"consistent":{"level":"none","max-log-size":64,"flush-interval":2000,"storage":""},"scheduler":{"region-per-span":0}},"state":"normal","error":null,"creator-version":"v6.5.0-master-dirty"}`,
 	)
-	nameSet, err = utils.GetCDCChangefeedNameSet(ctx, cli)
+	nameSet, err = cdcutil.GetCDCChangefeedNameSet(ctx, cli)
 	require.NoError(t, err)
 	require.True(t, nameSet.Empty())
 }

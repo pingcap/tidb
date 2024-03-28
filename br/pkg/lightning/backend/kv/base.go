@@ -110,7 +110,7 @@ func (row RowArrayMarshaller) MarshalLogArray(encoder zapcore.ArrayEncoder) erro
 		}
 		if err := encoder.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
 			enc.AddString("kind", kindStr[kind])
-			enc.AddString("val", redact.String(str))
+			enc.AddString("val", redact.Value(str))
 			return nil
 		})); err != nil {
 			return err

@@ -324,7 +324,7 @@ func (rng StringifyRange) String() string {
 	} else {
 		endKey = redact.Key(rng.EndKey)
 	}
-	sb.WriteString(redact.String(endKey))
+	sb.WriteString(redact.Value(endKey))
 	sb.WriteString(")")
 	return sb.String()
 }

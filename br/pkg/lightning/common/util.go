@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/format"
 	"go.uber.org/zap"
 )
@@ -167,7 +167,7 @@ func IsEmptyDir(name string) bool {
 // SQLWithRetry constructs a retryable transaction.
 type SQLWithRetry struct {
 	// either *sql.DB or *sql.Conn
-	DB           utils.DBExecutor
+	DB           dbutil.DBExecutor
 	Logger       log.Logger
 	HideQueryLog bool
 }
@@ -379,7 +379,7 @@ func InterpolateMySQLString(s string) string {
 }
 
 // TableExists return whether table with specified name exists in target db
-func TableExists(ctx context.Context, db utils.QueryExecutor, schema, table string) (bool, error) {
+func TableExists(ctx context.Context, db dbutil.QueryExecutor, schema, table string) (bool, error) {
 	query := "SELECT 1 from INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
 	var exist string
 	err := db.QueryRowContext(ctx, query, schema, table).Scan(&exist)
@@ -394,7 +394,7 @@ func TableExists(ctx context.Context, db utils.QueryExecutor, schema, table stri
 }
 
 // SchemaExists return whether schema with specified name exists.
-func SchemaExists(ctx context.Context, db utils.QueryExecutor, schema string) (bool, error) {
+func SchemaExists(ctx context.Context, db dbutil.QueryExecutor, schema string) (bool, error) {
 	query := "SELECT 1 from INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?"
 	var exist string
 	err := db.QueryRowContext(ctx, query, schema).Scan(&exist)
