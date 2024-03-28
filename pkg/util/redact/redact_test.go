@@ -16,6 +16,7 @@ package redact
 
 import (
 	"bytes"
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -75,3 +76,16 @@ func TestDeRedact(t *testing.T) {
 		require.Equal(t, c.output, w.String())
 	}
 }
+
+func TestRedactInitAndValueAndKey(t *testing.T) {
+	redacted, secret := "?", "secret"
+
+	InitRedact(false)
+	require.Equal(t, Value(secret), secret)
+	require.Equal(t, Key([]byte(secret)), hex.EncodeToString([]byte(secret)))
+
+	InitRedact(true)
+	require.Equal(t, Value(secret), redacted)
+	require.Equal(t, Key([]byte(secret)), redacted)
+}
+
