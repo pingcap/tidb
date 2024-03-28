@@ -6287,14 +6287,49 @@ func buildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 	return part, nil
 }
 
+<<<<<<< HEAD:ddl/ddl_api.go
 func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
+=======
+func buildAddedPartitionDefs(ctx expression.BuildContext, meta *model.TableInfo, spec *ast.AlterTableSpec) error {
+	partInterval := getPartitionIntervalFromTable(ctx, meta)
+	if partInterval == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"LAST PARTITION, does not seem like an INTERVAL partitioned table")
+	}
+	if partInterval.MaxValPart {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION when MAXVALUE partition exists")
+	}
+
+	spec.Partition.Interval = partInterval
+
+	if len(spec.PartDefinitions) > 0 {
+		return errors.Trace(dbterror.ErrUnsupportedAddPartition)
+	}
+	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
+}
+
+func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes []types.FieldType, exprs []ast.ExprNode) ([]types.Datum, error) {
+>>>>>>> 33d6b79163e (ddl: fix partition definition for literal with non-utf8 charsets + binary column (#49229)):pkg/ddl/ddl_api.go
 	// Validate() has already checked len(colNames) = len(exprs)
 	// create table ... partition by range columns (cols)
 	// partition p0 values less than (expr)
 	// check the type of cols[i] and expr is consistent.
+<<<<<<< HEAD:ddl/ddl_api.go
 	colTypes := collectColumnsType(meta)
 	for i, colExpr := range exprs {
 		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
+=======
+	valDatums := make([]types.Datum, 0, len(colTypes))
+	for i, colExpr := range exprs {
+		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
+			valDatums = append(valDatums, types.NewStringDatum(partitionMaxValue))
+			continue
+		}
+		if d, ok := colExpr.(*ast.DefaultExpr); ok {
+			if d.Name != nil {
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+>>>>>>> 33d6b79163e (ddl: fix partition definition for literal with non-utf8 charsets + binary column (#49229)):pkg/ddl/ddl_api.go
 			continue
 		}
 		colType := colTypes[i]
@@ -6335,8 +6370,14 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 		if err != nil {
 			return dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
+<<<<<<< HEAD:ddl/ddl_api.go
 	}
 	return nil
+=======
+		valDatums = append(valDatums, newVal)
+	}
+	return valDatums, nil
+>>>>>>> 33d6b79163e (ddl: fix partition definition for literal with non-utf8 charsets + binary column (#49229)):pkg/ddl/ddl_api.go
 }
 
 // LockTables uses to execute lock tables statement.
