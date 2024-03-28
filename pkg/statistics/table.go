@@ -196,7 +196,6 @@ func (m *ColAndIdxExistenceMap) makeIdxInfoMap() {
 	if m.idxInfoMap == nil {
 		m.idxInfoMap = make(map[int64]*model.IndexInfo, len(m.idxAnalyzed))
 	}
-
 }
 
 // NewColAndIndexExistenceMap return a new object with the given capcity.
