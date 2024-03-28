@@ -2732,7 +2732,7 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	originalVal1 := exec.AutoAnalyzeMinCnt
 	originalVal2 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
 	exec.AutoAnalyzeMinCnt = 0
-	tk.MustExec("set global tidb_auto_analyze_ratio = 0.501")
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.001")
 	defer func() {
 		exec.AutoAnalyzeMinCnt = originalVal1
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
