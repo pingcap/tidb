@@ -1487,6 +1487,7 @@ const (
 	DefTiDBLowResolutionTSOUpdateInterval             = 2000
 	DefDivPrecisionIncrement                          = 4
 	DefTiDBDMLType                                    = "STANDARD"
+	DefGroupConcatMaxLen                              = "1024"
 )
 
 // Process global variables.
