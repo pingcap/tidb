@@ -46,12 +46,22 @@ go_test(
     embed = [":reporter"],
     flaky = True,
     deps = [
+<<<<<<< HEAD:util/topsql/reporter/BUILD.bazel
         "//config",
         "//testkit/testsetup",
         "//util/topsql/collector",
         "//util/topsql/reporter/mock",
         "//util/topsql/state",
         "//util/topsql/stmtstats",
+=======
+        "//pkg/config",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/topsql/collector",
+        "//pkg/util/topsql/reporter/mock",
+        "//pkg/util/topsql/state",
+        "//pkg/util/topsql/stmtstats",
+        "@com_github_pingcap_failpoint//:failpoint",
+>>>>>>> 089cba4853d (pkg/util: fix panic caused by logging grpc err (#52179)):pkg/util/topsql/reporter/BUILD.bazel
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
