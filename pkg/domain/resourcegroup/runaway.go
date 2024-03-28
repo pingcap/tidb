@@ -444,7 +444,7 @@ type RunawayChecker struct {
 
 	markedByRule  atomic.Bool
 	markedByWatch bool
-	action        rmpb.RunawayAction
+	watchAction   rmpb.RunawayAction
 }
 
 func newRunawayChecker(manager *RunawayManager, resourceGroupName string, setting *rmpb.RunawaySettings, originalSQL, sqlDigest, planDigest string) *RunawayChecker {
@@ -477,7 +477,7 @@ func (r *RunawayChecker) BeforeExecutor() error {
 			}
 			r.markedByWatch = true
 			now := time.Now()
-			r.action = action
+			r.watchAction = action
 			r.markRunaway(RunawayMatchTypeWatch, action, &now)
 			// If no match action, it will do nothing.
 			switch action {
@@ -497,15 +497,14 @@ func (r *RunawayChecker) BeforeExecutor() error {
 
 // BeforeCopRequest checks runaway and modifies the request if necessary before sending coprocessor request.
 func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
-	if r.setting == nil {
+	if r.setting == nil && !r.markedByWatch {
 		return nil
 	}
 	marked := r.markedByRule.Load()
 	if !marked {
 		// note: now we don't check whether query is in watch list again.
 		if r.markedByWatch {
-			switch r.setting.Action {
-			case rmpb.RunawayAction_CoolDown:
+			if r.watchAction == rmpb.RunawayAction_CoolDown {
 				req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
 			}
 		}
