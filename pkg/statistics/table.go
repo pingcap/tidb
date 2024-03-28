@@ -690,7 +690,6 @@ const shardCnt = 128
 
 type neededStatsMap struct {
 	items [shardCnt]neededStatsInternalMap
-	m     sync.RWMutex
 }
 
 func newNeededStatsMap() *neededStatsMap {
