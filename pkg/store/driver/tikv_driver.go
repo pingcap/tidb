@@ -25,7 +25,10 @@ import (
 
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -35,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/tikv/client-go/v2/config"
+	cli_config "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
@@ -65,43 +68,43 @@ func init() {
 type Option func(*TiKVDriver)
 
 // WithSecurity changes the config.Security used by tikv driver.
-func WithSecurity(s config.Security) Option {
+func WithSecurity(s cli_config.Security) Option {
 	return func(c *TiKVDriver) {
 		c.security = s
 	}
 }
 
 // WithTiKVClientConfig changes the config.TiKVClient used by tikv driver.
-func WithTiKVClientConfig(client config.TiKVClient) Option {
+func WithTiKVClientConfig(client cli_config.TiKVClient) Option {
 	return func(c *TiKVDriver) {
 		c.tikvConfig = client
 	}
 }
 
 // WithTxnLocalLatches changes the config.TxnLocalLatches used by tikv driver.
-func WithTxnLocalLatches(t config.TxnLocalLatches) Option {
+func WithTxnLocalLatches(t cli_config.TxnLocalLatches) Option {
 	return func(c *TiKVDriver) {
 		c.txnLocalLatches = t
 	}
 }
 
 // WithPDClientConfig changes the config.PDClient used by tikv driver.
-func WithPDClientConfig(client config.PDClient) Option {
+func WithPDClientConfig(client cli_config.PDClient) Option {
 	return func(c *TiKVDriver) {
 		c.pdConfig = client
 	}
 }
 
-func getKVStore(path string, tls config.Security) (kv.Storage, error) {
+func getKVStore(path string, tls cli_config.Security) (kv.Storage, error) {
 	return TiKVDriver{}.OpenWithOptions(path, WithSecurity(tls))
 }
 
 // TiKVDriver implements engine TiKV.
 type TiKVDriver struct {
-	pdConfig        config.PDClient
-	security        config.Security
-	tikvConfig      config.TiKVClient
-	txnLocalLatches config.TxnLocalLatches
+	pdConfig        cli_config.PDClient
+	security        cli_config.Security
+	tikvConfig      cli_config.TiKVClient
+	txnLocalLatches cli_config.TxnLocalLatches
 }
 
 // Open opens or creates an TiKV storage with given path using global config.
@@ -111,7 +114,7 @@ func (d TiKVDriver) Open(path string) (kv.Storage, error) {
 }
 
 func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
-	tidbCfg := config.GetGlobalConfig()
+	tidbCfg := cli_config.GetGlobalConfig()
 	d.pdConfig = tidbCfg.PDClient
 	d.security = tidbCfg.Security
 	d.tikvConfig = tidbCfg.TiKVClient
@@ -127,7 +130,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 	mc.Lock()
 	defer mc.Unlock()
 	d.setDefaultAndOptions(options...)
-	etcdAddrs, disableGC, keyspaceName, err := config.ParsePath(path)
+	etcdAddrs, disableGC, keyspaceName, err := cli_config.ParsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -165,7 +168,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 			}),
 		),
 		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
-		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
+		pd.WithForwardingOption(cli_config.GetGlobalConfig().EnableForwarding))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -183,14 +186,10 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		return nil, errors.Trace(err)
 	}
 
-	spkv, err = tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	// ---------------- keyspace logic  ----------------
 	var (
-		pdClient *tikv.CodecPDClient
+		pdClient     *tikv.CodecPDClient
+		keyspaceMeta *keyspacepb.KeyspaceMeta
 	)
 
 	if keyspaceName == "" {
@@ -199,6 +198,11 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 	} else {
 		logutil.BgLogger().Info("using API V2.", zap.String("keyspaceName", keyspaceName))
 		pdClient, err = tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, pdCli, keyspaceName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		keyspaceMeta, err = keyspace.GetKeyspaceMeta(pdCli, keyspaceName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -211,17 +215,27 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		tikv.WithCodec(codec),
 	)
 
+	spkv, err = keyspace.NewEtcdSafePointKV(etcdAddrs, codec, tlsConfig)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	s, err = tikv.NewKVStore(uuid, pdClient, spkv, &injectTraceClient{Client: rpcClient},
 		tikv.WithPDHTTPClient("tikv-driver", etcdAddrs, pdhttp.WithTLSConfig(tlsConfig), pdhttp.WithMetrics(metrics.PDAPIRequestCounter, metrics.PDAPIExecutionHistogram)))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
+	logutil.BgLogger().Warn("Safe point v2 etcd path exists, config.EnableSafePointV2 must be true.")
+	err = d.checkSafePointVersion(keyspaceMeta, s.GetPDHTTPClient())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	// ---------------- keyspace logic  ----------------
 	if d.txnLocalLatches.Enabled {
 		s.EnableTxnLocalLatches(d.txnLocalLatches.Capacity)
 	}
-	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
+	coprCacheConfig := &cli_config.GetGlobalConfig().TiKVClient.CoprCache
 	coprStore, err := copr.NewStore(s, coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -239,6 +253,42 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 
 	mc.cache[uuid] = store
 	return store, nil
+}
+
+func (d TiKVDriver) checkSafePointVersion(keyspaceMeta *keyspacepb.KeyspaceMeta, pdHTTPCli pdhttp.Client) error {
+	if keyspaceMeta == nil {
+		return nil
+	}
+
+	// If safe point version in PD keyspace config is not v2.
+	if !gcworker.IsKeyspaceMetaEnableSafePointV2(keyspaceMeta) {
+		// Tidb config safe point version v2. Update safe point version in PD keyspace config to v2.
+		if config.GetGlobalConfig().EnableSafePointV2 {
+			ctx := context.Background()
+			keyspaceSafePointVersionConfig := pdhttp.KeyspaceSafePointVersionConfig{
+				Config: pdhttp.KeyspaceSafePointVersion{
+					SafePointVersion: config.SafePointV2,
+				},
+			}
+			err := pdHTTPCli.UpdateKeyspaceSafePointVersion(ctx, keyspaceMeta.GetName(), &keyspaceSafePointVersionConfig)
+			if err != nil {
+				return err
+			}
+			return nil
+		}
+	}
+
+	// If safe point version in PD keyspace config is v2,
+	// TiDB config safe point version is not v2.
+	// Set the enable safe point v2 in tidb config is true.
+	if !config.GetGlobalConfig().EnableSafePointV2 {
+		logutil.BgLogger().Warn("Safe point v2 etcd path exists, config.EnableSafePointV2 must be true.")
+		config.UpdateGlobal(func(c *config.Config) {
+			c.EnableSafePointV2 = true
+		})
+	}
+
+	return nil
 }
 
 type tikvStore struct {
@@ -275,7 +325,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	if ldflagGetEtcdAddrsFromConfig == "1" {
 		// For automated test purpose.
 		// To manipulate connection to etcd by mandatorily setting path to a proxy.
-		cfg := config.GetGlobalConfig()
+		cfg := cli_config.GetGlobalConfig()
 		return strings.Split(cfg.Path, ","), nil
 	}
 
@@ -374,6 +424,15 @@ func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
 func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 	ver, err := s.KVStore.CurrentTimestamp(txnScope)
 	return kv.NewVersion(ver), derr.ToTiDBErr(err)
+}
+
+// CurrentMinTimestamp returns current minimum timestamp across all keyspace groups.
+func (s *tikvStore) CurrentMinTimestamp() (uint64, error) {
+	ts, err := s.KVStore.CurrentMinTimestamp()
+	if err != nil && strings.Contains(err.Error(), "Unimplemented") {
+		ts, err = s.KVStore.CurrentTimestamp(kv.GlobalTxnScope)
+	}
+	return ts, derr.ToTiDBErr(err)
 }
 
 // ShowStatus returns the specified status of the storage
