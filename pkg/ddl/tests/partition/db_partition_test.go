@@ -3177,19 +3177,21 @@ func TestRemoveListColumnsPartitioning(t *testing.T) {
 
 func TestRemovePartitioningAutoIDs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk1 := testkit.NewTestKit(t, store)
 	dbName := "RemovePartAutoIDs"
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+
 	tk1.MustExec(`create schema ` + dbName)
 	tk1.MustExec(`use ` + dbName)
+	tk2.MustExec(`use ` + dbName)
+	tk3.MustExec(`use ` + dbName)
+
 	tk1.MustExec(`CREATE TABLE t (a int auto_increment primary key nonclustered, b varchar(255), key (b)) partition by hash(a) partitions 3`)
 	tk1.MustExec(`insert into t values (11,11),(2,2),(null,12)`)
 	tk1.MustExec(`insert into t values (null,18)`)
 	tk1.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows("13 11 11", "14 2 2", "15 12 12", "17 16 18"))
 
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec(`use ` + dbName)
-	tk3 := testkit.NewTestKit(t, store)
-	tk3.MustExec(`use ` + dbName)
 	waitFor := func(col int, tableName, s string) {
 		for {
 			tk4 := testkit.NewTestKit(t, store)
