@@ -737,7 +737,7 @@ create table log_message_1 (
 			"  `a` time DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 			"PARTITION BY RANGE COLUMNS(`a`)\n" +
-			"(PARTITION `p1` VALUES LESS THAN ('2020'))"))
+			"(PARTITION `p1` VALUES LESS THAN ('00:20:20'))"))
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a time, b time) partition by range columns (a) (partition p1 values less than ('2020'), partition p2 values less than ('20:20:10'))`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows(
@@ -746,7 +746,7 @@ create table log_message_1 (
 			"  `b` time DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 			"PARTITION BY RANGE COLUMNS(`a`)\n" +
-			"(PARTITION `p1` VALUES LESS THAN ('2020'),\n" +
+			"(PARTITION `p1` VALUES LESS THAN ('00:20:20'),\n" +
 			" PARTITION `p2` VALUES LESS THAN ('20:20:10'))"))
 	tk.MustExec(`insert into t values ('2019','2019'),('20:20:09','20:20:09')`)
 	tk.MustExec(`drop table t`)
@@ -3787,8 +3787,8 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 		"  `create_time` datetime DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
-		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01'),\n" +
-		" PARTITION `P_LT_2023-01-02` VALUES LESS THAN ('2023-01-02'),\n" +
+		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-02` VALUES LESS THAN ('2023-01-02 00:00:00'),\n" +
 		" PARTITION `P_LT_2023-01-03 00:00:00` VALUES LESS THAN ('2023-01-03 00:00:00'),\n" +
 		" PARTITION `P_LT_2023-01-04 00:00:00` VALUES LESS THAN ('2023-01-04 00:00:00'))"))
 }

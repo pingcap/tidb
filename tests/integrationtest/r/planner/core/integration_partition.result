@@ -682,7 +682,7 @@ drop table t1;
 create database RangeColumnsMulti;
 use RangeColumnsMulti;
 create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p0 values less than (NULL,NULL,NULL));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 26 near ",'',''))" 
+Error 1566 (HY000): Not allowed to use NULL value in VALUES LESS THAN
 create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p1 values less than (-2147483649,'0000-00-00',""));
 Error 1654 (HY000): Partition column values of incorrect type
 create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p1 values less than (-2147483648,'0000-00-00',""),partition p2 values less than (10,'2022-01-01',"Wow"),partition p3 values less than (11,'2022-01-01',MAXVALUE),partition p4 values less than (MAXVALUE,'2022-01-01',"Wow"));
@@ -1165,11 +1165,11 @@ t	CREATE TABLE `t` (
   `a` date DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`a`)
-(PARTITION `p0` VALUES LESS THAN ('19990601'),
+(PARTITION `p0` VALUES LESS THAN ('1999-06-01'),
  PARTITION `p1` VALUES LESS THAN ('2000-05-01'),
- PARTITION `p2` VALUES LESS THAN ('20080401'),
+ PARTITION `p2` VALUES LESS THAN ('2008-04-01'),
  PARTITION `p3` VALUES LESS THAN ('2010-03-01'),
- PARTITION `p4` VALUES LESS THAN ('20160201'),
+ PARTITION `p4` VALUES LESS THAN ('2016-02-01'),
  PARTITION `p5` VALUES LESS THAN ('2020-01-01'),
  PARTITION `p6` VALUES LESS THAN (MAXVALUE))
 insert into t values ('19990101'),('1999-06-01'),('2000-05-01'),('20080401'),('2010-03-01'),('2016-02-01'),('2020-01-01');
