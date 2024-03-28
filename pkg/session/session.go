@@ -2637,8 +2637,64 @@ func (s *session) GetTableCtx() tbctx.MutateContext {
 }
 
 // GetDistSQLCtx returns the context used in DistSQL
-func (s *session) GetDistSQLCtx() distsqlctx.DistSQLContext {
-	return s
+func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
+	vars := s.GetSessionVars()
+	sc := vars.StmtCtx
+
+	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
+		return &distsqlctx.DistSQLContext{
+			AppendWarning:   sc.AppendWarning,
+			InRestrictedSQL: sc.InRestrictedSQL,
+			Client:          s.GetClient(),
+
+			EnabledRateLimitAction: vars.EnabledRateLimitAction,
+			EnableChunkRPC:         vars.EnableChunkRPC,
+			OriginalSQL:            sc.OriginalSQL,
+			KVVars:                 vars.KVVars,
+			KvExecCounter:          sc.KvExecCounter,
+			SessionMemTracker:      vars.MemTracker,
+
+			Location:         sc.TimeZone(),
+			RuntimeStatsColl: sc.RuntimeStatsColl,
+			SQLKiller:        &vars.SQLKiller,
+			ErrCtx:           sc.ErrCtx(),
+
+			TiFlashReplicaRead:                   vars.TiFlashReplicaRead,
+			TiFlashMaxThreads:                    vars.TiFlashMaxThreads,
+			TiFlashMaxBytesBeforeExternalJoin:    vars.TiFlashMaxBytesBeforeExternalJoin,
+			TiFlashMaxBytesBeforeExternalGroupBy: vars.TiFlashMaxBytesBeforeExternalGroupBy,
+			TiFlashMaxBytesBeforeExternalSort:    vars.TiFlashMaxBytesBeforeExternalSort,
+			TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
+			TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
+
+			DistSQLConcurrency:            vars.DistSQLScanConcurrency(),
+			ReplicaReadType:               vars.GetReplicaRead(),
+			WeakConsistency:               sc.WeakConsistency,
+			RCCheckTS:                     sc.RCCheckTS,
+			NotFillCache:                  sc.NotFillCache,
+			TaskID:                        sc.TaskID,
+			Priority:                      sc.Priority,
+			ResourceGroupTagger:           sc.GetResourceGroupTagger(),
+			EnablePaging:                  vars.EnablePaging,
+			MinPagingSize:                 vars.MinPagingSize,
+			MaxPagingSize:                 vars.MaxPagingSize,
+			RequestSourceType:             vars.RequestSourceType,
+			ExplicitRequestSourceType:     vars.ExplicitRequestSourceType,
+			StoreBatchSize:                vars.StoreBatchSize,
+			ResourceGroupName:             sc.ResourceGroupName,
+			LoadBasedReplicaReadThreshold: vars.LoadBasedReplicaReadThreshold,
+			RunawayChecker:                sc.RunawayChecker,
+			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
+
+			ReplicaClosestReadThreshold: vars.ReplicaClosestReadThreshold,
+			ConnectionID:                vars.ConnectionID,
+			SessionAlias:                vars.SessionAlias,
+
+			ExecDetails: &sc.SyncExecDetails,
+		}
+	})
+
+	return dctx.(*distsqlctx.DistSQLContext)
 }
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {

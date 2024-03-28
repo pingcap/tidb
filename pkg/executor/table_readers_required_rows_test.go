@@ -112,7 +112,7 @@ func mockDistsqlSelectCtxGet(ctx context.Context) (totalRows int, expectedRowsRe
 	return
 }
 
-func mockSelectResult(ctx context.Context, dctx distsqlctx.DistSQLContext, kvReq *kv.Request,
+func mockSelectResult(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Request,
 	fieldTypes []*types.FieldType, copPlanIDs []int) (distsql.SelectResult, error) {
 	totalRows, expectedRowsRet := mockDistsqlSelectCtxGet(ctx)
 	return &requiredRowsSelectResult{

@@ -2612,7 +2612,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.
 		SetDAGRequest(dagReq).
-		SetFromSessionVars(sctx.GetSessionVars()).
+		SetFromSessionVars(sctx.GetDistSQLCtx()).
 		SetFromInfoSchema(sctx.GetInfoSchema()).
 		SetStoreType(kv.TiDB).
 		SetTiDBServerID(gcid.ServerID).

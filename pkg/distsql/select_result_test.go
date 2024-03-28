@@ -30,13 +30,15 @@ import (
 func TestUpdateCopRuntimeStats(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = stmtctx.NewStmtCtx()
-	sr := selectResult{ctx: ctx, storeType: kv.TiKV}
+	sr := selectResult{ctx: ctx.GetDistSQLCtx(), storeType: kv.TiKV}
 	require.Nil(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl)
 
 	sr.rootPlanID = 1234
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{DetailsNeedP90: execdetails.DetailsNeedP90{CalleeAddress: "a"}}}, 0)
 
 	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+	// refresh the ctx after assigning `RuntimeStatsColl`.
+	sr.ctx = ctx.GetDistSQLCtx()
 	i := uint64(1)
 	sr.selectResp = &tipb.SelectResponse{
 		ExecutionSummaries: []*tipb.ExecutorExecutionSummary{

@@ -66,6 +66,6 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 		dagReq.Executors, err = ConstructListBasedDistExec(ctx.GetPlanCtx(), plans)
 	}
 
-	distsql.SetEncodeType(ctx, dagReq)
+	distsql.SetEncodeType(ctx.GetDistSQLCtx(), dagReq)
 	return dagReq, err
 }
