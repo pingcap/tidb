@@ -88,4 +88,3 @@ func TestRedactInitAndValueAndKey(t *testing.T) {
 	require.Equal(t, Value(secret), redacted)
 	require.Equal(t, Key([]byte(secret)), redacted)
 }
-
