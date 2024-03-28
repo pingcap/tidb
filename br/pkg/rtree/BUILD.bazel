@@ -35,6 +35,7 @@ go_test(
     shard_count = 4,
     deps = [
         ":rtree",
+        "//kv",
         "//tablecodec",
         "//testkit/testsetup",
         "@com_github_pingcap_kvproto//pkg/brpb",
