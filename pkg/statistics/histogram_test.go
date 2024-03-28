@@ -523,6 +523,16 @@ func TestMergeBucketNDV(t *testing.T) {
 			right:  genBucket4Merging4Test(2, 6, 4, 0),
 			result: genBucket4Merging4Test(2, 6, 5, 0),
 		},
+		{
+			left:   genBucket4Merging4Test(3, 5, 0, 0),
+			right:  genBucket4Merging4Test(2, 6, 0, 0),
+			result: genBucket4Merging4Test(2, 6, 0, 0),
+		},
+		{
+			left:   genBucket4Merging4Test(1, 3, 0, 0),
+			right:  genBucket4Merging4Test(4, 6, 0, 0),
+			result: genBucket4Merging4Test(1, 6, 0, 0),
+		},
 	}
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	for _, tt := range tests {
