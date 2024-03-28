@@ -303,7 +303,11 @@ func (cr *chunkProcessor) encodeLoop(
 	var (
 		filteredColumns []string
 		extendVals      []types.Datum
+		// some columns should not record in checkpoint, like extra columns
+		// so we copy a new one from chunk.ColumnPermutation
+		columnPermutation = make([]int, 0, len(cr.chunk.ColumnPermutation))
 	)
+	columnPermutation = append(columnPermutation, cr.chunk.ColumnPermutation...)
 	ignoreColumns, err1 := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(t.dbInfo.Name, t.tableInfo.Core.Name.O, rc.cfg.Mydumper.CaseSensitive)
 	if err1 != nil {
 		err = err1
@@ -362,6 +366,7 @@ func (cr *chunkProcessor) encodeLoop(
 						if err = t.initializeColumns(columnNames, cr.chunk); err != nil {
 							return
 						}
+						columnPermutation = append(columnPermutation, cr.chunk.ColumnPermutation...)
 					}
 					filteredColumns = columnNames
 					ignoreColsMap := ignoreColumns.ColumnsMap()
@@ -376,7 +381,7 @@ func (cr *chunkProcessor) encodeLoop(
 					}
 					for i, col := range t.tableInfo.Core.Columns {
 						if p, ok := extendColsMap[col.Name.O]; ok {
-							cr.chunk.ColumnPermutation[i] = p
+							columnPermutation[i] = p
 						}
 					}
 					initializedColumns = true
@@ -431,10 +436,11 @@ func (cr *chunkProcessor) encodeLoop(
 						lastRow,
 						lastOffset,
 						dupIgnoreRowsIter.UnsafeValue(),
+						columnPermutation,
 						t.tableInfo.Desired,
 						logger,
 					)
-					rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
+					rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, columnPermutation)
 					err = rc.errorMgr.RecordDuplicate(
 						ctx,
 						logger,
@@ -453,12 +459,12 @@ func (cr *chunkProcessor) encodeLoop(
 			}
 
 			// sql -> kv
-			kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
+			kvs, encodeErr := kvEncoder.Encode(lastRow.Row, lastRow.RowID, columnPermutation, curOffset)
 			encodeDur += time.Since(encodeDurStart)
 
 			hasIgnoredEncodeErr := false
 			if encodeErr != nil {
-				rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
+				rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, columnPermutation)
 				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
 				if encodeErr != nil {
 					err = common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(&cr.chunk.Key, newOffset)
@@ -524,6 +530,7 @@ func (cr *chunkProcessor) getDuplicateMessage(
 	lastRow mydump.Row,
 	lastOffset int64,
 	encodedIdxID []byte,
+	columnPermutation []int,
 	tableInfo *model.TableInfo,
 	logger log.Logger,
 ) string {
@@ -531,7 +538,7 @@ func (cr *chunkProcessor) getDuplicateMessage(
 	if err != nil {
 		return err.Error()
 	}
-	kvs, err := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, lastOffset)
+	kvs, err := kvEncoder.Encode(lastRow.Row, lastRow.RowID, columnPermutation, lastOffset)
 	if err != nil {
 		return err.Error()
 	}
