@@ -1023,6 +1023,38 @@ const (
 	ErrAssertionFailed                     = 8141
 	ErrInstanceScope                       = 8142
 	ErrNonTransactionalJobFailure          = 8143
+<<<<<<< HEAD:errno/errcode.go
+=======
+	ErrSettingNoopVariable                 = 8144
+	ErrGettingNoopVariable                 = 8145
+	ErrCannotMigrateSession                = 8146
+	ErrLazyUniquenessCheckFailure          = 8147
+	ErrUnsupportedColumnInTTLConfig        = 8148
+	ErrTTLColumnCannotDrop                 = 8149
+	ErrSetTTLOptionForNonTTLTable          = 8150
+	ErrTempTableNotAllowedWithTTL          = 8151
+	ErrUnsupportedTTLReferencedByFK        = 8152
+	ErrUnsupportedPrimaryKeyTypeWithTTL    = 8153
+	ErrLoadDataFromServerDisk              = 8154
+	ErrLoadParquetFromLocal                = 8155
+	ErrLoadDataEmptyPath                   = 8156
+	ErrLoadDataUnsupportedFormat           = 8157
+	ErrLoadDataInvalidURI                  = 8158
+	ErrLoadDataCantAccess                  = 8159
+	ErrLoadDataCantRead                    = 8160
+	ErrLoadDataWrongFormatConfig           = 8162
+	ErrUnknownOption                       = 8163
+	ErrInvalidOptionVal                    = 8164
+	ErrDuplicateOption                     = 8165
+	ErrLoadDataUnsupportedOption           = 8166
+	ErrLoadDataJobNotFound                 = 8170
+	ErrLoadDataInvalidOperation            = 8171
+	ErrLoadDataLocalUnsupportedOption      = 8172
+	ErrLoadDataPreCheckFailed              = 8173
+	ErrBRJobNotFound                       = 8174
+	ErrMemoryExceedForQuery                = 8175
+	ErrMemoryExceedForInstance             = 8176
+>>>>>>> 5bc70a9f6c2 (errno: add test to check every errcode has its message (#49774)):pkg/errno/errcode.go
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
