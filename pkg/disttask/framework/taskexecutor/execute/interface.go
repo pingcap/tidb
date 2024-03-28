@@ -55,7 +55,9 @@ type SubtaskSummary struct {
 
 // StepExecFrameworkInfo is an interface that should be embedded into the
 // implementation of StepExecutor. It's set by the framework automatically and
-// the implementation can use it to access necessary information.
+// the implementation can use it to access necessary information. The framework
+// will init it before `StepExecutor.Init`, before that you cannot call methods
+// in this interface.
 type StepExecFrameworkInfo interface {
 	// restricted is a private method to prevent other package mistakenly implements
 	// StepExecFrameworkInfo. So when StepExecFrameworkInfo is composed with other
