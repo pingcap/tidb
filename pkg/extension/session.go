@@ -88,6 +88,8 @@ type StmtEventInfo interface {
 	// AffectedRows will return the affected rows of the current statement
 	AffectedRows() uint64
 	// RelatedTables will return the related tables of the current statement
+	// For statements succeeding to build logical plan, it uses the `visitinfo` to get the related tables
+	// For statements failing to build logical plan, it traverses the ast node to get the related tables
 	RelatedTables() []stmtctx.TableEntry
 	// GetError will return the error when the current statement is failed
 	GetError() error
