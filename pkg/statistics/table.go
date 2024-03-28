@@ -161,7 +161,9 @@ func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 
 // InsertCol inserts a column with its meta into the map.
 func (m *ColAndIdxExistenceMap) InsertCol(id int64, info *model.ColumnInfo, analyzed bool) {
-	m.makeColInfoMapMap()
+	if m.colInfoMap == nil {
+		m.colInfoMap = make(map[int64]*model.ColumnInfo, len(m.colAnalyzed))
+	}
 	m.colInfoMap[id] = info
 	m.colAnalyzed[id] = analyzed
 }
@@ -176,14 +178,18 @@ func (m *ColAndIdxExistenceMap) GetCol(id int64) *model.ColumnInfo {
 
 // InsertIndex inserts an index with its meta into the map.
 func (m *ColAndIdxExistenceMap) InsertIndex(id int64, info *model.IndexInfo, analyzed bool) {
-	m.makeIdxInfoMap()
+	if m.idxInfoMap == nil {
+		m.idxInfoMap = make(map[int64]*model.IndexInfo, len(m.idxAnalyzed))
+	}
 	m.idxInfoMap[id] = info
 	m.idxAnalyzed[id] = analyzed
 }
 
 // GetIndex gets the meta data of the given index.
 func (m *ColAndIdxExistenceMap) GetIndex(id int64) *model.IndexInfo {
-	m.makeIdxInfoMap()
+	if m.idxInfoMap == nil {
+		return nil
+	}
 	return m.idxInfoMap[id]
 }
 
@@ -204,18 +210,6 @@ func (m *ColAndIdxExistenceMap) Clone() (mm *ColAndIdxExistenceMap) {
 	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
 	mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
 	return mm
-}
-
-func (m *ColAndIdxExistenceMap) makeColInfoMapMap() {
-	if m.colInfoMap == nil {
-		m.colInfoMap = make(map[int64]*model.ColumnInfo, len(m.colAnalyzed))
-	}
-}
-
-func (m *ColAndIdxExistenceMap) makeIdxInfoMap() {
-	if m.idxInfoMap == nil {
-		m.idxInfoMap = make(map[int64]*model.IndexInfo, len(m.idxAnalyzed))
-	}
 }
 
 // ColAndIdxExistenceMapIsEqual is used in testing, checking whether the two are equal.
