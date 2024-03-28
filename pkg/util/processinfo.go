@@ -155,6 +155,7 @@ var ascServerStatus = []uint16{
 	mysql.ServerStatusMetadataChanged,
 	mysql.ServerStatusWasSlow,
 	mysql.ServerPSOutParams,
+	mysql.ServerStatusWaitQueryFinished,
 }
 
 // mapServerStatus2Str is the map for server status to string.
@@ -171,6 +172,7 @@ var mapServerStatus2Str = map[uint16]string{
 	mysql.ServerStatusMetadataChanged:    "metadata changed",
 	mysql.ServerStatusWasSlow:            "was slow",
 	mysql.ServerPSOutParams:              "ps out params",
+	mysql.ServerStatusWaitQueryFinished:  "wait query finished",
 }
 
 // serverStatus2Str convert server status to string.

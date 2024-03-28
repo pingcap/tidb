@@ -623,6 +623,7 @@ func (s *Server) closeListener() {
 // Close closes the server.
 func (s *Server) Close() {
 	s.startShutdown()
+	s.KillAllConnections()
 	s.rwlock.Lock() // // prevent new connections
 	defer s.rwlock.Unlock()
 	s.inShutdownMode.Store(true)
@@ -905,6 +906,11 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
 		// Mark the client connection status as WaitShutdown, when clientConn.Run detect
 		// this, it will end the dispatch loop and exit.
 		conn.setStatus(connStatusWaitShutdown)
+		if conn.bufReadConn != nil {
+			if err := conn.bufReadConn.SetWriteDeadline(time.Now()); err != nil {
+				logutil.BgLogger().Warn("error setting write deadline for kill.", zap.Error(err))
+			}
+		}
 	}
 	killQuery(conn, maxExecutionTime)
 }

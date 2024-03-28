@@ -102,7 +102,7 @@ func (s *sessionToBeKilled) reset() {
 func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 	if s.isKilling {
 		if info, ok := sm.GetProcessInfo(s.sessionID); ok {
-			if info.Time == s.sqlStartTime {
+			if info.Time == s.sqlStartTime && (info.State&mysql.ServerStatusWaitQueryFinished == 0) {
 				if time.Since(s.lastLogTime) > 5*time.Second {
 					logutil.BgLogger().Warn(fmt.Sprintf("global memory controller failed to kill the top-consumer in %ds",
 						time.Since(s.killStartTime)/time.Second),

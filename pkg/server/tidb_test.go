@@ -39,6 +39,7 @@ func TestRcReadCheckTSConflict(t *testing.T) {
 		chunkAlloc: chunk.NewAllocator(),
 		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
+	defer closeConn(cc)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_rc_read_check_ts = ON")
@@ -88,6 +89,7 @@ func TestRcReadCheckTSConflictExtra(t *testing.T) {
 		chunkAlloc: chunk.NewAllocator(),
 		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
+	defer closeConn(cc)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_rc_read_check_ts = ON")
