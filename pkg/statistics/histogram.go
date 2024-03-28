@@ -1570,7 +1570,7 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 				buckets[i-1].Count -= overlappedCount
 				buckets[i-1].NDV -= overlappedNDV
 				// Cut it.
-				currentLeftMost.Copy(buckets[i-1].lower)
+				currentLeftMost.Copy(buckets[i-1].upper)
 				buckets[i-1].Repeat = 0
 			}
 			merged, err := mergePartitionBuckets(sc, buckets[i:r])
@@ -1588,21 +1588,39 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 	}
 	if r > 0 {
 		bucketSum := int64(0)
-		for _, b := range buckets[:r] {
+		leftMost := buckets[0].lower
+		for i, b := range buckets[:r] {
 			bucketSum += b.Count
+			if i == 0 {
+				continue
+			}
+			res, err := leftMost.Compare(sc.TypeCtx(), b.lower, collate.GetBinaryCollator())
+			if err != nil {
+				return nil, err
+			}
+			if res > 0 {
+				leftMost = b.lower
+			}
 		}
 
 		if len(globalBuckets) > 0 && bucketSum < gBucketCountThreshold { // merge them into the previous global bucket
 			r = prevR
+			lower := globalBuckets[len(globalBuckets)-1].lower
+			res, err := leftMost.Compare(sc.TypeCtx(), lower, collate.GetBinaryCollator())
+			if err != nil {
+				return nil, err
+			}
+			if res > 0 {
+				leftMost = lower
+			}
 			globalBuckets = globalBuckets[:len(globalBuckets)-1]
 		}
 
-		leftMost := buckets[0].lower.Clone()
 		merged, err := mergePartitionBuckets(sc, buckets[:r])
 		if err != nil {
 			return nil, err
 		}
-		merged.lower = leftMost
+		leftMost.Copy(merged.lower)
 		globalBuckets = append(globalBuckets, merged)
 	}
 	for i := 0; i < len(buckets); i++ {
