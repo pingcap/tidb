@@ -10,6 +10,7 @@ go_library(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/model",
+        "//pkg/planner/core",
         "//pkg/types",
         "//pkg/util/dbutil",
         "@com_github_pingcap_errors//:errors",

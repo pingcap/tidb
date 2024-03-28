@@ -52,7 +52,6 @@ go_test(
         "//pkg/parser",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
-        "//pkg/planner/core",
         "//pkg/types",
         "//pkg/util/dbutil/dbutiltest",
         "//pkg/util/schemacmp",
