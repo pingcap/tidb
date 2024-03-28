@@ -5,6 +5,7 @@
 //
 //	mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/planner LogicalPlan,PipelineSpec
 //
+
 // Package mock is a generated GoMock package.
 package mock
 
@@ -36,6 +37,11 @@ func NewMockLogicalPlan(ctrl *gomock.Controller) *MockLogicalPlan {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockLogicalPlan) EXPECT() *MockLogicalPlanMockRecorder {
 	return m.recorder
+}
+
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockLogicalPlan) ISGOMOCK() struct{} {
+	return struct{}{}
 }
 
 // FromTaskMeta mocks base method.
@@ -103,6 +109,11 @@ func NewMockPipelineSpec(ctrl *gomock.Controller) *MockPipelineSpec {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockPipelineSpec) EXPECT() *MockPipelineSpecMockRecorder {
 	return m.recorder
+}
+
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockPipelineSpec) ISGOMOCK() struct{} {
+	return struct{}{}
 }
 
 // ToSubtaskMeta mocks base method.

@@ -309,11 +309,12 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 		stepLogger.End(zap.InfoLevel, resErr)
 	}()
 
-	stepExecutor, err := e.GetStepExecutor(task, resource)
+	stepExecutor, err := e.GetStepExecutor(task)
 	if err != nil {
 		e.onError(err)
 		return e.getError()
 	}
+	execute.SetFrameworkInfo(stepExecutor, resource)
 
 	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
 		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
