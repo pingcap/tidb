@@ -72,7 +72,7 @@ type frameworkInfo struct {
 	resource *proto.StepResource
 }
 
-func (f *frameworkInfo) restricted() {}
+func (*frameworkInfo) restricted() {}
 
 func (f *frameworkInfo) GetResource() *proto.StepResource {
 	return f.resource
