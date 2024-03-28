@@ -1505,12 +1505,26 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 	bucketCount := int64(1)
 	gBucketCountThreshold := (totCount / expBucketNumber) * 80 / 100 // expectedBucketSize * 0.8
 	var bucketNDV int64
+	var currentLeftMost *types.Datum
 	for i := len(buckets) - 1; i >= 0; i-- {
+		if currentLeftMost == nil {
+			currentLeftMost = buckets[i].lower
+		} else {
+			res, err := currentLeftMost.Compare(sc.TypeCtx(), buckets[i].lower, collate.GetBinaryCollator())
+			if err != nil {
+				return nil, err
+			}
+			if res > 0 {
+				currentLeftMost = buckets[i].lower
+			}
+		}
 		sum += buckets[i].Count
 		bucketNDV += buckets[i].NDV
 		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
-			currentLeftMost := buckets[i].lower
 			// If the buckets have the same upper, we merge them into the same new buckets.
+			// We don't need to update the currentLeftMost in the for loop because the leftmost bucket's lower
+			// will be the smallest when their upper is the same.
+			// We just need to update it after the for loop.
 			for ; i > 0; i-- {
 				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), buckets[i].upper, collate.GetBinaryCollator())
 				if err != nil {
@@ -1521,7 +1535,13 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 				}
 				sum += buckets[i-1].Count
 				bucketNDV += buckets[i-1].NDV
-				currentLeftMost = buckets[i-1].lower
+			}
+			res, err := currentLeftMost.Compare(sc.TypeCtx(), buckets[i].lower, collate.GetBinaryCollator())
+			if err != nil {
+				return nil, err
+			}
+			if res > 0 {
+				currentLeftMost = buckets[i].lower
 			}
 
 			// Iterate possible overlapped ones.
@@ -1562,6 +1582,7 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 				return nil, err
 			}
 			currentLeftMost.Copy(merged.lower)
+			currentLeftMost = nil
 			globalBuckets = append(globalBuckets, merged)
 			prevR = r
 			r = i
