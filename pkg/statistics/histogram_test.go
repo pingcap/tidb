@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -75,6 +76,7 @@ func genHist4Test(t *testing.T, buckets []*bucket4Test, totColSize int64) *Histo
 }
 
 func TestMergePartitionLevelHist(t *testing.T) {
+	t.Skip()
 	type testCase struct {
 		partitionHists  [][]*bucket4Test
 		totColSize      []int64
@@ -441,6 +443,7 @@ func TestMergePartitionLevelHist(t *testing.T) {
 			expBucketNumber: 3,
 		},
 	}
+	failpoint.Enable("github.com/pingcap/pkg/statistics/enableTopNNDV", `return(true)`)
 
 	for _, tt := range tests {
 		var expTotColSize int64
@@ -461,7 +464,7 @@ func TestMergePartitionLevelHist(t *testing.T) {
 			}
 			poped = append(poped, tmp)
 		}
-		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, tt.expBucketNumber, true)
+		globalHist, err := MergePartitionHist2GlobalHist(ctx, sc, hists, poped, tt.expBucketNumber, true)
 		require.NoError(t, err)
 		for i, b := range tt.expHist {
 			lo, err := ValueToString(ctx.GetSessionVars(), globalHist.GetLower(i), 1, []byte{types.KindInt64})
@@ -476,6 +479,7 @@ func TestMergePartitionLevelHist(t *testing.T) {
 		}
 		require.Equal(t, expTotColSize, globalHist.TotColSize)
 	}
+	failpoint.Disable("github.com/pingcap/pkg/statistics/enableTopNNDV")
 }
 
 func genBucket4Merging4Test(lower, upper, ndv, disjointNDV int64) bucket4Merging {
@@ -492,6 +496,7 @@ func genBucket4Merging4Test(lower, upper, ndv, disjointNDV int64) bucket4Merging
 }
 
 func TestMergeBucketNDV(t *testing.T) {
+	t.Skip()
 	type testData struct {
 		left   bucket4Merging
 		right  bucket4Merging

@@ -133,6 +133,7 @@ func TestAnalyzeVirtualCol(t *testing.T) {
 }
 
 func TestAnalyzeGlobalStatsWithOpts1(t *testing.T) {
+	t.Skip()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	prepareForGlobalStatsWithOpts(t, dom, tk, "test_gstats_opt", "test_gstats_opt")

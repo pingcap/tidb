@@ -26,12 +26,14 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -1247,10 +1249,10 @@ func (b *bucket4Merging) Clone() bucket4Merging {
 // Before merging, you need to make sure that when using (upper, lower) as the comparison key, `right` is greater than `left`
 func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *bucket4Merging) (*bucket4Merging, error) {
 	res := right.Clone()
-	if left.NDV == 0 {
+	if left.Count == 0 {
 		return &res, nil
 	}
-	if right.NDV == 0 {
+	if right.Count == 0 {
 		left.lower.Copy(res.lower)
 		left.upper.Copy(res.upper)
 		res.NDV = left.NDV
@@ -1406,18 +1408,24 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	return res, nil
 }
 
-func (t *TopNMeta) buildBucket4Merging(d *types.Datum) *bucket4Merging {
+func (t *TopNMeta) buildBucket4Merging(sctx sessionctx.Context, d *types.Datum) *bucket4Merging {
 	res := newbucket4MergingForRecycle()
 	d.Copy(res.lower)
 	d.Copy(res.upper)
 	res.Count = int64(t.Count)
 	res.Repeat = int64(t.Count)
-	res.NDV = int64(1)
+	if sctx.GetSessionVars().AnalyzeVersion <= Version2 {
+		res.NDV = 0
+	}
+	failpoint.Inject("github.com/pingcap/pkg/statistics/enableTopNNDV", func(_ failpoint.Value) {
+		res.NDV = 1
+	})
+	intest.Assert(sctx.GetSessionVars().AnalyzeVersion <= Version2)
 	return res
 }
 
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
-func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool) (*Histogram, error) {
+func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool) (*Histogram, error) {
 	var totCount, totNull, bucketNumber, totColSize int64
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
@@ -1471,7 +1479,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		if res < 0 {
 			minValue = d.Clone()
 		}
-		buckets = append(buckets, meta.buildBucket4Merging(&d))
+		buckets = append(buckets, meta.buildBucket4Merging(sctx, &d))
 	}
 
 	// Remove empty buckets
@@ -1517,6 +1525,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		sum += buckets[i].Count
 		bucketNDV += buckets[i].NDV
 		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
+			currentLeftMost := buckets[i].lower
 			for ; i > 0; i-- { // if the buckets have the same upper, we merge them into the same new buckets.
 				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), buckets[i].upper, collate.GetBinaryCollator())
 				if err != nil {
@@ -1527,11 +1536,46 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				}
 				sum += buckets[i-1].Count
 				bucketNDV += buckets[i-1].NDV
+				currentLeftMost = buckets[i-1].lower
+			}
+
+			for ; i > 0; i-- {
+				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+				if err != nil {
+					return nil, err
+				}
+				// If buckets[i-1].upper <= currentLeftMost, this bucket has no overlap with current merging one. Break it.
+				if res <= 0 {
+					break
+				}
+				// Now the bucket[i-1].upper > currentLeftMost, they are overlapped.
+				res, err = buckets[i-1].lower.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+				if err != nil {
+					return nil, err
+				}
+				// If buckets[i-1].lower >= currentLeftMost, this bucket is totally inside. So it can be totoally merged.
+				if res >= 0 {
+					sum += buckets[i-1].Count
+					bucketNDV += buckets[i-1].NDV
+					continue
+				}
+				// Now buckets[i-1].lower < currentLeftMost < buckets[i-1].upper
+				overlapping := calcFraction4Datums(buckets[i-1].lower, buckets[i-1].upper, currentLeftMost)
+				overlappedCount := int64(float64(buckets[i-1].Count) * overlapping)
+				overlappedNDV := int64(float64(buckets[i-1].NDV) * overlapping)
+				sum += overlappedCount
+				bucketNDV += overlappedNDV
+				buckets[i-1].Count -= overlappedCount
+				buckets[i-1].NDV -= overlappedNDV
+				// Cut it.
+				currentLeftMost.Copy(buckets[i-1].lower)
+				buckets[i-1].Repeat = 0
 			}
 			merged, err := mergePartitionBuckets(sc, buckets[i:r])
 			if err != nil {
 				return nil, err
 			}
+			currentLeftMost.Copy(merged.lower)
 			globalBuckets = append(globalBuckets, merged)
 			prevR = r
 			r = i
@@ -1569,13 +1613,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	if minValue == nil || len(globalBuckets) == 0 { // both hists and popedTopN are empty, returns an empty hist in this case
 		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize), nil
 	}
-	minValue.Copy(globalBuckets[0].lower)
 	for i := 1; i < len(globalBuckets); i++ {
-		if globalBuckets[i].NDV == 1 { // there is only 1 value so lower = upper
-			globalBuckets[i].upper.Copy(globalBuckets[i].lower)
-		} else {
-			globalBuckets[i-1].upper.Copy(globalBuckets[i].lower)
-		}
 		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
 	}
 
