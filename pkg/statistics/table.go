@@ -85,6 +85,26 @@ type ColAndIdxExistenceMap struct {
 	idxAnalyzed map[int64]bool
 }
 
+// NewColAndIndexExistenceMap return a new object with the given capcity.
+func NewColAndIndexExistenceMap(colCap, idxCap int) *ColAndIdxExistenceMap {
+	return &ColAndIdxExistenceMap{
+		colInfoMap:  make(map[int64]*model.ColumnInfo, colCap),
+		colAnalyzed: make(map[int64]bool, colCap),
+		idxInfoMap:  make(map[int64]*model.IndexInfo, idxCap),
+		idxAnalyzed: make(map[int64]bool, idxCap),
+	}
+}
+
+// NewPseudoTableColAndIndexExistenceMap return a new object with the given capcity.
+func NewPseudoTableColAndIndexExistenceMap(colCap, idxCap int) *ColAndIdxExistenceMap {
+	return &ColAndIdxExistenceMap{
+		colInfoMap:  nil,
+		colAnalyzed: make(map[int64]bool, colCap),
+		idxInfoMap:  nil,
+		idxAnalyzed: make(map[int64]bool, idxCap),
+	}
+}
+
 // SomeAnalyzed checks whether some part of the table is analyzed.
 // The newly added column/index might not have its stats.
 func (m *ColAndIdxExistenceMap) SomeAnalyzed() bool {
@@ -174,15 +194,18 @@ func (m *ColAndIdxExistenceMap) IsEmpty() bool {
 
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
-	mm := NewColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))
-	if mm.colInfoMap != nil {
+	var mm *ColAndIdxExistenceMap
+	if m.idxInfoMap == nil {
+		mm = NewPseudoTableColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))
+		mm.colAnalyzed = maps.Clone(m.colAnalyzed)
+		mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
+	} else {
+		mm = NewColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))
 		mm.colInfoMap = maps.Clone(m.colInfoMap)
-	}
-	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
-	if mm.idxInfoMap != nil {
+		mm.colAnalyzed = maps.Clone(m.colAnalyzed)
 		mm.idxInfoMap = maps.Clone(m.idxInfoMap)
+		mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
 	}
-	mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
 	return mm
 }
 
@@ -195,26 +218,6 @@ func (m *ColAndIdxExistenceMap) makeColInfoMapMap() {
 func (m *ColAndIdxExistenceMap) makeIdxInfoMap() {
 	if m.idxInfoMap == nil {
 		m.idxInfoMap = make(map[int64]*model.IndexInfo, len(m.idxAnalyzed))
-	}
-}
-
-// NewColAndIndexExistenceMap return a new object with the given capcity.
-func NewColAndIndexExistenceMap(colCap, idxCap int) *ColAndIdxExistenceMap {
-	return &ColAndIdxExistenceMap{
-		colInfoMap:  make(map[int64]*model.ColumnInfo, colCap),
-		colAnalyzed: make(map[int64]bool, colCap),
-		idxInfoMap:  make(map[int64]*model.IndexInfo, idxCap),
-		idxAnalyzed: make(map[int64]bool, idxCap),
-	}
-}
-
-// NewPseudoTableColAndIndexExistenceMap return a new object with the given capcity.
-func NewPseudoTableColAndIndexExistenceMap(colCap, idxCap int) *ColAndIdxExistenceMap {
-	return &ColAndIdxExistenceMap{
-		colInfoMap:  nil,
-		colAnalyzed: make(map[int64]bool, colCap),
-		idxInfoMap:  nil,
-		idxAnalyzed: make(map[int64]bool, idxCap),
 	}
 }
 
