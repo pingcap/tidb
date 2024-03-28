@@ -1851,17 +1851,17 @@ func (e *memtableRetriever) setDataForTiDBHotRegions(ctx sessionctx.Context) err
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
-	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
 	tikvHelper := &helper.Helper{
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, allSchemas)
+	schemas := tikvHelper.FilterMemDBs(sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().AllSchemas())
+	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, schemas)
 	if err != nil {
 		return err
 	}
 	e.setDataForHotRegionByMetrics(metrics, "read")
-	metrics, err = tikvHelper.ScrapeHotInfo(pdapi.HotWrite, allSchemas)
+	metrics, err = tikvHelper.ScrapeHotInfo(pdapi.HotWrite, schemas)
 	if err != nil {
 		return err
 	}
