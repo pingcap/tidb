@@ -464,7 +464,7 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordCh
 	worker, err := newAddIndexIngestWorker(
 		b.ctx, b.tbl, reorgInfo.d, engines, b.resultCh, job.ID,
 		reorgInfo.SchemaName, indexIDs, b.writerMaxID,
-		b.copReqSenderPool, sessCtx, b.checkpointMgr, b.distribute)
+		b.copReqSenderPool, sessCtx, bcCtx, b.checkpointMgr, b.distribute)
 	if err != nil {
 		// Return an error only if it is the first worker.
 		if b.writerMaxID == 0 {
@@ -574,6 +574,11 @@ func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool
 		result.addedCount = count
 		result.scanCount = count
 		result.nextKey = nextKey
+		// needs to flush and import to avoid too much use of disk.
+		flushed, _, _, err := ingest.TryFlushAllIndexes(w.backendCtx, ingest.FlushModeAuto, w.indexIDs)
+		if !flushed || err != nil {
+			result.err = err
+		}
 	}
 	if ResultCounterForTest != nil && result.err == nil {
 		ResultCounterForTest.Add(1)

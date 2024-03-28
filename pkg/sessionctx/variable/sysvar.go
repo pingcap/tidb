@@ -2458,10 +2458,11 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	// This system var is set disk quota for lightning sort dir, from 100 GB to 1PB.
-	{Scope: ScopeGlobal, Name: TiDBDDLDiskQuota, Value: strconv.Itoa(DefTiDBDDLDiskQuota), Type: TypeInt, MinValue: DefTiDBDDLDiskQuota, MaxValue: 1024 * 1024 * DefTiDBDDLDiskQuota / 100, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+	{Scope: ScopeGlobal, Name: TiDBDDLDiskQuota, Value: strconv.Itoa(DefTiDBDDLDiskQuota), Type: TypeInt, MinValue: 0, MaxValue: 1024 * 1024 * DefTiDBDDLDiskQuota / 100, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return strconv.FormatUint(DDLDiskQuota.Load(), 10), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		DDLDiskQuota.Store(TidbOptUint64(val, DefTiDBDDLDiskQuota))
+		DDLDiskQuota.Store(TidbOptUint64("10", DefTiDBDDLDiskQuota))
+		logutil.BgLogger().Info("ywq test disk quota", zap.Any("val", DDLDiskQuota.Load()))
 		return nil
 	}},
 	// can't assign validate function here. Because validation function will run after GetGlobal function

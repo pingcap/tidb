@@ -129,6 +129,9 @@ func TestIssue51162(t *testing.T) {
 	 PRIMARY KEY (col_47,col_46(2)) /*T![clustered_index] CLUSTERED */
 	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`)
 
+	tk.MustExec(`set global tidb_ddl_disk_quota="10";`)
+	tk.MustExec(`set global tidb_enable_dist_task=on;`)
+
 	tk.MustExec(`INSERT INTO tl VALUES
 	('[\"1\"]',0,'1','[1]','Wxup81','1','10:14:20');`)
 

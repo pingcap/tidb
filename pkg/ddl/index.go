@@ -1701,8 +1701,10 @@ type addIndexIngestWorker struct {
 
 	tbl              table.PhysicalTable
 	indexes          []table.Index
+	indexIDs         []int64
 	writers          []ingest.Writer
 	copReqSenderPool *copReqSenderPool
+	backendCtx       ingest.BackendCtx
 	checkpointMgr    *ingest.CheckpointManager
 
 	resultCh   chan *backfillResult
@@ -1722,6 +1724,7 @@ func newAddIndexIngestWorker(
 	writerID int,
 	copReqSenderPool *copReqSenderPool,
 	sessCtx sessionctx.Context,
+	backendCtx ingest.BackendCtx,
 	checkpointMgr *ingest.CheckpointManager,
 	distribute bool,
 ) (*addIndexIngestWorker, error) {
@@ -1745,11 +1748,13 @@ func newAddIndexIngestWorker(
 		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
 			metrics.GenerateReorgLabel("add_idx_rate", schemaName, t.Meta().Name.O)),
 		tbl:              t,
+		indexIDs:         indexIDs,
 		indexes:          indexes,
 		writers:          writers,
 		copReqSenderPool: copReqSenderPool,
 		resultCh:         resultCh,
 		jobID:            jobID,
+		backendCtx:       backendCtx,
 		checkpointMgr:    checkpointMgr,
 		distribute:       distribute,
 	}, nil
