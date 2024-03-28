@@ -530,6 +530,9 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
 		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
 	}
+	if len(r.copPlanIDs) > 0 {
+		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordTimeDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), &copStats.TimeDetail)
+	}
 
 	// If hasExecutor is true, it means the summary is returned from TiFlash.
 	hasExecutor := false
