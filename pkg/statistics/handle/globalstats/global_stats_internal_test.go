@@ -356,7 +356,8 @@ func testIssues24349(testKit *testkit.TestKit) {
 		"test t global b 0 2 4",
 	))
 	testKit.MustQuery("show stats_buckets where partition_name='global'").Check(testkit.Rows(
-		"test t global a 0 0 2 2 2 2 0",
+		"test t global a 0 0 4 4 0 0 0",
+		"test t global a 0 1 6 2 2 2 0",
 		"test t global b 0 0 2 2 1 1 0",
 		"test t global b 0 1 10 1 1 4 0",
 	))
