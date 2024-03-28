@@ -568,7 +568,7 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 		rc.pdClient,
 		rc.pdHTTPClient,
 		rc.tlsConf,
-		uint(rc.GetStoreCount()),
+		uint(rc.GetStoreCount()+1),
 		splitClientOpts...,
 	)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
@@ -1433,7 +1433,7 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int
 		rc.GetPDClient(),
 		rc.pdHTTPClient,
 		rc.GetTLSConfig(),
-		uint(rc.GetStoreCount()),
+		uint(rc.GetStoreCount()+1),
 	)
 	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
 }

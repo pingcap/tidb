@@ -524,7 +524,7 @@ func SplitRanges(
 		client.GetPDClient(),
 		client.pdHTTPClient,
 		client.GetTLSConfig(),
-		uint(client.GetStoreCount()),
+		uint(client.GetStoreCount()+1),
 		splitClientOpts...,
 	))
 
