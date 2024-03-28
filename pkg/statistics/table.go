@@ -859,17 +859,17 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		slices.Sort(idxIDs)
 	}
 	newColl := &HistColl{
-		PhysicalID:     coll.PhysicalID,
-		HavePhysicalID: coll.HavePhysicalID,
-		Pseudo:         coll.Pseudo,
-		RealtimeCount:  coll.RealtimeCount,
-		ModifyCount:    coll.ModifyCount,
-		Columns:        newColHistMap,
-		Indices:        newIdxHistMap,
-		ColID2IdxIDs:   colID2IdxIDs,
-		Idx2ColumnIDs:  idx2Columns,
+		PhysicalID:         coll.PhysicalID,
+		HavePhysicalID:     coll.HavePhysicalID,
+		Pseudo:             coll.Pseudo,
+		RealtimeCount:      coll.RealtimeCount,
+		ModifyCount:        coll.ModifyCount,
+		Columns:            newColHistMap,
+		Indices:            newIdxHistMap,
+		ColID2IdxIDs:       colID2IdxIDs,
+		Idx2ColumnIDs:      idx2Columns,
 		UniqueID2colInfoID: uniqueID2colInfoID,
-		MVIdx2Columns:  mvIdx2Columns,
+		MVIdx2Columns:      mvIdx2Columns,
 	}
 	return newColl
 }
