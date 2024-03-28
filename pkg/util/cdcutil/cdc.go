@@ -28,9 +28,12 @@ import (
 )
 
 const (
-	CDCPrefix      = "/tidb/cdc/"
+	// CDCPrefix is the prefix of CDC information in etcd.
+	CDCPrefix = "/tidb/cdc/"
+	// ChangefeedPath is the path of changefeed information in etcd.
 	ChangefeedPath = "/changefeed/info/"
-	CDCPrefixV61   = "/tidb/cdc/changefeed/info/"
+	// CDCPrefixV61 is the prefix of CDC information in etcd.
+	CDCPrefixV61 = "/tidb/cdc/changefeed/info/"
 )
 
 // CDCNameSet saves CDC changefeed's information.
