@@ -227,7 +227,7 @@ func (gs *tidbSession) Close() {
 	gs.se.Close()
 }
 
-// GetGlobalVariables implements glue.Session.
+// GetGlobalVariable implements glue.Session.
 func (gs *tidbSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
@@ -304,7 +304,7 @@ func (s *mockSession) Close() {
 	s.se.Close()
 }
 
-// GetGlobalVariables implements glue.Session.
+// GetGlobalVariable implements glue.Session.
 func (s *mockSession) GetGlobalVariable(name string) (string, error) {
 	if ret, ok := s.globalVars[name]; ok {
 		return ret, nil

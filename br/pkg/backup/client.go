@@ -281,7 +281,7 @@ func (bc *Client) GetCheckpointRunner() *checkpoint.CheckpointRunner[checkpoint.
 	return bc.checkpointRunner
 }
 
-// StartCheckpointMeta will
+// StartCheckpointRunner will
 // 1. saves the initial status into the external storage;
 // 2. load the checkpoint data from external storage
 // 3. start checkpoint runner
@@ -492,7 +492,7 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 	return retRanges, nil
 }
 
-// BuildBackupRangeAndSchema gets KV range and schema of tables.
+// BuildBackupRangeAndInitSchema gets KV range and schema of tables.
 // KV ranges are separated by Table IDs.
 // Also, KV ranges are separated by Index IDs in the same table.
 func BuildBackupRangeAndInitSchema(
