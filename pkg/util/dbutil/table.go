@@ -19,12 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/types/parser_driver" // for parser driver
-	"github.com/pingcap/tidb/pkg/util/collate"
 )
-
-func init() {
-	collate.SetNewCollationEnabledForTest(false)
-}
 
 // FindColumnByName finds column by name.
 func FindColumnByName(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
