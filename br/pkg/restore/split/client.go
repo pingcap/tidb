@@ -27,6 +27,7 @@ import (
 	brlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	pd "github.com/tikv/pd/client"
@@ -521,30 +522,34 @@ func (c *pdClient) hasHealthyRegion(ctx context.Context, regionID uint64) (bool,
 }
 
 // SplitWaitAndScatter implements the SplitClient interface.
-func (c *pdClient) SplitWaitAndScatter(ctx context.Context, sortedKeys [][]byte) ([]*RegionInfo, error) {
-	if len(sortedKeys) == 0 {
+func (c *pdClient) SplitWaitAndScatter(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error) {
+	if len(sortedSplitKeys) == 0 {
 		return nil, nil
 	}
 
-	// TODO(lance6716): len(sortedKeys) == 1?
-	minKey := codec.EncodeBytesExt(nil, sortedKeys[0], c.isRawKv)
-	maxKey := codec.EncodeBytesExt(nil, sortedKeys[len(sortedKeys)-1], c.isRawKv)
+	// we need to find the regions that contain the split keys. However, the scan
+	// region API accepts a key range [start, end) where end key is exclusive, so we
+	// increase the end key a bit. If the end key is on the region boundaries, it
+	// will be skipped by getSplitKeysOfRegions.
+	scanStart := codec.EncodeBytesExt(nil, sortedSplitKeys[0], c.isRawKv)
+	lastKey := kv.Key(sortedSplitKeys[len(sortedSplitKeys)-1])
+	scanEnd := codec.EncodeBytesExt(nil, lastKey.Next(), c.isRawKv)
 	mu := sync.Mutex{}
-	ret := make([]*RegionInfo, 0, len(sortedKeys)+1)
+	ret := make([]*RegionInfo, 0, len(sortedSplitKeys)+1)
 
 	err := utils.WithRetry(ctx, func() error {
 		ret = ret[:0]
 
-		regions, err := PaginateScanRegion(ctx, c, minKey, maxKey, ScanRegionPaginationLimit)
+		regions, err := PaginateScanRegion(ctx, c, scanStart, scanEnd, ScanRegionPaginationLimit)
 		if err != nil {
 			return err
 		}
 		log.Info("paginate scan regions",
 			zap.Int("count", len(regions)),
-			logutil.Key("start", minKey),
-			logutil.Key("end", maxKey))
+			logutil.Key("start", scanStart),
+			logutil.Key("end", scanEnd))
 
-		splitKeyMap := getSplitKeysOfRegions(sortedKeys, regions, c.isRawKv)
+		splitKeyMap := getSplitKeysOfRegions(sortedSplitKeys, regions, c.isRawKv)
 		workerPool := utils.NewWorkerPool(c.splitConcurrency, "split keys")
 		eg, eCtx := errgroup.WithContext(ctx)
 		for region, splitKeys := range splitKeyMap {

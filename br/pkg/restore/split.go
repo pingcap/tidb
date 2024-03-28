@@ -148,10 +148,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 ) error {
 	startTime := time.Now()
 
-	allKeys := make([][]byte, 0, len(sortedKeys)+1)
-	allKeys = append(allKeys, scanStartKey)
-	allKeys = append(allKeys, sortedKeys...)
-	scatterRegions, err := rs.client.SplitWaitAndScatter(ctx, allKeys)
+	scatterRegions, err := rs.client.SplitWaitAndScatter(ctx, sortedKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
