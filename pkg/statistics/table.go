@@ -693,11 +693,13 @@ type neededStatsMap struct {
 }
 
 func getIdx(tbl model.TableItemID) int64 {
-	result := tbl.ID % shardCnt
-	if result < 0 {
-		return -result
+	var id int64
+	if tbl.ID < 0 {
+		id = -tbl.ID
+	} else {
+		id = tbl.ID
 	}
-	return result
+	return id % shardCnt
 }
 
 func newNeededStatsMap() *neededStatsMap {
