@@ -327,6 +327,7 @@ func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 // PrunePartitions will check which partition to use
 // returns true if no matching partition
 func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
+	logutil.BgLogger().Debug("PrunePartitions (PointGet)")
 	pi := p.TblInfo.GetPartitionInfo()
 	if pi == nil {
 		return false
@@ -364,6 +365,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 		for i := range p.IndexInfo.Columns {
 			// TODO: Skip copying non-partitioning columns?
 			p.IndexValues[i].Copy(&row[p.IndexInfo.Columns[i].Offset])
+			logutil.BgLogger().Debug("idxval copy", zap.Int("i", i), zap.Int("Offset", p.IndexInfo.Columns[i].Offset))
 		}
 	} else {
 		var dVal types.Datum
@@ -373,8 +375,10 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 			dVal = types.NewIntDatum(p.Handle.IntValue())
 		}
 		dVal.Copy(&row[p.HandleColOffset])
+		logutil.BgLogger().Debug("handle val copy", zap.Int("Offset", p.HandleColOffset))
 	}
 	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx(), row)
+	logutil.BgLogger().Debug("PrunePartitions (PointGet)", zap.Int("partIdx", partIdx), zap.Error(err))
 	if err != nil {
 		partIdx = -1
 		p.PartitionIdx = &partIdx

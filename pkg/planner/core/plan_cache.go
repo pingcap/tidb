@@ -16,6 +16,8 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -466,6 +468,9 @@ func rebuildRange(p Plan) error {
 				for i := range x.IndexValues {
 					x.IndexValues[i] = ranges.Ranges[0].LowVal[i]
 				}
+				if x.PartitionIdx != nil {
+					logutil.BgLogger().Debug("IndexInfo prev partIdx was", zap.Int("PartitionIdx", *x.PartitionIdx))
+				}
 			} else {
 				var pkCol *expression.Column
 				var unsignedIntHandle bool
@@ -490,6 +495,9 @@ func rebuildRange(p Plan) error {
 						return errors.New("rebuild to get an unsafe range")
 					}
 					x.Handle = kv.IntHandle(ranges[0].LowVal[0].GetInt64())
+					if x.PartitionIdx != nil {
+						logutil.BgLogger().Debug("!IndexInfo prev partIdx was", zap.Int("PartitionIdx", *x.PartitionIdx))
+					}
 				}
 			}
 		}
