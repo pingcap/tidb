@@ -1160,6 +1160,8 @@ const (
 	// The value can be STANDARD, BULK.
 	// Currently, the BULK mode only affects auto-committed DML.
 	TiDBDMLType = "tidb_dml_type"
+	// TiDBTraceID is the trace id of the current tracing context.
+	TiDBTraceID = "tidb_trace_id"
 )
 
 // TiDB intentional limits
