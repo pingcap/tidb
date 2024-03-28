@@ -109,8 +109,14 @@ func (m *ColAndIdxExistenceMap) SomeAnalyzed() bool {
 // Don't check whether it has statistics or not.
 func (m *ColAndIdxExistenceMap) Has(id int64, isIndex bool) bool {
 	if isIndex {
+		if m.idxInfoMap == nil {
+			return false
+		}
 		_, ok := m.idxInfoMap[id]
 		return ok
+	}
+	if m.colInfoMap == nil {
+		return false
 	}
 	_, ok := m.colInfoMap[id]
 	return ok
@@ -135,23 +141,29 @@ func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 
 // InsertCol inserts a column with its meta into the map.
 func (m *ColAndIdxExistenceMap) InsertCol(id int64, info *model.ColumnInfo, analyzed bool) {
+	m.makeColInfoMapMap()
 	m.colInfoMap[id] = info
 	m.colAnalyzed[id] = analyzed
 }
 
 // GetCol gets the meta data of the given column.
 func (m *ColAndIdxExistenceMap) GetCol(id int64) *model.ColumnInfo {
+	if m.colInfoMap == nil {
+		return nil
+	}
 	return m.colInfoMap[id]
 }
 
 // InsertIndex inserts an index with its meta into the map.
 func (m *ColAndIdxExistenceMap) InsertIndex(id int64, info *model.IndexInfo, analyzed bool) {
+	m.makeIdxInfoMap()
 	m.idxInfoMap[id] = info
 	m.idxAnalyzed[id] = analyzed
 }
 
 // GetIndex gets the meta data of the given index.
 func (m *ColAndIdxExistenceMap) GetIndex(id int64) *model.IndexInfo {
+	m.makeIdxInfoMap()
 	return m.idxInfoMap[id]
 }
 
@@ -163,11 +175,28 @@ func (m *ColAndIdxExistenceMap) IsEmpty() bool {
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))
-	mm.colInfoMap = maps.Clone(m.colInfoMap)
+	if mm.colInfoMap != nil {
+		mm.colInfoMap = maps.Clone(m.colInfoMap)
+	}
 	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
+	if mm.idxInfoMap != nil {
+		mm.idxInfoMap = maps.Clone(m.idxInfoMap)
+	}
 	mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
-	mm.idxInfoMap = maps.Clone(m.idxInfoMap)
 	return mm
+}
+
+func (m *ColAndIdxExistenceMap) makeColInfoMapMap() {
+	if m.colInfoMap == nil {
+		m.colInfoMap = make(map[int64]*model.ColumnInfo, len(m.colAnalyzed))
+	}
+}
+
+func (m *ColAndIdxExistenceMap) makeIdxInfoMap() {
+	if m.idxInfoMap == nil {
+		m.idxInfoMap = make(map[int64]*model.IndexInfo, len(m.idxAnalyzed))
+	}
+
 }
 
 // NewColAndIndexExistenceMap return a new object with the given capcity.
@@ -176,6 +205,15 @@ func NewColAndIndexExistenceMap(colCap, idxCap int) *ColAndIdxExistenceMap {
 		colInfoMap:  make(map[int64]*model.ColumnInfo, colCap),
 		colAnalyzed: make(map[int64]bool, colCap),
 		idxInfoMap:  make(map[int64]*model.IndexInfo, idxCap),
+		idxAnalyzed: make(map[int64]bool, idxCap),
+	}
+}
+
+func NewPseudoTableColAndIndexExistenceMap(colCap, idxCap int) *ColAndIdxExistenceMap {
+	return &ColAndIdxExistenceMap{
+		colInfoMap:  nil,
+		colAnalyzed: make(map[int64]bool, colCap),
+		idxInfoMap:  nil,
 		idxAnalyzed: make(map[int64]bool, idxCap),
 	}
 }
