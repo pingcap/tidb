@@ -35,6 +35,8 @@ type TiKVClusterMeta interface {
 
 	// Stores returns the store metadata from the cluster.
 	Stores(ctx context.Context) ([]Store, error)
+
+	FetchCurrentTS(ctx context.Context) (uint64, error)
 }
 
 type Store struct {
