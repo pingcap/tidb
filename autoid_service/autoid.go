@@ -290,14 +290,17 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 	if err != nil {
 		panic(err)
 	}
+	return newWithCli(selfAddr, cli, store)
+}
 
+func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Service {
 	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
 	l.SetBeOwnerHook(func() {
 		logutil.BgLogger().Info("leader change of autoid service, this node become owner",
 			zap.String("addr", selfAddr),
 			zap.String("category", "autoid service"))
 	})
-	err = l.CampaignOwner()
+	err := l.CampaignOwner()
 	if err != nil {
 		panic(err)
 	}

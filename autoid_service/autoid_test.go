@@ -23,10 +23,9 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -103,7 +102,7 @@ type dest struct {
 }
 
 func checkCurrValue(t *testing.T, cli autoid.AutoIDAllocClient, to dest, min, max int64) {
-	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, N: 0, KeyspaceID: uint32(tikv.NullspaceID)}
+	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, N: 0}
 	ctx := context.Background()
 	resp, err := cli.AllocAutoID(ctx, req)
 	require.NoError(t, err)
@@ -119,7 +118,7 @@ func autoIDRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned
 	if len(more) >= 2 {
 		offset = more[1]
 	}
-	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, IsUnsigned: unsigned, N: n, Increment: increment, Offset: offset, KeyspaceID: uint32(tikv.NullspaceID)}
+	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, IsUnsigned: unsigned, N: n, Increment: increment, Offset: offset}
 	resp, err := cli.AllocAutoID(context.Background(), req)
 	return autoIDResp{resp, err, t}
 }
@@ -238,7 +237,6 @@ func TestGRPC(t *testing.T) {
 		Increment:  1,
 		Offset:     1,
 		IsUnsigned: false,
-		KeyspaceID: uint32(tikv.NullspaceID),
 	})
 	require.NoError(t, err)
 }

@@ -21,6 +21,7 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -110,6 +111,7 @@ type mockStores struct {
 	mu               sync.Mutex
 	stores           map[uint64]*mockStore
 	onCreateStore    func(*mockStore)
+	connectDelay     func(uint64) <-chan struct{}
 	onConnectToStore func(uint64) error
 
 	pdc *tikv.RegionCache
@@ -117,8 +119,16 @@ type mockStores struct {
 
 func newTestEnv(pdc pd.Client) *mockStores {
 	r := tikv.NewRegionCache(pdc)
+	stores, err := pdc.GetAllStores(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	ss := map[uint64]*mockStore{}
+	for _, store := range stores {
+		ss[store.Id] = nil
+	}
 	ms := &mockStores{
-		stores:        map[uint64]*mockStore{},
+		stores:        ss,
 		pdc:           r,
 		onCreateStore: func(ms *mockStore) {},
 	}
@@ -138,7 +148,14 @@ func (m *mockStores) GetAllLiveStores(ctx context.Context) ([]*metapb.Store, err
 
 func (m *mockStores) ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	defer func() {
+		m.mu.Unlock()
+		if m.connectDelay != nil {
+			if ch := m.connectDelay(storeID); ch != nil {
+				<-ch
+			}
+		}
+	}()
 
 	if m.onConnectToStore != nil {
 		err := m.onConnectToStore(storeID)
@@ -147,8 +164,8 @@ func (m *mockStores) ConnectToStore(ctx context.Context, storeID uint64) (Prepar
 		}
 	}
 
-	_, ok := m.stores[storeID]
-	if !ok {
+	s, ok := m.stores[storeID]
+	if !ok || s == nil {
 		m.stores[storeID] = &mockStore{
 			output:         make(chan brpb.PrepareSnapshotBackupResponse, 16),
 			successRegions: []metapb.Region{},
@@ -161,7 +178,7 @@ func (m *mockStores) ConnectToStore(ctx context.Context, storeID uint64) (Prepar
 		}
 		m.onCreateStore(m.stores[storeID])
 	}
-	return m.stores[storeID], nil
+	return AdaptForGRPCInTest(m.stores[storeID]), nil
 }
 
 func (m *mockStores) LoadRegionsInKeyRange(ctx context.Context, startKey []byte, endKey []byte) (regions []Region, err error) {
@@ -455,4 +472,69 @@ func TestSplitEnv(t *testing.T) {
 	require.NoError(t, cc.Send(&tinyRequest))
 	require.Equal(t, cc.PrepareClient.(*counterClient).send, 1)
 	require.ElementsMatch(t, cc.PrepareClient.(*counterClient).regions, tinyRequest.Regions)
+}
+
+func TestConnectionDelay(t *testing.T) {
+	req := require.New(t)
+	pdc := fakeCluster(t, 3, dummyRegions(100)...)
+	ms := newTestEnv(pdc)
+	called := 0
+	delayConn := make(chan struct{})
+	blocked := make(chan struct{}, 64)
+	ms.connectDelay = func(i uint64) <-chan struct{} {
+		called += 1
+		if called == 2 {
+			blocked <- struct{}{}
+			return delayConn
+		}
+		return nil
+	}
+	ctx := context.Background()
+	prep := New(ms)
+	connectionPrepareResult := make(chan error)
+	go func() {
+		connectionPrepareResult <- prep.PrepareConnections(ctx)
+	}()
+	<-blocked
+	ms.mu.Lock()
+	nonNilStore := 0
+	for id, store := range ms.stores {
+		// We must not create and lease (i.e. reject admin command from any tikv) here.
+		if store != nil {
+			req.True(store.leaseUntil.Before(time.Now()), "%d->%s", id, store.leaseUntil)
+			nonNilStore += 1
+		}
+	}
+	req.GreaterOrEqual(nonNilStore, 2)
+	ms.mu.Unlock()
+	delayConn <- struct{}{}
+	req.NoError(<-connectionPrepareResult)
+}
+
+func TestHooks(t *testing.T) {
+	req := require.New(t)
+	pdc := fakeCluster(t, 3, dummyRegions(100)...)
+	pauseWaitApply := make(chan struct{})
+	ms := newTestEnv(pdc)
+	ms.onCreateStore = func(ms *mockStore) {
+		ms.onWaitApply = func(r *metapb.Region) error {
+			<-pauseWaitApply
+			return nil
+		}
+	}
+	adv := New(ms)
+	connectionsEstablished := new(atomic.Bool)
+	adv.AfterConnectionsEstablished = func() {
+		connectionsEstablished.Store(true)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- adv.DriveLoopAndWaitPrepare(context.Background())
+	}()
+	req.Eventually(connectionsEstablished.Load, 1*time.Second, 100*time.Millisecond)
+	close(pauseWaitApply)
+	req.NoError(<-errCh)
+	ms.AssertSafeForBackup(t)
+	req.NoError(adv.Finalize(context.Background()))
+	ms.AssertIsNormalMode(t)
 }
