@@ -524,7 +524,9 @@ func (r *RunawayChecker) BeforeCopRequest(req *tikvrpc.Request) error {
 		// execution time exceeds the threshold, mark the query as runaway
 		if r.markedByRule.CompareAndSwap(false, true) {
 			r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
-			r.markQuarantine(&now)
+			if !r.markedByWatch {
+				r.markQuarantine(&now)
+			}
 		}
 	}
 	switch r.setting.Action {
@@ -550,7 +552,9 @@ func (r *RunawayChecker) CheckCopRespError(err error) error {
 			now := time.Now()
 			if r.deadline.Before(now) && r.markedByRule.CompareAndSwap(false, true) {
 				r.markRunaway(RunawayMatchTypeIdentify, r.setting.Action, &now)
-				r.markQuarantine(&now)
+				if !r.markedByWatch {
+					r.markQuarantine(&now)
+				}
 				return exeerrors.ErrResourceGroupQueryRunawayInterrupted
 			}
 		}

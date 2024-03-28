@@ -324,9 +324,7 @@ func TestResourceGroupRunaway(t *testing.T) {
 	tk.MustQuery("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_watch").
 		Check(testkit.Rows("rg2 select /*+ resource_group(rg2) */ * from t"))
 	// wait for the runaway watch to be cleaned up
-	time.Sleep(time.Millisecond * 1100)
-	tk.MustQuery("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_watch").
-		Check(testkit.Rows())
+	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_watch", nil, testkit.Rows(), maxWaitDuration, tryInterval)
 	err = tk.QueryToErr("select /*+ resource_group(rg2) */ * from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
 
