@@ -44,6 +44,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 		mgr.GetTLSConfig(),
 		keepaliveCfg,
 		true,
+		mgr.GetStoreCount(),
 	)
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)

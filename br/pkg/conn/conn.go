@@ -72,6 +72,7 @@ type Mgr struct {
 	storage     kv.Storage   // Used to access SQL related interfaces.
 	tikvStore   tikv.Storage // Used to access TiKV specific interfaces.
 	ownsStorage bool
+	storeCount  int
 
 	*utils.StoreManager
 }
@@ -109,14 +110,16 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 	return stores, errors.Trace(errRetry)
 }
 
-func checkStoresAlive(ctx context.Context,
+func checkStoresAlive(
+	ctx context.Context,
 	pdclient pd.Client,
-	storeBehavior util.StoreBehavior) error {
+	storeBehavior util.StoreBehavior,
+) (int, error) {
 	// Check live tikv.
 	stores, err := util.GetAllTiKVStores(ctx, pdclient, storeBehavior)
 	if err != nil {
 		log.Error("failed to get store", zap.Error(err))
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
 	liveStoreCount := 0
@@ -127,7 +130,7 @@ func checkStoresAlive(ctx context.Context,
 		liveStoreCount++
 	}
 	log.Info("checked alive KV stores", zap.Int("aliveStores", liveStoreCount), zap.Int("totalStores", len(stores)))
-	return nil
+	return liveStoreCount, nil
 }
 
 // NewMgr creates a new Mgr.
@@ -176,7 +179,7 @@ func NewMgr(
 		}
 	}
 
-	err = checkStoresAlive(ctx, controller.GetPDClient(), storeBehavior)
+	storeCnt, err := checkStoresAlive(ctx, controller.GetPDClient(), storeBehavior)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -219,6 +222,7 @@ func NewMgr(
 		dom:          dom,
 		ownsStorage:  g.OwnsStorage(),
 		StoreManager: utils.NewStoreManager(controller.GetPDClient(), keepalive, tlsConf),
+		storeCount:   storeCnt,
 	}
 	return mgr, nil
 }
@@ -257,6 +261,11 @@ func (mgr *Mgr) GetTLSConfig() *tls.Config {
 // GetStore gets the tikvStore.
 func (mgr *Mgr) GetStore() tikv.Storage {
 	return mgr.tikvStore
+}
+
+// GetStoreCount returns the count of stores.
+func (mgr *Mgr) GetStoreCount() int {
+	return mgr.storeCount
 }
 
 // GetLockResolver gets the LockResolver.

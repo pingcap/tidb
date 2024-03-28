@@ -82,6 +82,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 		mgr.GetTLSConfig(),
 		keepaliveCfg,
 		false,
+		mgr.GetStoreCount(),
 	)
 
 	restoreTS, err := client.GetTS(ctx)

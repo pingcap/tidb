@@ -3,7 +3,6 @@
 package split
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"slices"
@@ -12,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -27,11 +27,14 @@ import (
 	brlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -43,6 +46,12 @@ const (
 	splitRegionMaxRetryTime = 4
 )
 
+var (
+	// the max total key size in a split region batch.
+	// our threshold should be smaller than TiKV's raft max entry size(default is 8MB).
+	maxBatchSplitSize = 6 * units.MiB
+)
+
 // SplitClient is an external client used by RegionSplitter.
 type SplitClient interface {
 	// GetStore gets a store by a store id.
@@ -51,9 +60,15 @@ type SplitClient interface {
 	GetRegion(ctx context.Context, key []byte) (*RegionInfo, error)
 	// GetRegionByID gets a region by a region id.
 	GetRegionByID(ctx context.Context, regionID uint64) (*RegionInfo, error)
-	// SplitWaitAndScatter splits a region from a batch of keys, waits for the split
-	// is finished, and scatters the new regions. It will return the original region,
-	// new regions and error. The input keys should not be encoded.
+	// SplitWaitAndScatter splits related regions which contain the keys, and then
+	// scatter them, and return the new regions that can be used by
+	// WaitRegionsScattered.
+	//
+	// Internally, it will retry for a long time if TiKV is slow to fulfill it.
+	SplitWaitAndScatter(ctx context.Context, keys [][]byte) ([]*RegionInfo, error)
+	// SplitWaitAndScatterOnRegion splits a region from a batch of keys, waits for
+	// the split is finished, and scatters the new regions. It will return the
+	// original region, new regions and error. The input keys should not be encoded.
 	//
 	// The split step has a few retry times. If it meets error, the error is returned
 	// directly.
@@ -64,7 +79,7 @@ type SplitClient interface {
 	//
 	// The scatter step has a few retry times. If it meets error, it will log a
 	// warning and continue.
-	SplitWaitAndScatter(ctx context.Context, region *RegionInfo, keys [][]byte) (*RegionInfo, []*RegionInfo, error)
+	SplitWaitAndScatterOnRegion(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error)
 	// GetOperator gets the status of operator of the specified region.
 	GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
 	// ScanRegions gets a list of regions, starts from the region that contains key.
@@ -92,18 +107,20 @@ type SplitClient interface {
 
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
 type pdClient struct {
-	mu         sync.Mutex
-	client     pd.Client
-	httpCli    pdhttp.Client
-	tlsConf    *tls.Config
-	storeCache map[uint64]*metapb.Store
+	mu               sync.Mutex
+	client           pd.Client
+	httpCli          pdhttp.Client
+	tlsConf          *tls.Config
+	storeCache       map[uint64]*metapb.Store
+	isRawKv          bool
+	splitConcurrency uint
+	splitBatchSize   int
+	onSplit          func([][]byte)
 
 	// FIXME when config changed during the lifetime of pdClient,
 	// 	this may mislead the scatter.
 	needScatterVal  bool
 	needScatterInit sync.Once
-
-	isRawKv bool
 }
 
 // NewSplitClient returns a client used by RegionSplitter.
@@ -111,16 +128,44 @@ func NewSplitClient(
 	client pd.Client,
 	httpCli pdhttp.Client,
 	tlsConf *tls.Config,
-	isRawKv bool,
+	concurrency uint,
+	opts ...ClientOption,
 ) SplitClient {
 	cli := &pdClient{
-		client:     client,
-		httpCli:    httpCli,
-		tlsConf:    tlsConf,
-		storeCache: make(map[uint64]*metapb.Store),
-		isRawKv:    isRawKv,
+		client:           client,
+		httpCli:          httpCli,
+		tlsConf:          tlsConf,
+		storeCache:       make(map[uint64]*metapb.Store),
+		splitConcurrency: concurrency,
+		splitBatchSize:   config.DefaultRegionSplitBatchSize,
+	}
+	for _, opt := range opts {
+		opt(cli)
 	}
 	return cli
+}
+
+type ClientOption func(*pdClient)
+
+// WithRawKV indicates the client should use raw kv mode.
+func WithRawKV() ClientOption {
+	return func(c *pdClient) {
+		c.isRawKv = true
+	}
+}
+
+// WithOnSplit sets the callback function that will be called after each split.
+func WithOnSplit(fn func([][]byte)) ClientOption {
+	return func(c *pdClient) {
+		c.onSplit = fn
+	}
+}
+
+// WithSplitBatchSize sets the batch size of split.
+func WithSplitBatchSize(size int) ClientOption {
+	return func(c *pdClient) {
+		c.splitBatchSize = size
+	}
 }
 
 func (c *pdClient) needScatter(ctx context.Context) bool {
@@ -224,80 +269,6 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*RegionI
 	}, nil
 }
 
-func (c *pdClient) SplitRegion(ctx context.Context, regionInfo *RegionInfo, key []byte) (*RegionInfo, error) {
-	var peer *metapb.Peer
-	if regionInfo.Leader != nil {
-		peer = regionInfo.Leader
-	} else {
-		if len(regionInfo.Region.Peers) == 0 {
-			return nil, errors.Annotate(berrors.ErrRestoreNoPeer, "region does not have peer")
-		}
-		peer = regionInfo.Region.Peers[0]
-	}
-	storeID := peer.GetStoreId()
-	store, err := c.GetStore(ctx, storeID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	conn, err := grpc.Dial(store.GetAddress(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		config.DefaultGrpcKeepaliveParams)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer conn.Close()
-
-	client := tikvpb.NewTikvClient(conn)
-	resp, err := client.SplitRegion(ctx, &kvrpcpb.SplitRegionRequest{
-		Context: &kvrpcpb.Context{
-			RegionId:    regionInfo.Region.Id,
-			RegionEpoch: regionInfo.Region.RegionEpoch,
-			Peer:        peer,
-		},
-		SplitKey: key,
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if resp.RegionError != nil {
-		log.Error("fail to split region",
-			logutil.Region(regionInfo.Region),
-			logutil.Key("key", key),
-			zap.Stringer("regionErr", resp.RegionError))
-		return nil, errors.Annotatef(berrors.ErrRestoreSplitFailed, "err=%v", resp.RegionError)
-	}
-
-	// BUG: Left is deprecated, it may be nil even if split is succeed!
-	// Assume the new region is the left one.
-	newRegion := resp.GetLeft()
-	if newRegion == nil {
-		regions := resp.GetRegions()
-		for _, r := range regions {
-			if bytes.Equal(r.GetStartKey(), regionInfo.Region.GetStartKey()) {
-				newRegion = r
-				break
-			}
-		}
-	}
-	if newRegion == nil {
-		return nil, errors.Annotate(berrors.ErrRestoreSplitFailed, "new region is nil")
-	}
-	var leader *metapb.Peer
-	// Assume the leaders will be at the same store.
-	if regionInfo.Leader != nil {
-		for _, p := range newRegion.GetPeers() {
-			if p.GetStoreId() == regionInfo.Leader.GetStoreId() {
-				leader = p
-				break
-			}
-		}
-	}
-	return &RegionInfo{
-		Region: newRegion,
-		Leader: leader,
-	}, nil
-}
-
 func splitRegionWithFailpoint(
 	ctx context.Context,
 	regionInfo *RegionInfo,
@@ -368,9 +339,9 @@ func sendSplitRegionRequest(
 	retry int,
 ) (bool, *kvrpcpb.SplitRegionResponse, error) {
 	if intest.InTest {
-		mockCli, ok := c.client.(*mockPDClientForSplit)
+		mockCli, ok := c.client.(*MockPDClientForSplit)
 		if ok {
-			return mockCli.splitRegions.fn()
+			return mockCli.SplitRegion(regionInfo, keys, c.isRawKv)
 		}
 	}
 	var peer *metapb.Peer
@@ -452,17 +423,16 @@ func sendSplitRegionRequest(
 	return false, resp, nil
 }
 
-func (c *pdClient) batchSplitRegionsWithOrigin(
+func (c *pdClient) batchSplitRegions(
 	ctx context.Context, regionInfo *RegionInfo, keys [][]byte,
-) (*RegionInfo, []*RegionInfo, error) {
+) ([]*RegionInfo, error) {
 	resp, err := c.sendSplitRegionRequest(ctx, regionInfo, keys)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	regions := resp.GetRegions()
 	newRegionInfos := make([]*RegionInfo, 0, len(regions))
-	var originRegion *RegionInfo
 	for _, region := range regions {
 		var leader *metapb.Peer
 
@@ -475,12 +445,8 @@ func (c *pdClient) batchSplitRegionsWithOrigin(
 				}
 			}
 		}
-		// original region
+		// don't return original region
 		if region.GetId() == regionInfo.Region.GetId() {
-			originRegion = &RegionInfo{
-				Region: region,
-				Leader: leader,
-			}
 			continue
 		}
 		newRegionInfos = append(newRegionInfos, &RegionInfo{
@@ -488,7 +454,7 @@ func (c *pdClient) batchSplitRegionsWithOrigin(
 			Leader: leader,
 		})
 	}
-	return originRegion, newRegionInfos, nil
+	return newRegionInfos, nil
 }
 
 func (c *pdClient) waitRegionsSplit(ctx context.Context, newRegions []*RegionInfo) error {
@@ -555,16 +521,128 @@ func (c *pdClient) hasHealthyRegion(ctx context.Context, regionID uint64) (bool,
 	return len(regionInfo.PendingPeers) == 0, nil
 }
 
-func (c *pdClient) SplitWaitAndScatter(
-	ctx context.Context, region *RegionInfo, keys [][]byte,
-) (*RegionInfo, []*RegionInfo, error) {
-	if len(keys) == 0 {
-		return region, []*RegionInfo{region}, nil
+// SplitWaitAndScatter implements the SplitClient interface.
+func (c *pdClient) SplitWaitAndScatter(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error) {
+	if len(sortedSplitKeys) == 0 {
+		return nil, nil
 	}
 
-	origin, newRegions, err := c.batchSplitRegionsWithOrigin(ctx, region, keys)
+	// we need to find the regions that contain the split keys. However, the scan
+	// region API accepts a key range [start, end) where end key is exclusive, so we
+	// increase the end key a bit. If the end key is on the region boundaries, it
+	// will be skipped by getSplitKeysOfRegions.
+	scanStart := codec.EncodeBytesExt(nil, sortedSplitKeys[0], c.isRawKv)
+	lastKey := kv.Key(sortedSplitKeys[len(sortedSplitKeys)-1])
+	scanEnd := codec.EncodeBytesExt(nil, lastKey.Next(), c.isRawKv)
+	mu := sync.Mutex{}
+	ret := make([]*RegionInfo, 0, len(sortedSplitKeys)+1)
+
+	err := utils.WithRetry(ctx, func() error {
+		ret = ret[:0]
+
+		regions, err := PaginateScanRegion(ctx, c, scanStart, scanEnd, ScanRegionPaginationLimit)
+		if err != nil {
+			return err
+		}
+		log.Info("paginate scan regions",
+			zap.Int("count", len(regions)),
+			logutil.Key("start", scanStart),
+			logutil.Key("end", scanEnd))
+
+		splitKeyMap := getSplitKeysOfRegions(sortedSplitKeys, regions, c.isRawKv)
+		workerPool := utils.NewWorkerPool(c.splitConcurrency, "split keys")
+		eg, eCtx := errgroup.WithContext(ctx)
+		for region, splitKeys := range splitKeyMap {
+			region := region
+			splitKeys := splitKeys
+			workerPool.ApplyOnErrorGroup(eg, func() error {
+				start, end := 0, 0
+				totalKeySize := 0
+				for end < len(splitKeys) {
+					for end < len(splitKeys) &&
+						totalKeySize+len(splitKeys[end]) < maxBatchSplitSize &&
+						end-start < c.splitBatchSize {
+						totalKeySize += len(splitKeys[end])
+						end++
+					}
+
+					// in rare cases we may have a very large key that exceeds the maxBatchSplitSize.
+					if end < len(splitKeys) && start == end {
+						end++
+					}
+
+					keys := splitKeys[start:end]
+					log.Info("get split keys for split regions",
+						logutil.Region(region.Region), logutil.Keys(keys))
+					// TODO(lance6716): add error handling to retry from scan or retry from split
+					newRegions, err2 := c.SplitWaitAndScatterOnRegion(eCtx, region, keys)
+					if err2 != nil {
+						log.Info("split and scatter region meet error, will retry", zap.Error(err2))
+						return err2
+					}
+					if len(newRegions) != len(keys) {
+						log.Warn("split key count and new region count mismatch",
+							zap.Int("new region count", len(newRegions)),
+							zap.Int("split key count", len(keys)))
+					}
+					log.Info("scattered regions", zap.Int("count", len(newRegions)))
+					mu.Lock()
+					ret = append(ret, newRegions...)
+					mu.Unlock()
+					if c.onSplit != nil {
+						c.onSplit(keys)
+					}
+					start = end
+					totalKeySize = 0
+					// the keys of next split batch are located in the right-most region.
+					region = newRegions[len(newRegions)-1]
+				}
+
+				return nil
+			})
+		}
+		return eg.Wait()
+	}, newSplitBackoffer())
+	return ret, errors.Trace(err)
+}
+
+type splitBackoffer struct {
+	state utils.RetryState
+}
+
+func newSplitBackoffer() *splitBackoffer {
+	return &splitBackoffer{
+		state: utils.InitialRetryState(splitRetryTimes, SplitRetryInterval, SplitMaxRetryInterval),
+	}
+}
+
+func (bo *splitBackoffer) NextBackoff(err error) time.Duration {
+	if berrors.ErrInvalidRange.Equal(err) {
+		bo.state.GiveUp()
+		return 0
+	}
+	return bo.state.ExponentialBackoff()
+}
+
+func (bo *splitBackoffer) Attempt() int {
+	return bo.state.Attempt()
+}
+
+// SplitWaitAndScatterOnRegion implements the SplitClient interface.
+func (c *pdClient) SplitWaitAndScatterOnRegion(
+	ctx context.Context, region *RegionInfo, keys [][]byte,
+) ([]*RegionInfo, error) {
+	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+		failpoint.Return(nil, errors.New("retryable error"))
+	})
+
+	if len(keys) == 0 {
+		return []*RegionInfo{region}, nil
+	}
+
+	newRegions, err := c.batchSplitRegions(ctx, region, keys)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	err = c.waitRegionsSplit(ctx, newRegions)
 	if err != nil {
@@ -574,7 +652,7 @@ func (c *pdClient) SplitWaitAndScatter(
 		)
 	}
 	if err = ctx.Err(); err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	err = c.scatterRegions(ctx, newRegions)
@@ -584,7 +662,7 @@ func (c *pdClient) SplitWaitAndScatter(
 			zap.Error(err),
 		)
 	}
-	return origin, newRegions, errors.Trace(ctx.Err())
+	return newRegions, errors.Trace(ctx.Err())
 }
 
 func (c *pdClient) getStoreCount(ctx context.Context) (int, error) {

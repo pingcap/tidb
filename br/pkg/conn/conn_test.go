@@ -158,8 +158,9 @@ func TestCheckStoresAlive(t *testing.T) {
 	require.Len(t, kvStores, 2)
 	require.Equal(t, stores[2:], kvStores)
 
-	err = checkStoresAlive(ctx, fpdc, util.SkipTiFlash)
+	storeCnt, err := checkStoresAlive(ctx, fpdc, util.SkipTiFlash)
 	require.NoError(t, err)
+	require.Equal(t, 1, storeCnt)
 }
 
 func TestGetAllTiKVStores(t *testing.T) {

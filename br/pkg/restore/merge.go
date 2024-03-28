@@ -96,11 +96,11 @@ func MergeAndRewriteFileRanges(
 		// so that splitRanges no need to handle rewrite rules any more.
 		tmpRng, err := RewriteRange(rg, rewriteRules)
 		if err != nil {
-			return nil, nil, errors.Annotatef(berrors.ErrRestoreInvalidRange,
+			return nil, nil, errors.Annotatef(berrors.ErrInvalidRange,
 				"unable to rewrite range files %+v", files)
 		}
 		if out := rangeTree.InsertRange(*tmpRng); out != nil {
-			return nil, nil, errors.Annotatef(berrors.ErrRestoreInvalidRange,
+			return nil, nil, errors.Annotatef(berrors.ErrInvalidRange,
 				"duplicate range %s files %+v", out, files)
 		}
 	}

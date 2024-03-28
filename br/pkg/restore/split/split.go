@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	brlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -22,11 +23,11 @@ import (
 
 var (
 	WaitRegionOnlineAttemptTimes = config.DefaultRegionCheckBackoffLimit
+	splitRetryTimes              = 32
 )
 
 // Constants for split retry machinery.
 const (
-	SplitRetryTimes       = 32
 	SplitRetryInterval    = 50 * time.Millisecond
 	SplitMaxRetryInterval = 4 * time.Second
 
@@ -91,7 +92,7 @@ func PaginateScanRegion(
 	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
 ) ([]*RegionInfo, error) {
 	if len(endKey) != 0 && bytes.Compare(startKey, endKey) > 0 {
-		return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "startKey > endKey, startKey: %s, endkey: %s",
+		return nil, errors.Annotatef(berrors.ErrInvalidRange, "startKey > endKey, startKey: %s, endkey: %s",
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 	}
 
@@ -174,7 +175,7 @@ func ScanRegionsWithRetry(
 	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
 ) ([]*RegionInfo, error) {
 	if len(endKey) != 0 && bytes.Compare(startKey, endKey) > 0 {
-		return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "startKey > endKey, startKey: %s, endkey: %s",
+		return nil, errors.Annotatef(berrors.ErrInvalidRange, "startKey > endKey, startKey: %s, endkey: %s",
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 	}
 
@@ -288,34 +289,79 @@ func (b *BackoffMayNotCountBackoffer) Attempt() int {
 }
 
 // GetSplitKeysOfRegions checks every input key is necessary to split region on
-// it. Returns a map from original region ID to split keys belongs to each
-// region.
+// it. Returns a map from region to split keys belongs to it.
 //
 // prerequisite:
 // - sortedKeys are sorted in ascending order.
 // - sortedRegions are continuous and sorted in ascending order by start key.
 // - sortedRegions can cover all keys in sortedKeys.
 // PaginateScanRegion should satisfy the above prerequisites.
-func GetSplitKeysOfRegions(sortedKeys [][]byte, sortedRegions []*RegionInfo, isRawKV bool) map[uint64][][]byte {
-	splitKeyMap := make(map[uint64][][]byte, len(sortedRegions))
+func getSplitKeysOfRegions(
+	sortedKeys [][]byte,
+	sortedRegions []*RegionInfo,
+	isRawKV bool,
+) map[*RegionInfo][][]byte {
+	splitKeyMap := make(map[*RegionInfo][][]byte, len(sortedRegions))
+	pendingSplitKeyMap := make(map[*RegionInfo][][]byte, 1)
 	curKeyIndex := 0
+	splitKey := codec.EncodeBytesExt(nil, sortedKeys[curKeyIndex], isRawKV)
+	moveRegionCnt := 0
+
 	for _, region := range sortedRegions {
-		for ; curKeyIndex < len(sortedKeys); curKeyIndex += 1 {
+		for {
 			if len(sortedKeys[curKeyIndex]) == 0 {
-				continue
+				// should not happen?
+				goto nextKey
 			}
-			splitKey := codec.EncodeBytesExt(nil, sortedKeys[curKeyIndex], isRawKV)
 			// If splitKey is the boundary of the region, don't need to split on it.
 			if bytes.Equal(splitKey, region.Region.GetStartKey()) {
-				continue
+				goto nextKey
 			}
-			// If splitKey is not in a region, we should move to the next region.
+			// If splitKey is not in this region, we should move to the next region.
 			if !region.ContainsInterior(splitKey) {
+				moveRegionCnt++
 				break
 			}
-			regionID := region.Region.GetId()
-			splitKeyMap[regionID] = append(splitKeyMap[regionID], sortedKeys[curKeyIndex])
+
+			//   key1      key2    key3
+			//    |    a    |    b  |
+			// ---+----+----+----+--+-----------
+			// region1 | region2 | region3 | region4
+			//
+			// key2 don't need to be split on. Considering the original region, we can have
+			// [key1, a), [a, b), [b, key3) rather than [key1, a), [a, key2), [key2, b), [b,
+			// key3)
+
+			if moveRegionCnt > 0 {
+				clear(pendingSplitKeyMap)
+				// save key2 in pendingSplitKeyMap. When we move to key3 we can check
+				// moveRegionCnt again to know if key2 can be skipped.
+				pendingSplitKeyMap[region] = append(pendingSplitKeyMap[region], sortedKeys[curKeyIndex])
+			} else {
+				for k, v := range pendingSplitKeyMap {
+					splitKeyMap[k] = append(splitKeyMap[k], v...)
+				}
+				splitKeyMap[region] = append(splitKeyMap[region], sortedKeys[curKeyIndex])
+				clear(pendingSplitKeyMap)
+			}
+
+		nextKey:
+			curKeyIndex++
+			if curKeyIndex >= len(sortedKeys) {
+				for k, v := range pendingSplitKeyMap {
+					splitKeyMap[k] = append(splitKeyMap[k], v...)
+				}
+				return splitKeyMap
+			}
+			splitKey = codec.EncodeBytesExt(nil, sortedKeys[curKeyIndex], isRawKV)
+			moveRegionCnt = 0
 		}
 	}
+	brlog.L().Error("in getSplitKeysOfRegions, regions don't cover all keys",
+		zap.String("firstKey", hex.EncodeToString(sortedKeys[0])),
+		zap.String("lastKey", hex.EncodeToString(sortedKeys[len(sortedKeys)-1])),
+		zap.String("firstRegionStartKey", hex.EncodeToString(sortedRegions[0].Region.GetStartKey())),
+		zap.String("lastRegionEndKey", hex.EncodeToString(sortedRegions[len(sortedRegions)-1].Region.GetEndKey())),
+	)
 	return splitKeyMap
 }

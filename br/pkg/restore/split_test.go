@@ -101,13 +101,10 @@ func (c *TestClient) GetRegionByID(ctx context.Context, regionID uint64) (*split
 	return region, nil
 }
 
-func (c *TestClient) SplitWaitAndScatter(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
-) (*split.RegionInfo, []*split.RegionInfo, error) {
+func (c *TestClient) SplitWaitAndScatter(ctx_ context.Context, keys [][]byte) ([]*split.RegionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	newRegions := make([]*split.RegionInfo, 0)
-	var region *split.RegionInfo
 	for _, key := range keys {
 		var target *split.RegionInfo
 		splitKey := codec.EncodeBytes([]byte{}, key)
@@ -131,10 +128,9 @@ func (c *TestClient) SplitWaitAndScatter(
 		c.nextRegionID++
 		target.Region.StartKey = splitKey
 		c.regions[target.Region.Id] = target
-		region = target
 		newRegions = append(newRegions, newRegion)
 	}
-	return region, newRegions, nil
+	return newRegions, nil
 }
 
 func (c *TestClient) GetOperator(context.Context, uint64) (*pdpb.GetOperatorResponse, error) {
@@ -175,7 +171,7 @@ func TestScanEmptyRegion(t *testing.T) {
 	regionSplitter := NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges)
 	// should not return error with only one range entry
 	require.NoError(t, err)
 }
@@ -199,7 +195,7 @@ func TestSplitAndScatter(t *testing.T) {
 		require.NoError(t, err)
 		ranges[i] = *tmp
 	}
-	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges)
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -219,14 +215,26 @@ func TestRawSplit(t *testing.T) {
 			EndKey:   []byte{},
 		},
 	}
-	client := initTestClient(true)
+	mockPDClient := split.NewMockPDClientForSplit()
+	regionBoundaries := [][]byte{{}, {12}, {34}, {56}, {}}
+	mockPDClient.SetRegions(regionBoundaries)
+	splitClient := split.NewSplitClient(mockPDClient, nil, nil, 1, split.WithRawKV())
 	ctx := context.Background()
 
-	regionSplitter := NewRegionSplitter(client)
-	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, true, func(key [][]byte) {})
+	regionSplitter := NewRegionSplitter(splitClient)
+	err := regionSplitter.ExecuteSplit(ctx, ranges)
 	require.NoError(t, err)
-	regions := client.GetAllRegions()
-	expectedKeys := []string{"", "aay", "bba", "bbh", "cca", ""}
+	regions := make(map[uint64]*split.RegionInfo, len(mockPDClient.Regions.Regions))
+	for i, r := range mockPDClient.Regions.Regions {
+		regions[uint64(i)] = &split.RegionInfo{
+			Region: r.Meta,
+		}
+	}
+
+	expectedKeys := make([]string, 0, len(regionBoundaries))
+	for _, b := range regionBoundaries {
+		expectedKeys = append(expectedKeys, string(b))
+	}
 	if !validateRegionsExt(regions, expectedKeys, true) {
 		for _, region := range regions {
 			t.Logf("region: %v\n", region.Region)
@@ -342,77 +350,6 @@ FindRegion:
 		return false
 	}
 	return true
-}
-
-func TestRegionConsistency(t *testing.T) {
-	cases := []struct {
-		startKey []byte
-		endKey   []byte
-		err      string
-		regions  []*split.RegionInfo
-	}{
-		{
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			"scan region return empty result, startKey: (.*?), endKey: (.*?)",
-			[]*split.RegionInfo{},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			"first region 1's startKey(.*?) > startKey(.*?)",
-			[]*split.RegionInfo{
-				{
-					Region: &metapb.Region{
-						Id:       1,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
-					},
-				},
-			},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("b")),
-			codec.EncodeBytes([]byte{}, []byte("e")),
-			"last region 100's endKey(.*?) < endKey(.*?)",
-			[]*split.RegionInfo{
-				{
-					Region: &metapb.Region{
-						Id:       100,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
-					},
-				},
-			},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("c")),
-			codec.EncodeBytes([]byte{}, []byte("e")),
-			"region 6's endKey not equal to next region 8's startKey(.*?)",
-			[]*split.RegionInfo{
-				{
-					Region: &metapb.Region{
-						Id:          6,
-						StartKey:    codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
-						RegionEpoch: nil,
-					},
-				},
-				{
-					Region: &metapb.Region{
-						Id:       8,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("e")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("f")),
-					},
-				},
-			},
-		},
-	}
-	for _, ca := range cases {
-		err := split.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions)
-		require.Error(t, err)
-		require.Regexp(t, ca.err, err.Error())
-	}
 }
 
 type fakeRestorer struct {

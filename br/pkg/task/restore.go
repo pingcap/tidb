@@ -740,6 +740,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		mgr.GetTLSConfig(),
 		keepaliveCfg,
 		false,
+		mgr.GetStoreCount(),
 	)
 	// using tikv config to set the concurrency-per-store for client.
 	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
