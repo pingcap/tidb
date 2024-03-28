@@ -760,7 +760,7 @@ childLoop:
 		case *DataSource:
 			wrapper.ds = child
 			break childLoop
-		case *LogicalProjection, *LogicalSelection:
+		case *LogicalProjection, *LogicalSelection, *LogicalAggregation:
 			if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 				return nil
 			}
@@ -985,7 +985,8 @@ type indexJoinBuildHelper struct {
 	curPossibleUsedKeys []*expression.Column
 	curNotUsedIndexCols []*expression.Column
 	curNotUsedColLens   []int
-	curIdxOff2KeyOff    []int
+	// Store the corresponding innerKeys offset of each column in the current path, reset by "resetContextForIndex()"
+	curIdxOff2KeyOff []int
 }
 
 func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*expression.Column, outerJoinKeys []*expression.Column) string {
@@ -1012,188 +1013,6 @@ func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*
 	}
 	buffer.WriteString("]")
 	return buffer.String()
-}
-
-// constructInnerTableScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerTableScanTask(
-	wrapper *indexJoinInnerChildWrapper,
-	ranges ranger.Ranges,
-	_ []*expression.Column,
-	rangeInfo string,
-	keepOrder bool,
-	desc bool,
-	rowCount float64,
-) task {
-	ds := wrapper.ds
-	// If `ds.tableInfo.GetPartitionInfo() != nil`,
-	// it means the data source is a partition table reader.
-	// If the inner task need to keep order, the partition table reader can't satisfy it.
-	if keepOrder && ds.tableInfo.GetPartitionInfo() != nil {
-		return nil
-	}
-	ts := PhysicalTableScan{
-		Table:           ds.tableInfo,
-		Columns:         ds.Columns,
-		TableAsName:     ds.TableAsName,
-		DBName:          ds.DBName,
-		filterCondition: ds.pushedDownConds,
-		Ranges:          ranges,
-		rangeInfo:       rangeInfo,
-		KeepOrder:       keepOrder,
-		Desc:            desc,
-		physicalTableID: ds.physicalTableID,
-		isPartition:     ds.partitionDefIdx != nil,
-		tblCols:         ds.TblCols,
-		tblColHists:     ds.TblColHists,
-	}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	ts.SetSchema(ds.schema.Clone())
-	if rowCount <= 0 {
-		rowCount = float64(1)
-	}
-	selectivity := float64(1)
-	countAfterAccess := rowCount
-	if len(ts.filterCondition) > 0 {
-		var err error
-		selectivity, _, err = cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, ts.filterCondition, ds.possibleAccessPaths)
-		if err != nil || selectivity <= 0 {
-			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ts.TableAsName.L))
-			selectivity = SelectionFactor
-		}
-		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
-		// i.e, rowCount equals to `countAfterAccess * selectivity`.
-		countAfterAccess = rowCount / selectivity
-	}
-	ts.SetStats(&property.StatsInfo{
-		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
-		RowCount:     math.Min(1.0, countAfterAccess),
-		StatsVersion: ds.StatsInfo().StatsVersion,
-		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
-	})
-	usedStats := p.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
-	if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
-		ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
-	}
-	copTask := &copTask{
-		tablePlan:         ts,
-		indexPlanFinished: true,
-		tblColHists:       ds.TblColHists,
-		keepOrder:         ts.KeepOrder,
-	}
-	copTask.physPlanPartInfo = PhysPlanPartInfo{
-		PruningConds:   ds.allConds,
-		PartitionNames: ds.partitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.names,
-	}
-	ts.PlanPartInfo = copTask.physPlanPartInfo
-	selStats := ts.StatsInfo().Scale(selectivity)
-	ts.addPushedDownSelection(copTask, selStats)
-	t := copTask.convertToRootTask(ds.SCtx())
-	reader := t.p
-	t.p = p.constructInnerByWrapper(wrapper, reader)
-	return t
-}
-
-func (p *LogicalJoin) constructInnerByWrapper(wrapper *indexJoinInnerChildWrapper, child PhysicalPlan) PhysicalPlan {
-	for i := len(wrapper.zippedChildren) - 1; i >= 0; i-- {
-		switch x := wrapper.zippedChildren[i].(type) {
-		case *LogicalUnionScan:
-			child = p.constructInnerUnionScan(x, child)
-		case *LogicalProjection:
-			child = p.constructInnerProj(x, child)
-		case *LogicalSelection:
-			child = p.constructInnerSel(x, child)
-		}
-	}
-	return child
-}
-
-func (*LogicalJoin) constructInnerSel(sel *LogicalSelection, child PhysicalPlan) PhysicalPlan {
-	if sel == nil {
-		return child
-	}
-	physicalSel := PhysicalSelection{
-		Conditions: sel.Conditions,
-	}.Init(sel.SCtx(), sel.StatsInfo(), sel.QueryBlockOffset(), nil)
-	physicalSel.SetChildren(child)
-	return physicalSel
-}
-
-func (*LogicalJoin) constructInnerProj(proj *LogicalProjection, child PhysicalPlan) PhysicalPlan {
-	if proj == nil {
-		return child
-	}
-	physicalProj := PhysicalProjection{
-		Exprs:                proj.Exprs,
-		CalculateNoDelay:     proj.CalculateNoDelay,
-		AvoidColumnEvaluator: proj.AvoidColumnEvaluator,
-	}.Init(proj.SCtx(), proj.StatsInfo(), proj.QueryBlockOffset(), nil)
-	physicalProj.SetChildren(child)
-	physicalProj.SetSchema(proj.schema)
-	return physicalProj
-}
-
-func (*LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader PhysicalPlan) PhysicalPlan {
-	if us == nil {
-		return reader
-	}
-	// Use `reader.StatsInfo()` instead of `us.StatsInfo()` because it should be more accurate. No need to specify
-	// childrenReqProps now since we have got reader already.
-	physicalUnionScan := PhysicalUnionScan{
-		Conditions: us.conditions,
-		HandleCols: us.handleCols,
-	}.Init(us.SCtx(), reader.StatsInfo(), us.QueryBlockOffset(), nil)
-	physicalUnionScan.SetChildren(reader)
-	return physicalUnionScan
-}
-
-// getColsNDVLowerBoundFromHistColl tries to get a lower bound of the NDV of columns (whose uniqueIDs are colUIDs).
-func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.HistColl) int64 {
-	if len(colUIDs) == 0 || histColl == nil {
-		return -1
-	}
-
-	// 1. Try to get NDV from column stats if it's a single column.
-	if len(colUIDs) == 1 && histColl.Columns != nil {
-		uid := colUIDs[0]
-		if colStats, ok := histColl.Columns[uid]; ok && colStats != nil && colStats.IsStatsInitialized() {
-			return colStats.NDV
-		}
-	}
-
-	slices.Sort(colUIDs)
-
-	// 2. Try to get NDV from index stats.
-	// Note that we don't need to specially handle prefix index here, because the NDV of a prefix index is
-	// equal or less than the corresponding normal index, and that's safe here since we want a lower bound.
-	for idxID, idxCols := range histColl.Idx2ColumnIDs {
-		if len(idxCols) != len(colUIDs) {
-			continue
-		}
-		orderedIdxCols := make([]int64, len(idxCols))
-		copy(orderedIdxCols, idxCols)
-		slices.Sort(orderedIdxCols)
-		if !slices.Equal(orderedIdxCols, colUIDs) {
-			continue
-		}
-		if idxStats, ok := histColl.Indices[idxID]; ok && idxStats != nil && idxStats.IsStatsInitialized() {
-			return idxStats.NDV
-		}
-	}
-
-	// TODO: if there's an index that contains the expected columns, we can also make use of its NDV.
-	// For example, NDV(a,b,c) / NDV(c) is a safe lower bound of NDV(a,b).
-
-	// 3. If we still haven't got an NDV, we use the maximum NDV in the column stats as a lower bound.
-	maxNDV := int64(-1)
-	for _, uid := range colUIDs {
-		colStats := histColl.Columns[uid]
-		if colStats == nil || !colStats.IsStatsInitialized() {
-			continue
-		}
-		maxNDV = max(maxNDV, colStats.NDV)
-	}
-	return maxNDV
 }
 
 // constructInnerIndexScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
@@ -1376,10 +1195,287 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
 	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
-	t := cop.convertToRootTask(ds.SCtx())
-	reader := t.p
-	t.p = p.constructInnerByWrapper(wrapper, reader)
-	return t
+	return p.constructIndexJoinInnerSideTask(cop, ds, path, wrapper)
+}
+
+// constructInnerTableScanTask is specially used to construct the inner plan for PhysicalIndexJoin.
+func (p *LogicalJoin) constructInnerTableScanTask(
+	wrapper *indexJoinInnerChildWrapper,
+	ranges ranger.Ranges,
+	_ []*expression.Column,
+	rangeInfo string,
+	keepOrder bool,
+	desc bool,
+	rowCount float64,
+) task {
+	ds := wrapper.ds
+	// If `ds.tableInfo.GetPartitionInfo() != nil`,
+	// it means the data source is a partition table reader.
+	// If the inner task need to keep order, the partition table reader can't satisfy it.
+	if keepOrder && ds.tableInfo.GetPartitionInfo() != nil {
+		return nil
+	}
+	ts := PhysicalTableScan{
+		Table:           ds.tableInfo,
+		Columns:         ds.Columns,
+		TableAsName:     ds.TableAsName,
+		DBName:          ds.DBName,
+		filterCondition: ds.pushedDownConds,
+		Ranges:          ranges,
+		rangeInfo:       rangeInfo,
+		KeepOrder:       keepOrder,
+		Desc:            desc,
+		physicalTableID: ds.physicalTableID,
+		isPartition:     ds.partitionDefIdx != nil,
+		tblCols:         ds.TblCols,
+		tblColHists:     ds.TblColHists,
+	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	ts.SetSchema(ds.schema.Clone())
+	if rowCount <= 0 {
+		rowCount = float64(1)
+	}
+	selectivity := float64(1)
+	countAfterAccess := rowCount
+	if len(ts.filterCondition) > 0 {
+		var err error
+		selectivity, _, err = cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, ts.filterCondition, ds.possibleAccessPaths)
+		if err != nil || selectivity <= 0 {
+			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ts.TableAsName.L))
+			selectivity = SelectionFactor
+		}
+		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
+		// i.e, rowCount equals to `countAfterAccess * selectivity`.
+		countAfterAccess = rowCount / selectivity
+	}
+	ts.SetStats(&property.StatsInfo{
+		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
+		RowCount:     math.Min(1.0, countAfterAccess),
+		StatsVersion: ds.StatsInfo().StatsVersion,
+		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
+	})
+	usedStats := p.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
+	if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
+		ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
+	}
+	copTask := &copTask{
+		tablePlan:         ts,
+		indexPlanFinished: true,
+		tblColHists:       ds.TblColHists,
+		keepOrder:         ts.KeepOrder,
+	}
+	copTask.physPlanPartInfo = PhysPlanPartInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
+	}
+	ts.PlanPartInfo = copTask.physPlanPartInfo
+	selStats := ts.StatsInfo().Scale(selectivity)
+	ts.addPushedDownSelection(copTask, selStats)
+	return p.constructIndexJoinInnerSideTask(copTask, ds, nil, wrapper)
+}
+
+func (p *LogicalJoin) constructIndexJoinInnerSideTask(dsCopTask *copTask, ds *DataSource, path *util.AccessPath, wrapper *indexJoinInnerChildWrapper) task {
+	if len(wrapper.zippedChildren) == 0 {
+		t := dsCopTask.convertToRootTask(ds.SCtx())
+		return t
+	}
+	la, canPushAggToCop := wrapper.zippedChildren[len(wrapper.zippedChildren)-1].(*LogicalAggregation)
+	if la != nil && la.HasDistinct() {
+		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
+		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
+		if !la.SCtx().GetSessionVars().AllowDistinctAggPushDown {
+			canPushAggToCop = false
+		}
+	}
+
+	if canPushAggToCop {
+		// Try stream agg
+		_, preferStream := la.ResetHintIfConflicted()
+		for _, aggFunc := range la.AggFuncs {
+			if aggFunc.Mode == aggregation.FinalMode {
+				preferStream = false
+				break
+			}
+		}
+		// group by a + b is not interested in any order.
+		groupByCols := la.GetGroupByCols()
+		if len(groupByCols) != len(la.GroupByItems) {
+			preferStream = false
+		}
+		if la.HasDistinct() && !la.distinctArgsMeetsProperty() {
+			preferStream = false
+		}
+		// sort items must be the super set of group by items
+		if path != nil && path.Index != nil && ds.tableInfo.GetPartitionInfo() == nil {
+			if len(path.IdxCols) < len(groupByCols) {
+				preferStream = false
+			}
+			sctx := p.SCtx()
+			for i, groupbyCol := range groupByCols {
+				if path.IdxColLens[i] != types.UnspecifiedLength || !groupbyCol.EqualByExprAndID(sctx.GetExprCtx(), path.IdxCols[i]) {
+					preferStream = false
+				}
+			}
+		} else {
+			preferStream = false
+		}
+
+		// build physical agg and attach to task
+		var aggTask task
+		// build stream agg and change ds keep order to true
+		if preferStream {
+			newGbyItems := make([]expression.Expression, len(la.GroupByItems))
+			copy(newGbyItems, la.GroupByItems)
+			newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
+			copy(newAggFuncs, la.AggFuncs)
+			streamAgg := basePhysicalAgg{
+				GroupByItems: newGbyItems,
+				AggFuncs:     newAggFuncs,
+			}.initForStream(la.SCtx(), la.StatsInfo(), la.QueryBlockOffset(), nil)
+			streamAgg.SetSchema(la.schema.Clone())
+			// change to keep order
+			physicalIndexScan, _ := dsCopTask.tablePlan.(*PhysicalIndexScan)
+			if physicalIndexScan != nil {
+				physicalIndexScan.KeepOrder = true
+				dsCopTask.keepOrder = true
+				aggTask = streamAgg.attach2Task(dsCopTask)
+			}
+		}
+
+		// build hash agg, when the stream agg is illegal such as the order by prop is not matched
+		if aggTask == nil {
+			physicalHashAgg := NewPhysicalHashAgg(la, la.StatsInfo(), nil)
+			physicalHashAgg.SetSchema(la.schema.Clone())
+			aggTask = physicalHashAgg.attach2Task(dsCopTask)
+		}
+
+		// build other inner plan node to task
+		result, ok := aggTask.(*rootTask)
+		if !ok {
+			return nil
+		}
+		result.p = p.constructInnerByZippedChildren(wrapper.zippedChildren[0:len(wrapper.zippedChildren)-1], result.p)
+		return result
+	}
+
+	result := dsCopTask.convertToRootTask(ds.SCtx())
+	result.p = p.constructInnerByZippedChildren(wrapper.zippedChildren, result.p)
+	return result
+}
+
+func (p *LogicalJoin) constructInnerByZippedChildren(zippedChildren []LogicalPlan, child PhysicalPlan) PhysicalPlan {
+	for i := len(zippedChildren) - 1; i >= 0; i-- {
+		switch x := zippedChildren[i].(type) {
+		case *LogicalUnionScan:
+			child = p.constructInnerUnionScan(x, child)
+		case *LogicalProjection:
+			child = p.constructInnerProj(x, child)
+		case *LogicalSelection:
+			child = p.constructInnerSel(x, child)
+		case *LogicalAggregation:
+			child = p.constructInnerAgg(x, child)
+		}
+	}
+	return child
+}
+
+func (*LogicalJoin) constructInnerAgg(logicalAgg *LogicalAggregation, child PhysicalPlan) PhysicalPlan {
+	if logicalAgg == nil {
+		return child
+	}
+	physicalHashAgg := NewPhysicalHashAgg(logicalAgg, logicalAgg.StatsInfo(), nil)
+	physicalHashAgg.SetSchema(logicalAgg.schema.Clone())
+	physicalHashAgg.SetChildren(child)
+	return physicalHashAgg
+}
+
+func (*LogicalJoin) constructInnerSel(sel *LogicalSelection, child PhysicalPlan) PhysicalPlan {
+	if sel == nil {
+		return child
+	}
+	physicalSel := PhysicalSelection{
+		Conditions: sel.Conditions,
+	}.Init(sel.SCtx(), sel.StatsInfo(), sel.QueryBlockOffset(), nil)
+	physicalSel.SetChildren(child)
+	return physicalSel
+}
+
+func (*LogicalJoin) constructInnerProj(proj *LogicalProjection, child PhysicalPlan) PhysicalPlan {
+	if proj == nil {
+		return child
+	}
+	physicalProj := PhysicalProjection{
+		Exprs:                proj.Exprs,
+		CalculateNoDelay:     proj.CalculateNoDelay,
+		AvoidColumnEvaluator: proj.AvoidColumnEvaluator,
+	}.Init(proj.SCtx(), proj.StatsInfo(), proj.QueryBlockOffset(), nil)
+	physicalProj.SetChildren(child)
+	physicalProj.SetSchema(proj.schema)
+	return physicalProj
+}
+
+func (*LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader PhysicalPlan) PhysicalPlan {
+	if us == nil {
+		return reader
+	}
+	// Use `reader.StatsInfo()` instead of `us.StatsInfo()` because it should be more accurate. No need to specify
+	// childrenReqProps now since we have got reader already.
+	physicalUnionScan := PhysicalUnionScan{
+		Conditions: us.conditions,
+		HandleCols: us.handleCols,
+	}.Init(us.SCtx(), reader.StatsInfo(), us.QueryBlockOffset(), nil)
+	physicalUnionScan.SetChildren(reader)
+	return physicalUnionScan
+}
+
+// getColsNDVLowerBoundFromHistColl tries to get a lower bound of the NDV of columns (whose uniqueIDs are colUIDs).
+func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.HistColl) int64 {
+	if len(colUIDs) == 0 || histColl == nil {
+		return -1
+	}
+
+	// 1. Try to get NDV from column stats if it's a single column.
+	if len(colUIDs) == 1 && histColl.Columns != nil {
+		uid := colUIDs[0]
+		if colStats, ok := histColl.Columns[uid]; ok && colStats != nil && colStats.IsStatsInitialized() {
+			return colStats.NDV
+		}
+	}
+
+	slices.Sort(colUIDs)
+
+	// 2. Try to get NDV from index stats.
+	// Note that we don't need to specially handle prefix index here, because the NDV of a prefix index is
+	// equal or less than the corresponding normal index, and that's safe here since we want a lower bound.
+	for idxID, idxCols := range histColl.Idx2ColumnIDs {
+		if len(idxCols) != len(colUIDs) {
+			continue
+		}
+		orderedIdxCols := make([]int64, len(idxCols))
+		copy(orderedIdxCols, idxCols)
+		slices.Sort(orderedIdxCols)
+		if !slices.Equal(orderedIdxCols, colUIDs) {
+			continue
+		}
+		if idxStats, ok := histColl.Indices[idxID]; ok && idxStats != nil && idxStats.IsStatsInitialized() {
+			return idxStats.NDV
+		}
+	}
+
+	// TODO: if there's an index that contains the expected columns, we can also make use of its NDV.
+	// For example, NDV(a,b,c) / NDV(c) is a safe lower bound of NDV(a,b).
+
+	// 3. If we still haven't got an NDV, we use the maximum NDV in the column stats as a lower bound.
+	maxNDV := int64(-1)
+	for _, uid := range colUIDs {
+		colStats := histColl.Columns[uid]
+		if colStats == nil || !colStats.IsStatsInitialized() {
+			continue
+		}
+		maxNDV = max(maxNDV, colStats.NDV)
+	}
+	return maxNDV
 }
 
 var symmetricOp = map[string]string{
@@ -1500,6 +1596,16 @@ func (cwc *ColWithCmpFuncManager) MemoryUsage() (sum int64) {
 	return
 }
 
+// Reset the 'curIdxOff2KeyOff', 'curNotUsedIndexCols' and 'curNotUsedColLens' by innerKeys and idxCols
+/*
+For each idxCols,
+  If column can be found in innerKeys
+	save offset of innerKeys in 'curIdxOff2KeyOff'
+  Else,
+	save -1 in 'curIdxOff2KeyOff'
+*/
+// For example, innerKeys[t1.a, t1.sum_b, t1.c], idxCols [a, b, c]
+// 'curIdxOff2KeyOff' = [0, -1, 2]
 func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expression.Column, idxCols []*expression.Column, colLens []int, outerKeys []*expression.Column) {
 	tmpSchema := expression.NewSchema(innerKeys...)
 	ijHelper.curIdxOff2KeyOff = make([]int, len(idxCols))

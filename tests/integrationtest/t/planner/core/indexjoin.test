@@ -17,4 +17,29 @@ select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
 select /*+ HASH_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
 rollback;
 
+# Test agg as inner side of index join
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) from t group by a) tmp, t1 where tmp.a=t1.a;
+select /*+ INL_JOIN(tmp) */ * from (select a, count(b) from t group by a) tmp, t1 where tmp.a=t1.a;
+select /*+ HASH_JOIN(tmp) */ * from (select a, count(b) from t group by a) tmp, t1 where tmp.a=t1.a;
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a and tmp.count_b = t1.b;
+select /*+ INL_JOIN(tmp) */ * from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a and tmp.count_b = t1.b;
+select /*+ HASH_JOIN(tmp) */ * from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a and tmp.count_b = t1.b;
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.count_b = t1.b; -- hint doesn't work
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, b from t group by a, b) tmp, t1 where tmp.a=t1.a;
+select /*+ INL_JOIN(tmp) */ * from (select a, b from t group by a, b) tmp, t1 where tmp.a=t1.a;
+select /*+ HASH_JOIN(tmp) */ * from (select a, b from t group by a, b) tmp, t1 where tmp.a=t1.a;
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, b from t where a=1 group by a, b having a>0 ) tmp, t1 where tmp.a=t1.a;
+select /*+ INL_JOIN(tmp) */ * from (select a, b from t where a=1 group by a, b having a>0 ) tmp, t1 where tmp.a=t1.a;
+select /*+ HASH_JOIN(tmp) */ * from (select a, b from t where a=1 group by a, b having a>0 ) tmp, t1 where tmp.a=t1.a;
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a +1 as a1, b from t group by a, b ) tmp, t1 where tmp.a1=t1.a; -- hint doesn't work
+
+# Test the diff type with same column
+# The firstrow() function will changed the column type from float to double but it will not changed the unique id of column. So we need to test the result of index join.
+create table t3 (a int, b float, index idx (b));
+create table t4 (a int, b double);
+insert into t3 values (1, 1.0), (1, 2.0), (2, 3.0);
+insert into t4 values (1, 1.11111111);
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select b from t group by b) tmp, t1 where tmp.b=t1.b;
+select /*+ INL_JOIN(tmp) */ * from (select b from t group by b) tmp, t1 where tmp.b=t1.b;
+
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
