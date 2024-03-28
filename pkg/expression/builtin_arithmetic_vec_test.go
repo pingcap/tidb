@@ -231,7 +231,7 @@ func TestVectorizedDecimalErrOverflow(t *testing.T) {
 		baseFunc, err := funcs[tt.funcName].getFunction(ctx, cols)
 		require.NoError(t, err)
 		result := chunk.NewColumn(eType2FieldType(types.ETDecimal), 1)
-		err = baseFunc.vecEvalDecimal(ctx, input, result)
+		err = vecEvalType(ctx, baseFunc, types.ETDecimal, input, result)
 		require.EqualError(t, err, tt.errStr)
 	}
 }

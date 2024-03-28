@@ -353,10 +353,11 @@ func TestCastFuncSig(t *testing.T) {
 		case 5:
 			sig = &builtinCastDecimalAsDecimalSig{decFunc}
 		}
-		res, isNull, err := sig.evalDecimal(ctx, c.row.ToRow())
-		require.Equal(t, false, isNull)
+		res, err := evalBuiltinFunc(sig, ctx, c.row.ToRow())
 		require.NoError(t, err)
-		require.Equal(t, 0, res.Compare(c.after))
+		require.False(t, res.IsNull())
+		require.Equal(t, types.KindMysqlDecimal, res.Kind())
+		require.Equal(t, 0, res.GetMysqlDecimal().Compare(c.after))
 	}
 
 	durationColumn.RetType.SetDecimal(1)
@@ -439,10 +440,11 @@ func TestCastFuncSig(t *testing.T) {
 		case 5:
 			sig = &builtinCastDecimalAsDecimalSig{decFunc}
 		}
-		res, isNull, err := sig.evalDecimal(ctx, c.row.ToRow())
-		require.Equal(t, false, isNull)
+		res, err := evalBuiltinFunc(sig, ctx, c.row.ToRow())
 		require.NoError(t, err)
-		require.Equal(t, c.after.ToString(), res.ToString())
+		require.False(t, res.IsNull())
+		require.Equal(t, types.KindMysqlDecimal, res.Kind())
+		require.Equal(t, c.after.ToString(), res.GetMysqlDecimal().ToString())
 	}
 
 	durationColumn.RetType.SetDecimal(0)
@@ -522,10 +524,11 @@ func TestCastFuncSig(t *testing.T) {
 		case 6:
 			sig = &builtinCastJSONAsIntSig{intFunc}
 		}
-		res, isNull, err := sig.evalInt(ctx, c.row.ToRow())
-		require.False(t, isNull)
+		res, err := evalBuiltinFunc(sig, ctx, c.row.ToRow())
 		require.NoError(t, err)
-		require.Equal(t, c.after, res)
+		require.False(t, res.IsNull())
+		require.Equal(t, types.KindInt64, res.Kind())
+		require.Equal(t, c.after, res.GetInt64())
 	}
 
 	// Test cast as real.
@@ -590,10 +593,12 @@ func TestCastFuncSig(t *testing.T) {
 		case 5:
 			sig = &builtinCastJSONAsRealSig{realFunc}
 		}
-		res, isNull, err := sig.evalReal(ctx, c.row.ToRow())
-		require.False(t, isNull)
+
+		res, err := evalBuiltinFunc(sig, ctx, c.row.ToRow())
 		require.NoError(t, err)
-		require.Equal(t, c.after, res)
+		require.False(t, res.IsNull())
+		require.Equal(t, types.KindFloat64, res.Kind())
+		require.Equal(t, c.after, res.GetFloat64())
 	}
 
 	// Test cast as string.
@@ -667,10 +672,11 @@ func TestCastFuncSig(t *testing.T) {
 		case 6:
 			sig = &builtinCastStringAsStringSig{stringFunc}
 		}
-		res, isNull, err := sig.evalString(ctx, c.row.ToRow())
-		require.False(t, isNull)
+		res, err := evalBuiltinFunc(sig, ctx, c.row.ToRow())
 		require.NoError(t, err)
-		require.Equal(t, c.after, res)
+		require.False(t, res.IsNull())
+		require.Equal(t, types.KindString, res.Kind())
+		require.Equal(t, c.after, res.GetString())
 	}
 
 	// Test cast as string.
@@ -754,10 +760,11 @@ func TestCastFuncSig(t *testing.T) {
 		case 6:
 			sig = &builtinCastJSONAsStringSig{stringFunc}
 		}
-		res, isNull, err := sig.evalString(ctx, c.row.ToRow())
-		require.False(t, isNull)
+		res, err := evalBuiltinFunc(sig, ctx, c.row.ToRow())
 		require.NoError(t, err)
-		require.Equal(t, c.after, res)
+		require.False(t, res.IsNull())
+		require.Equal(t, types.KindString, res.Kind())
+		require.Equal(t, c.after, res.GetString())
 	}
 
 	castToTimeCases := []struct {
@@ -830,10 +837,11 @@ func TestCastFuncSig(t *testing.T) {
 		case 6:
 			sig = &builtinCastTimeAsTimeSig{timeFunc}
 		}
-		res, isNull, err := sig.evalTime(ctx, c.row.ToRow())
+		res, err := evalBuiltinFunc(sig, ctx, c.row.ToRow())
 		require.NoError(t, err)
-		require.False(t, isNull)
-		require.Equal(t, c.after.String(), res.String())
+		require.False(t, res.IsNull())
+		require.Equal(t, types.KindMysqlTime, res.Kind())
+		require.Equal(t, c.after.String(), res.GetMysqlTime().String())
 	}
 
 	castToTimeCases2 := []struct {
@@ -912,9 +920,10 @@ func TestCastFuncSig(t *testing.T) {
 		case 5:
 			sig = &builtinCastTimeAsTimeSig{timeFunc}
 		}
-		res, isNull, err := sig.evalTime(ctx, c.row.ToRow())
-		require.Equal(t, false, isNull)
+		res, err := evalBuiltinFunc(sig, ctx, c.row.ToRow())
 		require.NoError(t, err)
+		require.False(t, res.IsNull())
+		require.Equal(t, types.KindMysqlTime, res.Kind())
 		resAfter := c.after.String()
 		if c.fsp > 0 {
 			resAfter += "."
@@ -922,7 +931,7 @@ func TestCastFuncSig(t *testing.T) {
 				resAfter += "0"
 			}
 		}
-		require.Equal(t, resAfter, res.String())
+		require.Equal(t, resAfter, res.GetMysqlTime().String())
 	}
 
 	castToDurationCases := []struct {
@@ -995,10 +1004,12 @@ func TestCastFuncSig(t *testing.T) {
 		case 6:
 			sig = &builtinCastDurationAsDurationSig{durationFunc}
 		}
-		res, isNull, err := sig.evalDuration(ctx, c.row.ToRow())
-		require.False(t, isNull)
+
+		res, err := evalBuiltinFunc(sig, ctx, c.row.ToRow())
 		require.NoError(t, err)
-		require.Equal(t, c.after.String(), res.String())
+		require.False(t, res.IsNull())
+		require.Equal(t, types.KindMysqlDuration, res.Kind())
+		require.Equal(t, c.after.String(), res.GetMysqlDuration().String())
 	}
 
 	castToDurationCases2 := []struct {
@@ -1070,9 +1081,10 @@ func TestCastFuncSig(t *testing.T) {
 		case 5:
 			sig = &builtinCastDurationAsDurationSig{durationFunc}
 		}
-		res, isNull, err := sig.evalDuration(ctx, c.row.ToRow())
-		require.False(t, isNull)
+		res, err := evalBuiltinFunc(sig, ctx, c.row.ToRow())
 		require.NoError(t, err)
+		require.False(t, res.IsNull())
+		require.Equal(t, types.KindMysqlDuration, res.Kind())
 		resAfter := c.after.String()
 		if c.fsp > 0 {
 			resAfter += "."
@@ -1080,7 +1092,7 @@ func TestCastFuncSig(t *testing.T) {
 				resAfter += "0"
 			}
 		}
-		require.Equal(t, resAfter, res.String())
+		require.Equal(t, resAfter, res.GetMysqlDuration().String())
 	}
 
 	// null case
@@ -1089,20 +1101,21 @@ func TestCastFuncSig(t *testing.T) {
 	bf, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeVarString))
 	require.NoError(t, err)
 	sig = &builtinCastRealAsStringSig{bf}
-	sRes, isNull, err := sig.evalString(ctx, row.ToRow())
-	require.Equal(t, "", sRes)
-	require.Equal(t, true, isNull)
+	sRes, err := evalBuiltinFunc(sig, ctx, row.ToRow())
 	require.NoError(t, err)
+	require.True(t, sRes.IsNull())
+	require.Equal(t, "", sRes.GetString())
 
 	// test hybridType case.
 	args = []Expression{&Constant{Value: types.NewDatum(types.Enum{Name: "a", Value: 0}), RetType: types.NewFieldType(mysql.TypeEnum)}}
 	b, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeLonglong))
 	require.NoError(t, err)
 	sig = &builtinCastStringAsIntSig{newBaseBuiltinCastFunc(b, false)}
-	iRes, isNull, err := sig.evalInt(ctx, chunk.Row{})
-	require.Equal(t, false, isNull)
+	iRes, err := evalBuiltinFunc(sig, ctx, row.ToRow())
 	require.NoError(t, err)
-	require.Equal(t, int64(0), iRes)
+	require.False(t, iRes.IsNull())
+	require.Equal(t, types.KindInt64, iRes.Kind())
+	require.Equal(t, int64(0), iRes.GetInt64())
 }
 
 func TestCastJSONAsDecimalSig(t *testing.T) {
