@@ -91,5 +91,10 @@ func SetFrameworkInfo(exec StepExecutor, resource *proto.StepResource) {
 	if e.Kind() == reflect.Ptr || e.Kind() == reflect.Interface {
 		e = e.Elem()
 	}
-	e.FieldByName(stepExecFrameworkInfoName).Set(reflect.ValueOf(toInject))
+	info := e.FieldByName(stepExecFrameworkInfoName)
+	// if `exec` embeds StepExecutor rather than StepExecFrameworkInfo, the field
+	// will not be found. This is happened in mock generated code.
+	if info.IsValid() && info.CanSet() {
+		info.Set(reflect.ValueOf(toInject))
+	}
 }
