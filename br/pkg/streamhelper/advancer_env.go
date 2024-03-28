@@ -8,8 +8,8 @@ import (
 
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -35,13 +35,6 @@ type Env interface {
 // to adapt the requirement of `RegionScan`.
 type PDRegionScanner struct {
 	pd.Client
-}
-
-// Updates the service GC safe point for the cluster.
-// Returns the minimal service GC safe point across all services.
-// If the arguments is `0`, this would remove the service safe point.
-func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
-	return c.UpdateServiceGCSafePoint(ctx, logBackupServiceID, int64(logBackupSafePointTTL.Seconds()), at)
 }
 
 // TODO: It should be able to synchoronize the current TS with the PD.

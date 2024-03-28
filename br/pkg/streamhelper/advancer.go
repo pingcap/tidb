@@ -588,20 +588,6 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 		}
 		return errors.Annotate(errors.Errorf("check point lagged too large"), "check point lagged too large")
 	}
-	p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint.safeTS())
-	if err != nil {
-		return errors.Annotatef(err,
-			"failed to update service GC safe point, current checkpoint is %d, target checkpoint is %d",
-			c.lastCheckpoint.safeTS(), p)
-	}
-	if p <= c.lastCheckpoint.safeTS() {
-		log.Info("updated log backup GC safe point.",
-			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint.safeTS()))
-	}
-	if p > c.lastCheckpoint.safeTS() {
-		log.Warn("update log backup GC safe point failed: stale.",
-			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint.safeTS()))
-	}
 	return nil
 }
 
