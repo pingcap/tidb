@@ -692,6 +692,14 @@ type neededStatsMap struct {
 	items [shardCnt]neededStatsInternalMap
 }
 
+func getIdx(tbl model.TableItemID) int64 {
+	result := tbl.ID % shardCnt
+	if result < 0 {
+		return -result
+	}
+	return result
+}
+
 func newNeededStatsMap() *neededStatsMap {
 	result := neededStatsMap{}
 	for i := 0; i < shardCnt; i++ {
@@ -712,11 +720,11 @@ func (n *neededStatsMap) AllItems() []model.TableItemID {
 }
 
 func (n *neededStatsMap) Insert(col model.TableItemID) {
-	n.items[col.ID%shardCnt].Insert(col)
+	n.items[getIdx(col)].Insert(col)
 }
 
 func (n *neededStatsMap) Delete(col model.TableItemID) {
-	n.items[col.ID%shardCnt].Delete(col)
+	n.items[getIdx(col)].Delete(col)
 }
 
 func (n *neededStatsMap) Length() int {
