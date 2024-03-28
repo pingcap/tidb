@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/stretchr/testify/require"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
 )
 
