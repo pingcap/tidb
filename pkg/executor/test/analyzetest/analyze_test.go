@@ -688,7 +688,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
-	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.51")
 	originalVal3 := exec.AutoAnalyzeMinCnt
 	defer func() {
 		exec.AutoAnalyzeMinCnt = originalVal3
@@ -1030,7 +1030,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
-	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.51")
 	originalVal3 := exec.AutoAnalyzeMinCnt
 	defer func() {
 		exec.AutoAnalyzeMinCnt = originalVal3
@@ -2732,7 +2732,7 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	originalVal1 := exec.AutoAnalyzeMinCnt
 	originalVal2 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
 	exec.AutoAnalyzeMinCnt = 0
-	tk.MustExec("set global tidb_auto_analyze_ratio = 0.001")
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.501")
 	defer func() {
 		exec.AutoAnalyzeMinCnt = originalVal1
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
