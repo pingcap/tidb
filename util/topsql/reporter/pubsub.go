@@ -19,16 +19,10 @@ import (
 	"errors"
 	"time"
 
-<<<<<<< HEAD:util/topsql/reporter/pubsub.go
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	reporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
-=======
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
->>>>>>> 089cba4853d (pkg/util: fix panic caused by logging grpc err (#52179)):pkg/util/topsql/reporter/pubsub.go
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
