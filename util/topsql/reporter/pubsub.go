@@ -19,15 +19,10 @@ import (
 	"errors"
 	"time"
 
-<<<<<<< HEAD:util/topsql/reporter/pubsub.go
+	tidberrors "github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-=======
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
->>>>>>> 089cba4853d (pkg/util: fix panic caused by logging grpc err (#52179)):pkg/util/topsql/reporter/pubsub.go
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -104,8 +99,9 @@ func (ds *pubSubDataSink) OnReporterClosing() {
 func (ds *pubSubDataSink) run() error {
 	defer func() {
 		if r := recover(); r != nil {
+			err := tidberrors.Errorf("%v", r)
 			// To catch panic when log grpc error. https://github.com/pingcap/tidb/issues/51301.
-			logutil.BgLogger().Error("[top-sql] got panic in pub sub data sink, just ignore", zap.Error(util.GetRecoverError(r)))
+			logutil.BgLogger().Error("[top-sql] got panic in pub sub data sink, just ignore", zap.Error(err))
 		}
 		ds.registerer.Deregister(ds)
 		ds.cancel()
