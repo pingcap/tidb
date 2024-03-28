@@ -177,7 +177,7 @@ func (m *mockStores) ConnectToStore(ctx context.Context, storeID uint64) (Prepar
 		}
 		m.onCreateStore(m.stores[storeID])
 	}
-	return m.stores[storeID], nil
+	return AdaptForGRPCInTest(m.stores[storeID]), nil
 }
 
 func (m *mockStores) LoadRegionsInKeyRange(ctx context.Context, startKey []byte, endKey []byte) (regions []Region, err error) {
