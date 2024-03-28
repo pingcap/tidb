@@ -63,13 +63,6 @@ const (
 	// CheckpointDriverFile is a constant for choosing the "File" checkpoint driver in the configuration.
 	CheckpointDriverFile = "file"
 
-	// ReplaceOnDup indicates using REPLACE INTO to insert data for TiDB backend.
-	ReplaceOnDup = "replace"
-	// IgnoreOnDup indicates using INSERT IGNORE INTO to insert data for TiDB backend.
-	IgnoreOnDup = "ignore"
-	// ErrorOnDup indicates using INSERT INTO to insert data, which would violate PK or UNIQUE constraint for TiDB backend.
-	ErrorOnDup = "error"
-
 	// KVWriteBatchSize batch size when write to TiKV.
 	// this is the default value of linux send buffer size(net.ipv4.tcp_wmem) too.
 	KVWriteBatchSize        = 16 * units.KiB
@@ -597,17 +590,20 @@ const (
 type DuplicateResolutionAlgorithm int
 
 const (
-	// DupeResAlgNone doesn't detect duplicate.
-	DupeResAlgNone DuplicateResolutionAlgorithm = iota
-
-	// DupeResAlgReplace records all duplicate records like the 'record' algorithm, and remove some rows with conflict
-	// and reserve other rows that can be kept and not cause conflict anymore. Users need to analyze the
-	// lightning_task_info.conflict_error_v2 table to check whether the reserved data cater to their need and check whether
-	// they need to add back the correct rows.
-	DupeResAlgReplace
-
-	// DupeResAlgErr reports an error after detecting the first conflict and stops the import process.
-	DupeResAlgErr
+	// NoneOnDup does nothing when detecting duplicate.
+	NoneOnDup DuplicateResolutionAlgorithm = iota
+	// ReplaceOnDup indicates using REPLACE INTO to insert data for TiDB backend.
+	// ReplaceOnDup records all duplicate records, remove some rows with conflict
+	// and reserve other rows that can be kept and not cause conflict anymore for local backend.
+	// Users need to analyze the lightning_task_info.conflict_error_v2 table to check whether the reserved data
+	// cater to their need and check whether they need to add back the correct rows.
+	ReplaceOnDup
+	// IgnoreOnDup indicates using INSERT IGNORE INTO to insert data for TiDB backend.
+	// Local backend does not support IgnoreOnDup.
+	IgnoreOnDup
+	// ErrorOnDup indicates using INSERT INTO to insert data for TiDB backend, which would violate PK or UNIQUE constraint when detecting duplicate.
+	// ErrorOnDup reports an error after detecting the first conflict and stops the import process for local backend.
+	ErrorOnDup
 )
 
 // UnmarshalTOML implements the toml.Unmarshaler interface.
@@ -615,7 +611,7 @@ func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v any) error {
 	if val, ok := v.(string); ok {
 		return dra.FromStringValue(val)
 	}
-	return errors.Errorf("invalid duplicate-resolution '%v', please choose valid option between ['none', 'replace', 'error']", v)
+	return errors.Errorf("invalid conflict.strategy '%v', please choose valid option between ['', 'replace', 'ignore', 'error']", v)
 }
 
 // MarshalText implements the encoding.TextMarshaler interface.
@@ -626,14 +622,19 @@ func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
 // FromStringValue parses the string value to the DuplicateResolutionAlgorithm.
 func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
-	case "none":
-		*dra = DupeResAlgNone
+	case "", "none":
+		*dra = NoneOnDup
 	case "replace":
-		*dra = DupeResAlgReplace
+		*dra = ReplaceOnDup
+	case "ignore":
+		*dra = IgnoreOnDup
 	case "error":
-		*dra = DupeResAlgErr
+		*dra = ErrorOnDup
+	case "remove", "record":
+		log.L().Warn("\"conflict.strategy '%s' is no longer supported, has been converted to 'replace'")
+		*dra = ReplaceOnDup
 	default:
-		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['none', 'replace', 'error']", s)
+		return errors.Errorf("invalid conflict.strategy '%s', please choose valid option between ['', 'replace', 'ignore', 'error']", s)
 	}
 	return nil
 }
@@ -651,14 +652,16 @@ func (dra *DuplicateResolutionAlgorithm) UnmarshalJSON(data []byte) error {
 // String implements the fmt.Stringer interface.
 func (dra DuplicateResolutionAlgorithm) String() string {
 	switch dra {
-	case DupeResAlgNone:
-		return "none"
-	case DupeResAlgReplace:
+	case NoneOnDup:
+		return ""
+	case ReplaceOnDup:
 		return "replace"
-	case DupeResAlgErr:
+	case IgnoreOnDup:
+		return "ignore"
+	case ErrorOnDup:
 		return "error"
 	default:
-		panic(fmt.Sprintf("invalid duplicate-resolution type '%d'", dra))
+		panic(fmt.Sprintf("invalid conflict.strategy type '%d'", dra))
 	}
 }
 
@@ -1045,21 +1048,22 @@ type TikvImporter struct {
 	Addr    string `toml:"addr" json:"addr"`
 	Backend string `toml:"backend" json:"backend"`
 	// deprecated, use Conflict.Strategy instead.
-	OnDuplicate string `toml:"on-duplicate" json:"on-duplicate"`
-	MaxKVPairs  int    `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	OnDuplicate DuplicateResolutionAlgorithm `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs  int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
 	// deprecated
-	SendKVPairs             int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
-	SendKVSize              ByteSize                     `toml:"send-kv-size" json:"send-kv-size"`
-	CompressKVPairs         CompressionType              `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
-	RegionSplitSize         ByteSize                     `toml:"region-split-size" json:"region-split-size"`
-	RegionSplitKeys         int                          `toml:"region-split-keys" json:"region-split-keys"`
-	RegionSplitBatchSize    int                          `toml:"region-split-batch-size" json:"region-split-batch-size"`
-	RegionSplitConcurrency  int                          `toml:"region-split-concurrency" json:"region-split-concurrency"`
-	RegionCheckBackoffLimit int                          `toml:"region-check-backoff-limit" json:"region-check-backoff-limit"`
-	SortedKVDir             string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
-	DiskQuota               ByteSize                     `toml:"disk-quota" json:"disk-quota"`
-	RangeConcurrency        int                          `toml:"range-concurrency" json:"range-concurrency"`
-	DuplicateResolution     DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	SendKVPairs             int             `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	SendKVSize              ByteSize        `toml:"send-kv-size" json:"send-kv-size"`
+	CompressKVPairs         CompressionType `toml:"compress-kv-pairs" json:"compress-kv-pairs"`
+	RegionSplitSize         ByteSize        `toml:"region-split-size" json:"region-split-size"`
+	RegionSplitKeys         int             `toml:"region-split-keys" json:"region-split-keys"`
+	RegionSplitBatchSize    int             `toml:"region-split-batch-size" json:"region-split-batch-size"`
+	RegionSplitConcurrency  int             `toml:"region-split-concurrency" json:"region-split-concurrency"`
+	RegionCheckBackoffLimit int             `toml:"region-check-backoff-limit" json:"region-check-backoff-limit"`
+	SortedKVDir             string          `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
+	DiskQuota               ByteSize        `toml:"disk-quota" json:"disk-quota"`
+	RangeConcurrency        int             `toml:"range-concurrency" json:"range-concurrency"`
+	// deprecated, use Conflict.Strategy instead.
+	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
 	// deprecated, use ParallelImport instead.
 	IncrementalImport bool   `toml:"incremental-import" json:"incremental-import"`
 	ParallelImport    bool   `toml:"parallel-import" json:"parallel-import"`
@@ -1098,7 +1102,6 @@ func (t *TikvImporter) adjust() error {
 				"`tikv-importer.logical-import-batch-rows` got %d, should be larger than 0",
 				t.LogicalImportBatchRows)
 		}
-		t.DuplicateResolution = DupeResAlgNone
 	case BackendLocal:
 		if t.RegionSplitBatchSize <= 0 {
 			return common.ErrInvalidConfig.GenWithStack(
@@ -1328,42 +1331,49 @@ func ParseCharset(dataCharacterSet string) (Charset, error) {
 
 // Conflict is the config section for PK/UK conflict related configurations.
 type Conflict struct {
-	Strategy      string `toml:"strategy" json:"strategy"`
-	Threshold     int64  `toml:"threshold" json:"threshold"`
-	MaxRecordRows int64  `toml:"max-record-rows" json:"max-record-rows"`
+	Strategy                     DuplicateResolutionAlgorithm `toml:"strategy" json:"strategy"`
+	PrecheckConflictBeforeImport bool                         `toml:"precheck-conflict-before-import" json:"precheck-conflict-before-import"`
+	Threshold                    int64                        `toml:"threshold" json:"threshold"`
+	MaxRecordRows                int64                        `toml:"max-record-rows" json:"max-record-rows"`
 }
 
 // adjust assigns default values and check illegal values. The arguments must be
 // adjusted before calling this function.
 func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 	strategyConfigFrom := "conflict.strategy"
-	if c.Strategy == "" {
-		if i.OnDuplicate == "" && i.Backend == BackendTiDB {
+	if c.Strategy == NoneOnDup {
+		if i.OnDuplicate == NoneOnDup && i.Backend == BackendTiDB {
 			c.Strategy = ErrorOnDup
 		}
-		if i.OnDuplicate != "" {
+		if i.OnDuplicate != NoneOnDup {
 			strategyConfigFrom = "tikv-importer.on-duplicate"
 			c.Strategy = i.OnDuplicate
 		}
 	}
-	c.Strategy = strings.ToLower(c.Strategy)
+	strategyFromDuplicateResolution := false
+	if c.Strategy == NoneOnDup && i.DuplicateResolution != NoneOnDup {
+		c.Strategy = i.DuplicateResolution
+		strategyFromDuplicateResolution = true
+	}
 	switch c.Strategy {
-	case ReplaceOnDup, IgnoreOnDup, ErrorOnDup, "":
+	case ReplaceOnDup, IgnoreOnDup, ErrorOnDup, NoneOnDup:
 	default:
 		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported `%s` (%s)", strategyConfigFrom, c.Strategy)
 	}
-	if c.Strategy != "" {
-		if i.ParallelImport && i.Backend == BackendLocal {
-			return common.ErrInvalidConfig.GenWithStack(
-				`%s cannot be used with tikv-importer.parallel-import and tikv-importer.backend = "local"`,
-				strategyConfigFrom)
-		}
-		if i.DuplicateResolution != DupeResAlgNone {
-			return common.ErrInvalidConfig.GenWithStack(
-				"%s cannot be used with tikv-importer.duplicate-resolution",
-				strategyConfigFrom)
-		}
+	if !strategyFromDuplicateResolution && c.Strategy != NoneOnDup && i.DuplicateResolution != NoneOnDup {
+		return common.ErrInvalidConfig.GenWithStack(
+			"%s cannot be used with tikv-importer.duplicate-resolution",
+			strategyConfigFrom)
+	}
+	if c.Strategy == IgnoreOnDup && i.Backend == BackendLocal {
+		return common.ErrInvalidConfig.GenWithStack(
+			`%s cannot be set to "ignore" when use tikv-importer.backend = "local"`,
+			strategyConfigFrom)
+	}
+	if c.PrecheckConflictBeforeImport && i.Backend == BackendTiDB {
+		return common.ErrInvalidConfig.GenWithStack(
+			`conflict.precheck-conflict-before-import cannot be set to true when use tikv-importer.backend = "tidb"`)
 	}
 
 	if c.Threshold < 0 {
@@ -1372,9 +1382,9 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 			c.Threshold = 0
 		case IgnoreOnDup, ReplaceOnDup:
 			c.Threshold = math.MaxInt64
-		case "":
+		case NoneOnDup:
 			c.Threshold = 0
-			if i.DuplicateResolution != DupeResAlgNone {
+			if i.Backend == BackendLocal && c.Strategy != NoneOnDup {
 				c.Threshold = math.MaxInt64
 			}
 		}
@@ -1473,7 +1483,7 @@ func NewConfig() *Config {
 			RegionSplitConcurrency:  runtime.GOMAXPROCS(0),
 			RegionCheckBackoffLimit: DefaultRegionCheckBackoffLimit,
 			DiskQuota:               ByteSize(math.MaxInt64),
-			DuplicateResolution:     DupeResAlgNone,
+			DuplicateResolution:     NoneOnDup,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
 			BlockSize:               16 * 1024,
 			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),
@@ -1486,9 +1496,10 @@ func NewConfig() *Config {
 			ChecksumViaSQL:    false,
 		},
 		Conflict: Conflict{
-			Strategy:      "",
-			Threshold:     -1,
-			MaxRecordRows: -1,
+			Strategy:                     NoneOnDup,
+			PrecheckConflictBeforeImport: false,
+			Threshold:                    -1,
+			MaxRecordRows:                -1,
 		},
 	}
 }

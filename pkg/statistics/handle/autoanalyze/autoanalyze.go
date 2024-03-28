@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
@@ -50,13 +51,13 @@ import (
 type statsAnalyze struct {
 	statsHandle statstypes.StatsHandle
 	// sysProcTracker is used to track sys process like analyze
-	sysProcTracker sessionctx.SysProcTracker
+	sysProcTracker sysproctrack.Tracker
 }
 
 // NewStatsAnalyze creates a new StatsAnalyze.
 func NewStatsAnalyze(
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) statstypes.StatsAnalyze {
 	return &statsAnalyze{statsHandle: statsHandle, sysProcTracker: sysProcTracker}
 }
@@ -263,7 +264,7 @@ func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalID
 func HandleAutoAnalyze(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) (analyzed bool) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -323,7 +324,7 @@ func HandleAutoAnalyze(
 func RandomPickOneTableAndTryAutoAnalyze(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 	autoAnalyzeRatio float64,
 	pruneMode variable.PartitionPruneMode,
 	start, end time.Time,
@@ -448,7 +449,7 @@ func getPartitionStats(
 func tryAutoAnalyzeTable(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 	tblInfo *model.TableInfo,
 	statsTbl *statistics.Table,
 	ratio float64,
@@ -487,7 +488,7 @@ func tryAutoAnalyzeTable(
 
 	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
-		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
+		if _, ok := statsTbl.Indices[idx.ID]; !ok && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
 			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
 			escaped, err := sqlescape.EscapeSQL(sqlWithIdx, paramsWithIdx...)
@@ -516,7 +517,7 @@ func tryAutoAnalyzeTable(
 //
 // Exposed for test.
 func NeedAnalyzeTable(tbl *statistics.Table, autoAnalyzeRatio float64) (bool, string) {
-	analyzed := exec.TableAnalyzed(tbl)
+	analyzed := tbl.IsAnalyzed()
 	if !analyzed {
 		return true, "table unanalyzed"
 	}
@@ -539,7 +540,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, autoAnalyzeRatio float64) (bool, st
 func tryAutoAnalyzePartitionTableInDynamicMode(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 	tblInfo *model.TableInfo,
 	partitionDefs []model.PartitionDefinition,
 	partitionStats map[int64]*statistics.Table,
@@ -634,7 +635,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				continue
 			}
 			// 2. If the index is not analyzed, we need to analyze it.
-			if _, ok := partitionStats.Indices[idx.ID]; !ok {
+			if !partitionStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
 				needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
 				statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
 			}

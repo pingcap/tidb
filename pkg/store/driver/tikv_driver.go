@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -63,8 +62,6 @@ func init() {
 	// Setup the Hooks to dynamic control global resource controller.
 	variable.EnableGlobalResourceControlFunc = tikv.EnableResourceControl
 	variable.DisableGlobalResourceControlFunc = tikv.DisableResourceControl
-	// cannot use this package directly, it causes import cycle
-	importer.GetKVStore = getKVStore
 }
 
 // Option is a function that changes some config of Driver

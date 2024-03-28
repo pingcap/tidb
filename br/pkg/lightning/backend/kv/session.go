@@ -180,9 +180,9 @@ func (*MemBuf) Staging() kv.StagingHandle {
 // If the changes are not published by `Release`, they will be discarded.
 func (*MemBuf) Cleanup(_ kv.StagingHandle) {}
 
-// MayFlush implements the kv.MemBuffer interface.
-func (*MemBuf) MayFlush() error {
-	return nil
+// GetLocal implements the kv.MemBuffer interface.
+func (mb *MemBuf) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
+	return mb.Get(ctx, key)
 }
 
 // Size returns sum of keys and values length.
@@ -269,6 +269,16 @@ func (*transaction) CacheTableInfo(_ int64, _ *model.TableInfo) {
 
 // SetAssertion implements the kv.Transaction interface.
 func (*transaction) SetAssertion(_ []byte, _ ...kv.FlagsOp) error {
+	return nil
+}
+
+// IsPipelined implements the kv.Transaction interface.
+func (*transaction) IsPipelined() bool {
+	return false
+}
+
+// MayFlush implements the kv.Transaction interface.
+func (*transaction) MayFlush() error {
 	return nil
 }
 
@@ -418,7 +428,7 @@ func (se *Session) Value(key fmt.Stringer) any {
 func (*Session) StmtAddDirtyTableOP(_ int, _ int64, _ kv.Handle) {}
 
 // GetInfoSchema implements the sessionctx.Context interface.
-func (*Session) GetInfoSchema() infoschema.InfoSchemaMetaVersion {
+func (*Session) GetInfoSchema() infoschema.MetaOnlyInfoSchema {
 	return nil
 }
 

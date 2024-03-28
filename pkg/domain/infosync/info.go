@@ -177,15 +177,15 @@ type ServerVersionInfo struct {
 
 // globalInfoSyncer stores the global infoSyncer.
 // Use a global variable for simply the code, use the domain.infoSyncer will have circle import problem in some pkg.
-// Use atomic.Value to avoid data race in the test.
-var globalInfoSyncer atomic.Value
+// Use atomic.Pointer to avoid data race in the test.
+var globalInfoSyncer atomic.Pointer[InfoSyncer]
 
 func getGlobalInfoSyncer() (*InfoSyncer, error) {
 	v := globalInfoSyncer.Load()
 	if v == nil {
 		return nil, errors.New("infoSyncer is not initialized")
 	}
-	return v.(*InfoSyncer), nil
+	return v, nil
 }
 
 func setGlobalInfoSyncer(is *InfoSyncer) {

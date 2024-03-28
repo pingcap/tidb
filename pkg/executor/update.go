@@ -218,6 +218,9 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 		}
 		return err1
 	}
+	if txn, _ := e.Ctx().Txn(false); txn != nil {
+		return txn.MayFlush()
+	}
 	return nil
 }
 
@@ -282,7 +285,8 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 			}
 		}
 		txn, err := e.Ctx().Txn(true)
-		if err == nil {
+		// pipelined dml may already flush in background, don't touch it to avoid race.
+		if err == nil && !txn.IsPipelined() {
 			sc := e.Ctx().GetSessionVars().StmtCtx
 			txn.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 			if sc.KvExecCounter != nil {

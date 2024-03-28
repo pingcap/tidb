@@ -530,6 +530,9 @@ type ks3ObjectReader struct {
 func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 	retryCnt := 0
 	maxCnt := r.rangeInfo.End + 1 - r.pos
+	if maxCnt == 0 {
+		return 0, io.EOF
+	}
 	if maxCnt > int64(len(p)) {
 		maxCnt = int64(len(p))
 	}

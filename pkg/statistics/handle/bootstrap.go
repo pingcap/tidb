@@ -51,13 +51,15 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 			HavePhysicalID: true,
 			RealtimeCount:  row.GetInt64(3),
 			ModifyCount:    row.GetInt64(2),
-			Columns:        make(map[int64]*statistics.Column, len(tableInfo.Columns)),
-			Indices:        make(map[int64]*statistics.Index, len(tableInfo.Indices)),
+			Columns:        make(map[int64]*statistics.Column, 4),
+			Indices:        make(map[int64]*statistics.Index, 4),
 		}
 		tbl := &statistics.Table{
-			HistColl: newHistColl,
-			Version:  row.GetUint64(0),
-			Name:     util.GetFullTableName(is, tableInfo),
+			HistColl:              newHistColl,
+			Version:               row.GetUint64(0),
+			Name:                  util.GetFullTableName(is, tableInfo),
+			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
+			IsPkIsHandle:          tableInfo.PKIsHandle,
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
@@ -100,11 +102,8 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 		isIndex := row.GetInt64(1)
 		id := row.GetInt64(2)
 		ndv := row.GetInt64(3)
-		version := row.GetUint64(4)
 		nullCount := row.GetInt64(5)
 		statsVer := row.GetInt64(7)
-		flag := row.GetInt64(9)
-		lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
 		// All the objects in the table share the same stats version.
 		if statsVer != statistics.Version0 {
@@ -121,19 +120,11 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 			if idxInfo == nil {
 				continue
 			}
-			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), 0, 0)
-			index := &statistics.Index{
-				Histogram:  *hist,
-				Info:       idxInfo,
-				StatsVer:   statsVer,
-				Flag:       flag,
-				PhysicalID: tblID,
+			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, statsVer != statistics.Version0)
+			if statsVer != statistics.Version0 {
+				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
+				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
 			}
-			lastAnalyzePos.Copy(&index.LastAnalyzePos)
-			if index.IsAnalyzed() {
-				index.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-			}
-			table.Indices[hist.ID] = index
 		} else {
 			var colInfo *model.ColumnInfo
 			for _, col := range tbl.Meta().Columns {
@@ -145,21 +136,11 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 			if colInfo == nil {
 				continue
 			}
-			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, row.GetInt64(6))
-			hist.Correlation = row.GetFloat64(8)
-			col := &statistics.Column{
-				Histogram:  *hist,
-				PhysicalID: tblID,
-				Info:       colInfo,
-				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       flag,
-				StatsVer:   statsVer,
+			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, colInfo, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
+			if statsVer != statistics.Version0 {
+				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
+				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
 			}
-			lastAnalyzePos.Copy(&col.LastAnalyzePos)
-			if col.StatsAvailable() {
-				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-			}
-			table.Columns[hist.ID] = col
 		}
 		cache.Put(tblID, table) // put this table again since it is updated
 	}
@@ -208,9 +189,12 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			if statsVer != statistics.Version0 {
 				index.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
+				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
 			table.Indices[hist.ID] = index
+			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, statsVer != statistics.Version0)
 		} else {
 			var colInfo *model.ColumnInfo
 			for _, col := range tbl.Meta().Columns {
@@ -234,6 +218,11 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
+			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, colInfo, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
+			if statsVer != statistics.Version0 {
+				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
+				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
+			}
 		}
 		cache.Put(tblID, table) // put this table again since it is updated
 	}

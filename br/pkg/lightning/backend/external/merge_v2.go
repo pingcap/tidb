@@ -65,7 +65,6 @@ func MergeOverlappingFilesV2(
 		math.MaxInt64,
 		int64(4*size.GB),
 		math.MaxInt64,
-		checkHotspot,
 	)
 	if err != nil {
 		return err
@@ -160,6 +159,7 @@ func MergeOverlappingFilesV2(
 		loaded.keys = nil
 		loaded.values = nil
 		loaded.memKVBuffers = nil
+		loaded.size = 0
 
 		if len(endKeyOfGroup) == 0 {
 			break

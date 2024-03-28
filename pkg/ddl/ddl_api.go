@@ -70,7 +70,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/set"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1287,7 +1286,7 @@ func restoreFuncCall(expr *ast.FuncCallExpr) (string, error) {
 // getFuncCallDefaultValue gets the default column value of function-call expression.
 func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *ast.FuncCallExpr) (any, bool, error) {
 	switch expr.FnName.L {
-	case ast.CurrentTimestamp, ast.CurrentDate:
+	case ast.CurrentTimestamp, ast.CurrentDate: // CURRENT_TIMESTAMP() and CURRENT_DATE()
 		tp, fsp := col.FieldType.GetType(), col.FieldType.GetDecimal()
 		if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 			defaultFsp := 0
@@ -1308,7 +1307,7 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			return nil, false, errors.Trace(err)
 		}
 		return str, true, nil
-	case ast.Rand, ast.UUID, ast.UUIDToBin:
+	case ast.Rand, ast.UUID, ast.UUIDToBin: // RAND(), UUID() and UUID_TO_BIN()
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -1318,12 +1317,12 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		}
 		col.DefaultIsExpr = true
 		return str, false, nil
-	case ast.DateFormat:
-		// Support DATE_FORMAT(NOW(),'%Y-%m'), DATE_FORMAT(NOW(),'%Y-%m-%d'),
-		// DATE_FORMAT(NOW(),'%Y-%m-%d %H.%i.%s'), DATE_FORMAT(NOW(),'%Y-%m-%d %H:%i:%s').
+	case ast.DateFormat: // DATE_FORMAT()
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
+		// Support DATE_FORMAT(NOW(),'%Y-%m'), DATE_FORMAT(NOW(),'%Y-%m-%d'),
+		// DATE_FORMAT(NOW(),'%Y-%m-%d %H.%i.%s'), DATE_FORMAT(NOW(),'%Y-%m-%d %H:%i:%s').
 		nowFunc, ok := expr.Args[0].(*ast.FuncCallExpr)
 		if ok && nowFunc.FnName.L == ast.Now {
 			if err := expression.VerifyArgsWrapper(nowFunc.FnName.L, len(nowFunc.Args)); err != nil {
@@ -1341,9 +1340,9 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			col.DefaultIsExpr = true
 			return str, false, nil
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), nowFunc.FnName.String())
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 	case ast.Replace:
-		// Support REPLACE(UPPER(UUID()), '-', '').
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -1355,6 +1354,7 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			}
 			funcCall = convertFunc.Args[0]
 		}
+		// Support REPLACE(UPPER(UUID()), '-', '').
 		if upperFunc, ok := funcCall.(*ast.FuncCallExpr); ok && upperFunc.FnName.L == ast.Upper {
 			if err := expression.VerifyArgsWrapper(upperFunc.FnName.L, len(upperFunc.Args)); err != nil {
 				return nil, false, errors.Trace(err)
@@ -1371,12 +1371,13 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 				return str, false, nil
 			}
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 	case ast.Upper:
-		// Support UPPER(SUBSTRING_INDEX(USER(), '@', 1)).
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
+		// Support UPPER(SUBSTRING_INDEX(USER(), '@', 1)).
 		if substringIndexFunc, ok := expr.Args[0].(*ast.FuncCallExpr); ok && substringIndexFunc.FnName.L == ast.SubstringIndex {
 			if err := expression.VerifyArgsWrapper(substringIndexFunc.FnName.L, len(substringIndexFunc.Args)); err != nil {
 				return nil, false, errors.Trace(err)
@@ -1397,12 +1398,13 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 				return str, false, nil
 			}
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
-	case ast.StrToDate:
-		// Support STR_TO_DATE('1980-01-01', '%Y-%m-%d').
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
+	case ast.StrToDate: // STR_TO_DATE()
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
+		// Support STR_TO_DATE('1980-01-01', '%Y-%m-%d').
 		if _, ok1 := expr.Args[0].(ast.ValueExpr); ok1 {
 			if _, ok2 := expr.Args[1].(ast.ValueExpr); ok2 {
 				str, err := restoreFuncCall(expr)
@@ -1413,7 +1415,8 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 				return str, false, nil
 			}
 		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), fmt.Sprintf("%s with these args", expr.FnName.String()))
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(),
+			fmt.Sprintf("%s with disallowed args", expr.FnName.String()))
 	default:
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	}
@@ -1661,6 +1664,9 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 
 	if c.GetDefaultValue() != nil {
 		if c.DefaultIsExpr {
+			if mysql.HasAutoIncrementFlag(c.GetFlag()) {
+				return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
+			}
 			return nil
 		}
 		if _, err := table.GetColDefaultValue(ctx.GetExprCtx(), c.ToInfo()); err != nil {
@@ -4600,6 +4606,38 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 	newPartInfo := newMeta.Partition
 
+	for _, index := range newMeta.Indices {
+		if index.Unique {
+			ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), index.Columns, newMeta)
+			if err != nil {
+				return err
+			}
+			if !ck {
+				if ctx.GetSessionVars().EnableGlobalIndex {
+					return dbterror.ErrCancelledDDLJob.GenWithStack("global index is not supported yet for alter table partitioning")
+				}
+				indexTp := "UNIQUE INDEX"
+				if index.Primary {
+					indexTp = "PRIMARY"
+				}
+				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
+			}
+		}
+	}
+	if newMeta.PKIsHandle {
+		indexCols := []*model.IndexColumn{{
+			Name:   newMeta.GetPkName(),
+			Length: types.UnspecifiedLength,
+		}}
+		ck, err := checkPartitionKeysConstraint(newMeta.GetPartitionInfo(), indexCols, newMeta)
+		if err != nil {
+			return err
+		}
+		if !ck {
+			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
+		}
+	}
+
 	if err = handlePartitionPlacement(ctx, newPartInfo); err != nil {
 		return errors.Trace(err)
 	}
@@ -5218,7 +5256,7 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 		return errors.Trace(dbterror.ErrPartitionExchangePartTable.GenWithStackByArgs(nt.Name))
 	}
 
-	if nt.ForeignKeys != nil {
+	if len(nt.ForeignKeys) > 0 {
 		return errors.Trace(dbterror.ErrPartitionExchangeForeignKey.GenWithStackByArgs(nt.Name))
 	}
 
@@ -5490,6 +5528,8 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		if err != nil {
 			return hasDefaultValue, errors.Trace(err)
 		}
+	} else {
+		hasDefaultValue = true
 	}
 	err = setDefaultValueWithBinaryPadding(col, value)
 	if err != nil {
@@ -5526,8 +5566,8 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	return errors.Trace(err)
 }
 
-// ProcessColumnOptions process column options.
-func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+// ProcessModifyColumnOptions process column options.
+func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
@@ -5605,7 +5645,8 @@ func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 	return nil
 }
 
-func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Column, outPriKeyConstraint *ast.Constraint, hasDefaultValue, setOnUpdateNow, hasNullFlag bool) error {
+func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Column,
+	outPriKeyConstraint *ast.Constraint, hasDefaultValue, setOnUpdateNow, hasNullFlag bool) error {
 	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
 	processColumnFlags(col)
 
@@ -5774,7 +5815,7 @@ func GetModifiableColumnJob(
 		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
 	}
 
-	if err = ProcessColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
+	if err = ProcessModifyColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -6939,7 +6980,7 @@ func (d *ddl) dropTableObject(
 					zap.String("database", fullti.Schema.O),
 					zap.String("table", fullti.Name.O),
 				)
-				exec := ctx.(sqlexec.RestrictedSQLExecutor)
+				exec := ctx.GetRestrictedSQLExecutor()
 				internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 				_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
 				if err != nil {
@@ -9159,7 +9200,7 @@ func (d *ddl) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err error)
 	// Initialize the cached table meta lock info in `mysql.table_cache_meta`.
 	// The operation shouldn't fail in most cases, and if it does, return the error directly.
 	// This DML and the following DDL is not atomic, that's not a problem.
-	_, _, err = sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil,
+	_, _, err = sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil,
 		"replace into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)

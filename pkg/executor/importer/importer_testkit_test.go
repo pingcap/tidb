@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -47,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
-	kvconfig "github.com/tikv/client-go/v2/config"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
@@ -200,10 +198,6 @@ func TestPostProcess(t *testing.T) {
 		return tk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	bak := importer.GetKVStore
-	defer func() {
-		importer.GetKVStore = bak
-	}()
 
 	tk.MustExec("create database db")
 	tk.MustExec("create table db.tb(id int primary key)")
@@ -231,19 +225,11 @@ func TestPostProcess(t *testing.T) {
 	localChecksum = verify.NewKVGroupChecksumForAdd()
 	localChecksum.AddRawGroup(verify.DataKVGroupID, 1, 1, 1)
 	require.NoError(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger))
-	// get KV store failed
-	importer.GetKVStore = func(path string, tls kvconfig.Security) (kv.Storage, error) {
-		return nil, errors.New("mock get kv store failed")
-	}
+	// rebase success
 	tk.MustExec("create table db.tb2(id int auto_increment primary key)")
 	table, err = do.InfoSchema().TableByName(model.NewCIStr("db"), model.NewCIStr("tb2"))
 	require.NoError(t, err)
 	plan.TableInfo, plan.DesiredTableInfo = table.Meta(), table.Meta()
-	require.ErrorContains(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger), "mock get kv store failed")
-	// rebase success
-	importer.GetKVStore = func(path string, tls kvconfig.Security) (kv.Storage, error) {
-		return store, nil
-	}
 	integration.BeforeTestExternal(t)
 	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	t.Cleanup(func() {
@@ -290,7 +276,7 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	if path != "" {
 		require.NoError(t, controller.InitDataStore(ctx))
 	}
-	ti, err := importer.NewTableImporterForTest(ctx, controller, "11", store, &storeHelper{kvStore: store})
+	ti, err := importer.NewTableImporterForTest(ctx, controller, "11", &storeHelper{kvStore: store})
 	require.NoError(t, err)
 	return ti
 }
@@ -310,6 +296,7 @@ func TestProcessChunkWith(t *testing.T) {
 	sourceData := []byte("1,2,3\n4,5,6\n7,8,9\n")
 	require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
 
+	keyspace := store.GetCodec().GetKeyspace()
 	t.Run("file chunk", func(t *testing.T) {
 		chunkInfo := &checkpoints.ChunkCheckpoint{
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
@@ -321,7 +308,7 @@ func TestProcessChunkWith(t *testing.T) {
 		kvWriter := mock.NewMockEngineWriter(ctrl)
 		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		progress := importer.NewProgress()
-		checksum := verify.NewKVGroupChecksumWithKeyspace(store.GetCodec())
+		checksum := verify.NewKVGroupChecksumWithKeyspace(keyspace)
 		err := importer.ProcessChunkWithWriter(ctx, chunkInfo, ti, kvWriter, kvWriter, progress, zap.NewExample(), checksum)
 		require.NoError(t, err)
 		require.Len(t, progress.GetColSize(), 3)
@@ -353,7 +340,7 @@ func TestProcessChunkWith(t *testing.T) {
 		kvWriter := mock.NewMockEngineWriter(ctrl)
 		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		progress := importer.NewProgress()
-		checksum := verify.NewKVGroupChecksumWithKeyspace(store.GetCodec())
+		checksum := verify.NewKVGroupChecksumWithKeyspace(keyspace)
 		err := importer.ProcessChunkWithWriter(ctx, chunkInfo, ti, kvWriter, kvWriter, progress, zap.NewExample(), checksum)
 		require.NoError(t, err)
 		require.Len(t, progress.GetColSize(), 3)

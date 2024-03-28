@@ -1,6 +1,6 @@
 // Copyright 2021 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore_test
+package restore
 
 import (
 	"context"
@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -58,35 +57,35 @@ func TestScanSuccess(t *testing.T) {
 	ctx := context.Background()
 
 	// make exclusive to inclusive.
-	ctl := restore.OverRegionsInRange([]byte("aa"), []byte("aay"), cli, &rs)
+	ctl := OverRegionsInRange([]byte("aa"), []byte("aay"), cli, &rs)
 	collectedRegions := []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		collectedRegions = append(collectedRegions, r)
-		return restore.RPCResultOK()
+		return RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba")
 
-	ctl = restore.OverRegionsInRange([]byte("aaz"), []byte("bb"), cli, &rs)
+	ctl = OverRegionsInRange([]byte("aaz"), []byte("bb"), cli, &rs)
 	collectedRegions = []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		collectedRegions = append(collectedRegions, r)
-		return restore.RPCResultOK()
+		return RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "aay", "bba", "bbh", "cca")
 
-	ctl = restore.OverRegionsInRange([]byte("aa"), []byte("cc"), cli, &rs)
+	ctl = OverRegionsInRange([]byte("aa"), []byte("cc"), cli, &rs)
 	collectedRegions = []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		collectedRegions = append(collectedRegions, r)
-		return restore.RPCResultOK()
+		return RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba", "bbh", "cca", "")
 
-	ctl = restore.OverRegionsInRange([]byte("aa"), []byte(""), cli, &rs)
+	ctl = OverRegionsInRange([]byte("aa"), []byte(""), cli, &rs)
 	collectedRegions = []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		collectedRegions = append(collectedRegions, r)
-		return restore.RPCResultOK()
+		return RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba", "bbh", "cca", "")
 }
@@ -95,7 +94,7 @@ func TestNotLeader(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(1, 0, 0)
-	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	notLeader := errorpb.Error{
@@ -109,17 +108,17 @@ func TestNotLeader(t *testing.T) {
 	meetRegions := []*split.RegionInfo{}
 	// record all regions we meet with id == 2.
 	idEqualsTo2Regions := []*split.RegionInfo{}
-	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		if r.Region.Id == 2 {
 			idEqualsTo2Regions = append(idEqualsTo2Regions, r)
 		}
 		if r.Region.Id == 2 && (r.Leader == nil || r.Leader.Id != 42) {
-			return restore.RPCResult{
+			return RPCResult{
 				StoreError: &notLeader,
 			}
 		}
 		meetRegions = append(meetRegions, r)
-		return restore.RPCResultOK()
+		return RPCResultOK()
 	})
 
 	require.NoError(t, err)
@@ -135,7 +134,7 @@ func TestServerIsBusy(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
-	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	serverIsBusy := errorpb.Error{
@@ -149,22 +148,22 @@ func TestServerIsBusy(t *testing.T) {
 	// record all regions we meet with id == 2.
 	idEqualsTo2Regions := []*split.RegionInfo{}
 	theFirstRun := true
-	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		if theFirstRun && r.Region.Id == 2 {
 			idEqualsTo2Regions = append(idEqualsTo2Regions, r)
 			theFirstRun = false
-			return restore.RPCResult{
+			return RPCResult{
 				StoreError: &serverIsBusy,
 			}
 		}
 		meetRegions = append(meetRegions, r)
-		return restore.RPCResultOK()
+		return RPCResultOK()
 	})
 
 	require.NoError(t, err)
 	assertRegions(t, idEqualsTo2Regions, "aay", "bba")
 	assertRegions(t, meetRegions, "", "aay", "bba", "bbh", "cca", "")
-	require.Equal(t, rs.RetryTimes(), 1)
+	require.Equal(t, rs.Attempt(), 1)
 }
 
 func TestServerIsBusyWithMemoryIsLimited(t *testing.T) {
@@ -176,7 +175,7 @@ func TestServerIsBusyWithMemoryIsLimited(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
-	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	serverIsBusy := errorpb.Error{
@@ -190,22 +189,22 @@ func TestServerIsBusyWithMemoryIsLimited(t *testing.T) {
 	// record all regions we meet with id == 2.
 	idEqualsTo2Regions := []*split.RegionInfo{}
 	theFirstRun := true
-	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		if theFirstRun && r.Region.Id == 2 {
 			idEqualsTo2Regions = append(idEqualsTo2Regions, r)
 			theFirstRun = false
-			return restore.RPCResult{
+			return RPCResult{
 				StoreError: &serverIsBusy,
 			}
 		}
 		meetRegions = append(meetRegions, r)
-		return restore.RPCResultOK()
+		return RPCResultOK()
 	})
 
 	require.NoError(t, err)
 	assertRegions(t, idEqualsTo2Regions, "aay", "bba")
 	assertRegions(t, meetRegions, "", "aay", "bba", "bbh", "cca", "")
-	require.Equal(t, rs.RetryTimes(), 0)
+	require.Equal(t, rs.Attempt(), 2)
 }
 
 func printRegion(name string, infos []*split.RegionInfo) {
@@ -228,7 +227,7 @@ func TestEpochNotMatch(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
-	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
@@ -262,18 +261,18 @@ func TestEpochNotMatch(t *testing.T) {
 	firstRunRegions := []*split.RegionInfo{}
 	secondRunRegions := []*split.RegionInfo{}
 	isSecondRun := false
-	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		if !isSecondRun && r.Region.Id == left.Region.Id {
 			mergeRegion()
 			isSecondRun = true
-			return restore.RPCResultFromPBError(epochNotMatch)
+			return RPCResultFromPBError(epochNotMatch)
 		}
 		if isSecondRun {
 			secondRunRegions = append(secondRunRegions, r)
 		} else {
 			firstRunRegions = append(firstRunRegions, r)
 		}
-		return restore.RPCResultOK()
+		return RPCResultOK()
 	})
 	printRegion("first", firstRunRegions)
 	printRegion("second", secondRunRegions)
@@ -287,7 +286,7 @@ func TestRegionSplit(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
-	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
@@ -338,18 +337,18 @@ func TestRegionSplit(t *testing.T) {
 	firstRunRegions := []*split.RegionInfo{}
 	secondRunRegions := []*split.RegionInfo{}
 	isSecondRun := false
-	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		if !isSecondRun && r.Region.Id == target.Region.Id {
 			splitRegion()
 			isSecondRun = true
-			return restore.RPCResultFromPBError(epochNotMatch)
+			return RPCResultFromPBError(epochNotMatch)
 		}
 		if isSecondRun {
 			secondRunRegions = append(secondRunRegions, r)
 		} else {
 			firstRunRegions = append(firstRunRegions, r)
 		}
-		return restore.RPCResultOK()
+		return RPCResultOK()
 	})
 	printRegion("first", firstRunRegions)
 	printRegion("second", secondRunRegions)
@@ -363,7 +362,7 @@ func TestRetryBackoff(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, time.Millisecond, 10*time.Millisecond)
-	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.regionsInfo.Regions)
@@ -380,12 +379,12 @@ func TestRetryBackoff(t *testing.T) {
 			},
 		}}
 	isSecondRun := false
-	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		if !isSecondRun && r.Region.Id == left.Region.Id {
 			isSecondRun = true
-			return restore.RPCResultFromPBError(epochNotLeader)
+			return RPCResultFromPBError(epochNotLeader)
 		}
-		return restore.RPCResultOK()
+		return RPCResultOK()
 	})
 	printPDRegion("cli", cli.regionsInfo.Regions)
 	require.Equal(t, 1, rs.Attempt())
@@ -395,10 +394,10 @@ func TestRetryBackoff(t *testing.T) {
 }
 
 func TestWrappedError(t *testing.T) {
-	result := restore.RPCResultFromError(errors.Trace(status.Error(codes.Unavailable, "the server is slacking. ><=·>")))
-	require.Equal(t, result.StrategyForRetry(), restore.StrategyFromThisRegion)
-	result = restore.RPCResultFromError(errors.Trace(status.Error(codes.Unknown, "the server said something hard to understand")))
-	require.Equal(t, result.StrategyForRetry(), restore.StrategyGiveUp)
+	result := RPCResultFromError(errors.Trace(status.Error(codes.Unavailable, "the server is slacking. ><=·>")))
+	require.Equal(t, result.StrategyForRetry(), StrategyFromThisRegion)
+	result = RPCResultFromError(errors.Trace(status.Error(codes.Unknown, "the server said something hard to understand")))
+	require.Equal(t, result.StrategyForRetry(), StrategyGiveUp)
 }
 
 func envInt(name string, def int) int {
@@ -414,22 +413,22 @@ func TestPaginateScanLeader(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, time.Millisecond, 10*time.Millisecond)
-	ctl := restore.OverRegionsInRange([]byte("aa"), []byte("aaz"), cli, &rs)
+	ctl := OverRegionsInRange([]byte("aa"), []byte("aaz"), cli, &rs)
 	ctx := context.Background()
 
 	cli.InjectErr = true
 	cli.InjectTimes = int32(envInt("PAGINATE_SCAN_LEADER_FAILURE_COUNT", 2))
 	collectedRegions := []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) restore.RPCResult {
+	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) RPCResult {
 		collectedRegions = append(collectedRegions, r)
-		return restore.RPCResultOK()
+		return RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba")
 }
 
 func TestImportKVFiles(t *testing.T) {
 	var (
-		importer            = restore.FileImporter{}
+		importer            = FileImporter{}
 		ctx                 = context.Background()
 		shiftStartTS uint64 = 100
 		startTS      uint64 = 200
@@ -438,7 +437,7 @@ func TestImportKVFiles(t *testing.T) {
 
 	err := importer.ImportKVFiles(
 		ctx,
-		[]*restore.LogDataFileInfo{
+		[]*LogDataFileInfo{
 			{
 				DataFileInfo: &backuppb.DataFileInfo{
 					Path: "log3",
@@ -460,7 +459,7 @@ func TestImportKVFiles(t *testing.T) {
 }
 
 func TestFilterFilesByRegion(t *testing.T) {
-	files := []*restore.LogDataFileInfo{
+	files := []*LogDataFileInfo{
 		{
 			DataFileInfo: &backuppb.DataFileInfo{
 				Path: "log3",
@@ -484,7 +483,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 
 	testCases := []struct {
 		r        split.RegionInfo
-		subfiles []*restore.LogDataFileInfo
+		subfiles []*LogDataFileInfo
 		err      error
 	}{
 		{
@@ -494,7 +493,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   []byte("1110"),
 				},
 			},
-			subfiles: []*restore.LogDataFileInfo{},
+			subfiles: []*LogDataFileInfo{},
 			err:      nil,
 		},
 		{
@@ -504,7 +503,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   []byte("1111"),
 				},
 			},
-			subfiles: []*restore.LogDataFileInfo{
+			subfiles: []*LogDataFileInfo{
 				files[0],
 			},
 			err: nil,
@@ -516,7 +515,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   []byte("2222"),
 				},
 			},
-			subfiles: []*restore.LogDataFileInfo{
+			subfiles: []*LogDataFileInfo{
 				files[0],
 			},
 			err: nil,
@@ -528,7 +527,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   []byte("3332"),
 				},
 			},
-			subfiles: []*restore.LogDataFileInfo{
+			subfiles: []*LogDataFileInfo{
 				files[0],
 			},
 			err: nil,
@@ -540,7 +539,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   []byte("3332"),
 				},
 			},
-			subfiles: []*restore.LogDataFileInfo{},
+			subfiles: []*LogDataFileInfo{},
 			err:      nil,
 		},
 		{
@@ -550,7 +549,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   []byte("3333"),
 				},
 			},
-			subfiles: []*restore.LogDataFileInfo{
+			subfiles: []*LogDataFileInfo{
 				files[1],
 			},
 			err: nil,
@@ -562,7 +561,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   []byte("5555"),
 				},
 			},
-			subfiles: []*restore.LogDataFileInfo{
+			subfiles: []*LogDataFileInfo{
 				files[1],
 			},
 			err: nil,
@@ -574,7 +573,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 					EndKey:   nil,
 				},
 			},
-			subfiles: []*restore.LogDataFileInfo{
+			subfiles: []*LogDataFileInfo{
 				files[1],
 			},
 			err: nil,
@@ -592,7 +591,7 @@ func TestFilterFilesByRegion(t *testing.T) {
 	}
 
 	for _, c := range testCases {
-		subfile, err := restore.FilterFilesByRegion(files, ranges, &c.r)
+		subfile, err := FilterFilesByRegion(files, ranges, &c.r)
 		require.Equal(t, err, c.err)
 		require.Equal(t, subfile, c.subfiles)
 	}

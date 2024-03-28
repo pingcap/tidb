@@ -2312,6 +2312,10 @@ func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
 	if snapshot == nil {
 		return
 	}
+	// pipelined dml may already flush in background, don't touch it to avoid race.
+	if txn, ok := snapshot.(kv.Transaction); ok && txn.IsPipelined() {
+		return
+	}
 	snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 	if sc.KvExecCounter != nil {
 		snapshot.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())
@@ -2372,7 +2376,7 @@ type groupByChecksum struct {
 
 func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]groupByChecksum, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
-	rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -2500,7 +2504,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			se.GetSessionVars().SnapshotTS = 0
 		}()
 	}
-	_, err = se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
+	_, err = se.GetSQLExecutor().ExecuteInternal(ctx, "begin")
 	if err != nil {
 		trySaveErr(err)
 		return
@@ -2589,7 +2593,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	}
 
 	queryToRow := func(se sessionctx.Context, sql string) ([]chunk.Row, error) {
-		rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+		rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
 		if err != nil {
 			return nil, err
 		}

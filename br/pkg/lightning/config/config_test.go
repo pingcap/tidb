@@ -737,16 +737,25 @@ func TestDurationMarshalJSON(t *testing.T) {
 
 func TestDuplicateResolutionAlgorithm(t *testing.T) {
 	var dra DuplicateResolutionAlgorithm
+	require.NoError(t, dra.FromStringValue(""))
+	require.Equal(t, NoneOnDup, dra)
 	require.NoError(t, dra.FromStringValue("none"))
-	require.Equal(t, DupeResAlgNone, dra)
+	require.Equal(t, NoneOnDup, dra)
 	require.NoError(t, dra.FromStringValue("replace"))
-	require.Equal(t, DupeResAlgReplace, dra)
+	require.Equal(t, ReplaceOnDup, dra)
+	require.NoError(t, dra.FromStringValue("ignore"))
+	require.Equal(t, IgnoreOnDup, dra)
 	require.NoError(t, dra.FromStringValue("error"))
-	require.Equal(t, DupeResAlgErr, dra)
+	require.Equal(t, ErrorOnDup, dra)
+	require.NoError(t, dra.FromStringValue("remove"))
+	require.Equal(t, ReplaceOnDup, dra)
+	require.NoError(t, dra.FromStringValue("record"))
+	require.Equal(t, ReplaceOnDup, dra)
 
-	require.Equal(t, "none", DupeResAlgNone.String())
-	require.Equal(t, "replace", DupeResAlgReplace.String())
-	require.Equal(t, "error", DupeResAlgErr.String())
+	require.Equal(t, "", NoneOnDup.String())
+	require.Equal(t, "replace", ReplaceOnDup.String())
+	require.Equal(t, "ignore", IgnoreOnDup.String())
+	require.Equal(t, "error", ErrorOnDup.String())
 }
 
 func TestLoadConfig(t *testing.T) {
@@ -966,12 +975,12 @@ func TestAdjustConflictStrategy(t *testing.T) {
 	ctx := context.Background()
 
 	cfg.TikvImporter.Backend = BackendTiDB
-	cfg.Conflict.Strategy = ""
+	cfg.Conflict.Strategy = NoneOnDup
 	require.NoError(t, cfg.Adjust(ctx))
 	require.Equal(t, ErrorOnDup, cfg.Conflict.Strategy)
 
 	cfg.TikvImporter.Backend = BackendLocal
-	cfg.Conflict.Strategy = ""
+	cfg.Conflict.Strategy = NoneOnDup
 	require.NoError(t, cfg.Adjust(ctx))
 	require.Empty(t, cfg.Conflict.Strategy)
 
@@ -983,7 +992,14 @@ func TestAdjustConflictStrategy(t *testing.T) {
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = true
-	require.ErrorContains(t, cfg.Adjust(ctx), `conflict.strategy cannot be used with tikv-importer.parallel-import and tikv-importer.backend = "local"`)
+	cfg.Conflict.PrecheckConflictBeforeImport = true
+	require.NoError(t, cfg.Adjust(ctx))
+
+	cfg.TikvImporter.Backend = BackendLocal
+	cfg.Conflict.Strategy = ReplaceOnDup
+	cfg.TikvImporter.ParallelImport = true
+	cfg.Conflict.PrecheckConflictBeforeImport = false
+	require.NoError(t, cfg.Adjust(ctx))
 
 	cfg.TikvImporter.Backend = BackendTiDB
 	cfg.Conflict.Strategy = IgnoreOnDup
@@ -992,15 +1008,33 @@ func TestAdjustConflictStrategy(t *testing.T) {
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = false
-	cfg.TikvImporter.DuplicateResolution = DupeResAlgReplace
-	require.ErrorContains(t, cfg.Adjust(ctx), "conflict.strategy cannot be used with tikv-importer.duplicate-resolution")
+	cfg.TikvImporter.DuplicateResolution = ReplaceOnDup
+	require.ErrorContains(t, cfg.Adjust(ctx), `conflict.strategy cannot be used with tikv-importer.duplicate-resolution`)
 
 	cfg.TikvImporter.Backend = BackendLocal
-	cfg.Conflict.Strategy = ""
+	cfg.Conflict.Strategy = NoneOnDup
 	cfg.TikvImporter.OnDuplicate = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = false
-	cfg.TikvImporter.DuplicateResolution = DupeResAlgReplace
-	require.ErrorContains(t, cfg.Adjust(ctx), "tikv-importer.on-duplicate cannot be used with tikv-importer.duplicate-resolution")
+	cfg.TikvImporter.DuplicateResolution = ReplaceOnDup
+	require.ErrorContains(t, cfg.Adjust(ctx), `tikv-importer.on-duplicate cannot be used with tikv-importer.duplicate-resolution`)
+
+	cfg.TikvImporter.Backend = BackendLocal
+	cfg.Conflict.Strategy = IgnoreOnDup
+	cfg.TikvImporter.DuplicateResolution = NoneOnDup
+	require.ErrorContains(t, cfg.Adjust(ctx), `conflict.strategy cannot be set to "ignore" when use tikv-importer.backend = "local"`)
+
+	cfg.TikvImporter.Backend = BackendTiDB
+	cfg.Conflict.Strategy = IgnoreOnDup
+	cfg.Conflict.PrecheckConflictBeforeImport = true
+	require.ErrorContains(t, cfg.Adjust(ctx), `conflict.precheck-conflict-before-import cannot be set to true when use tikv-importer.backend = "tidb"`)
+
+	cfg.TikvImporter.Backend = BackendLocal
+	cfg.Conflict.Strategy = NoneOnDup
+	cfg.TikvImporter.ParallelImport = false
+	cfg.TikvImporter.DuplicateResolution = ReplaceOnDup
+	cfg.TikvImporter.OnDuplicate = NoneOnDup
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, ReplaceOnDup, cfg.Conflict.Strategy)
 }
 
 func TestAdjustMaxRecordRows(t *testing.T) {
@@ -1252,12 +1286,16 @@ func TestCompressionType(t *testing.T) {
 func TestAdjustConflict(t *testing.T) {
 	cfg := NewConfig()
 	assignMinimalLegalValue(cfg)
-	cfg.Conflict.Strategy = "123"
-	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), "unsupported `conflict.strategy` (123)")
+	var dra DuplicateResolutionAlgorithm
 
-	cfg.Conflict.Strategy = "IGNORE"
+	require.NoError(t, dra.FromStringValue("REPLACE"))
+	cfg.Conflict.Strategy = dra
 	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
 	require.Equal(t, int64(math.MaxInt64), cfg.Conflict.Threshold)
+
+	require.NoError(t, dra.FromStringValue("IGNORE"))
+	cfg.Conflict.Strategy = dra
+	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `conflict.strategy cannot be set to "ignore" when use tikv-importer.backend = "local"`)
 
 	cfg.Conflict.Strategy = ErrorOnDup
 	cfg.Conflict.Threshold = 1

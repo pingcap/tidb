@@ -16,6 +16,7 @@ package infoschema
 
 import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 )
@@ -24,18 +25,13 @@ import (
 // It works as a in memory cache and doesn't handle any schema change.
 // InfoSchema is read-only, and the returned value is a copy.
 type InfoSchema interface {
-	SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
-	SchemaExists(schema model.CIStr) bool
+	context.MetaOnlyInfoSchema
 	TableByName(schema, table model.CIStr) (table.Table, error)
-	TableExists(schema, table model.CIStr) bool
-	SchemaByID(id int64) (*model.DBInfo, bool)
 	TableByID(id int64) (table.Table, bool)
-	AllSchemas() []*model.DBInfo
-	AllSchemaNames() []model.CIStr
 	SchemaTables(schema model.CIStr) []table.Table
-	SchemaMetaVersion() int64
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	Misc
+	base() *infoSchema
 }
 
 // Misc contains the methods that are not closely related to InfoSchema.

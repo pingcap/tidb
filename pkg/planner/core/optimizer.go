@@ -362,7 +362,9 @@ func adjustOptimizationFlags(flag uint64, logic LogicalPlan) uint64 {
 	}
 	flag |= flagCollectPredicateColumnsPoint
 	flag |= flagSyncWaitStatsLoadPoint
-
+	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
+		flag |= flagPartitionProcessor // apply partition pruning under static mode
+	}
 	return flag
 }
 
@@ -1352,6 +1354,7 @@ var DefaultDisabledLogicalRulesList *atomic.Value
 func init() {
 	expression.EvalSimpleAst = evalAstExpr
 	expression.BuildSimpleExpr = buildSimpleExpr
+	expression.DecodeKeyFromString = decodeKeyFromString
 	plannerutil.EvalAstExprWithPlanCtx = evalAstExprWithPlanCtx
 	plannerutil.RewriteAstExprWithPlanCtx = rewriteAstExprWithPlanCtx
 	DefaultDisabledLogicalRulesList = new(atomic.Value)

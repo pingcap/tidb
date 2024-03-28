@@ -942,10 +942,9 @@ func (ds *DataSource) ExplainInfo() string {
 		tblName = ds.TableAsName.O
 	}
 	fmt.Fprintf(buffer, "table:%s", tblName)
-	if ds.isPartition {
+	if ds.partitionDefIdx != nil {
 		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
-			partitionName := pi.GetNameByID(ds.physicalTableID)
-			fmt.Fprintf(buffer, ", partition:%s", partitionName)
+			fmt.Fprintf(buffer, ", partition:%s", pi.Definitions[*ds.partitionDefIdx].Name.O)
 		}
 	}
 	return buffer.String()
