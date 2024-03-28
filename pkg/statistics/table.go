@@ -221,6 +221,7 @@ type HistColl struct {
 	Idx2ColumnIDs map[int64][]int64
 	// ColID2IdxIDs maps the column id to a list index ids whose first column is it. It's used to calculate the selectivity in planner.
 	ColID2IdxIDs map[int64][]int64
+	UniqueID2colInfoID map[int64]int64
 	// MVIdx2Columns maps the index id to its columns by expression.Column.
 	// For normal index, the column id is enough, as we already have in Idx2ColumnIDs. But currently, mv index needs more
 	// information to match the filter against the mv index columns, and we need this map to provide this information.
@@ -753,9 +754,11 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
 	colInfoID2UniqueID := make(map[int64]int64, len(columns))
+	uniqueID2colInfoID := make(map[int64]int64, len(columns))
 	idxID2idxInfo := make(map[int64]*model.IndexInfo)
 	for _, col := range columns {
 		colInfoID2UniqueID[col.ID] = col.UniqueID
+		uniqueID2colInfoID[col.UniqueID] = col.ID
 	}
 	for id, colHist := range coll.Columns {
 		uniqueID, ok := colInfoID2UniqueID[id]
@@ -811,6 +814,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		Indices:        newIdxHistMap,
 		ColID2IdxIDs:   colID2IdxIDs,
 		Idx2ColumnIDs:  idx2Columns,
+		UniqueID2colInfoID: uniqueID2colInfoID,
 		MVIdx2Columns:  mvIdx2Columns,
 	}
 	return newColl

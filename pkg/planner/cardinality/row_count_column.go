@@ -45,7 +45,11 @@ func GetRowCountByColumnRanges(sctx context.PlanContext, coll *statistics.HistCo
 	}
 	sc := sctx.GetSessionVars().StmtCtx
 	c, ok := coll.Columns[colID]
-	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colID)
+	colInfoID := colID
+	if len(coll.UniqueID2colInfoID) > 0 {
+		colInfoID = coll.UniqueID2colInfoID[colID]
+	}
+	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colInfoID)
 	if c != nil && c.Info != nil {
 		name = c.Info.Name.O
 	}
@@ -83,7 +87,11 @@ func GetRowCountByIntColumnRanges(sctx context.PlanContext, coll *statistics.His
 	}
 	sc := sctx.GetSessionVars().StmtCtx
 	c, ok := coll.Columns[colID]
-	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colID)
+	colInfoID := colID
+	if len(coll.UniqueID2colInfoID) > 0 {
+		colInfoID = coll.UniqueID2colInfoID[colID]
+	}
+	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colInfoID)
 	if c != nil && c.Info != nil {
 		name = c.Info.Name.O
 	}
