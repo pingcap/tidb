@@ -239,7 +239,7 @@ GRANT ALL ON *.* to tcd2 WITH GRANT OPTION;
 CREATE USER acdc;
 Error 1227 (42000): Access denied; you need (at least one of) the CREATE User privilege(s) for this operation
 DROP USER tcd2;
-Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+Error 1227 (42000): Access denied; you need (at least one of) the SYSTEM_USER privilege(s) for this operation
 DROP USER tcd1;
 CREATE USER tcd1;
 GRANT tcd2 TO tcd1;
@@ -394,6 +394,7 @@ Error 1227 (42000): Access denied; you need (at least one of) the SYSTEM_USER or
 ALTER USER 'semuser1' IDENTIFIED BY '';
 ALTER USER 'semuser2' IDENTIFIED BY '';
 ALTER USER 'semuser3' IDENTIFIED BY '';
+Error 1227 (42000): Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation
 DROP USER IF EXISTS 'ru1'@'localhost';
 DROP USER IF EXISTS ru3;
 DROP USER IF EXISTS ru6@localhost;
