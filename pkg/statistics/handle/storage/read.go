@@ -589,7 +589,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		return nil
 	}
 	var colInfo *model.ColumnInfo
-	c, loadNeeded := tbl.ColumnIsLoadNeeded(col.ID, true)
+	_, loadNeeded := tbl.ColumnIsLoadNeeded(col.ID, true)
 	if !loadNeeded {
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
@@ -643,10 +643,10 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	statistics.HistogramNeededItems.Delete(col)
 	if col.IsSyncLoadFailed {
-		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
-			zap.Int64("table_id", c.PhysicalID),
-			zap.Int64("column_id", c.Info.ID),
-			zap.String("column_name", c.Info.Name.O))
+		logutil.BgLogger().Error("Hist for column should already be loaded as sync but not found.",
+			zap.Int64("table_id", col.TableID),
+			zap.Int64("column_id", col.ID),
+			zap.String("column_name", colHist.Info.Name.O))
 	}
 	return nil
 }

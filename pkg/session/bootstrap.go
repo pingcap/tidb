@@ -3323,7 +3323,7 @@ func mustExecute(s sessiontypes.Session, sql string, args ...any) {
 	_, err := s.ExecuteInternal(ctx, sql, args...)
 	defer cancel()
 	if err != nil {
-		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err), zap.Stack("stack"))
+		logutil.BgLogger().Fatal("mustExecute error", zap.String("sql", sql), zap.Error(err), zap.Stack("stack"))
 	}
 }
 
