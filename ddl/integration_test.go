@@ -142,3 +142,17 @@ func TestDDLOnCachedTable(t *testing.T) {
 	tk.MustExec("alter table t nocache;")
 	tk.MustExec("drop table if exists t;")
 }
+
+func TestExchangePartitionAfterDropForeignKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table parent (id int unique);")
+	tk.MustExec("create table child (id int, parent_id int, foreign key (parent_id) references parent(id));")
+	tk.MustExec("create table child_with_partition(id int, parent_id int) partition by range(id) (partition p1 values less than (100));")
+	tk.MustGetErrMsg("alter table child_with_partition exchange partition p1 with table child;", "[ddl:1740]Table to exchange with partition has foreign key references: 'child'")
+	tk.MustExec("alter table child drop foreign key fk_1;")
+	tk.MustExec("alter table child_with_partition exchange partition p1 with table child;")
+}

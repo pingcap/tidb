@@ -1140,9 +1140,13 @@ type LogicalMaxOneRow struct {
 }
 
 // LogicalTableDual represents a dual table plan.
+// Note that sometimes we don't set schema for LogicalTableDual (most notably in buildTableDual()), which means
+// outputting 0/1 row with zero column. This semantic may be different from your expectation sometimes but should not
+// cause any actual problems now.
 type LogicalTableDual struct {
 	logicalSchemaProducer
 
+	// RowCount could only be 0 or 1.
 	RowCount int
 }
 
