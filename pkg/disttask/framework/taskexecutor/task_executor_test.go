@@ -24,6 +24,7 @@ import (
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc/codes"
@@ -536,4 +537,12 @@ func TestExecutorErrHandling(t *testing.T) {
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	require.NoError(t, taskExecutor.RunStep(nil))
 	require.True(t, ctrl.Satisfied())
+}
+
+func TestInject(t *testing.T) {
+	e := &EmptyStepExecutor{}
+	r := &proto.StepResource{CPU: proto.NewAllocatable(1)}
+	execute.SetFrameworkInfo(e, r)
+	got := e.GetResource()
+	require.Equal(t, r, got)
 }

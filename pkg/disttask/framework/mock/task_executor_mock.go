@@ -492,18 +492,18 @@ func (m *MockExtension) EXPECT() *MockExtensionMockRecorder {
 }
 
 // GetStepExecutor mocks base method.
-func (m *MockExtension) GetStepExecutor(arg0 *proto.Task, arg1 *proto.StepResource) (execute.StepExecutor, error) {
+func (m *MockExtension) GetStepExecutor(arg0 *proto.Task) (execute.StepExecutor, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetStepExecutor", arg0, arg1)
+	ret := m.ctrl.Call(m, "GetStepExecutor", arg0)
 	ret0, _ := ret[0].(execute.StepExecutor)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetStepExecutor indicates an expected call of GetStepExecutor.
-func (mr *MockExtensionMockRecorder) GetStepExecutor(arg0, arg1 any) *gomock.Call {
+func (mr *MockExtensionMockRecorder) GetStepExecutor(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStepExecutor", reflect.TypeOf((*MockExtension)(nil).GetStepExecutor), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStepExecutor", reflect.TypeOf((*MockExtension)(nil).GetStepExecutor), arg0)
 }
 
 // IsIdempotent mocks base method.

@@ -16,6 +16,7 @@ package execute
 
 import (
 	"context"
+	"reflect"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 )
@@ -29,6 +30,8 @@ import (
 //		else OnFinished
 //	Cleanup
 type StepExecutor interface {
+	StepExecFrameworkInfo
+
 	// Init is used to initialize the environment.
 	// if failed, task executor will retry later.
 	Init(context.Context) error
@@ -48,4 +51,43 @@ type StepExecutor interface {
 // SubtaskSummary contains the summary of a subtask.
 type SubtaskSummary struct {
 	RowCount int64
+}
+
+// StepExecFrameworkInfo is an interface that should be embedded into the
+// implementation of StepExecutor. It's set by the framework automatically and
+// the implementation can use it to access necessary information.
+type StepExecFrameworkInfo interface {
+	// restricted is a private method to prevent other package mistakenly implements
+	// StepExecFrameworkInfo. So when StepExecFrameworkInfo is composed with other
+	// interfaces, the implementation of other interface must embed
+	// StepExecFrameworkInfo.
+	restricted()
+	// GetResource returns the expected resource of this step executor.
+	GetResource() *proto.StepResource
+}
+
+var stepExecFrameworkInfoName = reflect.TypeOf((*StepExecFrameworkInfo)(nil)).Elem().Name()
+
+type frameworkInfo struct {
+	resource *proto.StepResource
+}
+
+func (f *frameworkInfo) restricted() {}
+
+func (f *frameworkInfo) GetResource() *proto.StepResource {
+	return f.resource
+}
+
+// SetFrameworkInfo sets the framework info for the StepExecutor.
+func SetFrameworkInfo(exec StepExecutor, resource *proto.StepResource) {
+	if exec == nil {
+		return
+	}
+	toInject := &frameworkInfo{resource: resource}
+	// use reflection to set the framework info
+	e := reflect.ValueOf(exec)
+	if e.Kind() == reflect.Ptr || e.Kind() == reflect.Interface {
+		e = e.Elem()
+	}
+	e.FieldByName(stepExecFrameworkInfoName).Set(reflect.ValueOf(toInject))
 }
