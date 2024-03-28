@@ -186,6 +186,7 @@ func (a *recordSet) Finish() error {
 	var err error
 	a.once.Do(func() {
 		err = exec.Close(a.executor)
+		a.executor = nil
 		cteErr := resetCTEStorageMap(a.stmt.Ctx)
 		if cteErr != nil {
 			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
