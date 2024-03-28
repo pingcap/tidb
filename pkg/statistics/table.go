@@ -695,7 +695,7 @@ type neededStatsMap struct {
 
 func (n *neededStatsMap) AllItems() []model.TableItemID {
 	var result []model.TableItemID
-	for i := 0; i < 64; i++ {
+	for i := 0; i < shardCnt; i++ {
 		keys := n.items[i].AllItems()
 		result = append(result, keys...)
 	}
@@ -712,7 +712,7 @@ func (n *neededStatsMap) Delete(col model.TableItemID) {
 
 func (n *neededStatsMap) Length() int {
 	var result int
-	for i := 0; i < 64; i++ {
+	for i := 0; i < shardCnt; i++ {
 		result += n.items[i].Length()
 	}
 	return result
