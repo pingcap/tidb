@@ -15,7 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 )
 

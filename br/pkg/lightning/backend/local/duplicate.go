@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/distsql"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -48,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -817,7 +817,7 @@ func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB 
 	logger := m.logger
 	logger.Info("collect duplicate rows from local duplicate db", zap.String("category", "detect-dupe"), zap.Int("tasks", len(tasks)))
 
-	pool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from duplicate db")
+	pool := util.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from duplicate db")
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
 		task := task
@@ -893,7 +893,7 @@ func (m *DupeDetector) processRemoteDupTaskOnce(
 	task dupTask,
 	logger log.Logger,
 	importClientFactory ImportClientFactory,
-	regionPool *utils.WorkerPool,
+	regionPool *util.WorkerPool,
 	remainKeyRanges *pendingKeyRanges,
 	algorithm config.DuplicateResolutionAlgorithm,
 ) (madeProgress bool, err error) {
@@ -971,7 +971,7 @@ func (m *DupeDetector) processRemoteDupTask(
 	task dupTask,
 	logger log.Logger,
 	importClientFactory ImportClientFactory,
-	regionPool *utils.WorkerPool,
+	regionPool *util.WorkerPool,
 	algorithm config.DuplicateResolutionAlgorithm,
 ) error {
 	regionErrRetryAttempts := split.WaitRegionOnlineAttemptTimes
@@ -1021,8 +1021,8 @@ func (m *DupeDetector) CollectDuplicateRowsFromTiKV(ctx context.Context, importC
 	logger := m.logger
 	logger.Info("collect duplicate rows from tikv", zap.String("category", "detect-dupe"), zap.Int("tasks", len(tasks)))
 
-	taskPool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv")
-	regionPool := utils.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv by region")
+	taskPool := util.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv")
+	regionPool := util.NewWorkerPool(uint(m.concurrency), "collect duplicate rows from tikv by region")
 	g, gCtx := errgroup.WithContext(ctx)
 	for _, task := range tasks {
 		task := task
@@ -1118,7 +1118,7 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 		panic(fmt.Sprintf("[resolve-dupe] unknown conflict.strategy algorithm %v", algorithm))
 	}
 
-	pool := utils.NewWorkerPool(uint(local.dupeConcurrency), "resolve duplicate rows")
+	pool := util.NewWorkerPool(uint(local.dupeConcurrency), "resolve duplicate rows")
 
 	tblInfo, err := json.Marshal(tbl.Meta())
 	if err != nil {

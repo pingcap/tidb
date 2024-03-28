@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "dbutiltest",
+    srcs = ["utils.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/dbutil/dbutiltest",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/ddl",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/planner/core",
+        "//pkg/types",
+        "//pkg/util/dbutil",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)

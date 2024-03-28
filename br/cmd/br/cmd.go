@@ -14,7 +14,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -23,6 +22,7 @@ import (
 	tidbutils "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/spf13/cobra"
 )
 

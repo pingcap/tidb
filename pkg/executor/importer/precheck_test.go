@@ -26,12 +26,12 @@ import (
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/stretchr/testify/require"
@@ -166,7 +166,7 @@ func TestCheckRequirements(t *testing.T) {
 	_, err = etcdCli.Delete(ctx, pitrKey)
 	require.NoError(t, err)
 	// example: /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
-	cdcKey := utils.CDCPrefix + "testcluster/test_ns/changefeed/info/test_cf"
+	cdcKey := cdcutil.CDCPrefix + "testcluster/test_ns/changefeed/info/test_cf"
 	_, err = etcdCli.Put(ctx, cdcKey, `{"state":"normal"}`)
 	require.NoError(t, err)
 	err = c.CheckRequirements(ctx, conn)

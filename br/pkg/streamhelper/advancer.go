@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -224,7 +225,7 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
 	defer utils.PanicToErr(&err)
 
 	ranges := spans.Collapse(length, getRange)
-	workers := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance)*4, "sub ranges")
+	workers := util.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance)*4, "sub ranges")
 	eg, cx := errgroup.WithContext(ctx)
 	collector := NewClusterCollector(ctx, c.env)
 	collector.SetOnSuccessHook(func(u uint64, kr kv.KeyRange) {
@@ -679,7 +680,7 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 			return tikv.ResolveLocksForRange(
 				ctx, c.env, math.MaxUint64, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
 		}
-		workerPool := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
+		workerPool := util.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
 		var wg sync.WaitGroup
 		for _, r := range targets {
 			targetRange := r

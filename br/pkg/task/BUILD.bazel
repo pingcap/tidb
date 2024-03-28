@@ -54,6 +54,7 @@ go_library(
         "//pkg/statistics/handle",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/cdcutil",
         "//pkg/util/mathutil",
         "//pkg/util/table-filter",
         "@com_github_docker_go_units//:go-units",

@@ -27,11 +27,11 @@ import (
 	tidbkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
@@ -307,7 +307,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	fnGetLatestCount := atomic.NewInt32(0)
 	fnDeleteKeyCount := atomic.NewInt32(0)
-	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
+	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
 		ctx, tbl, "test", pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
@@ -512,7 +512,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	fnGetLatestCount := atomic.NewInt32(0)
 	fnDeleteKeyCount := atomic.NewInt32(0)
-	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
+	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
 		ctx, tbl, "test", pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {

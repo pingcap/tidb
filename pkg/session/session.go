@@ -3099,7 +3099,7 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
 
 // loadCollationParameter loads collation parameter from mysql.tidb
 func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
-	para, err := se.getTableValue(ctx, mysql.TiDBTable, tidbNewCollationEnabled)
+	para, err := se.getTableValue(ctx, mysql.TiDBTable, TidbNewCollationEnabled)
 	if err != nil {
 		return false, err
 	}

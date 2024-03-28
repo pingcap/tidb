@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -130,7 +130,7 @@ func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context) error {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
-	nameSet, err := utils.GetCDCChangefeedNameSet(ctx, cli.GetClient())
+	nameSet, err := cdcutil.GetCDCChangefeedNameSet(ctx, cli.GetClient())
 	if err != nil {
 		return errors.Trace(err)
 	}

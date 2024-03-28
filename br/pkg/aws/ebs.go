@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -77,7 +77,7 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 		ec2Tag("TiDBCluster-BR-Snapshot", "new"),
 	}
 
-	workerPool := utils.NewWorkerPool(e.concurrency, "create snapshots")
+	workerPool := util.NewWorkerPool(e.concurrency, "create snapshots")
 	for i := range backupInfo.TiKVComponent.Stores {
 		store := backupInfo.TiKVComponent.Stores[i]
 		volumes := store.Volumes
@@ -274,7 +274,7 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 
 	var deletedCnt atomic.Int32
 	eg, _ := errgroup.WithContext(context.Background())
-	workerPool := utils.NewWorkerPool(e.concurrency, "delete snapshot")
+	workerPool := util.NewWorkerPool(e.concurrency, "delete snapshot")
 	for i := range pendingSnaps {
 		snapID := pendingSnaps[i]
 		workerPool.ApplyOnErrorGroup(eg, func() error {
@@ -557,7 +557,7 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 		newVolumeIDMap[oldVol.ID] = *newVol.VolumeId
 	}
 
-	workerPool := utils.NewWorkerPool(e.concurrency, "create volume")
+	workerPool := util.NewWorkerPool(e.concurrency, "create volume")
 	for i := range meta.TiKVComponent.Stores {
 		store := meta.TiKVComponent.Stores[i]
 		for j := range store.Volumes {
@@ -662,7 +662,7 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 
 	var deletedCnt atomic.Int32
 	eg, _ := errgroup.WithContext(context.Background())
-	workerPool := utils.NewWorkerPool(e.concurrency, "delete volume")
+	workerPool := util.NewWorkerPool(e.concurrency, "delete volume")
 	for i := range pendingVolumes {
 		volID := pendingVolumes[i]
 		workerPool.ApplyOnErrorGroup(eg, func() error {

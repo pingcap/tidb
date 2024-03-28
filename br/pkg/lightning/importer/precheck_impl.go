@@ -38,11 +38,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/set"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -836,7 +836,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, e
 		errorMsg = append(errorMsg, fmt.Sprintf("found PiTR log streaming task(s): %v,", names))
 	}
 
-	nameSet, err := utils.GetCDCChangefeedNameSet(ctx, ci.etcdCli)
+	nameSet, err := cdcutil.GetCDCChangefeedNameSet(ctx, ci.etcdCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

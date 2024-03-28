@@ -21,7 +21,6 @@ go_library(
         "//br/pkg/restore/tiflashrec",
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
-        "//br/pkg/utils",
         "//pkg/ddl",
         "//pkg/kv",
         "//pkg/meta",

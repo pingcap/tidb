@@ -82,3 +82,11 @@ func TestClamp(t *testing.T) {
 	require.Equal(t, "xy", Clamp("yy", "ab", "xy"))
 	require.Equal(t, "ab", Clamp("ab", "ab", "ab"))
 }
+
+func TestNextPowerOfTwo(t *testing.T) {
+	require.Equal(t, int64(1), NextPowerOfTwo(1))
+	require.Equal(t, int64(4), NextPowerOfTwo(3))
+	require.Equal(t, int64(256), NextPowerOfTwo(255))
+	require.Equal(t, int64(1024), NextPowerOfTwo(1024))
+	require.Equal(t, int64(0x100000000), NextPowerOfTwo(0xabcd1234))
+}

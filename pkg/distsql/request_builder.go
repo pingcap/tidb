@@ -21,12 +21,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -72,7 +74,7 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 		builder.err = err
 	}
 	if builder.Request.KeyRanges == nil {
-		builder.Request.KeyRanges = kv.NewNonParitionedKeyRanges(nil)
+		builder.Request.KeyRanges = kv.NewNonPartitionedKeyRanges(nil)
 	}
 	return &builder.Request, builder.err
 }
@@ -89,7 +91,7 @@ func (builder *RequestBuilder) SetMemTracker(tracker *memory.Tracker) *RequestBu
 // br refers it, so have to keep it.
 func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.Range) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges = kv.NewNonParitionedKeyRanges(TableRangesToKVRanges(tid, tableRanges))
+		builder.Request.KeyRanges = kv.NewNonPartitionedKeyRanges(TableRangesToKVRanges(tid, tableRanges))
 	}
 	return builder
 }
@@ -197,7 +199,7 @@ func (builder *RequestBuilder) SetChecksumRequest(checksum *tipb.ChecksumRequest
 
 // SetKeyRanges sets "KeyRanges" for "kv.Request".
 func (builder *RequestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *RequestBuilder {
-	builder.Request.KeyRanges = kv.NewNonParitionedKeyRanges(keyRanges)
+	builder.Request.KeyRanges = kv.NewNonPartitionedKeyRanges(keyRanges)
 	return builder
 }
 
@@ -663,8 +665,13 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ra
 		if err != nil {
 			return nil, err
 		}
-		rans = append(rans, &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
-			HighVal: []types.Datum{types.NewBytesDatum(high)}, LowExclude: false, HighExclude: true, Collators: collate.GetBinaryCollatorSlice(1)})
+		rans = append(rans, &ranger.Range{
+			LowVal:      []types.Datum{types.NewBytesDatum(low)},
+			HighVal:     []types.Datum{types.NewBytesDatum(high)},
+			LowExclude:  false,
+			HighExclude: true,
+			Collators:   collate.GetBinaryCollatorSlice(1),
+		})
 	}
 	krs := make([][]kv.KeyRange, len(tids))
 	for i := range krs {
@@ -770,4 +777,53 @@ func EncodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 		high = kv.Key(high).PrefixNext()
 	}
 	return low, high, nil
+}
+
+// BuildTableRanges returns the key ranges encompassing the entire table,
+// and its partitions if exists.
+func BuildTableRanges(tbl *model.TableInfo) ([]kv.KeyRange, error) {
+	pis := tbl.GetPartitionInfo()
+	if pis == nil {
+		// Short path, no partition.
+		return appendRanges(tbl, tbl.ID)
+	}
+
+	ranges := make([]kv.KeyRange, 0, len(pis.Definitions)*(len(tbl.Indices)+1)+1)
+	for _, def := range pis.Definitions {
+		rgs, err := appendRanges(tbl, def.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ranges = append(ranges, rgs...)
+	}
+	return ranges, nil
+}
+
+func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
+	var ranges []*ranger.Range
+	if tbl.IsCommonHandle {
+		ranges = ranger.FullNotNullRange()
+	} else {
+		ranges = ranger.FullIntRange(false)
+	}
+
+	retRanges := make([]kv.KeyRange, 0, 1+len(tbl.Indices))
+	kvRanges, err := TableHandleRangesToKVRanges(nil, []int64{tblID}, tbl.IsCommonHandle, ranges)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	retRanges = kvRanges.AppendSelfTo(retRanges)
+
+	for _, index := range tbl.Indices {
+		if index.State != model.StatePublic {
+			continue
+		}
+		ranges = ranger.FullRange()
+		idxRanges, err := IndexRangesToKVRanges(nil, tblID, index.ID, ranges)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		retRanges = idxRanges.AppendSelfTo(retRanges)
+	}
+	return retRanges, nil
 }

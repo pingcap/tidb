@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -205,7 +205,7 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 
 	fnGetLatestCount := atomic.NewInt32(0)
 	fnDeleteKeyCount := atomic.NewInt32(0)
-	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
+	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
 		ctx, tbl, "a", pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
@@ -373,7 +373,7 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 
 	fnGetLatestCount := atomic.NewInt32(0)
 	fnDeleteKeyCount := atomic.NewInt32(0)
-	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
+	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
 		ctx, tbl, "a", pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
@@ -557,7 +557,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 
 	fnGetLatestCount := atomic.NewInt32(0)
 	fnDeleteKeyCount := atomic.NewInt32(0)
-	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
+	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
 		ctx, tbl, "a", pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
@@ -760,7 +760,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 
 	fnGetLatestCount := atomic.NewInt32(0)
 	fnDeleteKeyCount := atomic.NewInt32(0)
-	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
+	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
 		ctx, tbl, "a", pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {

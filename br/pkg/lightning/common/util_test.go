@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/dbutil/dbutiltest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -183,7 +183,7 @@ func TestGetAutoRandomColumn(t *testing.T) {
 	}
 	p := parser.New()
 	for _, tt := range tests {
-		tableInfo, err := dbutil.GetTableInfoBySQL(tt.ddl, p)
+		tableInfo, err := dbutiltest.GetTableInfoBySQL(tt.ddl, p)
 		require.NoError(t, err)
 		col := common.GetAutoRandomColumn(tableInfo)
 		if tt.colName == "" {
@@ -292,13 +292,45 @@ CREATE TABLE multi_indexes (
 	p := parser.New()
 
 	for _, tt := range tests {
-		curTblInfo, err := dbutil.GetTableInfoBySQL(tt.current, p)
+		curTblInfo, err := dbutiltest.GetTableInfoBySQL(tt.current, p)
 		require.NoError(t, err)
-		desiredTblInfo, err := dbutil.GetTableInfoBySQL(tt.desired, p)
+		desiredTblInfo, err := dbutiltest.GetTableInfoBySQL(tt.desired, p)
 		require.NoError(t, err)
 
 		singleSQL, multiSQLs := common.BuildAddIndexSQL(tt.table, curTblInfo, desiredTblInfo)
 		require.Equal(t, tt.singleSQL, singleSQL)
 		require.Equal(t, tt.multiSQLs, multiSQLs)
+	}
+}
+
+func TestHideSensitive(t *testing.T) {
+	strs := []struct {
+		old string
+		new string
+	}{
+		{
+			`host = "127.0.0.1"\n  user = "root"\n  password = "/Q7B9DizNLLTTfiZHv9WoEAKamfpIUs="\n  port = 3306\n`,
+			`host = "127.0.0.1"\n  user = "root"\n  password = ******\n  port = 3306\n`,
+		},
+		{
+			`host = "127.0.0.1"\n  user = "root"\n  password = ""\n  port = 3306\n`,
+			`host = "127.0.0.1"\n  user = "root"\n  password = ******\n  port = 3306\n`,
+		},
+		{
+			`host = "127.0.0.1"\n  user = "root"\n  password= "/Q7B9DizNLLTTfiZHv9WoEAKamfpIUs="\n  port = 3306\n`,
+			`host = "127.0.0.1"\n  user = "root"\n  password= ******\n  port = 3306\n`,
+		},
+		{
+			`host = "127.0.0.1"\n  user = "root"\n  password =""\n  port = 3306\n`,
+			`host = "127.0.0.1"\n  user = "root"\n  password =******\n  port = 3306\n`,
+		},
+		{
+			`host = "127.0.0.1"\n  user = "root"\n  password=""\n  port = 3306\n`,
+			`host = "127.0.0.1"\n  user = "root"\n  password=******\n  port = 3306\n`,
+		},
+	}
+	for i, str := range strs {
+		t.Logf("case #%d\n", i)
+		require.Equal(t, str.new, common.HideSensitive(str.old))
 	}
 }

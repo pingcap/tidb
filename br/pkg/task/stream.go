@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1082,7 +1083,7 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 
 	// check cdc changefeed
 	if cfg.CheckRequirements {
-		nameSet, err := utils.GetCDCChangefeedNameSet(ctx, etcdCLI)
+		nameSet, err := cdcutil.GetCDCChangefeedNameSet(ctx, etcdCLI)
 		if err != nil {
 			return err
 		}

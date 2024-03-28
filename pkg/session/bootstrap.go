@@ -763,8 +763,8 @@ const (
 	// The variable name in mysql.tidb table and it will be used when we want to know
 	// system timezone.
 	tidbSystemTZ = "system_tz"
-	// The variable name in mysql.tidb table and it will indicate if the new collations are enabled in the TiDB cluster.
-	tidbNewCollationEnabled = "new_collation_enabled"
+	// TidbNewCollationEnabled The variable name in mysql.tidb table and it will indicate if the new collations are enabled in the TiDB cluster.
+	TidbNewCollationEnabled = "new_collation_enabled"
 	// The variable name in mysql.tidb table and it records the default value of
 	// mem-quota-query when upgrade from v3.0.x to v4.0.9+.
 	tidbDefMemoryQuotaQuery = "default_memory_quota_query"
@@ -1864,7 +1864,7 @@ func writeNewCollationParameter(s sessiontypes.Session, flag bool) {
 		b = varTrue
 	}
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
-		mysql.SystemDB, mysql.TiDBTable, tidbNewCollationEnabled, b, comment, b,
+		mysql.SystemDB, mysql.TiDBTable, TidbNewCollationEnabled, b, comment, b,
 	)
 }
 

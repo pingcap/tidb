@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -510,7 +510,7 @@ func EstimateCompactionThreshold(files []mydump.FileInfo, cp *checkpoints.TableC
 func EstimateCompactionThreshold2(totalRawFileSize int64) int64 {
 	// try restrict the total file number within 512
 	threshold := totalRawFileSize / 512
-	threshold = utils.NextPowerOfTwo(threshold)
+	threshold = mathutil.NextPowerOfTwo(threshold)
 	if threshold < CompactionLowerThreshold {
 		// too may small SST files will cause inaccuracy of region range estimation,
 		threshold = CompactionLowerThreshold
