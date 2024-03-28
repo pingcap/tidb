@@ -559,7 +559,7 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 				Exprs: expr,
 			}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 
-			proj.schema.Append(&expression.Column{
+			proj.schema = expression.NewSchema(&expression.Column{
 				UniqueID: proj.SCtx().GetSessionVars().AllocPlanColumnID(),
 				RetType:  constOne.GetType(),
 			})
