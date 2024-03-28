@@ -1426,34 +1426,27 @@ func (t *TopNMeta) buildBucket4Merging(sctx sessionctx.Context, d *types.Datum) 
 
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
 func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool) (*Histogram, error) {
-	var totCount, totNull, bucketNumber, totColSize int64
+	var totCount, totNull, totColSize int64
+	var bucketNumber int
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
-	// minValue is used to calc the bucket lower.
-	var minValue *types.Datum
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
-		bucketNumber += int64(hist.Len())
-		if hist.Len() > 0 {
+		histLen := hist.Len()
+		if histLen > 0 {
+			bucketNumber += histLen
 			totCount += hist.Buckets[hist.Len()-1].Count
-			if minValue == nil {
-				minValue = hist.GetLower(0).Clone()
-				continue
-			}
-			tmpValue := hist.GetLower(0)
-			res, err := tmpValue.Compare(sc.TypeCtx(), minValue, collate.GetBinaryCollator())
-			if err != nil {
-				return nil, err
-			}
-			if res < 0 {
-				minValue = tmpValue.Clone()
-			}
 		}
 	}
 
-	bucketNumber += int64(len(popedTopN))
+	// If all the hist and the topn is empty, return a empty hist.
+	if bucketNumber+len(popedTopN) == 0 {
+		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, 0, totColSize), nil
+	}
+
+	bucketNumber += len(popedTopN)
 	buckets := make([]*bucket4Merging, 0, bucketNumber)
 	globalBuckets := make([]*bucket4Merging, 0, expBucketNumber)
 
@@ -1467,17 +1460,6 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 		d, err := topNMetaToDatum(meta, hists[0].Tp.GetType(), isIndex, sc.TimeZone())
 		if err != nil {
 			return nil, err
-		}
-		if minValue == nil {
-			minValue = d.Clone()
-			continue
-		}
-		res, err := d.Compare(sc.TypeCtx(), minValue, collate.GetBinaryCollator())
-		if err != nil {
-			return nil, err
-		}
-		if res < 0 {
-			minValue = d.Clone()
 		}
 		buckets = append(buckets, meta.buildBucket4Merging(sctx, &d))
 	}
@@ -1528,7 +1510,8 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 		bucketNDV += buckets[i].NDV
 		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
 			currentLeftMost := buckets[i].lower
-			for ; i > 0; i-- { // if the buckets have the same upper, we merge them into the same new buckets.
+			// If the buckets have the same upper, we merge them into the same new buckets.
+			for ; i > 0; i-- {
 				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), buckets[i].upper, collate.GetBinaryCollator())
 				if err != nil {
 					return nil, err
@@ -1541,6 +1524,7 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 				currentLeftMost = buckets[i-1].lower
 			}
 
+			// Iterate possible overlapped ones.
 			for ; i > 0; i-- {
 				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
 				if err != nil {
@@ -1627,14 +1611,8 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 		releasebucket4MergingForRecycle(buckets[i])
 	}
 	// Because we merge backwards, we need to flip the slices.
-	for i, j := 0, len(globalBuckets)-1; i < j; i, j = i+1, j-1 {
-		globalBuckets[i], globalBuckets[j] = globalBuckets[j], globalBuckets[i]
-	}
+	slices.Reverse(globalBuckets)
 
-	// Calc the bucket lower.
-	if minValue == nil || len(globalBuckets) == 0 { // both hists and popedTopN are empty, returns an empty hist in this case
-		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize), nil
-	}
 	for i := 1; i < len(globalBuckets); i++ {
 		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
 	}
