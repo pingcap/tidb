@@ -209,6 +209,12 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	tk.MustExec("insert into t values(10, 10)")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used without Metadata Lock. Fallback to standard mode")
 	tk.MustExec("set global tidb_enable_metadata_lock = on")
+
+	// tidb_constraint_check_in_place = ON
+	tk.MustExec("set @@tidb_constraint_check_in_place = 1")
+	tk.MustExec("insert into t values(11, 11)")
+	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used when tidb_constraint_check_in_place=ON. Fallback to standard mode")
+	tk.MustExec("set @@tidb_constraint_check_in_place = 0")
 }
 
 func compareTables(t *testing.T, tk *testkit.TestKit, t1, t2 string) {
