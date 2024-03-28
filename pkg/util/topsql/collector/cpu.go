@@ -23,7 +23,6 @@ import (
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"go.uber.org/zap"
@@ -255,12 +254,12 @@ func (s *sqlStats) tune() {
 }
 
 // CtxWithSQLDigest wrap the ctx with sql digest.
-func CtxWithSQLDigest(ctx context.Context, sqlDigest []byte) context.Context {
-	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest))))
+func CtxWithSQLDigest(ctx context.Context, sqlDigest string) context.Context {
+	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest))
 }
 
 // CtxWithSQLAndPlanDigest wrap the ctx with sql digest and plan digest.
-func CtxWithSQLAndPlanDigest(ctx context.Context, sqlDigest, planDigest []byte) context.Context {
-	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest)),
-		labelPlanDigest, string(hack.String(planDigest))))
+func CtxWithSQLAndPlanDigest(ctx context.Context, sqlDigest, planDigest string) context.Context {
+	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest,
+		labelPlanDigest, planDigest))
 }
