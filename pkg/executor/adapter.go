@@ -90,6 +90,7 @@ type processinfoSetter interface {
 type recordSet struct {
 	fields     []*ast.ResultField
 	executor   exec.Executor
+	schema     *expression.Schema
 	stmt       *ExecStmt
 	lastErrs   []error
 	txnStartTS uint64
@@ -98,7 +99,7 @@ type recordSet struct {
 
 func (a *recordSet) Fields() []*ast.ResultField {
 	if len(a.fields) == 0 {
-		a.fields = colNames2ResultFields(a.executor.Schema(), a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
+		a.fields = colNames2ResultFields(a.schema, a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
 	}
 	return a.fields
 }
@@ -186,6 +187,7 @@ func (a *recordSet) Finish() error {
 	var err error
 	a.once.Do(func() {
 		err = exec.Close(a.executor)
+		a.executor = nil
 		cteErr := resetCTEStorageMap(a.stmt.Ctx)
 		if cteErr != nil {
 			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
@@ -334,6 +336,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 
 	return &recordSet{
 		executor:   executor,
+		schema:     executor.Schema(),
 		stmt:       a,
 		txnStartTS: startTs,
 	}, nil
@@ -569,6 +572,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	return &recordSet{
 		executor:   e,
+		schema:     e.Schema(),
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
