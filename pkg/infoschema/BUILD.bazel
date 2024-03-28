@@ -75,6 +75,7 @@ go_test(
     name = "infoschema_test",
     timeout = "short",
     srcs = [
+        "bench_test.go",
         "infoschema_test.go",
         "infoschema_v2_test.go",
         "main_test.go",
@@ -93,6 +94,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/variable",
+        "//pkg/store/driver",
         "//pkg/table",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
