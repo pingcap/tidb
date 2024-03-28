@@ -42,7 +42,7 @@ type CDCNameSet struct {
 	nameSet map[string][]string
 }
 
-// that the nameSet is empty means no changefeed exists.
+// Empty that the nameSet is empty means no changefeed exists.
 func (s *CDCNameSet) Empty() bool {
 	return len(s.nameSet) == 0
 }

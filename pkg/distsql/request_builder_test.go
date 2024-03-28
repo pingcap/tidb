@@ -771,10 +771,10 @@ func TestBuildTableRangeCommonHandle(t *testing.T) {
 		ids []int64
 		trs []kv.KeyRange
 	}
-	low, err_l := codec.EncodeKey(time.UTC, nil, []types.Datum{types.MinNotNullDatum()}...)
-	require.NoError(t, err_l)
-	high, err_h := codec.EncodeKey(time.UTC, nil, []types.Datum{types.MaxValueDatum()}...)
-	require.NoError(t, err_h)
+	low, errL := codec.EncodeKey(time.UTC, nil, []types.Datum{types.MinNotNullDatum()}...)
+	require.NoError(t, errL)
+	high, errH := codec.EncodeKey(time.UTC, nil, []types.Datum{types.MaxValueDatum()}...)
+	require.NoError(t, errH)
 	high = kv.Key(high).PrefixNext()
 	cases := []Case{
 		{ids: []int64{1}, trs: []kv.KeyRange{
@@ -803,8 +803,8 @@ func TestBuildTableRangeCommonHandle(t *testing.T) {
 	}
 
 	tbl := &model.TableInfo{ID: 7, IsCommonHandle: true}
-	ranges, err_r := BuildTableRanges(tbl)
-	require.NoError(t, err_r)
+	ranges, errR := BuildTableRanges(tbl)
+	require.NoError(t, errR)
 	require.Equal(t, []kv.KeyRange{
 		{StartKey: tablecodec.EncodeRowKey(7, low), EndKey: tablecodec.EncodeRowKey(7, high)},
 	}, ranges)
