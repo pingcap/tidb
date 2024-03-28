@@ -126,7 +126,8 @@ func CreateAutoIDRequirement(t testing.TB, opts ...mockstore.MockTiKVStoreOption
 	}
 }
 
-func CreateAutoIDRequirement1(t testing.TB, store kv.Storage) autoid.Requirement {
+// CreateAutoIDRequirementWithStore create autoid requirement with storage for testing.
+func CreateAutoIDRequirementWithStore(t testing.TB, store kv.Storage) autoid.Requirement {
 	return &mockAutoIDRequirement{
 		store:  store,
 		client: nil,

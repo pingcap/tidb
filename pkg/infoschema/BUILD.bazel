@@ -101,10 +101,12 @@ go_test(
         "//pkg/testkit/testutil",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/logutil",
         "//pkg/util/set",
         "@com_github_pingcap_errors//:errors",
         "@com_github_prometheus_prometheus//promql/parser",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
     ],
 )

@@ -19,6 +19,7 @@ import (
 	"flag"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
@@ -26,11 +27,13 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 var (
-	tableCnt = flag.Int("table-cnt", 10000, "table count")
+	tableCnt = flag.Int("table-cnt", 100, "table count")
 	version  = flag.Int("version", 2, "infoschema version")
 	port     = flag.String("port", "10080", "port of metric server")
 )
@@ -41,19 +44,14 @@ var (
 //
 // bench.test -test.v -run ^$ -test.bench=BenchmarkInfoschemaOverhead --with-tikv "upstream-pd:2379?disableGC=true"
 func BenchmarkInfoschemaOverhead(b *testing.B) {
-	ctx, cancel := context.WithCancel(context.Background())
-	statusWG := testkit.MockTiDBStatusPort(ctx, b, *port)
-	defer func() {
-		cancel()
-		statusWG.Wait()
-	}()
+	wg := testkit.MockTiDBStatusPort(context.Background(), b, *port)
 
 	var d driver.TiKVDriver
 	var err error
 	store, err := d.Open("tikv://" + *testkit.WithTiKV)
 	require.NoError(b, err)
 
-	re := internal.CreateAutoIDRequirement1(b, store)
+	re := internal.CreateAutoIDRequirementWithStore(b, store)
 	defer func() {
 		err := re.Store().Close()
 		require.NoError(b, err)
@@ -69,9 +67,12 @@ func BenchmarkInfoschemaOverhead(b *testing.B) {
 		ctx:  kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
 		data: infoschema.NewData(),
 	}
+	startTime := time.Now()
 	for j := 0; j < *tableCnt; j++ {
+		logutil.BgLogger().Info("create one", zap.Int("table-idx", j))
 		tc.runCreateTable("test" + strconv.Itoa(j))
 	}
-
+	logutil.BgLogger().Info("all table created", zap.Duration("cost time", time.Since(startTime)))
 	// TODO: add more scenes.
+	wg.Wait()
 }
