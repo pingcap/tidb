@@ -801,19 +801,18 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
-	indexIDs := make([]int64, 0, len(s.indexes))
 	for _, index := range s.indexes {
-		indexIDs = append(indexIDs, index.Meta().ID)
-	}
-	_, _, failedID, err := ingest.TryFlushAllIndexes(s.backendCtx, ingest.FlushModeForceGlobal, indexIDs)
-	if err != nil {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			err = convertToKeyExistsErr(err, s.indexes[failedID].Meta(), s.tbl.Meta())
+		idxInfo := index.Meta()
+		_, _, err := s.backendCtx.Flush(idxInfo.ID, ingest.FlushModeForceGlobal)
+		if err != nil {
+			if common.ErrFoundDuplicateKeys.Equal(err) {
+				err = convertToKeyExistsErr(err, idxInfo, s.tbl.Meta())
+				return err
+			}
+			logutil.Logger(s.ctx).Error("flush error",
+				zap.String("category", "ddl"), zap.Error(err))
 			return err
 		}
-		logutil.Logger(s.ctx).Error("flush error",
-			zap.String("category", "ddl"), zap.Error(err))
-		return err
 	}
 	return nil
 }
