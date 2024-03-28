@@ -290,14 +290,17 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 	if err != nil {
 		panic(err)
 	}
+	return newWithCli(selfAddr, cli, store)
+}
 
+func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Service {
 	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
 	l.SetBeOwnerHook(func() {
 		logutil.BgLogger().Info("leader change of autoid service, this node become owner",
 			zap.String("addr", selfAddr),
 			zap.String("category", "autoid service"))
 	})
-	err = l.CampaignOwner()
+	err := l.CampaignOwner()
 	if err != nil {
 		panic(err)
 	}
@@ -438,6 +441,8 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 	})
 
 	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
+	val.Lock()
+	defer val.Unlock()
 
 	if req.N == 0 {
 		if val.base != 0 {
@@ -467,9 +472,6 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 			Max: currentEnd,
 		}, nil
 	}
-
-	val.Lock()
-	defer val.Unlock()
 
 	var min, max int64
 	var err error
@@ -531,6 +533,9 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 	}
 
 	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
+	val.Lock()
+	defer val.Unlock()
+
 	if req.Force {
 		err := val.forceRebase(ctx, s.store, req.DbID, req.TblID, req.Base, req.IsUnsigned)
 		if err != nil {
