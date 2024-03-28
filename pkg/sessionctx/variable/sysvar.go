@@ -730,7 +730,7 @@ var defaultSysVars = []*SysVar{
 		Type:     TypeFloat,
 		MinValue: 0,
 		MaxValue: math.MaxUint64,
-		// The value of TiDBAutoAnalyzeRatio should be greater than 0.00001.
+		// The value of TiDBAutoAnalyzeRatio should be greater than 0.00001 or equal to 0.00001.
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			ratio, err := strconv.ParseFloat(normalizedValue, 64)
 			if err != nil {

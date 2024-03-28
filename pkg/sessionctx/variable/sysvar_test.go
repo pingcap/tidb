@@ -1392,6 +1392,13 @@ func TestTiDBAutoAnalyzeRatio(t *testing.T) {
 	val, err = mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
 	require.NoError(t, err)
 	require.Equal(t, "1.1", val)
+
+	// set to 0.00001
+	err = mock.SetGlobalSysVar(ctx, TiDBAutoAnalyzeRatio, "0.00001")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "0.00001", val)
 }
 
 func TestTiDBTiFlashReplicaRead(t *testing.T) {
