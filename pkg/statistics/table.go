@@ -209,6 +209,7 @@ func NewColAndIndexExistenceMap(colCap, idxCap int) *ColAndIdxExistenceMap {
 	}
 }
 
+// NewPseudoTableColAndIndexExistenceMap return a new object with the given capcity.
 func NewPseudoTableColAndIndexExistenceMap(colCap, idxCap int) *ColAndIdxExistenceMap {
 	return &ColAndIdxExistenceMap{
 		colInfoMap:  nil,
@@ -921,7 +922,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 	}
 	t := &Table{
 		HistColl:              pseudoHistColl,
-		ColAndIdxExistenceMap: NewColAndIndexExistenceMap(len(tblInfo.Columns), len(tblInfo.Indices)),
+		ColAndIdxExistenceMap: NewPseudoTableColAndIndexExistenceMap(len(tblInfo.Columns), len(tblInfo.Indices)),
 	}
 	for _, col := range tblInfo.Columns {
 		// The column is public to use. Also we should check the column is not hidden since hidden means that it's used by expression index.
