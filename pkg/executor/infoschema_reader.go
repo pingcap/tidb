@@ -1949,7 +1949,7 @@ func (e *memtableRetriever) setDataForTiDBHotRegions(ctx context.Context, sctx s
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
-	allSchemas := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().(infoschema.InfoSchema).AllSchemas()
+	allSchemas := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().AllSchemas()
 	schemas := make([]*model.DBInfo, 0, len(allSchemas))
 	for _, schema := range allSchemas {
 		if util.IsMemDB(schema.Name.L) {
