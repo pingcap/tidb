@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+<<<<<<< HEAD:ddl/partition.go
 	"github.com/pingcap/tidb/config"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/ddl/label"
@@ -63,6 +64,45 @@ import (
 	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+=======
+	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
+	"github.com/pingcap/tidb/pkg/util/slice"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
+>>>>>>> 33d6b79163e (ddl: fix partition definition for literal with non-utf8 charsets + binary column (#49229)):pkg/ddl/partition.go
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -1217,13 +1257,14 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 			return nil, err
 		}
 		clause := def.Clause.(*ast.PartitionDefinitionClauseIn)
+		partVals := make([][]types.Datum, 0, len(clause.Values))
 		if len(tbInfo.Partition.Columns) > 0 {
 			for _, vs := range clause.Values {
-				// TODO: use the generated strings / normalized partition values
-				_, err := checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, vs)
+				vals, err := checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, vs)
 				if err != nil {
 					return nil, err
 				}
+				partVals = append(partVals, vals)
 			}
 		} else {
 			for _, vs := range clause.Values {
@@ -1247,16 +1288,32 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 		}
 
 		buf := new(bytes.Buffer)
-		for _, vs := range clause.Values {
+		for valIdx, vs := range clause.Values {
 			inValue := make([]string, 0, len(vs))
-			for i := range vs {
-				vs[i].Accept(exprChecker)
-				if exprChecker.err != nil {
-					return nil, exprChecker.err
+			isDefault := false
+			if len(vs) == 1 {
+				if _, ok := vs[0].(*ast.DefaultExpr); ok {
+					isDefault = true
 				}
-				buf.Reset()
-				vs[i].Format(buf)
-				inValue = append(inValue, buf.String())
+			}
+			if len(partVals) > valIdx && !isDefault {
+				for colIdx := range partVals[valIdx] {
+					partVal, err := generatePartValuesWithTp(partVals[valIdx][colIdx], colTypes[colIdx])
+					if err != nil {
+						return nil, err
+					}
+					inValue = append(inValue, partVal)
+				}
+			} else {
+				for i := range vs {
+					vs[i].Accept(exprChecker)
+					if exprChecker.err != nil {
+						return nil, exprChecker.err
+					}
+					buf.Reset()
+					vs[i].Format(buf)
+					inValue = append(inValue, buf.String())
+				}
 			}
 			piDef.InValues = append(piDef.InValues, inValue)
 			buf.Reset()
@@ -1295,10 +1352,10 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 			return nil, err
 		}
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
-		var partValStrings []string
+		var partValDatums []types.Datum
 		if len(tbInfo.Partition.Columns) > 0 {
 			var err error
-			if partValStrings, err = checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, clause.Exprs); err != nil {
+			if partValDatums, err = checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, clause.Exprs); err != nil {
 				return nil, err
 			}
 		} else {
@@ -1332,19 +1389,23 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 				return nil, exprChecker.err
 			}
 			// If multi-column use new evaluated+normalized output, instead of just formatted expression
-			if len(partValStrings) > i && len(colTypes) > 1 {
-				partVal := partValStrings[i]
-				switch colTypes[i].EvalType() {
-				case types.ETInt:
-					// no wrapping
-				case types.ETDatetime, types.ETString, types.ETDuration:
-					if _, ok := clause.Exprs[i].(*ast.MaxValueExpr); !ok {
-						// Don't wrap MAXVALUE
-						partVal = driver.WrapInSingleQuotes(partVal)
-					}
-				default:
-					return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+			if len(partValDatums) > i {
+				var partVal string
+				if partValDatums[i].Kind() == types.KindNull {
+					return nil, dbterror.ErrNullInValuesLessThan
 				}
+				if _, ok := clause.Exprs[i].(*ast.MaxValueExpr); ok {
+					partVal, err = partValDatums[i].ToString()
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					partVal, err = generatePartValuesWithTp(partValDatums[i], colTypes[i])
+					if err != nil {
+						return nil, err
+					}
+				}
+
 				piDef.LessThan = append(piDef.LessThan, partVal)
 			} else {
 				expr.Format(buf)
@@ -3848,4 +3909,31 @@ func AppendPartitionDefs(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 			fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
 		}
 	}
+}
+
+func generatePartValuesWithTp(partVal types.Datum, tp types.FieldType) (string, error) {
+	if partVal.Kind() == types.KindNull {
+		return "NULL", nil
+	}
+
+	s, err := partVal.ToString()
+	if err != nil {
+		return "", err
+	}
+
+	switch tp.EvalType() {
+	case types.ETInt:
+		return s, nil
+	case types.ETString:
+		// The `partVal` can be an invalid utf8 string if it's converted to BINARY, then the content will be lost after
+		// marshaling and storing in the schema. In this case, we use a hex literal to work around this issue.
+		if tp.GetCharset() == charset.CharsetBin {
+			return fmt.Sprintf("_binary 0x%x", s), nil
+		}
+		return driver.WrapInSingleQuotes(s), nil
+	case types.ETDatetime, types.ETDuration:
+		return driver.WrapInSingleQuotes(s), nil
+	}
+
+	return "", dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 }
