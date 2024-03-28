@@ -123,9 +123,12 @@ func TestPdBackoffWithRetryableError(t *testing.T) {
 		if counter == 2 {
 			return io.EOF
 		}
+		if counter == 6 {
+			return context.Canceled
+		}
 		return gRPCError
 	}, backoffer)
-	require.Equal(t, 16, counter)
+	require.Equal(t, 7, counter)
 	require.Equal(t, []error{
 		gRPCError,
 		gRPCError,
@@ -133,16 +136,7 @@ func TestPdBackoffWithRetryableError(t *testing.T) {
 		gRPCError,
 		gRPCError,
 		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
-		gRPCError,
+		context.Canceled,
 	}, multierr.Errors(err))
 }
 
