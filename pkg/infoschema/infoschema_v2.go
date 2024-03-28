@@ -685,6 +685,33 @@ func updateInfoSchemaBundles(b *Builder) {
 	}
 }
 
+func oldSchemaInfo(b *Builder, diff *model.SchemaDiff) (*model.DBInfo, bool) {
+	if b.enableV2 {
+		return b.infoschemaV2.SchemaByID(diff.OldSchemaID)
+	}
+
+	oldRoDBInfo, ok := b.infoSchema.SchemaByID(diff.OldSchemaID)
+	if ok {
+		oldRoDBInfo = b.getSchemaAndCopyIfNecessary(oldRoDBInfo.Name.L)
+	}
+	return oldRoDBInfo, ok
+}
+
+// allocByID returns the Allocators of a table.
+func allocByID(b *Builder, id int64) (autoid.Allocators, bool) {
+	var is InfoSchema
+	if b.enableV2 {
+		is = &b.infoschemaV2
+	} else {
+		is = b.infoSchema
+	}
+	tbl, ok := is.TableByID(id)
+	if !ok {
+		return autoid.Allocators{}, false
+	}
+	return tbl.Allocators(nil), true
+}
+
 // TODO: more UT to check the correctness.
 func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
