@@ -16,25 +16,25 @@ package session
 
 import (
 	"context"
-	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"go.uber.org/zap/zapcore"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/log"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func prepareBenchSession() (sessiontypes.Session, *domain.Domain, kv.Storage) {
@@ -128,6 +128,9 @@ func runPointSelect(b *testing.B, se sessiontypes.Session, query, expectedPlan s
 	expectHits := enablePlanCache && (expectedPlan != "Point_Get" && expectedPlan != "Batch_Point_Get")
 	checkHits := true
 	resStrings, err := session.ResultSetToStringSlice(ctx, se, rs[0])
+	if err != nil {
+		logutil.BgLogger().Error("error in ResultSetToStrinSlice", zap.String("query", query), zap.Error(err))
+	}
 	if !strings.HasPrefix(resStrings[0][0], expectedPlan) {
 		logutil.BgLogger().Error("expected Point_Get query plan", zap.String("query", query), zap.String("expectedPlan", expectedPlan), zap.Any("explain", resStrings))
 		checkHits = false
