@@ -159,6 +159,7 @@ func MergeOverlappingFilesV2(
 		loaded.keys = nil
 		loaded.values = nil
 		loaded.memKVBuffers = nil
+		loaded.size = 0
 
 		if len(endKeyOfGroup) == 0 {
 			break

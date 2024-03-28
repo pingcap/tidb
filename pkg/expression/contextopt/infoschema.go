@@ -20,7 +20,7 @@ import (
 )
 
 // InfoSchemaPropProvider is the function to provide information schema.
-type InfoSchemaPropProvider func(isDomain bool) infoschema.InfoSchemaMetaVersion
+type InfoSchemaPropProvider func(isDomain bool) infoschema.MetaOnlyInfoSchema
 
 // Desc returns the description for the property key.
 func (InfoSchemaPropProvider) Desc() *context.OptionalEvalPropDesc {
@@ -36,7 +36,7 @@ func (InfoSchemaPropReader) RequiredOptionalEvalProps() context.OptionalEvalProp
 }
 
 // GetSessionInfoSchema returns session information schema.
-func (InfoSchemaPropReader) GetSessionInfoSchema(ctx context.EvalContext) (infoschema.InfoSchemaMetaVersion, error) {
+func (InfoSchemaPropReader) GetSessionInfoSchema(ctx context.EvalContext) (infoschema.MetaOnlyInfoSchema, error) {
 	p, err := getPropProvider[InfoSchemaPropProvider](ctx, context.OptPropInfoSchema)
 	if err != nil {
 		return nil, err
@@ -45,7 +45,7 @@ func (InfoSchemaPropReader) GetSessionInfoSchema(ctx context.EvalContext) (infos
 }
 
 // GetDomainInfoSchema return domain information schema.
-func (InfoSchemaPropReader) GetDomainInfoSchema(ctx context.EvalContext) (infoschema.InfoSchemaMetaVersion, error) {
+func (InfoSchemaPropReader) GetDomainInfoSchema(ctx context.EvalContext) (infoschema.MetaOnlyInfoSchema, error) {
 	p, err := getPropProvider[InfoSchemaPropProvider](ctx, context.OptPropInfoSchema)
 	if err != nil {
 		return nil, err

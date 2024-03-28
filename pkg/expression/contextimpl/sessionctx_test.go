@@ -35,7 +35,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-func TestEvalContextImplWithSessionCtx(t *testing.T) {
+func TestSessionEvalContextBasic(t *testing.T) {
 	ctx := mock.NewContext()
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
@@ -93,7 +93,7 @@ func TestEvalContextImplWithSessionCtx(t *testing.T) {
 	require.Equal(t, "err1", warnings[0].Err.Error())
 }
 
-func TestEvalContextImplCurrentTime(t *testing.T) {
+func TestSessionEvalContextCurrentTime(t *testing.T) {
 	ctx := mock.NewContext()
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
@@ -162,7 +162,7 @@ func (m *mockPrivManager) RequestDynamicVerification(
 	return m.Called(activeRoles, privName, grantable).Bool(0)
 }
 
-func TestEvalContextImplPrivilegeCheck(t *testing.T) {
+func TestSessionEvalContextPrivilegeCheck(t *testing.T) {
 	ctx := mock.NewContext()
 	impl := contextimpl.NewExprExtendedImpl(ctx)
 	activeRoles := []*auth.RoleIdentity{
@@ -212,7 +212,7 @@ func getProvider[T context.OptionalEvalPropProvider](
 	return p
 }
 
-func TestEvalContextImplWithSessionCtxForOptProps(t *testing.T) {
+func TestSessionEvalContextOptProps(t *testing.T) {
 	ctx := mock.NewContext()
 	impl := contextimpl.NewExprExtendedImpl(ctx)
 

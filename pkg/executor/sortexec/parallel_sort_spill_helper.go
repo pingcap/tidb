@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -208,8 +209,7 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 		case <-p.finishCh:
 			// We must wait the finish of the above goroutine,
 			// or p.errOutputChan may be closed in advandce.
-			for range spilledRowChannel {
-			}
+			channel.Clear(spilledRowChannel)
 			return nil
 		case row, ok = <-spilledRowChannel:
 			if !ok {

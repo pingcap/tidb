@@ -43,9 +43,9 @@ type PlanContext interface {
 	// GetDomainInfoSchema returns the latest information schema in domain
 	// Different with `domain.InfoSchema()`, the information schema returned by this method
 	// includes the temporary table definitions stored in session
-	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
 	// GetInfoSchema returns the current infoschema
-	GetInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetInfoSchema() infoschema.MetaOnlyInfoSchema
 	// UpdateColStatsUsage updates the column stats usage.
 	UpdateColStatsUsage(predicateColumns []model.TableItemID)
 	// GetClient gets a kv.Client.
