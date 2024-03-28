@@ -193,19 +193,16 @@ func (m *ColAndIdxExistenceMap) IsEmpty() bool {
 }
 
 // Clone deeply copies the map.
-func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
-	var mm *ColAndIdxExistenceMap
+func (m *ColAndIdxExistenceMap) Clone() (mm *ColAndIdxExistenceMap) {
 	if m.idxInfoMap == nil {
 		mm = NewPseudoTableColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))
-		mm.colAnalyzed = maps.Clone(m.colAnalyzed)
-		mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
 	} else {
 		mm = NewColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))
 		mm.colInfoMap = maps.Clone(m.colInfoMap)
-		mm.colAnalyzed = maps.Clone(m.colAnalyzed)
 		mm.idxInfoMap = maps.Clone(m.idxInfoMap)
-		mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
 	}
+	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
+	mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
 	return mm
 }
 
