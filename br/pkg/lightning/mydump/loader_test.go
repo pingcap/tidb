@@ -81,12 +81,12 @@ func (s *testMydumpLoaderSuite) mkdir(t *testing.T, dirname string) {
 func TestLoader(t *testing.T) {
 	ctx := context.Background()
 	cfg := newConfigWithSourceDir("./not-exists")
-	_, err := md.NewMyDumpLoader(ctx, cfg)
+	_, err := md.NewLoader(ctx, md.NewLoaderCfg(cfg))
 	// will check schema in tidb and data file later in DataCheck.
 	require.NoError(t, err)
 
 	cfg = newConfigWithSourceDir("./examples")
-	mdl, err := md.NewMyDumpLoader(ctx, cfg)
+	mdl, err := md.NewLoader(ctx, md.NewLoaderCfg(cfg))
 	require.NoError(t, err)
 
 	dbMetas := mdl.GetDatabases()
@@ -113,7 +113,7 @@ func TestLoader(t *testing.T) {
 
 func TestEmptyDB(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
-	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	// will check schema in tidb and data file later in DataCheck.
 	require.NoError(t, err)
 }
@@ -132,7 +132,7 @@ func TestDuplicatedDB(t *testing.T) {
 	s.mkdir(t, "b")
 	s.touch(t, "b", "db-schema-create.sql")
 
-	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.Regexp(t, `invalid database schema file, duplicated item - .*[/\\]db-schema-create\.sql`, err)
 }
 
@@ -150,7 +150,7 @@ func TestTableNoHostDB(t *testing.T) {
 	err = os.WriteFile(filepath.Join(dir, "db.tbl-schema.sql"), nil, 0o644)
 	require.NoError(t, err)
 
-	_, err = md.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err = md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 }
 
@@ -171,7 +171,7 @@ func TestDuplicatedTable(t *testing.T) {
 	s.mkdir(t, "b")
 	s.touch(t, "b", "db.tbl-schema.sql")
 
-	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.Regexp(t, `invalid table schema file, duplicated item - .*db\.tbl-schema\.sql`, err)
 }
 
@@ -187,7 +187,7 @@ func TestTableInfoNotFound(t *testing.T) {
 	store, err := storage.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
-	loader, err := md.NewMyDumpLoader(ctx, s.cfg)
+	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 	for _, dbMeta := range loader.GetDatabases() {
 		logger, buffer := log.MakeTestLogger()
@@ -212,7 +212,7 @@ func TestTableUnexpectedError(t *testing.T) {
 	store, err := storage.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
-	loader, err := md.NewMyDumpLoader(ctx, s.cfg)
+	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 	for _, dbMeta := range loader.GetDatabases() {
 		for _, tblMeta := range dbMeta.Tables {
@@ -234,7 +234,7 @@ func TestMissingTableSchema(t *testing.T) {
 	store, err := storage.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
-	loader, err := md.NewMyDumpLoader(ctx, s.cfg)
+	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 	for _, dbMeta := range loader.GetDatabases() {
 		for _, tblMeta := range dbMeta.Tables {
@@ -255,7 +255,7 @@ func TestDataNoHostDB(t *testing.T) {
 	s.touch(t, "notdb-schema-create.sql")
 	s.touch(t, "db.tbl.sql")
 
-	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	// will check schema in tidb and data file later in DataCheck.
 	require.NoError(t, err)
 }
@@ -271,7 +271,7 @@ func TestDataNoHostTable(t *testing.T) {
 	s.touch(t, "db-schema-create.sql")
 	s.touch(t, "db.tbl.sql")
 
-	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	// will check schema in tidb and data file later in DataCheck.
 	require.NoError(t, err)
 }
@@ -287,7 +287,7 @@ func TestViewNoHostDB(t *testing.T) {
 	s.touch(t, "notdb-schema-create.sql")
 	s.touch(t, "db.tbl-schema-view.sql")
 
-	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.Contains(t, err.Error(), `invalid view schema file, miss host table schema for view 'tbl'`)
 }
 
@@ -302,7 +302,7 @@ func TestViewNoHostTable(t *testing.T) {
 	s.touch(t, "db-schema-create.sql")
 	s.touch(t, "db.tbl-schema-view.sql")
 
-	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.Contains(t, err.Error(), `invalid view schema file, miss host table schema for view 'tbl'`)
 }
 
@@ -314,7 +314,7 @@ func TestDataWithoutSchema(t *testing.T) {
 	err := os.WriteFile(p, nil, 0o644)
 	require.NoError(t, err)
 
-	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 	require.Equal(t, []*md.MDDatabaseMeta{{
 		Name: "db",
@@ -351,7 +351,7 @@ func TestTablesWithDots(t *testing.T) {
 	s.touch(t, "db.sql")
 	s.touch(t, "db-schema.sql")
 
-	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 	require.Equal(t, []*md.MDDatabaseMeta{{
 		Name:       "db",
@@ -405,7 +405,7 @@ func TestRouter(t *testing.T) {
 		s.touch(t, "a1.v1-schema.sql")
 		s.touch(t, "a1.v1-schema-view.sql")
 
-		mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
 		dbs := mdl.GetDatabases()
 		// hit rules: a0.t0 -> b.u, a0.t1 -> b.0, a1.t2 -> b.u
@@ -482,7 +482,7 @@ func TestRouter(t *testing.T) {
 		s.touch(t, "c0.t3.1.sql")
 
 		s.touch(t, "d0-schema-create.sql")
-		mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
 		dbs := mdl.GetDatabases()
 		// hit rules: c0.t3 -> c.t3
@@ -525,7 +525,7 @@ func TestRouter(t *testing.T) {
 		s.touch(t, "e0.f0-schema.sql")
 		s.touch(t, "e0.f0-schema-view.sql")
 
-		mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
 		dbs := mdl.GetDatabases()
 		// hit rules: e0.f0 -> v.vv
@@ -585,7 +585,7 @@ func TestRouter(t *testing.T) {
 		s.touch(t, "zbdb.table-schema.sql")
 		s.touch(t, "zbdb.table.1.sql")
 
-		mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
 		dbs := mdl.GetDatabases()
 		// hit rules: test_regexpr1.test_regexprtable -> downstream_db.downstream_table, zbdb.table -> db.table
@@ -649,7 +649,7 @@ func TestRouter(t *testing.T) {
 		s.touch(t, "x.t10-schema.sql") // hit rules, new name is x2.t
 		s.touch(t, "x.t20-schema.sql") // not hit rules, name is x.t20
 
-		mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
 		dbs := mdl.GetDatabases()
 		// hit rules: web -> web_test, x.t10 -> x2.t
@@ -705,7 +705,7 @@ func TestRoutesPanic(t *testing.T) {
 	s.touch(t, "test1.dump_test.002.sql")
 	s.touch(t, "test1.dump_test.003.sql")
 
-	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 }
 
@@ -719,7 +719,7 @@ func TestBadRouterRule(t *testing.T) {
 
 	s.touch(t, "a1b-schema-create.sql")
 
-	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.Regexp(t, `.*pattern a\*b not valid`, err.Error())
 }
 
@@ -773,7 +773,7 @@ func TestFileRouting(t *testing.T) {
 	s.touch(t, "d2/abc-table.sql")
 	s.touch(t, "abc.1.sql")
 
-	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 	require.Equal(t, []*md.MDDatabaseMeta{
 		{
@@ -881,7 +881,7 @@ func TestInputWithSpecialChars(t *testing.T) {
 	s.touch(t, "db%22.t%2522-schema.sql")
 	s.touch(t, "db%22.t%2522.0.csv")
 
-	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 	require.Equal(t, []*md.MDDatabaseMeta{
 		{
@@ -978,7 +978,7 @@ func TestMaxScanFilesOption(t *testing.T) {
 	}
 	cfg := newConfigWithSourceDir("/test-src")
 
-	mdl, err := md.NewMyDumpLoaderWithStore(ctx, cfg, memStore)
+	mdl, err := md.NewLoaderWithStore(ctx, md.NewLoaderCfg(cfg), memStore)
 	require.NoError(t, err)
 	require.NotNil(t, mdl)
 	dbMetas := mdl.GetDatabases()
@@ -988,7 +988,7 @@ func TestMaxScanFilesOption(t *testing.T) {
 	tbl := dbMeta.Tables[0]
 	require.Equal(t, dataFilesCount, len(tbl.DataFiles))
 
-	mdl, err = md.NewMyDumpLoaderWithStore(ctx, cfg, memStore,
+	mdl, err = md.NewLoaderWithStore(ctx, md.NewLoaderCfg(cfg), memStore,
 		md.WithMaxScanFiles(maxScanFilesCount),
 	)
 	require.NoError(t, err)
@@ -1001,7 +1001,7 @@ func TestMaxScanFilesOption(t *testing.T) {
 	require.Equal(t, dataFilesCount, len(tbl.DataFiles))
 
 	maxScanFilesCount = 100
-	mdl, err = md.NewMyDumpLoaderWithStore(ctx, cfg, memStore,
+	mdl, err = md.NewLoaderWithStore(ctx, md.NewLoaderCfg(cfg), memStore,
 		md.WithMaxScanFiles(maxScanFilesCount),
 	)
 	require.EqualError(t, err, common.ErrTooManySourceFiles.Error())
@@ -1051,7 +1051,7 @@ func TestExternalDataRoutes(t *testing.T) {
 		},
 	}
 
-	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 
 	require.NoError(t, err)
 	var database *md.MDDatabaseMeta
@@ -1165,4 +1165,12 @@ func TestSampleParquetDataSize(t *testing.T) {
 	require.NoError(t, err)
 	// expected error within 10%, so delta = totalRowSize / 10
 	require.InDelta(t, totalRowSize, size, float64(totalRowSize)/10)
+}
+
+func TestSetupOptions(t *testing.T) {
+	// those functions are only used in other components, add this to avoid they
+	// be deleted mistakenly.
+	_ = md.WithMaxScanFiles
+	_ = md.ReturnPartialResultOnError
+	_ = md.WithFileIterator
 }

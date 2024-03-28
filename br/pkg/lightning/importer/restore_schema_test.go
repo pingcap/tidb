@@ -105,7 +105,7 @@ func (s *restoreSchemaSuite) SetupSuite() {
 	config.Mydumper.DefaultFileRules = true
 	config.Mydumper.CharacterSet = "utf8mb4"
 	config.App.RegionConcurrency = 8
-	mydumpLoader, err := mydump.NewMyDumpLoaderWithStore(ctx, config, store)
+	mydumpLoader, err := mydump.NewLoaderWithStore(ctx, mydump.NewLoaderCfg(config), store)
 	s.Require().NoError(err)
 
 	dbMetas := mydumpLoader.GetDatabases()

@@ -1330,6 +1330,8 @@ func TestAdjustBlockSize(t *testing.T) {
 	cfg.TikvImporter.BlockSize = 0
 
 	err := cfg.Adjust(context.Background())
+	// should return "dial tcp 127.0.0.1:10080: connect: connection refused" error,
+	// if you run it locally, shutdown the tidb server first.
 	require.Error(t, err)
 	require.Equal(t, ByteSize(16384), cfg.TikvImporter.BlockSize)
 }
