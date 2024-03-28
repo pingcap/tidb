@@ -384,6 +384,7 @@ func SetExprColumnInOperand(expr Expression) Expression {
 
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
+// TODO: remove this function and only use ColumnSubstituteImpl since this function swallows the error, which seems unsafe.
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
 	_, _, resExpr := ColumnSubstituteImpl(expr, schema, newExprs, false)
 	return resExpr
