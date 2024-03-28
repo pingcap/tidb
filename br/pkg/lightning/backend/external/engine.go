@@ -266,13 +266,15 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
 	readStart := time.Now()
+	readDtStartKey := e.keyAdapter.Encode(nil, startKey, common.MinRowID)
+	readDtEndKey := e.keyAdapter.Encode(nil, endKey, common.MinRowID)
 	err := readAllData(
 		ctx,
 		e.storage,
 		e.dataFiles,
 		e.statsFiles,
-		startKey,
-		endKey,
+		readDtStartKey,
+		readDtEndKey,
 		e.smallBlockBufPool,
 		e.largeBlockBufPool,
 		&e.memKVsAndBuffers,
@@ -325,6 +327,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	e.memKVsAndBuffers.keys = nil
 	e.memKVsAndBuffers.values = nil
 	e.memKVsAndBuffers.memKVBuffers = nil
+	e.memKVsAndBuffers.size = 0
 
 	sendFn := func(dr common.DataAndRange) error {
 		select {
@@ -402,7 +405,32 @@ func (e *Engine) ID() string {
 
 // GetKeyRange implements common.Engine.
 func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
-	return e.startKey, e.endKey, nil
+	if _, ok := e.keyAdapter.(common.NoopKeyAdapter); ok {
+		return e.startKey, e.endKey, nil
+	}
+
+	// when duplicate detection feature is enabled, the end key comes from
+	// DupDetectKeyAdapter.Encode or Key.Next(). We try to decode it and check the
+	// error.
+
+	start, err := e.keyAdapter.Decode(nil, e.startKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	end, err := e.keyAdapter.Decode(nil, e.endKey)
+	if err == nil {
+		return start, end, nil
+	}
+	// handle the case that end key is from Key.Next()
+	if e.endKey[len(e.endKey)-1] != 0 {
+		return nil, nil, err
+	}
+	endEncoded := e.endKey[:len(e.endKey)-1]
+	end, err = e.keyAdapter.Decode(nil, endEncoded)
+	if err != nil {
+		return nil, nil, err
+	}
+	return start, kv.Key(end).Next(), nil
 }
 
 // SplitRanges split the ranges by split keys provided by external engine.
@@ -412,6 +440,13 @@ func (e *Engine) SplitRanges(
 	_ log.Logger,
 ) ([]common.Range, error) {
 	splitKeys := e.splitKeys
+	for i, k := range e.splitKeys {
+		var err error
+		splitKeys[i], err = e.keyAdapter.Decode(nil, k)
+		if err != nil {
+			return nil, err
+		}
+	}
 	ranges := make([]common.Range, 0, len(splitKeys)+1)
 	ranges = append(ranges, common.Range{Start: startKey})
 	for i := 0; i < len(splitKeys); i++ {

@@ -603,14 +603,16 @@ func (r *selectResult) Close() error {
 	if respSize > 0 {
 		r.memConsume(-respSize)
 	}
-	if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
-		unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
-		for _, copStats := range unconsumedCopStats {
-			_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0))
-			r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(&copStats.ExecDetails, nil)
+	if r.ctx != nil {
+		if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
+			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
+			for _, copStats := range unconsumedCopStats {
+				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0))
+				r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(&copStats.ExecDetails, nil)
+			}
 		}
 	}
-	if r.stats != nil {
+	if r.stats != nil && r.ctx != nil {
 		defer func() {
 			if ci, ok := r.resp.(copr.CopInfo); ok {
 				r.stats.buildTaskDuration = ci.GetBuildTaskElapsed()

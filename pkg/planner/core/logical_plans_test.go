@@ -83,7 +83,7 @@ func createPlannerSuite() (s *plannerSuite) {
 		MockListPartitionTable(),
 		MockStateNoneColumnTable(),
 	}
-	id := int64(0)
+	id := int64(1)
 	for _, tblInfo := range tblInfos {
 		tblInfo.ID = id
 		id += 1

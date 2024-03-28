@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -59,15 +60,19 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
+	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	pdHttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -777,6 +782,10 @@ func pickBackfillType(ctx context.Context, job *model.Job) (model.ReorgType, err
 		return model.ReorgTypeTxn, nil
 	}
 	if ingest.LitInitialized {
+		if job.ReorgMeta.UseCloudStorage {
+			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
+			return model.ReorgTypeLitMerge, nil
+		}
 		available, err := ingest.LitBackCtxMgr.CheckAvailable()
 		if err != nil {
 			return model.ReorgTypeNone, err
@@ -1782,6 +1791,7 @@ func writeChunkToLocal(
 	maxIdxColCnt := maxIndexColumnCount(indexes)
 	idxDataBuf := make([]types.Datum, maxIdxColCnt)
 	handleDataBuf := make([]types.Datum, len(c.HandleOutputOffsets))
+	var restoreDataBuf []types.Datum
 	count := 0
 	var lastHandle kv.Handle
 
@@ -1795,8 +1805,24 @@ func writeChunkToLocal(
 			unlock()
 		}
 	}()
+	needRestoreForIndexes := make([]bool, len(indexes))
+	restore := false
+	for i, index := range indexes {
+		needRestore := tables.NeedRestoredData(index.Meta().Columns, c.TableInfo.Columns)
+		needRestoreForIndexes[i] = needRestore
+		restore = restore || needRestore
+	}
+	if restore {
+		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
+	}
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
+		if restore {
+			// restoreDataBuf should not truncate index values.
+			for i, datum := range handleDataBuf {
+				restoreDataBuf[i] = *datum.Clone()
+			}
+		}
 		h, err := buildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, sCtx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
@@ -1806,7 +1832,10 @@ func writeChunkToLocal(
 			idxDataBuf = extractDatumByOffsets(
 				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
 			idxData := idxDataBuf[:len(index.Meta().Columns)]
-			rsData := getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, handleDataBuf)
+			var rsData []types.Datum
+			if needRestoreForIndexes[i] {
+				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
+			}
 			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxData, rsData, h)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
@@ -1965,7 +1994,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			err := w.executeDistTask(reorgInfo)
+			err := w.executeDistTask(t, reorgInfo)
 			if err != nil {
 				return err
 			}
@@ -2047,7 +2076,7 @@ var MockDMLExecutionOnDDLPaused func()
 // TestSyncChan is used to sync the test.
 var TestSyncChan = make(chan struct{})
 
-func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
+func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
 	}
@@ -2118,11 +2147,13 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 		logutil.BgLogger().Info("adjusted add-index task concurrency",
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
 			zap.String("task-key", taskKey))
+		rowSize := estimateTableRowSize(w.ctx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
 		taskMeta := &BackfillTaskMeta{
 			Job:             *job.Clone(),
 			EleIDs:          extractElemIDs(reorgInfo),
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
+			EstimateRowSize: rowSize,
 		}
 
 		metaData, err := json.Marshal(taskMeta)
@@ -2184,6 +2215,94 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 	})
 	err = g.Wait()
 	return err
+}
+
+// estimateTableRowSize estimates the row size in bytes of a table.
+// This function tries to retrieve row size in following orders:
+//  1. AVG_ROW_LENGTH column from information_schema.tables.
+//  2. region info's approximate key size / key number.
+func estimateTableRowSize(
+	ctx context.Context,
+	store kv.Storage,
+	exec sqlexec.RestrictedSQLExecutor,
+	tbl table.Table,
+) (sizeInBytes int) {
+	defer util.Recover(metrics.LabelDDL, "estimateTableRowSize", nil, false)
+	var gErr error
+	defer func() {
+		logutil.Logger(ctx).Info("estimate row size",
+			zap.Int64("tableID", tbl.Meta().ID), zap.Int("size", sizeInBytes), zap.Error(gErr))
+	}()
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		"select AVG_ROW_LENGTH from information_schema.tables where TIDB_TABLE_ID = %?", tbl.Meta().ID)
+	if err != nil {
+		gErr = err
+		return 0
+	}
+	if len(rows) == 0 {
+		gErr = errors.New("no average row data")
+		return 0
+	}
+	avgRowSize := rows[0].GetInt64(0)
+	if avgRowSize != 0 {
+		return int(avgRowSize)
+	}
+	regionRowSize, err := estimateRowSizeFromRegion(ctx, store, tbl)
+	if err != nil {
+		gErr = err
+		return 0
+	}
+	return regionRowSize
+}
+
+func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.Table) (int, error) {
+	hStore, ok := store.(helper.Storage)
+	if !ok {
+		return 0, errors.New("not a helper.Storage")
+	}
+	h := &helper.Helper{
+		Store:       hStore,
+		RegionCache: hStore.GetRegionCache(),
+	}
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		return 0, err
+	}
+	pid := tbl.Meta().ID
+	if part := tbl.GetPartitionedTable(); part != nil {
+		pid = part.Meta().ID
+	}
+	sk, ek := tablecodec.GetTableHandleKeyRange(pid)
+	sRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
+	if err != nil {
+		return 0, err
+	}
+	eRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, ek))
+	if err != nil {
+		return 0, err
+	}
+	sk, err = hex.DecodeString(sRegion.StartKey)
+	if err != nil {
+		return 0, err
+	}
+	ek, err = hex.DecodeString(eRegion.EndKey)
+	if err != nil {
+		return 0, err
+	}
+	// We use the second region to prevent the influence of the front and back tables.
+	regionLimit := 3
+	regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdHttp.NewKeyRange(sk, ek), regionLimit)
+	if err != nil {
+		return 0, err
+	}
+	if len(regionInfos.Regions) != regionLimit {
+		return 0, errors.New("less than 3 regions")
+	}
+	sample := regionInfos.Regions[1]
+	if sample.ApproximateKeys == 0 || sample.ApproximateSize == 0 {
+		return 0, errors.New("zero approximate size")
+	}
+	return int(uint64(sample.ApproximateSize)*size.MB) / int(sample.ApproximateKeys), nil
 }
 
 func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
@@ -2253,8 +2372,11 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 
 	var startKey, endKey kv.Key
 	if reorg.mergingTmpIdx {
-		indexID := reorg.currElement.ID
-		startKey, endKey = tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|indexID)
+		elements := reorg.elements
+		firstElemTempID := tablecodec.TempIndexPrefix | elements[0].ID
+		lastElemTempID := tablecodec.TempIndexPrefix | elements[len(elements)-1].ID
+		startKey = tablecodec.EncodeIndexSeekKey(pid, firstElemTempID, nil)
+		endKey = tablecodec.EncodeIndexSeekKey(pid, lastElemTempID, []byte{255})
 	} else {
 		currentVer, err := getValidCurrentVersion(reorg.d.store)
 		if err != nil {

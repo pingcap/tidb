@@ -936,6 +936,6 @@ child	CREATE TABLE `child` (
   `id` int(11) DEFAULT NULL,
   `cc` date DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d'),
   KEY `idx` (`cc`),
-  CONSTRAINT `fk_1` FOREIGN KEY (`cc`) REFERENCES `test`.`parent` (`c`) ON DELETE CASCADE
+  CONSTRAINT `fk_1` FOREIGN KEY (`cc`) REFERENCES `parent` (`c`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table parent, child;
