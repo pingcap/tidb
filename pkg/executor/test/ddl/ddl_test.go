@@ -903,10 +903,6 @@ func TestRenameTable(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
-	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
-		t.Skip("TODO: do not skip after solving https://github.com/pingcap/tidb/issues/52150")
-	}
-
 	tk.MustExec("drop database if exists rename1")
 	tk.MustExec("drop database if exists rename2")
 	tk.MustExec("drop database if exists rename3")

@@ -775,9 +775,6 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	autoid.SetStep(step)
 	defer autoid.SetStep(autoIDStep)
 	tk := testkit.NewTestKit(t, store)
-	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
-		t.Skip("TODO: do not skip after solving https://github.com/pingcap/tidb/issues/52150")
-	}
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,tt")
 	tk.MustExec("create table t(id int, c int)")

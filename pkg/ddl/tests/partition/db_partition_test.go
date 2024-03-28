@@ -2105,10 +2105,6 @@ func TestExchangePartitionHook(t *testing.T) {
 func TestExchangePartitionAutoID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
-		t.Skip("TODO: do not skip after solving https://github.com/pingcap/tidb/issues/52150")
-	}
-
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 
@@ -3182,9 +3178,6 @@ func TestRemoveListColumnsPartitioning(t *testing.T) {
 func TestRemovePartitioningAutoIDs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
-	if tk1.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
-		t.Skip("TODO: do not skip after solving https://github.com/pingcap/tidb/issues/52150")
-	}
 	dbName := "RemovePartAutoIDs"
 	tk1.MustExec(`create schema ` + dbName)
 	tk1.MustExec(`use ` + dbName)
