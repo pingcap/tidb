@@ -806,7 +806,7 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.1")
 		defer func() {
 			exec.AutoAnalyzeMinCnt = 1000
-			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.5")
 		}()
 
 		require.NoError(t, h.Update(is))
