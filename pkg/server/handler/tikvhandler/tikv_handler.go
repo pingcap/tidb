@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server/handler"
@@ -1975,7 +1976,7 @@ func (LabelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if len(labels) > 0 {
 		cfg := *config.GetGlobalConfig()
 		// Be careful of data race. The key & value of cfg.Labels must not be changed.
-		if cfg.Labels != nil {
+		if !emptynil.IsNilMap(cfg.Labels) {
 			for k, v := range cfg.Labels {
 				if _, found := labels[k]; !found {
 					labels[k] = v

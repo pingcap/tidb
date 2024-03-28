@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -327,7 +328,7 @@ func TestCoprocessorPagingSize(t *testing.T) {
 		for _, row := range rows {
 			buf := bytes.NewBufferString("")
 			_, _ = fmt.Fprintf(buf, "%s\n", row)
-			if matched := re.FindStringSubmatch(buf.String()); matched != nil {
+			if matched := re.FindStringSubmatch(buf.String()); !emptynil.IsNilSlice(matched) {
 				require.Equal(t, len(matched), 2)
 				c, err := strconv.ParseUint(matched[1], 10, 64)
 				require.NoError(t, err)

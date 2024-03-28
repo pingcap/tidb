@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -235,7 +236,7 @@ type planCacheKey struct {
 // Hash implements Key interface.
 func (key *planCacheKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		if key.hash == nil {
+		if emptynil.IsNilSlice(key.hash) {
 			key.hash = make([]byte, 0, len(key.stmtText)*2)
 		}
 		key.hash = append(key.hash, hack.Slice(key.database)...)
@@ -578,7 +579,7 @@ func isSafePointGetPath4PlanCache(sctx PlanContext, path *util.AccessPath) bool 
 	}
 
 	// TODO: enable this fix control switch by default after more test cases are added.
-	if sctx != nil && sctx.GetSessionVars() != nil && sctx.GetSessionVars().OptimizerFixControl != nil {
+	if sctx != nil && sctx.GetSessionVars() != nil && !emptynil.IsNilMap(sctx.GetSessionVars().OptimizerFixControl) {
 		fixControlOK := fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44830, false)
 		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) || isSafePointGetPath4PlanCacheScenario3(path)) {
 			return true

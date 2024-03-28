@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1276,7 +1277,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SQL_CALC_FOUND_ROWS ")
 		}
 
-		if n.TableHints != nil && len(n.TableHints) != 0 {
+		if !emptynil.IsNilSlice(n.TableHints) && len(n.TableHints) != 0 {
 			ctx.WritePlain("/*+ ")
 			for i, tableHint := range n.TableHints {
 				if i != 0 {
@@ -1348,7 +1349,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 
-		if n.WindowSpecs != nil {
+		if !emptynil.IsNilSlice(n.WindowSpecs) {
 			ctx.WriteKeyWord(" WINDOW ")
 			for i, windowsSpec := range n.WindowSpecs {
 				if i != 0 {
@@ -1475,7 +1476,7 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 		n.With = node.(*WithClause)
 	}
 
-	if n.TableHints != nil && len(n.TableHints) != 0 {
+	if !emptynil.IsNilSlice(n.TableHints) && len(n.TableHints) != 0 {
 		newHints := make([]*TableOptimizerHint, len(n.TableHints))
 		for i, hint := range n.TableHints {
 			node, ok := hint.Accept(v)
@@ -1958,7 +1959,7 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	if n.ColumnAssignments != nil {
+	if !emptynil.IsNilSlice(n.ColumnAssignments) {
 		ctx.WriteKeyWord(" SET")
 		for i, assign := range n.ColumnAssignments {
 			if i != 0 {
@@ -2158,7 +2159,7 @@ func (n *ImportIntoStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	if n.ColumnAssignments != nil {
+	if !emptynil.IsNilSlice(n.ColumnAssignments) {
 		ctx.WriteKeyWord(" SET")
 		for i, assign := range n.ColumnAssignments {
 			if i != 0 {
@@ -2312,7 +2313,7 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("INSERT ")
 	}
 
-	if n.TableHints != nil && len(n.TableHints) != 0 {
+	if !emptynil.IsNilSlice(n.TableHints) {
 		ctx.WritePlain("/*+ ")
 		for i, tableHint := range n.TableHints {
 			if i != 0 {
@@ -2370,7 +2371,7 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 	} else {
-		if n.Columns != nil {
+		if !emptynil.IsNilSlice(n.Columns) {
 			ctx.WritePlain(" (")
 			for i, v := range n.Columns {
 				if i != 0 {
@@ -2386,7 +2387,7 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WritePlain(")")
 		}
-		if n.Lists != nil {
+		if !emptynil.IsNilSlice(n.Lists) {
 			ctx.WriteKeyWord(" VALUES ")
 			for i, row := range n.Lists {
 				if i != 0 {
@@ -2416,7 +2417,7 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Errorf("Incorrect type for InsertStmt.Select: %T", v)
 		}
 	}
-	if n.OnDuplicate != nil {
+	if !emptynil.IsNilSlice(n.OnDuplicate) {
 		ctx.WriteKeyWord(" ON DUPLICATE KEY UPDATE ")
 		for i, v := range n.OnDuplicate {
 			if i != 0 {
@@ -2549,7 +2550,7 @@ func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 
 	ctx.WriteKeyWord("DELETE ")
 
-	if n.TableHints != nil && len(n.TableHints) != 0 {
+	if !emptynil.IsNilSlice(n.TableHints) {
 		ctx.WritePlain("/*+ ")
 		for i, tableHint := range n.TableHints {
 			if i != 0 {
@@ -2801,7 +2802,7 @@ func (n *UpdateStmt) Restore(ctx *format.RestoreCtx) error {
 
 	ctx.WriteKeyWord("UPDATE ")
 
-	if n.TableHints != nil && len(n.TableHints) != 0 {
+	if !emptynil.IsNilSlice(n.TableHints) {
 		ctx.WritePlain("/*+ ")
 		for i, tableHint := range n.TableHints {
 			if i != 0 {
@@ -3187,7 +3188,7 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 				return errors.Annotate(err, "An error occurred while restore ShowStmt.User")
 			}
 		}
-		if n.Roles != nil {
+		if !emptynil.IsNilSlice(n.Roles) {
 			ctx.WriteKeyWord(" USING ")
 			for i, r := range n.Roles {
 				if err := r.Restore(ctx); err != nil {

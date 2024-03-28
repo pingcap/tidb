@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -906,7 +907,7 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if data == nil {
+		if emptynil.IsNilSlice(data) {
 			break
 		}
 

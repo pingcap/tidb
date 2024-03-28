@@ -19,6 +19,7 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
@@ -95,7 +96,7 @@ func generateUnfinishedIndexMergePathFromORList(
 	unfinishedPartialPaths := make([]unfinishedAccessPathList, 0, len(orList))
 	for _, singleFilter := range orList {
 		unfinishedPathList := initUnfinishedPathsFromExpr(ds, candidateAccessPaths, singleFilter)
-		if unfinishedPathList == nil {
+		if emptynil.IsNilSlice(unfinishedPathList) {
 			return nil
 		}
 		unfinishedPartialPaths = append(unfinishedPartialPaths, unfinishedPathList)
@@ -273,7 +274,7 @@ func mergeANDItemIntoUnfinishedIndexMergePath(
 	}
 	// This means we failed to find any valid access filter from other expressions in the top level AND list.
 	// In this case, we ignore them and only rely on the nested OR list to try to build a IndexMerge OR path.
-	if pathListFromANDItem == nil {
+	if emptynil.IsNilSlice(pathListFromANDItem) {
 		return indexMergePath
 	}
 	for _, pathListForSinglePartialPath := range indexMergePath.indexMergeORPartialPaths {

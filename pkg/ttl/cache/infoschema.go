@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -97,7 +98,7 @@ func (isc *InfoSchemaCache) newTable(schema model.CIStr, tblInfo *model.TableInf
 		id = par.ID
 	}
 
-	if isc.Tables != nil {
+	if !emptynil.IsNilMap(isc.Tables) {
 		ttlTable, ok := isc.Tables[id]
 		if ok && ttlTable.TableInfo == tblInfo {
 			return ttlTable, nil

@@ -20,6 +20,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 )
 
 const (
@@ -88,7 +89,7 @@ func EncodedBytesLength(dataLen int) int {
 }
 
 func decodeBytes(b []byte, buf []byte, reverse bool) ([]byte, []byte, error) {
-	if buf == nil {
+	if emptynil.IsNilSlice(buf) {
 		buf = make([]byte, 0, len(b))
 	}
 	buf = buf[:0]

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -50,7 +51,7 @@ type cowExprRef struct {
 
 // Set will allocate new array if changed flag true
 func (c *cowExprRef) Set(i int, changed bool, val Expression) {
-	if c.new != nil {
+	if !emptynil.IsNilSlice(c.new) {
 		c.new[i] = val
 		return
 	}
@@ -64,7 +65,7 @@ func (c *cowExprRef) Set(i int, changed bool, val Expression) {
 
 // Result return the final reference
 func (c *cowExprRef) Result() []Expression {
-	if c.new != nil {
+	if !emptynil.IsNilSlice(c.new) {
 		return c.new
 	}
 	return c.ref
@@ -1653,9 +1654,9 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, exec contextopt.SQLExecutor, queryGlobal bool, inValues []any) (map[string]string, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	// If mock data is set, query the mock data instead of the real statements_summary tables.
-	if !queryGlobal && r.mockLocalData != nil {
+	if !queryGlobal && !emptynil.IsNilMap(r.mockLocalData) {
 		return r.runMockQuery(r.mockLocalData, inValues)
-	} else if queryGlobal && r.mockGlobalData != nil {
+	} else if queryGlobal && !emptynil.IsNilMap(r.mockGlobalData) {
 		return r.runMockQuery(r.mockGlobalData, inValues)
 	}
 

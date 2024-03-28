@@ -32,6 +32,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/parser",
+        "//pkg/parser/emptynil",
         "//pkg/testkit/testsetup",
         "//pkg/util",
         "//pkg/util/cpuprofile",

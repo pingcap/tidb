@@ -18,6 +18,7 @@ import (
 	"database/sql"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 )
 
 // ScanRowsToInterfaces scans rows to interface array.
@@ -69,7 +70,7 @@ func ScanRow(rows *sql.Rows) (map[string]*ColumnData, error) {
 	for i := range colVals {
 		data := &ColumnData{
 			Data:   colVals[i],
-			IsNull: colVals[i] == nil,
+			IsNull: emptynil.IsNilSlice(colVals[i]),
 		}
 		result[cols[i]] = data
 	}

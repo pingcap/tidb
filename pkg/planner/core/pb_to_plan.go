@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -120,7 +121,7 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	case infoschema.ClusterTableSlowLog:
 		extractor := &SlowQueryExtractor{}
 		extractor.Desc = tblScan.Desc
-		if b.ranges != nil {
+		if !emptynil.IsNilSlice(b.ranges) {
 			err := extractor.buildTimeRangeFromKeyRange(b.ranges)
 			if err != nil {
 				return nil, err

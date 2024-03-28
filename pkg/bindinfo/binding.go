@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -117,7 +118,7 @@ func (br Bindings) Copy() Bindings {
 // The available means the binding can be used or can be converted into a usable status.
 // It includes the 'Enabled', 'Using' and 'Disabled' status.
 func HasAvailableBinding(br Bindings) bool {
-	if br == nil {
+	if emptynil.IsNilSlice(br) {
 		return false
 	}
 	for _, binding := range br {
@@ -178,10 +179,10 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) error {
 
 // `merge` merges two Bindings. It will replace old bindings with new bindings if there are new updates.
 func merge(lBindings, rBindings Bindings) Bindings {
-	if lBindings == nil {
+	if emptynil.IsNilSlice(lBindings) {
 		return rBindings
 	}
-	if rBindings == nil {
+	if emptynil.IsNilSlice(rBindings) {
 		return lBindings
 	}
 	result := lBindings.Copy()

@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -494,22 +495,22 @@ func (e *VecGroupChecker) IsExhausted() bool {
 
 // Reset resets the group checker.
 func (e *VecGroupChecker) Reset() {
-	if e.groupOffset != nil {
+	if !emptynil.IsNilSlice(e.groupOffset) {
 		e.groupOffset = e.groupOffset[:0]
 	}
-	if e.sameGroup != nil {
+	if !emptynil.IsNilSlice(e.sameGroup) {
 		e.sameGroup = e.sameGroup[:0]
 	}
-	if e.firstGroupKey != nil {
+	if !emptynil.IsNilSlice(e.firstGroupKey) {
 		e.firstGroupKey = e.firstGroupKey[:0]
 	}
-	if e.lastGroupKey != nil {
+	if !emptynil.IsNilSlice(e.lastGroupKey) {
 		e.lastGroupKey = e.lastGroupKey[:0]
 	}
-	if e.firstRowDatums != nil {
+	if !emptynil.IsNilSlice(e.firstRowDatums) {
 		e.firstRowDatums = e.firstRowDatums[:0]
 	}
-	if e.lastRowDatums != nil {
+	if !emptynil.IsNilSlice(e.lastRowDatums) {
 		e.lastRowDatums = e.lastRowDatums[:0]
 	}
 }

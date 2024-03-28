@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -95,7 +96,7 @@ func savePDSchedule(job *model.Job) error {
 }
 
 func recoverPDSchedule(pdScheduleParam map[string]any) error {
-	if pdScheduleParam == nil {
+	if emptynil.IsNilMap(pdScheduleParam) {
 		return nil
 	}
 	return infosync.SetPDScheduleConfig(context.Background(), pdScheduleParam)

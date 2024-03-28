@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
@@ -1095,7 +1096,7 @@ func (d SchemaTracker) renameTable(_ sessionctx.Context, oldIdents, newIdents []
 		}
 
 		// no-op for ALTER TABLE RENAME t1 TO T1
-		if schema == nil && isAlterTable {
+		if emptynil.IsNilSlice(schema) && isAlterTable {
 			return nil
 		}
 	}

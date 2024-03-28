@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -57,7 +58,7 @@ func drainRowsFromExecutor(ctx context.Context, e executor, req *tipb.DAGRequest
 		if err != nil {
 			return chunk, errors.Trace(err)
 		}
-		if row == nil {
+		if emptynil.IsNilSlice(row) {
 			return chunk, nil
 		}
 		for _, offset := range req.OutputOffsets {

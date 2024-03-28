@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -248,7 +249,7 @@ func useDefaultEncoding(chk *chunk.Chunk, dagCtx *dagContext, dagReq *tipb.DAGRe
 	errCtx := sc.ErrCtx()
 	for i := 0; i < numRows; i++ {
 		datums = datums[:0]
-		if dagReq.OutputOffsets != nil {
+		if !emptynil.IsNilSlice(dagReq.OutputOffsets) {
 			for _, j := range dagReq.OutputOffsets {
 				datums = append(datums, chk.GetRow(i).GetDatum(int(j), fields[j]))
 			}
@@ -268,7 +269,7 @@ func useDefaultEncoding(chk *chunk.Chunk, dagCtx *dagContext, dagReq *tipb.DAGRe
 }
 
 func useChunkEncoding(chk *chunk.Chunk, dagReq *tipb.DAGRequest, fields []*types.FieldType, chunks []tipb.Chunk) []tipb.Chunk {
-	if dagReq.OutputOffsets != nil {
+	if !emptynil.IsNilSlice(dagReq.OutputOffsets) {
 		offsets := make([]int, len(dagReq.OutputOffsets))
 		newFields := make([]*types.FieldType, len(dagReq.OutputOffsets))
 		for i := 0; i < len(dagReq.OutputOffsets); i++ {
@@ -411,7 +412,7 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 		}
 	}
 	if len(pkCols) == 0 {
-		if primaryCols != nil {
+		if !emptynil.IsNilSlice(primaryCols) {
 			pkCols = primaryCols
 		} else {
 			pkCols = []int64{-1}

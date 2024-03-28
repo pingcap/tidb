@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -357,7 +358,7 @@ func TestCloneDatum(t *testing.T) {
 		res, err := tt.Compare(ctx, &tt1, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, 0, res)
-		if tt.b != nil {
+		if !emptynil.IsNilSlice(tt.b) {
 			require.NotSame(t, &tt1.b[0], &tt.b[0])
 		}
 	}
@@ -658,7 +659,7 @@ func TestProduceDecWithSpecifiedTp(t *testing.T) {
 				assert.FailNow(t, "Warn is not truncated", "warn: %v before: %v after: %v", warn, tt.dec, dec)
 			}
 		} else {
-			if warn != nil {
+			if len(warn) > 0 {
 				assert.FailNow(t, "Warn is not nil", "warn: %v before: %v after: %v", warn, tt.dec, dec)
 			}
 		}

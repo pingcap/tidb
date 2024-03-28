@@ -18,6 +18,7 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
@@ -93,7 +94,7 @@ func (trs *tidbResultSet) OnFetchReturned() {
 
 // Columns implements ResultSet.Columns interface.
 func (trs *tidbResultSet) Columns() []*column.Info {
-	if trs.columns != nil {
+	if !emptynil.IsNilSlice(trs.columns) {
 		return trs.columns
 	}
 	// for prepare statement, try to get cached columnInfo array
@@ -103,7 +104,7 @@ func (trs *tidbResultSet) Columns() []*column.Info {
 			trs.columns = colInfos
 		}
 	}
-	if trs.columns == nil {
+	if emptynil.IsNilSlice(trs.columns) {
 		fields := trs.recordSet.Fields()
 		for _, v := range fields {
 			trs.columns = append(trs.columns, column.ConvertColumnInfo(v))

@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
@@ -135,7 +136,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 			)
 
 			if needRetry {
-				if retryRows == nil {
+				if emptynil.IsNilSlice(retryRows) {
 					retryRows = make([][]types.Datum, 0, len(leftRows)+len(delBatch))
 				}
 				retryRows = append(retryRows, delBatch...)

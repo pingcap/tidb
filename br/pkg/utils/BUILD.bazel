@@ -31,6 +31,7 @@ go_library(
         "//br/pkg/logutil",
         "//pkg/errno",
         "//pkg/kv",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",

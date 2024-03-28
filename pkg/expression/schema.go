@@ -18,6 +18,7 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
@@ -202,7 +203,7 @@ func (s *Schema) ExtractColGroups(colGroups [][]*Column) ([][]int, []int) {
 	extracted := make([][]int, 0, len(colGroups))
 	offsets := make([]int, 0, len(colGroups))
 	for i, g := range colGroups {
-		if j := s.ColumnsIndices(g); j != nil {
+		if j := s.ColumnsIndices(g); !emptynil.IsNilSlice(j) {
 			extracted = append(extracted, j)
 			offsets = append(offsets, i)
 		}

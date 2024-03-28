@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -43,7 +44,7 @@ type showPlacementLabelsResultBuilder struct {
 }
 
 func (b *showPlacementLabelsResultBuilder) AppendStoreLabels(bj types.BinaryJSON) error {
-	if b.labelKey2values == nil {
+	if emptynil.IsNilMap(b.labelKey2values) {
 		b.labelKey2values = make(map[string]any)
 	}
 
@@ -478,7 +479,7 @@ func fetchScheduleState(ctx context.Context, scheduleState map[int64]infosync.Pl
 	startKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(id))
 	endKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(id+1))
 	schedule, err := infosync.GetReplicationState(ctx, startKey, endKey)
-	if err == nil && scheduleState != nil {
+	if err == nil && !emptynil.IsNilMap(scheduleState) {
 		scheduleState[id] = schedule
 	}
 	return schedule, err

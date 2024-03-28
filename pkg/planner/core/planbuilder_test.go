@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -425,7 +426,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 		return errors.Errorf("different type %v, %v, path %v", v1.Type(), v2.Type(), path)
 	}
 
-	if visited == nil {
+	if emptynil.IsNilMap(visited) {
 		visited = make(map[visit]bool)
 	}
 	hard := func(k reflect.Kind) bool {

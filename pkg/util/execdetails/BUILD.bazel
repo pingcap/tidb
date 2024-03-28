@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/execdetails",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/parser/emptynil",
         "@com_github_influxdata_tdigest//:tdigest",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_pingcap_tipb//go-tipb",

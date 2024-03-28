@@ -12,6 +12,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
+        "//pkg/parser/emptynil",
         "//pkg/statistics",
         "//pkg/util/codec",
         "//pkg/util/collate",

@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/coocood/freecache"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 )
 
 type (
@@ -67,7 +68,7 @@ func (c *cacheDB) get(tableID int64, key Key) []byte {
 func (c *cacheDB) UnionGet(ctx context.Context, tid int64, snapshot Snapshot, key Key) (val []byte, err error) {
 	val = c.get(tid, key)
 	// key does not exist then get from snapshot and set to cache
-	if val == nil {
+	if emptynil.IsNilSlice(val) {
 		val, err = snapshot.Get(ctx, key)
 		if err != nil {
 			return nil, err

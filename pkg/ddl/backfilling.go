@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -769,14 +770,14 @@ func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, keyPre
 	startKey kv.Key, endKey kv.Key, fn recordIterFunc) error {
 	isRecord := tablecodec.IsRecordKey(keyPrefix.Next())
 	var firstKey kv.Key
-	if startKey == nil {
+	if emptynil.IsNilSlice(startKey) {
 		firstKey = keyPrefix
 	} else {
 		firstKey = startKey
 	}
 
 	var upperBound kv.Key
-	if endKey == nil {
+	if emptynil.IsNilSlice(endKey) {
 		upperBound = keyPrefix.PrefixNext()
 	} else {
 		upperBound = endKey.PrefixNext()

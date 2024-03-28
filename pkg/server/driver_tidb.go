@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -397,7 +398,7 @@ func (tc *TiDBContext) EncodeSessionStates(_ context.Context, _ sessionctx.Conte
 		}
 		// Bound params are sent by CMD_STMT_SEND_LONG_DATA, the proxy can wait for COM_STMT_EXECUTE.
 		for _, boundParam := range stmt.BoundParams() {
-			if boundParam != nil {
+			if !emptynil.IsNilSlice(boundParam) {
 				return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have bound params")
 			}
 		}

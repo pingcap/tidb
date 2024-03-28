@@ -14,6 +14,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/parser/auth",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",
@@ -50,6 +51,7 @@ go_test(
     shard_count = 13,
     deps = [
         "//pkg/parser/auth",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/testkit/testsetup",
         "//pkg/types",

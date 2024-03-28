@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -663,7 +664,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 	cols1 := outerExec.Schema().Columns
 
 	joinSchema := expression.NewSchema()
-	if testCase.childrenUsedSchema != nil {
+	if !emptynil.IsNilSlice(testCase.childrenUsedSchema) {
 		for i, used := range testCase.childrenUsedSchema[0] {
 			if used {
 				joinSchema.Append(cols0[i])
@@ -1373,7 +1374,7 @@ func prepareMergeJoinExec(tc *mergeJoinTestCase, joinSchema *expression.Schema, 
 	}
 
 	var usedIdx [][]int
-	if tc.childrenUsedSchema != nil {
+	if !emptynil.IsNilSlice(tc.childrenUsedSchema) {
 		usedIdx = make([][]int, 0, len(tc.childrenUsedSchema))
 		for _, childSchema := range tc.childrenUsedSchema {
 			used := make([]int, 0, len(childSchema))
@@ -1417,7 +1418,7 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, innerDS, outerDS *testutil.MockDat
 	outerCols, innerCols := tc.Columns(), tc.Columns()
 
 	joinSchema := expression.NewSchema()
-	if tc.childrenUsedSchema != nil {
+	if !emptynil.IsNilSlice(tc.childrenUsedSchema) {
 		for i, used := range tc.childrenUsedSchema[0] {
 			if used {
 				joinSchema.Append(outerCols[i])
@@ -1663,7 +1664,7 @@ func BenchmarkMergeJoinExec(b *testing.B) {
 		for _, childrenUsedSchema := range childrenUsedSchemas {
 			tc, innerDS, outerDS := newMergeJoinBenchmark(totalRows/numInnerDup, numInnerDup, numInnerRedundant)
 			inlineProj := false
-			if childrenUsedSchema != nil {
+			if !emptynil.IsNilSlice(childrenUsedSchema) {
 				inlineProj = true
 				tc.childrenUsedSchema = childrenUsedSchema
 			}

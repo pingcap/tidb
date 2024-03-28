@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -72,7 +73,7 @@ notExhausted:
 	require.NoError(t, err)
 
 	// endKey should be strictly greater than lastEndKey
-	if lastEndKey != nil && endKey != nil {
+	if !emptynil.IsNilSlice(lastEndKey) && !emptynil.IsNilSlice(endKey) {
 		cmp := bytes.Compare(endKey, lastEndKey)
 		require.Equal(t, 1, cmp, "endKey: %v, lastEndKey: %v", endKey, lastEndKey)
 	}
@@ -92,14 +93,14 @@ notExhausted:
 		cmp := bytes.Compare(splitKeys[0], lastEndKey)
 		require.Equal(t, 1, cmp, "splitKeys: %v, lastEndKey: %v", splitKeys, lastEndKey)
 		// last splitKeys should be strictly less than endKey
-		if endKey != nil {
+		if !emptynil.IsNilSlice(endKey) {
 			cmp = bytes.Compare(splitKeys[len(splitKeys)-1], endKey)
 			require.Equal(t, -1, cmp, "splitKeys: %v, endKey: %v", splitKeys, endKey)
 		}
 	}
 
 	lastEndKey = endKey
-	if endKey != nil {
+	if !emptynil.IsNilSlice(endKey) {
 		goto notExhausted
 	}
 	require.NoError(t, splitter.Close())
@@ -179,7 +180,7 @@ notExhausted:
 	require.NoError(t, err)
 	require.LessOrEqual(t, len(dataFiles), groupFileNumUpperBound)
 	require.LessOrEqual(t, len(statFiles), groupFileNumUpperBound)
-	if endKey != nil {
+	if !emptynil.IsNilSlice(endKey) {
 		goto notExhausted
 	}
 	require.NoError(t, splitter.Close())
@@ -488,10 +489,10 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 		endKey, _, statFiles, _, err := splitter.SplitOneRangesGroup()
 		require.NoError(t, err)
 		require.Greater(t, len(statFiles), 0)
-		if endKey == nil {
+		if emptynil.IsNilSlice(endKey) {
 			break
 		}
-		if lastEndKey != nil {
+		if !emptynil.IsNilSlice(lastEndKey) {
 			cmp := bytes.Compare(endKey, lastEndKey)
 			require.Equal(t, 1, cmp, "endKey: %v, lastEndKey: %v", endKey, lastEndKey)
 		}

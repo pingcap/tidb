@@ -54,6 +54,7 @@ go_library(
         "//pkg/domain/infosync",
         "//pkg/kv",
         "//pkg/meta",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/variable",

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -595,7 +596,7 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	if err != nil {
 		return err
 	}
-	if cutVals == nil {
+	if emptynil.IsNilSlice(cutVals) {
 		cutVals = make([][]byte, len(colID2CutPos))
 	}
 	decoder := codec.NewDecoder(chk, sctx.GetSessionVars().Location())

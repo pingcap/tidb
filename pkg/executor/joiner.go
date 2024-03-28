@@ -16,6 +16,7 @@ package executor
 
 import (
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -149,7 +150,7 @@ func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
 	// lused and rused should be followed with its original order.
 	// the case is that is join schema rely on the reversed order
 	// of child's schema, here we should keep it original order.
-	if childrenUsed != nil {
+	if !emptynil.IsNilSlice(childrenUsed) {
 		base.lUsed = make([]int, 0, len(childrenUsed[0])) // make it non-nil
 		base.lUsed = append(base.lUsed, childrenUsed[0]...)
 		base.rUsed = make([]int, 0, len(childrenUsed[1])) // make it non-nil
@@ -271,7 +272,7 @@ func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColLen int, lUsed, 
 	if !j.outerIsRight {
 		innerColOffset, outerColOffset = outerColLen, 0
 	}
-	if lUsed != nil || rUsed != nil {
+	if !emptynil.IsNilSlice(lUsed) || !emptynil.IsNilSlice(rUsed) {
 		lSize := outerColOffset
 		if !j.outerIsRight {
 			lSize = innerColOffset
@@ -313,7 +314,7 @@ func (j *baseJoiner) filterAndCheckOuterRowStatus(
 		}
 	}
 
-	if lUsed != nil || rUsed != nil {
+	if !emptynil.IsNilSlice(lUsed) || !emptynil.IsNilSlice(rUsed) {
 		lSize := innerColsLen
 		if !j.outerIsRight {
 			lSize = input.NumCols() - innerColsLen
@@ -350,11 +351,11 @@ func (j *baseJoiner) Clone() baseJoiner {
 	if !j.defaultInner.IsEmpty() {
 		base.defaultInner = j.defaultInner.CopyConstruct()
 	}
-	if j.lUsed != nil {
+	if !emptynil.IsNilSlice(j.lUsed) {
 		base.lUsed = make([]int, len(j.lUsed))
 		copy(base.lUsed, j.lUsed)
 	}
-	if j.rUsed != nil {
+	if !emptynil.IsNilSlice(j.rUsed) {
 		base.rUsed = make([]int, len(j.rUsed))
 		copy(base.rUsed, j.rUsed)
 	}

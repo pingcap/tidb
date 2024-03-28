@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/checksum"
 	"github.com/pingcap/tidb/pkg/util/encrypt"
 )
@@ -31,7 +32,7 @@ func CopySelectedJoinRowsDirect(src *Chunk, selected []bool, dst *Chunk) (bool, 
 	if src.NumRows() == 0 {
 		return false, nil
 	}
-	if src.sel != nil || dst.sel != nil {
+	if !emptynil.IsNilSlice(src.sel) || !emptynil.IsNilSlice(dst.sel) {
 		return false, errors.New(msgErrSelNotNil)
 	}
 	if len(src.columns) == 0 {
@@ -88,7 +89,7 @@ func CopySelectedJoinRowsWithSameOuterRows(src *Chunk, innerColOffset, innerColL
 	if src.NumRows() == 0 {
 		return false, nil
 	}
-	if src.sel != nil || dst.sel != nil {
+	if !emptynil.IsNilSlice(src.sel) || !emptynil.IsNilSlice(dst.sel) {
 		return false, errors.New(msgErrSelNotNil)
 	}
 

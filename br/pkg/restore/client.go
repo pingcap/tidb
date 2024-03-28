@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
@@ -2541,13 +2542,13 @@ func ApplyKVFilesWithBatchMethod(
 		}
 
 		if f.GetType() == backuppb.FileType_Delete {
-			if fs.defaultFiles == nil {
+			if emptynil.IsNilSlice(fs.defaultFiles) {
 				fs.deleteFiles = make([]*LogDataFileInfo, 0)
 			}
 			fs.deleteFiles = append(fs.deleteFiles, f)
 		} else {
 			if f.GetCf() == stream.DefaultCF {
-				if fs.defaultFiles == nil {
+				if emptynil.IsNilSlice(fs.defaultFiles) {
 					fs.defaultFiles = make([]*LogDataFileInfo, 0, batchCount)
 				}
 				fs.defaultFiles = append(fs.defaultFiles, f)
@@ -2560,7 +2561,7 @@ func ApplyKVFilesWithBatchMethod(
 					fs.defaultKVCount = 0
 				}
 			} else {
-				if fs.writeFiles == nil {
+				if emptynil.IsNilSlice(fs.writeFiles) {
 					fs.writeFiles = make([]*LogDataFileInfo, 0, batchCount)
 				}
 				fs.writeFiles = append(fs.writeFiles, f)

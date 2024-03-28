@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -259,7 +260,7 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation,
 	}
 	tmpSchema := expression.NewSchema(gbyCols...)
 	for _, key := range child.Schema().Keys {
-		if tmpSchema.ColumnsIndices(key) != nil { // gby item need to be covered by key.
+		if !emptynil.IsNilSlice(tmpSchema.ColumnsIndices(key)) { // gby item need to be covered by key.
 			return child, nil
 		}
 	}
@@ -421,7 +422,7 @@ func (*aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, uni
 	// And the pushed agg will be something like `select a, b, c, a, b, c from t group by a, b, c`. So if we just return child as join does,
 	// this will cause error during executor phase.
 	for _, key := range unionChild.Schema().Keys {
-		if tmpSchema.ColumnsIndices(key) != nil {
+		if !emptynil.IsNilSlice(tmpSchema.ColumnsIndices(key)) {
 			if ok, proj := ConvertAggToProj(newAgg, newAgg.schema); ok {
 				proj.SetChildren(unionChild)
 				return proj, nil

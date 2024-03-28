@@ -17,11 +17,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/stretchr/testify/assert"
 )
 
 func newSliceIterWithCopy(data []*kv.Entry) *SliceIter {
-	if data == nil {
+	if emptynil.IsNilSlice(data) {
 		return NewSliceIter(nil)
 	}
 

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -646,7 +647,7 @@ func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshot
 			zap.String("start key", hex.EncodeToString(startHandleKey)),
 			zap.String("end key", hex.EncodeToString(endHandleKey)),
 			zap.Bool("is empty table", isEmptyTable))
-		if startHandleKey == nil {
+		if emptynil.IsNilSlice(startHandleKey) {
 			endHandleKey = nil
 		} else {
 			endHandleKey = startHandleKey.Next()
@@ -837,7 +838,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 // UpdateReorgMeta creates a new transaction and updates tidb_ddl_reorg table,
 // so the reorg can restart in case of issues.
 func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sess.Pool) (err error) {
-	if startKey == nil && r.EndKey == nil {
+	if emptynil.IsNilSlice(startKey) && emptynil.IsNilSlice(r.EndKey) {
 		return nil
 	}
 	sctx, err := pool.Get()

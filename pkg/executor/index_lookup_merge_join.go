@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -420,7 +421,7 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 
 func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
 	numOuterChks := task.outerResult.NumChunks()
-	if imw.outerMergeCtx.filter != nil {
+	if !emptynil.IsNilSlice(imw.outerMergeCtx.filter) {
 		task.outerMatch = make([][]bool, numOuterChks)
 		exprCtx := imw.ctx.GetExprCtx()
 		for i := 0; i < numOuterChks; i++ {
@@ -557,7 +558,7 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 	for _, outerIdx := range task.outerOrderIdx {
 		outerRow := task.outerResult.GetRow(outerIdx)
 		hasMatch, hasNull, cmpResult := false, false, initCmpResult
-		if task.outerMatch != nil && !task.outerMatch[outerIdx.ChkIdx][outerIdx.RowIdx] {
+		if !emptynil.IsNilSlice(task.outerMatch) && !task.outerMatch[outerIdx.ChkIdx][outerIdx.RowIdx] {
 			goto missMatch
 		}
 		// If it has iterated out all inner rows and the inner rows with same key is empty,
@@ -658,7 +659,7 @@ func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask)
 }
 
 func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, idx chunk.RowPtr) (*indexJoinLookUpContent, error) {
-	if task.outerMatch != nil && !task.outerMatch[idx.ChkIdx][idx.RowIdx] {
+	if !emptynil.IsNilSlice(task.outerMatch) && !task.outerMatch[idx.ChkIdx][idx.RowIdx] {
 		return nil, nil
 	}
 	outerRow := task.outerResult.GetRow(idx)

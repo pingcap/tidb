@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -187,7 +188,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		if err1 != nil {
 			return nil, nil, nil, nil, nil, err1
 		}
-		if data == nil {
+		if emptynil.IsNilSlice(data) {
 			break
 		}
 		var colResp *tipb.AnalyzeColumnsResp

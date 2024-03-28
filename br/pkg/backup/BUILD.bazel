@@ -30,6 +30,7 @@ go_library(
         "//pkg/distsql",
         "//pkg/kv",
         "//pkg/meta",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/util",

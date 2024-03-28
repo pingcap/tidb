@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 )
 
 // Set sets the string value of the key.
@@ -44,7 +45,7 @@ func (t *TxStructure) Get(key []byte) ([]byte, error) {
 // GetInt64 gets the int64 value of a key.
 func (t *TxStructure) GetInt64(key []byte) (int64, error) {
 	v, err := t.Get(key)
-	if err != nil || v == nil {
+	if err != nil || emptynil.IsNilSlice(v) {
 		return 0, errors.Trace(err)
 	}
 

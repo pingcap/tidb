@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -448,7 +449,7 @@ func readAllRows(t *testing.T, reader *HistoryReader) [][]types.Datum {
 	for {
 		rows, err := reader.Rows()
 		require.NoError(t, err)
-		if rows == nil {
+		if emptynil.IsNilSlice(rows) {
 			break
 		}
 		results = append(results, rows...)

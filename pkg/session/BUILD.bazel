@@ -50,6 +50,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/charset",
+        "//pkg/parser/emptynil",
         "//pkg/parser/format",
         "//pkg/parser/model",
         "//pkg/parser/mysql",

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -317,7 +318,7 @@ func (col *Column) VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chun
 		f32s := src.Float32s()
 		f64s := result.Float64s()
 		sel := input.Sel()
-		if sel != nil {
+		if !emptynil.IsNilSlice(sel) {
 			for i, j := range sel {
 				if src.IsNull(j) {
 					result.SetNull(i, true)

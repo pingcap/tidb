@@ -15,6 +15,7 @@ go_library(
         "//br/pkg/storage",
         "//br/pkg/summary",
         "//br/pkg/utils",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/types",

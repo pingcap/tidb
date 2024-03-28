@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/config"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/pd"
@@ -1496,7 +1497,7 @@ func (store *MVCCStore) ReadBufferFromLock(startTS uint64, keys ...[]byte) []*kv
 		switch lock.Op {
 		case uint8(kvrpcpb.Op_Put):
 			val := getValueFromLock(&lock)
-			if val == nil {
+			if emptynil.IsNilSlice(val) {
 				panic("Op_Put has a nil value")
 			}
 			pairs = append(
@@ -1770,7 +1771,7 @@ func (store *MVCCStore) MvccGetByStartTs(reqCtx *requestCtx, startTs uint64) (*k
 	if err != nil {
 		return nil, nil, err
 	}
-	if rawKey == nil {
+	if emptynil.IsNilSlice(rawKey) {
 		return nil, nil, nil
 	}
 	res, err := store.MvccGetByKey(reqCtx, rawKey)
@@ -1805,7 +1806,7 @@ func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]b
 		}
 	}
 	val, err := reqCtx.getDBReader().Get(key, version)
-	if val == nil {
+	if emptynil.IsNilSlice(val) {
 		return nil, err
 	}
 	return safeCopy(val), err
@@ -1823,7 +1824,7 @@ func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint
 				pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Error: convertToKeyError(err)})
 			} else if len(lockPairs) != 0 {
 				value := getValueFromLock(lockPairs[0].lock)
-				if value != nil {
+				if !emptynil.IsNilSlice(value) {
 					pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Value: value})
 				}
 			} else {

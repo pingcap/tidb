@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -99,7 +100,7 @@ func (r *resultChecker) initRowPtrs() {
 }
 
 func (r *resultChecker) check(resultChunks []*chunk.Chunk) bool {
-	if r.rowPtrs == nil {
+	if emptynil.IsNilSlice(r.rowPtrs) {
 		r.initRowPtrs()
 		sort.Slice(r.rowPtrs, r.keyColumnsLess)
 	}

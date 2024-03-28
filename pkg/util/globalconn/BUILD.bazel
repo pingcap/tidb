@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/globalconn",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/parser/emptynil",
         "//pkg/util/logutil",
         "@com_github_cznic_mathutil//:mathutil",
         "@com_github_ngaut_sync2//:sync2",

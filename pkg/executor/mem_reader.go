@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -477,7 +478,7 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if values == nil {
+	if emptynil.IsNilSlice(values) {
 		values = make([][]byte, len(colIDs))
 	}
 	// Fill the handle and null columns.
@@ -490,7 +491,7 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 					// Only try to decode handle when there is no corresponding column in the value.
 					// This is because the information in handle may be incomplete in some cases.
 					// For example, prefixed clustered index like 'primary key(col1(1))' only store the leftmost 1 char in the handle.
-					if values[offset] == nil {
+					if emptynil.IsNilSlice(values[offset]) {
 						values[offset] = handle.EncodedCol(i)
 						break
 					}
@@ -541,7 +542,7 @@ func (m *memTableReader) getMemRowsHandle() ([]kv.Handle, error) {
 
 func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 	offset, ok := colIDs[id]
-	if ok && data[offset] != nil {
+	if ok && !emptynil.IsNilSlice(data[offset]) {
 		return true
 	}
 	return false

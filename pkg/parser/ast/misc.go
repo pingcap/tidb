@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -2546,7 +2547,7 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 			return err
 		}
 		ctx.WritePlainf(" %s", n.Index)
-		if n.HandleRanges != nil {
+		if !emptynil.IsNilSlice(n.HandleRanges) {
 			ctx.WritePlain(" ")
 			for i, v := range n.HandleRanges {
 				if i != 0 {
@@ -2719,7 +2720,7 @@ func (n *PrivElem) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord(str)
 	}
-	if n.Cols != nil {
+	if !emptynil.IsNilSlice(n.Cols) {
 		ctx.WritePlain(" (")
 		for i, v := range n.Cols {
 			if i != 0 {
@@ -2970,7 +2971,7 @@ func (n *GrantStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore GrantStmt.Users[%d]", i)
 		}
 	}
-	if n.AuthTokenOrTLSOptions != nil {
+	if !emptynil.IsNilSlice(n.AuthTokenOrTLSOptions) {
 		if len(n.AuthTokenOrTLSOptions) != 0 {
 			ctx.WriteKeyWord(" REQUIRE ")
 		}
@@ -3078,7 +3079,7 @@ func (n *GrantRoleStmt) Accept(v Visitor) (Node, bool) {
 // Restore implements Node interface.
 func (n *GrantRoleStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("GRANT ")
-	if len(n.Roles) > 0 {
+	if !emptynil.IsNilSlice(n.Roles) {
 		for i, role := range n.Roles {
 			if i != 0 {
 				ctx.WritePlain(", ")

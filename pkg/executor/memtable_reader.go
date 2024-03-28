@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -102,7 +103,7 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	// The `InspectionTableCache` will be assigned in the begin of retrieving` and be
 	// cleaned at the end of retrieving, so nil represents currently in non-inspection mode.
-	if cache, tbl := e.Ctx().GetSessionVars().InspectionTableCache, e.table.Name.L; cache != nil &&
+	if cache, tbl := e.Ctx().GetSessionVars().InspectionTableCache, e.table.Name.L; !emptynil.IsNilMap(cache) &&
 		e.isInspectionCacheableTable(tbl) {
 		// TODO: cached rows will be returned fully, we should refactor this part.
 		if !e.cacheRetrieved {
@@ -800,7 +801,7 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		if err != nil {
 			return nil, err
 		}
-		if rows != nil {
+		if !emptynil.IsNilSlice(rows) {
 			finalRows = append(finalRows, rows...)
 		}
 		minTimeItem.messages.HistoryHotRegion = minTimeItem.messages.HistoryHotRegion[1:]

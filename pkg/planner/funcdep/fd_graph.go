@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
@@ -844,7 +845,7 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols i
 	s.NotNullCols.UnionWith(filterFDs.NotNullCols)
 	// inner cols can be nullable since then.
 	s.NotNullCols.DifferenceWith(innerCols)
-	if s.HashCodeToUniqueID == nil {
+	if emptynil.IsNilMap(s.HashCodeToUniqueID) {
 		s.HashCodeToUniqueID = innerFDs.HashCodeToUniqueID
 	} else {
 		for k, v := range innerFDs.HashCodeToUniqueID {
@@ -915,7 +916,7 @@ func (s *FDSet) AddFrom(fds *FDSet) {
 	}
 	s.ncEdges = append(s.ncEdges, fds.ncEdges...)
 	s.NotNullCols.UnionWith(fds.NotNullCols)
-	if s.HashCodeToUniqueID == nil {
+	if emptynil.IsNilMap(s.HashCodeToUniqueID) {
 		s.HashCodeToUniqueID = fds.HashCodeToUniqueID
 	} else {
 		for k, v := range fds.HashCodeToUniqueID {
@@ -1160,7 +1161,7 @@ func (s *FDSet) makeEquivMap(detCols, projectedCols intset.FastIntSet) map[int]i
 		closure.IntersectionWith(projectedCols)
 		// the column to be deleted has an equivalence column exactly in the project list.
 		if !closure.IsEmpty() {
-			if equivMap == nil {
+			if emptynil.IsNilMap(equivMap) {
 				equivMap = make(map[int]int)
 			}
 			id, _ := closure.Next(0) // We can record more equiv columns.

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -128,7 +129,7 @@ func (s *tableRegionSampler) writeChunk(req *chunk.Chunk) error {
 }
 
 func (s *tableRegionSampler) initRanges() error {
-	if s.restKVRanges == nil {
+	if emptynil.IsNilSlice(s.restKVRanges) {
 		var err error
 		s.restKVRanges, err = s.splitTableRanges()
 		if err != nil {
@@ -215,7 +216,7 @@ func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRa
 		if kv.Key(start).Cmp(startKey) < 0 {
 			start = startKey
 		}
-		if end == nil || kv.Key(end).Cmp(endKey) > 0 {
+		if emptynil.IsNilSlice(end) || kv.Key(end).Cmp(endKey) > 0 {
 			end = endKey
 		}
 		ranges = append(ranges, kv.KeyRange{StartKey: start, EndKey: end})
@@ -307,7 +308,7 @@ func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
 }
 
 func (s *tableRegionSampler) resetRowMap() {
-	if s.rowMap == nil {
+	if emptynil.IsNilMap(s.rowMap) {
 		colLen := len(s.schema.Columns)
 		s.rowMap = make(map[int64]types.Datum, colLen)
 		return

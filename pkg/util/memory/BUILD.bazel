@@ -13,6 +13,7 @@ go_library(
     deps = [
         "//pkg/errno",
         "//pkg/metrics",
+        "//pkg/parser/emptynil",
         "//pkg/parser/terror",
         "//pkg/util/cgroup",
         "//pkg/util/dbterror",

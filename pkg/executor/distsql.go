@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -385,7 +386,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		return bytes.Compare(i.StartKey, j.StartKey)
 	})
 	// use sortedSelectResults only when byItems pushed down and partition numbers > 1
-	if e.byItems == nil || len(e.partitions) <= 1 {
+	if emptynil.IsNilSlice(e.byItems) || len(e.partitions) <= 1 {
 		kvReq, err := e.buildKVReq(kvRanges)
 		if err != nil {
 			return err
@@ -542,7 +543,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 			// the first range is only suitable to p0 and the second is to p1, but now we'll also build kvRange for range0+p1 and range1+p0.
 			physicalID := p.GetPhysicalID()
 			ranges := e.ranges
-			if e.partitionRangeMap != nil && e.partitionRangeMap[physicalID] != nil {
+			if !emptynil.IsNilMap(e.partitionRangeMap) && !emptynil.IsNilSlice(e.partitionRangeMap[physicalID]) {
 				ranges = e.partitionRangeMap[physicalID]
 			}
 			var kvRange *kv.KeyRanges

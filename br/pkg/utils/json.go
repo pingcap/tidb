@@ -6,6 +6,7 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 )
 
 // MarshalBackupMeta converts the backupmeta strcture to JSON.
@@ -104,7 +105,7 @@ func makeJSONSchema(schema *backuppb.Schema) (*jsonSchema, error) {
 		return nil, errors.Trace(err)
 	}
 
-	if schema.Table != nil {
+	if !emptynil.IsNilSlice(schema.Table) {
 		if err := json.Unmarshal(schema.Table, &result.Table); err != nil {
 			return nil, errors.Trace(err)
 		}

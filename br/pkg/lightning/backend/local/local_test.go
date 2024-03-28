@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -722,7 +723,7 @@ func (c *mockImportClient) MultiIngest(_ context.Context, req *sst.MultiIngestRe
 			return &sst.IngestResponse{Error: &errorpb.Error{Message: "The file which would be ingested doest not exist."}}, nil
 		}
 	}
-	if c.apiInvokeRecorder != nil {
+	if !emptynil.IsNilMap(c.apiInvokeRecorder) {
 		c.apiInvokeRecorder["MultiIngest"] = append(c.apiInvokeRecorder["MultiIngest"], c.store.GetId())
 	}
 	if c.cnt < c.retry {
@@ -785,7 +786,7 @@ func (m mockWriteClient) SendMsg(_ any) error {
 }
 
 func (c *mockImportClient) Write(ctx context.Context, opts ...grpc.CallOption) (sst.ImportSST_WriteClient, error) {
-	if c.apiInvokeRecorder != nil {
+	if !emptynil.IsNilMap(c.apiInvokeRecorder) {
 		c.apiInvokeRecorder["Write"] = append(c.apiInvokeRecorder["Write"], c.store.GetId())
 	}
 	return mockWriteClient{writeResp: &sst.WriteResponse{Metas: []*sst.SSTMeta{

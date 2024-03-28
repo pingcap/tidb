@@ -17,6 +17,7 @@ import (
 	"container/list"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -290,7 +291,7 @@ func (l *LRUPlanCache) pickFromBucket(bucket map[*list.Element]struct{}, matchOp
 }
 
 func checkUint64SliceIfEqual(a, b []uint64) bool {
-	if (a == nil && b != nil) || (a != nil && b == nil) {
+	if (emptynil.IsNilSlice(a) && !emptynil.IsNilSlice(b)) || (!emptynil.IsNilSlice(a) && emptynil.IsNilSlice(b)) {
 		return false
 	}
 	if len(a) != len(b) {

@@ -21,6 +21,7 @@ go_library(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner/core",

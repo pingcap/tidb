@@ -14,7 +14,11 @@
 
 package membuf
 
-import "unsafe"
+import (
+	"unsafe"
+
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
+)
 
 const (
 	defaultPoolSize  = 1024
@@ -169,7 +173,7 @@ func (p *Pool) NewBuffer(opts ...BufferOption) *Buffer {
 	for _, opt := range opts {
 		opt(b)
 	}
-	if b.blocks == nil {
+	if emptynil.IsNilSlice(b.blocks) {
 		b.blocks = make([][]byte, 0, 128)
 	}
 	return b
@@ -243,7 +247,7 @@ func (b *Buffer) AllocBytes(n int) []byte {
 	}
 
 	bs, _ := b.allocBytesWithSliceLocation(n)
-	if bs != nil && b.pool.limiter != nil {
+	if !emptynil.IsNilSlice(bs) && b.pool.limiter != nil {
 		b.recordSmallObjOverhead(sizeOfSlice)
 	}
 	return bs
@@ -288,7 +292,7 @@ func (b *Buffer) allocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 // nil returned slice means allocation failed.
 func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	bs, loc := b.allocBytesWithSliceLocation(n)
-	if bs != nil && b.pool.limiter != nil {
+	if !emptynil.IsNilSlice(bs) && b.pool.limiter != nil {
 		b.recordSmallObjOverhead(sizeOfSliceLocation)
 	}
 	return bs, loc

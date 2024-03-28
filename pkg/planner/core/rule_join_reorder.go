@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -53,8 +54,8 @@ func extractJoinGroup(p LogicalPlan) *joinGroupResult {
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
 	if !isJoin || (join.preferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
 		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
-		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
-		if joinOrderHintInfo != nil {
+		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && emptynil.IsNilSlice(join.EqualConditions)) {
+		if !emptynil.IsNilSlice(joinOrderHintInfo) {
 			// The leading hint can not work for some reasons. So clear it in the join node.
 			join.hintInfo = nil
 		}
@@ -274,7 +275,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx PlanContext, p LogicalPlan, tr
 				"We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
 		}
 
-		if leadingHintInfo != nil && leadingHintInfo.LeadingJoinOrder != nil {
+		if leadingHintInfo != nil && !emptynil.IsNilSlice(leadingHintInfo.LeadingJoinOrder) {
 			if useGreedy {
 				ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
 				if !ok {
@@ -325,7 +326,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx PlanContext, p LogicalPlan, tr
 		}
 		return p, nil
 	}
-	if len(curJoinGroup) == 1 && joinOrderHintInfo != nil {
+	if len(curJoinGroup) == 1 && !emptynil.IsNilSlice(joinOrderHintInfo) {
 		ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check the join type or the join algorithm hint")
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
@@ -448,7 +449,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 			leftJoinGroup = append(leftJoinGroup[:groupIdx], leftJoinGroup[groupIdx+1:]...)
 		}
 	}
-	if len(leadingJoinGroup) != len(hintInfo.LeadingJoinOrder) || leadingJoinGroup == nil {
+	if len(leadingJoinGroup) != len(hintInfo.LeadingJoinOrder) || emptynil.IsNilSlice(leadingJoinGroup) {
 		return false, nil
 	}
 	leadingJoin := leadingJoinGroup[0]
@@ -457,7 +458,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 		var usedEdges []*expression.ScalarFunction
 		var joinType *joinTypeWithExtMsg
 		leadingJoin, leadingJoinGroup[0], usedEdges, joinType = s.checkConnection(leadingJoin, leadingJoinGroup[0])
-		if hasOuterJoin && usedEdges == nil {
+		if hasOuterJoin && emptynil.IsNilSlice(usedEdges) {
 			// If the joinGroups contain the outer join, we disable the cartesian product.
 			return false, nil
 		}
@@ -590,7 +591,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 			newJoin := s.newCartesianJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1])
 			for i := len(s.otherConds) - 1; i >= 0; i-- {
 				cols := expression.ExtractColumns(s.otherConds[i])
-				if newJoin.schema.ColumnsIndices(cols) != nil {
+				if !emptynil.IsNilSlice(newJoin.schema.ColumnsIndices(cols)) {
 					newJoin.OtherConditions = append(newJoin.OtherConditions, s.otherConds[i])
 					s.otherConds = append(s.otherConds[:i], s.otherConds[i+1:]...)
 				}

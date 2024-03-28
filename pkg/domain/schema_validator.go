@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -251,7 +252,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 		// When a transaction executes a DDL and got an error, it should manually call this method to check if it is caused by schema change.
 		// And then it will pass a nil for relatedPhysicalTableIDs to indicate just check schema version.
 		// When a transaction only contains DML on temporary tables, relatedPhysicalTableIDs is [].
-		if relatedPhysicalTableIDs == nil {
+		if emptynil.IsNilSlice(relatedPhysicalTableIDs) {
 			logutil.BgLogger().Info("the related physical table ID is empty", zap.Int64("schemaVer", schemaVer),
 				zap.Int64("latestSchemaVer", s.latestSchemaVer))
 			return nil, ResultFail

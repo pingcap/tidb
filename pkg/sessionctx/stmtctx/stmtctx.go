@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -557,7 +558,7 @@ const (
 func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value any) any {
 	sc.stmtCache.mu.Lock()
 	defer sc.stmtCache.mu.Unlock()
-	if sc.stmtCache.data == nil {
+	if emptynil.IsNilMap(sc.stmtCache.data) {
 		sc.stmtCache.data = make(map[StmtCacheKey]any)
 	}
 	if _, ok := sc.stmtCache.data[key]; !ok {
@@ -570,7 +571,7 @@ func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value any) any
 func (sc *StatementContext) GetOrEvaluateStmtCache(key StmtCacheKey, valueEvaluator func() (any, error)) (any, error) {
 	sc.stmtCache.mu.Lock()
 	defer sc.stmtCache.mu.Unlock()
-	if sc.stmtCache.data == nil {
+	if emptynil.IsNilMap(sc.stmtCache.data) {
 		sc.stmtCache.data = make(map[StmtCacheKey]any)
 	}
 	if _, ok := sc.stmtCache.data[key]; !ok {
@@ -1195,7 +1196,7 @@ func (sc *StatementContext) GetStaleTSO() (uint64, error) {
 
 // AddSetVarHintRestore records the variables which are affected by SET_VAR hint. And restore them to the old value later.
 func (sc *StatementContext) AddSetVarHintRestore(name, val string) {
-	if sc.SetVarHintRestore == nil {
+	if emptynil.IsNilMap(sc.SetVarHintRestore) {
 		sc.SetVarHintRestore = make(map[string]string)
 	}
 	sc.SetVarHintRestore[name] = val
@@ -1351,7 +1352,7 @@ func (s *UsedStatsInfoForTable) collectFromColOrIdxStatus(
 			if outputNumsLeft != nil {
 				*outputNumsLeft--
 			}
-		} else if statusCnt != nil {
+		} else if len(statusCnt) > 0 {
 			statusCnt[status[id]] = statusCnt[status[id]] + 1
 		}
 	}

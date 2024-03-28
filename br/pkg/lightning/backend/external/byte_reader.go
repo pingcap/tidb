@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -193,7 +194,7 @@ func (r *byteReader) switchToConcurrentReader() error {
 	readerFields.largeBuf = make([][]byte, readerFields.concurrency)
 	for i := range readerFields.largeBuf {
 		readerFields.largeBuf[i] = readerFields.largeBufferPool.AllocBytes(readerFields.bufSizePerConc)
-		if readerFields.largeBuf[i] == nil {
+		if emptynil.IsNilSlice(readerFields.largeBuf[i]) {
 			return errors.Errorf("alloc large buffer failed, size %d", readerFields.bufSizePerConc)
 		}
 	}

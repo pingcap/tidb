@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -106,7 +107,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.endFlag = true
 		return nil
 	}
-	if e.DumpInfo.ExecStmts == nil {
+	if emptynil.IsNilSlice(e.DumpInfo.ExecStmts) {
 		return errors.New("plan replayer: sql is empty")
 	}
 	err = e.DumpInfo.dump(ctx)

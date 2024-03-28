@@ -31,6 +31,7 @@ go_library(
         "//pkg/meta/autoid",
         "//pkg/parser/auth",
         "//pkg/parser/charset",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",

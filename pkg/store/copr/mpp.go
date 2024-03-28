@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -63,7 +64,7 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	var tasks []*batchCopTask
 	var err error
-	if req.PartitionIDAndRanges != nil {
+	if !emptynil.IsNilSlice(req.PartitionIDAndRanges) {
 		rangesForEachPartition := make([]*KeyRanges, len(req.PartitionIDAndRanges))
 		partitionIDs := make([]int64, len(req.PartitionIDAndRanges))
 		for i, p := range req.PartitionIDAndRanges {
@@ -72,7 +73,7 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 		}
 		tasks, err = buildBatchCopTasksForPartitionedTable(ctx, bo, c.store, rangesForEachPartition, kv.TiFlash, true, ttl, true, 20, partitionIDs, dispatchPolicy, tiflashReplicaReadPolicy, appendWarning)
 	} else {
-		if req.KeyRanges == nil {
+		if emptynil.IsNilSlice(req.KeyRanges) {
 			return nil, errors.New("KeyRanges in MPPBuildTasksRequest is nil")
 		}
 		ranges := NewKeyRanges(req.KeyRanges)
@@ -122,7 +123,7 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 	}
 	if originalTask != nil {
 		mppReq.TableRegions = originalTask.PartitionTableRegions
-		if mppReq.TableRegions != nil {
+		if !emptynil.IsNilSlice(mppReq.TableRegions) {
 			mppReq.Regions = nil
 		}
 	}

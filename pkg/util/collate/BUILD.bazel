@@ -20,6 +20,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser/charset",
+        "//pkg/parser/emptynil",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/util/collate/ucadata",

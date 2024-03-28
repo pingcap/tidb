@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -473,7 +474,7 @@ func genMockRowDouble(ctx BuildContext, eType types.EvalType, enableVec bool) (b
 }
 
 func checkVecEval(t *testing.T, eType types.EvalType, sel []int, result *chunk.Column) {
-	if sel == nil {
+	if emptynil.IsNilSlice(sel) {
 		for i := 0; i < 1024; i++ {
 			sel = append(sel, i)
 		}

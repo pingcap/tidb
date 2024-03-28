@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -388,7 +389,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	// If `keyspace-name` is set, the TiDB node will only do its own delete range, and will not calculate gc safe point and resolve locks.
 	// Note that when `keyspace-name` is set, `checkLeader` will be done within the key space.
 	// Therefore only one TiDB node in each key space will be responsible to do delete range.
-	if w.store.GetCodec().GetKeyspace() != nil {
+	if !emptynil.IsNilSlice(w.store.GetCodec().GetKeyspace()) {
 		err = w.runKeyspaceGCJob(ctx, concurrency)
 		if err != nil {
 			return errors.Trace(err)

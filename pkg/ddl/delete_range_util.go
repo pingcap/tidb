@@ -14,6 +14,8 @@
 
 package ddl
 
+import "github.com/pingcap/tidb/pkg/parser/emptynil"
+
 type tblIdxID struct {
 	physicalID int64
 	indexID    int64
@@ -25,7 +27,7 @@ type elementIDAlloc struct {
 }
 
 func (e *elementIDAlloc) allocForIndexID(physicalID, indexID int64) int64 {
-	if e.indexIDs == nil {
+	if emptynil.IsNilMap(e.indexIDs) {
 		e.indexIDs = make(map[tblIdxID]int64)
 	}
 	k := tblIdxID{physicalID: physicalID, indexID: indexID}
@@ -38,7 +40,7 @@ func (e *elementIDAlloc) allocForIndexID(physicalID, indexID int64) int64 {
 }
 
 func (e *elementIDAlloc) allocForPhysicalID(tableID int64) int64 {
-	if e.physicalIDs == nil {
+	if emptynil.IsNilMap(e.physicalIDs) {
 		e.physicalIDs = make(map[int64]int64)
 	}
 	if id, found := e.physicalIDs[tableID]; found {

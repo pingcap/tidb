@@ -15,6 +15,7 @@
 package collate
 
 import (
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -84,7 +85,7 @@ func convertRuneGeneralCI(r rune) uint16 {
 		return 0xFFFD
 	}
 	plane := planeTable[r>>8]
-	if plane == nil {
+	if emptynil.IsNilSlice(plane) {
 		return uint16(r)
 	}
 	return plane[r&0xFF]

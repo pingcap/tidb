@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/domain",
         "//pkg/kv",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/session",
         "//pkg/session/types",

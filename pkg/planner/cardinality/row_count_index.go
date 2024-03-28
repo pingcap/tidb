@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -107,7 +108,7 @@ func getIndexRowCountForStatsV1(sctx context.PlanContext, coll *statistics.HistC
 		// Try to enum the last range values.
 		if rangePosition != len(ran.LowVal) {
 			rangeVals = statistics.EnumRangeValues(ran.LowVal[rangePosition], ran.HighVal[rangePosition], ran.LowExclude, ran.HighExclude)
-			if rangeVals != nil {
+			if !emptynil.IsNilSlice(rangeVals) {
 				rangePosition++
 			}
 		}
@@ -128,7 +129,7 @@ func getIndexRowCountForStatsV1(sctx context.PlanContext, coll *statistics.HistC
 		}
 		var selectivity float64
 		// use CM Sketch to estimate the equal conditions
-		if rangeVals == nil {
+		if emptynil.IsNilSlice(rangeVals) {
 			bytes, err := codec.EncodeKey(sc.TimeZone(), nil, ran.LowVal[:rangePosition]...)
 			err = sc.HandleError(err)
 			if err != nil {

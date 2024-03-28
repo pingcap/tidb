@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -797,7 +798,7 @@ func readAndSplitIntoRange(
 	if err != nil {
 		return nil, err
 	}
-	if startKey == nil {
+	if emptynil.IsNilSlice(startKey) {
 		return nil, errors.New("could not find first pair")
 	}
 
@@ -1012,7 +1013,7 @@ func (local *Backend) generateJobForRange(
 	if err != nil {
 		return nil, err
 	}
-	if pairStart == nil {
+	if emptynil.IsNilSlice(pairStart) {
 		logFn := log.FromContext(ctx).Info
 		if _, ok := data.(*external.MemoryIngestData); ok {
 			logFn = log.FromContext(ctx).Warn
@@ -1223,7 +1224,7 @@ func (local *Backend) executeJob(
 			return nil
 		}
 
-		if job.writeResult == nil || job.writeResult.remainingStartKey == nil {
+		if job.writeResult == nil || emptynil.IsNilSlice(job.writeResult.remainingStartKey) {
 			return nil
 		}
 		job.keyRange.Start = job.writeResult.remainingStartKey

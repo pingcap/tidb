@@ -21,6 +21,7 @@ go_test(
     embed = [":kvcache"],
     flaky = True,
     deps = [
+        "//pkg/parser/emptynil",
         "//pkg/testkit/testsetup",
         "//pkg/util/memory",
         "@com_github_stretchr_testify//require",

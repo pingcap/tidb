@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -581,7 +582,7 @@ func (c *SortedRowContainer) Sort() (ret error) {
 			}
 		}
 	}()
-	if c.ptrM.rowPtrs != nil {
+	if !emptynil.IsNilSlice(c.ptrM.rowPtrs) {
 		return
 	}
 	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow()) // The memory usage has been tracked in SortedRowContainer.Add() function
@@ -619,7 +620,7 @@ func (c *SortedRowContainer) hasEnoughDataToSpill(t *memory.Tracker) bool {
 func (c *SortedRowContainer) Add(chk *Chunk) (err error) {
 	c.ptrM.RLock()
 	defer c.ptrM.RUnlock()
-	if c.ptrM.rowPtrs != nil {
+	if !emptynil.IsNilSlice(c.ptrM.rowPtrs) {
 		return ErrCannotAddBecauseSorted
 	}
 	// Consume the memory usage of rowPtrs in advance

@@ -790,7 +790,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintLimitToCop:
 			preferLimitToCop = true
 		case HintMerge:
-			if hint.Tables != nil {
+			if len(hint.Tables) > 0 {
 				warnHandler.SetHintWarning("The MERGE hint is not used correctly, maybe it inputs a table name.")
 				continue
 			}

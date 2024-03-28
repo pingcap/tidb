@@ -18,6 +18,7 @@ import (
 	"errors"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -160,7 +161,7 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 				continue
 			}
 			replaced = true
-			if args == nil {
+			if emptynil.IsNilSlice(args) {
 				args = make([]Expression, len(sf.GetArgs()))
 				copy(args, sf.GetArgs())
 			}
@@ -171,7 +172,7 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 				return false, true, cond
 			} else if subReplaced {
 				replaced = true
-				if args == nil {
+				if emptynil.IsNilSlice(args) {
 					args = make([]Expression, len(sf.GetArgs()))
 					copy(args, sf.GetArgs())
 				}
@@ -493,7 +494,7 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Constant {
 	retMapper := make(map[int]*Constant)
 	retMapper = s.pickEQCondsOnOuterCol(retMapper, visited, true)
-	if retMapper == nil {
+	if emptynil.IsNilMap(retMapper) {
 		// Filter is constant false or error occurred, enforce early termination.
 		return nil
 	}

@@ -62,6 +62,7 @@ go_test(
         "//pkg/ddl",
         "//pkg/meta",
         "//pkg/parser/ast",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/tablecodec",

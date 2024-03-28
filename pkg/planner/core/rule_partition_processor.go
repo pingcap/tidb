@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
@@ -511,7 +512,7 @@ func (s *partitionProcessor) processHashOrKeyPartition(ds *DataSource, pi *model
 	if err != nil {
 		return nil, err
 	}
-	if used != nil {
+	if !emptynil.IsNilSlice(used) {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
 	}
 	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -671,8 +672,8 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 				return nil, false, err
 			}
 			if colPrune.HasDefault() {
-				if location == nil || len(l.listPrune.ColPrunes) > 1 {
-					if location != nil {
+				if emptynil.IsNilSlice(location) || len(l.listPrune.ColPrunes) > 1 {
+					if !emptynil.IsNilSlice(location) {
 						locations = append(locations, location)
 					}
 					location = tables.ListPartitionLocation{
@@ -794,7 +795,7 @@ func (s *partitionProcessor) findUsedListPartitions(ctx PlanContext, tbl table.T
 	listPruner := newListPartitionPruner(ctx, tbl, partitionNames, s, partExpr.ForListPruning, columns)
 	var used map[int]struct{}
 	var err error
-	if partExpr.ForListPruning.ColPrunes == nil {
+	if emptynil.IsNilSlice(partExpr.ForListPruning.ColPrunes) {
 		used, err = listPruner.findUsedListPartitions(conds)
 	} else {
 		used, err = listPruner.findUsedListColumnsPartitions(conds)

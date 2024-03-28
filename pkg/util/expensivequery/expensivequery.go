@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -139,7 +140,7 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 // logExpensiveQuery logs the queries which exceed the time threshold or memory threshold.
 func logExpensiveQuery(costTime time.Duration, info *util.ProcessInfo, msg string) {
 	fields := util.GenLogFields(costTime, info, true)
-	if fields == nil {
+	if emptynil.IsNilSlice(fields) {
 		return
 	}
 	logutil.BgLogger().Warn(msg, fields...)

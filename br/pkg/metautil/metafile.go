@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -420,7 +421,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 		err := receiveBatch(cctx, errCh, ch, MaxBatchSize, func(item any) error {
 			table := item.(*Table)
 			if table.Info != nil {
-				if fileMap != nil {
+				if !emptynil.IsNilMap(fileMap) {
 					if files, ok := fileMap[table.Info.ID]; ok {
 						table.Files = append(table.Files, files...)
 					}
@@ -460,14 +461,14 @@ func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
 	}
 
 	var tableInfo *model.TableInfo
-	if s.Table != nil {
+	if !emptynil.IsNilSlice(s.Table) {
 		tableInfo = &model.TableInfo{}
 		if err := json.Unmarshal(s.Table, tableInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	var stats *util.JSONTable
-	if s.Stats != nil {
+	if !emptynil.IsNilSlice(s.Stats) {
 		stats = &util.JSONTable{}
 		if err := json.Unmarshal(s.Stats, stats); err != nil {
 			return nil, errors.Trace(err)

@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -995,7 +996,7 @@ func addTableNameInTableIDField(tableIDField any, is infoschema.InfoSchema) (enh
 
 func (s *session) updateStatsDeltaToCollector() {
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
-	if s.statsCollector != nil && mapper != nil {
+	if s.statsCollector != nil && !emptynil.IsNilMap(mapper) {
 		for _, item := range mapper {
 			if item.TableID > 0 {
 				s.statsCollector.Update(item.TableID, item.Delta, item.Count, &item.ColSize)
@@ -1975,7 +1976,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 
 	// The special session will share the `InspectionTableCache` with current session
 	// if the current session in inspection mode.
-	if cache := s.sessionVars.InspectionTableCache; cache != nil {
+	if cache := s.sessionVars.InspectionTableCache; !emptynil.IsNilMap(cache) {
 		se.sessionVars.InspectionTableCache = cache
 	}
 	se.sessionVars.OptimizerUseInvisibleIndexes = s.sessionVars.OptimizerUseInvisibleIndexes

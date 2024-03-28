@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/namespace"
 )
@@ -312,7 +313,7 @@ func parseToDirTree(root *Node, p string) *Node {
 	var ok bool
 
 	for _, dir := range pathDirs {
-		if current.Childs == nil {
+		if emptynil.IsNilMap(current.Childs) {
 			current.Childs = make(map[string]*Node)
 		}
 

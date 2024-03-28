@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -381,7 +382,7 @@ func (n *ReferenceDef) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if n.IndexPartSpecifications != nil {
+	if !emptynil.IsNilSlice(n.IndexPartSpecifications) {
 		ctx.WritePlain("(")
 		for i, indexColNames := range n.IndexPartSpecifications {
 			if i > 0 {
@@ -3348,7 +3349,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		if n.NoWriteToBinlog {
 			ctx.WriteKeyWord(" NO_WRITE_TO_BINLOG")
 		}
-		if n.PartDefinitions != nil {
+		if !emptynil.IsNilSlice(n.PartDefinitions) {
 			ctx.WritePlain(" (")
 			for i, def := range n.PartDefinitions {
 				if i != 0 {
@@ -3578,7 +3579,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteName(name.O)
 		}
 		ctx.WriteKeyWord(" INTO ")
-		if n.PartDefinitions != nil {
+		if !emptynil.IsNilSlice(n.PartDefinitions) {
 			ctx.WritePlain("(")
 			for i, def := range n.PartDefinitions {
 				if i != 0 {

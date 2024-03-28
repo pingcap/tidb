@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -367,13 +368,13 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	encodedKeyLen := keyAdapter.EncodedLen(idxKey, rowID)
 	length := encodedKeyLen + len(idxVal) + lengthBytes*2
 	dataBuf, loc := w.kvBuffer.AllocBytesWithSliceLocation(length)
-	if dataBuf == nil {
+	if emptynil.IsNilSlice(dataBuf) {
 		if err := w.flushKVs(ctx, false); err != nil {
 			return err
 		}
 		dataBuf, loc = w.kvBuffer.AllocBytesWithSliceLocation(length)
 		// we now don't support KV larger than blockSize
-		if dataBuf == nil {
+		if emptynil.IsNilSlice(dataBuf) {
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
 	}

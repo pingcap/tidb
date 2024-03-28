@@ -70,6 +70,7 @@ go_test(
         "//pkg/domain/resourcegroup",
         "//pkg/kv",
         "//pkg/parser/charset",
+        "//pkg/parser/emptynil",
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",

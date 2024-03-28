@@ -47,6 +47,7 @@ go_library(
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/kv",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",

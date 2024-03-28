@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
@@ -136,7 +137,7 @@ func (msm *MockSessionManager) GetAutoAnalyzeProcID() uint64 {
 // StoreInternalSession is to store internal session.
 func (msm *MockSessionManager) StoreInternalSession(s any) {
 	msm.mu.Lock()
-	if msm.internalSessions == nil {
+	if emptynil.IsNilMap(msm.internalSessions) {
 		msm.internalSessions = make(map[any]struct{})
 	}
 	msm.internalSessions[s] = struct{}{}

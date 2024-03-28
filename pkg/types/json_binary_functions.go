@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -261,7 +262,7 @@ func (bj BinaryJSON) extractOne(pathExpr JSONPathExpression) []BinaryJSON {
 
 func (bj BinaryJSON) extractTo(buf []BinaryJSON, pathExpr JSONPathExpression, dup map[*byte]struct{}, one bool) []BinaryJSON {
 	if len(pathExpr.legs) == 0 {
-		if dup != nil {
+		if !emptynil.IsNilMap(dup) {
 			if _, exists := dup[&bj.Value[0]]; exists {
 				return buf
 			}

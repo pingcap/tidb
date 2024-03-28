@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -170,7 +171,7 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 }
 
 func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.GroupNDV {
-	if colGroups == nil {
+	if emptynil.IsNilSlice(colGroups) {
 		return nil
 	}
 	tbl := ds.tableStats.HistColl
@@ -513,7 +514,7 @@ func getMinSelectivityFromPaths(paths []*util.AccessPath, totalRowCount float64)
 	for _, path := range paths {
 		// For table path and index merge path, AccessPath.CountAfterIndex is not set and meaningless,
 		// but we still consider their AccessPath.CountAfterAccess.
-		if path.IsTablePath() || path.PartialIndexPaths != nil {
+		if path.IsTablePath() || !emptynil.IsNilSlice(path.PartialIndexPaths) {
 			minSelectivity = min(minSelectivity, path.CountAfterAccess/totalRowCount)
 			continue
 		}
@@ -655,7 +656,7 @@ func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, child
 			}
 			projCols[i] = projCol
 		}
-		if projCols == nil {
+		if emptynil.IsNilSlice(projCols) {
 			continue
 		}
 		slices.Sort(projCols)

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
@@ -105,7 +106,7 @@ func (i *TemporaryTableSnapshotInterceptor) OnBatchGet(ctx context.Context, snap
 		}
 	}
 
-	if result == nil {
+	if emptynil.IsNilMap(result) {
 		result = make(map[string][]byte)
 	}
 	return result, nil
@@ -134,7 +135,7 @@ func (i *TemporaryTableSnapshotInterceptor) batchGetTemporaryTableKeys(ctx conte
 			return nil, nil, err
 		}
 
-		if result == nil {
+		if emptynil.IsNilMap(result) {
 			result = make(map[string][]byte)
 		}
 

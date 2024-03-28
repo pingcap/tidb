@@ -18,6 +18,7 @@ go_library(
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/vecgroupchecker",
         "//pkg/expression",
+        "//pkg/parser/emptynil",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx",

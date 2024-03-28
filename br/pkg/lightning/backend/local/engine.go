@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1574,7 +1575,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*
 	if err != nil {
 		return nil, err
 	}
-	if key == nil {
+	if emptynil.IsNilSlice(key) {
 		return nil, errors.New("all ssts are empty")
 	}
 	newMeta.minKey = append(newMeta.minKey[:0], key...)
@@ -1598,7 +1599,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*
 		if err != nil {
 			return nil, err
 		}
-		if key == nil {
+		if emptynil.IsNilSlice(key) {
 			break
 		}
 	}

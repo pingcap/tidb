@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -547,7 +548,7 @@ func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementConte
 	if len(rows) == 0 {
 		return nil
 	}
-	if fkc.checkRowsCache == nil {
+	if emptynil.IsNilMap(fkc.checkRowsCache) {
 		fkc.checkRowsCache = map[string]bool{}
 	}
 	fkCheckKeys := make([]*fkCheckKey, len(rows))

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"go.uber.org/atomic"
 )
 
@@ -153,7 +154,7 @@ type StatementStatsMap map[SQLPlanDigest]*StatementStatsItem
 // by m. So after calling Merge, it is best not to continue to use
 // other unless you understand what you are doing.
 func (m StatementStatsMap) Merge(other StatementStatsMap) {
-	if m == nil || other == nil {
+	if emptynil.IsNilMap(m) || emptynil.IsNilMap(other) {
 		return
 	}
 	for newDigest, newItem := range other {
@@ -230,7 +231,7 @@ func NewKvStatementStatsItem() KvStatementStatsItem {
 //
 // If you add additional indicators, you need to add their merge code here.
 func (i *KvStatementStatsItem) Merge(other KvStatementStatsItem) {
-	if i.KvExecCount == nil {
+	if emptynil.IsNilMap(i.KvExecCount) {
 		i.KvExecCount = other.KvExecCount
 	} else {
 		for target, count := range other.KvExecCount {

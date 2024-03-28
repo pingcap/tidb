@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/config"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/kverrors"
@@ -165,7 +166,7 @@ func PrewriteOptimisticWithAssertion(pk []byte, key []byte, value []byte, startT
 	minCommitTs uint64, useAsyncCommit bool, secondaries [][]byte, assertion kvrpcpb.Assertion,
 	assertionLevel kvrpcpb.AssertionLevel, store *TestStore) error {
 	op := kvrpcpb.Op_Put
-	if value == nil {
+	if emptynil.IsNilSlice(value) {
 		op = kvrpcpb.Op_Del
 	}
 	mutation := newMutation(op, key, value)

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -734,7 +735,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		avgInnerRowCnt = p.equalCondOutCnt / outerChild.StatsInfo().RowCount
 	}
 	joins = p.buildIndexJoinInner2TableScan(prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
-	if joins != nil {
+	if !emptynil.IsNilSlice(joins) {
 		return
 	}
 	return p.buildIndexJoinInner2IndexScan(prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
@@ -1154,7 +1155,7 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 	}
 
 	// 1. Try to get NDV from column stats if it's a single column.
-	if len(colUIDs) == 1 && histColl.Columns != nil {
+	if len(colUIDs) == 1 && !emptynil.IsNilMap(histColl.Columns) {
 		uid := colUIDs[0]
 		if colStats, ok := histColl.Columns[uid]; ok && colStats != nil && colStats.IsStatsInitialized() {
 			return colStats.NDV
@@ -3411,18 +3412,18 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 	preferHash, preferStream := la.ResetHintIfConflicted()
 
 	hashAggs := la.getHashAggs(prop)
-	if hashAggs != nil && preferHash {
+	if !emptynil.IsNilSlice(hashAggs) && preferHash {
 		return hashAggs, true, nil
 	}
 
 	streamAggs := la.getStreamAggs(prop)
-	if streamAggs != nil && preferStream {
+	if !emptynil.IsNilSlice(streamAggs) && preferStream {
 		return streamAggs, true, nil
 	}
 
 	aggs := append(hashAggs, streamAggs...)
 
-	if streamAggs == nil && preferStream && !prop.IsSortItemEmpty() {
+	if emptynil.IsNilSlice(streamAggs) && preferStream && !prop.IsSortItemEmpty() {
 		la.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer Hint STREAM_AGG is inapplicable")
 	}
 

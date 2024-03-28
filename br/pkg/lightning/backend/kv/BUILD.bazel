@@ -29,6 +29,7 @@ go_library(
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta/autoid",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner/context",

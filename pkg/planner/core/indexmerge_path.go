@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -1445,7 +1446,7 @@ func (ds *DataSource) cleanAccessPathForMVIndexHint() {
 
 // indexMergeContainSpecificIndex checks whether the index merge path contains at least one index in the `indexSet`
 func indexMergeContainSpecificIndex(path *util.AccessPath, indexSet map[int64]struct{}) bool {
-	if path.PartialIndexPaths == nil {
+	if emptynil.IsNilSlice(path.PartialIndexPaths) {
 		return false
 	}
 	for _, p := range path.PartialIndexPaths {

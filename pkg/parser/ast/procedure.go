@@ -17,6 +17,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
@@ -536,7 +537,7 @@ func (n *SimpleCaseStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if n.ElseCases != nil {
+	if !emptynil.IsNilSlice(n.ElseCases) {
 		ctx.WriteKeyWord(" ELSE ")
 		for _, stmt := range n.ElseCases {
 			err := stmt.Restore(ctx)
@@ -571,7 +572,7 @@ func (n *SimpleCaseStmt) Accept(v Visitor) (Node, bool) {
 		n.WhenCases[i] = node.(*SimpleWhenThenStmt)
 	}
 
-	if n.ElseCases != nil {
+	if !emptynil.IsNilSlice(n.ElseCases) {
 		for i, stmt := range n.ElseCases {
 			node, ok := stmt.Accept(v)
 			if !ok {
@@ -646,7 +647,7 @@ func (n *SearchCaseStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if n.ElseCases != nil {
+	if !emptynil.IsNilSlice(n.ElseCases) {
 		ctx.WriteKeyWord(" ELSE ")
 		for _, stmt := range n.ElseCases {
 			err := stmt.Restore(ctx)

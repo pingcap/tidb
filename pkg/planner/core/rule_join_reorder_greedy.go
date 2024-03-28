@@ -20,6 +20,7 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 )
 
 type joinReorderGreedySolver struct {
@@ -64,7 +65,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 
 	// joinNodeNum indicates the number of join nodes except leading join nodes in the current join group
 	joinNodeNum := len(s.curJoinGroup)
-	if leadingJoinNodes != nil {
+	if !emptynil.IsNilSlice(leadingJoinNodes) {
 		// The leadingJoinNodes should be the first element in the s.curJoinGroup.
 		// So it can be joined first.
 		leadingJoinNodes := append(leadingJoinNodes, s.curJoinGroup...)

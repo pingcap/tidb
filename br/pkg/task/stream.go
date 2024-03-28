@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/config"
@@ -1172,7 +1173,7 @@ func RunStreamRestore(
 		if _, err := glue.GetConsole(g).Out().Write(skipMsg); err != nil {
 			return errors.Trace(err)
 		}
-		if curTaskInfo != nil && curTaskInfo.TiFlashItems != nil {
+		if curTaskInfo != nil && !emptynil.IsNilMap(curTaskInfo.TiFlashItems) {
 			log.Info("load tiflash records of snapshot restore from checkpoint")
 			if err != nil {
 				return errors.Trace(err)

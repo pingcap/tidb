@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
@@ -56,7 +57,7 @@ func (la *LogicalAggregation) buildSelfKeyInfo(selfSchema *expression.Schema) {
 	groupByCols := la.GetGroupByCols()
 	if len(groupByCols) == len(la.GroupByItems) && len(la.GroupByItems) > 0 {
 		indices := selfSchema.ColumnsIndices(groupByCols)
-		if indices != nil {
+		if !emptynil.IsNilSlice(indices) {
 			newKey := make([]*expression.Column, 0, len(indices))
 			for _, i := range indices {
 				newKey = append(newKey, selfSchema.Columns[i])
@@ -170,7 +171,7 @@ func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSch
 	schema := p.buildSchemaByExprs(selfSchema)
 	for _, key := range childSchema[0].Keys {
 		indices := schema.ColumnsIndices(key)
-		if indices == nil {
+		if emptynil.IsNilSlice(indices) {
 			continue
 		}
 		newKey := make([]*expression.Column, 0, len(key))
@@ -291,9 +292,9 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 		} else if index.State != model.StatePublic {
 			continue
 		}
-		if uniqueKey, newKey := checkIndexCanBeKey(index, ds.Columns, selfSchema); newKey != nil {
+		if uniqueKey, newKey := checkIndexCanBeKey(index, ds.Columns, selfSchema); !emptynil.IsNilSlice(newKey) {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
-		} else if uniqueKey != nil {
+		} else if !emptynil.IsNilSlice(uniqueKey) {
 			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		}
 	}
@@ -319,9 +320,9 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*exp
 		if path.IsTablePath() {
 			continue
 		}
-		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
+		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); !emptynil.IsNilSlice(newKey) {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
-		} else if uniqueKey != nil {
+		} else if !emptynil.IsNilSlice(uniqueKey) {
 			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		}
 	}

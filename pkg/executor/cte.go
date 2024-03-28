@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
@@ -589,7 +590,7 @@ func (p *cteProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) 
 	}
 	sel = chk.Sel()
 	var hashBitMap []bool
-	if sel != nil {
+	if !emptynil.IsNilSlice(sel) {
 		hashBitMap = make([]bool, chk.Capacity())
 		for _, val := range sel {
 			hashBitMap[val] = true

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -194,7 +195,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
 	for _, mppTask := range pf.ExchangeSender.Tasks {
-		if mppTask.PartitionTableIDs != nil {
+		if !emptynil.IsNilSlice(mppTask.PartitionTableIDs) {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
 		} else if !mppTask.TiFlashStaticPrune {
 			// If isDisaggregatedTiFlashStaticPrune is true, it means this TableScan is under PartitionUnoin,
@@ -735,7 +736,7 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	if nodeInfo == nil {
+	if emptynil.IsNilMap(nodeInfo) {
 		return nil, nil, errors.New("node info should not be nil")
 	}
 	c.nodeCnt = len(nodeInfo)

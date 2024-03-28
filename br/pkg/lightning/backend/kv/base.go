@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -182,7 +183,7 @@ func NewBaseKVEncoder(config *encode.EncodingConfig) (*BaseKVEncoder, error) {
 
 // GetOrCreateRecord returns a record slice from the cache if possible, otherwise creates a new one.
 func (e *BaseKVEncoder) GetOrCreateRecord() []types.Datum {
-	if e.recordCache != nil {
+	if !emptynil.IsNilSlice(e.recordCache) {
 		return e.recordCache
 	}
 	return make([]types.Datum, 0, len(e.Columns)+1)

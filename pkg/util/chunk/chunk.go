@@ -18,6 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -100,7 +101,7 @@ func New(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
 // renewWithCapacity creates a new Chunk based on an existing Chunk with capacity. The newly
 // created Chunk has the same data schema with the old Chunk.
 func renewWithCapacity(chk *Chunk, capacity, requiredRows int) *Chunk {
-	if chk.columns == nil {
+	if emptynil.IsNilSlice(chk.columns) {
 		return &Chunk{}
 	}
 	return &Chunk{
@@ -141,7 +142,7 @@ func renewEmpty(chk *Chunk) *Chunk {
 		capacity:       chk.capacity,
 		requiredRows:   chk.requiredRows,
 	}
-	if chk.sel != nil {
+	if !emptynil.IsNilSlice(chk.sel) {
 		newChk.sel = make([]int, len(chk.sel))
 		copy(newChk.sel, chk.sel)
 	}
@@ -208,7 +209,7 @@ func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 
 // MakeRefTo copies columns `src.columns[srcColIdx]` to `c.columns[dstColIdx]`.
 func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) error {
-	if c.sel != nil || src.sel != nil {
+	if (!emptynil.IsNilSlice(c.sel)) || (!emptynil.IsNilSlice(src.sel)) {
 		return errors.New(msgErrSelNotNil)
 	}
 	c.columns[dstColIdx] = src.columns[srcColIdx]
@@ -219,7 +220,7 @@ func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) error {
 // "other.columns[otherIdx]". If there exists columns refer to the Column to be
 // swapped, we need to re-build the reference.
 func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) error {
-	if c.sel != nil || other.sel != nil {
+	if (!emptynil.IsNilSlice(c.sel)) || (!emptynil.IsNilSlice(other.sel)) {
 		return errors.New(msgErrSelNotNil)
 	}
 	// Find the leftmost Column of the reference which is the actual Column to
@@ -279,7 +280,7 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
 	c.sel = nil
-	if c.columns == nil {
+	if emptynil.IsNilSlice(c.columns) {
 		return
 	}
 	for _, col := range c.columns {
@@ -301,7 +302,7 @@ func (c *Chunk) CopyConstruct() *Chunk {
 // CopyConstructSel is just like CopyConstruct,
 // but ignore the rows that was not selected.
 func (c *Chunk) CopyConstructSel() *Chunk {
-	if c.sel == nil {
+	if emptynil.IsNilSlice(c.sel) {
 		return c.CopyConstruct()
 	}
 	newChk := renewWithCapacity(c, c.capacity, c.requiredRows)
@@ -317,7 +318,7 @@ func (c *Chunk) CopyConstructSel() *Chunk {
 // The doubled capacity should not be larger than maxChunkSize.
 func (c *Chunk) GrowAndReset(maxChunkSize int) {
 	c.sel = nil
-	if c.columns == nil {
+	if emptynil.IsNilSlice(c.columns) {
 		return
 	}
 	newCap := reCalcCapacity(c, maxChunkSize)
@@ -359,7 +360,7 @@ func (c *Chunk) NumCols() int {
 
 // NumRows returns the number of rows in the chunk.
 func (c *Chunk) NumRows() int {
-	if c.sel != nil {
+	if !emptynil.IsNilSlice(c.sel) {
 		return len(c.sel)
 	}
 	if c.NumCols() == 0 {
@@ -370,7 +371,7 @@ func (c *Chunk) NumRows() int {
 
 // GetRow gets the Row in the chunk with the row index.
 func (c *Chunk) GetRow(idx int) Row {
-	if c.sel != nil {
+	if !emptynil.IsNilSlice(c.sel) {
 		// mapping the logical RowIdx to the actual physical RowIdx;
 		// for example, if the Sel is [1, 5, 6], then
 		//	logical 0 -> physical 1,
@@ -412,7 +413,7 @@ func (c *Chunk) AppendRowByColIdxs(row Row, colIdxs []int) (wide int) {
 // 1. every columns are used if colIdxs is nil.
 // 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
 func (c *Chunk) AppendPartialRowByColIdxs(colOff int, row Row, colIdxs []int) (wide int) {
-	if colIdxs == nil {
+	if emptynil.IsNilSlice(colIdxs) {
 		c.AppendPartialRow(colOff, row)
 		return row.Len()
 	}
@@ -573,7 +574,7 @@ func (c *Chunk) AppendJSON(colIdx int, j types.BinaryJSON) {
 }
 
 func (c *Chunk) appendSel(colIdx int) {
-	if colIdx == 0 && c.sel != nil { // use column 0 as standard
+	if colIdx == 0 && !emptynil.IsNilSlice(c.sel) { // use column 0 as standard
 		c.sel = append(c.sel, c.columns[0].length)
 	}
 }
@@ -635,7 +636,7 @@ func (c *Chunk) SetSel(sel []int) {
 
 // Reconstruct removes all filtered rows in this Chunk.
 func (c *Chunk) Reconstruct() {
-	if c.sel == nil {
+	if emptynil.IsNilSlice(c.sel) {
 		return
 	}
 	for _, col := range c.columns {

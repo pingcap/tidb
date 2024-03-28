@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -236,7 +237,7 @@ func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expres
 	}
 	// merge the not-null-cols/registered-map from both side together.
 	fds.NotNullCols.UnionWith(rightFD.NotNullCols)
-	if fds.HashCodeToUniqueID == nil {
+	if emptynil.IsNilMap(fds.HashCodeToUniqueID) {
 		fds.HashCodeToUniqueID = rightFD.HashCodeToUniqueID
 	} else {
 		for k, v := range rightFD.HashCodeToUniqueID {
@@ -1642,7 +1643,7 @@ func detachCondAndBuildRangeForPath(
 	path.EqOrInCondCount = res.EqOrInCount
 	path.IsDNFCond = res.IsDNFCond
 	path.ConstCols = make([]bool, len(path.IdxCols))
-	if res.ColumnValues != nil {
+	if !emptynil.IsNilSlice(res.ColumnValues) {
 		for i := range path.ConstCols {
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
@@ -1843,7 +1844,7 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 	if path.CountAfterAccess < ds.StatsInfo().RowCount && !isIm {
 		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/SelectionFactor, float64(ds.statisticTable.RealtimeCount))
 	}
-	if path.IndexFilters != nil {
+	if !emptynil.IsNilSlice(path.IndexFilters) {
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, path.IndexFilters, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))

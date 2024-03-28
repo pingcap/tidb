@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	pd "github.com/tikv/pd/client/http"
 )
 
@@ -121,7 +122,7 @@ func (mm *mockLabelManager) GetAllLabelRules(context.Context) ([]*label.Rule, er
 	defer mm.RUnlock()
 	r := make([]*label.Rule, 0, len(mm.labelRules))
 	for _, labelRule := range mm.labelRules {
-		if labelRule == nil {
+		if emptynil.IsNilSlice(labelRule) {
 			continue
 		}
 		var rule *label.Rule
@@ -142,7 +143,7 @@ func (mm *mockLabelManager) GetLabelRules(_ context.Context, ruleIDs []string) (
 	for _, ruleID := range ruleIDs {
 		for id, labelRule := range mm.labelRules {
 			if id == ruleID {
-				if labelRule == nil {
+				if emptynil.IsNilSlice(labelRule) {
 					continue
 				}
 				var rule *label.Rule

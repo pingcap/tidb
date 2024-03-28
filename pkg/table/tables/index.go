@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
@@ -571,11 +572,11 @@ func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, d
 	if err != nil {
 		return false, nil, err
 	}
-	if tempRawVal == nil {
+	if emptynil.IsNilSlice(tempRawVal) {
 		originKey := tempKey.Clone()
 		tablecodec.TempIndexKey2IndexKey(originKey)
 		originVal, err := getKeyInTxn(ctx, txn, originKey)
-		if err != nil || originVal == nil {
+		if err != nil || emptynil.IsNilSlice(originVal) {
 			return false, nil, err
 		}
 		if distinct {
@@ -596,7 +597,7 @@ func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, d
 		originKey := tempKey.Clone()
 		tablecodec.TempIndexKey2IndexKey(originKey)
 		originVal, err := getKeyInTxn(ctx, txn, originKey)
-		if err != nil || originVal == nil {
+		if err != nil || emptynil.IsNilSlice(originVal) {
 			return false, nil, err
 		}
 		if distinct {
@@ -613,7 +614,7 @@ func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, d
 			recPrefix := tablecodec.GenTableRecordPrefix(tableID)
 			rowKey := tablecodec.EncodeRecordKey(recPrefix, originHandle)
 			rowVal, err := getKeyInTxn(ctx, txn, rowKey)
-			if err != nil || rowVal == nil {
+			if err != nil || emptynil.IsNilSlice(rowVal) {
 				return false, nil, err
 			}
 			// The row exists. This is the duplicated key.
@@ -643,7 +644,7 @@ func getKeyInTxn(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, e
 
 func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum, error) {
 	needLength := len(c.idxInfo.Columns)
-	if vals == nil || cap(vals) < needLength {
+	if emptynil.IsNilSlice(vals) || cap(vals) < needLength {
 		vals = make([]types.Datum, needLength)
 	}
 	vals = vals[:needLength]

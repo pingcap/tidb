@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -58,7 +59,7 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 
 	failpoint.InjectContext(ctx, "mockMetricsTableData", func() {
 		m, ok := ctx.Value("__mockMetricsTableData").(map[string][][]types.Datum)
-		if ok && m[e.table.Name.L] != nil {
+		if ok && !emptynil.IsNilSlice(m[e.table.Name.L]) {
 			failpoint.Return(m[e.table.Name.L], nil)
 		}
 	})
@@ -164,7 +165,7 @@ func (e *MetricRetriever) genRecord(metric pmodel.Metric, pair pmodel.SamplePair
 	)))
 	for _, label := range e.tblDef.Labels {
 		v := ""
-		if metric != nil {
+		if !emptynil.IsNilMap(metric) {
 			v = string(metric[pmodel.LabelName(label)])
 		}
 		if len(v) == 0 {

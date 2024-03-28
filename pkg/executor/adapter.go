@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -832,7 +833,7 @@ type chunkRowRecordSet struct {
 }
 
 func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
-	if c.fields == nil {
+	if emptynil.IsNilSlice(c.fields) {
 		c.fields = colNames2ResultFields(c.e.Schema(), c.execStmt.OutputNames, c.execStmt.Ctx.GetSessionVars().CurrentDB)
 	}
 	return c.fields
@@ -1895,7 +1896,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 
 	if stmtCtx.WaitLockLeaseTime > 0 {
-		if execDetail.BackoffSleep == nil {
+		if emptynil.IsNilMap(execDetail.BackoffSleep) {
 			execDetail.BackoffSleep = make(map[string]time.Duration)
 		}
 		execDetail.BackoffSleep["waitLockLeaseForCacheTable"] = stmtCtx.WaitLockLeaseTime

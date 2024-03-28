@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -230,7 +231,7 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 	AllSQLDigestsStr: func(info *TxnInfo) types.Datum {
 		allSQLDigests := info.AllSQLDigests
 		// Replace nil with empty array
-		if allSQLDigests == nil {
+		if emptynil.IsNilSlice(allSQLDigests) {
 			allSQLDigests = []string{}
 		}
 		res, err := json.Marshal(allSQLDigests)

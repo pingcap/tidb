@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -785,7 +786,7 @@ func CheckConsistencyAndValidPeer(regionInfos []*RecoverRegionInfo) (map[uint64]
 // in cloud, since iops and bandwidth limitation, write operator in raft is slow, so raft state (logterm, lastlog, commitlog...) are the same among the peers
 // LeaderCandidates select all peers can be select as a leader during the restore
 func LeaderCandidates(peers []*RecoverRegion) ([]*RecoverRegion, error) {
-	if peers == nil {
+	if emptynil.IsNilSlice(peers) {
 		return nil, errors.Annotatef(berrors.ErrRestoreRegionWithoutPeer,
 			"invalid region range")
 	}

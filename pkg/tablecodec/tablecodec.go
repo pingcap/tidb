@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -361,7 +362,7 @@ func EncodeOldRow(loc *time.Location, row []types.Datum, colIDs []int64, valBuf 
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
 	valBuf = valBuf[:0]
-	if values == nil {
+	if emptynil.IsNilSlice(values) {
 		values = make([]types.Datum, len(row)*2)
 	}
 	for i, c := range row {
@@ -447,10 +448,10 @@ func DecodeColumnValueWithDatum(data []byte, ft *types.FieldType, loc *time.Loca
 // DecodeRowWithMapNew decode a row to datum map.
 func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
 	loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
-	if row == nil {
+	if emptynil.IsNilMap(row) {
 		row = make(map[int64]types.Datum, len(cols))
 	}
-	if b == nil {
+	if emptynil.IsNilSlice(b) {
 		return row, nil
 	}
 	if len(b) == 1 && b[0] == codec.NilFlag {
@@ -473,10 +474,10 @@ func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
 // DecodeRowWithMap decodes a byte slice into datums with an existing row map.
 // Row layout: colID1, value1, colID2, value2, .....
 func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
-	if row == nil {
+	if emptynil.IsNilMap(row) {
 		row = make(map[int64]types.Datum, len(cols))
 	}
-	if b == nil {
+	if emptynil.IsNilSlice(b) {
 		return row, nil
 	}
 	if len(b) == 1 && b[0] == codec.NilFlag {
@@ -540,7 +541,7 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	if handle == nil || len(handleColIDs) == 0 {
 		return row, nil
 	}
-	if row == nil {
+	if emptynil.IsNilMap(row) {
 		row = make(map[int64]types.Datum, len(cols))
 	}
 	for id, ft := range cols {
@@ -588,7 +589,7 @@ func decodeHandleToDatum(handle kv.Handle, ft *types.FieldType, idx int) (types.
 // CutRowNew cuts encoded row into byte slices and return columns' byte slice.
 // Row layout: colID1, value1, colID2, value2, .....
 func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
-	if data == nil {
+	if emptynil.IsNilSlice(data) {
 		return nil, nil
 	}
 	if len(data) == 1 && data[0] == codec.NilFlag {
@@ -1110,7 +1111,7 @@ func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 
 // GetIndexKeyBuf reuse or allocate buffer
 func GetIndexKeyBuf(buf []byte, defaultCap int) []byte {
-	if buf != nil {
+	if !emptynil.IsNilSlice(buf) {
 		return buf[:0]
 	}
 	return make([]byte, 0, defaultCap)
@@ -1276,7 +1277,7 @@ func (v *TempIndexValueElem) Encode(buf []byte) []byte {
 				hLen = uint16(len(hEncoded))
 			}
 			// flag + handle length + handle + temp key version
-			if buf == nil {
+			if emptynil.IsNilSlice(buf) {
 				buf = make([]byte, 0, hLen+4)
 			}
 			buf = append(buf, byte(TempIndexValueFlagDeleted))
@@ -1286,7 +1287,7 @@ func (v *TempIndexValueElem) Encode(buf []byte) []byte {
 			return buf
 		}
 		// flag + temp key version
-		if buf == nil {
+		if emptynil.IsNilSlice(buf) {
 			buf = make([]byte, 0, 2)
 		}
 		buf = append(buf, byte(TempIndexValueFlagNonDistinctDeleted))
@@ -1295,7 +1296,7 @@ func (v *TempIndexValueElem) Encode(buf []byte) []byte {
 	}
 	if v.Distinct {
 		// flag + value length + value + temp key version
-		if buf == nil {
+		if emptynil.IsNilSlice(buf) {
 			buf = make([]byte, 0, len(v.Value)+4)
 		}
 		buf = append(buf, byte(TempIndexValueFlagNormal))
@@ -1306,7 +1307,7 @@ func (v *TempIndexValueElem) Encode(buf []byte) []byte {
 		return buf
 	}
 	// flag + value + temp key version
-	if buf == nil {
+	if emptynil.IsNilSlice(buf) {
 		buf = make([]byte, 0, len(v.Value)+2)
 	}
 	buf = append(buf, byte(TempIndexValueFlagNonDistinctNormal))
@@ -1470,7 +1471,7 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 	idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, handleRestoredData []types.Datum, buf []byte) ([]byte, error) {
 	var idxVal []byte
-	if buf == nil {
+	if emptynil.IsNilSlice(buf) {
 		idxVal = make([]byte, 0)
 	} else {
 		idxVal = buf[:0]
@@ -1535,7 +1536,7 @@ func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo
 	idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, buf []byte) ([]byte, error) {
 	var idxVal []byte
-	if buf == nil {
+	if emptynil.IsNilSlice(buf) {
 		idxVal = make([]byte, 0)
 	} else {
 		idxVal = buf[:0]
@@ -1587,7 +1588,7 @@ func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo
 		idxVal[0] = byte(tailLen)
 	} else {
 		// Old index value encoding.
-		if buf == nil {
+		if emptynil.IsNilSlice(buf) {
 			idxVal = make([]byte, 0)
 		} else {
 			idxVal = buf[:0]
@@ -1767,7 +1768,7 @@ func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdSt
 	if err != nil {
 		return nil, err
 	}
-	if segs.RestoredValues != nil {
+	if !emptynil.IsNilSlice(segs.RestoredValues) {
 		resultValues, err = decodeRestoredValuesV5(columns[:colsLen], resultValues, segs.RestoredValues)
 		if err != nil {
 			return nil, err
@@ -1776,7 +1777,7 @@ func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdSt
 	if hdStatus == HandleNotNeeded {
 		return resultValues, nil
 	}
-	if segs.CommonHandle != nil {
+	if !emptynil.IsNilSlice(segs.CommonHandle) {
 		// In unique common handle index.
 		handle, err = kv.NewCommonHandle(segs.CommonHandle)
 	} else {
@@ -1791,7 +1792,7 @@ func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdSt
 		return nil, err
 	}
 	resultValues = append(resultValues, handleBytes...)
-	if segs.PartitionID != nil {
+	if !emptynil.IsNilSlice(segs.PartitionID) {
 		_, pid, err := codec.DecodeInt(segs.PartitionID)
 		if err != nil {
 			return nil, err
@@ -1817,7 +1818,7 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 	if err != nil {
 		return nil, err
 	}
-	if segs.RestoredValues != nil { // new collation
+	if !emptynil.IsNilSlice(segs.RestoredValues) { // new collation
 		resultValues, err = decodeRestoredValues(columns[:colsLen], segs.RestoredValues)
 		if err != nil {
 			return nil, err
@@ -1827,10 +1828,10 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 		return resultValues, nil
 	}
 
-	if segs.IntHandle != nil {
+	if !emptynil.IsNilSlice(segs.IntHandle) {
 		// In unique int handle index.
 		handle = decodeIntHandleInIndexValue(segs.IntHandle)
-	} else if segs.CommonHandle != nil {
+	} else if !emptynil.IsNilSlice(segs.CommonHandle) {
 		// In unique common handle index.
 		handle, err = decodeHandleInIndexKey(segs.CommonHandle)
 		if err != nil {
@@ -1848,7 +1849,7 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 		return nil, err
 	}
 	resultValues = append(resultValues, handleBytes...)
-	if segs.PartitionID != nil {
+	if !emptynil.IsNilSlice(segs.PartitionID) {
 		_, pid, err := codec.DecodeInt(segs.PartitionID)
 		if err != nil {
 			return nil, err
@@ -1870,10 +1871,10 @@ func IndexKVIsUnique(value []byte) bool {
 	}
 	if getIndexVersion(value) == 1 {
 		segs := SplitIndexValueForClusteredIndexVersion1(value)
-		return segs.CommonHandle != nil
+		return !emptynil.IsNilSlice(segs.CommonHandle)
 	}
 	segs := SplitIndexValue(value)
-	return segs.IntHandle != nil || segs.CommonHandle != nil
+	return !emptynil.IsNilSlice(segs.IntHandle) || !emptynil.IsNilSlice(segs.CommonHandle)
 }
 
 // VerifyTableIDForRanges verifies that all given ranges are valid to decode the table id.

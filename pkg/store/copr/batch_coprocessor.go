@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -375,7 +376,7 @@ func balanceBatchCopTask(ctx context.Context, aliveStores []*tikv.Store, origina
 	contiguousBalanceScore := 0
 	if balanceWithContinuity {
 		contiguousTasks, contiguousBalanceScore = balanceBatchCopTaskWithContinuity(storeTaskMap, candidateRegionInfos, balanceContinuousRegionCount)
-		if isBalance(contiguousBalanceScore) && contiguousTasks != nil {
+		if isBalance(contiguousBalanceScore) && !emptynil.IsNilSlice(contiguousTasks) {
 			return contiguousTasks
 		}
 	}
@@ -385,7 +386,7 @@ func balanceBatchCopTask(ctx context.Context, aliveStores []*tikv.Store, origina
 		findNextStore := func(candidateStores []uint64) uint64 {
 			store := uint64(math.MaxUint64)
 			weightedRegionNum := math.MaxFloat64
-			if candidateStores != nil {
+			if !emptynil.IsNilSlice(candidateStores) {
 				for _, storeID := range candidateStores {
 					if _, validStore := storeCandidateRegionMap[storeID]; !validStore {
 						continue
@@ -449,7 +450,7 @@ func balanceBatchCopTask(ctx context.Context, aliveStores []*tikv.Store, origina
 		}
 	}
 
-	if contiguousTasks != nil {
+	if !emptynil.IsNilSlice(contiguousTasks) {
 		score, balanceInfos := checkBatchCopTaskBalance(storeTaskMap, balanceContinuousRegionCount)
 		if !isBalance(score) {
 			logutil.BgLogger().Warn("Region count is not balance and use contiguousTasks", zap.Int("contiguousBalanceScore", contiguousBalanceScore), zap.Int("score", score), zap.Strings("balanceInfos", balanceInfos))
@@ -1056,7 +1057,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 
 	var tasks []*batchCopTask
 	var err error
-	if req.PartitionIDAndRanges != nil {
+	if !emptynil.IsNilSlice(req.PartitionIDAndRanges) {
 		// For Partition Table Scan
 		keyRanges := make([]*KeyRanges, 0, len(req.PartitionIDAndRanges))
 		partitionIDs := make([]int64, 0, len(req.PartitionIDAndRanges))
@@ -1217,7 +1218,7 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
-	if batchTask.regionInfos != nil {
+	if !emptynil.IsNilSlice(batchTask.regionInfos) {
 		var ranges []kv.KeyRange
 		for _, ri := range batchTask.regionInfos {
 			ri.Ranges.Do(func(ran *kv.KeyRange) {
@@ -1473,7 +1474,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 		if err != nil {
 			return nil, err
 		}
-		if rpcCtxs == nil {
+		if emptynil.IsNilSlice(rpcCtxs) {
 			logutil.BgLogger().Info("buildBatchCopTasksConsistentHashForPD retry because rcpCtx is nil", zap.Int("retryNum", retryNum))
 			err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("Cannot find region with TiFlash peer"))
 			if err != nil {

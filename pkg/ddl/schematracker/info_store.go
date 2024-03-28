@@ -16,6 +16,7 @@ package schematracker
 
 import (
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -55,7 +56,7 @@ func (i *InfoStore) SchemaByName(name model.CIStr) *model.DBInfo {
 func (i *InfoStore) PutSchema(dbInfo *model.DBInfo) {
 	key := i.ciStr2Key(dbInfo.Name)
 	i.dbs[key] = dbInfo
-	if i.tables[key] == nil {
+	if emptynil.IsNilMap(i.tables[key]) {
 		i.tables[key] = map[string]*model.TableInfo{}
 	}
 }

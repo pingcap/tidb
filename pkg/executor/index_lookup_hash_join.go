@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -588,7 +589,7 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(task *indexHash
 		}
 	OUTER:
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-			if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
+			if !emptynil.IsNilSlice(task.outerMatch) && !task.outerMatch[chkIdx][rowIdx] {
 				continue
 			}
 			row := chk.GetRow(rowIdx)

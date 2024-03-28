@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbtbl "github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -648,7 +649,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err != nil && !tikverr.IsErrNotFound(err) {
 					return errors.Trace(err)
 				}
-				if latestValue != nil {
+				if !emptynil.IsNilSlice(latestValue) {
 					handle, err := tablecodec.DecodeRowKey(rawKey)
 					if err != nil {
 						return errors.Trace(err)

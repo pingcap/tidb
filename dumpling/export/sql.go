@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/dumpling/log"
 	dbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
@@ -864,7 +865,7 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Con
 		support[k] = pv
 	}
 
-	if cfg.Params == nil {
+	if emptynil.IsNilMap(cfg.Params) {
 		cfg.Params = make(map[string]string)
 	}
 

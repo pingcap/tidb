@@ -13,6 +13,7 @@ go_library(
         "//pkg/errno",
         "//pkg/parser",
         "//pkg/parser/ast",
+        "//pkg/parser/emptynil",
         "//pkg/parser/format",
         "//pkg/parser/model",
         "//pkg/util/dbterror",

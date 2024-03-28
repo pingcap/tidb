@@ -17,6 +17,8 @@ package rowcodec
 import (
 	"encoding/binary"
 	"strconv"
+
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 )
 
 const (
@@ -281,7 +283,7 @@ func (r *row) ColumnIsNull(rowData []byte, colID int64, defaultVal []byte) (bool
 	}
 	_, isNil, notFound := r.findColID(colID)
 	if notFound {
-		return defaultVal == nil, nil
+		return emptynil.IsNilSlice(defaultVal), nil
 	}
 	return isNil, nil
 }

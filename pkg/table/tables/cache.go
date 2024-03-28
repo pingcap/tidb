@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -249,7 +250,7 @@ func (c *cachedTable) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 
 func txnCtxAddCachedTable(sctx table.MutateContext, tid int64, handle *cachedTable) {
 	txnCtx := sctx.GetSessionVars().TxnCtx
-	if txnCtx.CachedTables == nil {
+	if emptynil.IsNilMap(txnCtx.CachedTables) {
 		txnCtx.CachedTables = make(map[int64]any)
 	}
 	if _, ok := txnCtx.CachedTables[tid]; !ok {

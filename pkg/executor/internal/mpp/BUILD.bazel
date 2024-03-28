@@ -18,6 +18,7 @@ go_library(
         "//pkg/executor/mppcoordmanager",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/parser/emptynil",
         "//pkg/planner/core",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",

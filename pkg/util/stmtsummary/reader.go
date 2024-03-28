@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -80,12 +81,12 @@ func (ssr *stmtSummaryReader) GetStmtSummaryCurrentRows() [][]types.Datum {
 			continue
 		}
 		record := ssr.getStmtByDigestRow(ssbd, beginTime)
-		if record != nil {
+		if !emptynil.IsNilSlice(record) {
 			rows = append(rows, record)
 		}
 	}
 	if ssr.checker == nil {
-		if otherDatum := ssr.getStmtEvictedOtherRow(other); otherDatum != nil {
+		if otherDatum := ssr.getStmtEvictedOtherRow(other); !emptynil.IsNilSlice(otherDatum) {
 			rows = append(rows, otherDatum)
 		}
 	}
@@ -160,7 +161,7 @@ func (ssr *stmtSummaryReader) getStmtByDigestHistoryRow(ssbd *stmtSummaryByDiges
 	rows := make([][]types.Datum, 0, len(ssElements))
 	for _, ssElement := range ssElements {
 		record := ssr.getStmtByDigestElementRow(ssElement, ssbd)
-		if record != nil {
+		if !emptynil.IsNilSlice(record) {
 			rows = append(rows, record)
 		}
 	}
@@ -193,7 +194,7 @@ func (ssr *stmtSummaryReader) getStmtEvictedOtherHistoryRow(ssbde *stmtSummaryBy
 	ssbd := new(stmtSummaryByDigest)
 	for _, seElement := range seElements {
 		record := ssr.getStmtByDigestElementRow(seElement.otherSummary, ssbd)
-		if record != nil {
+		if !emptynil.IsNilSlice(record) {
 			rows = append(rows, record)
 		}
 	}

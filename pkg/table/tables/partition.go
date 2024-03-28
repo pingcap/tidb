@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1611,7 +1612,7 @@ func partitionedTableAddRecord(ctx table.MutateContext, t *partitionedTable, r [
 		return nil, errors.Trace(err)
 	}
 
-	if partitionSelection != nil {
+	if !emptynil.IsNilMap(partitionSelection) {
 		if _, ok := partitionSelection[pid]; !ok {
 			return nil, errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
@@ -1742,7 +1743,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if partitionSelection != nil {
+	if !emptynil.IsNilMap(partitionSelection) {
 		if _, ok := partitionSelection[to]; !ok {
 			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}

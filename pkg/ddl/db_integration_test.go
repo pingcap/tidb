@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -2560,9 +2561,9 @@ func TestAccessLocalTmpTableAfterDropDB(t *testing.T) {
 			switch {
 			case test.errcode != 0:
 				tk.MustGetErrCode(test.sql, test.errcode)
-			case test.queryResult != nil:
+			case !emptynil.IsNilSlice(test.queryResult):
 				tk.MustQuery(test.sql).Check(testkit.Rows(test.queryResult...))
-			case test.result != nil:
+			case !emptynil.IsNilSlice(test.result):
 				tk.MustExec(test.sql)
 				tk.MustQuery("select * from tmpdb.tmp").Check(testkit.Rows(test.result...))
 			default:

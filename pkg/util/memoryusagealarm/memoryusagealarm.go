@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
@@ -274,7 +275,7 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 		info := list[i]
 		buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
 		fields := util.GenLogFields(record.lastCheckTime.Sub(info.Time), info, false)
-		if fields == nil {
+		if emptynil.IsNilSlice(fields) {
 			continue
 		}
 		fields = append(fields, zap.String("tidb_mem_oom_action", oomAction))

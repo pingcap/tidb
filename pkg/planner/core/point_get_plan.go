@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
@@ -1096,7 +1097,7 @@ func newBatchPointGetPlan(
 			pairs = make([]nameValuePair, 0, len(x.Values))
 			valuesParams = make([]*expression.Constant, len(x.Values))
 			initTypes := false
-			if indexTypes == nil { // only init once
+			if emptynil.IsNilSlice(indexTypes) { // only init once
 				indexTypes = make([]*types.FieldType, len(x.Values))
 				initTypes = true
 			}
@@ -1165,7 +1166,7 @@ func newBatchPointGetPlan(
 			}
 			values = []types.Datum{*dval}
 			valuesParams = []*expression.Constant{con}
-			if indexTypes == nil { // only init once
+			if emptynil.IsNilSlice(indexTypes) { // only init once
 				indexTypes = []*types.FieldType{&colInfos[0].FieldType}
 			}
 			pairs = append(pairs, nameValuePair{colName: whereColNames[0], value: *dval})
@@ -1332,7 +1333,7 @@ func tryPointGetPlan(ctx PlanContext, selStmt *ast.SelectStmt, check bool) *Poin
 
 	pairs := make([]nameValuePair, 0, 4)
 	pairs, isTableDual := getNameValuePairs(ctx, tbl, tblAlias, pairs, selStmt.Where)
-	if pairs == nil && !isTableDual {
+	if emptynil.IsNilSlice(pairs) && !isTableDual {
 		return nil
 	}
 
@@ -1384,7 +1385,7 @@ func checkTblIndexForPointPlan(ctx PlanContext, tblName *ast.TableName, schema *
 			}
 		}
 		if isTableDual {
-			if check && latestIndexes == nil {
+			if check && emptynil.IsNilMap(latestIndexes) {
 				latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
 				if err != nil {
 					logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
@@ -1401,10 +1402,10 @@ func checkTblIndexForPointPlan(ctx PlanContext, tblName *ast.TableName, schema *
 			return p
 		}
 		idxValues, idxConstant, colsFieldType := getIndexValues(idxInfo, pairs)
-		if idxValues == nil {
+		if emptynil.IsNilSlice(idxValues) {
 			continue
 		}
-		if check && latestIndexes == nil {
+		if check && emptynil.IsNilMap(latestIndexes) {
 			latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
 			if err != nil {
 				logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
@@ -1446,7 +1447,7 @@ func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint
 		if hint.HintScope != ast.HintForScan {
 			continue
 		}
-		if hint.HintType == ast.HintIgnore && hint.IndexNames != nil {
+		if hint.HintType == ast.HintIgnore && !emptynil.IsNilSlice(hint.IndexNames) {
 			isIgnore = true
 			for _, name := range hint.IndexNames {
 				if match(name) {
@@ -1454,7 +1455,7 @@ func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint
 				}
 			}
 		}
-		if (hint.HintType == ast.HintForce || hint.HintType == ast.HintUse) && hint.IndexNames != nil {
+		if (hint.HintType == ast.HintForce || hint.HintType == ast.HintUse) && !emptynil.IsNilSlice(hint.IndexNames) {
 			for _, name := range hint.IndexNames {
 				if match(name) {
 					return true
@@ -1638,11 +1639,11 @@ func getNameValuePairs(ctx PlanContext, tbl *model.TableInfo, tblName model.CISt
 	}
 	if binOp.Op == opcode.LogicAnd {
 		nvPairs, isTableDual = getNameValuePairs(ctx, tbl, tblName, nvPairs, binOp.L)
-		if nvPairs == nil || isTableDual {
+		if emptynil.IsNilSlice(nvPairs) || isTableDual {
 			return nil, isTableDual
 		}
 		nvPairs, isTableDual = getNameValuePairs(ctx, tbl, tblName, nvPairs, binOp.R)
-		if nvPairs == nil || isTableDual {
+		if emptynil.IsNilSlice(nvPairs) || isTableDual {
 			return nil, isTableDual
 		}
 		return nvPairs, isTableDual
@@ -1911,7 +1912,7 @@ func buildPointUpdatePlan(ctx PlanContext, pointPlan PhysicalPlan, dbName string
 		return nil
 	}
 	orderedList, allAssignmentsAreConstant := buildOrderedList(ctx, pointPlan, updateStmt.List)
-	if orderedList == nil {
+	if emptynil.IsNilSlice(orderedList) {
 		return nil
 	}
 	handleCols := buildHandleCols(ctx, tbl, pointPlan.Schema())

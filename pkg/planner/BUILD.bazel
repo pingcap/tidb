@@ -12,6 +12,7 @@ go_library(
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/parser/ast",
+        "//pkg/parser/emptynil",
         "//pkg/planner/cascades",
         "//pkg/planner/context",
         "//pkg/planner/core",

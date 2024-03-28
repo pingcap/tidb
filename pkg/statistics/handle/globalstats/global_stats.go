@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -168,7 +169,7 @@ func blockingMergePartitionStats2GlobalStats(
 	statsHandle statstypes.StatsHandle,
 ) (globalStats *GlobalStats, err error) {
 	externalCache := false
-	if allPartitionStats != nil {
+	if !emptynil.IsNilMap(allPartitionStats) {
 		externalCache = true
 	}
 
@@ -213,7 +214,7 @@ func blockingMergePartitionStats2GlobalStats(
 		tableInfo := partitionTable.Meta()
 		var partitionStats *statistics.Table
 		var okLoad bool
-		if allPartitionStats != nil {
+		if !emptynil.IsNilMap(allPartitionStats) {
 			partitionStats, okLoad = allPartitionStats[partitionID]
 		} else {
 			okLoad = false

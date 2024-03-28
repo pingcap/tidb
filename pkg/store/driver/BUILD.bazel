@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/kv",
         "//pkg/metrics",
+        "//pkg/parser/emptynil",
         "//pkg/sessionctx/variable",
         "//pkg/store/copr",
         "//pkg/store/driver/error",

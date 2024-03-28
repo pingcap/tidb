@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	atomicutil "go.uber.org/atomic"
 )
@@ -288,7 +289,7 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 		oldParent.remove(t)
 	}
 	parent.mu.Lock()
-	if parent.mu.children == nil {
+	if emptynil.IsNilMap(parent.mu.children) {
 		parent.mu.children = make(map[int][]*Tracker)
 	}
 	parent.mu.children[t.label] = append(parent.mu.children[t.label], t)
@@ -331,7 +332,7 @@ func (t *Tracker) remove(oldChild *Tracker) {
 	found := false
 	label := oldChild.label
 	t.mu.Lock()
-	if t.mu.children != nil {
+	if len(t.mu.children) > 0 {
 		children := t.mu.children[label]
 		for i, child := range children {
 			if child == oldChild {
@@ -373,7 +374,7 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 
 	label := oldChild.label
 	t.mu.Lock()
-	if t.mu.children != nil {
+	if len(t.mu.children) > 0 {
 		children := t.mu.children[label]
 		for i, child := range children {
 			if child != oldChild {

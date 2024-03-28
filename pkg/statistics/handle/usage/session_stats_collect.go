@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -469,7 +470,7 @@ func UpdateTableDeltaMap(m map[int64]variable.TableDelta, id int64, delta int64,
 	item := m[id]
 	item.Delta += delta
 	item.Count += count
-	if item.ColSize == nil {
+	if emptynil.IsNilMap(item.ColSize) {
 		item.ColSize = make(map[int64]int64)
 	}
 	if colSize != nil {

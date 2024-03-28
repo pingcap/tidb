@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -152,7 +153,7 @@ func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*
 	}
 
 	reader := stmtsummary.NewStmtSummaryReader(user, priv, columns, instanceAddr, tz)
-	if e.digests != nil {
+	if !emptynil.IsNilMap(e.digests) {
 		// set checker to filter out statements not matching the given digests
 		checker := stmtsummary.NewStmtSummaryChecker(e.digests)
 		reader.SetChecker(checker)
@@ -222,7 +223,7 @@ func (r *stmtSummaryRetrieverV2) initEvictedRowsReader(sctx sessionctx.Context) 
 	var rows [][]types.Datum
 
 	row := r.stmtSummary.Evicted()
-	if row != nil {
+	if !emptynil.IsNilSlice(row) {
 		rows = append(rows, row)
 	}
 	if !isClusterTable(r.table.Name.O) {

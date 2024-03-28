@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -117,7 +118,7 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 			originalOutputFieldTypes = append(originalOutputFieldTypes, expression.PbTypeToFieldType(gby.FieldType))
 		}
 	}
-	if ce.outputOff != nil {
+	if !emptynil.IsNilSlice(ce.outputOff) {
 		for _, idx := range ce.outputOff {
 			outputFieldTypes = append(outputFieldTypes, originalOutputFieldTypes[idx])
 		}
@@ -575,7 +576,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 			if len(val) == 0 {
 				continue
 			}
-			if e.counts != nil {
+			if !emptynil.IsNilSlice(e.counts) {
 				e.counts[i]++
 				e.ndvs[i] = 1
 			}
@@ -591,7 +592,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 				err = dbReader.Scan(ran.StartKey, ran.EndKey, math.MaxInt64, e.startTS, e.processor)
 			}
 			delta := int64(e.rowCount - oldCnt)
-			if e.counts != nil {
+			if !emptynil.IsNilSlice(e.counts) {
 				e.counts[i] += delta
 				e.ndvs[i] = e.curNdv
 			}
@@ -700,7 +701,7 @@ func (e *countColumnProcessor) Process(key, value []byte) error {
 		if e.aggCtx.col.ColumnId < int64(e.mockReader.chk.NumCols()) {
 			isNull = row.IsNull(int(e.aggCtx.col.ColumnId))
 		} else {
-			isNull = e.aggCtx.col.DefaultVal == nil
+			isNull = emptynil.IsNilSlice(e.aggCtx.col.DefaultVal)
 		}
 		if !isNull {
 			e.rowCount++
@@ -946,7 +947,7 @@ func (e *closureExecutor) chunkToOldChunk(chk *chunk.Chunk) error {
 	errCtx := sc.ErrCtx()
 	for i := 0; i < chk.NumRows(); i++ {
 		oldRow = oldRow[:0]
-		if e.outputOff != nil {
+		if !emptynil.IsNilSlice(e.outputOff) {
 			for _, outputOff := range e.outputOff {
 				d := chk.GetRow(i).GetDatum(int(outputOff), e.fieldTps[outputOff])
 				oldRow = append(oldRow, d)

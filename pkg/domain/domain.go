@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1147,7 +1148,7 @@ func (do *Domain) Init(
 		if addrs, err = ebd.EtcdAddrs(); err != nil {
 			return err
 		}
-		if addrs != nil {
+		if !emptynil.IsNilSlice(addrs) {
 			cli, err := newEtcdCli(addrs, ebd)
 			if err != nil {
 				return errors.Trace(err)

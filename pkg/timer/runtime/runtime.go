@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/timer/metrics"
 	"github.com/pingcap/tidb/pkg/util"
@@ -277,7 +278,7 @@ func (rt *TimerGroupRuntime) tryTriggerTimerEvents() {
 		case worker.ch <- req:
 			rt.cache.setTimerProcStatus(timer.ID, procTriggering, eventID)
 		default:
-			if busyWorkers == nil {
+			if emptynil.IsNilMap(busyWorkers) {
 				busyWorkers = make(map[string]struct{})
 			}
 

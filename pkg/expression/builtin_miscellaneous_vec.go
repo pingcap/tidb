@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/vitess"
@@ -51,7 +52,7 @@ func (b *builtinInetNtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		}
 		binary.BigEndian.PutUint32(ip, uint32(val))
 		ipv4 := ip.To4()
-		if ipv4 == nil {
+		if emptynil.IsNilSlice(ipv4) {
 			// Not a vaild ipv4 address.
 			result.AppendNull()
 			continue
@@ -143,7 +144,7 @@ func (b *builtinIsIPv6Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 			i64s[i] = 0
 		} else {
 			ipStr := buf.GetString(i)
-			if ip := net.ParseIP(ipStr); ip != nil && !isIPv4(ipStr) {
+			if ip := net.ParseIP(ipStr); !emptynil.IsNilSlice(ip) && !isIPv4(ipStr) {
 				i64s[i] = 1
 			} else {
 				i64s[i] = 0
@@ -467,24 +468,24 @@ func (b *builtinInet6AtonSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 			continue
 		}
 		ip := net.ParseIP(val)
-		if ip == nil {
+		if emptynil.IsNilSlice(ip) {
 			result.AppendNull()
 			continue
 		}
 		var isMappedIpv6 bool
 		ipTo4 := ip.To4()
-		if ipTo4 != nil && strings.Contains(val, ":") {
+		if !emptynil.IsNilSlice(ipTo4) && strings.Contains(val, ":") {
 			// mapped ipv6 address.
 			isMappedIpv6 = true
 		}
 
-		if isMappedIpv6 || ipTo4 == nil {
-			if resv6 == nil {
+		if isMappedIpv6 || emptynil.IsNilSlice(ipTo4) {
+			if emptynil.IsNilSlice(resv6) {
 				resv6 = make([]byte, net.IPv6len)
 			}
 			res = resv6
 		} else {
-			if resv4 == nil {
+			if emptynil.IsNilSlice(resv4) {
 				resv4 = make([]byte, net.IPv4len)
 			}
 			res = resv4
@@ -494,7 +495,7 @@ func (b *builtinInet6AtonSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 			copy(res[12:], ipTo4)
 			res[11] = 0xff
 			res[10] = 0xff
-		} else if ipTo4 == nil {
+		} else if emptynil.IsNilSlice(ipTo4) {
 			copy(res, ip.To16())
 		} else {
 			copy(res, ipTo4)
@@ -610,7 +611,7 @@ func (b *builtinInet6NtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		if len(valI) == net.IPv6len && !strings.Contains(ip, ":") {
 			ip = fmt.Sprintf("::ffff:%s", ip)
 		}
-		if net.ParseIP(ip) == nil {
+		if emptynil.IsNilSlice(net.ParseIP(ip)) {
 			result.AppendNull()
 			continue
 		}

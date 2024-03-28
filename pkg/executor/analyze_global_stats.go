@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -70,7 +71,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 
 			mergeStatsErr := func() error {
 				globalOpts := e.opts
-				if e.OptionsMap != nil {
+				if !emptynil.IsNilMap(e.OptionsMap) {
 					if v2Options, ok := e.OptionsMap[globalStatsID.tableID]; ok {
 						globalOpts = v2Options.FilledOpts
 					}

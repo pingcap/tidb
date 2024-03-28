@@ -13,6 +13,7 @@ go_library(
         "//pkg/meta/autoid",
         "//pkg/metrics",
         "//pkg/owner",
+        "//pkg/parser/emptynil",
         "//pkg/parser/model",
         "//pkg/util/etcd",
         "//pkg/util/logutil",

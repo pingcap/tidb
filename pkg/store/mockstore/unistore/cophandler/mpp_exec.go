@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/emptynil"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
@@ -222,13 +223,13 @@ func (e *tableScanExec) next() (*chunk.Chunk, error) {
 	// Update the range for coprocessor paging protocol.
 	if e.paging != nil && result.err == nil {
 		if e.desc {
-			if result.lastProcessedKey != nil {
+			if !emptynil.IsNilSlice(result.lastProcessedKey) {
 				*e.paging = coprocessor.KeyRange{Start: result.lastProcessedKey}
 			} else {
 				*e.paging = coprocessor.KeyRange{Start: e.kvRanges[len(e.kvRanges)-1].StartKey}
 			}
 		} else {
-			if result.lastProcessedKey != nil {
+			if !emptynil.IsNilSlice(result.lastProcessedKey) {
 				*e.paging = coprocessor.KeyRange{End: result.lastProcessedKey.Next()}
 			} else {
 				*e.paging = coprocessor.KeyRange{End: e.kvRanges[len(e.kvRanges)-1].EndKey}
