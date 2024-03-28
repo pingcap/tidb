@@ -44,11 +44,11 @@ func (op *LogicalOptimizeOp) WithEnableOptimizeTracer(tracer *tracing.LogicalOpt
 }
 
 // AppendBeforeRuleOptimize just appends a before-rule plan tracer.
-func (op *LogicalOptimizeOp) AppendBeforeRuleOptimize(index int, name string, planTrace *tracing.PlanTrace) {
+func (op *LogicalOptimizeOp) AppendBeforeRuleOptimize(index int, name string, build func() *tracing.PlanTrace) {
 	if op == nil || op.tracer == nil {
 		return
 	}
-	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, planTrace)
+	op.tracer.AppendRuleTracerBeforeRuleOptimize(index, name, build())
 }
 
 // AppendStepToCurrent appends a step of current action.

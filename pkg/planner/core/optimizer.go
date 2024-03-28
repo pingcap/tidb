@@ -1143,7 +1143,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		opt.AppendBeforeRuleOptimize(i, rule.name(), logic.BuildPlanTrace())
+		opt.AppendBeforeRuleOptimize(i, rule.name(), logic.BuildPlanTrace)
 		var planChanged bool
 		logic, planChanged, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
@@ -1158,7 +1158,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 
 	// Trigger the interaction rule
 	for i, rule := range againRuleList {
-		opt.AppendBeforeRuleOptimize(i, rule.name(), logic.BuildPlanTrace())
+		opt.AppendBeforeRuleOptimize(i, rule.name(), logic.BuildPlanTrace)
 		logic, _, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
