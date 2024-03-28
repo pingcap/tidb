@@ -1851,17 +1851,29 @@ func (e *memtableRetriever) setDataForTiDBHotRegions(ctx sessionctx.Context) err
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
+<<<<<<< HEAD:executor/infoschema_reader.go
 	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
+=======
+>>>>>>> f58f5e1a689 (infoschema: don't display tables in MemDB when query `TIDB_HOT_REGIONS` (#52180)):pkg/executor/infoschema_reader.go
 	tikvHelper := &helper.Helper{
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
+<<<<<<< HEAD:executor/infoschema_reader.go
 	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, allSchemas)
+=======
+	schemas := tikvHelper.FilterMemDBs(sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().AllSchemas())
+	metrics, err := tikvHelper.ScrapeHotInfo(ctx, helper.HotRead, schemas)
+>>>>>>> f58f5e1a689 (infoschema: don't display tables in MemDB when query `TIDB_HOT_REGIONS` (#52180)):pkg/executor/infoschema_reader.go
 	if err != nil {
 		return err
 	}
 	e.setDataForHotRegionByMetrics(metrics, "read")
+<<<<<<< HEAD:executor/infoschema_reader.go
 	metrics, err = tikvHelper.ScrapeHotInfo(pdapi.HotWrite, allSchemas)
+=======
+	metrics, err = tikvHelper.ScrapeHotInfo(ctx, helper.HotWrite, schemas)
+>>>>>>> f58f5e1a689 (infoschema: don't display tables in MemDB when query `TIDB_HOT_REGIONS` (#52180)):pkg/executor/infoschema_reader.go
 	if err != nil {
 		return err
 	}
