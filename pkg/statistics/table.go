@@ -653,12 +653,12 @@ func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 	return idx, false
 }
 
-type neededStatsMap struct {
+type neededStatsInternalMap struct {
 	items map[model.TableItemID]struct{}
 	m     sync.RWMutex
 }
 
-func (n *neededStatsMap) AllItems() []model.TableItemID {
+func (n *neededStatsInternalMap) AllItems() []model.TableItemID {
 	n.m.RLock()
 	keys := make([]model.TableItemID, 0, len(n.items))
 	for key := range n.items {
@@ -668,22 +668,54 @@ func (n *neededStatsMap) AllItems() []model.TableItemID {
 	return keys
 }
 
-func (n *neededStatsMap) Insert(col model.TableItemID) {
+func (n *neededStatsInternalMap) Insert(col model.TableItemID) {
 	n.m.Lock()
 	n.items[col] = struct{}{}
 	n.m.Unlock()
 }
 
-func (n *neededStatsMap) Delete(col model.TableItemID) {
+func (n *neededStatsInternalMap) Delete(col model.TableItemID) {
 	n.m.Lock()
 	delete(n.items, col)
 	n.m.Unlock()
 }
 
-func (n *neededStatsMap) Length() int {
+func (n *neededStatsInternalMap) Length() int {
 	n.m.RLock()
 	defer n.m.RUnlock()
 	return len(n.items)
+}
+
+const shardCnt = 64
+
+type neededStatsMap struct {
+	items [shardCnt]neededStatsInternalMap
+	m     sync.RWMutex
+}
+
+func (n *neededStatsMap) AllItems() []model.TableItemID {
+	var result []model.TableItemID
+	for i := 0; i < 64; i++ {
+		keys := n.items[i].AllItems()
+		result = append(result, keys...)
+	}
+	return result
+}
+
+func (n *neededStatsMap) Insert(col model.TableItemID) {
+	n.items[col.ID%shardCnt].Insert(col)
+}
+
+func (n *neededStatsMap) Delete(col model.TableItemID) {
+	n.items[col.ID%shardCnt].Delete(col)
+}
+
+func (n *neededStatsMap) Length() int {
+	var result int
+	for i := 0; i < 64; i++ {
+		result += n.items[i].Length()
+	}
+	return result
 }
 
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
