@@ -351,19 +351,19 @@ func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state
 func TestRenameTableAutoIDs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
 	dbName := "RenameTableAutoIDs"
 	tk1.MustExec(`create schema ` + dbName)
 	tk1.MustExec(`create schema ` + dbName + "2")
 	tk1.MustExec(`use ` + dbName)
+	tk2.MustExec(`use ` + dbName)
+	tk3.MustExec(`use ` + dbName)
 	tk1.MustExec(`CREATE TABLE t (a int auto_increment primary key nonclustered, b varchar(255), key (b)) AUTO_ID_CACHE 100`)
 	tk1.MustExec(`insert into t values (11,11),(2,2),(null,12)`)
 	tk1.MustExec(`insert into t values (null,18)`)
 	tk1.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows("13 11 11", "14 2 2", "15 12 12", "17 16 18"))
 
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec(`use ` + dbName)
-	tk3 := testkit.NewTestKit(t, store)
-	tk3.MustExec(`use ` + dbName)
 	waitFor := func(col int, tableName, s string) {
 		for {
 			tk4 := testkit.NewTestKit(t, store)
