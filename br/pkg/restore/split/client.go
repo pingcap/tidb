@@ -368,9 +368,9 @@ func sendSplitRegionRequest(
 	retry int,
 ) (bool, *kvrpcpb.SplitRegionResponse, error) {
 	if intest.InTest {
-		mockCli, ok := c.client.(*mockPDClientForSplit)
+		mockCli, ok := c.client.(*MockPDClientForSplit)
 		if ok {
-			return mockCli.splitRegions.fn()
+			return mockCli.SplitRegion(regionInfo, keys, c.isRawKv)
 		}
 	}
 	var peer *metapb.Peer
