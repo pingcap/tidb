@@ -60,9 +60,9 @@ func (op *LogicalOptimizeOp) AppendStepToCurrent(id int, tp string, reason, acti
 }
 
 // RecordFinalLogicalPlan records the final logical plan.
-func (op *LogicalOptimizeOp) RecordFinalLogicalPlan(planTrace *tracing.PlanTrace) {
+func (op *LogicalOptimizeOp) RecordFinalLogicalPlan(build func() *tracing.PlanTrace) {
 	if op == nil || op.tracer == nil {
 		return
 	}
-	op.tracer.RecordFinalLogicalPlan(planTrace)
+	op.tracer.RecordFinalLogicalPlan(build())
 }

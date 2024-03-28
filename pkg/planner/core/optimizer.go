@@ -1165,7 +1165,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		}
 	}
 
-	opt.RecordFinalLogicalPlan(logic.BuildPlanTrace())
+	opt.RecordFinalLogicalPlan(logic.BuildPlanTrace)
 	return logic, err
 }
 
