@@ -8046,3 +8046,21 @@ func TestIssue51765(t *testing.T) {
 	tk.MustQuery("select collation(ifnull(concat(NULL),id)) from t1;").Check(testkit.Rows("utf8mb4_general_ci"))
 	tk.MustQuery("select collation(ifnull(concat(NULL),ifnull(concat(NULL),id))) from t1;").Check(testkit.Rows("utf8mb4_general_ci"))
 }
+
+func TestCastBinaryStringToJSON(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustQuery("select cast(binary 'aa' as json);").Check(testkit.Rows(`"base64:type254:YWE="`))
+	tk.MustExec("create table t (vb VARBINARY(10), b BINARY(10), vc VARCHAR(10), c CHAR(10));")
+	tk.MustExec("insert into t values ('1', '1', '1', '1');")
+
+	tk.MustQuery("select cast(vb as json), cast(b as json), cast(vc as json), cast(c as json) from t;").Check(testkit.Rows(`"base64:type15:MQ==" "base64:type254:MQAAAAAAAAAAAA==" 1 1`))
+	tk.MustQuery("select 1 from t where cast(vb as json) = '1';").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t where cast(b as json) = '1';").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t where cast(vc as json) = '1';").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t where cast(c as json) = '1';").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t where cast(BINARY vc as json) = '1';").Check(testkit.Rows())
+	tk.MustQuery("select 1 from t where cast(BINARY c as json) = '1';").Check(testkit.Rows())
+}
