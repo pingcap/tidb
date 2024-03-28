@@ -693,6 +693,16 @@ type neededStatsMap struct {
 	m     sync.RWMutex
 }
 
+func newNeededStatsMap() neededStatsMap {
+	result := neededStatsMap{}
+	for i := 0; i < shardCnt; i++ {
+		result.items[i] = neededStatsInternalMap{
+			items: make(map[model.TableItemID]struct{}),
+		}
+	}
+	return result
+}
+
 func (n *neededStatsMap) AllItems() []model.TableItemID {
 	var result []model.TableItemID
 	for i := 0; i < shardCnt; i++ {
