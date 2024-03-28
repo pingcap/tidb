@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -106,7 +107,7 @@ type Client struct {
 	toolClient    split.SplitClient
 	fileImporter  FileImporter
 	rawKVClient   *RawKVBatchClient
-	workerPool    *utils.WorkerPool
+	workerPool    *util2.WorkerPool
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
 
@@ -673,10 +674,10 @@ func (rc *Client) SetConcurrency(c uint) {
 		// to sarifice some speed to reduce memory usage.
 		count := uint(rc.storeCount) * rc.concurrencyPerStore * 32
 		log.Info("download coarse worker pool", zap.Uint("size", count))
-		rc.workerPool = utils.NewWorkerPool(count, "file")
+		rc.workerPool = util2.NewWorkerPool(count, "file")
 		return
 	}
-	rc.workerPool = utils.NewWorkerPool(c, "file")
+	rc.workerPool = util2.NewWorkerPool(c, "file")
 }
 
 // SetConcurrencyPerStore sets the concurrency of download files for each store.
@@ -872,7 +873,7 @@ func (rc *Client) CreateDatabases(ctx context.Context, dbs []*metautil.Database)
 
 	log.Info("create databases in db pool", zap.Int("pool size", len(rc.dbPool)))
 	eg, ectx := errgroup.WithContext(ctx)
-	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "DB DDL workers")
+	workers := util2.NewWorkerPool(uint(len(rc.dbPool)), "DB DDL workers")
 	for _, db_ := range dbs {
 		db := db_
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
@@ -1108,7 +1109,7 @@ func (rc *Client) createTablesWithDBPool(ctx context.Context,
 	createOneTable func(ctx context.Context, db *DB, t *metautil.Table) error,
 	tables []*metautil.Table) error {
 	eg, ectx := errgroup.WithContext(ctx)
-	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "DDL workers")
+	workers := util2.NewWorkerPool(uint(len(rc.dbPool)), "DDL workers")
 	for _, t := range tables {
 		table := t
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
@@ -1122,7 +1123,7 @@ func (rc *Client) createTablesWithDBPool(ctx context.Context,
 func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, newTS uint64, outCh chan<- CreatedTable) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
-	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
+	workers := util2.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
@@ -1727,7 +1728,7 @@ func concurrentHandleTablesCh(
 	inCh <-chan *CreatedTable,
 	outCh chan<- *CreatedTable,
 	errCh chan<- error,
-	workers *utils.WorkerPool,
+	workers *util2.WorkerPool,
 	processFun func(context.Context, *CreatedTable) error,
 	deferFun func()) {
 	eg, ectx := errgroup.WithContext(ctx)
@@ -1775,7 +1776,7 @@ func (rc *Client) GoValidateChecksum(
 ) chan *CreatedTable {
 	log.Info("Start to validate checksum")
 	outCh := DefaultOutputTableChan()
-	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
+	workers := util2.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		start := time.Now()
 		defer func() {
@@ -1880,7 +1881,7 @@ func (rc *Client) GoUpdateMetaAndLoadStats(
 ) chan *CreatedTable {
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan()
-	workers := utils.NewWorkerPool(statsConcurrency, "UpdateStats")
+	workers := util2.NewWorkerPool(statsConcurrency, "UpdateStats")
 
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		oldTable := tbl.OldTable
@@ -1934,7 +1935,7 @@ func (rc *Client) GoUpdateMetaAndLoadStats(
 func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTable, updateCh glue.Progress, errCh chan<- error) chan *CreatedTable {
 	log.Info("Start to wait tiflash replica sync")
 	outCh := DefaultOutputTableChan()
-	workers := utils.NewWorkerPool(4, "WaitForTiflashReady")
+	workers := util2.NewWorkerPool(4, "WaitForTiflashReady")
 	// TODO support tiflash store changes
 	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
 	if err != nil {
@@ -2046,7 +2047,7 @@ func (rc *Client) FailpointDoChecksumForLogRestore(
 	}
 
 	eg, ectx := errgroup.WithContext(ctx)
-	pool := utils.NewWorkerPool(4, "checksum for log restore")
+	pool := util2.NewWorkerPool(4, "checksum for log restore")
 	infoSchema := rc.GetDomain().InfoSchema()
 	// downstream id -> upstream id
 	reidRules := make(map[int64]int64)

@@ -15,10 +15,13 @@
 package distsql
 
 import (
+	"math"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -241,7 +244,7 @@ func TestRequestBuilder1(t *testing.T) {
 		Tp:      103,
 		StartTs: 0x0,
 		Data:    []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
-		KeyRanges: kv.NewNonParitionedKeyRanges([]kv.KeyRange{
+		KeyRanges: kv.NewNonPartitionedKeyRanges([]kv.KeyRange{
 			{
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3},
@@ -325,7 +328,7 @@ func TestRequestBuilder2(t *testing.T) {
 		Tp:      103,
 		StartTs: 0x0,
 		Data:    []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
-		KeyRanges: kv.NewNonParitionedKeyRanges([]kv.KeyRange{
+		KeyRanges: kv.NewNonPartitionedKeyRanges([]kv.KeyRange{
 			{
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3},
@@ -445,7 +448,7 @@ func TestRequestBuilder4(t *testing.T) {
 		Tp:                103,
 		StartTs:           0x0,
 		Data:              []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
-		KeyRanges:         kv.NewNonParitionedKeyRanges(keyRanges),
+		KeyRanges:         kv.NewNonPartitionedKeyRanges(keyRanges),
 		Cacheable:         true,
 		KeepOrder:         false,
 		Desc:              false,
@@ -493,7 +496,7 @@ func TestRequestBuilder5(t *testing.T) {
 		Tp:               104,
 		StartTs:          0x0,
 		Data:             []uint8{0x8, 0x0, 0x18, 0x0, 0x20, 0x0},
-		KeyRanges:        kv.NewNonParitionedKeyRanges(keyRanges),
+		KeyRanges:        kv.NewNonPartitionedKeyRanges(keyRanges),
 		KeepOrder:        true,
 		Desc:             false,
 		Concurrency:      15,
@@ -522,7 +525,7 @@ func TestRequestBuilder6(t *testing.T) {
 		Tp:               105,
 		StartTs:          0x0,
 		Data:             []uint8{0x10, 0x0, 0x18, 0x0},
-		KeyRanges:        kv.NewNonParitionedKeyRanges(keyRanges),
+		KeyRanges:        kv.NewNonPartitionedKeyRanges(keyRanges),
 		KeepOrder:        false,
 		Desc:             false,
 		Concurrency:      concurrency,
@@ -559,7 +562,7 @@ func TestRequestBuilder7(t *testing.T) {
 				Tp:                0,
 				StartTs:           0x0,
 				KeepOrder:         false,
-				KeyRanges:         kv.NewNonParitionedKeyRanges(nil),
+				KeyRanges:         kv.NewNonPartitionedKeyRanges(nil),
 				Desc:              false,
 				Concurrency:       concurrency,
 				IsolationLevel:    0,
@@ -588,7 +591,7 @@ func TestRequestBuilder8(t *testing.T) {
 		Tp:                0,
 		StartTs:           0x0,
 		Data:              []uint8(nil),
-		KeyRanges:         kv.NewNonParitionedKeyRanges(nil),
+		KeyRanges:         kv.NewNonPartitionedKeyRanges(nil),
 		Concurrency:       variable.DefDistSQLScanConcurrency,
 		IsolationLevel:    0,
 		Priority:          0,
@@ -614,7 +617,7 @@ func TestRequestBuilderTiKVClientReadTimeout(t *testing.T) {
 		Tp:                    0,
 		StartTs:               0x0,
 		Data:                  []uint8(nil),
-		KeyRanges:             kv.NewNonParitionedKeyRanges(nil),
+		KeyRanges:             kv.NewNonPartitionedKeyRanges(nil),
 		Concurrency:           variable.DefDistSQLScanConcurrency,
 		IsolationLevel:        0,
 		Priority:              0,
@@ -720,4 +723,89 @@ func getExpectedRanges(tid int64, hrs []*handleRange) []kv.KeyRange {
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	return krs
+}
+
+func TestBuildTableRangeIntHandle(t *testing.T) {
+	type Case struct {
+		ids []int64
+		trs []kv.KeyRange
+	}
+	low := codec.EncodeInt(nil, math.MinInt64)
+	high := kv.Key(codec.EncodeInt(nil, math.MaxInt64)).PrefixNext()
+	cases := []Case{
+		{ids: []int64{1}, trs: []kv.KeyRange{
+			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
+		}},
+		{ids: []int64{1, 2, 3}, trs: []kv.KeyRange{
+			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
+			{StartKey: tablecodec.EncodeRowKey(2, low), EndKey: tablecodec.EncodeRowKey(2, high)},
+			{StartKey: tablecodec.EncodeRowKey(3, low), EndKey: tablecodec.EncodeRowKey(3, high)},
+		}},
+		{ids: []int64{1, 3}, trs: []kv.KeyRange{
+			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
+			{StartKey: tablecodec.EncodeRowKey(3, low), EndKey: tablecodec.EncodeRowKey(3, high)},
+		}},
+	}
+	for _, cs := range cases {
+		t.Log(cs)
+		tbl := &model.TableInfo{Partition: &model.PartitionInfo{Enable: true}}
+		for _, id := range cs.ids {
+			tbl.Partition.Definitions = append(tbl.Partition.Definitions,
+				model.PartitionDefinition{ID: id})
+		}
+		ranges, err := BuildTableRanges(tbl)
+		require.NoError(t, err)
+		require.Equal(t, cs.trs, ranges)
+	}
+
+	tbl := &model.TableInfo{ID: 7}
+	ranges, err := BuildTableRanges(tbl)
+	require.NoError(t, err)
+	require.Equal(t, []kv.KeyRange{
+		{StartKey: tablecodec.EncodeRowKey(7, low), EndKey: tablecodec.EncodeRowKey(7, high)},
+	}, ranges)
+}
+
+func TestBuildTableRangeCommonHandle(t *testing.T) {
+	type Case struct {
+		ids []int64
+		trs []kv.KeyRange
+	}
+	low, err_l := codec.EncodeKey(time.UTC, nil, []types.Datum{types.MinNotNullDatum()}...)
+	require.NoError(t, err_l)
+	high, err_h := codec.EncodeKey(time.UTC, nil, []types.Datum{types.MaxValueDatum()}...)
+	require.NoError(t, err_h)
+	high = kv.Key(high).PrefixNext()
+	cases := []Case{
+		{ids: []int64{1}, trs: []kv.KeyRange{
+			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
+		}},
+		{ids: []int64{1, 2, 3}, trs: []kv.KeyRange{
+			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
+			{StartKey: tablecodec.EncodeRowKey(2, low), EndKey: tablecodec.EncodeRowKey(2, high)},
+			{StartKey: tablecodec.EncodeRowKey(3, low), EndKey: tablecodec.EncodeRowKey(3, high)},
+		}},
+		{ids: []int64{1, 3}, trs: []kv.KeyRange{
+			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
+			{StartKey: tablecodec.EncodeRowKey(3, low), EndKey: tablecodec.EncodeRowKey(3, high)},
+		}},
+	}
+	for _, cs := range cases {
+		t.Log(cs)
+		tbl := &model.TableInfo{Partition: &model.PartitionInfo{Enable: true}, IsCommonHandle: true}
+		for _, id := range cs.ids {
+			tbl.Partition.Definitions = append(tbl.Partition.Definitions,
+				model.PartitionDefinition{ID: id})
+		}
+		ranges, err := BuildTableRanges(tbl)
+		require.NoError(t, err)
+		require.Equal(t, cs.trs, ranges)
+	}
+
+	tbl := &model.TableInfo{ID: 7, IsCommonHandle: true}
+	ranges, err_r := BuildTableRanges(tbl)
+	require.NoError(t, err_r)
+	require.Equal(t, []kv.KeyRange{
+		{StartKey: tablecodec.EncodeRowKey(7, low), EndKey: tablecodec.EncodeRowKey(7, high)},
+	}, ranges)
 }

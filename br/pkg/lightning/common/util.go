@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -695,4 +696,20 @@ func IsRaftKV2(ctx context.Context, db *sql.DB) (bool, error) {
 		}
 	}
 	return false, rows.Err()
+}
+
+var (
+	passwordPatterns = `(password[\s]*=[\s]*(\\")?)(.*?)((\\")?\\n)`
+
+	passwordRegexp *regexp.Regexp
+)
+
+func init() {
+	passwordRegexp = regexp.MustCompile(passwordPatterns)
+}
+
+// HideSensitive replace password with ******.
+func HideSensitive(input string) string {
+	output := passwordRegexp.ReplaceAllString(input, "$1******$4")
+	return output
 }

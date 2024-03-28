@@ -31,12 +31,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbtbl "github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -462,7 +462,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	ctx context.Context,
 	tbl tidbtbl.Table,
 	tableName string,
-	pool *utils.WorkerPool,
+	pool *util.WorkerPool,
 	fnGetLatest func(ctx context.Context, key []byte) ([]byte, error),
 	fnDeleteKey func(ctx context.Context, key []byte) error,
 ) error {
