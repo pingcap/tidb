@@ -62,5 +62,13 @@
         ]
       }
     ]
+  },
+  {
+    "name": "TestPartialStatsInExplain",
+    "cases": [
+      "explain format = brief select * from tp where b = 10",
+      "explain format = brief select * from t join tp where tp.a = 10 and t.b = tp.c",
+      "explain format = brief select * from t join tp partition (p0) join t2 where t.a < 10 and t.b = tp.c and t2.a > 10 and t2.a = tp.c"
+    ]
   }
 ]

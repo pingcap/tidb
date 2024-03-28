@@ -101,5 +101,47 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestPartialStatsInExplain",
+    "Cases": [
+      {
+        "Query": "explain format = brief select * from tp where b = 10",
+        "Result": [
+          "TableReader 0.01 root partition:all data:Selection",
+          "└─Selection 0.01 cop[tikv]  eq(test.tp.b, 10)",
+          "  └─TableFullScan 6.00 cop[tikv] table:tp keep order:false, stats:partial[b:allEvicted]"
+        ]
+      },
+      {
+        "Query": "explain format = brief select * from t join tp where tp.a = 10 and t.b = tp.c",
+        "Result": [
+          "Projection 0.00 root  test.t.a, test.t.b, test.t.c, test.tp.a, test.tp.b, test.tp.c",
+          "└─HashJoin 0.00 root  inner join, equal:[eq(test.tp.c, test.t.b)]",
+          "  ├─TableReader(Build) 0.00 root partition:p1 data:Selection",
+          "  │ └─Selection 0.00 cop[tikv]  eq(test.tp.a, 10), not(isnull(test.tp.c))",
+          "  │   └─TableFullScan 6.00 cop[tikv] table:tp keep order:false, stats:partial[c:allEvicted]",
+          "  └─TableReader(Probe) 3.00 root  data:Selection",
+          "    └─Selection 3.00 cop[tikv]  not(isnull(test.t.b))",
+          "      └─TableFullScan 3.00 cop[tikv] table:t keep order:false, stats:partial[idx:allEvicted, a:allEvicted, b:allEvicted]"
+        ]
+      },
+      {
+        "Query": "explain format = brief select * from t join tp partition (p0) join t2 where t.a < 10 and t.b = tp.c and t2.a > 10 and t2.a = tp.c",
+        "Result": [
+          "HashJoin 0.33 root  inner join, equal:[eq(test.tp.c, test.t2.a)]",
+          "├─IndexJoin(Build) 0.33 root  inner join, inner:IndexLookUp, outer key:test.t.b, inner key:test.tp.c, equal cond:eq(test.t.b, test.tp.c)",
+          "│ ├─TableReader(Build) 0.33 root  data:Selection",
+          "│ │ └─Selection 0.33 cop[tikv]  gt(test.t.b, 10), not(isnull(test.t.b))",
+          "│ │   └─TableRangeScan 1.00 cop[tikv] table:t range:[-inf,10), keep order:false, stats:partial[idx:allEvicted, a:allEvicted, b:allEvicted]",
+          "│ └─IndexLookUp(Probe) 0.33 root partition:p0 ",
+          "│   ├─Selection(Build) 0.33 cop[tikv]  gt(test.tp.c, 10), not(isnull(test.tp.c))",
+          "│   │ └─IndexRangeScan 0.50 cop[tikv] table:tp, index:ic(c) range: decided by [eq(test.tp.c, test.t.b)], keep order:false, stats:partial[c:allEvicted]",
+          "│   └─TableRowIDScan(Probe) 0.33 cop[tikv] table:tp keep order:false, stats:partial[c:allEvicted]",
+          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range:(10,+inf], keep order:false, stats:partial[a:allEvicted]"
+        ]
+      }
+    ]
   }
 ]
