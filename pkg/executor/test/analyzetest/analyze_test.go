@@ -688,7 +688,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
-	tk.MustExec("set global tidb_auto_analyze_ratio = 0.5")
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
 	originalVal3 := exec.AutoAnalyzeMinCnt
 	defer func() {
 		exec.AutoAnalyzeMinCnt = originalVal3
@@ -1030,7 +1030,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
-	tk.MustExec("set global tidb_auto_analyze_ratio = 0.5")
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
 	originalVal3 := exec.AutoAnalyzeMinCnt
 	defer func() {
 		exec.AutoAnalyzeMinCnt = originalVal3
