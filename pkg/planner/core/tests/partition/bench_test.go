@@ -363,11 +363,6 @@ func runPreparedPointSelect(b *testing.B, se sessiontypes.Session, query string,
 				hits++
 			} else {
 				warns := se.GetSessionVars().StmtCtx.GetWarnings()
-				/*
-					if len(warns) == 0 {
-						logutil.BgLogger().Fatal("No plan cache hit, and now warnings?")
-					}
-				*/
 				logutil.BgLogger().Warn("No plan cache hit", zap.Any("warns", warns))
 			}
 		}
