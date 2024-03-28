@@ -215,12 +215,15 @@ const (
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
+	// Note that Column use UniqueID as the key while Indices use the index ID in the metadata.
 	Columns map[int64]*Column
 	Indices map[int64]*Index
-	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
+	// Idx2ColumnIDs maps the index id to its column UniqueIDs. It's used to calculate the selectivity in planner.
 	Idx2ColumnIDs map[int64][]int64
-	// ColID2IdxIDs maps the column id to a list index ids whose first column is it. It's used to calculate the selectivity in planner.
+	// ColID2IdxIDs maps the column UniqueID to a list index ids whose first column is it.
+	// It's used to calculate the selectivity in planner.
 	ColID2IdxIDs map[int64][]int64
+	// UniqueID2colInfoID maps the column UniqueID to its ID in the metadata.
 	UniqueID2colInfoID map[int64]int64
 	// MVIdx2Columns maps the index id to its columns by expression.Column.
 	// For normal index, the column id is enough, as we already have in Idx2ColumnIDs. But currently, mv index needs more
