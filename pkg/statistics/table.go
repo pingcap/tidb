@@ -686,7 +686,7 @@ func (n *neededStatsInternalMap) Length() int {
 	return len(n.items)
 }
 
-const shardCnt = 64
+const shardCnt = 128
 
 type neededStatsMap struct {
 	items [shardCnt]neededStatsInternalMap
