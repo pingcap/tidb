@@ -36,7 +36,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -137,6 +139,26 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	// Adding additional permissions restrictions for SEM.
+	// Permissions listed in the SEM configuration requiring restriction demand both the granting and the recipient to have additional RESTRICTED_PRIV_ADMIN permission.
+	if sem.IsEnabled() {
+		currentUser := e.Ctx().GetSessionVars().User
+		checker := privilege.GetPrivilegeManager(e.Ctx())
+		hasRestrictedPrivAdmin := checker.RequestDynamicVerificationWithUser("RESTRICTED_PRIV_ADMIN", false, currentUser)
+		for _, priv := range e.Privs {
+			if priv.Priv != mysql.ExtendedPriv && sem.IsStaticPermissionRestricted(priv.Priv) {
+				if !hasRestrictedPrivAdmin {
+					return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_PRIV_ADMIN")
+				}
+				for _, user := range e.Users {
+					if !checker.RequestDynamicVerificationWithUser("RESTRICTED_PRIV_ADMIN", false, user.User) {
+						return plannererrors.ErrRecipientAccessDenied.GenWithStackByArgs("RESTRICTED_PRIV_ADMIN")
+					}
+				}
+			}
+		}
+	}
+
 	defer func() {
 		if !isCommit {
 			_, err := internalSession.GetSQLExecutor().ExecuteInternal(internalCtx, "rollback")

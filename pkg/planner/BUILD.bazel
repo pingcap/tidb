@@ -24,6 +24,7 @@ go_library(
         "//pkg/util/hint",
         "//pkg/util/intest",
         "//pkg/util/logutil",
+        "//pkg/util/sem",
         "//pkg/util/topsql",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

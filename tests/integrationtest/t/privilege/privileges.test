@@ -619,6 +619,7 @@ connect (semuser1,localhost,semuser1,,);
 connection semuser1;
 ALTER USER 'semuser1' IDENTIFIED BY '';
 ALTER USER 'semuser2' IDENTIFIED BY '';
+--error 1227
 ALTER USER 'semuser3' IDENTIFIED BY '';
 disconnect semuser1;
 connection default;

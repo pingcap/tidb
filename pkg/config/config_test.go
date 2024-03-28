@@ -1137,6 +1137,47 @@ func TestDeprecatedConfig(t *testing.T) {
 	}
 }
 
+func TestSEMConfig(t *testing.T) {
+	storeDir := t.TempDir()
+	configFile := filepath.Join(storeDir, "sem.json")
+	f, err := os.Create(configFile)
+	require.NoError(t, err)
+	defer func(configFile string) {
+		require.NoError(t, os.Remove(configFile))
+	}(configFile)
+	_, err = f.WriteString(`{
+    "restricted_status" : [
+        {
+            "name": "tidb_gc_leader_desc",
+            "restriction-type": "hidden",
+            "value": ""
+        },
+       {
+         "name": "tidb_gc_leader_uuid",
+         "restriction-type": "replace",
+         "value": "xxxxxxxxxxx"
+       }
+    ],
+
+    "restricted_static_privileges_col" : ["Config_priv"]
+	}`)
+
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+
+	config, err := loadSEMConfig(configFile)
+	require.NoError(t, err)
+
+	err = isValidSEMConfig(*config)
+	require.NoError(t, err)
+
+	config.RestrictedStaticPrivilegesCol = append(config.RestrictedStaticPrivilegesCol, "Shutdown_priv")
+	require.NoError(t, isValidSEMConfig(*config))
+
+	config.RestrictedStaticPrivilegesCol = append(config.RestrictedStaticPrivilegesCol, "Shutdown")
+	require.EqualError(t, isValidSEMConfig(*config), "unrecognized permission Shutdown")
+}
+
 func TestMaxIndexLength(t *testing.T) {
 	conf := NewConfig()
 	checkValid := func(indexLen int, shouldBeValid bool) {

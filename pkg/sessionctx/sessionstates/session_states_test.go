@@ -241,6 +241,20 @@ func TestSystemVars(t *testing.T) {
 }
 
 func TestInvisibleVars(t *testing.T) {
+	tidbCfg := config.NewConfig()
+	tidbCfg.Security.SEM.RestrictedVariables = []config.RestrictedVariable{
+		{
+			Name:            variable.TiDBOptWriteRowID,
+			RestrictionType: "hidden",
+			Readonly:        true,
+		},
+		{
+			Name:            variable.TiDBRowFormatVersion,
+			RestrictionType: "hidden",
+			Readonly:        true,
+		},
+	}
+	config.StoreGlobalConfig(tidbCfg)
 	tests := []struct {
 		hasPriv       bool
 		stmt          string

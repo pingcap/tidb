@@ -133,6 +133,14 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			}
 		}
 	}
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	if sem.IsReadOnlySysVar(name) && !checker.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+		return plannererrors.ErrSQLInReadOnlyMode
+	}
+
+	if sem.IsReadOnlyGlobalSysVar(name) && !checker.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+		return plannererrors.ErrSQLInReadOnlyMode
+	}
 
 	if sysVar.IsNoop && !variable.EnableNoopVariables.Load() {
 		// The variable is a noop. For compatibility we allow it to still

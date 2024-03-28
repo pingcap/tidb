@@ -81,6 +81,7 @@ var (
 	ErrDBaccessDenied                        = dbterror.ClassOptimizer.NewStd(mysql.ErrDBaccessDenied)
 	ErrTableaccessDenied                     = dbterror.ClassOptimizer.NewStd(mysql.ErrTableaccessDenied)
 	ErrSpecificAccessDenied                  = dbterror.ClassOptimizer.NewStd(mysql.ErrSpecificAccessDenied)
+	ErrRecipientAccessDenied                 = dbterror.ClassOptimizer.NewStd(mysql.ErrRecipientAccessDenied)
 	ErrViewNoExplain                         = dbterror.ClassOptimizer.NewStd(mysql.ErrViewNoExplain)
 	ErrWrongValueCountOnRow                  = dbterror.ClassOptimizer.NewStd(mysql.ErrWrongValueCountOnRow)
 	ErrViewInvalid                           = dbterror.ClassOptimizer.NewStd(mysql.ErrViewInvalid)
