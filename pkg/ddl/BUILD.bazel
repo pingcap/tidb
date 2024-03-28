@@ -53,6 +53,7 @@ go_library(
         "rollingback.go",
         "sanity_check.go",
         "schema.go",
+        "schema_version.go",
         "sequence.go",
         "split_region.go",
         "stat.go",
