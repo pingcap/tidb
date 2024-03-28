@@ -19,6 +19,8 @@ import (
 	"errors"
 	"time"
 
+	tidberrors "github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -96,6 +98,11 @@ func (ds *pubSubDataSink) OnReporterClosing() {
 
 func (ds *pubSubDataSink) run() error {
 	defer func() {
+		if r := recover(); r != nil {
+			err := tidberrors.Errorf("%v", r)
+			// To catch panic when log grpc error. https://github.com/pingcap/tidb/issues/51301.
+			logutil.BgLogger().Error("[top-sql] got panic in pub sub data sink, just ignore", zap.Error(err))
+		}
 		ds.registerer.Deregister(ds)
 		ds.cancel()
 	}()
@@ -132,6 +139,7 @@ func (ds *pubSubDataSink) run() error {
 				return ctx.Err()
 			}
 
+			failpoint.Inject("mockGrpcLogPanic", nil)
 			if err != nil {
 				logutil.BgLogger().Warn(
 					"[top-sql] pubsub datasink failed to send data to subscriber",
