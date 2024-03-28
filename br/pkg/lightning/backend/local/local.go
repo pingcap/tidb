@@ -247,6 +247,11 @@ func NewTargetInfoGetter(tls *common.TLS, g glue.Glue, pdCli pd.Client) backend.
 	}
 }
 
+// FetchRemoteDBModels implements the `backend.TargetInfoGetter` interface.
+func (g *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	return tikv.FetchRemoteDBModelsFromTLS(ctx, g.tls)
+}
+
 // FetchRemoteTableModels obtains the models of all tables given the schema name.
 // It implements the `TargetInfoGetter` interface.
 func (g *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
