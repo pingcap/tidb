@@ -79,9 +79,9 @@ type Table struct {
 // ColAndIdxExistenceMap is the meta map for statistics.Table.
 // It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
 type ColAndIdxExistenceMap struct {
-	colInfoMap  map[int64]*model.ColumnInfo
+	colInfoMap  map[int64]*model.ColumnInfo // it will be nil when stats is pseudo
 	colAnalyzed map[int64]bool
-	idxInfoMap  map[int64]*model.IndexInfo
+	idxInfoMap  map[int64]*model.IndexInfo // it will be nil when stats is pseudo
 	idxAnalyzed map[int64]bool
 }
 
