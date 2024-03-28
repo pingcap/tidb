@@ -707,7 +707,7 @@ func (bo *splitBackoffer) NextBackoff(err error) time.Duration {
 	case strings.Contains(err.Error(), "no valid key"):
 		bo.state.GiveUp()
 		return 0
-	case berrors.ErrRestoreInvalidRange.Equal(err):
+	case berrors.ErrInvalidRange.Equal(err):
 		bo.state.GiveUp()
 		return 0
 	}

@@ -51,6 +51,11 @@ error = '''
 invalid metafile: %s
 '''
 
+["BR:Common:ErrInvalidRange"]
+error = '''
+invalid restore range
+'''
+
 ["BR:Common:ErrUndefinedDbOrTable"]
 error = '''
 undefined restore databases or tables
@@ -224,11 +229,6 @@ incompatible system table
 ["BR:Restore:ErrRestoreInvalidBackup"]
 error = '''
 invalid backup
-'''
-
-["BR:Restore:ErrRestoreInvalidRange"]
-error = '''
-invalid restore range
 '''
 
 ["BR:Restore:ErrRestoreInvalidRewrite"]
