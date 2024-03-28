@@ -975,20 +975,33 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 	return kv.NewCommonHandle(keySuffix)
 }
 
-func decodeHandleInIndexValue(value []byte) (kv.Handle, error) {
+func decodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
+	var seg IndexValueSegments
 	if getIndexVersion(value) == 1 {
-		seg := SplitIndexValueForClusteredIndexVersion1(value)
-		return kv.NewCommonHandle(seg.CommonHandle)
-	}
-	if len(value) > MaxOldEncodeValueLen {
-		tailLen := value[0]
-		if tailLen >= 8 {
-			return decodeIntHandleInIndexValue(value[len(value)-int(tailLen):]), nil
+		seg = SplitIndexValueForClusteredIndexVersion1(value)
+	} else {
+		if len(value) <= MaxOldEncodeValueLen {
+			return decodeIntHandleInIndexValue(value), nil
 		}
-		handleLen := uint16(value[2])<<8 + uint16(value[3])
-		return kv.NewCommonHandle(value[4 : 4+handleLen])
+		seg = SplitIndexValue(value)
 	}
-	return decodeIntHandleInIndexValue(value), nil
+	if len(seg.IntHandle) != 0 {
+		handle = decodeIntHandleInIndexValue(seg.IntHandle)
+	}
+	if len(seg.CommonHandle) != 0 {
+		handle, err = kv.NewCommonHandle(seg.CommonHandle)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(seg.PartitionID) != 0 {
+		_, pid, err := codec.DecodeInt(seg.PartitionID)
+		if err != nil {
+			return nil, err
+		}
+		handle = kv.NewPartitionHandle(pid, handle)
+	}
+	return handle, nil
 }
 
 // decodeIntHandleInIndexValue uses to decode index value as int handle id.
