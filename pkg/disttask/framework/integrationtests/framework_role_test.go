@@ -43,6 +43,7 @@ func TestRoleBasic(t *testing.T) {
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	tk := testkit.NewTestKit(t, c.Store)
+	tk.MustExec("set @@global.tidb_schema_cache_size = default")
 
 	// 1. all "" role.
 	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😁", c.TestContext)
