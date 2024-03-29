@@ -17,11 +17,11 @@ package core
 import (
 	"context"
 	"errors"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
 
 // predicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
