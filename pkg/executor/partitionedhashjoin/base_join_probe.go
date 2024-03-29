@@ -74,16 +74,19 @@ type baseJoinProbe struct {
 	ctx    *PartitionedHashJoinCtx
 	workID uint
 
-	currentChunk       *chunk.Chunk
-	matchedRowsHeaders []uintptr           // the start address of each matched rows
-	hashValues         [][]posAndHashValue // the start address of each matched rows
-	currentRowsPos     []uintptr           // the current address of each matched rows
-	serializedKeys     [][]byte            // used for save serialized keys
-	filterVector       []bool              // if there is filter before probe, filterVector saves the filter result
-	nullKeyVector      []bool              // nullKeyVector[i] = true if any of the key is null
-	currentProbeRow    int
-	chunkRows          int
-	cachedBuildRows    []rowIndexInfo
+	currentChunk *chunk.Chunk
+	selRows      []int
+	// matchedRowsHeaders, currentRowsPos, serializedKeys is indexed by logical row index
+	matchedRowsHeaders []uintptr // the start address of each matched rows
+	currentRowsPos     []uintptr // the current address of each matched rows
+	serializedKeys     [][]byte  // used for save serialized keys
+	// filterVector and nullKeyVector is indexed by physical row index
+	filterVector    []bool              // if there is filter before probe, filterVector saves the filter result
+	nullKeyVector   []bool              // nullKeyVector[i] = true if any of the key is null
+	hashValues      [][]posAndHashValue // the start address of each matched rows
+	currentProbeRow int
+	chunkRows       int
+	cachedBuildRows []rowIndexInfo
 
 	keyIndex         []int
 	columnTypes      []*types.FieldType
@@ -122,12 +125,21 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 	j.currentChunk = chk
-	rows := chk.NumRows()
-	j.chunkRows = rows
-	if cap(j.matchedRowsHeaders) >= rows {
-		j.matchedRowsHeaders = j.matchedRowsHeaders[:rows]
+	logicalRows := chk.NumRows()
+	// if chk.sel != nil, then physicalRows is different from logicalRows
+	physicalRows := chk.Column(0).Rows()
+	usedRows := chk.Sel()
+	if usedRows == nil {
+		for i := 0; i < logicalRows; i++ {
+			j.selRows = append(j.selRows, i)
+		}
+		usedRows = j.selRows
+	}
+	j.chunkRows = logicalRows
+	if cap(j.matchedRowsHeaders) >= logicalRows {
+		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRows]
 	} else {
-		j.matchedRowsHeaders = make([]uintptr, rows)
+		j.matchedRowsHeaders = make([]uintptr, logicalRows)
 	}
 	for i := 0; i < j.ctx.PartitionNumber; i++ {
 		j.hashValues[i] = j.hashValues[i][:0]
@@ -138,28 +150,28 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	//	j.hashValues = make([]uint64, rows)
 	//}
 	if j.ctx.ProbeFilter != nil {
-		if cap(j.filterVector) >= rows {
-			j.filterVector = j.filterVector[:rows]
+		if cap(j.filterVector) >= physicalRows {
+			j.filterVector = j.filterVector[:physicalRows]
 		} else {
-			j.filterVector = make([]bool, rows)
+			j.filterVector = make([]bool, physicalRows)
 		}
 	}
 	if j.hasNullableKey {
-		if cap(j.nullKeyVector) >= rows {
-			j.nullKeyVector = j.nullKeyVector[:rows]
+		if cap(j.nullKeyVector) >= physicalRows {
+			j.nullKeyVector = j.nullKeyVector[:physicalRows]
 		} else {
-			j.nullKeyVector = make([]bool, rows)
+			j.nullKeyVector = make([]bool, physicalRows)
 		}
-		for i := 0; i < rows; i++ {
+		for i := 0; i < physicalRows; i++ {
 			j.nullKeyVector = append(j.nullKeyVector, false)
 		}
 	}
-	if cap(j.serializedKeys) >= rows {
-		j.serializedKeys = j.serializedKeys[:rows]
+	if cap(j.serializedKeys) >= logicalRows {
+		j.serializedKeys = j.serializedKeys[:logicalRows]
 	} else {
-		j.serializedKeys = make([][]byte, rows)
+		j.serializedKeys = make([][]byte, logicalRows)
 	}
-	for i := 0; i < rows; i++ {
+	for i := 0; i < logicalRows; i++ {
 		j.serializedKeys[i] = j.serializedKeys[i][:0]
 	}
 	if j.ctx.ProbeFilter != nil {
@@ -171,24 +183,24 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 
 	// generate serialized key
 	for index, keyIndex := range j.keyIndex {
-		err = codec.SerializeKeys(j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.columnTypes[keyIndex], keyIndex, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes[index], j.serializedKeys)
+		err = codec.SerializeKeys(j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.columnTypes[keyIndex], keyIndex, usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes[index], j.serializedKeys)
 		if err != nil {
 			return err
 		}
 	}
 	// generate hash value
 	hash := fnv.New64()
-	for i := 0; i < rows; i++ {
-		if (j.filterVector != nil && !j.filterVector[i]) || (j.nullKeyVector != nil && j.nullKeyVector[i]) {
+	for logicalRowIndex, physicalRowIndex := range usedRows {
+		if (j.filterVector != nil && !j.filterVector[physicalRowIndex]) || (j.nullKeyVector != nil && j.nullKeyVector[physicalRowIndex]) {
 			continue
 		}
 		hash.Reset()
 		// As the golang doc described, `Hash.Write` never returns an error.
 		// See https://golang.org/pkg/hash/#Hash
-		_, _ = hash.Write(j.serializedKeys[i])
+		_, _ = hash.Write(j.serializedKeys[logicalRowIndex])
 		hashValue := hash.Sum64()
 		partIndex := hashValue % uint64(j.ctx.PartitionNumber)
-		j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: i})
+		j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
 		//j.matchedRowsHeaders[i] = j.ctx.joinHashTable.lookup(j.hashValues[i])
 	}
 	j.currentProbeRow = 0
@@ -385,6 +397,7 @@ func NewJoinProbe(ctx *PartitionedHashJoinCtx, workID uint, joinType core.JoinTy
 	}
 	base.cachedBuildRows = make([]rowIndexInfo, 0, BATCH_BUILD_ROW_SIZE)
 	base.matchedRowsHeaders = make([]uintptr, 0, chunk.InitialCapacity)
+	base.selRows = make([]int, 0, chunk.InitialCapacity)
 	base.hashValues = make([][]posAndHashValue, ctx.PartitionNumber)
 	for i := 0; i < ctx.PartitionNumber; i++ {
 		base.hashValues[i] = make([]posAndHashValue, 0, chunk.InitialCapacity)

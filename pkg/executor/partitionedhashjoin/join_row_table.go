@@ -372,6 +372,7 @@ type rowTableBuilder struct {
 
 	serializedKeyVectorBuffer [][]byte
 	partIdxVector             []int
+	selRows                   []int
 	hashValue                 []uint64
 	filterVector              []bool // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector             []bool // nullKeyVector[i] = true if any of the key is null
@@ -397,42 +398,52 @@ func (b *rowTableBuilder) initBuffer() {
 	}
 }
 
-func (b *rowTableBuilder) ResetBuffer(rows int) {
-	if cap(b.serializedKeyVectorBuffer) >= rows {
-		b.serializedKeyVectorBuffer = b.serializedKeyVectorBuffer[:rows]
-		for i := 0; i < rows; i++ {
+func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) []int {
+	usedRows := chk.Sel()
+	logicalRows := chk.NumRows()
+	physicalRows := chk.Column(0).Rows()
+	if usedRows == nil {
+		for i := 0; i < logicalRows; i++ {
+			b.selRows = append(b.selRows, i)
+		}
+		usedRows = b.selRows
+	}
+	if cap(b.serializedKeyVectorBuffer) >= logicalRows {
+		b.serializedKeyVectorBuffer = b.serializedKeyVectorBuffer[:logicalRows]
+		for i := 0; i < logicalRows; i++ {
 			b.serializedKeyVectorBuffer[i] = b.serializedKeyVectorBuffer[i][:0]
 		}
 	} else {
-		b.serializedKeyVectorBuffer = make([][]byte, rows)
+		b.serializedKeyVectorBuffer = make([][]byte, logicalRows)
 	}
-	if cap(b.partIdxVector) >= rows {
-		b.partIdxVector = b.partIdxVector[:0]
+	if cap(b.partIdxVector) >= logicalRows {
+		b.partIdxVector = b.partIdxVector[:logicalRows]
 	} else {
-		b.partIdxVector = make([]int, 0, rows)
+		b.partIdxVector = make([]int, logicalRows)
 	}
-	if cap(b.hashValue) >= rows {
-		b.hashValue = b.hashValue[:0]
+	if cap(b.hashValue) >= logicalRows {
+		b.hashValue = b.hashValue[:logicalRows]
 	} else {
-		b.hashValue = make([]uint64, 0, rows)
+		b.hashValue = make([]uint64, logicalRows)
 	}
 	if b.hasFilter {
-		if cap(b.filterVector) >= rows {
-			b.filterVector = b.filterVector[:0]
+		if cap(b.filterVector) >= physicalRows {
+			b.filterVector = b.filterVector[:physicalRows]
 		} else {
-			b.filterVector = make([]bool, 0, rows)
+			b.filterVector = make([]bool, physicalRows)
 		}
 	}
 	if b.hasNullableKey {
-		if cap(b.nullKeyVector) >= rows {
+		if cap(b.nullKeyVector) >= physicalRows {
 			b.nullKeyVector = b.nullKeyVector[:0]
 		} else {
-			b.nullKeyVector = make([]bool, 0, rows)
+			b.nullKeyVector = make([]bool, 0, physicalRows)
 		}
-		for i := 0; i < rows; i++ {
+		for i := 0; i < physicalRows; i++ {
 			b.nullKeyVector = append(b.nullKeyVector, false)
 		}
 	}
+	return usedRows
 }
 
 func newRowTable(meta *JoinTableMeta) *rowTable {
@@ -455,12 +466,12 @@ func (builder *rowTableBuilder) appendRemainingRowLocations(rowTables []*rowTabl
 	}
 }
 
-func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chunk.Chunk, rowTables []*rowTable, rowTableMeta *JoinTableMeta) {
+func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chunk.Chunk, usedRows []int, rowTables []*rowTable, rowTableMeta *JoinTableMeta) {
 	fakeAddrByte := make([]byte, 8)
-	for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+	for logicalRowIndex, physicalRowIndex := range usedRows {
 		var (
-			row     = chk.GetRow(rowIdx)
-			partIdx = builder.partIdxVector[rowIdx]
+			row     = chk.GetRow(logicalRowIndex)
+			partIdx = builder.partIdxVector[logicalRowIndex]
 			seg     *rowTableSegment
 		)
 		if rowTables[partIdx] == nil {
@@ -480,9 +491,9 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 				rowTables[partIdx].segments = append(rowTables[partIdx].segments, seg)
 			}
 		}
-		seg.hashValues = append(seg.hashValues, builder.hashValue[rowIdx])
-		if (!builder.hasFilter || builder.filterVector[rowIdx]) && (!builder.hasNullableKey || !builder.nullKeyVector[rowIdx]) {
-			seg.validJoinKeyPos = append(seg.validJoinKeyPos, rowIdx)
+		seg.hashValues = append(seg.hashValues, builder.hashValue[logicalRowIndex])
+		if (!builder.hasFilter || builder.filterVector[physicalRowIndex]) && (!builder.hasNullableKey || !builder.nullKeyVector[physicalRowIndex]) {
+			seg.validJoinKeyPos = append(seg.validJoinKeyPos, logicalRowIndex)
 		}
 		builder.startPosInRawData[partIdx] = append(builder.startPosInRawData[partIdx], uint64(len(seg.rawData)))
 		// next_row_ptr
@@ -493,12 +504,12 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 		length := uint64(0)
 		// if join_key is not fixed length: `key_length` need to be written in rawData
 		if !rowTableMeta.isJoinKeysFixedLength {
-			length = uint64(len(builder.serializedKeyVectorBuffer[rowIdx]))
+			length = uint64(len(builder.serializedKeyVectorBuffer[logicalRowIndex]))
 			seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), SizeOfLengthField)...)
 		}
 		if !rowTableMeta.isJoinKeysInlined {
 			// if join_key is not inlined: `serialized_key` need to be written in rawData
-			seg.rawData = append(seg.rawData, builder.serializedKeyVectorBuffer[rowIdx]...)
+			seg.rawData = append(seg.rawData, builder.serializedKeyVectorBuffer[logicalRowIndex]...)
 		}
 
 		for index, colIdx := range builder.rowColumnsOrder {
