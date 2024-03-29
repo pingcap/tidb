@@ -73,6 +73,50 @@ func TestTableHandlesToKVRanges(t *testing.T) {
 	}
 }
 
+func TestTablePartitionHandlesToKVRanges(t *testing.T) {
+	handles := []kv.Handle{
+		// Partition handles in different partitions
+		kv.NewPartitionHandle(1, kv.IntHandle(0)),
+		kv.NewPartitionHandle(2, kv.IntHandle(2)),
+		kv.NewPartitionHandle(2, kv.IntHandle(3)),
+		kv.NewPartitionHandle(2, kv.IntHandle(4)),
+		kv.NewPartitionHandle(3, kv.IntHandle(5)),
+		kv.NewPartitionHandle(1, kv.IntHandle(10)),
+		kv.NewPartitionHandle(2, kv.IntHandle(11)),
+		kv.NewPartitionHandle(3, kv.IntHandle(100)),
+		kv.NewPartitionHandle(1, kv.IntHandle(9223372036854775806)),
+		kv.NewPartitionHandle(1, kv.IntHandle(9223372036854775807)),
+	}
+
+	// Build expected key ranges.
+	hrs := make([]*handleRange, 0, len(handles))
+	hrs = append(hrs, &handleRange{start: 0, end: 0})
+	hrs = append(hrs, &handleRange{start: 2, end: 4})
+	hrs = append(hrs, &handleRange{start: 5, end: 5})
+	hrs = append(hrs, &handleRange{start: 10, end: 10})
+	hrs = append(hrs, &handleRange{start: 11, end: 11})
+	hrs = append(hrs, &handleRange{start: 100, end: 100})
+	hrs = append(hrs, &handleRange{start: 9223372036854775806, end: 9223372036854775807})
+
+	expect := append(getExpectedRanges(1, hrs[:1]), getExpectedRanges(2, hrs[1:2])...)
+	expect = append(expect, getExpectedRanges(3, hrs[2:3])...)
+	expect = append(expect, getExpectedRanges(1, hrs[3:4])...)
+	expect = append(expect, getExpectedRanges(2, hrs[4:5])...)
+	expect = append(expect, getExpectedRanges(3, hrs[5:6])...)
+	expect = append(expect, getExpectedRanges(1, hrs[6:])...)
+
+	// Build actual key ranges.
+	actual, hints := TableHandlesToKVRanges(0, handles)
+
+	// Compare key ranges and expected key ranges.
+	require.Equal(t, len(expect), len(actual))
+	require.Equal(t, hints, []int{1, 3, 1, 1, 1, 1, 2})
+	for i := range actual {
+		require.Equal(t, expect[i].StartKey, actual[i].StartKey)
+		require.Equal(t, expect[i].EndKey, actual[i].EndKey)
+	}
+}
+
 func TestTableRangesToKVRanges(t *testing.T) {
 	ranges := []*ranger.Range{
 		{
