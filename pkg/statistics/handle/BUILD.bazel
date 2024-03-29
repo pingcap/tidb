@@ -35,6 +35,7 @@ go_library(
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/logutil",
+        "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
