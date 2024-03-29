@@ -40,6 +40,7 @@ type Worker struct {
 func NewWorker(dealFunc func(task Task) error) *Worker {
 	return &Worker{
 		dealFunc: dealFunc,
+		taskChan: make(chan Task, 1),
 	}
 }
 
