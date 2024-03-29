@@ -216,17 +216,15 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 			case bytes.Equal(key, data2NonclusteredKey):
 				if fnGetLatestCount.String() == "3" {
 					return data2NonclusteredValue, nil
-				} else {
-					return nil, tikverr.ErrNotExist
 				}
+				return nil, tikverr.ErrNotExist
 			case bytes.Equal(key, data6RowKey):
 				return data6RowValue, nil
 			case bytes.Equal(key, data6NonclusteredKey):
 				if fnGetLatestCount.String() == "6" {
 					return data6NonclusteredValue, nil
-				} else {
-					return nil, tikverr.ErrNotExist
 				}
+				return nil, tikverr.ErrNotExist
 			case bytes.Equal(key, data2IndexKey):
 				return data2IndexValue, nil
 			case bytes.Equal(key, data3RowKey):
@@ -384,9 +382,8 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 			case bytes.Equal(key, data4RowKey):
 				if fnGetLatestCount.String() == "3" {
 					return data4RowValue, nil
-				} else {
-					return nil, tikverr.ErrNotExist
 				}
+				return nil, tikverr.ErrNotExist
 			case bytes.Equal(key, data4NonclusteredKey):
 				return data4NonclusteredValue, nil
 			default:
@@ -566,23 +563,20 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 			case bytes.Equal(key, data4NonclusteredKey):
 				if fnGetLatestCount.String() != "20" {
 					return data4NonclusteredValue, nil
-				} else {
-					return nil, tikverr.ErrNotExist
 				}
+				return nil, tikverr.ErrNotExist
 			case bytes.Equal(key, data5RowKey):
 				if fnGetLatestCount.String() == "3" {
 					return data5RowValue, nil
-				} else {
-					return nil, tikverr.ErrNotExist
 				}
+				return nil, tikverr.ErrNotExist
 			case bytes.Equal(key, data1NonclusteredKey):
 				return data1NonclusteredValue, nil
 			case bytes.Equal(key, data2RowKey):
 				if fnGetLatestCount.String() == "6" {
 					return data2RowValue, nil
-				} else {
-					return nil, tikverr.ErrNotExist
 				}
+				return nil, tikverr.ErrNotExist
 			case bytes.Equal(key, data3IndexKey):
 				return data3IndexValue, nil
 			case bytes.Equal(key, data4RowKey):
@@ -769,31 +763,27 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 			case bytes.Equal(key, data4NonclusteredKey):
 				if fnGetLatestCount.String() != "20" {
 					return data4NonclusteredValue, nil
-				} else {
-					return nil, tikverr.ErrNotExist
 				}
+				return nil, tikverr.ErrNotExist
 			case bytes.Equal(key, data5RowKey):
 				if fnGetLatestCount.String() == "3" {
 					return data5RowValue, nil
-				} else {
-					return nil, tikverr.ErrNotExist
 				}
+				return nil, tikverr.ErrNotExist
 			case bytes.Equal(key, data1NonclusteredKey):
 				return data1NonclusteredValue, nil
 			case bytes.Equal(key, data2RowKey):
 				if fnGetLatestCount.String() == "6" {
 					return data2RowValue, nil
-				} else {
-					return nil, tikverr.ErrNotExist
 				}
+				return nil, tikverr.ErrNotExist
 			case bytes.Equal(key, data3IndexKey):
 				return data3IndexValue, nil
 			case bytes.Equal(key, data4RowKey):
 				if fnGetLatestCount.String() == "9" {
 					return data4RowValue, nil
-				} else {
-					return nil, tikverr.ErrNotExist
 				}
+				return nil, tikverr.ErrNotExist
 			case bytes.Equal(key, data2IndexKey):
 				return data2IndexValue, nil
 			case bytes.Equal(key, data5IndexKey):

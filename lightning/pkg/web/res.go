@@ -20,4 +20,5 @@ import (
 	"net/http"
 )
 
+// Res is the web resources.
 var Res http.FileSystem = http.Dir("br/web/dist")

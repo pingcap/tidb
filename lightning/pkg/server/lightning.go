@@ -57,7 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
-	_ "github.com/pingcap/tidb/pkg/planner/core"
+	_ "github.com/pingcap/tidb/pkg/planner/core" // init expression.EvalSimpleAst related function
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
