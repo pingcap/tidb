@@ -200,24 +200,44 @@ func getNotNullFullRange() []*point {
 // So we need to set it to MaxInt64.
 func FullIntRange(isUnsigned bool) Ranges {
 	if isUnsigned {
-		return Ranges{{LowVal: []types.Datum{types.NewUintDatum(0)}, HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)}, Collators: collate.GetBinaryCollatorSlice(1)}}
+		return Ranges{{
+			LowVal:    []types.Datum{types.NewUintDatum(0)},
+			HighVal:   []types.Datum{types.NewUintDatum(math.MaxUint64)},
+			Collators: collate.GetBinaryCollatorSlice(1),
+		}}
 	}
-	return Ranges{{LowVal: []types.Datum{types.NewIntDatum(math.MinInt64)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}, Collators: collate.GetBinaryCollatorSlice(1)}}
+	return Ranges{{
+		LowVal:    []types.Datum{types.NewIntDatum(math.MinInt64)},
+		HighVal:   []types.Datum{types.NewIntDatum(math.MaxInt64)},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}}
 }
 
 // FullRange is [null, +∞) for Range.
 func FullRange() Ranges {
-	return Ranges{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)}}
+	return Ranges{{
+		LowVal:    []types.Datum{{}},
+		HighVal:   []types.Datum{types.MaxValueDatum()},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}}
 }
 
 // FullNotNullRange is (-∞, +∞) for Range.
 func FullNotNullRange() Ranges {
-	return Ranges{{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)}}
+	return Ranges{{
+		LowVal:    []types.Datum{types.MinNotNullDatum()},
+		HighVal:   []types.Datum{types.MaxValueDatum()},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}}
 }
 
 // NullRange is [null, null] for Range.
 func NullRange() Ranges {
-	return Ranges{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{{}}, Collators: collate.GetBinaryCollatorSlice(1)}}
+	return Ranges{{
+		LowVal:    []types.Datum{{}},
+		HighVal:   []types.Datum{{}},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}}
 }
 
 // builder is the range builder struct.

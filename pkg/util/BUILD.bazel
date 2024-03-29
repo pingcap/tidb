@@ -19,6 +19,7 @@ go_library(
         "urls.go",
         "util.go",
         "wait_group_wrapper.go",
+        "worker_pool.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util",
     visibility = ["//visibility:public"],

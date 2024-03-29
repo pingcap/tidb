@@ -35,8 +35,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -44,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -75,7 +75,7 @@ type tidbRows []tidbRow
 // MarshalLogArray implements the zapcore.ArrayMarshaler interface
 func (rows tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 	for _, r := range rows {
-		encoder.AppendString(redact.String(r.insertStmt))
+		encoder.AppendString(redact.Value(r.insertStmt))
 	}
 	return nil
 }
@@ -784,7 +784,7 @@ stmtLoop:
 
 			if !common.IsContextCanceledError(err) {
 				log.FromContext(ctx).Error("execute statement failed",
-					zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.String(stmt)), zap.Error(err))
+					zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.Value(stmt)), zap.Error(err))
 			}
 			// It's batch mode, just return the error. Caller will fall back to row-by-row mode.
 			if batch {
@@ -905,7 +905,7 @@ type TableAutoIDInfo struct {
 }
 
 // FetchTableAutoIDInfos fetches the auto id information of a table.
-func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableName string) ([]*TableAutoIDInfo, error) {
+func FetchTableAutoIDInfos(ctx context.Context, exec dbutil.QueryExecutor, tableName string) ([]*TableAutoIDInfo, error) {
 	rows, e := exec.QueryContext(ctx, fmt.Sprintf("SHOW TABLE %s NEXT_ROW_ID", tableName))
 	if e != nil {
 		return nil, errors.Trace(e)

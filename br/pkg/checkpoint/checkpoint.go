@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -849,7 +850,7 @@ func removeCheckpointData(ctx context.Context, s storage.ExternalStorage, subDir
 
 	maxFailedFilesNum := int64(16)
 	var failedFilesCount atomic.Int64
-	pool := utils.NewWorkerPool(4, "checkpoint remove worker")
+	pool := util.NewWorkerPool(4, "checkpoint remove worker")
 	eg, gCtx := errgroup.WithContext(ctx)
 	for _, filename := range removedFileNames {
 		name := filename
