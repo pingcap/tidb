@@ -74,7 +74,7 @@ run_sql 'DROP DATABASE cpeng;'
 rm -f "/tmp/tidb_lightning_checkpoint_local_backend_test.pb"
 
 set +e
-export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/importer/FailIfStatusBecomes=return(90);'
+export GO_FAILPOINTS='github.com/pingcap/tidb/lightning/pkg/importer/FailIfStatusBecomes=return(90);'
 for i in $(seq "$ENGINE_COUNT"); do
     echo "******** Importing Table Now (step $i/$ENGINE_COUNT) ********"
     run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "$CUR/config.toml"
@@ -107,7 +107,7 @@ for ckpt in mysql file; do
 
   # before chunk pos is updated, local files could handle lost
   set +e
-  export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/FailAfterWriteRows=return"
+  export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/FailAfterWriteRows=return"
   run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "$CUR/$ckpt.toml"
   set -e
   run_lightning_ctl --check-local-storage \
@@ -121,7 +121,7 @@ for ckpt in mysql file; do
   run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_local_backend_test'
   rm -f "/tmp/tidb_lightning_checkpoint_local_backend_test.pb"
   set +e
-  export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/LocalBackendSaveCheckpoint=return;github.com/pingcap/tidb/br/pkg/lightning/importer/FailIfImportedChunk=return"
+  export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/LocalBackendSaveCheckpoint=return;github.com/pingcap/tidb/lightning/pkg/importer/FailIfImportedChunk=return"
   run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "$CUR/$ckpt.toml"
   set -e
   run_lightning_ctl --check-local-storage \
@@ -134,7 +134,7 @@ for ckpt in mysql file; do
 
   # after index engine is imported, local file could handle lost
   set +e
-  export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/FailIfIndexEngineImported=return(1)"
+  export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/FailIfIndexEngineImported=return(1)"
   run_lightning --backend local --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-local.log" --config "$CUR/$ckpt.toml"
   set -e
   run_lightning_ctl --check-local-storage \

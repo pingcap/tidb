@@ -434,8 +434,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
 	require.NoError(s.T(), failpoint.Enable(
-		"github.com/pingcap/tidb/br/pkg/lightning/importer/mock-kv-size", "return(110000000)"))
-	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/importer/mock-kv-size")
+		"github.com/pingcap/tidb/lightning/pkg/importer/mock-kv-size", "return(110000000)"))
+	defer failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/mock-kv-size")
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	require.NoError(s.T(), err)
 

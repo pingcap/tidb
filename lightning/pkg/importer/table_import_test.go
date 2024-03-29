@@ -231,9 +231,9 @@ func (s *tableRestoreSuite) SetupTest() {
 }
 
 func (s *tableRestoreSuite) TestPopulateChunks() {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/importer/PopulateChunkTimestamp", "return(1234567897)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp", "return(1234567897)")
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/importer/PopulateChunkTimestamp")
+		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp")
 	}()
 
 	cp := &checkpoints2.TableCheckpoint{
@@ -492,9 +492,9 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 		DataFiles:  fakeDataFiles,
 	}
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/importer/PopulateChunkTimestamp", "return(1234567897)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp", "return(1234567897)")
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/importer/PopulateChunkTimestamp")
+		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp")
 	}()
 
 	cp := &checkpoints2.TableCheckpoint{
@@ -1046,7 +1046,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 }
 
 func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/importer/SlowDownCheckpointUpdate", "sleep(100)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importer/SlowDownCheckpointUpdate", "sleep(100)")
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/importer/SlowDownCheckpointUpdate")
 	}()

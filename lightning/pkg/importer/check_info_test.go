@@ -584,10 +584,10 @@ func TestCheckTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/importer/CheckTableEmptyFailed", `return`)
+	err = failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importer/CheckTableEmptyFailed", `return`)
 	require.NoError(t, err)
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/importer/CheckTableEmptyFailed")
+		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/CheckTableEmptyFailed")
 	}()
 
 	// restrict the concurrency to ensure there are more tables than workers
