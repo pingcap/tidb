@@ -280,6 +280,7 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 			return nil, err
 		}
 		mgr.execPreparedStmtID = stmtID
+		// TODO recycle this session.
 		mgr.executorMgrSe = executorMgrSe
 	}
 	rs, err := mgr.executorMgrSe.ExecutePreparedStmt(ctx, mgr.execPreparedStmtID, []expression.Expression{
