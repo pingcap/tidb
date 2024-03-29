@@ -25,7 +25,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -99,6 +102,9 @@ type TaskHandle interface {
 
 // TaskManager is the manager of task and subtask.
 type TaskManager struct {
+	executorMgrSe      types.Session
+	execPreparedStmtID uint32
+
 	sePool sessionPool
 }
 
@@ -257,21 +263,48 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Tas
 
 // GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+basicTaskColumns+`, max(st.concurrency)
+	if mgr.execPreparedStmtID == 0 {
+		se, err := mgr.sePool.Get()
+		if err != nil {
+			return nil, err
+		}
+		executorMgrSe := se.(types.Session)
+		stmtID, _, _, err := executorMgrSe.PrepareStmt(`select ` + basicTaskColumns + `, max(st.concurrency)
 			from mysql.tidb_global_task t join mysql.tidb_background_subtask st
 				on t.id = st.task_key and t.step = st.step
-			where t.state in (%?, %?, %?) and st.state in (%?, %?) and st.exec_id = %?
+			where t.state in (?, ?, ?) and st.state in (?, ?) and st.exec_id = ?
 			group by t.id
-			order by priority asc, create_time asc, id asc`,
-		proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStatePausing,
-		proto.SubtaskStatePending, proto.SubtaskStateRunning, execID)
+			order by priority asc, create_time asc, id asc`)
+		if err != nil {
+			mgr.sePool.Put(se)
+			return nil, err
+		}
+		mgr.execPreparedStmtID = stmtID
+		mgr.executorMgrSe = executorMgrSe
+	}
+	rs, err := mgr.executorMgrSe.ExecutePreparedStmt(ctx, mgr.execPreparedStmtID, []expression.Expression{
+		expression.NewStrConst(proto.TaskStateRunning.String()),
+		expression.NewStrConst(proto.TaskStateReverting.String()),
+		expression.NewStrConst(proto.TaskStatePausing.String()),
+		expression.NewStrConst(proto.SubtaskStatePending.String()),
+		expression.NewStrConst(proto.SubtaskStateRunning.String()),
+		expression.NewStrConst(execID),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if rs == nil {
+		return []*TaskExecInfo{}, nil
+	}
+
+	defer terror.Call(rs.Close)
+	chunkRows, err := sqlexec.DrainRecordSet(ctx, rs, 1024)
 	if err != nil {
 		return nil, err
 	}
 
-	res := make([]*TaskExecInfo, 0, len(rs))
-	for _, r := range rs {
+	res := make([]*TaskExecInfo, 0, len(chunkRows))
+	for _, r := range chunkRows {
 		res = append(res, &TaskExecInfo{
 			TaskBase:           row2TaskBasic(r),
 			SubtaskConcurrency: int(r.GetInt64(8)),
