@@ -8,7 +8,6 @@ go_library(
         "kv2sql.go",
         "session.go",
         "sql2kv.go",
-        "types.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/backend/kv",
     visibility = ["//visibility:public"],
