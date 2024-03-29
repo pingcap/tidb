@@ -215,9 +215,27 @@ const (
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
-	// Note that Column use UniqueID as the key while Indices use the index ID in the metadata.
-	Columns map[int64]*Column
-	Indices map[int64]*Index
+	// Note that when used in a query, Column use UniqueID as the key while Indices use the index ID in the
+	// metadata. (See GenerateHistCollFromColumnInfo() for details)
+	Columns    map[int64]*Column
+	Indices    map[int64]*Index
+	PhysicalID int64
+	// TODO: add AnalyzeCount here
+	RealtimeCount int64 // RealtimeCount is the current table row count, maintained by applying stats delta based on AnalyzeCount.
+	ModifyCount   int64 // Total modify count in a table.
+
+	// The version of the statistics, refer to Version0, Version1, Version2 and so on.
+	StatsVer int
+	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
+	// The physical id is used when try to load column stats from storage.
+	HavePhysicalID bool
+	Pseudo         bool
+
+	/*
+		Fields below are only used in a query, like for estimation, and they will be useless when stored in
+		the stats cache. (See GenerateHistCollFromColumnInfo() for details)
+	*/
+
 	// Idx2ColUniqueIDs maps the index id to its column UniqueIDs. It's used to calculate the selectivity in planner.
 	Idx2ColUniqueIDs map[int64][]int64
 	// ColUniqueID2IdxIDs maps the column UniqueID to a list index ids whose first column is it.
@@ -228,18 +246,7 @@ type HistColl struct {
 	// MVIdx2Columns maps the index id to its columns by expression.Column.
 	// For normal index, the column id is enough, as we already have in Idx2ColUniqueIDs. But currently, mv index needs more
 	// information to match the filter against the mv index columns, and we need this map to provide this information.
-	MVIdx2Columns map[int64][]*expression.Column
-	PhysicalID    int64
-	// TODO: add AnalyzeCount here
-	RealtimeCount int64 // RealtimeCount is the current table row count, maintained by applying stats delta based on AnalyzeCount.
-	ModifyCount   int64 // Total modify count in a table.
-
-	// The version of the statistics, refer to Version0, Version1, Version2 and so on.
-	StatsVer int
-	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
-	// The physical id is used when try to load column stats from storage.
-	HavePhysicalID    bool
-	Pseudo            bool
+	MVIdx2Columns     map[int64][]*expression.Column
 	CanNotTriggerLoad bool
 }
 
