@@ -698,15 +698,7 @@ func IsRaftKV2(ctx context.Context, db *sql.DB) (bool, error) {
 	return false, rows.Err()
 }
 
-var (
-	passwordPatterns = `(password[\s]*=[\s]*(\\")?)(.*?)((\\")?\\n)`
-
-	passwordRegexp *regexp.Regexp
-)
-
-func init() {
-	passwordRegexp = regexp.MustCompile(passwordPatterns)
-}
+var passwordRegexp = regexp.MustCompile(`(password[\s]*=[\s]*(\\")?)(.*?)((\\")?\\n)`)
 
 // HideSensitive replace password with ******.
 func HideSensitive(input string) string {
