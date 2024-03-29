@@ -191,7 +191,7 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) (execute.StepExecutor, error) {
+func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
 	switch task.Step {
 	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
 		return s.newBackfillSubtaskExecutor(task.Step)

@@ -30,13 +30,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbtbl "github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -298,7 +298,7 @@ func (em *ErrorManager) RecordTypeError(
 		errMsg := encodeErr.Error()
 		logger = logger.With(
 			zap.Int64("offset", offset),
-			zap.String("row", redact.String(rowText)),
+			zap.String("row", redact.Value(rowText)),
 			zap.String("message", errMsg))
 
 		// put it into the database.
@@ -462,7 +462,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	ctx context.Context,
 	tbl tidbtbl.Table,
 	tableName string,
-	pool *utils.WorkerPool,
+	pool *util.WorkerPool,
 	fnGetLatest func(ctx context.Context, key []byte) ([]byte, error),
 	fnDeleteKey func(ctx context.Context, key []byte) error,
 ) error {

@@ -333,7 +333,7 @@ func TestUpgrade(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// Verify that 'new_collation_enabled' is false.
-	r = MustExecToRecodeSet(t, se2, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s'`, tidbNewCollationEnabled))
+	r = MustExecToRecodeSet(t, se2, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s'`, TidbNewCollationEnabled))
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
