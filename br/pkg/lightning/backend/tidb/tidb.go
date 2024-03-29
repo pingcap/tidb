@@ -785,6 +785,10 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 	return nil
 }
 
+func (be *tidbBackend) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	return be.targetInfoGetter.FetchRemoteDBModels(ctx)
+}
+
 func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	return be.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
 }
