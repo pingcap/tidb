@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -28,7 +29,7 @@ import (
 type deriveTopNFromWindow struct {
 }
 
-func appendDerivedTopNTrace(topN LogicalPlan, opt *util.LogicalOptimizeOp) {
+func appendDerivedTopNTrace(topN LogicalPlan, opt *coreusage.LogicalOptimizeOp) {
 	child := topN.Children()[0]
 	action := func() string {
 		return fmt.Sprintf("%v_%v top N added below  %v_%v ", topN.TP(), topN.ID(), child.TP(), child.ID())
@@ -116,12 +117,12 @@ func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 	return false, 0
 }
 
-func (*deriveTopNFromWindow) optimize(_ context.Context, p LogicalPlan, opt *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
+func (*deriveTopNFromWindow) optimize(_ context.Context, p LogicalPlan, opt *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	return p.deriveTopN(opt), planChanged, nil
 }
 
-func (s *baseLogicalPlan) deriveTopN(opt *util.LogicalOptimizeOp) LogicalPlan {
+func (s *baseLogicalPlan) deriveTopN(opt *coreusage.LogicalOptimizeOp) LogicalPlan {
 	p := s.self
 	if p.SCtx().GetSessionVars().AllowDeriveTopN {
 		for i, child := range p.Children() {
@@ -132,7 +133,7 @@ func (s *baseLogicalPlan) deriveTopN(opt *util.LogicalOptimizeOp) LogicalPlan {
 	return p
 }
 
-func (s *LogicalSelection) deriveTopN(opt *util.LogicalOptimizeOp) LogicalPlan {
+func (s *LogicalSelection) deriveTopN(opt *coreusage.LogicalOptimizeOp) LogicalPlan {
 	p := s.self.(*LogicalSelection)
 	windowIsTopN, limitValue := windowIsTopN(p)
 	if windowIsTopN {

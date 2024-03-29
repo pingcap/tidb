@@ -464,7 +464,7 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int,
 func (p *LogicalJoin) constructIndexJoin(
 	prop *property.PhysicalProperty,
 	outerIdx int,
-	innerTask task,
+	innerTask Task,
 	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
 	path *util.AccessPath,
@@ -578,7 +578,7 @@ func (p *LogicalJoin) constructIndexJoin(
 func (p *LogicalJoin) constructIndexMergeJoin(
 	prop *property.PhysicalProperty,
 	outerIdx int,
-	innerTask task,
+	innerTask Task,
 	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
 	path *util.AccessPath,
@@ -685,7 +685,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 func (p *LogicalJoin) constructIndexHashJoin(
 	prop *property.PhysicalProperty,
 	outerIdx int,
-	innerTask task,
+	innerTask Task,
 	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
 	path *util.AccessPath,
@@ -833,7 +833,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	newOuterJoinKeys := make([]*expression.Column, 0)
 	var ranges ranger.MutableRanges = ranger.Ranges{}
-	var innerTask, innerTask2 task
+	var innerTask, innerTask2 Task
 	var helper *indexJoinBuildHelper
 	if ds.tableInfo.IsCommonHandle {
 		helper, keyOff2IdxOff = p.getIndexJoinBuildHelper(ds, innerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath }, outerJoinKeys)
@@ -1025,7 +1025,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
-) task {
+) Task {
 	ds := wrapper.ds
 	// If `ds.tableInfo.GetPartitionInfo() != nil`,
 	// it means the data source is a partition table reader.
@@ -1090,9 +1090,9 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	ts.PlanPartInfo = copTask.physPlanPartInfo
 	selStats := ts.StatsInfo().Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
-	t := copTask.convertToRootTask(ds.SCtx())
-	reader := t.p
-	t.p = p.constructInnerByWrapper(wrapper, reader)
+	t := copTask.ConvertToRootTask(ds.SCtx())
+	reader := t.GetPlan()
+	t.SetPlan(p.constructInnerByWrapper(wrapper, reader))
 	return t
 }
 
@@ -1211,7 +1211,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	desc bool,
 	rowCount float64,
 	maxOneRow bool,
-) task {
+) Task {
 	ds := wrapper.ds
 	// If `ds.tableInfo.GetPartitionInfo() != nil`,
 	// it means the data source is a partition table reader.
@@ -1378,9 +1378,9 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
 	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
-	t := cop.convertToRootTask(ds.SCtx())
-	reader := t.p
-	t.p = p.constructInnerByWrapper(wrapper, reader)
+	t := cop.ConvertToRootTask(ds.SCtx())
+	reader := t.GetPlan()
+	t.SetPlan(p.constructInnerByWrapper(wrapper, reader))
 	return t
 }
 
@@ -2567,7 +2567,7 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 	return newProp, true
 }
 
-// exhaustPhysicalPlans enumerate all the possible physical plan for expand operator (currently only mpp case is supported)
+// exhaustop.PhysicalPlans enumerate all the possible physical plan for expand operator (currently only mpp case is supported)
 func (p *LogicalExpand) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
 	if !prop.IsSortItemEmpty() {
@@ -2944,9 +2944,9 @@ func (lw *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) (
 	return windows, true, nil
 }
 
-// exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
+// exhaustop.PhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
 func (*baseLogicalPlan) exhaustPhysicalPlans(*property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
+	panic("baseLogicalPlan.exhaustop.PhysicalPlans() should never be called.")
 }
 
 // canPushToCop checks if it can be pushed to some stores. For TiKV, it only checks datasource.

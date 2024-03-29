@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	math2 "math"
 	"strconv"
 	"strings"
@@ -95,7 +96,7 @@ type PointGetPlan struct {
 	// required by cost model
 	planCostInit bool
 	planCost     float64
-	planCostVer2 costVer2
+	planCostVer2 coreusage.CostVer2
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
 
@@ -108,21 +109,21 @@ type PointGetPlan struct {
 	PartitionNames []model.CIStr
 }
 
-func (p *PointGetPlan) getEstRowCountForDisplay() float64 {
+func (p *PointGetPlan) GetEstRowCountForDisplay() float64 {
 	if p == nil {
 		return 0
 	}
 	return p.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
 }
 
-func (p *PointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
+func (p *PointGetPlan) GetActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
 	if p == nil {
 		return 1
 	}
 	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
 }
 
-func (p *PointGetPlan) setProbeParents(probeParents []PhysicalPlan) {
+func (p *PointGetPlan) SetProbeParents(probeParents []PhysicalPlan) {
 	p.probeParents = probeParents
 }
 
@@ -148,9 +149,9 @@ func (p *PointGetPlan) SetCost(cost float64) {
 	p.cost = cost
 }
 
-// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
+// Attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 // current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
-func (*PointGetPlan) attach2Task(...task) task {
+func (*PointGetPlan) Attach2Task(...Task) Task {
 	return nil
 }
 
@@ -260,7 +261,7 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.outputNames = names
 }
 
-func (*PointGetPlan) appendChildCandidate(_ *physicalOptimizeOp) {}
+func (*PointGetPlan) AppendChildCandidate(_ *coreusage.PhysicalOptimizeOp) {}
 
 const emptyPointGetPlanSize = int64(unsafe.Sizeof(PointGetPlan{}))
 
@@ -434,7 +435,7 @@ type BatchPointGetPlan struct {
 	// required by cost model
 	planCostInit bool
 	planCost     float64
-	planCostVer2 costVer2
+	planCostVer2 coreusage.CostVer2
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
 
@@ -445,20 +446,20 @@ type BatchPointGetPlan struct {
 	PartitionNames []model.CIStr
 }
 
-func (p *BatchPointGetPlan) getEstRowCountForDisplay() float64 {
+func (p *BatchPointGetPlan) GetEstRowCountForDisplay() float64 {
 	if p == nil {
 		return 0
 	}
 	return p.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
 }
 
-func (p *BatchPointGetPlan) getActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
+func (p *BatchPointGetPlan) GetActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
 	if p == nil {
 		return 1
 	}
 	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
 }
-func (p *BatchPointGetPlan) setProbeParents(probeParents []PhysicalPlan) {
+func (p *BatchPointGetPlan) SetProbeParents(probeParents []PhysicalPlan) {
 	p.probeParents = probeParents
 }
 
@@ -482,9 +483,9 @@ func (*BatchPointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn
 	return nil
 }
 
-// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
+// Attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 // current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
-func (*BatchPointGetPlan) attach2Task(...task) task {
+func (*BatchPointGetPlan) Attach2Task(...Task) Task {
 	return nil
 }
 
@@ -571,7 +572,7 @@ func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.names = names
 }
 
-func (*BatchPointGetPlan) appendChildCandidate(_ *physicalOptimizeOp) {}
+func (*BatchPointGetPlan) AppendChildCandidate(_ *coreusage.PhysicalOptimizeOp) {}
 
 const emptyBatchPointGetPlanSize = int64(unsafe.Sizeof(BatchPointGetPlan{}))
 

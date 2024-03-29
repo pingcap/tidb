@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -87,7 +88,7 @@ const (
 	MemQuotaLbl = "memQuota"
 )
 
-func setPointGetPlanCostDetail(p *PointGetPlan, opt *physicalOptimizeOp,
+func setPointGetPlanCostDetail(p *PointGetPlan, opt *coreusage.PhysicalOptimizeOp,
 	rowSize, networkFactor, seekFactor float64) {
 	if opt == nil {
 		return
@@ -97,10 +98,10 @@ func setPointGetPlanCostDetail(p *PointGetPlan, opt *physicalOptimizeOp,
 		AddParam(NetworkFactorLbl, networkFactor).
 		AddParam(SeekFactorLbl, seekFactor).
 		SetDesc(fmt.Sprintf("%s*%s+%s", RowSizeLbl, NetworkFactorLbl, SeekFactorLbl))
-	opt.appendPlanCostDetail(detail)
+	appendPlanCostDetail4PhysicalOptimizeOp(opt, detail)
 }
 
-func setBatchPointGetPlanCostDetail(p *BatchPointGetPlan, opt *physicalOptimizeOp,
+func setBatchPointGetPlanCostDetail(p *BatchPointGetPlan, opt *coreusage.PhysicalOptimizeOp,
 	rowCount, rowSize, networkFactor, seekFactor float64, scanConcurrency int) {
 	if opt == nil {
 		return
@@ -113,10 +114,10 @@ func setBatchPointGetPlanCostDetail(p *BatchPointGetPlan, opt *physicalOptimizeO
 		AddParam(ScanConcurrencyLbl, scanConcurrency).
 		SetDesc(fmt.Sprintf("(%s*%s*%s+%s*%s)/%s",
 			RowCountLbl, RowSizeLbl, NetworkFactorLbl, RowCountLbl, SeekFactorLbl, ScanConcurrencyLbl))
-	opt.appendPlanCostDetail(detail)
+	appendPlanCostDetail4PhysicalOptimizeOp(opt, detail)
 }
 
-func setPhysicalTableOrIndexScanCostDetail(p PhysicalPlan, opt *physicalOptimizeOp,
+func setPhysicalTableOrIndexScanCostDetail(p PhysicalPlan, opt *coreusage.PhysicalOptimizeOp,
 	rowCount, rowSize, scanFactor float64, costModelVersion int) {
 	if opt == nil {
 		return
@@ -137,10 +138,10 @@ func setPhysicalTableOrIndexScanCostDetail(p PhysicalPlan, opt *physicalOptimize
 		desc = fmt.Sprintf("%s*log2(%s)*%s", RowCountLbl, RowSizeLbl, ScanFactorLbl)
 	}
 	detail.SetDesc(desc)
-	opt.appendPlanCostDetail(detail)
+	appendPlanCostDetail4PhysicalOptimizeOp(opt, detail)
 }
 
-func setPhysicalTableReaderCostDetail(p *PhysicalTableReader, opt *physicalOptimizeOp,
+func setPhysicalTableReaderCostDetail(p *PhysicalTableReader, opt *coreusage.PhysicalOptimizeOp,
 	rowCount, rowSize, networkFactor, netSeekCost, tablePlanCost float64,
 	scanConcurrency int, storeType kv.StoreType) {
 	// tracer haven't support non tikv plan for now
@@ -156,10 +157,10 @@ func setPhysicalTableReaderCostDetail(p *PhysicalTableReader, opt *physicalOptim
 		AddParam(ScanConcurrencyLbl, scanConcurrency)
 	detail.SetDesc(fmt.Sprintf("(%s+%s*%s*%s+%s)/%s", TablePlanCostLbl,
 		RowCountLbl, RowSizeLbl, NetworkFactorLbl, NetSeekCostLbl, ScanConcurrencyLbl))
-	opt.appendPlanCostDetail(detail)
+	appendPlanCostDetail4PhysicalOptimizeOp(opt, detail)
 }
 
-func setPhysicalIndexReaderCostDetail(p *PhysicalIndexReader, opt *physicalOptimizeOp,
+func setPhysicalIndexReaderCostDetail(p *PhysicalIndexReader, opt *coreusage.PhysicalOptimizeOp,
 	rowCount, rowSize, networkFactor, netSeekCost, indexPlanCost float64,
 	scanConcurrency int) {
 	if opt == nil {
@@ -174,10 +175,10 @@ func setPhysicalIndexReaderCostDetail(p *PhysicalIndexReader, opt *physicalOptim
 		AddParam(ScanConcurrencyLbl, scanConcurrency)
 	detail.SetDesc(fmt.Sprintf("(%s+%s*%s*%s+%s)/%s", IndexPlanCostLbl,
 		RowCountLbl, RowSizeLbl, NetworkFactorLbl, NetSeekCostLbl, ScanConcurrencyLbl))
-	opt.appendPlanCostDetail(detail)
+	appendPlanCostDetail4PhysicalOptimizeOp(opt, detail)
 }
 
-func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp, spill bool,
+func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *coreusage.PhysicalOptimizeOp, spill bool,
 	buildCnt, probeCnt, cpuFactor, rowSize, numPairs,
 	cpuCost, probeCPUCost, memCost, diskCost, probeDiskCost,
 	diskFactor, memoryFactor, concurrencyFactor float64,
@@ -238,7 +239,7 @@ func setPhysicalHashJoinCostDetail(p *PhysicalHashJoin, opt *physicalOptimizeOp,
 		AddParam(ProbeDiskCostDescLbl, diskCostDetail.probeDesc())
 
 	detail.SetDesc(fmt.Sprintf("%s+%s+%s+all children cost", CPUCostDetailLbl, MemCostDetailLbl, DiskCostDetailLbl))
-	opt.appendPlanCostDetail(detail)
+	appendPlanCostDetail4PhysicalOptimizeOp(opt, detail)
 }
 
 // HashJoinProbeCostDetail indicates probe cpu cost detail
