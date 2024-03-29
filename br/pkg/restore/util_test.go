@@ -3,8 +3,6 @@
 package restore
 
 import (
-	"context"
-	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -13,9 +11,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	recover_data "github.com/pingcap/kvproto/pkg/recoverdatapb"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -171,176 +166,6 @@ func TestValidateFileRewriteRule(t *testing.T) {
 	)
 	require.Error(t, err)
 	require.Regexp(t, ".*rewrite rule mismatch.*", err.Error())
-}
-
-func TestPaginateScanRegion(t *testing.T) {
-	peers := make([]*metapb.Peer, 1)
-	peers[0] = &metapb.Peer{
-		Id:      1,
-		StoreId: 1,
-	}
-	stores := make(map[uint64]*metapb.Store)
-	stores[1] = &metapb.Store{
-		Id: 1,
-	}
-
-	makeRegions := func(num uint64) (map[uint64]*split.RegionInfo, []*split.RegionInfo) {
-		regionsMap := make(map[uint64]*split.RegionInfo, num)
-		regions := make([]*split.RegionInfo, 0, num)
-		endKey := make([]byte, 8)
-		for i := uint64(0); i < num-1; i++ {
-			ri := &split.RegionInfo{
-				Region: &metapb.Region{
-					Id:    i + 1,
-					Peers: peers,
-				},
-			}
-
-			if i != 0 {
-				startKey := make([]byte, 8)
-				binary.BigEndian.PutUint64(startKey, i)
-				ri.Region.StartKey = codec.EncodeBytes([]byte{}, startKey)
-			}
-			endKey = make([]byte, 8)
-			binary.BigEndian.PutUint64(endKey, i+1)
-			ri.Region.EndKey = codec.EncodeBytes([]byte{}, endKey)
-
-			regionsMap[i] = ri
-			regions = append(regions, ri)
-		}
-
-		if num == 1 {
-			endKey = []byte{}
-		} else {
-			endKey = codec.EncodeBytes([]byte{}, endKey)
-		}
-		ri := &split.RegionInfo{
-			Region: &metapb.Region{
-				Id:       num,
-				Peers:    peers,
-				StartKey: endKey,
-				EndKey:   []byte{},
-			},
-		}
-		regionsMap[num] = ri
-		regions = append(regions, ri)
-
-		return regionsMap, regions
-	}
-
-	ctx := context.Background()
-	regionMap := make(map[uint64]*split.RegionInfo)
-	var regions []*split.RegionInfo
-	var batch []*split.RegionInfo
-	backup := split.WaitRegionOnlineAttemptTimes
-	split.WaitRegionOnlineAttemptTimes = 3
-	defer func() {
-		split.WaitRegionOnlineAttemptTimes = backup
-	}()
-	_, err := split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
-	require.Error(t, err)
-	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
-	require.Regexp(t, ".*scan region return empty result.*", err.Error())
-
-	regionMap, regions = makeRegions(1)
-	tc := NewTestClient(stores, regionMap, 0)
-	tc.InjectErr = true
-	tc.InjectTimes = 2
-	batch, err = split.PaginateScanRegion(ctx, tc, []byte{}, []byte{}, 3)
-	require.NoError(t, err)
-	require.Equal(t, regions, batch)
-
-	regionMap, regions = makeRegions(2)
-	batch, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
-	require.NoError(t, err)
-	require.Equal(t, regions, batch)
-
-	regionMap, regions = makeRegions(3)
-	batch, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
-	require.NoError(t, err)
-	require.Equal(t, regions, batch)
-
-	regionMap, regions = makeRegions(8)
-	batch, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
-	require.NoError(t, err)
-	require.Equal(t, regions, batch)
-
-	regionMap, regions = makeRegions(8)
-	batch, err = split.PaginateScanRegion(
-		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.StartKey, []byte{}, 3)
-	require.NoError(t, err)
-	require.Equal(t, regions[1:], batch)
-
-	batch, err = split.PaginateScanRegion(
-		ctx, NewTestClient(stores, regionMap, 0), []byte{}, regions[6].Region.EndKey, 3)
-	require.NoError(t, err)
-	require.Equal(t, regions[:7], batch)
-
-	batch, err = split.PaginateScanRegion(
-		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.StartKey, regions[1].Region.EndKey, 3)
-	require.NoError(t, err)
-	require.Equal(t, regions[1:2], batch)
-
-	_, err = split.PaginateScanRegion(
-		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[1].Region.EndKey, 3)
-	require.Error(t, err)
-
-	_, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{2}, []byte{1}, 3)
-	require.Error(t, err)
-	require.True(t, berrors.ErrRestoreInvalidRange.Equal(err))
-	require.Regexp(t, ".*startKey > endKey.*", err.Error())
-
-	tc = NewTestClient(stores, regionMap, 0)
-	tc.InjectErr = true
-	tc.InjectTimes = 5
-	_, err = split.PaginateScanRegion(ctx, tc, []byte{}, []byte{}, 3)
-	require.Error(t, err)
-	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
-
-	// make the regionMap losing some region, this will cause scan region check fails
-	// region ID is key+1, so region 4 is deleted
-	missingRegion := regions[3]
-	delete(regionMap, uint64(3))
-	missingRegion2 := regions[4]
-	delete(regionMap, uint64(4))
-	_, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
-	require.Error(t, err)
-	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
-	require.Regexp(t, ".*region 3's endKey not equal to next region 6's startKey.*", err.Error())
-
-	// test should not increase retry counter when region becomes more
-	tc = NewTestClient(stores, regionMap, 0)
-	mockClient := &regionOnlineSlowClient{
-		TestClient:     tc,
-		missingRegion:  missingRegion,
-		missingRegion2: missingRegion2,
-	}
-	_, err = split.PaginateScanRegion(ctx, mockClient, regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
-	require.NoError(t, err)
-}
-
-type regionOnlineSlowClient struct {
-	*TestClient
-	scanRegionCnt  int
-	missingRegion  *split.RegionInfo
-	missingRegion2 *split.RegionInfo
-}
-
-func (c *regionOnlineSlowClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
-	c.scanRegionCnt++
-	var toAddRegion *split.RegionInfo
-	switch c.scanRegionCnt {
-	case 2:
-		toAddRegion = c.missingRegion
-	case 4:
-		toAddRegion = c.missingRegion2
-	}
-	if toAddRegion != nil {
-		mapKey := toAddRegion.Region.Id - 1
-		c.TestClient.regions[mapKey] = toAddRegion
-		c.TestClient.regionsInfo.SetRegion(pdtypes.NewRegionInfo(toAddRegion.Region, toAddRegion.Leader))
-	}
-	return c.TestClient.ScanRegions(ctx, key, endKey, limit)
 }
 
 func TestRewriteFileKeys(t *testing.T) {
