@@ -79,6 +79,7 @@ type Table struct {
 // ColAndIdxExistenceMap is the meta map for statistics.Table.
 // It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
 type ColAndIdxExistenceMap struct {
+	mu          sync.RWMutex // It will cause concurrent map writes when to init stats.
 	colInfoMap  map[int64]*model.ColumnInfo
 	colAnalyzed map[int64]bool
 	idxInfoMap  map[int64]*model.IndexInfo
@@ -88,6 +89,8 @@ type ColAndIdxExistenceMap struct {
 // SomeAnalyzed checks whether some part of the table is analyzed.
 // The newly added column/index might not have its stats.
 func (m *ColAndIdxExistenceMap) SomeAnalyzed() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m == nil {
 		return false
 	}
@@ -108,6 +111,8 @@ func (m *ColAndIdxExistenceMap) SomeAnalyzed() bool {
 // This method only checks whether the given item exists or not.
 // Don't check whether it has statistics or not.
 func (m *ColAndIdxExistenceMap) Has(id int64, isIndex bool) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if isIndex {
 		_, ok := m.idxInfoMap[id]
 		return ok
@@ -125,6 +130,8 @@ func (m *ColAndIdxExistenceMap) Has(id int64, isIndex bool) bool {
 //
 // To figure out three status, we use HasAnalyzed's TRUE value to represents the status 3. The Has's FALSE to represents the status 1.
 func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if isIndex {
 		analyzed, ok := m.idxAnalyzed[id]
 		return ok && analyzed
@@ -135,33 +142,45 @@ func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 
 // InsertCol inserts a column with its meta into the map.
 func (m *ColAndIdxExistenceMap) InsertCol(id int64, info *model.ColumnInfo, analyzed bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.colInfoMap[id] = info
 	m.colAnalyzed[id] = analyzed
 }
 
 // GetCol gets the meta data of the given column.
 func (m *ColAndIdxExistenceMap) GetCol(id int64) *model.ColumnInfo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.colInfoMap[id]
 }
 
 // InsertIndex inserts an index with its meta into the map.
 func (m *ColAndIdxExistenceMap) InsertIndex(id int64, info *model.IndexInfo, analyzed bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.idxInfoMap[id] = info
 	m.idxAnalyzed[id] = analyzed
 }
 
 // GetIndex gets the meta data of the given index.
 func (m *ColAndIdxExistenceMap) GetIndex(id int64) *model.IndexInfo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.idxInfoMap[id]
 }
 
 // IsEmpty checks whether the map is empty.
 func (m *ColAndIdxExistenceMap) IsEmpty() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return len(m.colInfoMap)+len(m.idxInfoMap) == 0
 }
 
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	mm := NewColAndIndexExistenceMap(len(m.colInfoMap), len(m.idxInfoMap))
 	mm.colInfoMap = maps.Clone(m.colInfoMap)
 	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
