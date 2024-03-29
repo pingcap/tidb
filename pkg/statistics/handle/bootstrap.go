@@ -106,7 +106,6 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 		if !ok {
 			continue
 		}
-		table = table.Copy()
 		isIndex := row.GetInt64(1)
 		id := row.GetInt64(2)
 		ndv := row.GetInt64(3)
