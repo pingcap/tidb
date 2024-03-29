@@ -336,7 +336,7 @@ func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache 
 		minTid = rows[0].GetInt64(0)
 		maxTid = rows[0].GetInt64(1)
 	}
-	ls := initstats.NewWorker(func(task initstats.Task) error {
+	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
 		return h.initStatsHistogramsByPaging(is, cache, task)
 	})
 	ls.LoadStats()

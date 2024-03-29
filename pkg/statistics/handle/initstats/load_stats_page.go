@@ -36,8 +36,8 @@ type RangeWorker struct {
 	wg util.WaitGroupWrapper
 }
 
-// NewWorker creates a new RangeWorker.
-func NewWorker(dealFunc func(task Task) error) *RangeWorker {
+// NewRangeWorker creates a new RangeWorker.
+func NewRangeWorker(dealFunc func(task Task) error) *RangeWorker {
 	return &RangeWorker{
 		dealFunc: dealFunc,
 		taskChan: make(chan Task, 1),
