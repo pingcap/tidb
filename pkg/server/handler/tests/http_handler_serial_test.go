@@ -458,7 +458,7 @@ func TestDebugRoutes(t *testing.T) {
 		"/debug/pprof/mutex?debug=1",
 		"/debug/pprof/symbol",
 		"/debug/pprof/trace",
-		"/debug/pprof/profile", // this takes a while to run, so we skip it
+		"/debug/pprof/profile",
 		"/debug/gogc",
 		// "/debug/zip", // this creates unexpected goroutines which will make goleak complain, so we skip it for now
 		"/debug/ballast-object-sz",
