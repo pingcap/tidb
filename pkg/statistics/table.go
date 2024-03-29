@@ -79,11 +79,11 @@ type Table struct {
 // ColAndIdxExistenceMap is the meta map for statistics.Table.
 // It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
 type ColAndIdxExistenceMap struct {
-	mu          sync.RWMutex // It will cause concurrent map writes when to init stats.
 	colInfoMap  map[int64]*model.ColumnInfo
 	colAnalyzed map[int64]bool
 	idxInfoMap  map[int64]*model.IndexInfo
 	idxAnalyzed map[int64]bool
+	mu          sync.RWMutex // It will cause concurrent map writes when to init stats.
 }
 
 // SomeAnalyzed checks whether some part of the table is analyzed.
