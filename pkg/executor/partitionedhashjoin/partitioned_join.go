@@ -361,7 +361,7 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 
 	for chk := range srcChkCh {
 		start := time.Now()
-		builder.ResetBuffer(chk.NumRows())
+		usedRows := builder.ResetBuffer(chk)
 		if w.HashJoinCtx.BuildFilter != nil {
 			builder.filterVector, err = expression.VectorizedFilter(w.HashJoinCtx.SessCtx.GetExprCtx(), w.HashJoinCtx.SessCtx.GetSessionVars().EnableVectorizedExpression, w.HashJoinCtx.BuildFilter, chunk.NewIterator4Chunk(chk), builder.filterVector)
 			if err != nil {
@@ -370,23 +370,30 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 		}
 		// split partition
 		for index, colIdx := range builder.buildKeyIndex {
-			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, builder.filterVector, builder.nullKeyVector, hashTableMeta.serializeModes[index], builder.serializedKeyVectorBuffer)
+			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, usedRows, builder.filterVector, builder.nullKeyVector, hashTableMeta.serializeModes[index], builder.serializedKeyVectorBuffer)
 			if err != nil {
 				return err
 			}
 		}
 
 		h := fnv.New64()
-		for _, key := range builder.serializedKeyVectorBuffer {
-			h.Write(key)
+		fakePartIndex := 0
+		for logicalRowIndex, physicalRowIndex := range usedRows {
+			if (builder.filterVector != nil && !builder.filterVector[physicalRowIndex]) || (builder.nullKeyVector != nil && builder.nullKeyVector[physicalRowIndex]) {
+				builder.hashValue[logicalRowIndex] = uint64(fakePartIndex)
+				builder.partIdxVector[logicalRowIndex] = fakePartIndex
+				fakePartIndex = (fakePartIndex + 1) % partitionNumber
+				continue
+			}
+			h.Write(builder.serializedKeyVectorBuffer[logicalRowIndex])
 			hash := h.Sum64()
-			builder.hashValue = append(builder.hashValue, hash)
-			builder.partIdxVector = append(builder.partIdxVector, int(hash%uint64(partitionNumber)))
+			builder.hashValue[logicalRowIndex] = hash
+			builder.partIdxVector[logicalRowIndex] = int(hash % uint64(partitionNumber))
 			h.Reset()
 		}
 
 		// 2. build rowtable
-		builder.appendToRowTable(typeCtx, chk, w.rowTables, hashTableMeta)
+		builder.appendToRowTable(typeCtx, chk, usedRows, w.rowTables, hashTableMeta)
 		cost += int64(time.Since(start))
 	}
 	start := time.Now()
