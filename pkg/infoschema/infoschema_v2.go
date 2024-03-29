@@ -334,14 +334,14 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 				return
 			}
 		}
-		return nil, ErrTableNotExists.GenWithStackByArgs(schema, tbl)
+		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
 
 	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
 	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
 		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
-		return nil, ErrTableNotExists.GenWithStackByArgs(schema, tbl)
+		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
 
 	// Get from the cache.
@@ -569,7 +569,7 @@ func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts u
 
 		// table removed.
 		if tblInfo == nil {
-			return nil, errors.Trace(ErrTableNotExists.GenWithStackByArgs(
+			return nil, errors.Trace(ErrTableNotExists.FastGenByArgs(
 				fmt.Sprintf("(Schema ID %d)", dbID),
 				fmt.Sprintf("(Table ID %d)", tblID),
 			))
@@ -590,7 +590,7 @@ func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts u
 		return nil, errors.Trace(err)
 	}
 	if res == nil {
-		return nil, errors.Trace(ErrTableNotExists.GenWithStackByArgs(
+		return nil, errors.Trace(ErrTableNotExists.FastGenByArgs(
 			fmt.Sprintf("(Schema ID %d)", dbID),
 			fmt.Sprintf("(Table ID %d)", tblID),
 		))
