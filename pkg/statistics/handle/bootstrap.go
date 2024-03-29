@@ -679,7 +679,7 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache) error 
 		maxTid = rows[0].GetInt64(1)
 	}
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
-		return h.initStatsTopNByPaging(cache, task)
+		return h.initStatsBucketsByPaging(cache, task)
 	})
 	ls.LoadStats()
 	tid := minTid
