@@ -42,13 +42,6 @@ go_test(
     flaky = True,
     shard_count = 9,
     deps = [
-<<<<<<< HEAD:pkg/lightning/errormanager/BUILD.bazel
-=======
-        "//br/pkg/lightning/backend/encode",
-        "//br/pkg/lightning/backend/kv",
-        "//br/pkg/lightning/config",
-        "//br/pkg/lightning/log",
->>>>>>> upstream/master:br/pkg/lightning/errormanager/BUILD.bazel
         "//pkg/ddl",
         "//pkg/lightning/backend/encode",
         "//pkg/lightning/backend/kv",

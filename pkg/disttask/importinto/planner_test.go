@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	external2 "github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
@@ -126,11 +126,11 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 		prefix := fmt.Sprintf("d_%d_", i)
 		idxPrefix := fmt.Sprintf("i1_%d_", i)
 		meta := &ImportStepMeta{
-			SortedDataMeta: &external2.SortedKVMeta{
+			SortedDataMeta: &external.SortedKVMeta{
 				StartKey:    []byte(prefix + "a"),
 				EndKey:      []byte(prefix + "c"),
 				TotalKVSize: 12,
-				MultipleFilesStats: []external2.MultipleFilesStat{
+				MultipleFilesStats: []external.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
 							{prefix + "/1", prefix + "/1.stat"},
@@ -138,12 +138,12 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 					},
 				},
 			},
-			SortedIndexMetas: map[int64]*external2.SortedKVMeta{
+			SortedIndexMetas: map[int64]*external.SortedKVMeta{
 				1: {
 					StartKey:    []byte(idxPrefix + "a"),
 					EndKey:      []byte(idxPrefix + "c"),
 					TotalKVSize: 12,
-					MultipleFilesStats: []external2.MultipleFilesStat{
+					MultipleFilesStats: []external.MultipleFilesStat{
 						{
 							Filenames: [][2]string{
 								{idxPrefix + "/1", idxPrefix + "/1.stat"},
@@ -161,10 +161,10 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 }
 
 func TestGenerateMergeSortSpecs(t *testing.T) {
-	stepBak := external2.MergeSortFileCountStep
-	external2.MergeSortFileCountStep = 2
+	stepBak := external.MergeSortFileCountStep
+	external.MergeSortFileCountStep = 2
 	t.Cleanup(func() {
-		external2.MergeSortFileCountStep = stepBak
+		external.MergeSortFileCountStep = stepBak
 	})
 	// force merge sort for data kv
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`))
@@ -224,11 +224,11 @@ func genMergeStepMetas(t *testing.T, cnt int) [][]byte {
 		prefix := fmt.Sprintf("x_%d_", i)
 		meta := &MergeSortStepMeta{
 			KVGroup: "data",
-			SortedKVMeta: external2.SortedKVMeta{
+			SortedKVMeta: external.SortedKVMeta{
 				StartKey:    []byte(prefix + "a"),
 				EndKey:      []byte(prefix + "c"),
 				TotalKVSize: 12,
-				MultipleFilesStats: []external2.MultipleFilesStat{
+				MultipleFilesStats: []external.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
 							{prefix + "/1", prefix + "/1.stat"},

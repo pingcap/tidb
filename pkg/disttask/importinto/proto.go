@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	external2 "github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -60,9 +60,9 @@ type ImportStepMeta struct {
 	// NewPanickingAllocators for more info.
 	MaxIDs map[autoid.AllocatorType]int64
 
-	SortedDataMeta *external2.SortedKVMeta
+	SortedDataMeta *external.SortedKVMeta
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
-	SortedIndexMetas map[int64]*external2.SortedKVMeta
+	SortedIndexMetas map[int64]*external.SortedKVMeta
 }
 
 const (
@@ -74,20 +74,20 @@ const (
 // MergeSortStepMeta is the meta of merge sort step.
 type MergeSortStepMeta struct {
 	// KVGroup is the group name of the sorted kv, either dataKVGroup or index-id.
-	KVGroup                string   `json:"kv-group"`
-	DataFiles              []string `json:"data-files"`
-	external2.SortedKVMeta `json:"sorted-kv-meta"`
+	KVGroup               string   `json:"kv-group"`
+	DataFiles             []string `json:"data-files"`
+	external.SortedKVMeta `json:"sorted-kv-meta"`
 }
 
 // WriteIngestStepMeta is the meta of write and ingest step.
 // only used when global sort is enabled.
 type WriteIngestStepMeta struct {
-	KVGroup                string `json:"kv-group"`
-	external2.SortedKVMeta `json:"sorted-kv-meta"`
-	DataFiles              []string `json:"data-files"`
-	StatFiles              []string `json:"stat-files"`
-	RangeSplitKeys         [][]byte `json:"range-split-keys"`
-	RangeSplitSize         int64    `json:"range-split-size"`
+	KVGroup               string `json:"kv-group"`
+	external.SortedKVMeta `json:"sorted-kv-meta"`
+	DataFiles             []string `json:"data-files"`
+	StatFiles             []string `json:"stat-files"`
+	RangeSplitKeys        [][]byte `json:"range-split-keys"`
+	RangeSplitSize        int64    `json:"range-split-size"`
 
 	Result Result
 }
@@ -113,24 +113,24 @@ type SharedVars struct {
 	mu       sync.Mutex
 	Checksum *verification.KVGroupChecksum
 
-	SortedDataMeta *external2.SortedKVMeta
+	SortedDataMeta *external.SortedKVMeta
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
-	SortedIndexMetas map[int64]*external2.SortedKVMeta
+	SortedIndexMetas map[int64]*external.SortedKVMeta
 	ShareMu          sync.Mutex
 }
 
-func (sv *SharedVars) mergeDataSummary(summary *external2.WriterSummary) {
+func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	sv.SortedDataMeta.MergeSummary(summary)
 }
 
-func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *external2.WriterSummary) {
+func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *external.WriterSummary) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	meta, ok := sv.SortedIndexMetas[indexID]
 	if !ok {
-		meta = external2.NewSortedKVMeta(summary)
+		meta = external.NewSortedKVMeta(summary)
 		sv.SortedIndexMetas[indexID] = meta
 		return
 	}

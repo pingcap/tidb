@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	lkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -44,7 +44,7 @@ func TestBuildDupTask(t *testing.T) {
 	info, err := ddl.MockTableInfo(mock.NewContext(), node[0].(*ast.CreateTableStmt), 1)
 	require.NoError(t, err)
 	info.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), info)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), info)
 	require.NoError(t, err)
 
 	// Test build duplicate detecting task.
@@ -75,12 +75,12 @@ func TestBuildDupTask(t *testing.T) {
 	}
 }
 
-func buildTableForTestConvertToErrFoundConflictRecords(t *testing.T, node []ast.StmtNode) (table.Table, *kv.Pairs) {
+func buildTableForTestConvertToErrFoundConflictRecords(t *testing.T, node []ast.StmtNode) (table.Table, *lkv.Pairs) {
 	mockSctx := mock.NewContext()
 	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
 	require.NoError(t, err)
 	info.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), info)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), info)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{
@@ -88,7 +88,7 @@ func buildTableForTestConvertToErrFoundConflictRecords(t *testing.T, node []ast.
 		Timestamp: 1234567890,
 	}
 
-	encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+	encoder, err := lkv.NewBaseKVEncoder(&encode.EncodingConfig{
 		Table:          tbl,
 		SessionOptions: sessionOpts,
 		Logger:         log.L(),

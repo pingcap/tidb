@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 )
@@ -225,8 +225,8 @@ func (s *mockGCSSuite) testWriteAfterImport(importSQL string, sourceType importe
 			s.True(ok)
 			tableObj, err := is.TableByName(model.NewCIStr("write_after_import"), model.NewCIStr("t"))
 			s.NoError(err)
-			if common2.TableHasAutoID(tableObj.Meta()) {
-				allocators, err := common2.GetGlobalAutoIDAlloc(domain.GetDomain(s.tk.Session()), dbInfo.ID, tableObj.Meta())
+			if common.TableHasAutoID(tableObj.Meta()) {
+				allocators, err := common.GetGlobalAutoIDAlloc(domain.GetDomain(s.tk.Session()), dbInfo.ID, tableObj.Meta())
 				s.NoError(err)
 				var nextGlobalAutoID []int64
 				for _, alloc := range allocators {

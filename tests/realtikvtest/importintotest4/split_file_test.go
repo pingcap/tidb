@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
-	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -47,10 +47,10 @@ func (s *mockGCSSuite) TestSplitFile() {
 	s.prepareAndUseDB("split_file")
 	s.tk.MustExec("create table t (a bigint primary key , b varchar(100));")
 	// 1.csv should be split into 3 chunks
-	backup := config2.MaxRegionSize
-	config2.MaxRegionSize = config2.ByteSize(int64(math.Ceil(float64(len(content)) / 3)))
+	backup := config.MaxRegionSize
+	config.MaxRegionSize = config.ByteSize(int64(math.Ceil(float64(len(content)) / 3)))
 	s.T().Cleanup(func() {
-		config2.MaxRegionSize = backup
+		config.MaxRegionSize = backup
 	})
 	// split into 3 engines(subtasks)
 	importSQL := fmt.Sprintf(`import into split_file.t FROM 'gs://split-file/1.csv?endpoint=%s'

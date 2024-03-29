@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	external2 "github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -256,11 +256,11 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	gotSubtasks, err := manager.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
 	sortStepMeta := &importinto.ImportStepMeta{
-		SortedDataMeta: &external2.SortedKVMeta{
+		SortedDataMeta: &external.SortedKVMeta{
 			StartKey:    []byte("ta"),
 			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
-			MultipleFilesStats: []external2.MultipleFilesStat{
+			MultipleFilesStats: []external.MultipleFilesStat{
 				{
 					Filenames: [][2]string{
 						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
@@ -268,12 +268,12 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 				},
 			},
 		},
-		SortedIndexMetas: map[int64]*external2.SortedKVMeta{
+		SortedIndexMetas: map[int64]*external.SortedKVMeta{
 			1: {
 				StartKey:    []byte("ia"),
 				EndKey:      []byte("ic"),
 				TotalKVSize: 12,
-				MultipleFilesStats: []external2.MultipleFilesStat{
+				MultipleFilesStats: []external.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
 							{"gs://sort-bucket/index/1", "gs://sort-bucket/index/1.stat"},
@@ -312,7 +312,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	mergeSortStepMeta := &importinto.MergeSortStepMeta{
 		KVGroup: "data",
-		SortedKVMeta: external2.SortedKVMeta{
+		SortedKVMeta: external.SortedKVMeta{
 			StartKey:    []byte("ta"),
 			EndKey:      []byte("tc"),
 			TotalKVSize: 12,

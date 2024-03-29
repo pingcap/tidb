@@ -486,13 +486,13 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
-      "lightning/": "lightning/",
+      "pkg/lightning/mydump/": "pkg/lightning/mydump/",
+      "lightning/pkg/importer/opts": "lightning/pkg/importer/opts",
       "pkg/kv/": "kv code",
       "pkg/util/memory": "util/memory",
       "pkg/ddl/": "ddl",
       "pkg/planner/": "planner",
-      "pkg/extension/": "extension code",
-      "pkg/lightning/": "lightning code"
+      "pkg/extension/": "extension code"
     }
   },
   "pkgfact": {
@@ -613,6 +613,7 @@
       ".*failpoint_binding__.go$": "ignore generated code",
       "pkg/util/chunk": "ignore util/chunk",
       "pkg/lightning/mydump/": "more than 50",
+      "lightning/pkg/importer/": "more than 50",
       "pkg/lightning/backend/local/": "more than 50",
       "br/pkg/restore/": "more than 50",
       "pkg/ddl/tests/partition/": "more than 50"

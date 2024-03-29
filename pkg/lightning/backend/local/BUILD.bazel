@@ -39,6 +39,7 @@ go_library(
         "//pkg/lightning/checkpoints",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
+        "//pkg/lightning/errormanager",
         "//pkg/lightning/log",
         "//pkg/lightning/manual",
         "//pkg/lightning/metric",

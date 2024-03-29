@@ -24,7 +24,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	tidbkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -52,7 +52,7 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.False(t, info.PKIsHandle)
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), info)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
 	require.NoError(t, err)
 	require.False(t, tbl.Meta().HasClusteredIndex())
 
@@ -61,7 +61,7 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 		Timestamp: 1234567890,
 	}
 
-	encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+	encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{
 		Table:          tbl,
 		SessionOptions: sessionOpts,
 		Logger:         log.L(),
@@ -262,7 +262,7 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.False(t, info.PKIsHandle)
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), info)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
 	require.NoError(t, err)
 	require.False(t, tbl.Meta().HasClusteredIndex())
 
@@ -271,7 +271,7 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 		Timestamp: 1234567890,
 	}
 
-	encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+	encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{
 		Table:          tbl,
 		SessionOptions: sessionOpts,
 		Logger:         log.L(),
@@ -415,7 +415,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.False(t, info.PKIsHandle)
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), info)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
 	require.NoError(t, err)
 	require.False(t, tbl.Meta().HasClusteredIndex())
 
@@ -424,7 +424,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 		Timestamp: 1234567890,
 	}
 
-	encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+	encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{
 		Table:          tbl,
 		SessionOptions: sessionOpts,
 		Logger:         log.L(),
@@ -614,7 +614,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.False(t, info.PKIsHandle)
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), info)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), info)
 	require.NoError(t, err)
 	require.False(t, tbl.Meta().HasClusteredIndex())
 
@@ -623,7 +623,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 		Timestamp: 1234567890,
 	}
 
-	encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+	encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{
 		Table:          tbl,
 		SessionOptions: sessionOpts,
 		Logger:         log.L(),
