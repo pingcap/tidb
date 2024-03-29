@@ -38,12 +38,14 @@ import (
 )
 
 type readIndexExecutor struct {
+	execute.StepExecFrameworkInfo
 	d       *ddl
 	job     *model.Job
 	indexes []*model.IndexInfo
 	ptbl    table.PhysicalTable
 	jc      *JobContext
 
+	avgRowSize      int
 	cloudStorageURI string
 
 	bc          ingest.BackendCtx
@@ -65,6 +67,7 @@ func newReadIndexExecutor(
 	jc *JobContext,
 	bcGetter func() (ingest.BackendCtx, error),
 	cloudStorageURI string,
+	avgRowSize int,
 ) (*readIndexExecutor, error) {
 	bc, err := bcGetter()
 	if err != nil {
@@ -78,6 +81,7 @@ func newReadIndexExecutor(
 		jc:              jc,
 		bc:              bc,
 		cloudStorageURI: cloudStorageURI,
+		avgRowSize:      avgRowSize,
 		curRowCount:     &atomic.Int64{},
 	}, nil
 }
@@ -241,7 +245,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewAddIndexIngestPipeline(
 		opCtx, d.store, d.sessPool, r.bc, engines, sessCtx, r.job.ID,
-		tbl, r.indexes, start, end, totalRowCount, counter, r.job.ReorgMeta)
+		tbl, r.indexes, start, end, totalRowCount, counter, r.job.ReorgMeta, r.avgRowSize)
 }
 
 func (r *readIndexExecutor) buildExternalStorePipeline(
@@ -282,5 +286,7 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		totalRowCount,
 		counter,
 		onClose,
-		r.job.ReorgMeta)
+		r.job.ReorgMeta,
+		r.avgRowSize,
+	)
 }

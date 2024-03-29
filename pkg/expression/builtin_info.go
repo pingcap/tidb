@@ -909,7 +909,7 @@ func (c *tidbDecodeKeyFunctionClass) getFunction(ctx BuildContext, args []Expres
 }
 
 // DecodeKeyFromString is used to decode key by expressions
-var DecodeKeyFromString func(types.Context, infoschema.InfoSchemaMetaVersion, string) string
+var DecodeKeyFromString func(types.Context, infoschema.MetaOnlyInfoSchema, string) string
 
 type builtinTiDBDecodeKeySig struct {
 	baseBuiltinFunc

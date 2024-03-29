@@ -49,6 +49,8 @@ import (
 // importStepExecutor is a executor for import step.
 // StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
+	execute.StepExecFrameworkInfo
+
 	taskID        int64
 	taskMeta      *TaskMeta
 	tableImporter *importer.TableImporter
@@ -62,7 +64,6 @@ type importStepExecutor struct {
 	importCtx    context.Context
 	importCancel context.CancelFunc
 	wg           sync.WaitGroup
-	resource     *proto.StepResource
 }
 
 func getTableImporter(
@@ -110,7 +111,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 			s.tableImporter.CheckDiskQuota(s.importCtx)
 		}()
 	}
-	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.resource, s.tableImporter.Plan)
+	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
 	s.logger.Info("KV writer memory size limit per concurrency",
 		zap.String("data", units.BytesSize(float64(s.dataKVMemSizePerCon))),
 		zap.String("per-index", units.BytesSize(float64(s.perIndexKVMemSizePerCon))))
@@ -280,7 +281,6 @@ type mergeSortStepExecutor struct {
 	// 	max(max-merged-files * max-file-size / max-part-num(10000), min-part-size)
 	dataKVPartSize  int64
 	indexKVPartSize int64
-	resource        *proto.StepResource
 }
 
 var _ execute.StepExecutor = &mergeSortStepExecutor{}
@@ -294,7 +294,7 @@ func (m *mergeSortStepExecutor) Init(ctx context.Context) error {
 		return err
 	}
 	m.controller = controller
-	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.resource, &m.taskMeta.Plan)
+	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.GetResource(), &m.taskMeta.Plan)
 	m.dataKVPartSize = max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
 	m.indexKVPartSize = max(external.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
 
@@ -367,11 +367,12 @@ func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Sub
 }
 
 type writeAndIngestStepExecutor struct {
+	execute.StepExecFrameworkInfo
+
 	taskID        int64
 	taskMeta      *TaskMeta
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
-	resource      *proto.StepResource
 	store         tidbkv.Storage
 }
 
@@ -528,7 +529,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-func (e *importExecutor) GetStepExecutor(task *proto.Task, stepResource *proto.StepResource) (execute.StepExecutor, error) {
+func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
@@ -545,7 +546,6 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task, stepResource *proto.S
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
-			resource: stepResource,
 			store:    e.store,
 		}, nil
 	case proto.ImportStepMergeSort:
@@ -553,14 +553,12 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task, stepResource *proto.S
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
-			resource: stepResource,
 		}, nil
 	case proto.ImportStepWriteAndIngest:
 		return &writeAndIngestStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
-			resource: stepResource,
 			store:    e.store,
 		}, nil
 	case proto.ImportStepPostProcess:

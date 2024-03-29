@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/dbutil/dbutiltest"
 	"github.com/pingcap/tidb/pkg/util/extsort"
 	"github.com/stretchr/testify/require"
 )
@@ -153,7 +153,7 @@ func TestSimplifyTable(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		p := parser.New()
-		originalTblInfo, err := dbutil.GetTableInfoBySQL(tc.table, p)
+		originalTblInfo, err := dbutiltest.GetTableInfoBySQL(tc.table, p)
 		require.NoError(t, err)
 
 		// run twice to make sure originalTblInfo is not changed
@@ -162,7 +162,7 @@ func TestSimplifyTable(t *testing.T) {
 			if tc.expTableHasNoCols {
 				require.Empty(t, actualTblInfo.Columns)
 			} else {
-				expTblInfo, err := dbutil.GetTableInfoBySQL(tc.expTable, p)
+				expTblInfo, err := dbutiltest.GetTableInfoBySQL(tc.expTable, p)
 				require.NoError(t, err)
 
 				require.Equal(t, len(expTblInfo.Columns), len(actualTblInfo.Columns))

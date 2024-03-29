@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/errctx"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
@@ -117,7 +117,7 @@ func (mb *MemBuf) Recycle(buf *BytesBuf) {
 // AllocateBuf allocates a byte buffer.
 func (mb *MemBuf) AllocateBuf(size int) {
 	mb.Lock()
-	size = max(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
+	size = max(units.MiB, int(mathutil.NextPowerOfTwo(int64(size)))*2)
 	var (
 		existingBuf    *BytesBuf
 		existingBufIdx int
@@ -428,7 +428,7 @@ func (se *Session) Value(key fmt.Stringer) any {
 func (*Session) StmtAddDirtyTableOP(_ int, _ int64, _ kv.Handle) {}
 
 // GetInfoSchema implements the sessionctx.Context interface.
-func (*Session) GetInfoSchema() infoschema.InfoSchemaMetaVersion {
+func (*Session) GetInfoSchema() infoschema.MetaOnlyInfoSchema {
 	return nil
 }
 

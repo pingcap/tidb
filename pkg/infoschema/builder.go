@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // Builder builds a new InfoSchema.
@@ -384,19 +385,18 @@ func dropTableForUpdate(b *Builder, newTableID, oldTableID int64, dbInfo *model.
 			// TODO: Check how this would work with ADD/REMOVE Partitioning,
 			// which may have AutoID not connected to tableID
 			// TODO: can there be _tidb_rowid AutoID per partition?
-			oldAllocs, _ := allocByID(b.infoSchema, oldTableID)
+			oldAllocs, _ := allocByID(b, oldTableID)
 			newAllocs = filterAllocators(diff, oldAllocs)
 		}
 
 		tmpIDs := tblIDs
 		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
-			oldRoDBInfo, ok := b.infoSchema.SchemaByID(diff.OldSchemaID)
+			oldDBInfo, ok := oldSchemaInfo(b, diff)
 			if !ok {
 				return nil, newAllocs, ErrDatabaseNotExists.GenWithStackByArgs(
 					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
 				)
 			}
-			oldDBInfo := b.getSchemaAndCopyIfNecessary(oldRoDBInfo.Name.L)
 			tmpIDs = applyDropTable(b, diff, oldDBInfo, oldTableID, tmpIDs)
 		} else {
 			tmpIDs = applyDropTable(b, diff, dbInfo, oldTableID, tmpIDs)
@@ -637,7 +637,7 @@ func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID in
 	if tblInfo == nil {
 		// When we apply an old schema diff, the table may has been dropped already, so we need to fall back to
 		// full load.
-		return nil, ErrTableNotExists.GenWithStackByArgs(
+		return nil, ErrTableNotExists.FastGenByArgs(
 			fmt.Sprintf("(Schema ID %d)", dbInfo.ID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
@@ -970,9 +970,10 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 }
 
 func tableBucketIdx(tableID int64) int {
+	intest.Assert(tableID > 0)
 	return int(tableID % bucketCount)
 }
 
 func tableIDIsValid(tableID int64) bool {
-	return tableID != 0
+	return tableID > 0
 }
