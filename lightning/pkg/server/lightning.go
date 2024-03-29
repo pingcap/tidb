@@ -1,10 +1,10 @@
 // Copyright 2019 PingCAP, Inc.
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
+// Licensed under the Apache License, Version .0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -46,13 +46,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	importer2 "github.com/pingcap/tidb/lightning/pkg/importer"
-	web2 "github.com/pingcap/tidb/lightning/pkg/web"
+	"github.com/pingcap/tidb/lightning/pkg/importer"
+	"github.com/pingcap/tidb/lightning/pkg/web"
 	_ "github.com/pingcap/tidb/pkg/expression" // get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`.
-	local2 "github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
-	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -74,27 +74,27 @@ import (
 
 // Lightning is the main struct of the lightning package.
 type Lightning struct {
-	globalCfg *config2.GlobalConfig
-	globalTLS *common2.TLS
+	globalCfg *config.GlobalConfig
+	globalTLS *common.TLS
 	// taskCfgs is the list of task configurations enqueued in the server mode
-	taskCfgs   *config2.List
+	taskCfgs   *config.List
 	ctx        context.Context
 	shutdown   context.CancelFunc // for whole lightning context
 	server     http.Server
 	serverAddr net.Addr
 	serverLock sync.Mutex
-	status     importer2.LightningStatus
+	status     importer.LightningStatus
 
 	promFactory  promutil.Factory
 	promRegistry promutil.Registry
 	metrics      *metric.Metrics
 
 	cancelLock sync.Mutex
-	curTask    *config2.Config
+	curTask    *config.Config
 	cancel     context.CancelFunc // for per task context, which maybe different from lightning context
 }
 
-func initEnv(cfg *config2.GlobalConfig) error {
+func initEnv(cfg *config.GlobalConfig) error {
 	if cfg.App.Config.File == "" {
 		return nil
 	}
@@ -102,13 +102,13 @@ func initEnv(cfg *config2.GlobalConfig) error {
 }
 
 // New creates a new Lightning instance.
-func New(globalCfg *config2.GlobalConfig) *Lightning {
+func New(globalCfg *config.GlobalConfig) *Lightning {
 	if err := initEnv(globalCfg); err != nil {
 		fmt.Println("Failed to initialize environment:", err)
 		os.Exit(1)
 	}
 
-	tls, err := common2.NewTLS(
+	tls, err := common.NewTLS(
 		globalCfg.Security.CAPath,
 		globalCfg.Security.CertPath,
 		globalCfg.Security.KeyPath,
@@ -251,7 +251,7 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux.HandleFunc("/resume", httpHandleWrapper(handleResume))
 	mux.HandleFunc("/loglevel", httpHandleWrapper(handleLogLevel))
 
-	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web2.Res, httpgzip.FileServerOptions{
+	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web.Res, httpgzip.FileServerOptions{
 		IndexHTML: true,
 		ServeError: func(w http.ResponseWriter, req *http.Request, err error) {
 			if os.IsNotExist(err) && !strings.Contains(req.URL.Path, ".") {
@@ -282,7 +282,7 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 // RunServer is used by binary lightning to start a HTTP server to receive import tasks.
 func (l *Lightning) RunServer() error {
 	l.serverLock.Lock()
-	l.taskCfgs = config2.NewConfigList()
+	l.taskCfgs = config.NewConfigList()
 	l.serverLock.Unlock()
 	log.L().Info(
 		"Lightning server is running, post to /tasks to start an import task",
@@ -300,8 +300,8 @@ func (l *Lightning) RunServer() error {
 			logger:       log.L(),
 		}
 		err = l.run(context.Background(), task, o)
-		if err != nil && !common2.IsContextCanceledError(err) {
-			importer2.DeliverPauser.Pause() // force pause the progress on error
+		if err != nil && !common.IsContextCanceledError(err) {
+			importer.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
 		}
 	}
@@ -317,7 +317,7 @@ func (l *Lightning) RunServer() error {
 //     storage by config
 //   - WithCheckpointStorage: caller has opened an external storage for lightning and want to save checkpoint
 //     in it. Otherwise, lightning will save checkpoint by the Checkpoint.DSN in config
-func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config2.Config, opts ...Option) error {
+func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.Config, opts ...Option) error {
 	o := &options{
 		promFactory:  l.promFactory,
 		promRegistry: l.promRegistry,
@@ -425,7 +425,7 @@ func getKeyspaceName(db *sql.DB) (string, error) {
 	return value, rows.Err()
 }
 
-func (l *Lightning) run(taskCtx context.Context, taskCfg *config2.Config, o *options) (err error) {
+func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *options) (err error) {
 	build.LogInfo(build.Lightning)
 	o.logger.Info("cfg", zap.Stringer("cfg", taskCfg))
 
@@ -451,14 +451,14 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config2.Config, o *opt
 	l.cancel = cancel
 	l.curTask = taskCfg
 	l.cancelLock.Unlock()
-	web2.BroadcastStartTask()
+	web.BroadcastStartTask()
 
 	defer func() {
 		cancel()
 		l.cancelLock.Lock()
 		l.cancel = nil
 		l.cancelLock.Unlock()
-		web2.BroadcastEndTask(err)
+		web.BroadcastEndTask(err)
 	}()
 
 	failpoint.Inject("SkipRunTask", func() {
@@ -468,7 +468,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config2.Config, o *opt
 			default:
 			}
 		}
-		if recorder, ok := l.ctx.Value(taskCfgRecorderKey).(chan *config2.Config); ok {
+		if recorder, ok := l.ctx.Value(taskCfgRecorderKey).(chan *config.Config); ok {
 			select {
 			case recorder <- taskCfg:
 			case <-ctx.Done():
@@ -499,18 +499,18 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config2.Config, o *opt
 	})
 
 	if err := taskCfg.TiDB.Security.BuildTLSConfig(); err != nil {
-		return common2.ErrInvalidTLSConfig.Wrap(err)
+		return common.ErrInvalidTLSConfig.Wrap(err)
 	}
 
 	s := o.dumpFileStorage
 	if s == nil {
 		u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
 		if err != nil {
-			return common2.NormalizeError(err)
+			return common.NormalizeError(err)
 		}
 		s, err = storage.New(ctx, u, &storage.ExternalStorageOptions{})
 		if err != nil {
-			return common2.NormalizeError(err)
+			return common.NormalizeError(err)
 		}
 	}
 
@@ -522,14 +522,14 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config2.Config, o *opt
 	})
 	if !errors.ErrorEqual(walkErr, expectedErr) {
 		if walkErr == nil {
-			return common2.ErrEmptySourceDir.GenWithStackByArgs(taskCfg.Mydumper.SourceDir)
+			return common.ErrEmptySourceDir.GenWithStackByArgs(taskCfg.Mydumper.SourceDir)
 		}
-		return common2.NormalizeOrWrapErr(common2.ErrStorageUnknown, walkErr)
+		return common.NormalizeOrWrapErr(common.ErrStorageUnknown, walkErr)
 	}
 
 	loadTask := o.logger.Begin(zap.InfoLevel, "load data source")
 	var mdl *mydump.MDLoader
-	mdl, err = mydump.NewMyDumpLoaderWithStore(ctx, taskCfg, s)
+	mdl, err = mydump.NewLoaderWithStore(ctx, mydump.NewLoaderCfg(taskCfg), s)
 	loadTask.End(zap.ErrorLevel, err)
 	if err != nil {
 		return errors.Trace(err)
@@ -537,7 +537,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config2.Config, o *opt
 	err = checkSystemRequirement(taskCfg, mdl.GetDatabases())
 	if err != nil {
 		o.logger.Error("check system requirements failed", zap.Error(err))
-		return common2.ErrSystemRequirementNotMet.Wrap(err).GenWithStackByArgs()
+		return common.ErrSystemRequirementNotMet.Wrap(err).GenWithStackByArgs()
 	}
 	// check table schema conflicts
 	err = checkSchemaConflict(taskCfg, mdl.GetDatabases())
@@ -547,20 +547,20 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config2.Config, o *opt
 	}
 
 	dbMetas := mdl.GetDatabases()
-	web2.BroadcastInitProgress(dbMetas)
+	web.BroadcastInitProgress(dbMetas)
 
 	// db is only not nil in unit test
 	db := o.db
 	if db == nil {
 		// initiation of default db should be after BuildTLSConfig
-		db, err = importer2.DBFromConfig(ctx, taskCfg.TiDB)
+		db, err = importer.DBFromConfig(ctx, taskCfg.TiDB)
 		if err != nil {
-			return common2.ErrDBConnect.Wrap(err)
+			return common.ErrDBConnect.Wrap(err)
 		}
 	}
 
 	var keyspaceName string
-	if taskCfg.TikvImporter.Backend == config2.BackendLocal {
+	if taskCfg.TikvImporter.Backend == config.BackendLocal {
 		keyspaceName = taskCfg.TikvImporter.KeyspaceName
 		if keyspaceName == "" {
 			keyspaceName, err = getKeyspaceName(db)
@@ -571,7 +571,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config2.Config, o *opt
 		o.logger.Info("acquired keyspace name", zap.String("keyspaceName", keyspaceName))
 	}
 
-	param := &importer2.ControllerParam{
+	param := &importer.ControllerParam{
 		DBMetas:           dbMetas,
 		Status:            &l.status,
 		DumpFileStorage:   s,
@@ -583,8 +583,8 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config2.Config, o *opt
 		KeyspaceName:      keyspaceName,
 	}
 
-	var procedure *importer2.Controller
-	procedure, err = importer2.NewImportController(ctx, taskCfg, param)
+	var procedure *importer.Controller
+	procedure, err = importer.NewImportController(ctx, taskCfg, param)
 	if err != nil {
 		o.logger.Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
@@ -711,7 +711,7 @@ func (l *Lightning) handleGetTask(w http.ResponseWriter) {
 }
 
 func (l *Lightning) handleGetOneTask(w http.ResponseWriter, req *http.Request, taskID int64) {
-	var task *config2.Config
+	var task *config.Config
 
 	l.cancelLock.Lock()
 	if l.curTask != nil && l.curTask.TaskID == taskID {
@@ -757,10 +757,10 @@ func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "cannot read request", err)
 		return
 	}
-	filteredData := common2.HideSensitive(string(data))
+	filteredData := common.HideSensitive(string(data))
 	log.L().Info("received task config", zap.String("content", filteredData))
 
-	cfg := config2.NewConfig()
+	cfg := config.NewConfig()
 	if err = cfg.LoadFromGlobal(l.globalCfg); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "cannot restore from global config", err)
 		return
@@ -861,7 +861,7 @@ func writeBytesCompressed(w http.ResponseWriter, req *http.Request, b []byte) {
 
 func handleProgressTask(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	res, err := web2.MarshalTaskProgress()
+	res, err := web.MarshalTaskProgress()
 	if err == nil {
 		writeBytesCompressed(w, req, res)
 	} else {
@@ -873,7 +873,7 @@ func handleProgressTask(w http.ResponseWriter, req *http.Request) {
 func handleProgressTable(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	tableName := req.URL.Query().Get("t")
-	res, err := web2.MarshalTableCheckpoints(tableName)
+	res, err := web.MarshalTableCheckpoints(tableName)
 	if err == nil {
 		writeBytesCompressed(w, req, res)
 	} else {
@@ -892,11 +892,11 @@ func handlePause(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case http.MethodGet:
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"paused":%v}`, importer2.DeliverPauser.IsPaused())
+		fmt.Fprintf(w, `{"paused":%v}`, importer.DeliverPauser.IsPaused())
 
 	case http.MethodPut:
 		w.WriteHeader(http.StatusOK)
-		importer2.DeliverPauser.Pause()
+		importer.DeliverPauser.Pause()
 		log.L().Info("progress paused")
 		_, _ = w.Write([]byte("{}"))
 
@@ -912,7 +912,7 @@ func handleResume(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case http.MethodPut:
 		w.WriteHeader(http.StatusOK)
-		importer2.DeliverPauser.Resume()
+		importer.DeliverPauser.Resume()
 		log.L().Info("progress resumed")
 		_, _ = w.Write([]byte("{}"))
 
@@ -954,9 +954,9 @@ func handleLogLevel(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func checkSystemRequirement(cfg *config2.Config, dbsMeta []*mydump.MDDatabaseMeta) error {
+func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) error {
 	// in local mode, we need to read&write a lot of L0 sst files, so we need to check system max open files limit
-	if cfg.TikvImporter.Backend == config2.BackendLocal {
+	if cfg.TikvImporter.Backend == config.BackendLocal {
 		// estimate max open files = {top N(TableConcurrency) table sizes} / {MemoryTableSize}
 		tableTotalSizes := make([]int64, 0)
 		for _, dbs := range dbsMeta {
@@ -977,8 +977,8 @@ func checkSystemRequirement(cfg *config2.Config, dbsMeta []*mydump.MDDatabaseMet
 		maxDBFiles := topNTotalSize / int64(cfg.TikvImporter.LocalWriterMemCacheSize) * 2
 		// the pebble db and all import routine need upto maxDBFiles fds for read and write.
 		maxOpenDBFiles := maxDBFiles * (1 + int64(cfg.TikvImporter.RangeConcurrency))
-		estimateMaxFiles := local2.RlimT(cfg.App.RegionConcurrency) + local2.RlimT(maxOpenDBFiles)
-		if err := local2.VerifyRLimit(estimateMaxFiles); err != nil {
+		estimateMaxFiles := local.RlimT(cfg.App.RegionConcurrency) + local.RlimT(maxOpenDBFiles)
+		if err := local.VerifyRLimit(estimateMaxFiles); err != nil {
 			return err
 		}
 	}
@@ -987,13 +987,13 @@ func checkSystemRequirement(cfg *config2.Config, dbsMeta []*mydump.MDDatabaseMet
 }
 
 // checkSchemaConflict return error if checkpoint table scheme is conflict with data files
-func checkSchemaConflict(cfg *config2.Config, dbsMeta []*mydump.MDDatabaseMeta) error {
-	if cfg.Checkpoint.Enable && cfg.Checkpoint.Driver == config2.CheckpointDriverMySQL {
+func checkSchemaConflict(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) error {
+	if cfg.Checkpoint.Enable && cfg.Checkpoint.Driver == config.CheckpointDriverMySQL {
 		for _, db := range dbsMeta {
 			if db.Name == cfg.Checkpoint.Schema {
 				for _, tb := range db.Tables {
 					if checkpoints.IsCheckpointTable(tb.Name) {
-						return common2.ErrCheckpointSchemaConflict.GenWithStack("checkpoint table `%s`.`%s` conflict with data files. Please change the `checkpoint.schema` config or set `checkpoint.driver` to \"file\" instead", db.Name, tb.Name)
+						return common.ErrCheckpointSchemaConflict.GenWithStack("checkpoint table `%s`.`%s` conflict with data files. Please change the `checkpoint.schema` config or set `checkpoint.driver` to \"file\" instead", db.Name, tb.Name)
 					}
 				}
 			}
@@ -1003,7 +1003,7 @@ func checkSchemaConflict(cfg *config2.Config, dbsMeta []*mydump.MDDatabaseMeta) 
 }
 
 // CheckpointRemove removes the checkpoint of the given table.
-func CheckpointRemove(ctx context.Context, cfg *config2.Config, tableName string) error {
+func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string) error {
 	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -1028,44 +1028,44 @@ func CheckpointRemove(ctx context.Context, cfg *config2.Config, tableName string
 }
 
 // CleanupMetas removes the table metas of the given table.
-func CleanupMetas(ctx context.Context, cfg *config2.Config, tableName string) error {
+func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) error {
 	if tableName == "all" {
 		tableName = ""
 	}
 	// try to clean up table metas if exists
-	db, err := importer2.DBFromConfig(ctx, cfg.TiDB)
+	db, err := importer.DBFromConfig(ctx, cfg.TiDB)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tableMetaExist, err := common2.TableExists(ctx, db, cfg.App.MetaSchemaName, importer2.TableMetaTableName)
+	tableMetaExist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, importer.TableMetaTableName)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if tableMetaExist {
-		metaTableName := common2.UniqueTable(cfg.App.MetaSchemaName, importer2.TableMetaTableName)
-		if err = importer2.RemoveTableMetaByTableName(ctx, db, metaTableName, tableName); err != nil {
+		metaTableName := common.UniqueTable(cfg.App.MetaSchemaName, importer.TableMetaTableName)
+		if err = importer.RemoveTableMetaByTableName(ctx, db, metaTableName, tableName); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	exist, err := common2.TableExists(ctx, db, cfg.App.MetaSchemaName, importer2.TaskMetaTableName)
+	exist, err := common.TableExists(ctx, db, cfg.App.MetaSchemaName, importer.TaskMetaTableName)
 	if err != nil || !exist {
 		return errors.Trace(err)
 	}
-	return errors.Trace(importer2.MaybeCleanupAllMetas(ctx, log.L(), db, cfg.App.MetaSchemaName, tableMetaExist))
+	return errors.Trace(importer.MaybeCleanupAllMetas(ctx, log.L(), db, cfg.App.MetaSchemaName, tableMetaExist))
 }
 
 // SwitchMode switches the mode of the TiKV cluster.
 func SwitchMode(ctx context.Context, cli pdhttp.Client, tls *tls.Config, mode string, ranges ...*import_sstpb.Range) error {
 	var m import_sstpb.SwitchMode
 	switch mode {
-	case config2.ImportMode:
+	case config.ImportMode:
 		m = import_sstpb.SwitchMode_Import
-	case config2.NormalMode:
+	case config.NormalMode:
 		m = import_sstpb.SwitchMode_Normal
 	default:
-		return errors.Errorf("invalid mode %s, must use %s or %s", mode, config2.ImportMode, config2.NormalMode)
+		return errors.Errorf("invalid mode %s, must use %s or %s", mode, config.ImportMode, config.NormalMode)
 	}
 
 	return tikv.ForAllStores(

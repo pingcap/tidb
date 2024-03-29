@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/util"
 )
 
 // predicateSimplification consolidates different predcicates on a column and its equivalence classes.  Initial out is for
@@ -64,12 +65,12 @@ func findPredicateType(expr expression.Expression) (*expression.Column, predicat
 	return nil, otherPredicate
 }
 
-func (*predicateSimplification) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (*predicateSimplification) optimize(_ context.Context, p LogicalPlan, opt *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	return p.predicateSimplification(opt), planChanged, nil
 }
 
-func (s *baseLogicalPlan) predicateSimplification(opt *logicalOptimizeOp) LogicalPlan {
+func (s *baseLogicalPlan) predicateSimplification(opt *util.LogicalOptimizeOp) LogicalPlan {
 	p := s.self
 	for i, child := range p.Children() {
 		newChild := child.predicateSimplification(opt)
@@ -154,7 +155,7 @@ func applyPredicateSimplification(sctx PlanContext, predicates []expression.Expr
 	return newValues
 }
 
-func (ds *DataSource) predicateSimplification(*logicalOptimizeOp) LogicalPlan {
+func (ds *DataSource) predicateSimplification(*util.LogicalOptimizeOp) LogicalPlan {
 	p := ds.self.(*DataSource)
 	p.pushedDownConds = applyPredicateSimplification(p.SCtx(), p.pushedDownConds)
 	p.allConds = applyPredicateSimplification(p.SCtx(), p.allConds)

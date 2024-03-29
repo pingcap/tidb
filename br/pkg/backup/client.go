@@ -861,8 +861,7 @@ func (bc *Client) BackupRange(
 	}()
 	logutil.CL(ctx).Info("backup range started",
 		logutil.Key("startKey", progressRange.Origin.StartKey), logutil.Key("endKey", progressRange.Origin.EndKey),
-		zap.Uint64("rateLimit", request.RateLimit),
-		zap.Uint32("concurrency", request.Concurrency))
+		zap.Uint64("rateLimit", request.RateLimit))
 
 	allStores, err := conn.GetAllTiKVStoresWithRetry(ctx, bc.mgr.GetPDClient(), connutil.SkipTiFlash)
 	if err != nil {

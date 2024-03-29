@@ -772,7 +772,7 @@ func CheckConsistencyAndValidPeer(regionInfos []*RecoverRegionInfo) (map[uint64]
 		if !keyEq(prevEndKey, iter.Key().([]byte)) {
 			log.Error("regions are not adjacent", zap.Uint64("pre region", prevRegion), zap.Uint64("cur region", v.RegionId))
 			// TODO, some enhancement may need, a PoC or test may need for decision
-			return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange,
+			return nil, errors.Annotatef(berrors.ErrInvalidRange,
 				"invalid region range")
 		}
 		prevEndKey = v.EndKey

@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	log2 "github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	md "github.com/pingcap/tidb/pkg/lightning/mydump"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"github.com/stretchr/testify/assert"
@@ -81,12 +81,12 @@ func (s *testMydumpLoaderSuite) mkdir(t *testing.T, dirname string) {
 func TestLoader(t *testing.T) {
 	ctx := context.Background()
 	cfg := newConfigWithSourceDir("./not-exists")
-	_, err := mydump.NewMyDumpLoader(ctx, cfg)
+	_, err := md.NewLoader(ctx, md.NewLoaderCfg(cfg))
 	// will check schema in tidb and data file later in DataCheck.
 	require.NoError(t, err)
 
 	cfg = newConfigWithSourceDir("./examples")
-	mdl, err := mydump.NewMyDumpLoader(ctx, cfg)
+	mdl, err := md.NewLoader(ctx, md.NewLoaderCfg(cfg))
 	require.NoError(t, err)
 
 	dbMetas := mdl.GetDatabases()
@@ -113,7 +113,7 @@ func TestLoader(t *testing.T) {
 
 func TestEmptyDB(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
-	_, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	// will check schema in tidb and data file later in DataCheck.
 	require.NoError(t, err)
 }
@@ -132,7 +132,7 @@ func TestDuplicatedDB(t *testing.T) {
 	s.mkdir(t, "b")
 	s.touch(t, "b", "db-schema-create.sql")
 
-	_, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.Regexp(t, `invalid database schema file, duplicated item - .*[/\\]db-schema-create\.sql`, err)
 }
 
@@ -150,7 +150,7 @@ func TestTableNoHostDB(t *testing.T) {
 	err = os.WriteFile(filepath.Join(dir, "db.tbl-schema.sql"), nil, 0o644)
 	require.NoError(t, err)
 
-	_, err = mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err = md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 }
 
@@ -171,7 +171,7 @@ func TestDuplicatedTable(t *testing.T) {
 	s.mkdir(t, "b")
 	s.touch(t, "b", "db.tbl-schema.sql")
 
-	_, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.Regexp(t, `invalid table schema file, duplicated item - .*db\.tbl-schema\.sql`, err)
 }
 
@@ -187,7 +187,7 @@ func TestTableInfoNotFound(t *testing.T) {
 	store, err := storage.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
-	loader, err := mydump.NewMyDumpLoader(ctx, s.cfg)
+	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 	for _, dbMeta := range loader.GetDatabases() {
 		logger, buffer := log2.MakeTestLogger()
@@ -212,7 +212,7 @@ func TestTableUnexpectedError(t *testing.T) {
 	store, err := storage.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
-	loader, err := mydump.NewMyDumpLoader(ctx, s.cfg)
+	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 	for _, dbMeta := range loader.GetDatabases() {
 		for _, tblMeta := range dbMeta.Tables {
@@ -234,7 +234,7 @@ func TestMissingTableSchema(t *testing.T) {
 	store, err := storage.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
-	loader, err := mydump.NewMyDumpLoader(ctx, s.cfg)
+	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 	for _, dbMeta := range loader.GetDatabases() {
 		for _, tblMeta := range dbMeta.Tables {
@@ -255,7 +255,7 @@ func TestDataNoHostDB(t *testing.T) {
 	s.touch(t, "notdb-schema-create.sql")
 	s.touch(t, "db.tbl.sql")
 
-	_, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	// will check schema in tidb and data file later in DataCheck.
 	require.NoError(t, err)
 }
@@ -271,7 +271,7 @@ func TestDataNoHostTable(t *testing.T) {
 	s.touch(t, "db-schema-create.sql")
 	s.touch(t, "db.tbl.sql")
 
-	_, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	// will check schema in tidb and data file later in DataCheck.
 	require.NoError(t, err)
 }
@@ -287,7 +287,7 @@ func TestViewNoHostDB(t *testing.T) {
 	s.touch(t, "notdb-schema-create.sql")
 	s.touch(t, "db.tbl-schema-view.sql")
 
-	_, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.Contains(t, err.Error(), `invalid view schema file, miss host table schema for view 'tbl'`)
 }
 
@@ -302,7 +302,7 @@ func TestViewNoHostTable(t *testing.T) {
 	s.touch(t, "db-schema-create.sql")
 	s.touch(t, "db.tbl-schema-view.sql")
 
-	_, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.Contains(t, err.Error(), `invalid view schema file, miss host table schema for view 'tbl'`)
 }
 
@@ -314,22 +314,22 @@ func TestDataWithoutSchema(t *testing.T) {
 	err := os.WriteFile(p, nil, 0o644)
 	require.NoError(t, err)
 
-	mdl, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
-	require.Equal(t, []*mydump.MDDatabaseMeta{{
+	require.Equal(t, []*md.MDDatabaseMeta{{
 		Name: "db",
-		SchemaFile: mydump.FileInfo{
+		SchemaFile: md.FileInfo{
 			TableName: filter.Table{
 				Schema: "db",
 				Name:   "",
 			},
-			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeSchemaSchema},
+			FileMeta: md.SourceFileMeta{Type: md.SourceTypeSchemaSchema},
 		},
-		Tables: []*mydump.MDTableMeta{{
+		Tables: []*md.MDTableMeta{{
 			DB:           "db",
 			Name:         "tbl",
-			SchemaFile:   mydump.FileInfo{TableName: filter.Table{Schema: "db", Name: "tbl"}},
-			DataFiles:    []mydump.FileInfo{{TableName: filter.Table{Schema: "db", Name: "tbl"}, FileMeta: mydump.SourceFileMeta{Path: "db.tbl.sql", Type: mydump.SourceTypeSQL}}},
+			SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "tbl"}},
+			DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "db", Name: "tbl"}, FileMeta: md.SourceFileMeta{Path: "db.tbl.sql", Type: md.SourceTypeSQL}}},
 			IsRowOrdered: true,
 			IndexRatio:   0.0,
 		}},
@@ -351,25 +351,25 @@ func TestTablesWithDots(t *testing.T) {
 	s.touch(t, "db.sql")
 	s.touch(t, "db-schema.sql")
 
-	mdl, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
-	require.Equal(t, []*mydump.MDDatabaseMeta{{
+	require.Equal(t, []*md.MDDatabaseMeta{{
 		Name:       "db",
-		SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "db", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: "db-schema-create.sql", Type: mydump.SourceTypeSchemaSchema}},
-		Tables: []*mydump.MDTableMeta{
+		SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "db-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+		Tables: []*md.MDTableMeta{
 			{
 				DB:           "db",
 				Name:         "0002",
-				SchemaFile:   mydump.FileInfo{TableName: filter.Table{Schema: "db", Name: "0002"}, FileMeta: mydump.SourceFileMeta{Path: "db.0002-schema.sql", Type: mydump.SourceTypeTableSchema}},
-				DataFiles:    []mydump.FileInfo{{TableName: filter.Table{Schema: "db", Name: "0002"}, FileMeta: mydump.SourceFileMeta{Path: "db.0002.sql", Type: mydump.SourceTypeSQL}}},
+				SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "0002"}, FileMeta: md.SourceFileMeta{Path: "db.0002-schema.sql", Type: md.SourceTypeTableSchema}},
+				DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "db", Name: "0002"}, FileMeta: md.SourceFileMeta{Path: "db.0002.sql", Type: md.SourceTypeSQL}}},
 				IsRowOrdered: true,
 				IndexRatio:   0.0,
 			},
 			{
 				DB:           "db",
 				Name:         "tbl.with.dots",
-				SchemaFile:   mydump.FileInfo{TableName: filter.Table{Schema: "db", Name: "tbl.with.dots"}, FileMeta: mydump.SourceFileMeta{Path: "db.tbl.with.dots-schema.sql", Type: mydump.SourceTypeTableSchema}},
-				DataFiles:    []mydump.FileInfo{{TableName: filter.Table{Schema: "db", Name: "tbl.with.dots"}, FileMeta: mydump.SourceFileMeta{Path: "db.tbl.with.dots.0001.sql", Type: mydump.SourceTypeSQL, SortKey: "0001"}}},
+				SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "tbl.with.dots"}, FileMeta: md.SourceFileMeta{Path: "db.tbl.with.dots-schema.sql", Type: md.SourceTypeTableSchema}},
+				DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "db", Name: "tbl.with.dots"}, FileMeta: md.SourceFileMeta{Path: "db.tbl.with.dots.0001.sql", Type: md.SourceTypeSQL, SortKey: "0001"}}},
 				IsRowOrdered: true,
 				IndexRatio:   0.0,
 			},
@@ -405,42 +405,42 @@ func TestRouter(t *testing.T) {
 		s.touch(t, "a1.v1-schema.sql")
 		s.touch(t, "a1.v1-schema-view.sql")
 
-		mdl, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
 		dbs := mdl.GetDatabases()
 		// hit rules: a0.t0 -> b.u, a0.t1 -> b.0, a1.t2 -> b.u
 		// not hit: a1.s1, a1.v1
-		expectedDBS := []*mydump.MDDatabaseMeta{
+		expectedDBS := []*md.MDDatabaseMeta{
 			{
 				Name:       "a0",
-				SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "a0", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: "a0-schema-create.sql", Type: mydump.SourceTypeSchemaSchema}},
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "a0", Name: ""}, FileMeta: md.SourceFileMeta{Path: "a0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
 			},
 			{
 				Name:       "a1",
-				SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "a1", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: "a1-schema-create.sql", Type: mydump.SourceTypeSchemaSchema}},
-				Tables: []*mydump.MDTableMeta{
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "a1", Name: ""}, FileMeta: md.SourceFileMeta{Path: "a1-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
 					{
 						DB:           "a1",
 						Name:         "s1",
-						SchemaFile:   mydump.FileInfo{TableName: filter.Table{Schema: "a1", Name: "s1"}, FileMeta: mydump.SourceFileMeta{Path: "a1.s1-schema.sql", Type: mydump.SourceTypeTableSchema}},
-						DataFiles:    []mydump.FileInfo{{TableName: filter.Table{Schema: "a1", Name: "s1"}, FileMeta: mydump.SourceFileMeta{Path: "a1.s1.1.sql", Type: mydump.SourceTypeSQL, SortKey: "1"}}},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "s1"}, FileMeta: md.SourceFileMeta{Path: "a1.s1-schema.sql", Type: md.SourceTypeTableSchema}},
+						DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "a1", Name: "s1"}, FileMeta: md.SourceFileMeta{Path: "a1.s1.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
 					{
 						DB:           "a1",
 						Name:         "v1",
-						SchemaFile:   mydump.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: mydump.SourceFileMeta{Path: "a1.v1-schema.sql", Type: mydump.SourceTypeTableSchema}},
-						DataFiles:    []mydump.FileInfo{},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema.sql", Type: md.SourceTypeTableSchema}},
+						DataFiles:    []md.FileInfo{},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
 				},
-				Views: []*mydump.MDTableMeta{
+				Views: []*md.MDTableMeta{
 					{
 						DB:           "a1",
 						Name:         "v1",
-						SchemaFile:   mydump.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: mydump.SourceFileMeta{Path: "a1.v1-schema-view.sql", Type: mydump.SourceTypeViewSchema}},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema-view.sql", Type: md.SourceTypeViewSchema}},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
@@ -448,16 +448,16 @@ func TestRouter(t *testing.T) {
 			},
 			{
 				Name:       "b",
-				SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "b", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: "a0-schema-create.sql", Type: mydump.SourceTypeSchemaSchema}},
-				Tables: []*mydump.MDTableMeta{
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "b", Name: ""}, FileMeta: md.SourceFileMeta{Path: "a0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
 					{
 						DB:         "b",
 						Name:       "u",
-						SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: mydump.SourceFileMeta{Path: "a0.t0-schema.sql", Type: mydump.SourceTypeTableSchema}},
-						DataFiles: []mydump.FileInfo{
-							{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: mydump.SourceFileMeta{Path: "a0.t0.1.sql", Type: mydump.SourceTypeSQL, SortKey: "1"}},
-							{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: mydump.SourceFileMeta{Path: "a0.t1.1.sql", Type: mydump.SourceTypeSQL, SortKey: "1"}},
-							{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: mydump.SourceFileMeta{Path: "a1.t2.1.sql", Type: mydump.SourceTypeSQL, SortKey: "1"}},
+						SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: "a0.t0-schema.sql", Type: md.SourceTypeTableSchema}},
+						DataFiles: []md.FileInfo{
+							{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: "a0.t0.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}},
+							{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: "a0.t1.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}},
+							{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: "a1.t2.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}},
 						},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
@@ -482,25 +482,25 @@ func TestRouter(t *testing.T) {
 		s.touch(t, "c0.t3.1.sql")
 
 		s.touch(t, "d0-schema-create.sql")
-		mdl, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
 		dbs := mdl.GetDatabases()
 		// hit rules: c0.t3 -> c.t3
 		// not hit: d0
-		expectedDBS := []*mydump.MDDatabaseMeta{
+		expectedDBS := []*md.MDDatabaseMeta{
 			{
 				Name:       "d0",
-				SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "d0", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: "d0-schema-create.sql", Type: mydump.SourceTypeSchemaSchema}},
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d0", Name: ""}, FileMeta: md.SourceFileMeta{Path: "d0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
 			},
 			{
 				Name:       "c",
-				SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "c", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: "c0-schema-create.sql", Type: mydump.SourceTypeSchemaSchema}},
-				Tables: []*mydump.MDTableMeta{
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "c", Name: ""}, FileMeta: md.SourceFileMeta{Path: "c0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
 					{
 						DB:           "c",
 						Name:         "t3",
-						SchemaFile:   mydump.FileInfo{TableName: filter.Table{Schema: "c", Name: "t3"}, FileMeta: mydump.SourceFileMeta{Path: "c0.t3-schema.sql", Type: mydump.SourceTypeTableSchema}},
-						DataFiles:    []mydump.FileInfo{{TableName: filter.Table{Schema: "c", Name: "t3"}, FileMeta: mydump.SourceFileMeta{Path: "c0.t3.1.sql", Type: mydump.SourceTypeSQL, SortKey: "1"}}},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "c", Name: "t3"}, FileMeta: md.SourceFileMeta{Path: "c0.t3-schema.sql", Type: md.SourceTypeTableSchema}},
+						DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "c", Name: "t3"}, FileMeta: md.SourceFileMeta{Path: "c0.t3.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
@@ -525,33 +525,33 @@ func TestRouter(t *testing.T) {
 		s.touch(t, "e0.f0-schema.sql")
 		s.touch(t, "e0.f0-schema-view.sql")
 
-		mdl, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
 		dbs := mdl.GetDatabases()
 		// hit rules: e0.f0 -> v.vv
-		expectedDBS := []*mydump.MDDatabaseMeta{
+		expectedDBS := []*md.MDDatabaseMeta{
 			{
 				Name:       "e0",
-				SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "e0", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: "e0-schema-create.sql", Type: mydump.SourceTypeSchemaSchema}},
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "e0", Name: ""}, FileMeta: md.SourceFileMeta{Path: "e0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
 			},
 			{
 				Name:       "v",
-				SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "v", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: "e0-schema-create.sql", Type: mydump.SourceTypeSchemaSchema}},
-				Tables: []*mydump.MDTableMeta{
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "v", Name: ""}, FileMeta: md.SourceFileMeta{Path: "e0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
 					{
 						DB:           "v",
 						Name:         "vv",
-						SchemaFile:   mydump.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: mydump.SourceFileMeta{Path: "e0.f0-schema.sql", Type: mydump.SourceTypeTableSchema}},
-						DataFiles:    []mydump.FileInfo{},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema.sql", Type: md.SourceTypeTableSchema}},
+						DataFiles:    []md.FileInfo{},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
 				},
-				Views: []*mydump.MDTableMeta{
+				Views: []*md.MDTableMeta{
 					{
 						DB:           "v",
 						Name:         "vv",
-						SchemaFile:   mydump.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: mydump.SourceFileMeta{Path: "e0.f0-schema-view.sql", Type: mydump.SourceTypeViewSchema}},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema-view.sql", Type: md.SourceTypeViewSchema}},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
@@ -585,24 +585,24 @@ func TestRouter(t *testing.T) {
 		s.touch(t, "zbdb.table-schema.sql")
 		s.touch(t, "zbdb.table.1.sql")
 
-		mdl, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
 		dbs := mdl.GetDatabases()
 		// hit rules: test_regexpr1.test_regexprtable -> downstream_db.downstream_table, zbdb.table -> db.table
-		expectedDBS := []*mydump.MDDatabaseMeta{
+		expectedDBS := []*md.MDDatabaseMeta{
 			{
 				Name:       "test_regexpr1",
-				SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "test_regexpr1", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: "test_regexpr1-schema-create.sql", Type: mydump.SourceTypeSchemaSchema}},
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "test_regexpr1", Name: ""}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
 			},
 			{
 				Name:       "db",
-				SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "db", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: "zbdb-schema-create.sql", Type: mydump.SourceTypeSchemaSchema}},
-				Tables: []*mydump.MDTableMeta{
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "zbdb-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
 					{
 						DB:           "db",
 						Name:         "table",
-						SchemaFile:   mydump.FileInfo{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: mydump.SourceFileMeta{Path: "zbdb.table-schema.sql", Type: mydump.SourceTypeTableSchema}},
-						DataFiles:    []mydump.FileInfo{{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: mydump.SourceFileMeta{Path: "zbdb.table.1.sql", Type: mydump.SourceTypeSQL, SortKey: "1"}}},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: md.SourceFileMeta{Path: "zbdb.table-schema.sql", Type: md.SourceTypeTableSchema}},
+						DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: md.SourceFileMeta{Path: "zbdb.table.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
@@ -610,13 +610,13 @@ func TestRouter(t *testing.T) {
 			},
 			{
 				Name:       "downstream_db",
-				SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "downstream_db", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: "test_regexpr1-schema-create.sql", Type: mydump.SourceTypeSchemaSchema}},
-				Tables: []*mydump.MDTableMeta{
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "downstream_db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
 					{
 						DB:           "downstream_db",
 						Name:         "downstream_table",
-						SchemaFile:   mydump.FileInfo{TableName: filter.Table{Schema: "downstream_db", Name: "downstream_table"}, FileMeta: mydump.SourceFileMeta{Path: "test_regexpr1.test_regexprtable-schema.sql", Type: mydump.SourceTypeTableSchema}},
-						DataFiles:    []mydump.FileInfo{{TableName: filter.Table{Schema: "downstream_db", Name: "downstream_table"}, FileMeta: mydump.SourceFileMeta{Path: "test_regexpr1.test_regexprtable.1.sql", Type: mydump.SourceTypeSQL, SortKey: "1"}}},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "downstream_db", Name: "downstream_table"}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1.test_regexprtable-schema.sql", Type: md.SourceTypeTableSchema}},
+						DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "downstream_db", Name: "downstream_table"}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1.test_regexprtable.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
@@ -649,41 +649,41 @@ func TestRouter(t *testing.T) {
 		s.touch(t, "x.t10-schema.sql") // hit rules, new name is x2.t
 		s.touch(t, "x.t20-schema.sql") // not hit rules, name is x.t20
 
-		mdl, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
 		dbs := mdl.GetDatabases()
 		// hit rules: web -> web_test, x.t10 -> x2.t
 		// not hit: x.t20
-		expectedDBS := []*mydump.MDDatabaseMeta{
+		expectedDBS := []*md.MDDatabaseMeta{
 			{
 				Name:       "x",
-				SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "x", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: "x-schema-create.sql", Type: mydump.SourceTypeSchemaSchema}},
-				Tables: []*mydump.MDTableMeta{
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "x", Name: ""}, FileMeta: md.SourceFileMeta{Path: "x-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
 					{
 						DB:           "x",
 						Name:         "t20",
-						SchemaFile:   mydump.FileInfo{TableName: filter.Table{Schema: "x", Name: "t20"}, FileMeta: mydump.SourceFileMeta{Path: "x.t20-schema.sql", Type: mydump.SourceTypeTableSchema}},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "x", Name: "t20"}, FileMeta: md.SourceFileMeta{Path: "x.t20-schema.sql", Type: md.SourceTypeTableSchema}},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
-						DataFiles:    []mydump.FileInfo{},
+						DataFiles:    []md.FileInfo{},
 					},
 				},
 			},
 			{
 				Name:       "web_test",
-				SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "web_test", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: "web-schema-create.sql", Type: mydump.SourceTypeSchemaSchema}},
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "web_test", Name: ""}, FileMeta: md.SourceFileMeta{Path: "web-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
 			},
 			{
 				Name:       "x2",
-				SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "x2", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: "x-schema-create.sql", Type: mydump.SourceTypeSchemaSchema}},
-				Tables: []*mydump.MDTableMeta{
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "x2", Name: ""}, FileMeta: md.SourceFileMeta{Path: "x-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
 					{
 						DB:           "x2",
 						Name:         "t",
-						SchemaFile:   mydump.FileInfo{TableName: filter.Table{Schema: "x2", Name: "t"}, FileMeta: mydump.SourceFileMeta{Path: "x.t10-schema.sql", Type: mydump.SourceTypeTableSchema}},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "x2", Name: "t"}, FileMeta: md.SourceFileMeta{Path: "x.t10-schema.sql", Type: md.SourceTypeTableSchema}},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
-						DataFiles:    []mydump.FileInfo{},
+						DataFiles:    []md.FileInfo{},
 					},
 				},
 			},
@@ -705,7 +705,7 @@ func TestRoutesPanic(t *testing.T) {
 	s.touch(t, "test1.dump_test.002.sql")
 	s.touch(t, "test1.dump_test.003.sql")
 
-	_, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 }
 
@@ -719,7 +719,7 @@ func TestBadRouterRule(t *testing.T) {
 
 	s.touch(t, "a1b-schema-create.sql")
 
-	_, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.Regexp(t, `.*pattern a\*b not valid`, err.Error())
 }
 
@@ -773,32 +773,32 @@ func TestFileRouting(t *testing.T) {
 	s.touch(t, "d2/abc-table.sql")
 	s.touch(t, "abc.1.sql")
 
-	mdl, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
-	require.Equal(t, []*mydump.MDDatabaseMeta{
+	require.Equal(t, []*md.MDDatabaseMeta{
 		{
 			Name:       "d1",
-			SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "d1", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: filepath.FromSlash("d1/schema.sql"), Type: mydump.SourceTypeSchemaSchema}},
-			Tables: []*mydump.MDTableMeta{
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d1", Name: ""}, FileMeta: md.SourceFileMeta{Path: filepath.FromSlash("d1/schema.sql"), Type: md.SourceTypeSchemaSchema}},
+			Tables: []*md.MDTableMeta{
 				{
 					DB:   "d1",
 					Name: "test",
-					SchemaFile: mydump.FileInfo{
+					SchemaFile: md.FileInfo{
 						TableName: filter.Table{Schema: "d1", Name: "test"},
-						FileMeta:  mydump.SourceFileMeta{Path: filepath.FromSlash("d1/test-table.sql"), Type: mydump.SourceTypeTableSchema},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/test-table.sql"), Type: md.SourceTypeTableSchema},
 					},
-					DataFiles: []mydump.FileInfo{
+					DataFiles: []md.FileInfo{
 						{
 							TableName: filter.Table{Schema: "d1", Name: "test"},
-							FileMeta:  mydump.SourceFileMeta{Path: filepath.FromSlash("d1/test0.sql"), Type: mydump.SourceTypeSQL},
+							FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/test0.sql"), Type: md.SourceTypeSQL},
 						},
 						{
 							TableName: filter.Table{Schema: "d1", Name: "test"},
-							FileMeta:  mydump.SourceFileMeta{Path: filepath.FromSlash("d1/test1.sql"), Type: mydump.SourceTypeSQL},
+							FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/test1.sql"), Type: md.SourceTypeSQL},
 						},
 						{
 							TableName: filter.Table{Schema: "d1", Name: "test"},
-							FileMeta:  mydump.SourceFileMeta{Path: filepath.FromSlash("d1/test2.001.sql"), Type: mydump.SourceTypeSQL},
+							FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/test2.001.sql"), Type: md.SourceTypeSQL},
 						},
 					},
 					IndexRatio:   0.0,
@@ -807,22 +807,22 @@ func TestFileRouting(t *testing.T) {
 				{
 					DB:   "d1",
 					Name: "v1",
-					SchemaFile: mydump.FileInfo{
+					SchemaFile: md.FileInfo{
 						TableName: filter.Table{Schema: "d1", Name: "v1"},
-						FileMeta:  mydump.SourceFileMeta{Path: filepath.FromSlash("d1/v1-table.sql"), Type: mydump.SourceTypeTableSchema},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/v1-table.sql"), Type: md.SourceTypeTableSchema},
 					},
-					DataFiles:    []mydump.FileInfo{},
+					DataFiles:    []md.FileInfo{},
 					IndexRatio:   0.0,
 					IsRowOrdered: true,
 				},
 			},
-			Views: []*mydump.MDTableMeta{
+			Views: []*md.MDTableMeta{
 				{
 					DB:   "d1",
 					Name: "v1",
-					SchemaFile: mydump.FileInfo{
+					SchemaFile: md.FileInfo{
 						TableName: filter.Table{Schema: "d1", Name: "v1"},
-						FileMeta:  mydump.SourceFileMeta{Path: filepath.FromSlash("d1/v1-view.sql"), Type: mydump.SourceTypeViewSchema},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/v1-view.sql"), Type: md.SourceTypeViewSchema},
 					},
 					IndexRatio:   0.0,
 					IsRowOrdered: true,
@@ -831,16 +831,16 @@ func TestFileRouting(t *testing.T) {
 		},
 		{
 			Name:       "d2",
-			SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "d2", Name: ""}, FileMeta: mydump.SourceFileMeta{Path: filepath.FromSlash("d2/schema.sql"), Type: mydump.SourceTypeSchemaSchema}},
-			Tables: []*mydump.MDTableMeta{
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d2", Name: ""}, FileMeta: md.SourceFileMeta{Path: filepath.FromSlash("d2/schema.sql"), Type: md.SourceTypeSchemaSchema}},
+			Tables: []*md.MDTableMeta{
 				{
 					DB:   "d2",
 					Name: "abc",
-					SchemaFile: mydump.FileInfo{
+					SchemaFile: md.FileInfo{
 						TableName: filter.Table{Schema: "d2", Name: "abc"},
-						FileMeta:  mydump.SourceFileMeta{Path: filepath.FromSlash("d2/abc-table.sql"), Type: mydump.SourceTypeTableSchema},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d2/abc-table.sql"), Type: md.SourceTypeTableSchema},
 					},
-					DataFiles:    []mydump.FileInfo{{TableName: filter.Table{Schema: "d2", Name: "abc"}, FileMeta: mydump.SourceFileMeta{Path: "abc.1.sql", Type: mydump.SourceTypeSQL}}},
+					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "d2", Name: "abc"}, FileMeta: md.SourceFileMeta{Path: "abc.1.sql", Type: md.SourceTypeSQL}}},
 					IndexRatio:   0.0,
 					IsRowOrdered: true,
 				},
@@ -881,24 +881,24 @@ func TestInputWithSpecialChars(t *testing.T) {
 	s.touch(t, "db%22.t%2522-schema.sql")
 	s.touch(t, "db%22.t%2522.0.csv")
 
-	mdl, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
-	require.Equal(t, []*mydump.MDDatabaseMeta{
+	require.Equal(t, []*md.MDDatabaseMeta{
 		{
 			Name:       `db"`,
-			SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: `db"`, Name: ""}, FileMeta: mydump.SourceFileMeta{Path: filepath.FromSlash("db%22-schema-create.sql"), Type: mydump.SourceTypeSchemaSchema}},
-			Tables: []*mydump.MDTableMeta{
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: `db"`, Name: ""}, FileMeta: md.SourceFileMeta{Path: filepath.FromSlash("db%22-schema-create.sql"), Type: md.SourceTypeSchemaSchema}},
+			Tables: []*md.MDTableMeta{
 				{
 					DB:   `db"`,
 					Name: "t%22",
-					SchemaFile: mydump.FileInfo{
+					SchemaFile: md.FileInfo{
 						TableName: filter.Table{Schema: `db"`, Name: "t%22"},
-						FileMeta:  mydump.SourceFileMeta{Path: filepath.FromSlash("db%22.t%2522-schema.sql"), Type: mydump.SourceTypeTableSchema},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("db%22.t%2522-schema.sql"), Type: md.SourceTypeTableSchema},
 					},
-					DataFiles: []mydump.FileInfo{
+					DataFiles: []md.FileInfo{
 						{
 							TableName: filter.Table{Schema: `db"`, Name: "t%22"},
-							FileMeta:  mydump.SourceFileMeta{Path: filepath.FromSlash("db%22.t%2522.0.csv"), Type: mydump.SourceTypeCSV, SortKey: "0"},
+							FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("db%22.t%2522.0.csv"), Type: md.SourceTypeCSV, SortKey: "0"},
 						},
 					},
 					IndexRatio:   0,
@@ -908,49 +908,49 @@ func TestInputWithSpecialChars(t *testing.T) {
 		},
 		{
 			Name:       "test",
-			SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: `test`, Name: ""}, FileMeta: mydump.SourceFileMeta{Path: filepath.FromSlash("test-schema-create.sql"), Type: mydump.SourceTypeSchemaSchema}},
-			Tables: []*mydump.MDTableMeta{
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: `test`, Name: ""}, FileMeta: md.SourceFileMeta{Path: filepath.FromSlash("test-schema-create.sql"), Type: md.SourceTypeSchemaSchema}},
+			Tables: []*md.MDTableMeta{
 				{
 					DB:   "test",
 					Name: `t"`,
-					SchemaFile: mydump.FileInfo{
+					SchemaFile: md.FileInfo{
 						TableName: filter.Table{Schema: "test", Name: `t"`},
-						FileMeta:  mydump.SourceFileMeta{Path: filepath.FromSlash("test.t%22-schema.sql"), Type: mydump.SourceTypeTableSchema},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("test.t%22-schema.sql"), Type: md.SourceTypeTableSchema},
 					},
-					DataFiles:    []mydump.FileInfo{{TableName: filter.Table{Schema: "test", Name: `t"`}, FileMeta: mydump.SourceFileMeta{Path: "test.t%22.sql", Type: mydump.SourceTypeSQL}}},
+					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "test", Name: `t"`}, FileMeta: md.SourceFileMeta{Path: "test.t%22.sql", Type: md.SourceTypeSQL}}},
 					IndexRatio:   0,
 					IsRowOrdered: true,
 				},
 				{
 					DB:   "test",
 					Name: "t%22",
-					SchemaFile: mydump.FileInfo{
+					SchemaFile: md.FileInfo{
 						TableName: filter.Table{Schema: "test", Name: "t%22"},
-						FileMeta:  mydump.SourceFileMeta{Path: filepath.FromSlash("test.t%2522-schema.sql"), Type: mydump.SourceTypeTableSchema},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("test.t%2522-schema.sql"), Type: md.SourceTypeTableSchema},
 					},
-					DataFiles:    []mydump.FileInfo{{TableName: filter.Table{Schema: "test", Name: "t%22"}, FileMeta: mydump.SourceFileMeta{Path: "test.t%2522.csv", Type: mydump.SourceTypeCSV}}},
+					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "test", Name: "t%22"}, FileMeta: md.SourceFileMeta{Path: "test.t%2522.csv", Type: md.SourceTypeCSV}}},
 					IndexRatio:   0,
 					IsRowOrdered: true,
 				},
 				{
 					DB:   "test",
 					Name: "t%gg",
-					SchemaFile: mydump.FileInfo{
+					SchemaFile: md.FileInfo{
 						TableName: filter.Table{Schema: "test", Name: "t%gg"},
-						FileMeta:  mydump.SourceFileMeta{Path: filepath.FromSlash("test.t%gg-schema.sql"), Type: mydump.SourceTypeTableSchema},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("test.t%gg-schema.sql"), Type: md.SourceTypeTableSchema},
 					},
-					DataFiles:    []mydump.FileInfo{{TableName: filter.Table{Schema: "test", Name: "t%gg"}, FileMeta: mydump.SourceFileMeta{Path: "test.t%gg.csv", Type: mydump.SourceTypeCSV}}},
+					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "test", Name: "t%gg"}, FileMeta: md.SourceFileMeta{Path: "test.t%gg.csv", Type: md.SourceTypeCSV}}},
 					IndexRatio:   0,
 					IsRowOrdered: true,
 				},
 				{
 					DB:   "test",
 					Name: "t+gg",
-					SchemaFile: mydump.FileInfo{
+					SchemaFile: md.FileInfo{
 						TableName: filter.Table{Schema: "test", Name: "t+gg"},
-						FileMeta:  mydump.SourceFileMeta{Path: filepath.FromSlash("test.t+gg-schema.sql"), Type: mydump.SourceTypeTableSchema},
+						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("test.t+gg-schema.sql"), Type: md.SourceTypeTableSchema},
 					},
-					DataFiles:    []mydump.FileInfo{{TableName: filter.Table{Schema: "test", Name: "t+gg"}, FileMeta: mydump.SourceFileMeta{Path: "test.t+gg.csv", Type: mydump.SourceTypeCSV}}},
+					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "test", Name: "t+gg"}, FileMeta: md.SourceFileMeta{Path: "test.t+gg.csv", Type: md.SourceTypeCSV}}},
 					IndexRatio:   0,
 					IsRowOrdered: true,
 				},
@@ -978,7 +978,7 @@ func TestMaxScanFilesOption(t *testing.T) {
 	}
 	cfg := newConfigWithSourceDir("/test-src")
 
-	mdl, err := mydump.NewMyDumpLoaderWithStore(ctx, cfg, memStore)
+	mdl, err := md.NewLoaderWithStore(ctx, md.NewLoaderCfg(cfg), memStore)
 	require.NoError(t, err)
 	require.NotNil(t, mdl)
 	dbMetas := mdl.GetDatabases()
@@ -988,8 +988,8 @@ func TestMaxScanFilesOption(t *testing.T) {
 	tbl := dbMeta.Tables[0]
 	require.Equal(t, dataFilesCount, len(tbl.DataFiles))
 
-	mdl, err = mydump.NewMyDumpLoaderWithStore(ctx, cfg, memStore,
-		mydump.WithMaxScanFiles(maxScanFilesCount),
+	mdl, err = md.NewLoaderWithStore(ctx, md.NewLoaderCfg(cfg), memStore,
+		md.WithMaxScanFiles(maxScanFilesCount),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, mdl)
@@ -1001,8 +1001,8 @@ func TestMaxScanFilesOption(t *testing.T) {
 	require.Equal(t, dataFilesCount, len(tbl.DataFiles))
 
 	maxScanFilesCount = 100
-	mdl, err = mydump.NewMyDumpLoaderWithStore(ctx, cfg, memStore,
-		mydump.WithMaxScanFiles(maxScanFilesCount),
+	mdl, err = md.NewLoaderWithStore(ctx, md.NewLoaderCfg(cfg), memStore,
+		md.WithMaxScanFiles(maxScanFilesCount),
 	)
 	require.EqualError(t, err, common.ErrTooManySourceFiles.Error())
 	require.NotNil(t, mdl)
@@ -1051,10 +1051,10 @@ func TestExternalDataRoutes(t *testing.T) {
 		},
 	}
 
-	mdl, err := mydump.NewMyDumpLoader(context.Background(), s.cfg)
+	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 
 	require.NoError(t, err)
-	var database *mydump.MDDatabaseMeta
+	var database *md.MDDatabaseMeta
 	for _, db := range mdl.GetDatabases() {
 		if db.Name == "test" {
 			require.Nil(t, database)
@@ -1100,9 +1100,9 @@ func TestSampleFileCompressRatio(t *testing.T) {
 	err = store.WriteFile(ctx, fileName, bf.Bytes())
 	require.NoError(t, err)
 
-	ratio, err := mydump.SampleFileCompressRatio(ctx, mydump.SourceFileMeta{
+	ratio, err := md.SampleFileCompressRatio(ctx, md.SourceFileMeta{
 		Path:        fileName,
-		Compression: mydump.CompressionGZ,
+		Compression: md.CompressionGZ,
 	}, store)
 	require.NoError(t, err)
 	require.InDelta(t, ratio, 5000.0/float64(bf.Len()), 1e-5)
@@ -1159,10 +1159,18 @@ func TestSampleParquetDataSize(t *testing.T) {
 	err = store.WriteFile(ctx, fileName, bf.Bytes())
 	require.NoError(t, err)
 
-	size, err := mydump.SampleParquetDataSize(ctx, mydump.SourceFileMeta{
+	size, err := md.SampleParquetDataSize(ctx, md.SourceFileMeta{
 		Path: fileName,
 	}, store)
 	require.NoError(t, err)
 	// expected error within 10%, so delta = totalRowSize / 10
 	require.InDelta(t, totalRowSize, size, float64(totalRowSize)/10)
+}
+
+func TestSetupOptions(t *testing.T) {
+	// those functions are only used in other components, add this to avoid they
+	// be deleted mistakenly.
+	_ = md.WithMaxScanFiles
+	_ = md.ReturnPartialResultOnError
+	_ = md.WithFileIterator
 }

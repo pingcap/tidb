@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "initstats",
+    srcs = ["load_stats.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/initstats",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/types",
+        "//pkg/util",
+        "//pkg/util/chunk",
+        "//pkg/util/sqlexec",
+        "@org_uber_go_zap//:zap",
+    ],
+)

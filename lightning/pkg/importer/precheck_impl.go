@@ -33,11 +33,11 @@ import (
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	checkpoints2 "github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
-	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
@@ -191,11 +191,11 @@ func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*precheck.CheckR
 
 type clusterVersionCheckItem struct {
 	preInfoGetter PreImportInfoGetter
-	dbMetas       []*mydump2.MDDatabaseMeta
+	dbMetas       []*mydump.MDDatabaseMeta
 }
 
 // NewClusterVersionCheckItem creates a new clusterVersionCheckItem.
-func NewClusterVersionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump2.MDDatabaseMeta) precheck.Checker {
+func NewClusterVersionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) precheck.Checker {
 	return &clusterVersionCheckItem{
 		preInfoGetter: preInfoGetter,
 		dbMetas:       dbMetas,
@@ -217,7 +217,7 @@ func (ci *clusterVersionCheckItem) Check(ctx context.Context) (*precheck.CheckRe
 	}
 	checkCtx := WithPreInfoGetterDBMetas(ctx, ci.dbMetas)
 	if err := ci.preInfoGetter.CheckVersionRequirements(checkCtx); err != nil {
-		err := common2.NormalizeError(err)
+		err := common.NormalizeError(err)
 		theResult.Passed = false
 		theResult.Message = fmt.Sprintf("Cluster version check failed: %s", err.Error())
 	}
@@ -226,11 +226,11 @@ func (ci *clusterVersionCheckItem) Check(ctx context.Context) (*precheck.CheckRe
 
 type emptyRegionCheckItem struct {
 	preInfoGetter PreImportInfoGetter
-	dbMetas       []*mydump2.MDDatabaseMeta
+	dbMetas       []*mydump.MDDatabaseMeta
 }
 
 // NewEmptyRegionCheckItem creates a new emptyRegionCheckItem.
-func NewEmptyRegionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump2.MDDatabaseMeta) precheck.Checker {
+func NewEmptyRegionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) precheck.Checker {
 	return &emptyRegionCheckItem{
 		preInfoGetter: preInfoGetter,
 		dbMetas:       dbMetas,
@@ -324,11 +324,11 @@ func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*precheck.CheckResul
 
 type regionDistributionCheckItem struct {
 	preInfoGetter PreImportInfoGetter
-	dbMetas       []*mydump2.MDDatabaseMeta
+	dbMetas       []*mydump.MDDatabaseMeta
 }
 
 // NewRegionDistributionCheckItem creates a new regionDistributionCheckItem.
-func NewRegionDistributionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump2.MDDatabaseMeta) precheck.Checker {
+func NewRegionDistributionCheckItem(preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) precheck.Checker {
 	return &regionDistributionCheckItem{
 		preInfoGetter: preInfoGetter,
 		dbMetas:       dbMetas,
@@ -404,11 +404,11 @@ func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*precheck.Che
 }
 
 type storagePermissionCheckItem struct {
-	cfg *config2.Config
+	cfg *config.Config
 }
 
 // NewStoragePermissionCheckItem creates a new storagePermissionCheckItem.
-func NewStoragePermissionCheckItem(cfg *config2.Config) precheck.Checker {
+func NewStoragePermissionCheckItem(cfg *config.Config) precheck.Checker {
 	return &storagePermissionCheckItem{
 		cfg: cfg,
 	}
@@ -430,7 +430,7 @@ func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*precheck.Chec
 
 	u, err := storage.ParseBackend(ci.cfg.Mydumper.SourceDir, nil)
 	if err != nil {
-		return nil, common2.NormalizeError(err)
+		return nil, common.NormalizeError(err)
 	}
 	_, err = storage.New(ctx, u, &storage.ExternalStorageOptions{
 		CheckPermissions: []storage.Permission{
@@ -446,12 +446,12 @@ func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*precheck.Chec
 }
 
 type largeFileCheckItem struct {
-	cfg     *config2.Config
-	dbMetas []*mydump2.MDDatabaseMeta
+	cfg     *config.Config
+	dbMetas []*mydump.MDDatabaseMeta
 }
 
 // NewLargeFileCheckItem creates a new largeFileCheckItem.
-func NewLargeFileCheckItem(cfg *config2.Config, dbMetas []*mydump2.MDDatabaseMeta) precheck.Checker {
+func NewLargeFileCheckItem(cfg *config.Config, dbMetas []*mydump.MDDatabaseMeta) precheck.Checker {
 	return &largeFileCheckItem{
 		cfg:     cfg,
 		dbMetas: dbMetas,
@@ -490,11 +490,11 @@ func (ci *largeFileCheckItem) Check(_ context.Context) (*precheck.CheckResult, e
 }
 
 type localDiskPlacementCheckItem struct {
-	cfg *config2.Config
+	cfg *config.Config
 }
 
 // NewLocalDiskPlacementCheckItem creates a new localDiskPlacementCheckItem.
-func NewLocalDiskPlacementCheckItem(cfg *config2.Config) precheck.Checker {
+func NewLocalDiskPlacementCheckItem(cfg *config.Config) precheck.Checker {
 	return &localDiskPlacementCheckItem{
 		cfg: cfg,
 	}
@@ -514,7 +514,7 @@ func (ci *localDiskPlacementCheckItem) Check(_ context.Context) (*precheck.Check
 		Message:  "local source dir and temp-kv dir are in different disks",
 	}
 	sourceDir := strings.TrimPrefix(ci.cfg.Mydumper.SourceDir, storage.LocalURIPrefix)
-	same, err := common2.SameDisk(sourceDir, ci.cfg.TikvImporter.SortedKVDir)
+	same, err := common.SameDisk(sourceDir, ci.cfg.TikvImporter.SortedKVDir)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -527,13 +527,13 @@ func (ci *localDiskPlacementCheckItem) Check(_ context.Context) (*precheck.Check
 }
 
 type localTempKVDirCheckItem struct {
-	cfg           *config2.Config
+	cfg           *config.Config
 	preInfoGetter PreImportInfoGetter
-	dbMetas       []*mydump2.MDDatabaseMeta
+	dbMetas       []*mydump.MDDatabaseMeta
 }
 
 // NewLocalTempKVDirCheckItem creates a new localTempKVDirCheckItem.
-func NewLocalTempKVDirCheckItem(cfg *config2.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump2.MDDatabaseMeta) precheck.Checker {
+func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) precheck.Checker {
 	return &localTempKVDirCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
@@ -550,7 +550,7 @@ func (ci *localTempKVDirCheckItem) hasCompressedFiles() bool {
 	for _, dbMeta := range ci.dbMetas {
 		for _, tbMeta := range dbMeta.Tables {
 			for _, file := range tbMeta.DataFiles {
-				if file.FileMeta.Compression != mydump2.CompressionNone {
+				if file.FileMeta.Compression != mydump.CompressionNone {
 					return true
 				}
 			}
@@ -570,7 +570,7 @@ func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*precheck.CheckRe
 		Item:     ci.GetCheckItemID(),
 		Severity: severity,
 	}
-	storageSize, err := common2.GetStorageSize(ci.cfg.TikvImporter.SortedKVDir)
+	storageSize, err := common.GetStorageSize(ci.cfg.TikvImporter.SortedKVDir)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -607,14 +607,14 @@ func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*precheck.CheckRe
 }
 
 type checkpointCheckItem struct {
-	cfg           *config2.Config
+	cfg           *config.Config
 	preInfoGetter PreImportInfoGetter
-	dbMetas       []*mydump2.MDDatabaseMeta
-	checkpointsDB checkpoints2.DB
+	dbMetas       []*mydump.MDDatabaseMeta
+	checkpointsDB checkpoints.DB
 }
 
 // NewCheckpointCheckItem creates a new checkpointCheckItem.
-func NewCheckpointCheckItem(cfg *config2.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump2.MDDatabaseMeta, checkpointsDB checkpoints2.DB) precheck.Checker {
+func NewCheckpointCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, checkpointsDB checkpoints.DB) precheck.Checker {
 	return &checkpointCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
@@ -662,9 +662,9 @@ func (ci *checkpointCheckItem) Check(ctx context.Context) (*precheck.CheckResult
 }
 
 // checkpointIsValid checks whether we can start this import with this checkpoint.
-func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump2.MDTableMeta, dbInfos map[string]*checkpoints2.TidbDBInfo) ([]string, error) {
+func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
 	msgs := make([]string, 0)
-	uniqueName := common2.UniqueTable(tableInfo.DB, tableInfo.Name)
+	uniqueName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	tableCheckPoint, err := ci.checkpointsDB.Get(ctx, uniqueName)
 	if err != nil {
 		if errors.IsNotFound(err) {
@@ -675,16 +675,16 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 		return nil, errors.Trace(err)
 	}
 	// if checkpoint enable and not missing, we skip the check table empty progress.
-	if tableCheckPoint.Status <= checkpoints2.CheckpointStatusMissing {
+	if tableCheckPoint.Status <= checkpoints.CheckpointStatusMissing {
 		return nil, nil
 	}
 
-	if tableCheckPoint.Status <= checkpoints2.CheckpointStatusMaxInvalid {
+	if tableCheckPoint.Status <= checkpoints.CheckpointStatusMaxInvalid {
 		failedStep := tableCheckPoint.Status * 10
 		var action strings.Builder
 		action.WriteString("./tidb-lightning-ctl --checkpoint-error-")
 		switch failedStep {
-		case checkpoints2.CheckpointStatusAlteredAutoInc, checkpoints2.CheckpointStatusAnalyzed:
+		case checkpoints.CheckpointStatusAlteredAutoInc, checkpoints.CheckpointStatusAnalyzed:
 			action.WriteString("ignore")
 		default:
 			action.WriteString("destroy")
@@ -752,7 +752,7 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 // CDCPITRCheckItem check downstream has enabled CDC or PiTR. It's exposed to let
 // caller override the Instruction message.
 type CDCPITRCheckItem struct {
-	cfg           *config2.Config
+	cfg           *config.Config
 	Instruction   string
 	pdAddrsGetter func(context.Context) []string
 	// used in test
@@ -760,7 +760,7 @@ type CDCPITRCheckItem struct {
 }
 
 // NewCDCPITRCheckItem creates a checker to check downstream has enabled CDC or PiTR.
-func NewCDCPITRCheckItem(cfg *config2.Config, pdAddrsGetter func(context.Context) []string) precheck.Checker {
+func NewCDCPITRCheckItem(cfg *config.Config, pdAddrsGetter func(context.Context) []string) precheck.Checker {
 	return &CDCPITRCheckItem{
 		cfg:           cfg,
 		Instruction:   "local backend is not compatible with them. Please switch to tidb backend then try again.",
@@ -775,7 +775,7 @@ func (*CDCPITRCheckItem) GetCheckItemID() precheck.CheckItemID {
 
 func dialEtcdWithCfg(
 	ctx context.Context,
-	cfg *config2.Config,
+	cfg *config.Config,
 	addrs []string,
 ) (*clientv3.Client, error) {
 	cfg2, err := cfg.ToTLS()
@@ -790,7 +790,7 @@ func dialEtcdWithCfg(
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
-			config2.DefaultGrpcKeepaliveParams,
+			config.DefaultGrpcKeepaliveParams,
 			grpc.WithBlock(),
 			grpc.WithReturnConnectionError(),
 		},
@@ -805,7 +805,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, e
 		Severity: precheck.Critical,
 	}
 
-	if ci.cfg.TikvImporter.Backend != config2.BackendLocal {
+	if ci.cfg.TikvImporter.Backend != config.BackendLocal {
 		theResult.Passed = true
 		theResult.Message = "TiDB Lightning is not using local backend, skip this check"
 		return theResult, nil
@@ -862,14 +862,14 @@ type onlyState struct {
 }
 
 type schemaCheckItem struct {
-	cfg           *config2.Config
+	cfg           *config.Config
 	preInfoGetter PreImportInfoGetter
-	dbMetas       []*mydump2.MDDatabaseMeta
-	checkpointsDB checkpoints2.DB
+	dbMetas       []*mydump.MDDatabaseMeta
+	checkpointsDB checkpoints.DB
 }
 
 // NewSchemaCheckItem creates a checker to check whether the schema is valid.
-func NewSchemaCheckItem(cfg *config2.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump2.MDDatabaseMeta, cpdb checkpoints2.DB) precheck.Checker {
+func NewSchemaCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, cpdb checkpoints.DB) precheck.Checker {
 	return &schemaCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
@@ -901,7 +901,7 @@ func (ci *schemaCheckItem) Check(ctx context.Context) (*precheck.CheckResult, er
 	for _, dbInfo := range ci.dbMetas {
 		for _, tableInfo := range dbInfo.Tables {
 			if ci.cfg.Checkpoint.Enable && ci.checkpointsDB != nil {
-				uniqueName := common2.UniqueTable(tableInfo.DB, tableInfo.Name)
+				uniqueName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 				if _, err := ci.checkpointsDB.Get(ctx, uniqueName); err == nil {
 					// there is a checkpoint
 					log.L().Debug("checkpoint detected, skip the schema check", zap.String("table", uniqueName))
@@ -923,7 +923,7 @@ func (ci *schemaCheckItem) Check(ctx context.Context) (*precheck.CheckResult, er
 }
 
 // SchemaIsValid checks the import file and cluster schema is match.
-func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump2.MDTableMeta, dbInfos map[string]*checkpoints2.TidbDBInfo) ([]string, error) {
+func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta, dbInfos map[string]*checkpoints.TidbDBInfo) ([]string, error) {
 	if len(tableInfo.DataFiles) == 0 {
 		log.FromContext(ctx).Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
 		return nil, nil
@@ -993,7 +993,7 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump2
 
 	core := info.Core
 	defaultCols := make(map[string]struct{})
-	autoRandomCol := common2.GetAutoRandomColumn(core)
+	autoRandomCol := common.GetAutoRandomColumn(core)
 	for _, col := range core.Columns {
 		// we can extend column the same with columns with default values
 		if _, isExtendCol := fullExtendColsSet[col.Name.O]; isExtendCol || hasDefault(col) || (autoRandomCol != nil && autoRandomCol.ID == col.ID) {
@@ -1022,7 +1022,7 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump2
 	// get columns name from data file.
 	dataFileMeta := dataFile.FileMeta
 
-	if tp := dataFileMeta.Type; tp != mydump2.SourceTypeCSV && tp != mydump2.SourceTypeSQL && tp != mydump2.SourceTypeParquet {
+	if tp := dataFileMeta.Type; tp != mydump.SourceTypeCSV && tp != mydump.SourceTypeSQL && tp != mydump.SourceTypeParquet {
 		msgs = append(msgs, fmt.Sprintf("file '%s' with unknown source type '%s'", dataFileMeta.Path, dataFileMeta.Type.String()))
 		return msgs, nil
 	}
@@ -1078,7 +1078,7 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump2
 	for _, col := range colsFromDataFile {
 		if _, ok := colMap[col]; !ok {
 			checkMsg := "please check table schema"
-			if dataFileMeta.Type == mydump2.SourceTypeCSV && ci.cfg.Mydumper.CSV.Header {
+			if dataFileMeta.Type == mydump.SourceTypeCSV && ci.cfg.Mydumper.CSV.Header {
 				checkMsg += " and csv file header"
 			}
 			msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have column %s, "+
@@ -1102,13 +1102,13 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump2
 }
 
 type csvHeaderCheckItem struct {
-	cfg           *config2.Config
+	cfg           *config.Config
 	preInfoGetter PreImportInfoGetter
-	dbMetas       []*mydump2.MDDatabaseMeta
+	dbMetas       []*mydump.MDDatabaseMeta
 }
 
 // NewCSVHeaderCheckItem creates a new csvHeaderCheckItem.
-func NewCSVHeaderCheckItem(cfg *config2.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump2.MDDatabaseMeta) precheck.Checker {
+func NewCSVHeaderCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta) precheck.Checker {
 	return &csvHeaderCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
@@ -1139,7 +1139,7 @@ func (ci *csvHeaderCheckItem) Check(ctx context.Context) (*precheck.CheckResult,
 		Message:  "the config [mydumper.csv.header] is set to false, and CSV header lines are really not detected in the data files",
 	}
 	var (
-		tableMeta    *mydump2.MDTableMeta
+		tableMeta    *mydump.MDTableMeta
 		csvCount     int
 		hasUniqueIdx bool
 	)
@@ -1160,7 +1160,7 @@ outer:
 			tableHasUniqueIdx := false
 			tableCSVCount := 0
 			for _, f := range tblMeta.DataFiles {
-				if f.FileMeta.Type == mydump2.SourceTypeCSV {
+				if f.FileMeta.Type == mydump.SourceTypeCSV {
 					tableCSVCount++
 					if tableCSVCount >= 2 {
 						break
@@ -1197,7 +1197,7 @@ outer:
 
 	var rows [][]types.Datum
 	for _, f := range tableMeta.DataFiles {
-		if f.FileMeta.Type != mydump2.SourceTypeCSV {
+		if f.FileMeta.Type != mydump.SourceTypeCSV {
 			continue
 		}
 
@@ -1261,7 +1261,7 @@ outer:
 	for _, f := range tableInfo.Core.Columns {
 		tableFields[f.Name.L] = struct{}{}
 	}
-	if common2.TableHasAutoRowID(tableInfo.Core) {
+	if common.TableHasAutoRowID(tableInfo.Core) {
 		tableFields[model.ExtraHandleName.L] = struct{}{}
 	}
 	hasUniqueField := false
@@ -1318,14 +1318,14 @@ func checkFieldCompatibility(
 }
 
 type tableEmptyCheckItem struct {
-	cfg           *config2.Config
+	cfg           *config.Config
 	preInfoGetter PreImportInfoGetter
-	dbMetas       []*mydump2.MDDatabaseMeta
-	checkpointsDB checkpoints2.DB
+	dbMetas       []*mydump.MDDatabaseMeta
+	checkpointsDB checkpoints.DB
 }
 
 // NewTableEmptyCheckItem creates a new tableEmptyCheckItem
-func NewTableEmptyCheckItem(cfg *config2.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump2.MDDatabaseMeta, cpdb checkpoints2.DB) precheck.Checker {
+func NewTableEmptyCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter, dbMetas []*mydump.MDDatabaseMeta, cpdb checkpoints.DB) precheck.Checker {
 	return &tableEmptyCheckItem{
 		cfg:           cfg,
 		preInfoGetter: preInfoGetter,
@@ -1366,7 +1366,7 @@ func (ci *tableEmptyCheckItem) Check(ctx context.Context) (*precheck.CheckResult
 	for i := 0; i < concurrency; i++ {
 		eg.Go(func() error {
 			for tblNameComp := range ch {
-				fullTableName := common2.UniqueTable(tblNameComp.DBName, tblNameComp.TableName)
+				fullTableName := common.UniqueTable(tblNameComp.DBName, tblNameComp.TableName)
 				// skip tables that have checkpoint
 				if ci.cfg.Checkpoint.Enable && ci.checkpointsDB != nil {
 					_, err := ci.checkpointsDB.Get(gCtx, fullTableName)
@@ -1404,7 +1404,7 @@ loop:
 	}
 	close(ch)
 	if err := eg.Wait(); err != nil {
-		if common2.IsContextCanceledError(err) {
+		if common.IsContextCanceledError(err) {
 			return nil, nil
 		}
 		return nil, errors.Annotate(err, "check table contains data failed")

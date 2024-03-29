@@ -38,6 +38,7 @@ import (
 )
 
 type readIndexExecutor struct {
+	execute.StepExecFrameworkInfo
 	d       *ddl
 	job     *model.Job
 	indexes []*model.IndexInfo

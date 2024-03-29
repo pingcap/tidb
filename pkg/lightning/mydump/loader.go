@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
@@ -69,7 +69,7 @@ func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalSt
 		}
 	}
 	// set default if schema sql is empty or failed to extract.
-	return common2.SprintfWithIdentifiers("CREATE DATABASE IF NOT EXISTS %s", m.Name)
+	return common.SprintfWithIdentifiers("CREATE DATABASE IF NOT EXISTS %s", m.Name)
 }
 
 // MDTableMeta contains some parsed metadata for a table in the source by MyDumper Loader.
@@ -91,11 +91,16 @@ type SourceFileMeta struct {
 	Type        SourceType
 	Compression Compression
 	SortKey     string
-	FileSize    int64
+	// FileSize is the size of the file in the storage.
+	FileSize int64
 	// WARNING: variables below are not persistent
 	ExtendData ExtendColumnData
-	RealSize   int64
-	Rows       int64 // only for parquet
+	// RealSize is same as FileSize if the file is not compressed and not parquet.
+	// If the file is compressed, RealSize is the estimated uncompressed size.
+	// If the file is parquet, RealSize is the estimated data size after convert
+	// to row oriented storage.
+	RealSize int64
+	Rows     int64 // only for parquet
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.
@@ -180,12 +185,50 @@ func WithFileIterator(fileIter FileIterator) MDLoaderSetupOption {
 	}
 }
 
+// LoaderConfig is the configuration for constructing a MDLoader.
+type LoaderConfig struct {
+	// SourceID is the unique identifier for the data source, it's used in DM only.
+	// must be used together with Routes.
+	SourceID string
+	// SourceURL is the URL of the data source.
+	SourceURL string
+	// Routes is the routing rules for the tables, exclusive with FileRouters.
+	// it's deprecated in lightning, but still used in DM.
+	// when used this, DefaultFileRules must be true.
+	Routes config.Routes
+	// CharacterSet is the character set of the schema sql files.
+	CharacterSet string
+	// Filter is the filter for the tables, files related to filtered-out tables are not loaded.
+	// must be specified, else all tables are filtered out, see config.GetDefaultFilter.
+	Filter      []string
+	FileRouters []*config.FileRouteRule
+	// CaseSensitive indicates whether Routes and Filter are case-sensitive.
+	CaseSensitive bool
+	// DefaultFileRules indicates whether to use the default file routing rules.
+	// If it's true, the default file routing rules will be appended to the FileRouters.
+	// a little confusing, but it's true only when FileRouters is empty.
+	DefaultFileRules bool
+}
+
+// NewLoaderCfg creates loader config from lightning config.
+func NewLoaderCfg(cfg *config.Config) LoaderConfig {
+	return LoaderConfig{
+		SourceID:         cfg.Mydumper.SourceID,
+		SourceURL:        cfg.Mydumper.SourceDir,
+		Routes:           cfg.Routes,
+		CharacterSet:     cfg.Mydumper.CharacterSet,
+		Filter:           cfg.Mydumper.Filter,
+		FileRouters:      cfg.Mydumper.FileRouters,
+		CaseSensitive:    cfg.Mydumper.CaseSensitive,
+		DefaultFileRules: cfg.Mydumper.DefaultFileRules,
+	}
+}
+
 // MDLoader is for 'Mydumper File Loader', which loads the files in the data source and generates a set of metadata.
 type MDLoader struct {
-	store  storage.ExternalStorage
-	dbs    []*MDDatabaseMeta
-	filter filter.Filter
-	// router     *router.Table
+	store      storage.ExternalStorage
+	dbs        []*MDDatabaseMeta
+	filter     filter.Filter
 	router     *regexprrouter.RouteTable
 	fileRouter FileRouter
 	charSet    string
@@ -203,22 +246,22 @@ type mdLoaderSetup struct {
 	setupCfg      *MDLoaderSetupConfig
 }
 
-// NewMyDumpLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
-func NewMyDumpLoader(ctx context.Context, cfg *config.Config, opts ...MDLoaderSetupOption) (*MDLoader, error) {
-	u, err := storage.ParseBackend(cfg.Mydumper.SourceDir, nil)
+// NewLoader constructs a MyDumper loader that scanns the data source and constructs a set of metadatas.
+func NewLoader(ctx context.Context, cfg LoaderConfig, opts ...MDLoaderSetupOption) (*MDLoader, error) {
+	u, err := storage.ParseBackend(cfg.SourceURL, nil)
 	if err != nil {
-		return nil, common2.NormalizeError(err)
+		return nil, common.NormalizeError(err)
 	}
 	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
 	if err != nil {
-		return nil, common2.NormalizeError(err)
+		return nil, common.NormalizeError(err)
 	}
 
-	return NewMyDumpLoaderWithStore(ctx, cfg, s, opts...)
+	return NewLoaderWithStore(ctx, cfg, s, opts...)
 }
 
-// NewMyDumpLoaderWithStore constructs a MyDumper loader with the provided external storage that scanns the data source and constructs a set of metadatas.
-func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config,
+// NewLoaderWithStore constructs a MyDumper loader with the provided external storage that scanns the data source and constructs a set of metadatas.
+func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 	store storage.ExternalStorage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	var r *regexprrouter.RouteTable
 	var err error
@@ -234,45 +277,45 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config,
 		}
 	}
 
-	if len(cfg.Routes) > 0 && len(cfg.Mydumper.FileRouters) > 0 {
-		return nil, common2.ErrInvalidConfig.GenWithStack("table route is deprecated, can't config both [routes] and [mydumper.files]")
+	if len(cfg.Routes) > 0 && len(cfg.FileRouters) > 0 {
+		return nil, common.ErrInvalidConfig.GenWithStack("table route is deprecated, can't config both [routes] and [mydumper.files]")
 	}
 
 	if len(cfg.Routes) > 0 {
-		r, err = regexprrouter.NewRegExprRouter(cfg.Mydumper.CaseSensitive, cfg.Routes)
+		r, err = regexprrouter.NewRegExprRouter(cfg.CaseSensitive, cfg.Routes)
 		if err != nil {
-			return nil, common2.ErrInvalidConfig.Wrap(err).GenWithStack("invalid table route rule")
+			return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid table route rule")
 		}
 	}
 
-	f, err := filter.Parse(cfg.Mydumper.Filter)
+	f, err := filter.Parse(cfg.Filter)
 	if err != nil {
-		return nil, common2.ErrInvalidConfig.Wrap(err).GenWithStack("parse filter failed")
+		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse filter failed")
 	}
-	if !cfg.Mydumper.CaseSensitive {
+	if !cfg.CaseSensitive {
 		f = filter.CaseInsensitive(f)
 	}
 
-	fileRouteRules := cfg.Mydumper.FileRouters
-	if cfg.Mydumper.DefaultFileRules {
+	fileRouteRules := cfg.FileRouters
+	if cfg.DefaultFileRules {
 		fileRouteRules = append(fileRouteRules, defaultFileRouteRules...)
 	}
 
 	fileRouter, err := NewFileRouter(fileRouteRules, log.FromContext(ctx))
 	if err != nil {
-		return nil, common2.ErrInvalidConfig.Wrap(err).GenWithStack("parse file routing rule failed")
+		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse file routing rule failed")
 	}
 
 	mdl := &MDLoader{
 		store:      store,
 		filter:     f,
 		router:     r,
-		charSet:    cfg.Mydumper.CharacterSet,
+		charSet:    cfg.CharacterSet,
 		fileRouter: fileRouter,
 	}
 
 	setup := mdLoaderSetup{
-		sourceID:      cfg.Mydumper.SourceID,
+		sourceID:      cfg.SourceID,
 		loader:        mdl,
 		dbIndexMap:    make(map[string]int),
 		tableIndexMap: make(map[filter.Table]int),
@@ -351,19 +394,19 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 	}
 	if err := fileIter.IterateFiles(ctx, s.constructFileInfo); err != nil {
 		if !s.setupCfg.ReturnPartialResultOnError {
-			return common2.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
+			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
 		gerr = err
 	}
 	if err := s.route(); err != nil {
-		return common2.ErrTableRoute.Wrap(err).GenWithStackByArgs()
+		return common.ErrTableRoute.Wrap(err).GenWithStackByArgs()
 	}
 
 	// setup database schema
 	if len(s.dbSchemas) != 0 {
 		for _, fileInfo := range s.dbSchemas {
 			if _, dbExists := s.insertDB(fileInfo); dbExists && s.loader.router == nil {
-				return common2.ErrInvalidSchemaFile.GenWithStack("invalid database schema file, duplicated item - %s", fileInfo.FileMeta.Path)
+				return common.ErrInvalidSchemaFile.GenWithStack("invalid database schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
 	}
@@ -372,7 +415,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		// setup table schema
 		for _, fileInfo := range s.tableSchemas {
 			if _, _, tableExists := s.insertTable(fileInfo); tableExists && s.loader.router == nil {
-				return common2.ErrInvalidSchemaFile.GenWithStack("invalid table schema file, duplicated item - %s", fileInfo.FileMeta.Path)
+				return common.ErrInvalidSchemaFile.GenWithStack("invalid table schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
 	}
@@ -384,7 +427,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 			if !tableExists {
 				// we are not expect the user only has view schema without table schema when user use dumpling to get view.
 				// remove the last `-view.sql` from path as the relate table schema file path
-				return common2.ErrInvalidSchemaFile.GenWithStack("invalid view schema file, miss host table schema for view '%s'", fileInfo.TableName.Name)
+				return common.ErrInvalidSchemaFile.GenWithStack("invalid view schema file, miss host table schema for view '%s'", fileInfo.TableName.Name)
 			}
 		}
 	}
@@ -440,7 +483,7 @@ func (iter *allFileIterator) IterateFiles(ctx context.Context, hdl FileHandler) 
 	err := iter.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
 		totalScannedFileCount++
 		if iter.maxScanFiles > 0 && totalScannedFileCount > iter.maxScanFiles {
-			return common2.ErrTooManySourceFiles
+			return common.ErrTooManySourceFiles
 		}
 		return hdl(ctx, path, size)
 	})
@@ -612,7 +655,7 @@ func (s *mdLoaderSetup) route() error {
 			remainingSchemas = append(remainingSchemas, info)
 		} else if dbInfo.count < 0 {
 			// this should not happen if there are no bugs in the code
-			return common2.ErrTableRoute.GenWithStack("something wrong happened when route %s", info.TableName.String())
+			return common.ErrTableRoute.GenWithStack("something wrong happened when route %s", info.TableName.String())
 		}
 	}
 	s.dbSchemas = remainingSchemas

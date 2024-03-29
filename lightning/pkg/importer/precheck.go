@@ -51,7 +51,7 @@ func NewPrecheckItemBuilderFromConfig(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	mdl, err := mydump.NewMyDumpLoader(ctx, cfg, builderCfg.MDLoaderSetupOptions...)
+	mdl, err := mydump.NewLoader(ctx, mydump.NewLoaderCfg(cfg), builderCfg.MDLoaderSetupOptions...)
 	if err != nil {
 		if mdl == nil {
 			return nil, errors.Trace(err)
