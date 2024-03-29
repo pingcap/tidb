@@ -440,6 +440,37 @@ func TestTiFlashReplica(t *testing.T) {
 	checkFunc()
 }
 
+func TestDebugRoutes(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	debugRoutes := []string{
+		"/debug/pprof/",
+		"/debug/pprof/heap?debug=1",
+		"/debug/pprof/goroutine?debug=1",
+		"/debug/pprof/goroutine?debug=2",
+		"/debug/pprof/allocs?debug=1",
+		"/debug/pprof/block?debug=1",
+		"/debug/pprof/threadcreate?debug=1",
+		"/debug/pprof/cmdline",
+		"/debug/pprof/profile",
+		"/debug/pprof/mutex?debug=1",
+		"/debug/pprof/symbol",
+		"/debug/pprof/trace",
+		"/debug/pprof/profile", // this takes a while to run, so we skip it
+		"/debug/gogc",
+		// "/debug/zip", // this creates unexpected goroutines which will make goleak complain, so we skip it for now
+		"/debug/ballast-object-sz",
+	}
+	for _, route := range debugRoutes {
+		resp, err := ts.FetchStatus(route)
+		require.NoError(t, err, fmt.Sprintf("GET route %s failed", route))
+		require.Equal(t, http.StatusOK, resp.StatusCode, fmt.Sprintf("GET route %s failed", route))
+		require.NoError(t, resp.Body.Close())
+	}
+}
+
 func TestFailpointHandler(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 
