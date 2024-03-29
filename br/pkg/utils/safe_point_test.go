@@ -15,7 +15,7 @@ import (
 
 func TestCheckGCSafepoint(t *testing.T) {
 	ctx := context.Background()
-	pdClient := &mockSafePoint{safepoint: 2333}
+	pdClient := &mockSafePoint{safepoint: 2333, services: make(map[string]uint64)}
 	{
 		err := utils.CheckGCSafePoint(ctx, pdClient, 2333+1)
 		require.NoError(t, err)
@@ -121,7 +121,7 @@ func (m *mockSafePoint) UpdateGCSafePoint(ctx context.Context, safePoint uint64)
 }
 
 func TestStartServiceSafePointKeeper(t *testing.T) {
-	pdClient := &mockSafePoint{safepoint: 2333}
+	pdClient := &mockSafePoint{safepoint: 2333, services: make(map[string]uint64)}
 
 	cases := []struct {
 		sp utils.BRServiceSafePoint
