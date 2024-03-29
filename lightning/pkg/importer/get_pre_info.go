@@ -301,7 +301,7 @@ func NewPreImportInfoGetter(
 		}
 	}
 
-	getPreInfoCfg := opts.NewDefaultGetPreInfoConfig()
+	getPreInfoCfg := ropts.NewDefaultGetPreInfoConfig()
 	for _, o := range opts {
 		o(getPreInfoCfg)
 	}

@@ -321,13 +321,13 @@ build_br:
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 
 build_lightning_for_web:
-	CGO_ENABLED=1 $(GOBUILD) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) br/cmd/tidb-lightning/main.go
+	CGO_ENABLED=1 $(GOBUILD) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) lightning/cmd/tidb-lightning/main.go
 
 build_lightning:
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./br/cmd/tidb-lightning
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
 
 build_lightning-ctl:
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./br/cmd/tidb-lightning-ctl
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./lightning/cmd/tidb-lightning-ctl
 
 build_for_br_integration_test:
 	@make failpoint-enable
@@ -336,13 +336,13 @@ build_for_br_integration_test:
 		-o $(BR_BIN).test \
 		github.com/pingcap/tidb/br/cmd/br && \
 	$(GOTEST) -c -cover -covermode=count \
-		-coverpkg=github.com/pingcap/tidb/br/... \
+		-coverpkg=github.com/pingcap/tidb/lightning/...,github.com/pingcap/tidb/pkg/lightning/... \
 		-o $(LIGHTNING_BIN).test \
-		github.com/pingcap/tidb/br/cmd/tidb-lightning && \
+		github.com/pingcap/tidb/lightning/cmd/tidb-lightning && \
 	$(GOTEST) -c -cover -covermode=count \
-		-coverpkg=github.com/pingcap/tidb/br/... \
+		-coverpkg=github.com/pingcap/tidb/lightning/...,github.com/pingcap/tidb/pkg/lightning/... \
 		-o $(LIGHTNING_CTL_BIN).test \
-		github.com/pingcap/tidb/br/cmd/tidb-lightning-ctl && \
+		github.com/pingcap/tidb/lightning/cmd/tidb-lightning-ctl && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/locker br/tests/br_key_locked/*.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/gc br/tests/br_z_gc_safepoint/*.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/oauth br/tests/br_gcs/*.go && \
