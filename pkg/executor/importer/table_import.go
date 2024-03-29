@@ -30,22 +30,22 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/metric"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	local2 "github.com/pingcap/tidb/pkg/lightning/backend/local"
+	checkpoints2 "github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
+	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -68,7 +68,7 @@ import (
 )
 
 // NewTiKVModeSwitcher make it a var, so we can mock it in tests.
-var NewTiKVModeSwitcher = local.NewTiKVModeSwitcher
+var NewTiKVModeSwitcher = local2.NewTiKVModeSwitcher
 
 var (
 	// CheckDiskQuotaInterval is the default time interval to check disk quota.
@@ -84,7 +84,7 @@ var (
 	//	- 1.05 KiB per row, 527 MiB per file, 1024000000 rows, 1 TiB total
 	//
 	// it might not be the optimal value for other cases.
-	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
+	defaultMaxEngineSize = int64(5 * config2.DefaultBatchSize)
 )
 
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.
@@ -128,7 +128,7 @@ func prepareSortDir(e *LoadDataController, id string, tidbCfg *tidb.Config) (str
 // GetRegionSplitSizeKeys gets the region split size and keys from PD.
 func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionSplitKeys int64, err error) {
 	tidbCfg := tidb.GetGlobalConfig()
-	tls, err := common.NewTLS(
+	tls, err := common2.NewTLS(
 		tidbCfg.Security.ClusterSSLCA,
 		tidbCfg.Security.ClusterSSLCert,
 		tidbCfg.Security.ClusterSSLKey,
@@ -145,7 +145,7 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 		return 0, 0, errors.Trace(err)
 	}
 	defer pdCli.Close()
-	return local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
+	return local2.GetRegionSplitSizeKeys(ctx, pdCli, tls)
 }
 
 // NewTableImporter creates a new table importer.
@@ -169,7 +169,7 @@ func NewTableImporter(
 	}
 
 	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
-	tls, err := common.NewTLS(
+	tls, err := common2.NewTLS(
 		tidbCfg.Security.ClusterSSLCA,
 		tidbCfg.Security.ClusterSSLCert,
 		tidbCfg.Security.ClusterSSLKey,
@@ -182,7 +182,7 @@ func NewTableImporter(
 
 	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
 	d := kvStore.(tidbkv.StorageWithPD).GetPDClient().GetServiceDiscovery()
-	localBackend, err := local.NewBackend(ctx, tls, backendConfig, d)
+	localBackend, err := local2.NewBackend(ctx, tls, backendConfig, d)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +191,7 @@ func NewTableImporter(
 		LoadDataController: e,
 		id:                 id,
 		backend:            localBackend,
-		tableInfo: &checkpoints.TidbTableInfo{
+		tableInfo: &checkpoints2.TidbTableInfo{
 			ID:   e.Table.Meta().ID,
 			Name: e.Table.Meta().Name.O,
 			Core: e.Table.Meta(),
@@ -203,8 +203,8 @@ func NewTableImporter(
 		// this is the value we use for 50TiB data parallel import.
 		// this might not be the optimal value.
 		// todo: use different default for single-node import and distributed import.
-		regionSplitSize: 2 * int64(config.SplitRegionSize),
-		regionSplitKeys: 2 * int64(config.SplitRegionKeys),
+		regionSplitSize: 2 * int64(config2.SplitRegionSize),
+		regionSplitKeys: 2 * int64(config2.SplitRegionKeys),
 		diskQuota:       adjustDiskQuota(int64(e.DiskQuota), dir, e.logger),
 		diskQuotaLock:   new(syncutil.RWMutex),
 	}, nil
@@ -217,8 +217,8 @@ type TableImporter struct {
 	// it's the task id if we are running in distributed framework, else it's an
 	// uuid. we use this id to create a unique directory for this importer.
 	id        string
-	backend   *local.Backend
-	tableInfo *checkpoints.TidbTableInfo
+	backend   *local2.Backend
+	tableInfo *checkpoints2.TidbTableInfo
 	// this table has a separate id allocator used to record the max row id allocated.
 	encTable table.Table
 	dbID     int64
@@ -234,7 +234,7 @@ type TableImporter struct {
 }
 
 // NewTableImporterForTest creates a new table importer for test.
-func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, helper local.StoreHelper) (*TableImporter, error) {
+func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, helper local2.StoreHelper) (*TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -248,7 +248,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 	}
 
 	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
-	localBackend, err := local.NewBackendForTest(ctx, backendConfig, helper)
+	localBackend, err := local2.NewBackendForTest(ctx, backendConfig, helper)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +257,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 		LoadDataController: e,
 		id:                 id,
 		backend:            localBackend,
-		tableInfo: &checkpoints.TidbTableInfo{
+		tableInfo: &checkpoints2.TidbTableInfo{
 			ID:   e.Table.Meta().ID,
 			Name: e.Table.Meta().Name.O,
 			Core: e.Table.Meta(),
@@ -274,10 +274,10 @@ func (ti *TableImporter) GetKeySpace() []byte {
 	return ti.keyspace
 }
 
-func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
+func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints2.ChunkCheckpoint) (mydump2.Parser, error) {
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, ti.dataStore, storage.DecompressConfig{
+			reader, err := mydump2.OpenReader(ctx, &chunk.FileMeta, ti.dataStore, storage.DecompressConfig{
 				ZStdDecodeConcurrency: 1,
 			})
 			if err != nil {
@@ -307,7 +307,7 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 	return parser, nil
 }
 
-func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEncoder, error) {
+func (ti *TableImporter) getKVEncoder(chunk *checkpoints2.ChunkCheckpoint) (KVEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        ti.SQLMode,
@@ -369,13 +369,13 @@ func (e *LoadDataController) SetExecuteNodeCnt(cnt int) {
 // PopulateChunks populates chunks from table regions.
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.
-func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]*checkpoints.EngineCheckpoint, err error) {
+func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]*checkpoints2.EngineCheckpoint, err error) {
 	task := log.BeginTask(e.logger, "populate chunks")
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	tableMeta := &mydump.MDTableMeta{
+	tableMeta := &mydump2.MDTableMeta{
 		DB:        e.DBName,
 		Name:      e.Table.Meta().Name.O,
 		DataFiles: e.toMyDumpFiles(),
@@ -383,10 +383,10 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 	adjustedMaxEngineSize := e.getAdjustedMaxEngineSize()
 	e.logger.Info("adjust max engine size", zap.Int64("before", int64(e.MaxEngineSize)),
 		zap.Int64("after", adjustedMaxEngineSize))
-	dataDivideCfg := &mydump.DataDivideConfig{
+	dataDivideCfg := &mydump2.DataDivideConfig{
 		ColumnCnt:      len(e.Table.Meta().Columns),
 		EngineDataSize: adjustedMaxEngineSize,
-		MaxChunkSize:   int64(config.MaxRegionSize),
+		MaxChunkSize:   int64(config2.MaxRegionSize),
 		Concurrency:    e.ThreadCnt,
 		IOWorkers:      nil,
 		Store:          e.dataStore,
@@ -399,7 +399,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		CSV:                    *e.GenerateCSVConfig(),
 	}
 	makeEngineCtx := log.NewContext(ctx, log.Logger{Logger: e.logger})
-	tableRegions, err2 := mydump.MakeTableRegions(makeEngineCtx, dataDivideCfg)
+	tableRegions, err2 := mydump2.MakeTableRegions(makeEngineCtx, dataDivideCfg)
 
 	if err2 != nil {
 		e.logger.Error("populate chunks failed", zap.Error(err2))
@@ -408,19 +408,19 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 
 	var maxRowID int64
 	timestamp := time.Now().Unix()
-	tableCp := &checkpoints.TableCheckpoint{
-		Engines: map[int32]*checkpoints.EngineCheckpoint{},
+	tableCp := &checkpoints2.TableCheckpoint{
+		Engines: map[int32]*checkpoints2.EngineCheckpoint{},
 	}
 	for _, region := range tableRegions {
 		engine, found := tableCp.Engines[region.EngineID]
 		if !found {
-			engine = &checkpoints.EngineCheckpoint{
-				Status: checkpoints.CheckpointStatusLoaded,
+			engine = &checkpoints2.EngineCheckpoint{
+				Status: checkpoints2.CheckpointStatusLoaded,
 			}
 			tableCp.Engines[region.EngineID] = engine
 		}
-		ccp := &checkpoints.ChunkCheckpoint{
-			Key: checkpoints.ChunkCheckpointKey{
+		ccp := &checkpoints2.ChunkCheckpoint{
+			Key: checkpoints2.ChunkCheckpointKey{
 				Path:   region.FileMeta.Path,
 				Offset: region.Chunk.Offset,
 			},
@@ -436,7 +436,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 	}
 
 	// Add index engine checkpoint
-	tableCp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
+	tableCp.Engines[common2.IndexEngineID] = &checkpoints2.EngineCheckpoint{Status: checkpoints2.CheckpointStatusLoaded}
 	return tableCp.Engines, nil
 }
 
@@ -445,7 +445,7 @@ func (ti *TableImporter) getTotalRawFileSize(indexCnt int64) int64 {
 	var totalSize int64
 	for _, file := range ti.dataFiles {
 		size := file.RealSize
-		if file.Type == mydump.SourceTypeParquet {
+		if file.Type == mydump2.SourceTypeParquet {
 			// parquet file is compressed, thus estimates with a factor of 2
 			size *= 2
 		}
@@ -460,12 +460,12 @@ func (ti *TableImporter) OpenIndexEngine(ctx context.Context, engineID int32) (*
 		TableInfo: ti.tableInfo,
 	}
 	idxCnt := len(ti.tableInfo.Core.Indices)
-	if !common.TableHasAutoRowID(ti.tableInfo.Core) {
+	if !common2.TableHasAutoRowID(ti.tableInfo.Core) {
 		idxCnt--
 	}
 	// todo: getTotalRawFileSize returns size of all data files, but in distributed framework,
 	// we create one index engine for each engine, should reflect this in the future.
-	threshold := local.EstimateCompactionThreshold2(ti.getTotalRawFileSize(int64(idxCnt)))
+	threshold := local2.EstimateCompactionThreshold2(ti.getTotalRawFileSize(int64(idxCnt)))
 	idxEngineCfg.Local = backend.LocalEngineConfig{
 		Compact:            threshold > 0,
 		CompactConcurrency: 4,
@@ -500,10 +500,10 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) (int64, error) {
 	var kvCount int64
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
-	if common.ErrFoundDuplicateKeys.Equal(importErr) {
-		importErr = local.ConvertToErrFoundConflictRecords(importErr, ti.encTable)
+	if common2.ErrFoundDuplicateKeys.Equal(importErr) {
+		importErr = local2.ConvertToErrFoundConflictRecords(importErr, ti.encTable)
 	}
-	if closedEngine.GetID() != common.IndexEngineID {
+	if closedEngine.GetID() != common2.IndexEngineID {
 		// todo: change to a finer-grain progress later.
 		// each row is encoded into 1 data key
 		kvCount = ti.backend.GetImportedKVCount(closedEngine.GetUUID())
@@ -513,7 +513,7 @@ func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *bac
 }
 
 // Backend returns the backend of the importer.
-func (ti *TableImporter) Backend() *local.Backend {
+func (ti *TableImporter) Backend() *local2.Backend {
 	return ti.backend
 }
 
@@ -553,7 +553,7 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 		case <-time.After(CheckDiskQuotaInterval):
 		}
 
-		largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := local.CheckDiskQuota(ti.backend, ti.diskQuota)
+		largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := local2.CheckDiskQuota(ti.backend, ti.diskQuota)
 		if len(largeEngines) == 0 && inProgressLargeEngines == 0 {
 			unlockDiskQuota()
 			continue
@@ -588,11 +588,11 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 			if err := ti.backend.UnsafeImportAndReset(
 				ctx,
 				engine,
-				int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio),
-				int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio),
+				int64(config2.SplitRegionSize)*int64(config2.MaxSplitRegionSizeRatio),
+				int64(config2.SplitRegionKeys)*int64(config2.MaxSplitRegionSizeRatio),
 			); err != nil {
-				if common.ErrFoundDuplicateKeys.Equal(err) {
-					err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
+				if common2.ErrFoundDuplicateKeys.Equal(err) {
+					err = local2.ConvertToErrFoundConflictRecords(err, ti.encTable)
 				}
 				importErr = multierr.Append(importErr, err)
 			}
@@ -649,7 +649,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	if err != nil {
 		return nil, err
 	}
-	indexEngine, err = ti.OpenIndexEngine(ctx, common.IndexEngineID)
+	indexEngine, err = ti.OpenIndexEngine(ctx, common2.IndexEngineID)
 	if err != nil {
 		return nil, err
 	}
@@ -662,7 +662,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	for i := 0; i < ti.ThreadCnt; i++ {
 		eg.Go(func() error {
-			chunkCheckpoint := checkpoints.ChunkCheckpoint{}
+			chunkCheckpoint := checkpoints2.ChunkCheckpoint{}
 			chunkChecksum := verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
 			progress := NewProgress()
 			defer func() {
@@ -688,8 +688,8 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		failpoint.Return(nil, errors.New("mock import from select error"))
 	})
 	if err = closedDataEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
+		if common2.ErrFoundDuplicateKeys.Equal(err) {
+			err = local2.ConvertToErrFoundConflictRecords(err, ti.encTable)
 		}
 		return nil, err
 	}
@@ -700,8 +700,8 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		return nil, err
 	}
 	if err = closedIndexEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys); err != nil {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			err = local.ConvertToErrFoundConflictRecords(err, ti.encTable)
+		if common2.ErrFoundDuplicateKeys.Equal(err) {
+			err = local2.ConvertToErrFoundConflictRecords(err, ti.encTable)
 		}
 		return nil, err
 	}
@@ -723,7 +723,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 }
 
 func adjustDiskQuota(diskQuota int64, sortDir string, logger *zap.Logger) int64 {
-	sz, err := common.GetStorageSize(sortDir)
+	sz, err := common2.GetStorageSize(sortDir)
 	if err != nil {
 		logger.Warn("failed to get storage size", zap.Error(err))
 		if diskQuota != 0 {
@@ -790,13 +790,13 @@ func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs ma
 		callLog.End(zap.ErrorLevel, err)
 	}()
 
-	if !common.TableHasAutoID(plan.DesiredTableInfo) {
+	if !common2.TableHasAutoID(plan.DesiredTableInfo) {
 		return nil
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()
 	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
-	tls, err2 := common.NewTLS(
+	tls, err2 := common2.NewTLS(
 		tidbCfg.Security.ClusterSSLCA,
 		tidbCfg.Security.ClusterSSLCert,
 		tidbCfg.Security.ClusterSSLKey,
@@ -819,7 +819,7 @@ func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs ma
 	etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
 	autoidCli := autoid.NewClientDiscover(etcdCli)
 	r := autoIDRequirement{store: kvStore, autoidCli: autoidCli}
-	err = common.RebaseTableAllocators(ctx, maxIDs, &r, plan.DBID, plan.DesiredTableInfo)
+	err = common2.RebaseTableAllocators(ctx, maxIDs, &r, plan.DBID, plan.DesiredTableInfo)
 	if err1 := etcdCli.Close(); err1 != nil {
 		logger.Info("close etcd client error", zap.Error(err1))
 	}
@@ -829,7 +829,7 @@ func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs ma
 
 // VerifyChecksum verify the checksum of the table.
 func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChecksum, se sessionctx.Context, logger *zap.Logger) error {
-	if plan.Checksum == config.OpLevelOff {
+	if plan.Checksum == config2.OpLevelOff {
 		return nil
 	}
 	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
@@ -840,19 +840,19 @@ func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChec
 
 	remoteChecksum, err := checksumTable(ctx, se, plan, logger)
 	if err != nil {
-		if plan.Checksum != config.OpLevelOptional {
+		if plan.Checksum != config2.OpLevelOptional {
 			return err
 		}
 		logger.Warn("checksumTable failed, will skip this error and go on", zap.Error(err))
 	}
 	if remoteChecksum != nil {
 		if !remoteChecksum.IsEqual(&localChecksum) {
-			err2 := common.ErrChecksumMismatch.GenWithStackByArgs(
+			err2 := common2.ErrChecksumMismatch.GenWithStackByArgs(
 				remoteChecksum.Checksum, localChecksum.Sum(),
 				remoteChecksum.TotalKVs, localChecksum.SumKVS(),
 				remoteChecksum.TotalBytes, localChecksum.SumSize(),
 			)
-			if plan.Checksum == config.OpLevelOptional {
+			if plan.Checksum == config2.OpLevelOptional {
 				logger.Warn("verify checksum failed, but checksum is optional, will skip it", zap.Error(err2))
 				err2 = nil
 			}
@@ -863,13 +863,13 @@ func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChec
 	return nil
 }
 
-func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logger *zap.Logger) (*local.RemoteChecksum, error) {
+func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logger *zap.Logger) (*local2.RemoteChecksum, error) {
 	var (
-		tableName                    = common.UniqueTable(plan.DBName, plan.TableInfo.Name.L)
+		tableName                    = common2.UniqueTable(plan.DBName, plan.TableInfo.Name.L)
 		sql                          = "ADMIN CHECKSUM TABLE " + tableName
 		maxErrorRetryCount           = 3
 		distSQLScanConcurrencyFactor = 1
-		remoteChecksum               *local.RemoteChecksum
+		remoteChecksum               *local2.RemoteChecksum
 		txnErr                       error
 		doneCh                       = make(chan struct{})
 	)
@@ -897,7 +897,7 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 				logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
 			}
 
-			newConcurrency := mathutil.Max(plan.DistSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency)
+			newConcurrency := mathutil.Max(plan.DistSQLScanConcurrency/distSQLScanConcurrencyFactor, local2.MinDistSQLScanConcurrency)
 			logger.Info("checksum with adjusted distsql scan concurrency", zap.Int("concurrency", newConcurrency))
 			se.GetSessionVars().SetDistSQLScanConcurrency(newConcurrency)
 
@@ -922,7 +922,7 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 			// +---------+------------+---------------------+-----------+-------------+
 			// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
 			// +---------+------------+-------------
-			remoteChecksum = &local.RemoteChecksum{
+			remoteChecksum = &local2.RemoteChecksum{
 				Schema:     rs[0].GetString(0),
 				Table:      rs[0].GetString(1),
 				Checksum:   rs[0].GetUint64(2),
@@ -931,7 +931,7 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 			}
 			return nil
 		}()
-		if !common.IsRetryableError(txnErr) {
+		if !common2.IsRetryableError(txnErr) {
 			break
 		}
 		distSQLScanConcurrencyFactor *= 2
@@ -941,7 +941,7 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 }
 
 func setBackoffWeight(se sessionctx.Context, plan *Plan, logger *zap.Logger) error {
-	backoffWeight := local.DefaultBackoffWeight
+	backoffWeight := local2.DefaultBackoffWeight
 	if val, ok := plan.ImportantSysVars[variable.TiDBBackOffWeight]; ok {
 		if weight, err := strconv.Atoi(val); err == nil && weight > backoffWeight {
 			backoffWeight = weight

@@ -13,7 +13,7 @@ import (
 	reflect "reflect"
 
 	import_sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
-	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/tikv/client-go/v2/tikv"
 	gomock "go.uber.org/mock/gomock"
 )

@@ -15,8 +15,8 @@
 package importinto
 
 import (
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
 )
 
 func toChunkCheckpoint(chunk Chunk) checkpoints.ChunkCheckpoint {
@@ -25,13 +25,13 @@ func toChunkCheckpoint(chunk Chunk) checkpoints.ChunkCheckpoint {
 			Path:   chunk.Path,
 			Offset: chunk.Offset,
 		},
-		FileMeta: mydump.SourceFileMeta{
+		FileMeta: mydump2.SourceFileMeta{
 			Path:        chunk.Path,
 			Type:        chunk.Type,
 			Compression: chunk.Compression,
 			FileSize:    chunk.FileSize,
 		},
-		Chunk: mydump.Chunk{
+		Chunk: mydump2.Chunk{
 			PrevRowIDMax: chunk.PrevRowIDMax,
 			RowIDMax:     chunk.RowIDMax,
 			Offset:       chunk.Offset,

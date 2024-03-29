@@ -29,16 +29,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	litlog "github.com/pingcap/tidb/pkg/lightning/log"
+	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
@@ -74,10 +74,10 @@ const (
 	DataFormatParquet = "parquet"
 
 	// DefaultDiskQuota is the default disk quota for IMPORT INTO
-	DefaultDiskQuota = config.ByteSize(50 << 30) // 50GiB
+	DefaultDiskQuota = config2.ByteSize(50 << 30) // 50GiB
 
 	// 0 means no limit
-	unlimitedWriteSpeed = config.ByteSize(0)
+	unlimitedWriteSpeed = config2.ByteSize(0)
 
 	characterSetOption          = "character_set"
 	fieldsTerminatedByOption    = "fields_terminated_by"
@@ -143,7 +143,7 @@ var (
 	}
 
 	// LoadDataReadBlockSize is exposed for test.
-	LoadDataReadBlockSize = int64(config.ReadBlockSize)
+	LoadDataReadBlockSize = int64(config2.ReadBlockSize)
 
 	supportedSuffixForServerDisk = []string{
 		".csv", ".sql", ".parquet",
@@ -185,7 +185,7 @@ type LoadDataReaderInfo struct {
 	// be called once.
 	Opener func(ctx context.Context) (io.ReadSeekCloser, error)
 	// Remote is not nil only if load from cloud storage.
-	Remote *mydump.SourceFileMeta
+	Remote *mydump2.SourceFileMeta
 }
 
 // Plan describes the plan of LOAD DATA and IMPORT INTO.
@@ -224,15 +224,15 @@ type Plan struct {
 	plannercore.LineFieldsInfo
 	IgnoreLines uint64
 
-	DiskQuota             config.ByteSize
-	Checksum              config.PostOpLevel
+	DiskQuota             config2.ByteSize
+	Checksum              config2.PostOpLevel
 	ThreadCnt             int
-	MaxWriteSpeed         config.ByteSize
+	MaxWriteSpeed         config2.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
 	Detached              bool
 	DisableTiKVImportMode bool
-	MaxEngineSize         config.ByteSize
+	MaxEngineSize         config2.ByteSize
 	CloudStorageURI       string
 	DisablePrecheck       bool
 
@@ -290,7 +290,7 @@ type LoadDataController struct {
 
 	logger    *zap.Logger
 	dataStore storage.ExternalStorage
-	dataFiles []*mydump.SourceFileMeta
+	dataFiles []*mydump2.SourceFileMeta
 	// GlobalSortStore is used to store sorted data when using global sort.
 	GlobalSortStore storage.ExternalStorage
 	// ExecuteNodesCnt is the count of execute nodes.
@@ -299,14 +299,14 @@ type LoadDataController struct {
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
 	res := map[string]string{}
-	for k, defVal := range common.DefaultImportantVariables {
+	for k, defVal := range common2.DefaultImportantVariables {
 		if val, ok := sctx.GetSessionVars().GetSystemVar(k); ok {
 			res[k] = val
 		} else {
 			res[k] = defVal
 		}
 	}
-	for k, defVal := range common.DefaultImportVariablesTiDB {
+	for k, defVal := range common2.DefaultImportVariablesTiDB {
 		if val, ok := sctx.GetSessionVars().GetSystemVar(k); ok {
 			res[k] = val
 		} else {
@@ -318,7 +318,7 @@ func getImportantSysVars(sctx sessionctx.Context) map[string]string {
 
 // NewPlanFromLoadDataPlan creates a import plan from LOAD DATA.
 func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.LoadData) (*Plan, error) {
-	fullTableName := common.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
+	fullTableName := common2.UniqueTable(plan.Table.Schema.L, plan.Table.Name.L)
 	logger := log.L().With(zap.String("table", fullTableName))
 	charset := plan.Charset
 	if charset == nil {
@@ -538,14 +538,14 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 		threadCnt = 2
 	}
 
-	p.Checksum = config.OpLevelRequired
+	p.Checksum = config2.OpLevelRequired
 	p.ThreadCnt = threadCnt
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
 	p.Detached = false
 	p.DisableTiKVImportMode = false
-	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
+	p.MaxEngineSize = config2.ByteSize(defaultMaxEngineSize)
 	p.CloudStorageURI = variable.CloudStorageURI.Load()
 
 	v := "utf8mb4"
@@ -615,7 +615,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if err != nil || v == "" {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		_, err = config.ParseCharset(v)
+		_, err = config2.ParseCharset(v)
 		if err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -937,8 +937,8 @@ func (e *LoadDataController) GetFieldCount() int {
 }
 
 // GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
-func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
-	csvConfig := &config.CSVConfig{
+func (e *LoadDataController) GenerateCSVConfig() *config2.CSVConfig {
+	csvConfig := &config2.CSVConfig{
 		Separator: e.FieldsTerminatedBy,
 		// ignore optionally enclosed
 		Delimiter:   e.FieldsEnclosedBy,
@@ -1057,7 +1057,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var totalSize int64
-	dataFiles := []*mydump.SourceFileMeta{}
+	dataFiles := []*mydump2.SourceFileMeta{}
 	// check glob pattern is present in filename.
 	idx := strings.IndexAny(fileNameKey, "*[")
 	// simple path when the path represent one file
@@ -1074,8 +1074,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
 		}
-		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
-		fileMeta := mydump.SourceFileMeta{
+		compressTp := mydump2.ParseCompressionOnFileExtension(fileNameKey)
+		fileMeta := mydump2.SourceFileMeta{
 			Path:        fileNameKey,
 			FileSize:    size,
 			Compression: compressTp,
@@ -1103,8 +1103,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if !match {
 					return nil
 				}
-				compressTp := mydump.ParseCompressionOnFileExtension(remotePath)
-				fileMeta := mydump.SourceFileMeta{
+				compressTp := mydump2.ParseCompressionOnFileExtension(remotePath)
+				fileMeta := mydump2.SourceFileMeta{
 					Path:        remotePath,
 					FileSize:    size,
 					Compression: compressTp,
@@ -1126,11 +1126,11 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 }
 
 func (e *LoadDataController) getFileRealSize(ctx context.Context,
-	fileMeta mydump.SourceFileMeta, store storage.ExternalStorage) int64 {
-	if fileMeta.Compression == mydump.CompressionNone {
+	fileMeta mydump2.SourceFileMeta, store storage.ExternalStorage) int64 {
+	if fileMeta.Compression == mydump2.CompressionNone {
 		return fileMeta.FileSize
 	}
-	compressRatio, err := mydump.SampleFileCompressRatio(ctx, fileMeta, store)
+	compressRatio, err := mydump2.SampleFileCompressRatio(ctx, fileMeta, store)
 	if err != nil {
 		e.logger.Warn("failed to get compress ratio", zap.String("file", fileMeta.Path), zap.Error(err))
 		return fileMeta.FileSize
@@ -1138,15 +1138,15 @@ func (e *LoadDataController) getFileRealSize(ctx context.Context,
 	return int64(compressRatio * float64(fileMeta.FileSize))
 }
 
-func (e *LoadDataController) getSourceType() mydump.SourceType {
+func (e *LoadDataController) getSourceType() mydump2.SourceType {
 	switch e.Format {
 	case DataFormatParquet:
-		return mydump.SourceTypeParquet
+		return mydump2.SourceTypeParquet
 	case DataFormatDelimitedData, DataFormatCSV:
-		return mydump.SourceTypeCSV
+		return mydump2.SourceTypeCSV
 	default:
 		// DataFormatSQL
-		return mydump.SourceTypeSQL
+		return mydump2.SourceTypeSQL
 	}
 }
 
@@ -1157,7 +1157,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 		f := e.dataFiles[i]
 		result = append(result, LoadDataReaderInfo{
 			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore, storage.DecompressConfig{})
+				fileReader, err2 := mydump2.OpenReader(ctx, f, e.dataStore, storage.DecompressConfig{})
 				if err2 != nil {
 					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
 				}
@@ -1173,7 +1173,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 func (e *LoadDataController) GetParser(
 	ctx context.Context,
 	dataFileInfo LoadDataReaderInfo,
-) (parser mydump.Parser, err error) {
+) (parser mydump2.Parser, err error) {
 	reader, err2 := dataFileInfo.Opener(ctx)
 	if err2 != nil {
 		return nil, err2
@@ -1187,9 +1187,9 @@ func (e *LoadDataController) GetParser(
 	}()
 	switch e.Format {
 	case DataFormatDelimitedData, DataFormatCSV:
-		var charsetConvertor *mydump.CharsetConvertor
+		var charsetConvertor *mydump2.CharsetConvertor
 		if e.Charset != nil {
-			charsetConvertor, err = mydump.NewCharsetConvertor(*e.Charset, string(utf8.RuneError))
+			charsetConvertor, err = mydump2.NewCharsetConvertor(*e.Charset, string(utf8.RuneError))
 			if err != nil {
 				return nil, err
 			}
@@ -1197,7 +1197,7 @@ func (e *LoadDataController) GetParser(
 		if err != nil {
 			return nil, err
 		}
-		parser, err = mydump.NewCSVParser(
+		parser, err = mydump2.NewCSVParser(
 			ctx,
 			e.GenerateCSVConfig(),
 			reader,
@@ -1206,7 +1206,7 @@ func (e *LoadDataController) GetParser(
 			false,
 			charsetConvertor)
 	case DataFormatSQL:
-		parser = mydump.NewChunkParser(
+		parser = mydump2.NewChunkParser(
 			ctx,
 			e.SQLMode,
 			reader,
@@ -1214,7 +1214,7 @@ func (e *LoadDataController) GetParser(
 			nil,
 		)
 	case DataFormatParquet:
-		parser, err = mydump.NewParquetParser(
+		parser, err = mydump2.NewParquetParser(
 			ctx,
 			e.dataStore,
 			reader,
@@ -1230,10 +1230,10 @@ func (e *LoadDataController) GetParser(
 }
 
 // HandleSkipNRows skips the first N rows of the data file.
-func (e *LoadDataController) HandleSkipNRows(parser mydump.Parser) error {
+func (e *LoadDataController) HandleSkipNRows(parser mydump2.Parser) error {
 	// handle IGNORE N LINES
 	ignoreOneLineFn := parser.ReadRow
-	if csvParser, ok := parser.(*mydump.CSVParser); ok {
+	if csvParser, ok := parser.(*mydump2.CSVParser); ok {
 		ignoreOneLineFn = func() error {
 			_, _, err3 := csvParser.ReadUntilTerminator()
 			return err3
@@ -1255,14 +1255,14 @@ func (e *LoadDataController) HandleSkipNRows(parser mydump.Parser) error {
 	return nil
 }
 
-func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
+func (e *LoadDataController) toMyDumpFiles() []mydump2.FileInfo {
 	tbl := filter.Table{
 		Schema: e.DBName,
 		Name:   e.Table.Meta().Name.O,
 	}
-	res := []mydump.FileInfo{}
+	res := []mydump2.FileInfo{}
 	for _, f := range e.dataFiles {
-		res = append(res, mydump.FileInfo{
+		res = append(res, mydump2.FileInfo{
 			TableName: tbl,
 			FileMeta:  *f,
 		})
@@ -1312,42 +1312,42 @@ func (e *LoadDataController) getBackendWorkerConcurrency() int {
 	if e.IsGlobalSort() {
 		return e.ThreadCnt * 2
 	}
-	return config.DefaultRangeConcurrency * 2
+	return config2.DefaultRangeConcurrency * 2
 }
 
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
-		MaxConnPerStore:        config.DefaultRangeConcurrency,
-		ConnCompressType:       config.CompressionNone,
+		MaxConnPerStore:        config2.DefaultRangeConcurrency,
+		ConnCompressType:       config2.CompressionNone,
 		WorkerConcurrency:      e.getBackendWorkerConcurrency(),
-		KVWriteBatchSize:       config.KVWriteBatchSize,
-		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
+		KVWriteBatchSize:       config2.KVWriteBatchSize,
+		RegionSplitBatchSize:   config2.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
 		// enable after we support checkpoint
 		CheckpointEnabled:           false,
-		MemTableSize:                config.DefaultEngineMemCacheSize,
-		LocalWriterMemCacheSize:     int64(config.DefaultLocalWriterMemCacheSize),
+		MemTableSize:                config2.DefaultEngineMemCacheSize,
+		LocalWriterMemCacheSize:     int64(config2.DefaultLocalWriterMemCacheSize),
 		ShouldCheckTiKV:             true,
 		DupeDetectEnabled:           false,
-		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: false},
+		DuplicateDetectOpt:          common2.DupDetectOpt{ReportErrOnDup: false},
 		StoreWriteBWLimit:           int(e.MaxWriteSpeed),
 		MaxOpenFiles:                int(tidbutil.GenRLimit("table_import")),
 		KeyspaceName:                tidb.GetGlobalKeyspaceName(),
-		PausePDSchedulerScope:       config.PausePDSchedulerScopeTable,
+		PausePDSchedulerScope:       config2.PausePDSchedulerScopeTable,
 		DisableAutomaticCompactions: true,
-		BlockSize:                   config.DefaultBlockSize,
+		BlockSize:                   config2.DefaultBlockSize,
 	}
 	if e.IsRaftKV2 {
-		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
+		backendConfig.RaftKV2SwitchModeDuration = config2.DefaultSwitchTiKVModeInterval
 	}
 	return backendConfig
 }
 
 // FullTableName return FQDN of the table.
 func (e *LoadDataController) FullTableName() string {
-	return common.UniqueTable(e.DBName, e.Table.Meta().Name.O)
+	return common2.UniqueTable(e.DBName, e.Table.Meta().Name.O)
 }
 
 func getDataSourceType(p *plannercore.ImportInto) DataSourceType {

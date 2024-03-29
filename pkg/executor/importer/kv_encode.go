@@ -20,10 +20,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	kv2 "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
@@ -35,7 +35,7 @@ import (
 
 // KVEncoder encodes a row of data into a KV pair.
 type KVEncoder interface {
-	Encode(row []types.Datum, rowID int64) (*kv.Pairs, error)
+	Encode(row []types.Datum, rowID int64) (*kv2.Pairs, error)
 	// GetColumnSize returns the size of each column in the current encoder.
 	GetColumnSize() map[int64]int64
 	io.Closer
@@ -43,7 +43,7 @@ type KVEncoder interface {
 
 // tableKVEncoder encodes a row of data into a KV pair.
 type tableKVEncoder struct {
-	*kv.BaseKVEncoder
+	*kv2.BaseKVEncoder
 	// see import.go
 	columnAssignments  []expression.Expression
 	columnsAndUserVars []*ast.ColumnNameOrUserVar
@@ -59,7 +59,7 @@ func NewTableKVEncoder(
 	config *encode.EncodingConfig,
 	ti *TableImporter,
 ) (KVEncoder, error) {
-	baseKVEncoder, err := kv.NewBaseKVEncoder(config)
+	baseKVEncoder, err := kv2.NewBaseKVEncoder(config)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func NewTableKVEncoder(
 }
 
 // Encode implements the KVEncoder interface.
-func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
+func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv2.Pairs, error) {
 	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
 	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.
 	// when generating error such as mysql.ErrDataOutOfRange, the data will be part of the error, causing the buf

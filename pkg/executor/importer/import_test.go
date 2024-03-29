@@ -30,10 +30,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -63,8 +63,8 @@ func TestInitDefaultOptions(t *testing.T) {
 		variable.CloudStorageURI.Store("")
 	})
 	plan.initDefaultOptions(1)
-	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
-	require.Equal(t, config.OpLevelRequired, plan.Checksum)
+	require.Equal(t, config2.ByteSize(0), plan.DiskQuota)
+	require.Equal(t, config2.OpLevelRequired, plan.Checksum)
 	require.Equal(t, 1, plan.ThreadCnt)
 	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
 	require.Equal(t, false, plan.SplitFile)
@@ -72,7 +72,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, false, plan.Detached)
 	require.Equal(t, "utf8mb4", *plan.Charset)
 	require.Equal(t, false, plan.DisableTiKVImportMode)
-	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
+	require.Equal(t, config2.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
 	plan.initDefaultOptions(10)
@@ -131,15 +131,15 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, []string{"N"}, plan.FieldNullDef, sql)
 	require.Equal(t, "END", plan.LinesTerminatedBy, sql)
 	require.Equal(t, uint64(1), plan.IgnoreLines, sql)
-	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
-	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
+	require.Equal(t, config2.ByteSize(100<<30), plan.DiskQuota, sql)
+	require.Equal(t, config2.OpLevelOptional, plan.Checksum, sql)
 	require.Equal(t, runtime.GOMAXPROCS(0), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
-	require.Equal(t, config.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
+	require.Equal(t, config2.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
 	require.True(t, plan.SplitFile, sql)
 	require.Equal(t, int64(123), plan.MaxRecordedErrors, sql)
 	require.True(t, plan.Detached, sql)
 	require.True(t, plan.DisableTiKVImportMode, sql)
-	require.Equal(t, config.ByteSize(100<<30), plan.MaxEngineSize, sql)
+	require.Equal(t, config2.ByteSize(100<<30), plan.MaxEngineSize, sql)
 	require.Empty(t, plan.CloudStorageURI, sql)
 	require.True(t, plan.DisablePrecheck, sql)
 
@@ -188,7 +188,7 @@ func TestAdjustOptions(t *testing.T) {
 	}
 	plan.adjustOptions(16)
 	require.Equal(t, 16, plan.ThreadCnt)
-	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
+	require.Equal(t, config2.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
 
 	plan.ThreadCnt = 100000000
 	plan.DataSourceType = DataSourceTypeQuery
@@ -236,10 +236,10 @@ func TestGetFileRealSize(t *testing.T) {
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage")
 	}()
-	fileMeta := mydump.SourceFileMeta{Compression: mydump.CompressionNone, FileSize: 100}
+	fileMeta := mydump2.SourceFileMeta{Compression: mydump2.CompressionNone, FileSize: 100}
 	c := &LoadDataController{logger: log.L()}
 	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
-	fileMeta.Compression = mydump.CompressionGZ
+	fileMeta.Compression = mydump2.CompressionGZ
 	require.Equal(t, int64(250), c.getFileRealSize(context.Background(), fileMeta, nil))
 	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
 	require.NoError(t, err)
@@ -310,7 +310,7 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	c.Plan.IsRaftKV2 = true
 	cfg = c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
 	require.Greater(t, cfg.RaftKV2SwitchModeDuration, time.Duration(0))
-	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
+	require.Equal(t, config2.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
 }
 
 func TestGetBackendWorkerConcurrency(t *testing.T) {

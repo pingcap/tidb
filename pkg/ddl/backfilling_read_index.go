@@ -23,12 +23,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
+	external2 "github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -54,7 +54,7 @@ type readIndexExecutor struct {
 }
 
 type readIndexSummary struct {
-	metaGroups []*external.SortedKVMeta
+	metaGroups []*external2.SortedKVMeta
 	mu         sync.Mutex
 }
 
@@ -97,7 +97,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		zap.Bool("use cloud", len(r.cloudStorageURI) > 0))
 
 	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{
-		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
+		metaGroups: make([]*external2.SortedKVMeta, len(r.indexes)),
 	})
 
 	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
@@ -180,7 +180,7 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 	}
 	sum, _ := r.subtaskSummary.LoadAndDelete(subtask.ID)
 	s := sum.(*readIndexSummary)
-	all := external.SortedKVMeta{}
+	all := external2.SortedKVMeta{}
 	for _, g := range s.metaGroups {
 		all.Merge(g)
 	}
@@ -256,13 +256,13 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 	totalRowCount *atomic.Int64,
 ) (*operator.AsyncPipeline, error) {
 	d := r.d
-	onClose := func(summary *external.WriterSummary) {
+	onClose := func(summary *external2.WriterSummary) {
 		sum, _ := r.subtaskSummary.Load(subtaskID)
 		s := sum.(*readIndexSummary)
 		s.mu.Lock()
 		kvMeta := s.metaGroups[summary.GroupOffset]
 		if kvMeta == nil {
-			kvMeta = &external.SortedKVMeta{}
+			kvMeta = &external2.SortedKVMeta{}
 			s.metaGroups[summary.GroupOffset] = kvMeta
 		}
 		kvMeta.MergeSummary(summary)

@@ -12,8 +12,8 @@ import (
 	context "context"
 	reflect "reflect"
 
-	encode "github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	verification "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/verification"
 	types "github.com/pingcap/tidb/pkg/types"
 	gomock "go.uber.org/mock/gomock"
 )
