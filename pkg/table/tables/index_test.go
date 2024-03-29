@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	kv2 "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	lkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -175,7 +175,7 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 func TestGenIndexValueFromIndex(t *testing.T) {
 	tblInfo := buildTableInfo(t, "create table a (a int primary key, b int not null, c text, unique key key_b(b));")
 	tblInfo.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(kv2.NewPanickingAllocators(0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{
@@ -183,7 +183,7 @@ func TestGenIndexValueFromIndex(t *testing.T) {
 		Timestamp: 1234567890,
 	}
 
-	encoder, err := kv2.NewBaseKVEncoder(&encode.EncodingConfig{
+	encoder, err := lkv.NewBaseKVEncoder(&encode.EncodingConfig{
 		Table:          tbl,
 		SessionOptions: sessionOpts,
 	})
