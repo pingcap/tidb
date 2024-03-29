@@ -93,6 +93,10 @@ func (b noopBackend) CheckRequirements(context.Context, *backend.CheckCtx) error
 	return nil
 }
 
+func (b noopBackend) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	return nil, nil
+}
+
 // FetchRemoteTableModels obtains the models of all tables given the schema
 // name. The returned table info does not need to be precise if the encoder,
 // is not requiring them, but must at least fill in the following fields for
