@@ -143,7 +143,6 @@ go_test(
         "//pkg/util/logutil",
         "//pkg/util/mock",
         "//pkg/util/promutil",
-        "//pkg/util/sqlexec",
         "//pkg/util/syncutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_johannesboyne_gofakes3//:gofakes3",

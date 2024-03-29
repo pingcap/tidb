@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
@@ -459,7 +458,7 @@ func (s *streamMgr) checkStreamStartEnable(g glue.Glue) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	supportStream, err := utils.IsLogBackupEnabled(execCtx)
 	if err != nil {
 		return errors.Trace(err)
@@ -486,7 +485,7 @@ func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, string, error) 
 		return nil, "", errors.Trace(err)
 	}
 
-	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	oldRatio, err := utils.GetGcRatio(execCtx)
 	if err != nil {
 		return nil, "", errors.Trace(err)

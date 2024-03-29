@@ -15,6 +15,7 @@
 package contextimpl_test
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,17 +26,21 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	tmock "github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
-func TestEvalContextImplWithSessionCtx(t *testing.T) {
+func TestSessionEvalContextBasic(t *testing.T) {
 	ctx := mock.NewContext()
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
 	impl := contextimpl.NewExprExtendedImpl(ctx)
+	require.True(t, impl.GetOptionalPropSet().IsFull())
 
 	// should contain all the optional properties
 	for i := 0; i < context.OptPropsCnt; i++ {
@@ -52,6 +57,7 @@ func TestEvalContextImplWithSessionCtx(t *testing.T) {
 	vars.CurrentDB = "db1"
 	vars.MaxAllowedPacket = 123456
 
+	// basic fields
 	tc, ec := impl.TypeCtx(), sc.ErrCtx()
 	require.Equal(t, tc, sc.TypeCtx())
 	require.Equal(t, ec, impl.ErrCtx())
@@ -65,6 +71,7 @@ func TestEvalContextImplWithSessionCtx(t *testing.T) {
 	require.NoError(t, ctx.GetSessionVars().SetSystemVar("default_week_format", "5"))
 	require.Equal(t, "5", impl.GetDefaultWeekFormatMode())
 
+	// handle warnings
 	require.Equal(t, 0, impl.WarningCount())
 	impl.AppendWarning(errors.New("err1"))
 	require.Equal(t, 1, impl.WarningCount())
@@ -86,6 +93,112 @@ func TestEvalContextImplWithSessionCtx(t *testing.T) {
 	require.Equal(t, "err1", warnings[0].Err.Error())
 }
 
+func TestSessionEvalContextCurrentTime(t *testing.T) {
+	ctx := mock.NewContext()
+	vars := ctx.GetSessionVars()
+	sc := vars.StmtCtx
+	impl := contextimpl.NewExprExtendedImpl(ctx)
+
+	var now atomic.Pointer[time.Time]
+	sc.SetStaleTSOProvider(func() (uint64, error) {
+		v := time.UnixMilli(123456789)
+		// should only be called once
+		require.True(t, now.CompareAndSwap(nil, &v))
+		return oracle.GoTimeToTS(v), nil
+	})
+
+	// now should return the stable TSO if set
+	tm, err := impl.CurrentTime()
+	require.NoError(t, err)
+	v := now.Load()
+	require.NotNil(t, v)
+	require.Equal(t, v.UnixNano(), tm.UnixNano())
+
+	// The second call should return the same value
+	tm, err = impl.CurrentTime()
+	require.NoError(t, err)
+	require.Equal(t, v.UnixNano(), tm.UnixNano())
+
+	// now should return the system variable if "timestamp" is set
+	sc.SetStaleTSOProvider(nil)
+	sc.Reset()
+	require.NoError(t, vars.SetSystemVar("timestamp", "7654321.875"))
+	tm, err = impl.CurrentTime()
+	require.NoError(t, err)
+	require.Equal(t, int64(7654321_875_000_000), tm.UnixNano())
+
+	// The second call should return the same value
+	tm, err = impl.CurrentTime()
+	require.NoError(t, err)
+	require.Equal(t, int64(7654321_875_000_000), tm.UnixNano())
+
+	// now should return the system current time if not stale TSO or "timestamp" is set
+	require.NoError(t, vars.SetSystemVar("timestamp", "0"))
+	sc.Reset()
+	tm, err = impl.CurrentTime()
+	require.NoError(t, err)
+	require.InDelta(t, time.Now().Unix(), tm.Unix(), 5)
+
+	// The second call should return the same value
+	tm2, err := impl.CurrentTime()
+	require.NoError(t, err)
+	require.Equal(t, tm.UnixNano(), tm2.UnixNano())
+}
+
+type mockPrivManager struct {
+	tmock.Mock
+	privilege.Manager
+}
+
+func (m *mockPrivManager) RequestVerification(
+	activeRole []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType,
+) bool {
+	return m.Called(activeRole, db, table, column, priv).Bool(0)
+}
+
+func (m *mockPrivManager) RequestDynamicVerification(
+	activeRoles []*auth.RoleIdentity, privName string, grantable bool,
+) bool {
+	return m.Called(activeRoles, privName, grantable).Bool(0)
+}
+
+func TestSessionEvalContextPrivilegeCheck(t *testing.T) {
+	ctx := mock.NewContext()
+	impl := contextimpl.NewExprExtendedImpl(ctx)
+	activeRoles := []*auth.RoleIdentity{
+		{Username: "role1", Hostname: "host1"},
+		{Username: "role2", Hostname: "host2"},
+	}
+	ctx.GetSessionVars().ActiveRoles = activeRoles
+
+	// no privilege manager should always return true for privilege check
+	privilege.BindPrivilegeManager(ctx, nil)
+	require.True(t, impl.RequestVerification("test", "tbl1", "col1", mysql.SuperPriv))
+	require.True(t, impl.RequestDynamicVerification("RESTRICTED_TABLES_ADMIN", true))
+	require.True(t, impl.RequestDynamicVerification("RESTRICTED_TABLES_ADMIN", false))
+
+	// if privilege manager bound, it should return the privilege manager value
+	mgr := &mockPrivManager{}
+	privilege.BindPrivilegeManager(ctx, mgr)
+	mgr.On("RequestVerification", activeRoles, "db1", "t1", "c1", mysql.CreatePriv).
+		Return(true).Once()
+	require.True(t, impl.RequestVerification("db1", "t1", "c1", mysql.CreatePriv))
+	mgr.AssertExpectations(t)
+
+	mgr.On("RequestVerification", activeRoles, "db2", "t2", "c2", mysql.SuperPriv).
+		Return(false).Once()
+	require.False(t, impl.RequestVerification("db2", "t2", "c2", mysql.SuperPriv))
+	mgr.AssertExpectations(t)
+
+	mgr.On("RequestDynamicVerification", activeRoles, "RESTRICTED_USER_ADMIN", false).
+		Return(true).Once()
+	require.True(t, impl.RequestDynamicVerification("RESTRICTED_USER_ADMIN", false))
+
+	mgr.On("RequestDynamicVerification", activeRoles, "RESTRICTED_CONNECTION_ADMIN", true).
+		Return(false).Once()
+	require.False(t, impl.RequestDynamicVerification("RESTRICTED_CONNECTION_ADMIN", true))
+}
+
 func getProvider[T context.OptionalEvalPropProvider](
 	t *testing.T,
 	impl *contextimpl.ExprCtxExtendedImpl,
@@ -99,7 +212,7 @@ func getProvider[T context.OptionalEvalPropProvider](
 	return p
 }
 
-func TestEvalContextImplWithSessionCtxForOptProps(t *testing.T) {
+func TestSessionEvalContextOptProps(t *testing.T) {
 	ctx := mock.NewContext()
 	impl := contextimpl.NewExprExtendedImpl(ctx)
 

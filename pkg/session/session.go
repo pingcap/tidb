@@ -2268,6 +2268,14 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	return recordSet, nil
 }
 
+func (s *session) GetSQLExecutor() sqlexec.SQLExecutor {
+	return s
+}
+
+func (s *session) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return s
+}
+
 func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.StmtNode) error {
 	if s.sessionVars.RetryInfo.Retrying {
 		return sessiontxn.GetTxnManager(s).OnStmtRetry(ctx)
@@ -4082,7 +4090,7 @@ func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 // GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
 // Transaction infoschema is returned if inside an explicit txn.
 // Otherwise the latest infoschema is returned.
-func (s *session) GetInfoSchema() infoschemactx.InfoSchemaMetaVersion {
+func (s *session) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	vars := s.GetSessionVars()
 	var is infoschema.InfoSchema
 	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchema); ok {
@@ -4106,7 +4114,7 @@ func (s *session) GetInfoSchema() infoschemactx.InfoSchemaMetaVersion {
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 }
 
-func (s *session) GetDomainInfoSchema() infoschemactx.InfoSchemaMetaVersion {
+func (s *session) GetDomainInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	is := domain.GetDomain(s).InfoSchema()
 	extIs := &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)

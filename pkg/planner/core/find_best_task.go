@@ -748,6 +748,12 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 func compareCandidates(sctx PlanContext, prop *property.PhysicalProperty, lhs, rhs *candidatePath) int {
+	// Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
+	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
+	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
+		return 0
+	}
+
 	// This rule is empirical but not always correct.
 	// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
 	if lhs.path.CountAfterAccess > 100 && rhs.path.CountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
@@ -2576,11 +2582,17 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.GetFlag())
 		pointGetPlan.accessCols = ds.TblCols
-		hc, err := ds.handleCols.ResolveIndices(ds.schema)
-		if err != nil {
+		found := false
+		for i := range ds.Columns {
+			if ds.Columns[i].ID == ds.handleCols.GetCol(0).ID {
+				pointGetPlan.HandleColOffset = ds.Columns[i].Offset
+				found = true
+				break
+			}
+		}
+		if !found {
 			return invalidTask
 		}
-		pointGetPlan.HandleColOffset = hc.GetCol(0).Index
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sel := PhysicalSelection{

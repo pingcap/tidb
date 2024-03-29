@@ -338,6 +338,7 @@ func cmdRun(args ...string) bool {
 			fmt.Println("create junit file fail:", err)
 			return false
 		}
+		defer f.Close()
 		if err := write(f, out); err != nil {
 			fmt.Println("write junit file error:", err)
 			return false

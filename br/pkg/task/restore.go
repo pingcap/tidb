@@ -129,7 +129,7 @@ func (cfg *RestoreCommonConfig) adjust() {
 		cfg.MergeSmallRegionSizeBytes.Value = conn.DefaultMergeRegionSizeBytes
 	}
 	if len(cfg.Granularity) == 0 {
-		cfg.Granularity = string(restore.FineGrained)
+		cfg.Granularity = string(restore.CoarseGrained)
 	}
 	if !cfg.ConcurrencyPerStore.Modified {
 		cfg.ConcurrencyPerStore.Value = conn.DefaultImportNumGoroutines
@@ -140,8 +140,8 @@ func (cfg *RestoreCommonConfig) adjust() {
 func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
-	flags.String(flagGranularity, string(restore.FineGrained), "(experimental) Whether split & scatter regions using fine-grained way during restore")
-	flags.Uint(flagConcurrencyPerStore, 128, "(experimental) The size of thread pool on each store that executes tasks")
+	flags.String(flagGranularity, string(restore.CoarseGrained), "Whether split & scatter regions using fine-grained way during restore")
+	flags.Uint(flagConcurrencyPerStore, 128, "The size of thread pool on each store that executes tasks, only enabled when `--granularity=coarse-grained`")
 	flags.Uint32(flagConcurrency, 128, "(deprecated) The size of thread pool on BR that executes tasks, "+
 		"where each task restores one SST file to TiKV")
 	flags.Uint64(FlagMergeRegionSizeBytes, conn.DefaultMergeRegionSizeBytes,

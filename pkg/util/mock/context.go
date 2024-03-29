@@ -39,6 +39,7 @@ import (
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sli"
@@ -63,7 +64,7 @@ type Context struct {
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
 	sm            util.SessionManager
-	is            infoschema.InfoSchemaMetaVersion
+	is            infoschema.MetaOnlyInfoSchema
 	values        map[fmt.Stringer]any
 	sessionVars   *variable.SessionVars
 	tblctx        *tbctximpl.TableContextImpl
@@ -149,6 +150,31 @@ func (*Context) Execute(_ context.Context, _ string) ([]sqlexec.RecordSet, error
 // ExecuteStmt implements sqlexec.SQLExecutor ExecuteStmt interface.
 func (*Context) ExecuteStmt(_ context.Context, _ ast.StmtNode) (sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Supported")
+}
+
+// ParseWithParams implements sqlexec.RestrictedSQLExecutor ParseWithParams interface.
+func (*Context) ParseWithParams(_ context.Context, _ string, _ ...any) (ast.StmtNode, error) {
+	return nil, errors.Errorf("Not Supported")
+}
+
+// ExecRestrictedStmt implements sqlexec.RestrictedSQLExecutor ExecRestrictedStmt interface.
+func (*Context) ExecRestrictedStmt(_ context.Context, _ ast.StmtNode, _ ...sqlexec.OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error) {
+	return nil, nil, errors.Errorf("Not Supported")
+}
+
+// ExecRestrictedSQL implements sqlexec.RestrictedSQLExecutor ExecRestrictedSQL interface.
+func (*Context) ExecRestrictedSQL(_ context.Context, _ []sqlexec.OptionFuncAlias, _ string, _ ...any) ([]chunk.Row, []*ast.ResultField, error) {
+	return nil, nil, errors.Errorf("Not Supported")
+}
+
+// GetSQLExecutor returns the SQLExecutor.
+func (c *Context) GetSQLExecutor() sqlexec.SQLExecutor {
+	return c
+}
+
+// GetRestrictedSQLExecutor returns the RestrictedSQLExecutor.
+func (c *Context) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return c
 }
 
 // SetDiskFullOpt sets allowed options of current operation in each TiKV disk usage level.
@@ -249,13 +275,13 @@ func (c *Context) GetMPPClient() kv.MPPClient {
 }
 
 // GetInfoSchema implements sessionctx.Context GetInfoSchema interface.
-func (c *Context) GetInfoSchema() infoschema.InfoSchemaMetaVersion {
+func (c *Context) GetInfoSchema() infoschema.MetaOnlyInfoSchema {
 	vars := c.GetSessionVars()
-	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchemaMetaVersion); ok {
+	if snap, ok := vars.SnapshotInfoschema.(infoschema.MetaOnlyInfoSchema); ok {
 		return snap
 	}
 	if vars.TxnCtx != nil && vars.InTxn() {
-		if is, ok := vars.TxnCtx.InfoSchema.(infoschema.InfoSchemaMetaVersion); ok {
+		if is, ok := vars.TxnCtx.InfoSchema.(infoschema.MetaOnlyInfoSchema); ok {
 			return is
 		}
 	}
@@ -266,10 +292,10 @@ func (c *Context) GetInfoSchema() infoschema.InfoSchemaMetaVersion {
 }
 
 // MockInfoschema only serves for test.
-var MockInfoschema func(tbList []*model.TableInfo) infoschema.InfoSchemaMetaVersion
+var MockInfoschema func(tbList []*model.TableInfo) infoschema.MetaOnlyInfoSchema
 
 // GetDomainInfoSchema returns the latest information schema in domain
-func (c *Context) GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion {
+func (c *Context) GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema {
 	if c.is == nil {
 		c.is = MockInfoschema(nil)
 	}
@@ -503,7 +529,7 @@ func (c *Context) InSandBoxMode() bool {
 }
 
 // SetInfoSchema is to set info shema for the test.
-func (c *Context) SetInfoSchema(is infoschema.InfoSchemaMetaVersion) {
+func (c *Context) SetInfoSchema(is infoschema.MetaOnlyInfoSchema) {
 	c.is = is
 }
 

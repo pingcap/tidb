@@ -1,0 +1,13 @@
+# TestFoldIfNull
+drop table if exists t, t1;
+create table t (id varbinary(16));
+create table t1(id char(16) charset utf8mb4 collate utf8mb4_general_ci);
+insert into t values ();
+insert into t1 values ("Hello World");
+select collation(ifnull(concat(NULL),'~'));
+select collation(ifnull(concat(NULL),ifnull(concat(NULL),'~')));
+select collation(ifnull(concat(id),'~')) from t;
+select collation(ifnull(concat(NULL),ifnull(concat(id),'~'))) from t;
+select collation(ifnull(concat(id),ifnull(concat(id),'~'))) from t;
+select collation(ifnull(concat(NULL),id)) from t1;
+select collation(ifnull(concat(NULL),ifnull(concat(NULL),id))) from t1;

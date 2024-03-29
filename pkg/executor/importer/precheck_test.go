@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/etcd"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -71,7 +70,7 @@ func TestCheckRequirements(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	ctx := util.WithInternalSourceType(context.Background(), kv.InternalImportInto)
-	conn := tk.Session().(sqlexec.SQLExecutor)
+	conn := tk.Session().GetSQLExecutor()
 
 	_, err := conn.Execute(ctx, "create table test.t(id int primary key)")
 	require.NoError(t, err)
