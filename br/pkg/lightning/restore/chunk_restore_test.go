@@ -25,7 +25,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/golang/mock/gomock"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -50,6 +49,7 @@ import (
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/mock/gomock"
 )
 
 type chunkRestoreSuite struct {
@@ -95,7 +95,7 @@ func (s *chunkRestoreSuite) TearDownTest() {
 func (s *chunkRestoreSuite) TestDeliverLoopCancel() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
-	mockBackend := mock.NewMockBackend(controller)
+	mockBackend := mock.NewMockAbstractBackend(controller)
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
 
 	rc := &Controller{backend: backend.MakeBackend(mockBackend)}
@@ -113,7 +113,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
-	mockBackend := mock.NewMockBackend(controller)
+	mockBackend := mock.NewMockAbstractBackend(controller)
 	importer := backend.MakeBackend(mockBackend)
 
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), gomock.Any()).Return(nil).Times(2)
@@ -168,7 +168,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
-	mockBackend := mock.NewMockBackend(controller)
+	mockBackend := mock.NewMockAbstractBackend(controller)
 	importer := backend.MakeBackend(mockBackend)
 
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), gomock.Any()).Return(nil).Times(2)
@@ -627,7 +627,7 @@ func (s *chunkRestoreSuite) TestRestore() {
 
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
-	mockBackend := mock.NewMockBackend(controller)
+	mockBackend := mock.NewMockAbstractBackend(controller)
 	importer := backend.MakeBackend(mockBackend)
 
 	mockBackend.EXPECT().OpenEngine(ctx, gomock.Any(), gomock.Any()).Return(nil).Times(2)

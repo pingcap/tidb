@@ -30,7 +30,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/docker/go-units"
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -69,6 +68,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/tikv/client-go/v2/testutils"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/mock/gomock"
 )
 
 type tableRestoreSuiteBase struct {
@@ -333,7 +333,7 @@ func (w errorLocalWriter) Close(context.Context) (backend.ChunkFlushStatus, erro
 func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	ctx := context.Background()
 	ctrl := gomock.NewController(s.T())
-	mockBackend := mock.NewMockBackend(ctrl)
+	mockBackend := mock.NewMockAbstractBackend(ctrl)
 	rc := &Controller{
 		cfg:            s.cfg,
 		pauser:         DeliverPauser,
@@ -816,7 +816,7 @@ func (s *tableRestoreSuite) TestAnalyzeTable() {
 func (s *tableRestoreSuite) TestImportKVSuccess() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
-	mockBackend := mock.NewMockBackend(controller)
+	mockBackend := mock.NewMockAbstractBackend(controller)
 	importer := backend.MakeBackend(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
@@ -851,7 +851,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess() {
 func (s *tableRestoreSuite) TestImportKVFailure() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
-	mockBackend := mock.NewMockBackend(controller)
+	mockBackend := mock.NewMockAbstractBackend(controller)
 	importer := backend.MakeBackend(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
@@ -1409,7 +1409,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 	ctx := context.Background()
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
-	mockBackend := mock.NewMockBackend(controller)
+	mockBackend := mock.NewMockAbstractBackend(controller)
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
 	require.NoError(s.T(), err)
