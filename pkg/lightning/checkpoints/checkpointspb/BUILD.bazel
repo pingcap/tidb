@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "checkpointspb",
     srcs = ["file_checkpoints.pb.go"],
-    importpath = "github.com/pingcap/tidb/br/pkg/lightning/checkpoints/checkpointspb",
+    importpath = "github.com/pingcap/tidb/pkg/lightning/checkpoints/checkpointspb",
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_gogo_protobuf//gogoproto",

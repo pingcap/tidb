@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "metric",
     srcs = ["metric.go"],
-    importpath = "github.com/pingcap/tidb/br/pkg/lightning/metric",
+    importpath = "github.com/pingcap/tidb/pkg/lightning/metric",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/promutil",

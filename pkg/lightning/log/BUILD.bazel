@@ -7,7 +7,7 @@ go_library(
         "log.go",
         "testlogger.go",
     ],
-    importpath = "github.com/pingcap/tidb/br/pkg/lightning/log",
+    importpath = "github.com/pingcap/tidb/pkg/lightning/log",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/logutil",

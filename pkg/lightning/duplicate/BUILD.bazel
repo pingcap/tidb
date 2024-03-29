@@ -7,10 +7,10 @@ go_library(
         "internal.go",
         "worker.go",
     ],
-    importpath = "github.com/pingcap/tidb/br/pkg/lightning/duplicate",
+    importpath = "github.com/pingcap/tidb/pkg/lightning/duplicate",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/lightning/log",
+        "//pkg/lightning/log",
         "//pkg/util/codec",
         "//pkg/util/extsort",
         "@com_github_pingcap_errors//:errors",
@@ -31,7 +31,7 @@ go_test(
     flaky = True,
     shard_count = 4,
     deps = [
-        "//br/pkg/lightning/log",
+        "//pkg/lightning/log",
         "//pkg/util/extsort",
         "@com_github_stretchr_testify//require",
     ],

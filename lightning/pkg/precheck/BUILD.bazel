@@ -3,6 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "precheck",
     srcs = ["precheck.go"],
-    importpath = "github.com/pingcap/tidb/br/pkg/lightning/precheck",
+    importpath = "github.com/pingcap/tidb/lightning/pkg/precheck",
     visibility = ["//visibility:public"],
 )
