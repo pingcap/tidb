@@ -2003,7 +2003,7 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 	tableInfo := as.Tables[0].TableInfo
 	tbl, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tblName.DBInfo.Name.O, tableInfo.Name.O)
+		return nil, infoschema.ErrTableNotExists.FastGenByArgs(tblName.DBInfo.Name.O, tableInfo.Name.O)
 	}
 	p := &CheckTable{
 		DBName: tblName.Schema.O,
@@ -3794,11 +3794,11 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (Plan, error) {
 	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
+		return nil, infoschema.ErrTableNotExists.FastGenByArgs()
 	}
 	tn, ok := ts.Source.(*ast.TableName)
 	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
+		return nil, infoschema.ErrTableNotExists.FastGenByArgs()
 	}
 	tableInfo := tn.TableInfo
 	if tableInfo.IsView() {
@@ -4360,9 +4360,113 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		db := b.ctx.GetSessionVars().CurrentDB
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
+		return nil, infoschema.ErrTableNotExists.FastGenByArgs(db, tableInfo.Name.O)
 	}
+<<<<<<< HEAD:planner/core/planbuilder.go
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx, model.NewCIStr(""), tableInfo)
+=======
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), model.NewCIStr(""), tableInfo)
+	if err != nil {
+		return nil, err
+	}
+	mockTablePlan.SetSchema(schema)
+	mockTablePlan.names = names
+
+	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
+	return p, err
+}
+
+var (
+	importIntoSchemaNames = []string{"Job_ID", "Data_Source", "Target_Table", "Table_ID",
+		"Phase", "Status", "Source_File_Size", "Imported_Rows",
+		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
+	importIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
+		mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
+
+	// ImportIntoDataSource used inplannererrors.ErrLoadDataInvalidURI.
+	ImportIntoDataSource = "data source"
+)
+
+func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (Plan, error) {
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	var (
+		err              error
+		options          = make([]*LoadDataOpt, 0, len(ld.Options))
+		importFromServer bool
+	)
+
+	if ld.Select == nil {
+		importFromServer, err = storage.IsLocalPath(ld.Path)
+		if err != nil {
+			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
+		}
+	}
+
+	if importFromServer && sem.IsEnabled() {
+		return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
+	}
+
+	for _, opt := range ld.Options {
+		loadDataOpt := LoadDataOpt{Name: opt.Name}
+		if opt.Value != nil {
+			loadDataOpt.Value, _, err = b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+		options = append(options, &loadDataOpt)
+	}
+	p := ImportInto{
+		Path:               ld.Path,
+		Format:             ld.Format,
+		Table:              ld.Table,
+		ColumnAssignments:  ld.ColumnAssignments,
+		ColumnsAndUserVars: ld.ColumnsAndUserVars,
+		Options:            options,
+		Stmt:               ld.Text(),
+	}.Init(b.ctx)
+	user := b.ctx.GetSessionVars().User
+	// IMPORT INTO need full DML privilege of the target table
+	// to support add-index by SQL, we need ALTER privilege
+	var selectErr, updateErr, insertErr, deleteErr, alterErr error
+	if user != nil {
+		selectErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+		updateErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("UPDATE", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+		insertErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+		deleteErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DELETE", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+		alterErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, p.Table.Schema.O, p.Table.Name.O, "", selectErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, p.Table.Schema.O, p.Table.Name.O, "", updateErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.O, p.Table.Name.O, "", insertErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.O, p.Table.Name.O, "", deleteErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, p.Table.Schema.O, p.Table.Name.O, "", alterErr)
+	if importFromServer {
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
+	}
+	tableInfo := p.Table.TableInfo
+	// we use the latest IS to support IMPORT INTO dst FROM SELECT * FROM src AS OF TIMESTAMP '2020-01-01 00:00:00'
+	// Note: we need to get p.Table when preprocessing, at that time, IS of session
+	// transaction is used, if the session ctx is already in snapshot read using tidb_snapshot, we might
+	// not get the schema or get a stale schema of the target table, so we don't
+	// support set 'tidb_snapshot' first and then import into the target table.
+	//
+	// tidb_read_staleness can be used to do stale read too, it's allowed as long as
+	// tableInfo.ID matches with the latest schema.
+	latestIS := b.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	tableInPlan, ok := latestIS.TableByID(tableInfo.ID)
+	if !ok {
+		// adaptor.handleNoDelayExecutor has a similar check, but we want to give
+		// a more specific error message here.
+		if b.ctx.GetSessionVars().SnapshotTS != 0 {
+			return nil, errors.New("can not execute IMPORT statement when 'tidb_snapshot' is set")
+		}
+		db := b.ctx.GetSessionVars().CurrentDB
+		return nil, infoschema.ErrTableNotExists.FastGenByArgs(db, tableInfo.Name.O)
+	}
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), model.NewCIStr(""), tableInfo)
+>>>>>>> b1c0e36cdf2 (*: fix oom in the infoSchema.TableByName (#52220)):pkg/planner/core/planbuilder.go
 	if err != nil {
 		return nil, err
 	}
