@@ -173,14 +173,10 @@ func (rs *RegionSplitter) executeSplitByKeys(
 			return err
 		}
 		splitKeyMap := split.GetSplitKeysOfRegions(sortedKeys, regions, splitContext.isRawKv)
-		regionMap := make(map[uint64]*split.RegionInfo)
-		for _, region := range regions {
-			regionMap[region.Region.GetId()] = region
-		}
 		workerPool := utils.NewWorkerPool(uint(splitContext.storeCount)+1, "split keys")
 		eg, ectx := errgroup.WithContext(ctx)
-		for regionID, splitKeys := range splitKeyMap {
-			region := regionMap[regionID]
+		for region, splitKeys := range splitKeyMap {
+			region := region
 			keys := splitKeys
 			sctx := splitContext
 			workerPool.ApplyOnErrorGroup(eg, func() error {

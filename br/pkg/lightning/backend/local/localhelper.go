@@ -26,7 +26,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -168,12 +167,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 			return nil
 		}
 
-		regionMap := make(map[uint64]*split.RegionInfo)
-		for _, region := range regions {
-			regionMap[region.Region.GetId()] = region
-		}
-
-		var splitKeyMap map[uint64][][]byte
+		var splitKeyMap map[*split.RegionInfo][][]byte
 		if len(retryKeys) > 0 {
 			firstKeyEnc := codec.EncodeBytes([]byte{}, retryKeys[0])
 			lastKeyEnc := codec.EncodeBytes([]byte{}, retryKeys[len(retryKeys)-1])
@@ -224,7 +218,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 									logutil.Key("regionStart", splitRegion.Region.StartKey), logutil.Key("regionEnd", splitRegion.Region.EndKey),
 									logutil.Region(splitRegion.Region), logutil.Leader(splitRegion.Leader))
 							}
-							splitRegion, newRegions, err1 = local.BatchSplitRegions(splitCtx, splitRegion, keys[startIdx:endIdx])
+							splitRegion, newRegions, err1 = local.splitCli.SplitWaitAndScatter(splitCtx, splitRegion, keys[startIdx:endIdx])
 							if err1 != nil {
 								if strings.Contains(err1.Error(), "no valid key") {
 									for _, key := range keys {
@@ -275,9 +269,9 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 			})
 		}
 	sendLoop:
-		for regionID, keys := range splitKeyMap {
+		for region, keys := range splitKeyMap {
 			select {
-			case ch <- &splitInfo{region: regionMap[regionID], keys: keys}:
+			case ch <- &splitInfo{region: region, keys: keys}:
 			case <-ctx.Done():
 				// outer context is canceled, can directly return
 				close(ch)
@@ -320,21 +314,6 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 	return nil
 }
 
-// BatchSplitRegions will split regions by the given split keys and tries to
-// scatter new regions. If split/scatter fails because new region is not ready,
-// this function will not return error.
-func (local *Backend) BatchSplitRegions(
-	ctx context.Context,
-	region *split.RegionInfo,
-	keys [][]byte,
-) (*split.RegionInfo, []*split.RegionInfo, error) {
-	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
-		failpoint.Return(nil, nil, errors.New("retryable error"))
-	})
-
-	return local.splitCli.SplitWaitAndScatter(ctx, region, keys)
-}
-
 func (local *Backend) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
 	regionInfo, err := local.splitCli.GetRegionByID(ctx, regionID)
 	if err != nil {
@@ -343,7 +322,7 @@ func (local *Backend) hasRegion(ctx context.Context, regionID uint64) (bool, err
 	return regionInfo != nil, nil
 }
 
-func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo) map[uint64][][]byte {
+func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo) map[*split.RegionInfo][][]byte {
 	checkKeys := make([][]byte, 0)
 	var lastEnd []byte
 	for _, rg := range ranges {

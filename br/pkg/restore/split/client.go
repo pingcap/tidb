@@ -558,6 +558,9 @@ func (c *pdClient) hasHealthyRegion(ctx context.Context, regionID uint64) (bool,
 func (c *pdClient) SplitWaitAndScatter(
 	ctx context.Context, region *RegionInfo, keys [][]byte,
 ) (*RegionInfo, []*RegionInfo, error) {
+	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+		failpoint.Return(nil, nil, errors.New("retryable error"))
+	})
 	if len(keys) == 0 {
 		return region, []*RegionInfo{region}, nil
 	}
