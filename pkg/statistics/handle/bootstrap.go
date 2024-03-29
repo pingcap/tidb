@@ -405,6 +405,79 @@ func (h *Handle) initStatsTopN(cache statstypes.StatsCache) error {
 	return nil
 }
 
+func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initstats.Task) error {
+	se, err := h.Pool.SPool().Get()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil { // only recycle when no error
+			h.Pool.SPool().Put(se)
+		}
+	}()
+	sctx := se.(sessionctx.Context)
+	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1 and table_id >= %? and table_id < %?"
+	rc, err := util.Exec(sctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer terror.Call(rc.Close)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	req := rc.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	for {
+		err := rc.Next(ctx, req)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		h.initStatsTopN4Chunk(cache, iter)
+	}
+	return nil
+}
+
+func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache) error {
+	sql := "select HIGH_PRIORITY min(table_id), max(table_id) from mysql.stats_top_n where is_index = 1"
+	rs, err := util.Exec(h.initStatsCtx, sql)
+	if err != nil {
+		return err
+	}
+	var rows []chunk.Row
+	rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 64)
+	if err != nil {
+		return err
+	}
+	err = rs.Close()
+	if err != nil {
+		return err
+	}
+	var maxTid, minTid int64
+	if len(rows) > 0 {
+		minTid = rows[0].GetInt64(0)
+		maxTid = rows[0].GetInt64(1)
+	}
+	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
+		return h.initStatsTopNByPaging(cache, task)
+	})
+	ls.LoadStats()
+	tid := minTid
+	for tid <= maxTid {
+		ls.SendTask(initstats.Task{
+			StartTid: tid,
+			EndTid:   tid + 1000,
+		})
+		tid += 1000
+	}
+	ls.SendTask(initstats.Task{
+		StartTid: tid,
+		EndTid:   tid + 1000,
+	})
+	ls.Wait()
+	return nil
+}
+
 func (*Handle) initStatsFMSketch4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := cache.Get(row.GetInt64(0))
@@ -593,16 +666,17 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	}
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		err = h.initStatsHistogramsConcurrency(is, cache)
-		if err != nil {
-			return errors.Trace(err)
-		}
 	} else {
 		err = h.initStatsHistograms(is, cache)
-		if err != nil {
-			return errors.Trace(err)
-		}
 	}
-	err = h.initStatsTopN(cache)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
+		err = h.initStatsTopNConcurrency(cache)
+	} else {
+		err = h.initStatsTopN(cache)
+	}
 	if err != nil {
 		return err
 	}
