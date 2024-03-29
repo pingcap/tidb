@@ -1170,12 +1170,14 @@ func (rc *Client) RestoreSSTFiles(
 	for rangeFiles, leftFiles = drainFilesByRange(files, rc.fileImporter.supportMultiIngest); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles, rc.fileImporter.supportMultiIngest) {
 		filesReplica := rangeFiles
 		rc.workerPool.ApplyOnErrorGroup(eg,
-			func() error {
+			func() (err error) {
 				fileStart := time.Now()
 				defer func() {
-					log.Info("import files done", logutil.Files(filesReplica),
-						zap.Duration("take", time.Since(fileStart)))
-					updateCh.Inc()
+					if err == nil {
+						log.Info("import files done", logutil.Files(filesReplica),
+							zap.Duration("take", time.Since(fileStart)))
+						updateCh.Inc()
+					}
 				}()
 				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.backupMeta.ApiVersion)
 			})
