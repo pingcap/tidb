@@ -9,11 +9,11 @@ package mock
 import (
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
 	kv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	log "github.com/pingcap/tidb/br/pkg/lightning/log"
 	verification "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	types "github.com/pingcap/tidb/types"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockEncoder is a mock of Encoder interface.
