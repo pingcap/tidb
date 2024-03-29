@@ -36,6 +36,7 @@ import (
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
+	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	cli_config "github.com/tikv/client-go/v2/config"
@@ -226,8 +227,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		return nil, errors.Trace(err)
 	}
 
-	logutil.BgLogger().Warn("Safe point v2 etcd path exists, config.EnableSafePointV2 must be true.")
-	err = d.checkSafePointVersion(keyspaceMeta, s.GetPDHTTPClient())
+	err = d.UpdateSafePointVersionAndConfig(keyspaceMeta, s.GetPDHTTPClient())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -255,7 +255,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 	return store, nil
 }
 
-func (d TiKVDriver) checkSafePointVersion(keyspaceMeta *keyspacepb.KeyspaceMeta, pdHTTPCli pdhttp.Client) error {
+func (d TiKVDriver) UpdateSafePointVersionAndConfig(keyspaceMeta *keyspacepb.KeyspaceMeta, pdHTTPCli pdhttp.Client) error {
 	if keyspaceMeta == nil {
 		return nil
 	}
@@ -263,11 +263,11 @@ func (d TiKVDriver) checkSafePointVersion(keyspaceMeta *keyspacepb.KeyspaceMeta,
 	// If safe point version in PD keyspace config is not v2.
 	if !gcworker.IsKeyspaceMetaEnableSafePointV2(keyspaceMeta) {
 		// Tidb config safe point version v2. Update safe point version in PD keyspace config to v2.
-		if config.GetGlobalConfig().EnableSafePointV2 {
+		if config.GetGlobalConfig().EnableKeyspaceLevelGC {
 			ctx := context.Background()
 			keyspaceSafePointVersionConfig := pdhttp.KeyspaceSafePointVersionConfig{
 				Config: pdhttp.KeyspaceSafePointVersion{
-					SafePointVersion: config.SafePointV2,
+					SafePointVersion: gcutil.KeyspaceLevelGC,
 				},
 			}
 			err := pdHTTPCli.UpdateKeyspaceSafePointVersion(ctx, keyspaceMeta.GetName(), &keyspaceSafePointVersionConfig)
@@ -281,10 +281,10 @@ func (d TiKVDriver) checkSafePointVersion(keyspaceMeta *keyspacepb.KeyspaceMeta,
 	// If safe point version in PD keyspace config is v2,
 	// TiDB config safe point version is not v2.
 	// Set the enable safe point v2 in tidb config is true.
-	if !config.GetGlobalConfig().EnableSafePointV2 {
-		logutil.BgLogger().Warn("Safe point v2 etcd path exists, config.EnableSafePointV2 must be true.")
+	if !config.GetGlobalConfig().EnableKeyspaceLevelGC {
+		logutil.BgLogger().Warn("Safe point v2 etcd path exists, config.EnableKeyspaceLevelGC must be true.")
 		config.UpdateGlobal(func(c *config.Config) {
-			c.EnableSafePointV2 = true
+			c.EnableKeyspaceLevelGC = true
 		})
 	}
 
@@ -427,8 +427,9 @@ func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 }
 
 // CurrentMinTimestamp returns current minimum timestamp across all keyspace groups.
-func (s *tikvStore) CurrentMinTimestamp() (uint64, error) {
-	ts, err := s.KVStore.CurrentMinTimestamp()
+func (s *tikvStore) CurrentMinTimestampInAllTSOGroup() (uint64, error) {
+	ts, err := s.KVStore.CurrentMinTimestampInAllTSOGroup()
+
 	if err != nil && strings.Contains(err.Error(), "Unimplemented") {
 		ts, err = s.KVStore.CurrentTimestamp(kv.GlobalTxnScope)
 	}

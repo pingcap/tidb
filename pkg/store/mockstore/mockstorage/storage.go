@@ -38,8 +38,8 @@ type mockStorage struct {
 }
 
 // CurrentMinTimestamp returns current minimum timestamp across all keyspace groups.
-func (s *mockStorage) CurrentMinTimestamp() (uint64, error) {
-	return s.KVStore.CurrentMinTimestamp()
+func (s *mockStorage) CurrentMinTimestampInAllTSOGroup() (uint64, error) {
+	return s.KVStore.CurrentMinTimestampInAllTSOGroup()
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.

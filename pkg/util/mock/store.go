@@ -29,7 +29,7 @@ type Store struct {
 }
 
 // CurrentMinTimestamp implements kv.Storage interface.
-func (*Store) CurrentMinTimestamp() (uint64, error) { return 0, nil }
+func (*Store) CurrentMinTimestampInAllTSOGroup() (uint64, error) { return 0, nil }
 
 // GetClient implements kv.Storage interface.
 func (s *Store) GetClient() kv.Client { return s.Client }

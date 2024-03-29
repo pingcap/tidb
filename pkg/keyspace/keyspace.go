@@ -82,7 +82,7 @@ func WrapZapcoreWithKeyspace() zap.Option {
 // NewEtcdSafePointKV is used to add prefix when set keyspace.
 func NewEtcdSafePointKV(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
 	var etcdNameSpace string
-	if config.GetGlobalConfig().EnableSafePointV2 {
+	if config.GetGlobalConfig().EnableKeyspaceLevelGC {
 		etcdNameSpace = MakeKeyspaceEtcdNamespace(codec)
 	}
 	return tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig, tikv.WithPrefix(etcdNameSpace))

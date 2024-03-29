@@ -30,6 +30,8 @@ const (
 	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?`
 	// SafePointVersion is safePoint version in keyspace meta config.
 	SafePointVersion = "safe_point_version"
+	// KeyspaceLevelGC is means safe point version of keyspace meta is v2.If keyspace meta has configured with safe_point_version = v2, this keyspace will calculate gc safe point on its own.
+	KeyspaceLevelGC = "keyspace_level_gc"
 )
 
 // CheckGCEnable is use to check whether GC is enable.
