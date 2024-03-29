@@ -247,7 +247,7 @@ type HistColl struct {
 	// MVIdx2Columns maps the index id to its columns by expression.Column.
 	// For normal index, the column id is enough, as we already have in Idx2ColUniqueIDs. But currently, mv index needs more
 	// information to match the filter against the mv index columns, and we need this map to provide this information.
-	MVIdx2Columns     map[int64][]*expression.Column
+	MVIdx2Columns map[int64][]*expression.Column
 }
 
 // TableMemoryUsage records tbl memory usage
