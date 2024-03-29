@@ -277,7 +277,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 }
 
 func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task) error {
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id >= ? and table_id < ?"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id >= %? and table_id < %?"
 	rc, err := util.Exec(h.initStatsCtx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
