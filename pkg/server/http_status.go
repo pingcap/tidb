@@ -299,7 +299,7 @@ func (s *Server) startHTTPServer() {
 	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
-	router.PathPrefix("/debug/pprof/").Handler(http.HandlerFunc(pprof.Index))
+	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
 
 	ballast := newBallast(s.cfg.MaxBallastObjectSize)
 	{
@@ -421,7 +421,7 @@ func (s *Server) startHTTPServer() {
 
 	// failpoint is enabled only for tests so we can add some http APIs here for tests.
 	failpoint.Inject("enableTestAPI", func() {
-		router.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
+		router.PathPrefix("/fail/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/fail")
 			new(failpoint.HttpHandler).ServeHTTP(w, r)
 		})
