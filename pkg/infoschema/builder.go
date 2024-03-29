@@ -850,6 +850,47 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			}
 		}
 	}
+<<<<<<< HEAD
+=======
+	return autoid.NewAllocatorsFromTblInfo(b.Requirement, dbInfo.ID, tblInfo)
+}
+
+func applyCreateTable(b *Builder, m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64, schemaVersion int64) ([]int64, error) {
+	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if tblInfo == nil {
+		// When we apply an old schema diff, the table may has been dropped already, so we need to fall back to
+		// full load.
+		return nil, ErrTableNotExists.FastGenByArgs(
+			fmt.Sprintf("(Schema ID %d)", dbInfo.ID),
+			fmt.Sprintf("(Table ID %d)", tableID),
+		)
+	}
+
+	b.updateBundleForCreateTable(tblInfo, tp)
+
+	if tp != model.ActionTruncateTablePartition {
+		affected = appendAffectedIDs(affected, tblInfo)
+	}
+
+	// Failpoint check whether tableInfo should be added to repairInfo.
+	// Typically used in repair table test to load mock `bad` tableInfo into repairInfo.
+	failpoint.Inject("repairFetchCreateTable", func(val failpoint.Value) {
+		if val.(bool) {
+			if domainutil.RepairInfo.InRepairMode() && tp != model.ActionRepairTable && domainutil.RepairInfo.CheckAndFetchRepairedTable(dbInfo, tblInfo) {
+				failpoint.Return(nil, nil)
+			}
+		}
+	})
+
+	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
+	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
+
+	allocs = b.buildAllocsForCreateTable(tp, dbInfo, tblInfo, allocs)
+
+>>>>>>> b1c0e36cdf2 (*: fix oom in the infoSchema.TableByName (#52220))
 	tbl, err := b.tableFromMeta(allocs, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
