@@ -26,7 +26,7 @@ func TestFilter(t *testing.T) {
 	require.Len(t, buffer.Stripped(), 0)
 
 	logger, buffer = log.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
-		return log.NewFilterCore(c, "github.com/pingcap/tidb/br/").With([]zap.Field{zap.String("a", "b")})
+		return log.NewFilterCore(c, "/lightning/").With([]zap.Field{zap.String("a", "b")})
 	}), zap.AddCaller())
 	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
 	require.Equal(t, `{"$lvl":"WARN","$msg":"the message","a":"b","number":123456,"array":[7,8,9]}`, buffer.Stripped())

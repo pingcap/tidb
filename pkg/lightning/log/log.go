@@ -94,6 +94,7 @@ func InitLogger(cfg *Config, _ string) error {
 			return NewFilterCore(
 				core,
 				"github.com/pingcap/tidb/br/",
+				"/lightning/",
 				"main.main",
 				"github.com/tikv/pd/client/http",
 			)
