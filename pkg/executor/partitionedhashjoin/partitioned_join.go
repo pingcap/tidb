@@ -68,12 +68,13 @@ type PartitionedHashJoinCtx struct {
 	memTracker    *memory.Tracker // track memory usage.
 	diskTracker   *disk.Tracker   // track disk usage.
 
-	RightAsBuildSide bool
-	BuildFilter      expression.CNFExprs
-	ProbeFilter      expression.CNFExprs
-	OtherCondition   expression.CNFExprs
-	joinHashTable    *JoinHashTable
-	hashTableMeta    *JoinTableMeta
+	RightAsBuildSide               bool
+	BuildFilter                    expression.CNFExprs
+	ProbeFilter                    expression.CNFExprs
+	OtherCondition                 expression.CNFExprs
+	joinHashTable                  *JoinHashTable
+	hashTableMeta                  *JoinTableMeta
+	needScanRowTableAfterProbeDone bool
 
 	LUsed, RUsed                                 []int
 	LUsedInOtherCondition, RUsedInOtherCondition []int
@@ -87,7 +88,6 @@ type ProbeSideTupleFetcher struct {
 	ProbeChkResourceCh             chan *probeChkResource
 	ProbeResultChs                 []chan *chunk.Chunk
 	RequiredRows                   int64
-	needScanHTAfterProbeDone       bool
 	canSkipProbeIfHashTableIsEmpty bool
 }
 
@@ -218,6 +218,7 @@ func (e *PartitionedHashJoinExec) Open(ctx context.Context) error {
 		e.hashTableMeta = newTableMeta(e.BuildWorkers[0].BuildKeyColIdx, e.BuildWorkers[0].BuildTypes,
 			e.BuildKeyTypes, e.ProbeKeyTypes, e.LUsedInOtherCondition, e.LUsed, e.needUsedFlag())
 	}
+	e.PartitionedHashJoinCtx.needScanRowTableAfterProbeDone = e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
 	e.PartitionedHashJoinCtx.allocPool = e.AllocPool
 	if e.PartitionedHashJoinCtx.memTracker != nil {
 		e.PartitionedHashJoinCtx.memTracker.Reset()
@@ -290,7 +291,7 @@ func (fetcher *ProbeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 					probeSideResult.Reset()
 				}
 			})
-			if probeSideResult.NumRows() == 0 && !fetcher.needScanHTAfterProbeDone {
+			if probeSideResult.NumRows() == 0 && !fetcher.PartitionedHashJoinCtx.needScanRowTableAfterProbeDone {
 				// this is a short path, if current join don't need to scan hash table
 				// after probe, then if the probe side is empty, the join result must
 				// be empty
@@ -304,7 +305,7 @@ func (fetcher *ProbeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 				return
 			} else if skipProbe {
 				// stop probe
-				if !fetcher.needScanHTAfterProbeDone {
+				if !fetcher.PartitionedHashJoinCtx.needScanRowTableAfterProbeDone {
 					fetcher.finished.Store(true)
 				}
 				return
@@ -356,6 +357,7 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 		startPosInRawData:   make([][]uint64, partitionNumber),
 		hasNullableKey:      w.HasNullableKey,
 		hasFilter:           w.HashJoinCtx.BuildFilter != nil,
+		keepFilteredRows:    w.HashJoinCtx.needScanRowTableAfterProbeDone,
 	}
 	builder.initBuffer()
 
@@ -468,7 +470,6 @@ func (e *PartitionedHashJoinExec) initializeForProbe() {
 	e.joinResultCh = make(chan *internalutil.HashjoinWorkerResult, e.Concurrency+1)
 
 	e.ProbeSideTupleFetcher.PartitionedHashJoinCtx = e.PartitionedHashJoinCtx
-	e.ProbeSideTupleFetcher.needScanHTAfterProbeDone = e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
 	e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty = e.canSkipProbeIfHashTableIsEmpty()
 	// e.ProbeSideTupleFetcher.ProbeResultChs is for transmitting the chunks which store the data of
 	// ProbeSideExec, it'll be written by probe side worker goroutine, and read by join
