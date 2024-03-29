@@ -90,7 +90,7 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
-    shard_count = 34,
+    shard_count = 32,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",
