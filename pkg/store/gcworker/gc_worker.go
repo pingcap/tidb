@@ -1207,7 +1207,7 @@ func (w *GCWorker) resolveLocks(
 		errMsg = "[gc worker] keyspace resolve locks err."
 	} else {
 		logutil.Logger(ctx).Info("[gc worker] start all keyspaces resolve locks when use global gc.")
-		err = w.resolveKeyspacesInGlobalGCLocks(ctx, runner, safePoint)
+		err = w.resolveLocksInGlobalGC(ctx, runner, safePoint)
 		errMsg = "[gc worker] resolve locks all keyspace failed"
 	}
 
@@ -1252,7 +1252,7 @@ func (w *GCWorker) getAllKeyspace(ctx context.Context) ([]*keyspacepb.KeyspaceMe
 	return allkeyspaces, nil
 }
 
-// IsKeyspaceMetaEnableSafePointV2 return true if keyspace meta config has safe point version is v2.
+// IsKeyspaceMetaEnableSafePointV2 return true if keyspace meta config has safe point version is 'keyspace_level_gc'.
 func IsKeyspaceMetaEnableSafePointV2(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	if val, ok := keyspaceMeta.Config[gcutil.SafePointVersion]; ok {
 		return val == gcutil.KeyspaceLevelGC
@@ -1260,8 +1260,8 @@ func IsKeyspaceMetaEnableSafePointV2(keyspaceMeta *keyspacepb.KeyspaceMeta) bool
 	return false
 }
 
-// Do resolve locks by all safe point v1 keyspace.
-func (w *GCWorker) resolveKeyspacesInGlobalGCLocks(ctx context.Context, runner *rangetask.Runner, safePoint uint64) error {
+// Do resolve locks in global gc.
+func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask.Runner, safePoint uint64) error {
 	keyspaces, err := w.getAllKeyspace(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("[gc worker] get all keyspace err.", zap.Error(errors.Trace(err)))
@@ -1269,7 +1269,12 @@ func (w *GCWorker) resolveKeyspacesInGlobalGCLocks(ctx context.Context, runner *
 	}
 	logutil.Logger(ctx).Info("[gc worker] start keyspaces resolve locks.")
 
-	// Start api v1 resolve locks, the range is [ unbounded, keyspace 0 left bound )
+	// There is 3 steps of resolve locks in global gc.
+	// step 1. resolve locks in [ unbounded, keyspace 0 left bound )
+	// step 2. resolve locks in [ keyspace txnLeftBound , keyspace txnRightBound ) ... [ max keyspace txnLeftBound , max keyspace txnRightBound )
+	// step 3. resolve locks in [ max keyspace txnRightBound , unbounded )
+
+	// step 1. resolve locks in [ unbounded, keyspace 0 left bound )
 	txnLeftBound := []byte("")
 	txnRightBound := keyspace.GetKeyspaceTxnPrefix(0)
 	err = w.legacyResolveLocksByRange(ctx, txnLeftBound, txnRightBound, runner, safePoint)
@@ -1278,6 +1283,7 @@ func (w *GCWorker) resolveKeyspacesInGlobalGCLocks(ctx context.Context, runner *
 		return err
 	}
 
+	// step 2. resolve locks in [ keyspace txnLeftBound , keyspace txnRightBound ) ... [ max keyspace txnLeftBound , max keyspace txnRightBound )
 	// maxRightBound is the max right bound of all keyspaces,
 	// is used to find the range right of the last keyspace's range.
 	var maxRightBound []byte
@@ -1303,7 +1309,7 @@ func (w *GCWorker) resolveKeyspacesInGlobalGCLocks(ctx context.Context, runner *
 		}
 	}
 
-	// Do range:[ last keyspace right bound, unbounded ) resolve locks.
+	// step 3. resolve locks in [ max keyspace txnRightBound , unbounded )
 	endKey := []byte("")
 	err = w.legacyResolveLocksByRange(ctx, maxRightBound, endKey, runner, safePoint)
 	if err != nil {
