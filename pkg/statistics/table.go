@@ -236,6 +236,7 @@ type HistColl struct {
 		the stats cache. (See GenerateHistCollFromColumnInfo() for details)
 	*/
 
+	CanNotTriggerLoad bool
 	// Idx2ColUniqueIDs maps the index id to its column UniqueIDs. It's used to calculate the selectivity in planner.
 	Idx2ColUniqueIDs map[int64][]int64
 	// ColUniqueID2IdxIDs maps the column UniqueID to a list index ids whose first column is it.
@@ -247,7 +248,6 @@ type HistColl struct {
 	// For normal index, the column id is enough, as we already have in Idx2ColUniqueIDs. But currently, mv index needs more
 	// information to match the filter against the mv index columns, and we need this map to provide this information.
 	MVIdx2Columns     map[int64][]*expression.Column
-	CanNotTriggerLoad bool
 }
 
 // TableMemoryUsage records tbl memory usage
