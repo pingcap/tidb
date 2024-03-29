@@ -65,17 +65,22 @@ type rowIndexInfo struct {
 	buildRowData  uintptr
 }
 
+type posAndHashValue struct {
+	hashValue uint64
+	pos       int
+}
+
 type baseJoinProbe struct {
 	ctx    *PartitionedHashJoinCtx
 	workID uint
 
 	currentChunk       *chunk.Chunk
-	matchedRowsHeaders []uintptr // the start address of each matched rows
-	hashValues         []uint64  // the start address of each matched rows
-	currentRowsPos     []uintptr // the current address of each matched rows
-	serializedKeys     [][]byte  // used for save serialized keys
-	filterVector       []bool    // if there is filter before probe, filterVector saves the filter result
-	nullKeyVector      []bool    // nullKeyVector[i] = true if any of the key is null
+	matchedRowsHeaders []uintptr           // the start address of each matched rows
+	hashValues         [][]posAndHashValue // the start address of each matched rows
+	currentRowsPos     []uintptr           // the current address of each matched rows
+	serializedKeys     [][]byte            // used for save serialized keys
+	filterVector       []bool              // if there is filter before probe, filterVector saves the filter result
+	nullKeyVector      []bool              // nullKeyVector[i] = true if any of the key is null
 	currentProbeRow    int
 	chunkRows          int
 	cachedBuildRows    []rowIndexInfo
@@ -105,9 +110,9 @@ func (j *baseJoinProbe) IsCurrentChunkProbeDone() bool {
 
 func (j *baseJoinProbe) advanceCurrentProbeRow() {
 	j.currentProbeRow++
-	if j.currentProbeRow < j.chunkRows {
-		j.matchedRowsHeaders[j.currentProbeRow] = j.ctx.joinHashTable.lookup(j.hashValues[j.currentProbeRow])
-	}
+	//if j.currentProbeRow < j.chunkRows {
+	//	j.matchedRowsHeaders[j.currentProbeRow] = j.ctx.joinHashTable.lookup(j.hashValues[j.currentProbeRow])
+	//}
 }
 
 func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
@@ -124,11 +129,14 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	} else {
 		j.matchedRowsHeaders = make([]uintptr, rows)
 	}
-	if cap(j.hashValues) >= rows {
-		j.hashValues = j.hashValues[:rows]
-	} else {
-		j.hashValues = make([]uint64, rows)
+	for i := 0; i < j.ctx.PartitionNumber; i++ {
+		j.hashValues[i] = j.hashValues[i][:0]
 	}
+	//if cap(j.hashValues) >= rows {
+	//	j.hashValues = j.hashValues[:rows]
+	//} else {
+	//	j.hashValues = make([]uint64, rows)
+	//}
 	if j.ctx.ProbeFilter != nil {
 		if cap(j.filterVector) >= rows {
 			j.filterVector = j.filterVector[:rows]
@@ -178,11 +186,18 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		// As the golang doc described, `Hash.Write` never returns an error.
 		// See https://golang.org/pkg/hash/#Hash
 		_, _ = hash.Write(j.serializedKeys[i])
-		j.hashValues[i] = hash.Sum64()
-		//j.matchedRowsHeaders[i] = j.ctx.joinHashTable.lookup(hash.Sum64())
+		hashValue := hash.Sum64()
+		partIndex := hashValue % uint64(j.ctx.PartitionNumber)
+		j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: i})
+		//j.matchedRowsHeaders[i] = j.ctx.joinHashTable.lookup(j.hashValues[i])
 	}
 	j.currentProbeRow = 0
-	j.matchedRowsHeaders[j.currentProbeRow] = j.ctx.joinHashTable.lookup(j.hashValues[j.currentProbeRow])
+	for i := 0; i < j.ctx.PartitionNumber; i++ {
+		for index := range j.hashValues[i] {
+			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.joinHashTable.tables[i].lookup(j.hashValues[i][index].hashValue)
+		}
+	}
+	//j.matchedRowsHeaders[j.currentProbeRow] = j.ctx.joinHashTable.lookup(j.hashValues[j.currentProbeRow])
 	return
 }
 
@@ -370,7 +385,10 @@ func NewJoinProbe(ctx *PartitionedHashJoinCtx, workID uint, joinType core.JoinTy
 	}
 	base.cachedBuildRows = make([]rowIndexInfo, 0, BATCH_BUILD_ROW_SIZE)
 	base.matchedRowsHeaders = make([]uintptr, 0, chunk.InitialCapacity)
-	base.hashValues = make([]uint64, 0, chunk.InitialCapacity)
+	base.hashValues = make([][]posAndHashValue, ctx.PartitionNumber)
+	for i := 0; i < ctx.PartitionNumber; i++ {
+		base.hashValues[i] = make([]posAndHashValue, 0, chunk.InitialCapacity)
+	}
 	base.serializedKeys = make([][]byte, 0, chunk.InitialCapacity)
 	if base.ctx.ProbeFilter != nil {
 		base.filterVector = make([]bool, 0, chunk.InitialCapacity)
