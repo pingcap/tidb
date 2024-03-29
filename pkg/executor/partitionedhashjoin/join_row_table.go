@@ -362,13 +362,14 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 }
 
 type rowTableBuilder struct {
-	buildKeyIndex   []int
-	buildSchema     *expression.Schema
-	rowColumnsOrder []int
-	columnsSize     []int
-	needUsedFlag    bool
-	hasNullableKey  bool
-	hasFilter       bool
+	buildKeyIndex    []int
+	buildSchema      *expression.Schema
+	rowColumnsOrder  []int
+	columnsSize      []int
+	needUsedFlag     bool
+	hasNullableKey   bool
+	hasFilter        bool
+	keepFilteredRows bool
 
 	serializedKeyVectorBuffer [][]byte
 	partIdxVector             []int
@@ -469,6 +470,10 @@ func (builder *rowTableBuilder) appendRemainingRowLocations(rowTables []*rowTabl
 func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chunk.Chunk, usedRows []int, rowTables []*rowTable, rowTableMeta *JoinTableMeta) {
 	fakeAddrByte := make([]byte, 8)
 	for logicalRowIndex, physicalRowIndex := range usedRows {
+		needInsertedToHashTable := (!builder.hasFilter || builder.filterVector[physicalRowIndex]) && (!builder.hasNullableKey || !builder.nullKeyVector[physicalRowIndex])
+		if !needInsertedToHashTable && !builder.keepFilteredRows {
+			continue
+		}
 		var (
 			row     = chk.GetRow(logicalRowIndex)
 			partIdx = builder.partIdxVector[logicalRowIndex]
@@ -491,10 +496,10 @@ func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chu
 				rowTables[partIdx].segments = append(rowTables[partIdx].segments, seg)
 			}
 		}
-		seg.hashValues = append(seg.hashValues, builder.hashValue[logicalRowIndex])
-		if (!builder.hasFilter || builder.filterVector[physicalRowIndex]) && (!builder.hasNullableKey || !builder.nullKeyVector[physicalRowIndex]) {
-			seg.validJoinKeyPos = append(seg.validJoinKeyPos, logicalRowIndex)
+		if needInsertedToHashTable {
+			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 		}
+		seg.hashValues = append(seg.hashValues, builder.hashValue[logicalRowIndex])
 		builder.startPosInRawData[partIdx] = append(builder.startPosInRawData[partIdx], uint64(len(seg.rawData)))
 		// next_row_ptr
 		seg.rawData = append(seg.rawData, fakeAddrByte...)
