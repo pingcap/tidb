@@ -336,6 +336,13 @@ func (fetcher *ProbeSideTupleFetcher) wait4BuildSide() (skipProbe bool, err erro
 }
 
 func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, srcChkCh chan *chunk.Chunk) (err error) {
+	cost := int64(0)
+	defer func() {
+		if w.HashJoinCtx.stats != nil {
+			atomic.AddInt64(&w.HashJoinCtx.stats.partitionData, cost)
+			setMaxValue(&w.HashJoinCtx.stats.maxPartitionData, cost)
+		}
+	}()
 	partitionNumber := w.HashJoinCtx.PartitionNumber
 	hashTableMeta := w.HashJoinCtx.hashTableMeta
 	w.rowTables = make([]*rowTable, partitionNumber)
@@ -353,6 +360,7 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 	builder.initBuffer()
 
 	for chk := range srcChkCh {
+		start := time.Now()
 		builder.ResetBuffer(chk.NumRows())
 		if w.HashJoinCtx.BuildFilter != nil {
 			builder.filterVector, err = expression.VectorizedFilter(w.HashJoinCtx.SessCtx.GetExprCtx(), w.HashJoinCtx.SessCtx.GetSessionVars().EnableVectorizedExpression, w.HashJoinCtx.BuildFilter, chunk.NewIterator4Chunk(chk), builder.filterVector)
@@ -379,8 +387,11 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 
 		// 2. build rowtable
 		builder.appendToRowTable(typeCtx, chk, w.rowTables, hashTableMeta)
+		cost += int64(time.Since(start))
 	}
+	start := time.Now()
 	builder.appendRemainingRowLocations(w.rowTables)
+	cost += int64(time.Since(start))
 	return nil
 }
 
@@ -559,25 +570,28 @@ func (w *ProbeWorker) scanRowTableAfterProbeDone() {
 	}
 }
 
-func (w *ProbeWorker) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *internalutil.HashjoinWorkerResult) (ok bool, _ *internalutil.HashjoinWorkerResult) {
+func (w *ProbeWorker) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *internalutil.HashjoinWorkerResult) (ok bool, waitTime int64, _ *internalutil.HashjoinWorkerResult) {
+	waitTime = 0
 	joinResult.Err = w.JoinProbe.SetChunkForProbe(probeChunk)
 	if joinResult.Err != nil {
-		return false, joinResult
+		return false, waitTime, joinResult
 	}
 	for !w.JoinProbe.IsCurrentChunkProbeDone() {
 		ok, joinResult = w.JoinProbe.Probe(joinResult)
 		if !ok || joinResult.Err != nil {
-			return ok, joinResult
+			return ok, waitTime, joinResult
 		}
 		if joinResult.Chk.IsFull() {
+			waitStart := time.Now()
 			w.HashJoinCtx.joinResultCh <- joinResult
 			ok, joinResult = w.getNewJoinResult()
+			waitTime += int64(time.Since(waitStart))
 			if !ok {
-				return false, joinResult
+				return false, waitTime, joinResult
 			}
 		}
 	}
-	return true, joinResult
+	return true, waitTime, joinResult
 }
 
 func (w *ProbeWorker) runJoinWorker() {
@@ -588,7 +602,7 @@ func (w *ProbeWorker) runJoinWorker() {
 			t := time.Since(start)
 			atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
 			atomic.AddInt64(&w.HashJoinCtx.stats.fetchAndProbe, int64(t))
-			w.HashJoinCtx.stats.setMaxFetchAndProbeTime(int64(t))
+			setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbe, int64(t))
 		}()
 	}
 
@@ -619,8 +633,9 @@ func (w *ProbeWorker) runJoinWorker() {
 		}
 
 		start := time.Now()
-		ok, joinResult = w.processOneProbeChunk(probeSideResult, joinResult)
-		probeTime += int64(time.Since(start))
+		waitTime := int64(0)
+		ok, waitTime, joinResult = w.processOneProbeChunk(probeSideResult, joinResult)
+		probeTime += int64(time.Since(start)) - waitTime
 		if !ok {
 			break
 		}
@@ -752,7 +767,7 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	if e.stats != nil {
 		start := time.Now()
 		defer func() {
-			e.stats.fetchAndBuildHashTable = time.Since(start)
+			e.stats.fetchAndBuildHashTable = int64(time.Since(start))
 		}()
 	}
 
@@ -865,11 +880,19 @@ type buildTask struct {
 
 // buildHashTableForList builds hash table from `list`.
 func (w *BuildWorker) buildHashTable(taskCh chan *buildTask) error {
+	cost := int64(0)
+	defer func() {
+		if w.HashJoinCtx.stats != nil {
+			atomic.AddInt64(&w.HashJoinCtx.stats.buildHashTable, cost)
+			setMaxValue(&w.HashJoinCtx.stats.maxBuildHashTable, cost)
+		}
+	}()
 	for task := range taskCh {
+		start := time.Now()
 		partIdx, segStartIdx, segEndIdx := task.partitionIdx, task.segStartIdx, task.segEndIdx
 		w.HashJoinCtx.joinHashTable.tables[partIdx].build(segStartIdx, segEndIdx)
+		cost += int64(time.Since(start))
 	}
-
 	return nil
 }
 
@@ -937,12 +960,28 @@ func (e *joinRuntimeStats) Clone() execdetails.RuntimeStats {
 }
 
 type hashJoinRuntimeStats struct {
-	fetchAndBuildHashTable time.Duration
+	fetchAndBuildHashTable int64
+	partitionData          int64
+	maxPartitionData       int64
+	buildHashTable         int64
+	maxBuildHashTable      int64
 	hashStat               hashStatistic
 	fetchAndProbe          int64
 	probe                  int64
 	concurrent             int
 	maxFetchAndProbe       int64
+}
+
+func setMaxValue(addr *int64, currentValue int64) {
+	for {
+		value := atomic.LoadInt64(addr)
+		if currentValue <= value {
+			return
+		}
+		if atomic.CompareAndSwapInt64(addr, value, currentValue) {
+			return
+		}
+	}
 }
 
 func (e *hashJoinRuntimeStats) setMaxFetchAndProbeTime(t int64) {
@@ -965,12 +1004,20 @@ func (*hashJoinRuntimeStats) Tp() int {
 func (e *hashJoinRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 128))
 	if e.fetchAndBuildHashTable > 0 {
-		buf.WriteString("build_hash_table:{total:")
-		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable))
+		buf.WriteString("build_hash_table:{concurrency:")
+		buf.WriteString(strconv.Itoa(e.concurrent))
+		buf.WriteString(", total:")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndBuildHashTable)))
 		buf.WriteString(", fetch:")
-		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable - e.hashStat.buildTableElapse))
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndBuildHashTable - e.buildHashTable - e.partitionData)))
+		buf.WriteString(", partition:")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.partitionData)))
+		buf.WriteString(", max partition:")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxPartitionData)))
 		buf.WriteString(", build:")
-		buf.WriteString(execdetails.FormatDuration(e.hashStat.buildTableElapse))
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.buildHashTable)))
+		buf.WriteString(", max build:")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.maxBuildHashTable)))
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {
@@ -982,7 +1029,7 @@ func (e *hashJoinRuntimeStats) String() string {
 		buf.WriteString(execdetails.FormatDuration(time.Duration(atomic.LoadInt64(&e.maxFetchAndProbe))))
 		buf.WriteString(", probe:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.probe)))
-		buf.WriteString(", fetch:")
+		buf.WriteString(", fetch and wait:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe - e.probe)))
 		if e.hashStat.probeCollision > 0 {
 			buf.WriteString(", probe_collision:")
@@ -996,6 +1043,10 @@ func (e *hashJoinRuntimeStats) String() string {
 func (e *hashJoinRuntimeStats) Clone() execdetails.RuntimeStats {
 	return &hashJoinRuntimeStats{
 		fetchAndBuildHashTable: e.fetchAndBuildHashTable,
+		partitionData:          e.partitionData,
+		maxPartitionData:       e.maxPartitionData,
+		buildHashTable:         e.buildHashTable,
+		maxBuildHashTable:      e.maxBuildHashTable,
 		hashStat:               e.hashStat,
 		fetchAndProbe:          e.fetchAndProbe,
 		probe:                  e.probe,
@@ -1010,6 +1061,14 @@ func (e *hashJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 		return
 	}
 	e.fetchAndBuildHashTable += tmp.fetchAndBuildHashTable
+	e.buildHashTable += tmp.buildHashTable
+	if e.maxBuildHashTable < tmp.maxBuildHashTable {
+		e.maxBuildHashTable = tmp.maxBuildHashTable
+	}
+	e.partitionData += tmp.partitionData
+	if e.maxPartitionData < tmp.maxPartitionData {
+		e.maxPartitionData = tmp.maxPartitionData
+	}
 	e.hashStat.buildTableElapse += tmp.hashStat.buildTableElapse
 	e.hashStat.probeCollision += tmp.hashStat.probeCollision
 	e.fetchAndProbe += tmp.fetchAndProbe
