@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/lightning/config"
+	lightning "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -81,7 +81,7 @@ type litBackendCtx struct {
 	jobID    int64
 	backend  *local.Backend
 	ctx      context.Context
-	cfg      *config.Config
+	cfg      *lightning.Config
 	sysVars  map[string]string
 	diskRoot DiskRoot
 	done     bool
@@ -128,7 +128,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 		SQLMode: mysql.ModeStrictAllTables,
 		SysVars: bc.sysVars,
 		IndexID: indexID,
-	}, config.ErrorOnDup)
+	}, lightning.ErrorOnDup)
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
 
@@ -160,7 +160,7 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 			SQLMode: mysql.ModeStrictAllTables,
 			SysVars: bc.sysVars,
 			IndexID: ei.indexID,
-		}, config.ErrorOnDup)
+		}, lightning.ErrorOnDup)
 		return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 	}
 	return nil
@@ -242,8 +242,8 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 
 	ei.closedEngine = backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
 
-	regionSplitSize := int64(config.SplitRegionSize) * int64(config.MaxSplitRegionSizeRatio)
-	regionSplitKeys := int64(config.SplitRegionKeys)
+	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
+	regionSplitKeys := int64(lightning.SplitRegionKeys)
 	if err := ei.closedEngine.Import(bc.ctx, regionSplitSize, regionSplitKeys); err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrIngestDataErr, zap.Int64("index ID", ei.indexID),
 			zap.String("usage info", bc.diskRoot.UsageInfo()))

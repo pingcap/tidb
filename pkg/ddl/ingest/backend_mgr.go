@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	local2 "github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -158,7 +158,7 @@ func createLocalBackend(
 	ctx context.Context,
 	cfg *litConfig,
 	pdSvcDiscovery pd.ServiceDiscovery,
-) (*local2.Backend, error) {
+) (*local.Backend, error) {
 	tls, err := cfg.lightning.ToTLS()
 	if err != nil {
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Error(err))
@@ -169,13 +169,13 @@ func createLocalBackend(
 	// We disable the switch TiKV mode feature for now,
 	// because the impact is not fully tested.
 	var raftKV2SwitchModeDuration time.Duration
-	backendConfig := local2.NewBackendConfig(cfg.lightning, int(LitRLimit), cfg.keyspaceName, cfg.resourceGroup, kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
-	return local2.NewBackend(ctx, tls, backendConfig, pdSvcDiscovery)
+	backendConfig := local.NewBackendConfig(cfg.lightning, int(LitRLimit), cfg.keyspaceName, cfg.resourceGroup, kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
+	return local.NewBackend(ctx, tls, backendConfig, pdSvcDiscovery)
 }
 
 const checkpointUpdateInterval = 10 * time.Minute
 
-func newBackendContext(ctx context.Context, jobID int64, be *local2.Backend, cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot, etcdClient *clientv3.Client) *litBackendCtx {
+func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot, etcdClient *clientv3.Client) *litBackendCtx {
 	bCtx := &litBackendCtx{
 		SyncMap:        generic.NewSyncMap[int64, *engineInfo](10),
 		MemRoot:        memRoot,
@@ -221,7 +221,7 @@ func (m *litBackendCtxMgr) TotalDiskUsage() uint64 {
 	for _, key := range m.Keys() {
 		bc, exists := m.SyncMap.Load(key)
 		if exists {
-			_, _, bcDiskUsed, _ := local2.CheckDiskQuota(bc.backend, math.MaxInt64)
+			_, _, bcDiskUsed, _ := local.CheckDiskQuota(bc.backend, math.MaxInt64)
 			totalDiskUsed += uint64(bcDiskUsed)
 		}
 	}

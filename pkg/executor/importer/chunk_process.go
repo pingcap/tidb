@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	kv2 "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -77,7 +77,7 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 			err = nil
 			return
 		default:
-			err = common2.ErrEncodeKV.Wrap(err).GenWithStackByArgs(filename, currOffset)
+			err = common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(filename, currOffset)
 			return
 		}
 		lastRow := parser.LastRow()
@@ -115,11 +115,11 @@ func queryRowEncodeReader(rowCh <-chan QueryRow) encodeReaderFn {
 }
 
 type encodedKVGroupBatch struct {
-	dataKVs  []common2.KvPair
-	indexKVs map[int64][]common2.KvPair // indexID -> pairs
+	dataKVs  []common.KvPair
+	indexKVs map[int64][]common.KvPair // indexID -> pairs
 
-	bytesBuf *kv2.BytesBuf
-	memBuf   *kv2.MemBuf
+	bytesBuf *kv.BytesBuf
+	memBuf   *kv.MemBuf
 
 	groupChecksum *verify.KVGroupChecksum
 }
@@ -136,13 +136,13 @@ func (b *encodedKVGroupBatch) reset() {
 
 func newEncodedKVGroupBatch(keyspace []byte) *encodedKVGroupBatch {
 	return &encodedKVGroupBatch{
-		indexKVs:      make(map[int64][]common2.KvPair, 8),
+		indexKVs:      make(map[int64][]common.KvPair, 8),
 		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(keyspace),
 	}
 }
 
 // add must be called with `kvs` from the same session for a encodedKVGroupBatch.
-func (b *encodedKVGroupBatch) add(kvs *kv2.Pairs) error {
+func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 	for _, pair := range kvs.Pairs {
 		if tablecodec.IsRecordKey(pair.Key) {
 			b.dataKVs = append(b.dataKVs, pair)
@@ -209,7 +209,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		encodedBytesCounter, encodedRowsCounter prometheus.Counter
 		readDur, encodeDur                      time.Duration
 		rowCount                                int
-		rowBatch                                = make([]*kv2.Pairs, 0, MinDeliverRowCnt)
+		rowBatch                                = make([]*kv.Pairs, 0, MinDeliverRowCnt)
 		rowBatchByteSize                        uint64
 		currOffset                              int64
 	)
@@ -258,7 +258,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 
 		// the ownership of rowBatch is transferred to the receiver of sendFn, we should
 		// not touch it anymore.
-		rowBatch = make([]*kv2.Pairs, 0, MinDeliverRowCnt)
+		rowBatch = make([]*kv.Pairs, 0, MinDeliverRowCnt)
 		rowBatchByteSize = 0
 		rowCount = 0
 		readDur = 0
@@ -283,7 +283,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		data.resetFn()
 		if encodeErr != nil {
 			// todo: record and ignore encode error if user set max-errors param
-			return common2.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkName, data.endOffset)
+			return common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkName, data.endOffset)
 		}
 		encodeDur += time.Since(encodeDurStart)
 
@@ -451,14 +451,14 @@ func (p *dataDeliver) deliverLoop(ctx context.Context) error {
 			defer p.diskQuotaLock.RUnlock()
 
 			start := time.Now()
-			if err := p.dataWriter.AppendRows(ctx, nil, kv2.MakeRowsFromKvPairs(kvBatch.dataKVs)); err != nil {
-				if !common2.IsContextCanceledError(err) {
+			if err := p.dataWriter.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvBatch.dataKVs)); err != nil {
+				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to data engine failed", log.ShortError(err))
 				}
 				return errors.Trace(err)
 			}
-			if err := p.indexWriter.AppendRows(ctx, nil, kv2.GroupedPairs(kvBatch.indexKVs)); err != nil {
-				if !common2.IsContextCanceledError(err) {
+			if err := p.indexWriter.AppendRows(ctx, nil, kv.GroupedPairs(kvBatch.indexKVs)); err != nil {
+				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to index engine failed", log.ShortError(err))
 				}
 				return errors.Trace(err)
@@ -555,7 +555,7 @@ func NewIndexRouteWriter(logger *zap.Logger, writerFactory func(int64) *external
 
 // AppendRows implements backend.EngineWriter interface.
 func (w *IndexRouteWriter) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
-	groupedKvs, ok := rows.(kv2.GroupedPairs)
+	groupedKvs, ok := rows.(kv.GroupedPairs)
 	if !ok {
 		return errors.Errorf("invalid kv pairs type for IndexRouteWriter: %T", rows)
 	}

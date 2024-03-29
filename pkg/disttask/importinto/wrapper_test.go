@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,13 +28,13 @@ func TestChunkConvert(t *testing.T) {
 			Path:   "a.csv",
 			Offset: 11,
 		},
-		FileMeta: mydump2.SourceFileMeta{
+		FileMeta: mydump.SourceFileMeta{
 			Path:        "a.csv",
 			FileSize:    123,
-			Type:        mydump2.SourceTypeCSV,
-			Compression: mydump2.CompressionGZ,
+			Type:        mydump.SourceTypeCSV,
+			Compression: mydump.CompressionGZ,
 		},
-		Chunk: mydump2.Chunk{
+		Chunk: mydump.Chunk{
 			PrevRowIDMax: 33,
 			RowIDMax:     789,
 			Offset:       11,

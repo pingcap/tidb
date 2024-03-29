@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	external2 "github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -40,7 +40,7 @@ type mergeSortExecutor struct {
 	cloudStoreURI string
 
 	mu                  sync.Mutex
-	subtaskSortedKVMeta *external2.SortedKVMeta
+	subtaskSortedKVMeta *external.SortedKVMeta
 }
 
 func newMergeSortExecutor(
@@ -72,8 +72,8 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	m.subtaskSortedKVMeta = &external2.SortedKVMeta{}
-	onClose := func(summary *external2.WriterSummary) {
+	m.subtaskSortedKVMeta = &external.SortedKVMeta{}
+	onClose := func(summary *external.WriterSummary) {
 		m.mu.Lock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 		m.mu.Unlock()
@@ -94,13 +94,13 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	return external2.MergeOverlappingFiles(
+	return external.MergeOverlappingFiles(
 		ctx,
 		sm.DataFiles,
 		store,
 		int64(partSize),
 		prefix,
-		external2.DefaultBlockSize,
+		external.DefaultBlockSize,
 		onClose,
 		int(variable.GetDDLReorgWorkerCounter()), true)
 }
@@ -116,7 +116,7 @@ func (m *mergeSortExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 	if err != nil {
 		return err
 	}
-	sm.MetaGroups = []*external2.SortedKVMeta{m.subtaskSortedKVMeta}
+	sm.MetaGroups = []*external.SortedKVMeta{m.subtaskSortedKVMeta}
 	m.subtaskSortedKVMeta = nil
 	newMeta, err := json.Marshal(sm)
 	if err != nil {

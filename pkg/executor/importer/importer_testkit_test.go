@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -299,8 +299,8 @@ func TestProcessChunkWith(t *testing.T) {
 	keyspace := store.GetCodec().GetKeyspace()
 	t.Run("file chunk", func(t *testing.T) {
 		chunkInfo := &checkpoints.ChunkCheckpoint{
-			FileMeta: mydump2.SourceFileMeta{Type: mydump2.SourceTypeCSV, Path: "test.csv"},
-			Chunk:    mydump2.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
+			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
 		ti := getTableImporter(ctx, t, store, "t", fileName, []*plannercore.LoadDataOpt{
 			{Name: "skip_rows", Value: expression.NewInt64Const(1)}})
@@ -319,8 +319,8 @@ func TestProcessChunkWith(t *testing.T) {
 
 	t.Run("query chunk", func(t *testing.T) {
 		chunkInfo := &checkpoints.ChunkCheckpoint{
-			FileMeta: mydump2.SourceFileMeta{Type: mydump2.SourceTypeCSV, Path: "test.csv"},
-			Chunk:    mydump2.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
+			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
 		ti := getTableImporter(ctx, t, store, "t", "", nil)
 		defer ti.Backend().CloseEngineMgr()

@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
-	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -202,8 +202,8 @@ func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
 		return errors.New("load local data, reader is nil")
 	}
 
-	compressTp := mydump2.ParseCompressionOnFileExtension(e.GetInfilePath())
-	compressTp2, err := mydump2.ToStorageCompressType(compressTp)
+	compressTp := mydump.ParseCompressionOnFileExtension(e.GetInfilePath())
+	compressTp2, err := mydump.ToStorageCompressType(compressTp)
 	if err != nil {
 		return err
 	}
@@ -390,7 +390,7 @@ func (w *encodeWorker) processStream(
 // all data is read.
 func (w *encodeWorker) processOneStream(
 	ctx context.Context,
-	parser mydump2.Parser,
+	parser mydump.Parser,
 	outCh chan<- commitTask,
 ) (err error) {
 	defer func() {
@@ -445,7 +445,7 @@ func (w *encodeWorker) resetBatch() {
 // batch is full it will also return nil.
 // The result rows are saved in w.rows and update some members, caller can check
 // if curBatchCnt == 0 to know if reached EOF.
-func (w *encodeWorker) readOneBatchRows(ctx context.Context, parser mydump2.Parser) error {
+func (w *encodeWorker) readOneBatchRows(ctx context.Context, parser mydump.Parser) error {
 	for {
 		if err := parser.ReadRow(); err != nil {
 			if errors.Cause(err) == io.EOF {
@@ -686,7 +686,7 @@ func (e *LoadDataWorker) GetController() *importer.LoadDataController {
 }
 
 // TestLoadLocal is a helper function for unit test.
-func (e *LoadDataWorker) TestLoadLocal(parser mydump2.Parser) error {
+func (e *LoadDataWorker) TestLoadLocal(parser mydump.Parser) error {
 	if err := ResetContextOfStmt(e.UserSctx, &ast.LoadDataStmt{}); err != nil {
 		return err
 	}

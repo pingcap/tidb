@@ -24,7 +24,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -151,7 +151,7 @@ func (ei *engineInfo) ImportAndClean() error {
 		err := ei.closedEngine.Import(ei.ctx, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 		if err != nil {
 			logLevel := zap.ErrorLevel
-			if common2.ErrFoundDuplicateKeys.Equal(err) {
+			if common.ErrFoundDuplicateKeys.Equal(err) {
 				logLevel = zap.WarnLevel
 			}
 			logutil.Logger(ei.ctx).Log(logLevel, LitErrIngestDataErr, zap.Error(err),
@@ -244,7 +244,7 @@ func (ei *engineInfo) closeWriters() error {
 
 // WriteRow Write one row into local writer buffer.
 func (wCtx *writerContext) WriteRow(ctx context.Context, key, idxVal []byte, handle tidbkv.Handle) error {
-	kvs := make([]common2.KvPair, 1)
+	kvs := make([]common.KvPair, 1)
 	kvs[0].Key = key
 	kvs[0].Val = idxVal
 	if handle != nil {
