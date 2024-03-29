@@ -91,7 +91,7 @@ require (
 	github.com/pingcap/tipb v0.0.0-20240318032315-55a7867ddd50
 	github.com/prometheus/client_golang v1.19.0
 	github.com/prometheus/client_model v0.6.0
-	github.com/prometheus/common v0.51.0
+	github.com/prometheus/common v0.51.1
 	github.com/prometheus/prometheus v0.50.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sasha-s/go-deadlock v0.3.1
