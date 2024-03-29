@@ -379,6 +379,11 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 			}
 			err = fn(resp)
 			if err != nil {
+				failpoint.Inject("stop-retry-on-get-config-from-tikv", func(val failpoint.Value) {
+					if val.(bool) {
+						failpoint.Return(nil)
+					}
+				})
 				return err
 			}
 			_ = resp.Body.Close()
