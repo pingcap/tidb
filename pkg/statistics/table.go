@@ -218,15 +218,15 @@ type HistColl struct {
 	// Note that Column use UniqueID as the key while Indices use the index ID in the metadata.
 	Columns map[int64]*Column
 	Indices map[int64]*Index
-	// Idx2ColumnIDs maps the index id to its column UniqueIDs. It's used to calculate the selectivity in planner.
-	Idx2ColumnIDs map[int64][]int64
-	// ColID2IdxIDs maps the column UniqueID to a list index ids whose first column is it.
+	// Idx2ColUniqueIDs maps the index id to its column UniqueIDs. It's used to calculate the selectivity in planner.
+	Idx2ColUniqueIDs map[int64][]int64
+	// ColUniqueID2IdxIDs maps the column UniqueID to a list index ids whose first column is it.
 	// It's used to calculate the selectivity in planner.
-	ColID2IdxIDs map[int64][]int64
+	ColUniqueID2IdxIDs map[int64][]int64
 	// UniqueID2colInfoID maps the column UniqueID to its ID in the metadata.
 	UniqueID2colInfoID map[int64]int64
 	// MVIdx2Columns maps the index id to its columns by expression.Column.
-	// For normal index, the column id is enough, as we already have in Idx2ColumnIDs. But currently, mv index needs more
+	// For normal index, the column id is enough, as we already have in Idx2ColUniqueIDs. But currently, mv index needs more
 	// information to match the filter against the mv index columns, and we need this map to provide this information.
 	MVIdx2Columns map[int64][]*expression.Column
 	PhysicalID    int64
@@ -804,7 +804,7 @@ func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 	return newColl
 }
 
-// GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxIDs and IdxID2ColIDs is built from the given parameter.
+// GenerateHistCollFromColumnInfo generates a new HistColl whose ColUniqueID2IdxIDs and Idx2ColUniqueIDs is built from the given parameter.
 func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
 	colInfoID2UniqueID := make(map[int64]int64, len(columns))
@@ -866,8 +866,8 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		ModifyCount:        coll.ModifyCount,
 		Columns:            newColHistMap,
 		Indices:            newIdxHistMap,
-		ColID2IdxIDs:       colID2IdxIDs,
-		Idx2ColumnIDs:      idx2Columns,
+		ColUniqueID2IdxIDs: colID2IdxIDs,
+		Idx2ColUniqueIDs:   idx2Columns,
 		UniqueID2colInfoID: uniqueID2colInfoID,
 		MVIdx2Columns:      mvIdx2Columns,
 	}

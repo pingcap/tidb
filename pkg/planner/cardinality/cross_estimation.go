@@ -152,7 +152,7 @@ func crossEstimateRowCount(sctx context.PlanContext,
 		return 0, err == nil, corr
 	}
 	idxID := int64(-1)
-	idxIDs, idxExists := dsStatsInfo.HistColl.ColID2IdxIDs[colID]
+	idxIDs, idxExists := dsStatsInfo.HistColl.ColUniqueID2IdxIDs[colID]
 	if idxExists && len(idxIDs) > 0 {
 		idxID = idxIDs[0]
 	}

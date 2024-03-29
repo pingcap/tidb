@@ -170,7 +170,7 @@ func getIndexRowCountForStatsV1(sctx context.PlanContext, coll *statistics.HistC
 			}
 			var count float64
 			var err error
-			colIDs := coll.Idx2ColumnIDs[idxID]
+			colIDs := coll.Idx2ColUniqueIDs[idxID]
 			var colID int64
 			if rangePosition >= len(colIDs) {
 				colID = -1
@@ -178,7 +178,7 @@ func getIndexRowCountForStatsV1(sctx context.PlanContext, coll *statistics.HistC
 				colID = colIDs[rangePosition]
 			}
 			// prefer index stats over column stats
-			if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok && len(idxIDs) > 0 {
+			if idxIDs, ok := coll.ColUniqueID2IdxIDs[colID]; ok && len(idxIDs) > 0 {
 				idxID := idxIDs[0]
 				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang})
 			} else {
@@ -422,7 +422,7 @@ func expBackoffEstimation(sctx context.PlanContext, idx *statistics.Index, coll 
 			Collators: make([]collate.Collator, 1),
 		},
 	}
-	colsIDs := coll.Idx2ColumnIDs[idx.Histogram.ID]
+	colsIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
 	singleColumnEstResults := make([]float64, 0, len(indexRange.LowVal))
 	// The following codes uses Exponential Backoff to reduce the impact of independent assumption. It works like:
 	//   1. Calc the selectivity of each column.
@@ -449,7 +449,7 @@ func expBackoffEstimation(sctx context.PlanContext, idx *statistics.Index, coll 
 			count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
 			selectivity = count / float64(coll.RealtimeCount)
 		}
-		if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok && !foundStats && len(indexRange.LowVal) > 1 {
+		if idxIDs, ok := coll.ColUniqueID2IdxIDs[colID]; ok && !foundStats && len(indexRange.LowVal) > 1 {
 			// Note the `len(indexRange.LowVal) > 1` condition here, it means we only recursively call
 			// `GetRowCountByIndexRanges()` when the input `indexRange` is a multi-column range. This
 			// check avoids infinite recursion.
