@@ -1955,6 +1955,10 @@ func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.Che
 	return local.targetInfoGetter.CheckRequirements(ctx, checkCtx)
 }
 
+func (local *local) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	return local.targetInfoGetter.FetchRemoteDBModels(ctx)
+}
+
 func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	return local.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
 }
