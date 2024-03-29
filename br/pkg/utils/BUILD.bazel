@@ -94,7 +94,11 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 38,
+=======
+    shard_count = 32,
+>>>>>>> 8bba8261b0c (log backup: fix the issue that paused service safepoint not removed (#52106))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",
