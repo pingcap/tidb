@@ -22,6 +22,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// Task represents the range of the table for loading stats.
 type Task struct {
 	StartTid int64
 	EndTid   int64
@@ -60,6 +61,7 @@ func (ls *Worker) loadStats() {
 	}
 }
 
+// SendTask sends a task to the load stats worker.
 func (ls *Worker) SendTask(task Task) {
 	ls.taskChan <- task
 }
