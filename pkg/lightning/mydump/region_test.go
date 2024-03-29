@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	. "github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	config2 "github.com/pingcap/tidb/pkg/lightning/config"
 	. "github.com/pingcap/tidb/pkg/lightning/mydump"

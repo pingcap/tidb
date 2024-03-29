@@ -30,7 +30,7 @@ echo "INSERT INTO tbl (j, i) VALUES (3, 1),(4, 2);" > "$DBPATH/cp_tsr.tbl.sql"
 PKG="github.com/pingcap/tidb/lightning/pkg/importer"
 export GO_FAILPOINTS="$PKG/SlowDownWriteRows=sleep(1000);$PKG/FailAfterWriteRows=panic;$PKG/SetMinDeliverBytes=return(1)"
 # Check after 1 row is written in tidb backend, the finished progress is updated
-export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/br/pkg/lightning/PrintStatus=return()"
+export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/lightning/pkg/server/PrintStatus=return()"
 
 # Start importing the tables.
 run_sql 'DROP DATABASE IF EXISTS cp_tsr'
@@ -47,7 +47,7 @@ grep "PrintStatus Failpoint" "$TEST_DIR/lightning.log" | grep -q "finished=36"
 
 # restart lightning from checkpoint, the second line should be written successfully
 # also check after restart from checkpoint, final finished equals to total
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/PrintStatus=return()"
+export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/server/PrintStatus=return()"
 set +e
 run_lightning -d "$DBPATH" --backend tidb --enable-checkpoint=1 2> /dev/null
 set -e

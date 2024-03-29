@@ -86,10 +86,10 @@ func TestConnect(t *testing.T) {
 	plainPsw := "dQAUoDiyb1ucWZk7"
 
 	require.NoError(t, failpoint.Enable(
-		"github.com/pingcap/tidb/br/pkg/lightning/common/MustMySQLPassword",
+		"github.com/pingcap/tidb/pkg/lightning/common/MustMySQLPassword",
 		fmt.Sprintf("return(\"%s\")", plainPsw)))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/MustMySQLPassword"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/common/MustMySQLPassword"))
 	}()
 
 	param := common.MySQLConnectParam{

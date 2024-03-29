@@ -1386,7 +1386,7 @@ func TestCharsetConversion(t *testing.T) {
 	runTestCasesCSV(t, &cfg, 1, testCases)
 }
 
-// Run `go test github.com/pingcap/br/pkg/lightning/mydump -check.b -check.bmem -test.v` to get benchmark result.
+// Run `go test github.com/pingcap/pkg/lightning/mydump -check.b -check.bmem -test.v` to get benchmark result.
 // Please ensure your temporary storage has (c.N / 2) KiB of free space.
 
 type benchCSVParserSuite struct {

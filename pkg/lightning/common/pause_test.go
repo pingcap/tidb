@@ -125,7 +125,7 @@ func TestPause(t *testing.T) {
 	assertUnblocksBetween(t, &wg, 500*time.Millisecond, 800*time.Millisecond)
 }
 
-// Run `go test github.com/pingcap/tidb/br/pkg/lightning/common -check.b -test.v` to get benchmark result.
+// Run `go test github.com/pingcap/tidb/pkg/lightning/common -check.b -test.v` to get benchmark result.
 func BenchmarkWaitNoOp(b *testing.B) {
 	p := common.NewPauser()
 	ctx := context.Background()

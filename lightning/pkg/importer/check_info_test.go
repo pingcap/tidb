@@ -603,10 +603,10 @@ func TestLocalResource(t *testing.T) {
 	mockStore, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
 
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/common/GetStorageSize", "return(2048)")
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize", "return(2048)")
 	require.NoError(t, err)
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/GetStorageSize")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize")
 	}()
 
 	cfg := config2.NewConfig()

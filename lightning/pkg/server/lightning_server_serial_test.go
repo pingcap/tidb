@@ -64,9 +64,9 @@ func createSuite(t *testing.T) *lightningServerSuite {
 	s.lightning.ctx = context.WithValue(s.lightning.ctx, taskCfgRecorderKey, s.taskCfgCh)
 	_ = s.lightning.GoServe()
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/SkipRunTask", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/server/SkipRunTask", "return"))
 	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/SkipRunTask"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/server/SkipRunTask"))
 		s.lightning.Stop()
 	})
 

@@ -701,7 +701,7 @@ func SetUpTest(b *testing.B) *benchSQL2KVSuite {
 	return s
 }
 
-// BenchmarkSQL2KV Run `go test -benchmem -run=^$ -bench ^BenchmarkSQL2KV$ github.com/pingcap/tidb/br/pkg/lightning/backend/kv` to get benchmark result.
+// BenchmarkSQL2KV Run `go test -benchmem -run=^$ -bench ^BenchmarkSQL2KV$ github.com/pingcap/tidb/pkg/lightning/backend/kv` to get benchmark result.
 func BenchmarkSQL2KV(b *testing.B) {
 	s := SetUpTest(b)
 	for i := 0; i < b.N; i++ {

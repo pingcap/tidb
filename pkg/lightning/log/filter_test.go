@@ -44,7 +44,7 @@ func TestFilter(t *testing.T) {
 // BenchmarkFilterStringsContains-16     	16693887	        66.68 ns/op
 // BenchmarkFilterRegexMatchString-16    	 2350828	       510.6 ns/op
 //
-// Run `go test -run='^$' -bench=. -v github.com/pingcap/tidb/br/pkg/lightning/log` to get benchmark result.
+// Run `go test -run='^$' -bench=. -v github.com/pingcap/tidb/pkg/lightning/log` to get benchmark result.
 func BenchmarkFilterStringsContains(b *testing.B) {
 	b.ResetTimer()
 

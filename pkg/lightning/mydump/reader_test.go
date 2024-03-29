@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	. "github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	mockstorage "github.com/pingcap/tidb/br/pkg/mock/storage"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	. "github.com/pingcap/tidb/pkg/lightning/mydump"

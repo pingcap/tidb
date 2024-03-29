@@ -164,24 +164,24 @@ func TestCheckSystemRequirement(t *testing.T) {
 		},
 	}
 
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue", "return(139415)")
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/GetRlimitValue", "return(139415)")
 	require.NoError(t, err)
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/SetRlimitError", "return(true)")
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/SetRlimitError", "return(true)")
 	require.NoError(t, err)
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/SetRlimitError")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/SetRlimitError")
 	}()
 	// with this dbMetas, the estimated fds will be 139416, so should return error
 	err = checkSystemRequirement(cfg, dbMetas)
 	require.Error(t, err)
 
-	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue")
+	err = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/GetRlimitValue")
 	require.NoError(t, err)
 
 	// the min rlimit should be not smaller than the default min value (139416)
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue", "return(139416)")
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/GetRlimitValue", "return(139416)")
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/GetRlimitValue")
 	}()
 	require.NoError(t, err)
 	err = checkSystemRequirement(cfg, dbMetas)

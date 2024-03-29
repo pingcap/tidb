@@ -198,10 +198,10 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	multiStats := make([]MultipleFilesStat, 0, 100)
 	randomSize := (rand.Intn(500) + 1) * 1000
 
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/mockRangesGroupSize",
+	failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/external/mockRangesGroupSize",
 		"return("+strconv.Itoa(randomSize)+")")
 	t.Cleanup(func() {
-		failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/mockRangesGroupSize")
+		failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/external/mockRangesGroupSize")
 	})
 	datas := make([]string, 0, 100)
 	stats := make([]string, 0, 100)

@@ -377,7 +377,7 @@ func (p *PreImportInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Conte
 				sleepMilliSeconds = defaultMilliSeconds
 			}
 			//nolint: errcheck
-			failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/tidb/FetchRemoteTableModels_BeforeFetchTableAutoIDInfos", fmt.Sprintf("sleep(%d)", sleepMilliSeconds))
+			failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/tidb/FetchRemoteTableModels_BeforeFetchTableAutoIDInfos", fmt.Sprintf("sleep(%d)", sleepMilliSeconds))
 		},
 	)
 	currentTableInfosFromDB, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName)

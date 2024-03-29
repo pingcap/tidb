@@ -1088,9 +1088,9 @@ func TestMultiIngest(t *testing.T) {
 
 func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	bak := Backend{}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
 	}()
 	jobCh := make(chan *regionJob, 1)
 	jobCh <- &regionJob{}
@@ -1890,11 +1890,11 @@ func TestDoImport(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
 	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs")
 	})
 
 	// test that
@@ -2137,11 +2137,11 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
 	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs")
 	})
 
 	// test that job need rescan when ingest
@@ -2203,15 +2203,15 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/beforeGenerateJob", "sleep(1000)")
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/beforeGenerateJob", "sleep(1000)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
 	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs")
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/beforeGenerateJob")
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/fakeRegionJobs")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/beforeGenerateJob")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
 	})
 
 	initRanges := []common2.Range{
@@ -2260,15 +2260,15 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 		maxRetryBackoffSecond = backup
 	})
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/sendDummyJob", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockGetFirstAndLastKey", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/sendDummyJob", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/mockGetFirstAndLastKey", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
 	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/sendDummyJob")
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockGetFirstAndLastKey")
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/sendDummyJob")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/mockGetFirstAndLastKey")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
 	})
 
 	initRanges := []common2.Range{
@@ -2291,15 +2291,15 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 }
 
 func TestExternalEngine(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipStartWorker", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/injectVariables", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
 	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipStartWorker")
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/injectVariables")
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/LoadIngestDataBatchSize")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize")
 	})
 	ctx := context.Background()
 	dir := t.TempDir()

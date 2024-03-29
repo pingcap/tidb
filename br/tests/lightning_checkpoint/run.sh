@@ -97,7 +97,7 @@ run_sql 'DROP DATABASE IF EXISTS cppk_tsr'
 run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_test_cppk'
 run_sql 'DROP DATABASE IF EXISTS `tidb_lightning_checkpoint_test_cppk.1357924680.bak`'
 
-export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/SetTaskID=return(1357924680);github.com/pingcap/tidb/lightning/pkg/importer/FailIfIndexEngineImported=return(1)"
+export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS;github.com/pingcap/tidb/lightning/pkg/server/SetTaskID=return(1357924680);github.com/pingcap/tidb/lightning/pkg/importer/FailIfIndexEngineImported=return(1)"
 
 set +e
 for i in $(seq "$TABLE_COUNT"); do

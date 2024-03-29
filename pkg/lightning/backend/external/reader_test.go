@@ -136,8 +136,8 @@ func TestReadLargeFile(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, datas, 1)
 
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/assertReloadAtMostOnce", "return()")
-	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/assertReloadAtMostOnce")
+	failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/external/assertReloadAtMostOnce", "return()")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/external/assertReloadAtMostOnce")
 
 	smallBlockBufPool := membuf.NewPool(
 		membuf.WithBlockNum(0),

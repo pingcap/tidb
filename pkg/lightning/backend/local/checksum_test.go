@@ -12,7 +12,6 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	. "github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	. "github.com/pingcap/tidb/pkg/lightning/checkpoints"
