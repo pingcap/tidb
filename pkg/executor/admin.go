@@ -273,7 +273,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, err
 	}
-	builder.KeyRanges = kv.NewNonParitionedKeyRanges(keyRanges)
+	builder.KeyRanges = kv.NewNonPartitionedKeyRanges(keyRanges)
 	kvReq, err := builder.
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
