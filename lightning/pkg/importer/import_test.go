@@ -25,11 +25,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/ddl"
-	checkpoints2 "github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
-	log2 "github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -54,7 +54,7 @@ func TestNewTableRestore(t *testing.T) {
 	p := parser.New()
 	se := tmock.NewContext()
 
-	dbInfo := &checkpoints2.TidbDBInfo{Name: "mockdb", Tables: map[string]*checkpoints2.TidbTableInfo{}}
+	dbInfo := &checkpoints.TidbDBInfo{Name: "mockdb", Tables: map[string]*checkpoints.TidbTableInfo{}}
 	for i, tc := range testCases {
 		node, err := p.ParseOneStmt(tc.createStmt, "utf8mb4", "utf8mb4_bin")
 		require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestNewTableRestore(t *testing.T) {
 		require.NoError(t, err)
 		tableInfo.State = model.StatePublic
 
-		dbInfo.Tables[tc.name] = &checkpoints2.TidbTableInfo{
+		dbInfo.Tables[tc.name] = &checkpoints.TidbTableInfo{
 			Name: tc.name,
 			DB:   dbInfo.Name,
 			Core: tableInfo,
@@ -72,33 +72,33 @@ func TestNewTableRestore(t *testing.T) {
 	for _, tc := range testCases {
 		tableInfo := dbInfo.Tables[tc.name]
 		tableName := common.UniqueTable("mockdb", tableInfo.Name)
-		tr, err := NewTableImporter(tableName, nil, dbInfo, tableInfo, &checkpoints2.TableCheckpoint{}, nil, nil, nil, log2.L())
+		tr, err := NewTableImporter(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 		require.NotNil(t, tr)
 		require.NoError(t, err)
 	}
 }
 
 func TestNewTableRestoreFailure(t *testing.T) {
-	tableInfo := &checkpoints2.TidbTableInfo{
+	tableInfo := &checkpoints.TidbTableInfo{
 		Name: "failure",
 		DB:   "mockdb",
 		Core: &model.TableInfo{},
 	}
-	dbInfo := &checkpoints2.TidbDBInfo{Name: "mockdb", Tables: map[string]*checkpoints2.TidbTableInfo{
+	dbInfo := &checkpoints.TidbDBInfo{Name: "mockdb", Tables: map[string]*checkpoints.TidbTableInfo{
 		"failure": tableInfo,
 	}}
 	tableName := common.UniqueTable("mockdb", "failure")
 
-	_, err := NewTableImporter(tableName, nil, dbInfo, tableInfo, &checkpoints2.TableCheckpoint{}, nil, nil, nil, log2.L())
+	_, err := NewTableImporter(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 	require.Regexp(t, `failed to tables\.TableFromMeta.*`, err.Error())
 }
 
 func TestErrorSummaries(t *testing.T) {
-	logger, buffer := log2.MakeTestLogger()
+	logger, buffer := log.MakeTestLogger()
 
 	es := makeErrorSummaries(logger)
-	es.record("first", errors.New("a1 error"), checkpoints2.CheckpointStatusAnalyzed)
-	es.record("second", errors.New("b2 error"), checkpoints2.CheckpointStatusAllWritten)
+	es.record("first", errors.New("a1 error"), checkpoints.CheckpointStatusAnalyzed)
+	es.record("second", errors.New("b2 error"), checkpoints.CheckpointStatusAllWritten)
 	es.emitLog()
 
 	lines := buffer.Lines()
@@ -113,7 +113,7 @@ func TestErrorSummaries(t *testing.T) {
 func TestVerifyCheckpoint(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
-	cpdb, err := checkpoints2.NewFileCheckpointsDB(ctx, filepath.Join(dir, "cp.pb"))
+	cpdb, err := checkpoints.NewFileCheckpointsDB(ctx, filepath.Join(dir, "cp.pb"))
 	require.NoError(t, err)
 	defer cpdb.Close()
 	actualReleaseVersion := build.ReleaseVersion
@@ -137,7 +137,7 @@ func TestVerifyCheckpoint(t *testing.T) {
 		return cfg
 	}
 
-	err = cpdb.Initialize(ctx, newCfg(), map[string]*checkpoints2.TidbDBInfo{})
+	err = cpdb.Initialize(ctx, newCfg(), map[string]*checkpoints.TidbDBInfo{})
 	require.NoError(t, err)
 
 	adjustFuncs := map[string]func(cfg *config.Config){
@@ -181,7 +181,7 @@ func TestVerifyCheckpoint(t *testing.T) {
 		cfg := newCfg()
 		cfg.App.CheckRequirements = false
 		fn(cfg)
-		err := cpdb.Initialize(context.Background(), cfg, map[string]*checkpoints2.TidbDBInfo{})
+		err := cpdb.Initialize(context.Background(), cfg, map[string]*checkpoints.TidbDBInfo{})
 		require.NoError(t, err)
 	}
 }
@@ -196,10 +196,10 @@ func (b failMetaMgrBuilder) Init(context.Context) error {
 }
 
 type panicCheckpointDB struct {
-	checkpoints2.DB
+	checkpoints.DB
 }
 
-func (cp panicCheckpointDB) Initialize(context.Context, *config.Config, map[string]*checkpoints2.TidbDBInfo) error {
+func (cp panicCheckpointDB) Initialize(context.Context, *config.Config, map[string]*checkpoints.TidbDBInfo) error {
 	panic("should not reach here")
 }
 
@@ -229,7 +229,7 @@ func TestPreCheckFailed(t *testing.T) {
 		metaMgrBuilder:      failMetaMgrBuilder{},
 		checkTemplate:       NewSimpleTemplate(),
 		db:                  db,
-		errorMgr:            errormanager.New(nil, cfg, log2.L()),
+		errorMgr:            errormanager.New(nil, cfg, log.L()),
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: theCheckBuilder,
 	}
@@ -279,15 +279,15 @@ func TestAddExtendDataForCheckpoint(t *testing.T) {
 		},
 	}
 
-	cp := &checkpoints2.TableCheckpoint{
-		Engines: map[int32]*checkpoints2.EngineCheckpoint{
+	cp := &checkpoints.TableCheckpoint{
+		Engines: map[int32]*checkpoints.EngineCheckpoint{
 			-1: {
-				Status: checkpoints2.CheckpointStatusLoaded,
-				Chunks: []*checkpoints2.ChunkCheckpoint{},
+				Status: checkpoints.CheckpointStatusLoaded,
+				Chunks: []*checkpoints.ChunkCheckpoint{},
 			},
 			0: {
-				Status: checkpoints2.CheckpointStatusImported,
-				Chunks: []*checkpoints2.ChunkCheckpoint{{
+				Status: checkpoints.CheckpointStatusImported,
+				Chunks: []*checkpoints.ChunkCheckpoint{{
 					FileMeta: mydump.SourceFileMeta{
 						Path: "tmp/test_1.t1.000000000.sql",
 					},

@@ -26,14 +26,14 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	kv2 "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
-	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -50,7 +50,7 @@ import (
 // for local backend it encodes and writes KV to local disk
 // for tidb backend it transforms data into sql and executes them.
 type chunkProcessor struct {
-	parser mydump2.Parser
+	parser mydump.Parser
 	index  int
 	chunk  *checkpoints.ChunkCheckpoint
 }
@@ -82,30 +82,30 @@ func openParser(
 	ioWorkers *worker.Pool,
 	store storage.ExternalStorage,
 	tblInfo *model.TableInfo,
-) (mydump2.Parser, error) {
+) (mydump.Parser, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
-	reader, err := mydump2.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
 	if err != nil {
 		return nil, err
 	}
 
-	var parser mydump2.Parser
+	var parser mydump.Parser
 	switch chunk.FileMeta.Type {
-	case mydump2.SourceTypeCSV:
+	case mydump.SourceTypeCSV:
 		hasHeader := cfg.Mydumper.CSV.Header && chunk.Chunk.Offset == 0
 		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
-		charsetConvertor, err := mydump2.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
+		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
 		if err != nil {
 			return nil, err
 		}
-		parser, err = mydump2.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader, charsetConvertor)
+		parser, err = mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
 			return nil, err
 		}
-	case mydump2.SourceTypeSQL:
-		parser = mydump2.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
-	case mydump2.SourceTypeParquet:
-		parser, err = mydump2.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
+	case mydump.SourceTypeSQL:
+		parser = mydump.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
+	case mydump.SourceTypeParquet:
+		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
 		if err != nil {
 			return nil, err
 		}
@@ -113,13 +113,13 @@ func openParser(
 		return nil, errors.Errorf("file '%s' with unknown source type '%s'", chunk.Key.Path, chunk.FileMeta.Type.String())
 	}
 
-	if chunk.FileMeta.Compression == mydump2.CompressionNone {
+	if chunk.FileMeta.Compression == mydump.CompressionNone {
 		if err = parser.SetPos(chunk.Chunk.Offset, chunk.Chunk.PrevRowIDMax); err != nil {
 			_ = parser.Close()
 			return nil, err
 		}
 	} else {
-		if err = mydump2.ReadUntil(parser, chunk.Chunk.Offset); err != nil {
+		if err = mydump.ReadUntil(parser, chunk.Chunk.Offset); err != nil {
 			_ = parser.Close()
 			return nil, err
 		}
@@ -344,7 +344,7 @@ func (cr *chunkProcessor) encodeLoop(
 			err = cr.parser.ReadRow()
 			columnNames := cr.parser.Columns()
 			newOffset, rowID = cr.parser.Pos()
-			if cr.chunk.FileMeta.Compression != mydump2.CompressionNone || cr.chunk.FileMeta.Type == mydump2.SourceTypeParquet {
+			if cr.chunk.FileMeta.Compression != mydump.CompressionNone || cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
 				newScannedOffset, scannedOffsetErr = cr.parser.ScannedPos()
 				if scannedOffsetErr != nil {
 					logger.Warn("fail to get data engine ScannedPos, progress may not be accurate",
@@ -382,14 +382,14 @@ func (cr *chunkProcessor) encodeLoop(
 					initializedColumns = true
 
 					if dupIgnoreRowsIter != nil {
-						dupIgnoreRowsIter.Seek(common2.EncodeIntRowID(lastRow.RowID))
+						dupIgnoreRowsIter.Seek(common.EncodeIntRowID(lastRow.RowID))
 					}
 				}
 			case io.EOF:
 				reachEOF = true
 				break outLoop
 			default:
-				err = common2.ErrEncodeKV.Wrap(err).GenWithStackByArgs(&cr.chunk.Key, newOffset)
+				err = common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(&cr.chunk.Key, newOffset)
 				return
 			}
 			readDur += time.Since(readDurStart)
@@ -399,7 +399,7 @@ func (cr *chunkProcessor) encodeLoop(
 
 			// Skip duplicated rows.
 			if dupIgnoreRowsIter != nil {
-				rowIDKey := common2.EncodeIntRowID(lastRow.RowID)
+				rowIDKey := common.EncodeIntRowID(lastRow.RowID)
 				isDupIgnored := false
 			dupDetectLoop:
 				for dupIgnoreRowsIter.Valid() {
@@ -461,7 +461,7 @@ func (cr *chunkProcessor) encodeLoop(
 				rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
 				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
 				if encodeErr != nil {
-					err = common2.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(&cr.chunk.Key, newOffset)
+					err = common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(&cr.chunk.Key, newOffset)
 				}
 				hasIgnoredEncodeErr = true
 			}
@@ -494,7 +494,7 @@ func (cr *chunkProcessor) encodeLoop(
 		if m, ok := metric.FromContext(ctx); ok {
 			m.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
 			m.RowReadSecondsHistogram.Observe(readDur.Seconds())
-			if cr.chunk.FileMeta.Type == mydump2.SourceTypeParquet {
+			if cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
 				m.RowReadBytesHistogram.Observe(float64(newScannedOffset - scannedOffset))
 			} else {
 				m.RowReadBytesHistogram.Observe(float64(newOffset - offset))
@@ -521,7 +521,7 @@ func (cr *chunkProcessor) encodeLoop(
 // If the index is not found (which is not expected), an empty string will be returned.
 func (cr *chunkProcessor) getDuplicateMessage(
 	kvEncoder encode.Encoder,
-	lastRow mydump2.Row,
+	lastRow mydump.Row,
 	lastOffset int64,
 	encodedIdxID []byte,
 	tableInfo *model.TableInfo,
@@ -537,7 +537,7 @@ func (cr *chunkProcessor) getDuplicateMessage(
 	}
 
 	if idxID == conflictOnHandle {
-		for _, kv := range kvs.(*kv2.Pairs).Pairs {
+		for _, kv := range kvs.(*kv.Pairs).Pairs {
 			if tablecodec.IsRecordKey(kv.Key) {
 				dupErr := txn.ExtractKeyExistsErrFromHandle(kv.Key, kv.Val, tableInfo)
 				return dupErr.Error()
@@ -548,7 +548,7 @@ func (cr *chunkProcessor) getDuplicateMessage(
 			zap.String("file", cr.chunk.FileMeta.Path),
 			zap.Any("row", lastRow.Row))
 	} else {
-		for _, kv := range kvs.(*kv2.Pairs).Pairs {
+		for _, kv := range kvs.(*kv.Pairs).Pairs {
 			_, decodedIdxID, isRecordKey, err := tablecodec.DecodeKeyHead(kv.Key)
 			if err != nil {
 				return err.Error()
@@ -655,14 +655,14 @@ func (cr *chunkProcessor) deliverLoop(
 			start := time.Now()
 
 			if err = dataEngine.AppendRows(ctx, columns, dataKVs); err != nil {
-				if !common2.IsContextCanceledError(err) {
+				if !common.IsContextCanceledError(err) {
 					deliverLogger.Error("write to data engine failed", log.ShortError(err))
 				}
 
 				return errors.Trace(err)
 			}
 			if err = indexEngine.AppendRows(ctx, columns, indexKVs); err != nil {
-				if !common2.IsContextCanceledError(err) {
+				if !common.IsContextCanceledError(err) {
 					deliverLogger.Error("write to index engine failed", log.ShortError(err))
 				}
 				return errors.Trace(err)
@@ -704,14 +704,14 @@ func (cr *chunkProcessor) deliverLoop(
 			// but we met it one time, but cannot reproduce it now, we add this check to make code more robust
 			// TODO: reproduce and find the root cause and fix it completely
 			var lowOffset, highOffset int64
-			if cr.chunk.FileMeta.Compression != mydump2.CompressionNone {
+			if cr.chunk.FileMeta.Compression != mydump.CompressionNone {
 				lowOffset, highOffset = startRealOffset, currRealOffset
 			} else {
 				lowOffset, highOffset = startOffset, currOffset
 			}
 			delta := highOffset - lowOffset
 			if delta >= 0 {
-				if cr.chunk.FileMeta.Type == mydump2.SourceTypeParquet {
+				if cr.chunk.FileMeta.Type == mydump.SourceTypeParquet {
 					if currRealOffset > startRealOffset {
 						m.BytesCounter.WithLabelValues(metric.StateRestored).Add(float64(currRealOffset - startRealOffset))
 					}

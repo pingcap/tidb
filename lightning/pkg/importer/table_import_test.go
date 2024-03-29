@@ -40,16 +40,16 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	kv2 "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/backend/tidb"
-	checkpoints2 "github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
-	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
-	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -76,12 +76,12 @@ const (
 
 type tableRestoreSuiteBase struct {
 	tr  *TableImporter
-	cfg *config2.Config
+	cfg *config.Config
 
-	tableInfo  *checkpoints2.TidbTableInfo
-	dbInfo     *checkpoints2.TidbDBInfo
-	tableMeta  *mydump2.MDTableMeta
-	tableMeta2 *mydump2.MDTableMeta
+	tableInfo  *checkpoints.TidbTableInfo
+	dbInfo     *checkpoints.TidbDBInfo
+	tableMeta  *mydump.MDTableMeta
+	tableMeta2 *mydump.MDTableMeta
 
 	store storage.ExternalStorage
 }
@@ -122,10 +122,10 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 )
 `, tiflashReplica2)
 
-	s.tableInfo = &checkpoints2.TidbTableInfo{Name: "table", DB: "db", Core: core}
-	s.dbInfo = &checkpoints2.TidbDBInfo{
+	s.tableInfo = &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
+	s.dbInfo = &checkpoints.TidbDBInfo{
 		Name: "db",
-		Tables: map[string]*checkpoints2.TidbTableInfo{
+		Tables: map[string]*checkpoints.TidbTableInfo{
 			"table":  s.tableInfo,
 			"table2": {Name: "table2", DB: "db", Core: core2},
 		},
@@ -140,17 +140,17 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 	fakeDataFilesCount := 6
 	fakeDataFilesContent := []byte("INSERT INTO `table` VALUES (1, 2, 3);")
 	require.Equal(t, 37, len(fakeDataFilesContent))
-	fakeDataFiles := make([]mydump2.FileInfo, 0, fakeDataFilesCount)
+	fakeDataFiles := make([]mydump.FileInfo, 0, fakeDataFilesCount)
 	for i := 1; i <= fakeDataFilesCount; i++ {
 		fakeFileName := fmt.Sprintf("db.table.%d.sql", i)
 		fakeDataPath := filepath.Join(fakeDataDir, fakeFileName)
 		err = os.WriteFile(fakeDataPath, fakeDataFilesContent, 0o644)
 		require.NoError(t, err)
-		fakeDataFiles = append(fakeDataFiles, mydump2.FileInfo{
+		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
 			TableName: filter.Table{Schema: "db", Name: "table"},
-			FileMeta: mydump2.SourceFileMeta{
+			FileMeta: mydump.SourceFileMeta{
 				Path:     fakeFileName,
-				Type:     mydump2.SourceTypeSQL,
+				Type:     mydump.SourceTypeSQL,
 				SortKey:  strconv.Itoa(i),
 				FileSize: 37,
 				RealSize: 37,
@@ -162,40 +162,40 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 	csvName := "db.table.99.csv"
 	err = os.WriteFile(filepath.Join(fakeDataDir, csvName), fakeCsvContent, 0o644)
 	require.NoError(t, err)
-	fakeDataFiles = append(fakeDataFiles, mydump2.FileInfo{
+	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
 		TableName: filter.Table{Schema: "db", Name: "table"},
-		FileMeta: mydump2.SourceFileMeta{
+		FileMeta: mydump.SourceFileMeta{
 			Path:     csvName,
-			Type:     mydump2.SourceTypeCSV,
+			Type:     mydump.SourceTypeCSV,
 			SortKey:  "99",
 			FileSize: 14,
 			RealSize: 14,
 		},
 	})
 
-	s.tableMeta = &mydump2.MDTableMeta{
+	s.tableMeta = &mydump.MDTableMeta{
 		DB:        "db",
 		Name:      "table",
 		TotalSize: tblSize,
-		SchemaFile: mydump2.FileInfo{
+		SchemaFile: mydump.FileInfo{
 			TableName: filter.Table{Schema: "db", Name: "table"},
-			FileMeta: mydump2.SourceFileMeta{
+			FileMeta: mydump.SourceFileMeta{
 				Path: "db.table-schema.sql",
-				Type: mydump2.SourceTypeTableSchema,
+				Type: mydump.SourceTypeTableSchema,
 			},
 		},
 		DataFiles: fakeDataFiles,
 	}
 
-	s.tableMeta2 = &mydump2.MDTableMeta{
+	s.tableMeta2 = &mydump.MDTableMeta{
 		DB:        "db",
 		Name:      "table2",
 		TotalSize: tblSize,
-		SchemaFile: mydump2.FileInfo{
+		SchemaFile: mydump.FileInfo{
 			TableName: filter.Table{Schema: "db", Name: "table"},
-			FileMeta: mydump2.SourceFileMeta{
+			FileMeta: mydump.SourceFileMeta{
 				Path: "db.table-schema.sql",
-				Type: mydump2.SourceTypeTableSchema,
+				Type: mydump.SourceTypeTableSchema,
 			},
 		},
 		DataFiles: fakeDataFiles,
@@ -205,10 +205,10 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 func (s *tableRestoreSuiteBase) setupTest(t *testing.T) {
 	// Collect into the test TableImporter structure
 	var err error
-	s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints2.TableCheckpoint{}, nil, nil, nil, log.L())
+	s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 	require.NoError(t, err)
 
-	s.cfg = config2.NewConfig()
+	s.cfg = config.NewConfig()
 	s.cfg.Mydumper.BatchSize = 111
 	s.cfg.App.TableConcurrency = 2
 }
@@ -236,25 +236,25 @@ func (s *tableRestoreSuite) TestPopulateChunks() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp")
 	}()
 
-	cp := &checkpoints2.TableCheckpoint{
-		Engines: make(map[int32]*checkpoints2.EngineCheckpoint),
+	cp := &checkpoints.TableCheckpoint{
+		Engines: make(map[int32]*checkpoints.EngineCheckpoint),
 	}
 
 	rc := &Controller{cfg: s.cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: s.store}
 	err := s.tr.populateChunks(context.Background(), rc, cp)
 	require.NoError(s.T(), err)
 	//nolint:dupl // false positive.
-	require.Equal(s.T(), map[int32]*checkpoints2.EngineCheckpoint{
+	require.Equal(s.T(), map[int32]*checkpoints.EngineCheckpoint{
 		-1: {
-			Status: checkpoints2.CheckpointStatusLoaded,
+			Status: checkpoints.CheckpointStatusLoaded,
 		},
 		0: {
-			Status: checkpoints2.CheckpointStatusLoaded,
-			Chunks: []*checkpoints2.ChunkCheckpoint{
+			Status: checkpoints.CheckpointStatusLoaded,
+			Chunks: []*checkpoints.ChunkCheckpoint{
 				{
-					Key:      checkpoints2.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[0].FileMeta.Path, Offset: 0},
+					Key:      checkpoints.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[0].FileMeta.Path, Offset: 0},
 					FileMeta: s.tr.tableMeta.DataFiles[0].FileMeta,
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
 						PrevRowIDMax: 0,
@@ -263,9 +263,9 @@ func (s *tableRestoreSuite) TestPopulateChunks() {
 					Timestamp: 1234567897,
 				},
 				{
-					Key:      checkpoints2.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[1].FileMeta.Path, Offset: 0},
+					Key:      checkpoints.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[1].FileMeta.Path, Offset: 0},
 					FileMeta: s.tr.tableMeta.DataFiles[1].FileMeta,
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
 						PrevRowIDMax: 7,
@@ -274,9 +274,9 @@ func (s *tableRestoreSuite) TestPopulateChunks() {
 					Timestamp: 1234567897,
 				},
 				{
-					Key:      checkpoints2.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[2].FileMeta.Path, Offset: 0},
+					Key:      checkpoints.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[2].FileMeta.Path, Offset: 0},
 					FileMeta: s.tr.tableMeta.DataFiles[2].FileMeta,
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
 						PrevRowIDMax: 14,
@@ -287,12 +287,12 @@ func (s *tableRestoreSuite) TestPopulateChunks() {
 			},
 		},
 		1: {
-			Status: checkpoints2.CheckpointStatusLoaded,
-			Chunks: []*checkpoints2.ChunkCheckpoint{
+			Status: checkpoints.CheckpointStatusLoaded,
+			Chunks: []*checkpoints.ChunkCheckpoint{
 				{
-					Key:      checkpoints2.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[3].FileMeta.Path, Offset: 0},
+					Key:      checkpoints.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[3].FileMeta.Path, Offset: 0},
 					FileMeta: s.tr.tableMeta.DataFiles[3].FileMeta,
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
 						PrevRowIDMax: 21,
@@ -301,9 +301,9 @@ func (s *tableRestoreSuite) TestPopulateChunks() {
 					Timestamp: 1234567897,
 				},
 				{
-					Key:      checkpoints2.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[4].FileMeta.Path, Offset: 0},
+					Key:      checkpoints.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[4].FileMeta.Path, Offset: 0},
 					FileMeta: s.tr.tableMeta.DataFiles[4].FileMeta,
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
 						PrevRowIDMax: 28,
@@ -312,9 +312,9 @@ func (s *tableRestoreSuite) TestPopulateChunks() {
 					Timestamp: 1234567897,
 				},
 				{
-					Key:      checkpoints2.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[5].FileMeta.Path, Offset: 0},
+					Key:      checkpoints.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[5].FileMeta.Path, Offset: 0},
 					FileMeta: s.tr.tableMeta.DataFiles[5].FileMeta,
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    37,
 						PrevRowIDMax: 35,
@@ -325,12 +325,12 @@ func (s *tableRestoreSuite) TestPopulateChunks() {
 			},
 		},
 		2: {
-			Status: checkpoints2.CheckpointStatusLoaded,
-			Chunks: []*checkpoints2.ChunkCheckpoint{
+			Status: checkpoints.CheckpointStatusLoaded,
+			Chunks: []*checkpoints.ChunkCheckpoint{
 				{
-					Key:      checkpoints2.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[6].FileMeta.Path, Offset: 0},
+					Key:      checkpoints.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[6].FileMeta.Path, Offset: 0},
 					FileMeta: s.tr.tableMeta.DataFiles[6].FileMeta,
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    14,
 						PrevRowIDMax: 42,
@@ -395,8 +395,8 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 		}
 	}()
 
-	cp := &checkpoints2.TableCheckpoint{
-		Engines: make(map[int32]*checkpoints2.EngineCheckpoint),
+	cp := &checkpoints.TableCheckpoint{
+		Engines: make(map[int32]*checkpoints.EngineCheckpoint),
 	}
 	err := s.tr.populateChunks(ctx, rc, cp)
 	require.NoError(s.T(), err)
@@ -408,7 +408,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	mockEngineWriter.EXPECT().IsSynced().Return(true).AnyTimes()
 	mockEngineWriter.EXPECT().Close(gomock.Any()).Return(mockChunkFlushStatus, nil).AnyTimes()
 
-	tbl, err := tables.TableFromMeta(kv2.NewPanickingAllocators(0), s.tableInfo.Core)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), s.tableInfo.Core)
 	require.NoError(s.T(), err)
 	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
 	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
@@ -459,7 +459,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 	store, err := storage.NewLocalStorage(fakeDataDir)
 	require.NoError(s.T(), err)
 
-	fakeDataFiles := make([]mydump2.FileInfo, 0)
+	fakeDataFiles := make([]mydump.FileInfo, 0)
 
 	fakeCsvContents := []string{
 		// small full header
@@ -478,17 +478,17 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 		csvName := fmt.Sprintf("db.table.%02d.csv", i)
 		err := os.WriteFile(filepath.Join(fakeDataDir, csvName), []byte(str), 0o644)
 		require.NoError(s.T(), err)
-		fakeDataFiles = append(fakeDataFiles, mydump2.FileInfo{
+		fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
 			TableName: filter.Table{Schema: "db", Name: "table"},
-			FileMeta:  mydump2.SourceFileMeta{Path: csvName, Type: mydump2.SourceTypeCSV, SortKey: fmt.Sprintf("%02d", i), FileSize: int64(len(str)), RealSize: int64(len(str))},
+			FileMeta:  mydump.SourceFileMeta{Path: csvName, Type: mydump.SourceTypeCSV, SortKey: fmt.Sprintf("%02d", i), FileSize: int64(len(str)), RealSize: int64(len(str))},
 		})
 		total += len(str)
 	}
-	tableMeta := &mydump2.MDTableMeta{
+	tableMeta := &mydump.MDTableMeta{
 		DB:         "db",
 		Name:       "table",
 		TotalSize:  int64(total),
-		SchemaFile: mydump2.FileInfo{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: mydump2.SourceFileMeta{Path: "db.table-schema.sql", Type: mydump2.SourceTypeTableSchema}},
+		SchemaFile: mydump.FileInfo{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: mydump.SourceFileMeta{Path: "db.table-schema.sql", Type: mydump.SourceTypeTableSchema}},
 		DataFiles:  fakeDataFiles,
 	}
 
@@ -497,11 +497,11 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/PopulateChunkTimestamp")
 	}()
 
-	cp := &checkpoints2.TableCheckpoint{
-		Engines: make(map[int32]*checkpoints2.EngineCheckpoint),
+	cp := &checkpoints.TableCheckpoint{
+		Engines: make(map[int32]*checkpoints.EngineCheckpoint),
 	}
 
-	cfg := config2.NewConfig()
+	cfg := config.NewConfig()
 	cfg.Mydumper.BatchSize = 100
 	cfg.Mydumper.MaxRegionSize = 40
 
@@ -510,21 +510,21 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 	cfg.Mydumper.StrictFormat = true
 	rc := &Controller{cfg: cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: store}
 
-	tr, err := NewTableImporter("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints2.TableCheckpoint{}, nil, nil, nil, log.L())
+	tr, err := NewTableImporter("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), tr.populateChunks(context.Background(), rc, cp))
 
-	require.Equal(s.T(), map[int32]*checkpoints2.EngineCheckpoint{
+	require.Equal(s.T(), map[int32]*checkpoints.EngineCheckpoint{
 		-1: {
-			Status: checkpoints2.CheckpointStatusLoaded,
+			Status: checkpoints.CheckpointStatusLoaded,
 		},
 		0: {
-			Status: checkpoints2.CheckpointStatusLoaded,
-			Chunks: []*checkpoints2.ChunkCheckpoint{
+			Status: checkpoints.CheckpointStatusLoaded,
+			Chunks: []*checkpoints.ChunkCheckpoint{
 				{
-					Key:      checkpoints2.ChunkCheckpointKey{Path: tableMeta.DataFiles[0].FileMeta.Path, Offset: 0},
+					Key:      checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[0].FileMeta.Path, Offset: 0},
 					FileMeta: tableMeta.DataFiles[0].FileMeta,
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    14,
 						PrevRowIDMax: 0,
@@ -533,9 +533,9 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Timestamp: 1234567897,
 				},
 				{
-					Key:      checkpoints2.ChunkCheckpointKey{Path: tableMeta.DataFiles[1].FileMeta.Path, Offset: 0},
+					Key:      checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[1].FileMeta.Path, Offset: 0},
 					FileMeta: tableMeta.DataFiles[1].FileMeta,
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       0,
 						EndOffset:    10,
 						PrevRowIDMax: 4,
@@ -544,10 +544,10 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Timestamp: 1234567897,
 				},
 				{
-					Key:               checkpoints2.ChunkCheckpointKey{Path: tableMeta.DataFiles[2].FileMeta.Path, Offset: 6},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[2].FileMeta.Path, Offset: 6},
 					FileMeta:          tableMeta.DataFiles[2].FileMeta,
 					ColumnPermutation: []int{0, 1, 2, -1},
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       6,
 						EndOffset:    52,
 						PrevRowIDMax: 7,
@@ -558,10 +558,10 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Timestamp: 1234567897,
 				},
 				{
-					Key:               checkpoints2.ChunkCheckpointKey{Path: tableMeta.DataFiles[2].FileMeta.Path, Offset: 52},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[2].FileMeta.Path, Offset: 52},
 					FileMeta:          tableMeta.DataFiles[2].FileMeta,
 					ColumnPermutation: []int{0, 1, 2, -1},
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       52,
 						EndOffset:    60,
 						PrevRowIDMax: 20,
@@ -571,10 +571,10 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Timestamp: 1234567897,
 				},
 				{
-					Key:               checkpoints2.ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 6},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 6},
 					FileMeta:          tableMeta.DataFiles[3].FileMeta,
 					ColumnPermutation: []int{1, 2, 0, -1},
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       6,
 						EndOffset:    48,
 						PrevRowIDMax: 22,
@@ -586,13 +586,13 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 			},
 		},
 		1: {
-			Status: checkpoints2.CheckpointStatusLoaded,
-			Chunks: []*checkpoints2.ChunkCheckpoint{
+			Status: checkpoints.CheckpointStatusLoaded,
+			Chunks: []*checkpoints.ChunkCheckpoint{
 				{
-					Key:               checkpoints2.ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 48},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 48},
 					FileMeta:          tableMeta.DataFiles[3].FileMeta,
 					ColumnPermutation: []int{1, 2, 0, -1},
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       48,
 						EndOffset:    101,
 						PrevRowIDMax: 35,
@@ -602,10 +602,10 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Timestamp: 1234567897,
 				},
 				{
-					Key:               checkpoints2.ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 101},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[3].FileMeta.Path, Offset: 101},
 					FileMeta:          tableMeta.DataFiles[3].FileMeta,
 					ColumnPermutation: []int{1, 2, 0, -1},
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       101,
 						EndOffset:    102,
 						PrevRowIDMax: 48,
@@ -615,10 +615,10 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 					Timestamp: 1234567897,
 				},
 				{
-					Key:               checkpoints2.ChunkCheckpointKey{Path: tableMeta.DataFiles[4].FileMeta.Path, Offset: 4},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[4].FileMeta.Path, Offset: 4},
 					FileMeta:          tableMeta.DataFiles[4].FileMeta,
 					ColumnPermutation: []int{-1, 0, 1, -1},
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       4,
 						EndOffset:    59,
 						PrevRowIDMax: 48,
@@ -630,13 +630,13 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 			},
 		},
 		2: {
-			Status: checkpoints2.CheckpointStatusLoaded,
-			Chunks: []*checkpoints2.ChunkCheckpoint{
+			Status: checkpoints.CheckpointStatusLoaded,
+			Chunks: []*checkpoints.ChunkCheckpoint{
 				{
-					Key:               checkpoints2.ChunkCheckpointKey{Path: tableMeta.DataFiles[4].FileMeta.Path, Offset: 59},
+					Key:               checkpoints.ChunkCheckpointKey{Path: tableMeta.DataFiles[4].FileMeta.Path, Offset: 59},
 					FileMeta:          tableMeta.DataFiles[4].FileMeta,
 					ColumnPermutation: []int{-1, 0, 1, -1},
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       59,
 						EndOffset:    60,
 						PrevRowIDMax: 61,
@@ -651,7 +651,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 }
 
 func (s *tableRestoreSuite) TestInitializeColumns() {
-	ccp := &checkpoints2.ChunkCheckpoint{}
+	ccp := &checkpoints.ChunkCheckpoint{}
 
 	defer func() {
 		s.tr.ignoreColumns = nil
@@ -760,10 +760,10 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 		core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
 		require.NoError(s.T(), err)
 		core.State = model.StatePublic
-		tableInfo := &checkpoints2.TidbTableInfo{Name: "table", DB: "db", Core: core}
-		s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints2.TableCheckpoint{}, nil, nil, nil, log.L())
+		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
+		s.tr, err = NewTableImporter("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, nil, log.L())
 		require.NoError(s.T(), err)
-		ccp := &checkpoints2.ChunkCheckpoint{}
+		ccp := &checkpoints.ChunkCheckpoint{}
 
 		err = s.tr.initializeColumns(testCase.columns, ccp)
 		require.NoError(s.T(), err)
@@ -863,7 +863,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess() {
 	importer := backend.MakeEngineManager(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
-	rc := &Controller{saveCpCh: chptCh, cfg: config2.NewConfig()}
+	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
 	go func() {
 		for scp := range chptCh {
 			if scp.waitCh != nil {
@@ -898,7 +898,7 @@ func (s *tableRestoreSuite) TestImportKVFailure() {
 	importer := backend.MakeEngineManager(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
-	rc := &Controller{saveCpCh: chptCh, cfg: config2.NewConfig()}
+	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
 	go func() {
 		for scp := range chptCh {
 			if scp.waitCh != nil {
@@ -936,7 +936,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	ctx := metric.WithMetric(context.Background(), metrics)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
-	cfg := config2.NewConfig()
+	cfg := config.NewConfig()
 	cfg.Mydumper.BatchSize = 1
 
 	cfg.Checkpoint.Enable = false
@@ -947,18 +947,18 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 
 	cfg.Mydumper.SourceDir = "."
 	cfg.Mydumper.CSV.Header = false
-	cfg.TikvImporter.Backend = config2.BackendTiDB
+	cfg.TikvImporter.Backend = config.BackendTiDB
 	tls, err := cfg.ToTLS()
 	require.NoError(s.T(), err)
 
 	err = cfg.Adjust(ctx)
 	require.NoError(s.T(), err)
 
-	cpDB := checkpoints2.NewNullCheckpointsDB()
-	dbMetas := []*mydump2.MDDatabaseMeta{
+	cpDB := checkpoints.NewNullCheckpointsDB()
+	dbMetas := []*mydump.MDDatabaseMeta{
 		{
 			Name:   s.tableInfo.DB,
-			Tables: []*mydump2.MDTableMeta{s.tableMeta},
+			Tables: []*mydump.MDTableMeta{s.tableMeta},
 		},
 	}
 	ioWorkers := worker.NewPool(ctx, 5, "io")
@@ -973,7 +973,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		ioWorkers:        ioWorkers,
 	}
 	preInfoGetter.Init()
-	dbInfos := map[string]*checkpoints2.TidbDBInfo{
+	dbInfos := map[string]*checkpoints.TidbDBInfo{
 		s.tableInfo.DB: s.dbInfo,
 	}
 	mockChunkFlushStatus := mock.NewMockChunkFlushStatus(controller)
@@ -1051,38 +1051,38 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importer/SlowDownCheckpointUpdate")
 	}()
 
-	web.BroadcastInitProgress([]*mydump2.MDDatabaseMeta{{
+	web.BroadcastInitProgress([]*mydump.MDDatabaseMeta{{
 		Name:   "test",
-		Tables: []*mydump2.MDTableMeta{{DB: "test", Name: "tbl"}},
+		Tables: []*mydump.MDTableMeta{{DB: "test", Name: "tbl"}},
 	}})
-	web.BroadcastTableCheckpoint(common2.UniqueTable("test", "tbl"), &checkpoints2.TableCheckpoint{})
+	web.BroadcastTableCheckpoint(common.UniqueTable("test", "tbl"), &checkpoints.TableCheckpoint{})
 
 	saveCpCh := make(chan saveCp)
 
 	rc := &Controller{
 		saveCpCh:      saveCpCh,
-		checkpointsDB: checkpoints2.NewNullCheckpointsDB(),
+		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
 	}
 	rc.checkpointsWg.Add(1)
 	go rc.listenCheckpointUpdates(log.L())
 
 	rc.errorSummaries = makeErrorSummaries(log.L())
 
-	err := rc.saveStatusCheckpoint(context.Background(), common2.UniqueTable("test", "tbl"), common2.IndexEngineID, errors.New("connection refused"), checkpoints2.CheckpointStatusImported)
+	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), common.IndexEngineID, errors.New("connection refused"), checkpoints.CheckpointStatusImported)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, len(rc.errorSummaries.summary))
 
 	err = rc.saveStatusCheckpoint(
 		context.Background(),
-		common2.UniqueTable("test", "tbl"), common2.IndexEngineID,
-		common2.ErrChecksumMismatch.GenWithStackByArgs(0, 0, 0, 0, 0, 0),
-		checkpoints2.CheckpointStatusImported,
+		common.UniqueTable("test", "tbl"), common.IndexEngineID,
+		common.ErrChecksumMismatch.GenWithStackByArgs(0, 0, 0, 0, 0, 0),
+		checkpoints.CheckpointStatusImported,
 	)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 1, len(rc.errorSummaries.summary))
 
 	start := time.Now()
-	err = rc.saveStatusCheckpoint(context.Background(), common2.UniqueTable("test", "tbl"), common2.IndexEngineID, nil, checkpoints2.CheckpointStatusImported)
+	err = rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), common.IndexEngineID, nil, checkpoints.CheckpointStatusImported)
 	require.NoError(s.T(), err)
 	elapsed := time.Since(start)
 	require.GreaterOrEqual(s.T(), elapsed, time.Millisecond*100)
@@ -1180,7 +1180,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 	for _, ca := range cases {
 		template := NewSimpleTemplate()
 
-		cfg := &config2.Config{}
+		cfg := &config.Config{}
 		cli := &mockPDHTTPCli{
 			storesInfo: ca.mockStoreResponse,
 			replicaCfg: ca.mockReplicaResponse,
@@ -1194,7 +1194,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			targetInfoGetter: targetInfoGetter,
 			srcStorage:       mockStore,
 		}
-		theCheckBuilder := NewPrecheckItemBuilder(cfg, []*mydump2.MDDatabaseMeta{}, preInfoGetter, nil, nil)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, []*mydump.MDDatabaseMeta{}, preInfoGetter, nil, nil)
 		rc := &Controller{
 			cfg:                 cfg,
 			store:               mockStore,
@@ -1318,26 +1318,26 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 	for i, ca := range testCases {
 		template := NewSimpleTemplate()
 
-		cfg := &config2.Config{}
+		cfg := &config.Config{}
 		cli := &mockPDHTTPCli{storesInfo: &ca.stores, emptyRegions: &ca.emptyRegions}
 
 		targetInfoGetter := &TargetInfoGetterImpl{
 			cfg:       cfg,
 			pdHTTPCli: cli,
 		}
-		dbMetas := []*mydump2.MDDatabaseMeta{}
+		dbMetas := []*mydump.MDDatabaseMeta{}
 		preInfoGetter := &PreImportInfoGetterImpl{
 			cfg:              cfg,
 			targetInfoGetter: targetInfoGetter,
 			dbMetas:          dbMetas,
 		}
-		theCheckBuilder := NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, checkpoints2.NewNullCheckpointsDB(), nil)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, checkpoints.NewNullCheckpointsDB(), nil)
 		rc := &Controller{
 			cfg:                 cfg,
 			taskMgr:             mockTaskMetaMgr{},
 			checkTemplate:       template,
 			preInfoGetter:       preInfoGetter,
-			dbInfos:             make(map[string]*checkpoints2.TidbDBInfo),
+			dbInfos:             make(map[string]*checkpoints.TidbDBInfo),
 			precheckItemBuilder: theCheckBuilder,
 			pdHTTPCli:           cli,
 		}
@@ -1360,7 +1360,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 		expectMsg       string
 		expectResult    bool
 		expectWarnCount int
-		dbMetas         []*mydump2.MDDatabaseMeta
+		dbMetas         []*mydump.MDDatabaseMeta
 	}{
 		{
 			true,
@@ -1374,13 +1374,13 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 			"(.*)Source data files size is proper(.*)",
 			true,
 			0,
-			[]*mydump2.MDDatabaseMeta{
+			[]*mydump.MDDatabaseMeta{
 				{
-					Tables: []*mydump2.MDTableMeta{
+					Tables: []*mydump.MDTableMeta{
 						{
-							DataFiles: []mydump2.FileInfo{
+							DataFiles: []mydump.FileInfo{
 								{
-									FileMeta: mydump2.SourceFileMeta{
+									FileMeta: mydump.SourceFileMeta{
 										FileSize: 1 * units.KiB,
 									},
 								},
@@ -1395,13 +1395,13 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 			"(.*)large data file: /testPath file exists(.*)",
 			true,
 			1,
-			[]*mydump2.MDDatabaseMeta{
+			[]*mydump.MDDatabaseMeta{
 				{
-					Tables: []*mydump2.MDTableMeta{
+					Tables: []*mydump.MDTableMeta{
 						{
-							DataFiles: []mydump2.FileInfo{
+							DataFiles: []mydump.FileInfo{
 								{
-									FileMeta: mydump2.SourceFileMeta{
+									FileMeta: mydump.SourceFileMeta{
 										FileSize: 1 * units.TiB,
 										RealSize: 1 * units.TiB,
 										Path:     "/testPath",
@@ -1423,7 +1423,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	defer cancel()
 	for _, ca := range cases {
 		template := NewSimpleTemplate()
-		cfg := &config2.Config{Mydumper: config2.MydumperRuntime{StrictFormat: ca.strictFormat}}
+		cfg := &config.Config{Mydumper: config.MydumperRuntime{StrictFormat: ca.strictFormat}}
 		theCheckBuilder := NewPrecheckItemBuilder(cfg, ca.dbMetas, nil, nil, nil)
 		rc := &Controller{
 			cfg:                 cfg,
@@ -1444,12 +1444,12 @@ func (s *tableRestoreSuite) TestEstimate() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
-	idAlloc := kv2.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
 	require.NoError(s.T(), err)
 
-	mockEncBuilder.EXPECT().MakeEmptyRows().Return(kv2.MakeRowsFromKvPairs(nil)).AnyTimes()
-	mockEncBuilder.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(kv2.NewTableKVEncoder(&encode.EncodingConfig{
+	mockEncBuilder.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
+	mockEncBuilder.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(&encode.EncodingConfig{
 		Table: tbl,
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        s.cfg.TiDB.SQLMode,
@@ -1459,13 +1459,13 @@ func (s *tableRestoreSuite) TestEstimate() {
 		Logger: log.L(),
 	}, nil)).AnyTimes()
 
-	dbMetas := []*mydump2.MDDatabaseMeta{
+	dbMetas := []*mydump.MDDatabaseMeta{
 		{
 			Name:   "db1",
-			Tables: []*mydump2.MDTableMeta{s.tableMeta, s.tableMeta2},
+			Tables: []*mydump.MDTableMeta{s.tableMeta, s.tableMeta2},
 		},
 	}
-	dbInfos := map[string]*checkpoints2.TidbDBInfo{
+	dbInfos := map[string]*checkpoints.TidbDBInfo{
 		"db1": s.dbInfo,
 	}
 	ioWorkers := worker.NewPool(context.Background(), 1, "io")
@@ -1481,7 +1481,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 	}
 	preInfoGetter.Init()
 
-	preInfoGetter.cfg.TikvImporter.Backend = config2.BackendLocal
+	preInfoGetter.cfg.TikvImporter.Backend = config.BackendLocal
 	preInfoGetter.dbInfosCache = dbInfos
 	estimateResult, err := preInfoGetter.EstimateSourceDataSize(ctx)
 	s.Require().NoError(err)
@@ -1492,21 +1492,21 @@ func (s *tableRestoreSuite) TestEstimate() {
 	tiflashExpected := int64(compressionRatio * float64(tblSize) * float64(tiflashReplica1+tiflashReplica2))
 	s.Require().Equal(tiflashExpected, estimateResult.TiFlashSize)
 
-	s.tableMeta.TotalSize = int64(config2.SplitRegionSize)
-	tikvExpected = int64(compressionRatio * float64(config2.SplitRegionSize+tblSize))
+	s.tableMeta.TotalSize = int64(config.SplitRegionSize)
+	tikvExpected = int64(compressionRatio * float64(config.SplitRegionSize+tblSize))
 	estimateResult, err = preInfoGetter.EstimateSourceDataSize(ctx, ropts.ForceReloadCache(true))
 	s.Require().NoError(err)
 	s.Require().Greater(estimateResult.SizeWithIndex, tikvExpected)
-	tiflashExpected = int64(compressionRatio * (float64(config2.SplitRegionSize*tiflashReplica1) + float64(tblSize*tiflashReplica2)))
+	tiflashExpected = int64(compressionRatio * (float64(config.SplitRegionSize*tiflashReplica1) + float64(tblSize*tiflashReplica2)))
 	s.Require().Greater(estimateResult.TiFlashSize, tiflashExpected)
 
 	// tidb backend don't compress
-	preInfoGetter.cfg.TikvImporter.Backend = config2.BackendTiDB
+	preInfoGetter.cfg.TikvImporter.Backend = config.BackendTiDB
 	estimateResult, err = preInfoGetter.EstimateSourceDataSize(ctx, ropts.ForceReloadCache(true))
 	s.Require().NoError(err)
-	tikvExpected = int64((int(config2.SplitRegionSize) + tblSize))
+	tikvExpected = int64((int(config.SplitRegionSize) + tblSize))
 	s.Require().Equal(tikvExpected, estimateResult.SizeWithIndex)
-	tiflashExpected = int64(config2.SplitRegionSize*tiflashReplica1 + tblSize*tiflashReplica2)
+	tiflashExpected = int64(config.SplitRegionSize*tiflashReplica1 + tblSize*tiflashReplica2)
 	s.Require().Equal(tiflashExpected, estimateResult.TiFlashSize)
 }
 
@@ -1530,13 +1530,13 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 	require.NoError(s.T(), err)
 
 	cases := []struct {
-		ignoreColumns []*config2.IgnoreColumns
+		ignoreColumns []*config.IgnoreColumns
 		expectMsg     string
 		// MsgNum == 0 means the check passed.
 		MsgNum    int
 		hasHeader bool
-		dbInfos   map[string]*checkpoints2.TidbDBInfo
-		tableMeta *mydump2.MDTableMeta
+		dbInfos   map[string]*checkpoints.TidbDBInfo
+		tableMeta *mydump.MDTableMeta
 	}{
 		// Case 1:
 		// csv has one column without header.
@@ -1547,10 +1547,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"TiDB schema `db1`.`table1` has 2 columns,and data file has 1 columns, but column colb are missing(.*)",
 			1,
 			false,
-			map[string]*checkpoints2.TidbDBInfo{
+			map[string]*checkpoints.TidbDBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints2.TidbTableInfo{
+					Tables: map[string]*checkpoints.TidbTableInfo{
 						"table1": {
 							ID:   1,
 							DB:   "db1",
@@ -1573,15 +1573,15 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 					},
 				},
 			},
-			&mydump2.MDTableMeta{
+			&mydump.MDTableMeta{
 				DB:   "db1",
 				Name: "table1",
-				DataFiles: []mydump2.FileInfo{
+				DataFiles: []mydump.FileInfo{
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case1File,
-							Type:     mydump2.SourceTypeCSV,
+							Type:     mydump.SourceTypeCSV,
 						},
 					},
 				},
@@ -1596,10 +1596,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"TiDB schema `db1`.`table2` doesn't have column cola,(.*)use tables.ignoreColumns to ignore(.*)",
 			1,
 			true,
-			map[string]*checkpoints2.TidbDBInfo{
+			map[string]*checkpoints.TidbDBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints2.TidbTableInfo{
+					Tables: map[string]*checkpoints.TidbTableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1617,15 +1617,15 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 					},
 				},
 			},
-			&mydump2.MDTableMeta{
+			&mydump.MDTableMeta{
 				DB:   "db1",
 				Name: "table2",
-				DataFiles: []mydump2.FileInfo{
+				DataFiles: []mydump.FileInfo{
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
-							Type:     mydump2.SourceTypeCSV,
+							Type:     mydump.SourceTypeCSV,
 						},
 					},
 				},
@@ -1637,7 +1637,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// we ignore colA by set config tables.IgnoreColumns
 		// we expect the check success.
 		{
-			[]*config2.IgnoreColumns{
+			[]*config.IgnoreColumns{
 				{
 					DB:      "db1",
 					Table:   "table2",
@@ -1647,10 +1647,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"",
 			0,
 			true,
-			map[string]*checkpoints2.TidbDBInfo{
+			map[string]*checkpoints.TidbDBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints2.TidbTableInfo{
+					Tables: map[string]*checkpoints.TidbTableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1668,15 +1668,15 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 					},
 				},
 			},
-			&mydump2.MDTableMeta{
+			&mydump.MDTableMeta{
 				DB:   "db1",
 				Name: "table2",
-				DataFiles: []mydump2.FileInfo{
+				DataFiles: []mydump.FileInfo{
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
-							Type:     mydump2.SourceTypeCSV,
+							Type:     mydump.SourceTypeCSV,
 						},
 					},
 				},
@@ -1689,7 +1689,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// colC doesn't have the default value.
 		// we expect the check failed.
 		{
-			[]*config2.IgnoreColumns{
+			[]*config.IgnoreColumns{
 				{
 					DB:      "db1",
 					Table:   "table2",
@@ -1699,10 +1699,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"TiDB schema `db1`.`table2` doesn't have the default value for colc(.*)",
 			1,
 			true,
-			map[string]*checkpoints2.TidbDBInfo{
+			map[string]*checkpoints.TidbDBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints2.TidbTableInfo{
+					Tables: map[string]*checkpoints.TidbTableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1725,15 +1725,15 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 					},
 				},
 			},
-			&mydump2.MDTableMeta{
+			&mydump.MDTableMeta{
 				DB:   "db1",
 				Name: "table2",
-				DataFiles: []mydump2.FileInfo{
+				DataFiles: []mydump.FileInfo{
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
-							Type:     mydump2.SourceTypeCSV,
+							Type:     mydump.SourceTypeCSV,
 						},
 					},
 				},
@@ -1746,7 +1746,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// colB doesn't have the default value.
 		// we expect the check failed.
 		{
-			[]*config2.IgnoreColumns{
+			[]*config.IgnoreColumns{
 				{
 					TableFilter: []string{"`db1`.`table2`"},
 					Columns:     []string{"colb"},
@@ -1755,10 +1755,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"TiDB schema `db1`.`table2`'s column colb cannot be ignored(.*)",
 			2,
 			true,
-			map[string]*checkpoints2.TidbDBInfo{
+			map[string]*checkpoints.TidbDBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints2.TidbTableInfo{
+					Tables: map[string]*checkpoints.TidbTableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1781,15 +1781,15 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 					},
 				},
 			},
-			&mydump2.MDTableMeta{
+			&mydump.MDTableMeta{
 				DB:   "db1",
 				Name: "table2",
-				DataFiles: []mydump2.FileInfo{
+				DataFiles: []mydump.FileInfo{
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
-							Type:     mydump2.SourceTypeCSV,
+							Type:     mydump.SourceTypeCSV,
 						},
 					},
 				},
@@ -1800,7 +1800,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// tidb has no table3.
 		// we expect the check failed.
 		{
-			[]*config2.IgnoreColumns{
+			[]*config.IgnoreColumns{
 				{
 					TableFilter: []string{"`db1`.`table2`"},
 					Columns:     []string{"colb"},
@@ -1809,23 +1809,23 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"TiDB schema `db1`.`table3` doesn't exists(.*)",
 			1,
 			true,
-			map[string]*checkpoints2.TidbDBInfo{
+			map[string]*checkpoints.TidbDBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints2.TidbTableInfo{
+					Tables: map[string]*checkpoints.TidbTableInfo{
 						"": {},
 					},
 				},
 			},
-			&mydump2.MDTableMeta{
+			&mydump.MDTableMeta{
 				DB:   "db1",
 				Name: "table3",
-				DataFiles: []mydump2.FileInfo{
+				DataFiles: []mydump.FileInfo{
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
-							Type:     mydump2.SourceTypeCSV,
+							Type:     mydump.SourceTypeCSV,
 						},
 					},
 				},
@@ -1835,7 +1835,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// table4 has two datafiles for table. we only check the first file.
 		// we expect the check success.
 		{
-			[]*config2.IgnoreColumns{
+			[]*config.IgnoreColumns{
 				{
 					DB:      "db1",
 					Table:   "table2",
@@ -1845,10 +1845,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"",
 			0,
 			true,
-			map[string]*checkpoints2.TidbDBInfo{
+			map[string]*checkpoints.TidbDBInfo{
 				"db1": {
 					Name: "db1",
-					Tables: map[string]*checkpoints2.TidbTableInfo{
+					Tables: map[string]*checkpoints.TidbTableInfo{
 						"table2": {
 							ID:   1,
 							DB:   "db1",
@@ -1866,25 +1866,25 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 					},
 				},
 			},
-			&mydump2.MDTableMeta{
+			&mydump.MDTableMeta{
 				DB:   "db1",
 				Name: "table2",
-				DataFiles: []mydump2.FileInfo{
+				DataFiles: []mydump.FileInfo{
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
-							Type:     mydump2.SourceTypeCSV,
+							Type:     mydump.SourceTypeCSV,
 						},
 					},
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
 							// This type will make the check failed.
 							// but it's the second file for table.
 							// so it's unreachable so this case will success.
-							Type: mydump2.SourceTypeIgnore,
+							Type: mydump.SourceTypeIgnore,
 						},
 					},
 				},
@@ -1895,7 +1895,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// ignore column and extended column are overlapped,
 		// we expect the check failed.
 		{
-			[]*config2.IgnoreColumns{
+			[]*config.IgnoreColumns{
 				{
 					DB:      "db",
 					Table:   "table",
@@ -1905,10 +1905,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"extend column colA is also assigned in ignore-column(.*)",
 			1,
 			true,
-			map[string]*checkpoints2.TidbDBInfo{
+			map[string]*checkpoints.TidbDBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints2.TidbTableInfo{
+					Tables: map[string]*checkpoints.TidbTableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -1927,27 +1927,27 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 					},
 				},
 			},
-			&mydump2.MDTableMeta{
+			&mydump.MDTableMeta{
 				DB:   "db",
 				Name: "table",
-				DataFiles: []mydump2.FileInfo{
+				DataFiles: []mydump.FileInfo{
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
-							Type:     mydump2.SourceTypeCSV,
-							ExtendData: mydump2.ExtendColumnData{
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
 								Columns: []string{"colA"},
 								Values:  []string{"a"},
 							},
 						},
 					},
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
-							Type:     mydump2.SourceTypeCSV,
-							ExtendData: mydump2.ExtendColumnData{
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
 								Columns: []string{},
 								Values:  []string{},
 							},
@@ -1964,10 +1964,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"extend column colA is contained in table(.*)",
 			1,
 			true,
-			map[string]*checkpoints2.TidbDBInfo{
+			map[string]*checkpoints.TidbDBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints2.TidbTableInfo{
+					Tables: map[string]*checkpoints.TidbTableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -1986,16 +1986,16 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 					},
 				},
 			},
-			&mydump2.MDTableMeta{
+			&mydump.MDTableMeta{
 				DB:   "db",
 				Name: "table",
-				DataFiles: []mydump2.FileInfo{
+				DataFiles: []mydump.FileInfo{
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
-							Type:     mydump2.SourceTypeCSV,
-							ExtendData: mydump2.ExtendColumnData{
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
 								Columns: []string{"colA"},
 								Values:  []string{"a"},
 							},
@@ -2012,10 +2012,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"row count 2 adding with extend column length 1 is larger than columnCount 2 plus ignore column count 0 for(.*)",
 			1,
 			false,
-			map[string]*checkpoints2.TidbDBInfo{
+			map[string]*checkpoints.TidbDBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints2.TidbTableInfo{
+					Tables: map[string]*checkpoints.TidbTableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -2034,16 +2034,16 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 					},
 				},
 			},
-			&mydump2.MDTableMeta{
+			&mydump.MDTableMeta{
 				DB:   "db",
 				Name: "table",
-				DataFiles: []mydump2.FileInfo{
+				DataFiles: []mydump.FileInfo{
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case3File,
-							Type:     mydump2.SourceTypeCSV,
-							ExtendData: mydump2.ExtendColumnData{
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
 								Columns: []string{"colA"},
 								Values:  []string{"a"},
 							},
@@ -2060,10 +2060,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"extend column \\[colC\\] don't exist in target table(.*)",
 			1,
 			true,
-			map[string]*checkpoints2.TidbDBInfo{
+			map[string]*checkpoints.TidbDBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints2.TidbTableInfo{
+					Tables: map[string]*checkpoints.TidbTableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -2082,27 +2082,27 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 					},
 				},
 			},
-			&mydump2.MDTableMeta{
+			&mydump.MDTableMeta{
 				DB:   "db",
 				Name: "table",
-				DataFiles: []mydump2.FileInfo{
+				DataFiles: []mydump.FileInfo{
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
-							Type:     mydump2.SourceTypeCSV,
-							ExtendData: mydump2.ExtendColumnData{
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
 								Columns: []string{"colC"},
 								Values:  []string{"a"},
 							},
 						},
 					},
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
-							Type:     mydump2.SourceTypeCSV,
-							ExtendData: mydump2.ExtendColumnData{
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
 								Columns: []string{"colC"},
 								Values:  []string{"b"},
 							},
@@ -2115,7 +2115,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// table has two datafiles and extend data for table.
 		// we expect the check succeed.
 		{
-			[]*config2.IgnoreColumns{
+			[]*config.IgnoreColumns{
 				{
 					DB:      "db",
 					Table:   "table",
@@ -2125,10 +2125,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			"",
 			0,
 			true,
-			map[string]*checkpoints2.TidbDBInfo{
+			map[string]*checkpoints.TidbDBInfo{
 				"db": {
 					Name: "db",
-					Tables: map[string]*checkpoints2.TidbTableInfo{
+					Tables: map[string]*checkpoints.TidbTableInfo{
 						"table": {
 							ID:   1,
 							DB:   "db1",
@@ -2151,27 +2151,27 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 					},
 				},
 			},
-			&mydump2.MDTableMeta{
+			&mydump.MDTableMeta{
 				DB:   "db",
 				Name: "table",
-				DataFiles: []mydump2.FileInfo{
+				DataFiles: []mydump.FileInfo{
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
-							Type:     mydump2.SourceTypeCSV,
-							ExtendData: mydump2.ExtendColumnData{
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
 								Columns: []string{"colC"},
 								Values:  []string{"a"},
 							},
 						},
 					},
 					{
-						FileMeta: mydump2.SourceFileMeta{
+						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
-							Type:     mydump2.SourceTypeCSV,
-							ExtendData: mydump2.ExtendColumnData{
+							Type:     mydump.SourceTypeCSV,
+							ExtendData: mydump.ExtendColumnData{
 								Columns: []string{"colC"},
 								Values:  []string{"b"},
 							},
@@ -2184,10 +2184,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 
 	for i, ca := range cases {
 		s.T().Logf("running testCase: #%d", i+1)
-		cfg := &config2.Config{
-			Mydumper: config2.MydumperRuntime{
-				ReadBlockSize: config2.ReadBlockSize,
-				CSV: config2.CSVConfig{
+		cfg := &config.Config{
+			Mydumper: config.MydumperRuntime{
+				ReadBlockSize: config.ReadBlockSize,
+				CSV: config.CSVConfig{
 					Separator:         ",",
 					Delimiter:         `"`,
 					Header:            ca.hasHeader,
@@ -2218,12 +2218,12 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 }
 
 func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
-	cfg := &config2.Config{
-		Mydumper: config2.MydumperRuntime{
-			ReadBlockSize:          config2.ReadBlockSize,
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize:          config.ReadBlockSize,
 			DataCharacterSet:       "gb18030",
 			DataInvalidCharReplace: string(utf8.RuneError),
-			CSV: config2.CSVConfig{
+			CSV: config.CSVConfig{
 				Separator:         "，",
 				Delimiter:         `"`,
 				Header:            true,
@@ -2236,7 +2236,7 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 			IgnoreColumns: nil,
 		},
 	}
-	charsetConvertor, err := mydump2.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
+	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
 	require.NoError(s.T(), err)
 	dir := s.T().TempDir()
 	mockStore, err := storage.NewLocalStorage(dir)
@@ -2248,10 +2248,10 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 	err = mockStore.WriteFile(ctx, csvFile, []byte(csvContent))
 	require.NoError(s.T(), err)
 
-	dbInfos := map[string]*checkpoints2.TidbDBInfo{
+	dbInfos := map[string]*checkpoints.TidbDBInfo{
 		"db1": {
 			Name: "db1",
-			Tables: map[string]*checkpoints2.TidbTableInfo{
+			Tables: map[string]*checkpoints.TidbTableInfo{
 				"gbk_table": {
 					ID:   1,
 					DB:   "db1",
@@ -2280,15 +2280,15 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 	}
 	ci := NewSchemaCheckItem(cfg, preInfoGetter, nil, nil).(*schemaCheckItem)
 	preInfoGetter.dbInfosCache = dbInfos
-	msgs, err := ci.SchemaIsValid(ctx, &mydump2.MDTableMeta{
+	msgs, err := ci.SchemaIsValid(ctx, &mydump.MDTableMeta{
 		DB:   "db1",
 		Name: "gbk_table",
-		DataFiles: []mydump2.FileInfo{
+		DataFiles: []mydump.FileInfo{
 			{
-				FileMeta: mydump2.SourceFileMeta{
+				FileMeta: mydump.SourceFileMeta{
 					FileSize: 1 * units.TiB,
 					Path:     csvFile,
-					Type:     mydump2.SourceTypeCSV,
+					Type:     mydump.SourceTypeCSV,
 				},
 			},
 		},
@@ -2404,22 +2404,22 @@ func TestGetChunkCompressedSizeForParquet(t *testing.T) {
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
 
-	dataFiles := make([]mydump2.FileInfo, 0)
-	dataFiles = append(dataFiles, mydump2.FileInfo{
+	dataFiles := make([]mydump.FileInfo, 0)
+	dataFiles = append(dataFiles, mydump.FileInfo{
 		TableName: filter.Table{Schema: "db", Name: "table"},
-		FileMeta: mydump2.SourceFileMeta{
+		FileMeta: mydump.SourceFileMeta{
 			Path:        fileName,
-			Type:        mydump2.SourceTypeParquet,
-			Compression: mydump2.CompressionNone,
+			Type:        mydump.SourceTypeParquet,
+			Compression: mydump.CompressionNone,
 			SortKey:     "99",
 			FileSize:    192,
 		},
 	})
 
-	chunk := checkpoints2.ChunkCheckpoint{
-		Key:      checkpoints2.ChunkCheckpointKey{Path: dataFiles[0].FileMeta.Path, Offset: 0},
+	chunk := checkpoints.ChunkCheckpoint{
+		Key:      checkpoints.ChunkCheckpointKey{Path: dataFiles[0].FileMeta.Path, Offset: 0},
 		FileMeta: dataFiles[0].FileMeta,
-		Chunk: mydump2.Chunk{
+		Chunk: mydump.Chunk{
 			Offset:       0,
 			EndOffset:    192,
 			PrevRowIDMax: 0,

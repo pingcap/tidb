@@ -30,7 +30,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/lightning/pkg/web"
-	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,27 +39,27 @@ var initProgressOnce sync.Once
 
 type lightningServerSuite struct {
 	lightning *Lightning
-	taskCfgCh chan *config2.Config
+	taskCfgCh chan *config.Config
 	taskRunCh chan struct{}
 }
 
 func createSuite(t *testing.T) *lightningServerSuite {
 	initProgressOnce.Do(web.EnableCurrentProgress)
 
-	cfg := config2.NewGlobalConfig()
+	cfg := config.NewGlobalConfig()
 	cfg.TiDB.Host = "test.invalid"
 	cfg.TiDB.Port = 4000
 	cfg.TiDB.PdAddr = "test.invalid:2379"
 	cfg.App.ServerMode = true
 	cfg.App.StatusAddr = "127.0.0.1:0"
 	cfg.Mydumper.SourceDir = "file://."
-	cfg.TikvImporter.Backend = config2.BackendLocal
+	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.SortedKVDir = t.TempDir()
 
 	s := new(lightningServerSuite)
 	s.lightning = New(cfg)
 	s.taskRunCh = make(chan struct{}, 1)
-	s.taskCfgCh = make(chan *config2.Config)
+	s.taskCfgCh = make(chan *config.Config)
 	s.lightning.ctx = context.WithValue(s.lightning.ctx, taskRunNotifyKey, s.taskRunCh)
 	s.lightning.ctx = context.WithValue(s.lightning.ctx, taskCfgRecorderKey, s.taskCfgCh)
 	_ = s.lightning.GoServe()
@@ -223,7 +223,7 @@ func TestGetDeleteTask(t *testing.T) {
 
 	// Check `GET /tasks/1` returns the desired cfg
 
-	var resCfg config2.Config
+	var resCfg config.Config
 
 	resp, err = http.Get(fmt.Sprintf("%s/%d", url, second))
 	require.NoError(t, err)
@@ -310,7 +310,7 @@ func TestHTTPAPIOutsideServerMode(t *testing.T) {
 	url := "http://" + s.lightning.serverAddr.String() + "/tasks"
 
 	errCh := make(chan error)
-	cfg := config2.NewConfig()
+	cfg := config.NewConfig()
 	cfg.TiDB.DistSQLScanConcurrency = 4
 	err := cfg.LoadFromGlobal(s.lightning.globalCfg)
 	require.NoError(t, err)

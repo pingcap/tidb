@@ -25,15 +25,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInitEnv(t *testing.T) {
-	cfg := &config2.GlobalConfig{
-		App: config2.GlobalLightning{StatusAddr: ":45678"},
+	cfg := &config.GlobalConfig{
+		App: config.GlobalLightning{StatusAddr: ":45678"},
 	}
 	err := initEnv(cfg)
 	require.NoError(t, err)
@@ -45,15 +45,15 @@ func TestInitEnv(t *testing.T) {
 }
 
 func TestRun(t *testing.T) {
-	globalConfig := config2.NewGlobalConfig()
+	globalConfig := config.NewGlobalConfig()
 	globalConfig.TiDB.Host = "test.invalid"
 	globalConfig.TiDB.Port = 4000
 	globalConfig.TiDB.PdAddr = "test.invalid:2379"
 	globalConfig.Mydumper.SourceDir = "not-exists"
-	globalConfig.TikvImporter.Backend = config2.BackendLocal
+	globalConfig.TikvImporter.Backend = config.BackendLocal
 	globalConfig.TikvImporter.SortedKVDir = t.TempDir()
 	lightning := New(globalConfig)
-	cfg := config2.NewConfig()
+	cfg := config.NewConfig()
 	err := cfg.LoadFromGlobal(globalConfig)
 	require.NoError(t, err)
 	err = lightning.RunOnceWithOptions(context.Background(), cfg)
@@ -71,13 +71,13 @@ func TestRun(t *testing.T) {
 		logger:       logger,
 		db:           db,
 	}
-	cfgCheckpoint := config2.Config{
-		Mydumper: config2.MydumperRuntime{
+	cfgCheckpoint := config.Config{
+		Mydumper: config.MydumperRuntime{
 			SourceDir:        "file://" + filepath.ToSlash(path),
 			Filter:           []string{"*.*"},
 			DefaultFileRules: true,
 		},
-		Checkpoint: config2.Checkpoint{
+		Checkpoint: config.Checkpoint{
 			Enable: true,
 			Driver: "invalid",
 		},
@@ -85,9 +85,9 @@ func TestRun(t *testing.T) {
 	err = lightning.run(ctx, &cfgCheckpoint, o)
 	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
 	mock.ExpectQuery("show config").WillReturnError(errors.New("lack privilege"))
-	cfgKeyspaceName := config2.NewConfig()
-	cfgKeyspaceName.TikvImporter.Backend = config2.BackendLocal
-	cfgKeyspaceName.TikvImporter.LocalWriterMemCacheSize = config2.SplitRegionSize
+	cfgKeyspaceName := config.NewConfig()
+	cfgKeyspaceName.TikvImporter.Backend = config.BackendLocal
+	cfgKeyspaceName.TikvImporter.LocalWriterMemCacheSize = config.SplitRegionSize
 	cfgKeyspaceName.Mydumper = cfgCheckpoint.Mydumper
 	cfgKeyspaceName.Checkpoint = cfgCheckpoint.Checkpoint
 	err = lightning.run(ctx, cfgKeyspaceName, o)
@@ -100,12 +100,12 @@ func TestRun(t *testing.T) {
 	require.Contains(t, buffer.String(), `"acquired keyspace name","keyspaceName":"test"`)
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	err = lightning.run(ctx, &config2.Config{
-		Mydumper: config2.MydumperRuntime{
+	err = lightning.run(ctx, &config.Config{
+		Mydumper: config.MydumperRuntime{
 			SourceDir: ".",
 			Filter:    []string{"*.*"},
 		},
-		Checkpoint: config2.Checkpoint{
+		Checkpoint: config.Checkpoint{
 			Enable: true,
 			Driver: "file",
 			DSN:    "any-file",
@@ -120,11 +120,11 @@ func TestCheckSystemRequirement(t *testing.T) {
 		return
 	}
 
-	cfg := config2.NewConfig()
+	cfg := config.NewConfig()
 	cfg.App.RegionConcurrency = 16
 	cfg.App.CheckRequirements = true
 	cfg.App.TableConcurrency = 4
-	cfg.TikvImporter.Backend = config2.BackendLocal
+	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.LocalWriterMemCacheSize = 128 * units.MiB
 	cfg.TikvImporter.RangeConcurrency = 16
 
@@ -189,9 +189,9 @@ func TestCheckSystemRequirement(t *testing.T) {
 }
 
 func TestCheckSchemaConflict(t *testing.T) {
-	cfg := config2.NewConfig()
+	cfg := config.NewConfig()
 	cfg.Checkpoint.Schema = "cp"
-	cfg.Checkpoint.Driver = config2.CheckpointDriverMySQL
+	cfg.Checkpoint.Driver = config.CheckpointDriverMySQL
 
 	dbMetas := []*mydump.MDDatabaseMeta{
 		{
@@ -236,7 +236,7 @@ func TestCheckSchemaConflict(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg.Checkpoint.Enable = true
-	cfg.Checkpoint.Driver = config2.CheckpointDriverFile
+	cfg.Checkpoint.Driver = config.CheckpointDriverFile
 	err = checkSchemaConflict(cfg, dbMetas)
 	require.NoError(t, err)
 }

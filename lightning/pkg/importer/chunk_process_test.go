@@ -34,12 +34,12 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/tidb"
-	checkpoints2 "github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -73,10 +73,10 @@ func (s *chunkRestoreSuite) SetupTest() {
 	ctx := context.Background()
 	w := worker.NewPool(ctx, 5, "io")
 
-	chunk := checkpoints2.ChunkCheckpoint{
-		Key:      checkpoints2.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[1].FileMeta.Path, Offset: 0},
+	chunk := checkpoints.ChunkCheckpoint{
+		Key:      checkpoints.ChunkCheckpointKey{Path: s.tr.tableMeta.DataFiles[1].FileMeta.Path, Offset: 0},
 		FileMeta: s.tr.tableMeta.DataFiles[1].FileMeta,
-		Chunk: mydump2.Chunk{
+		Chunk: mydump.Chunk{
 			Offset:       0,
 			EndOffset:    37,
 			PrevRowIDMax: 18,
@@ -313,19 +313,19 @@ func (s *chunkRestoreSuite) TestEncodeLoopWithExtendData() {
 
 	schema := "test_1"
 	tb := "t1"
-	ti := &checkpoints2.TidbTableInfo{
+	ti := &checkpoints.TidbTableInfo{
 		ID:   tableInfo.ID,
 		DB:   schema,
 		Name: tb,
 		Core: tableInfo,
 	}
 	s.tr.tableInfo = ti
-	s.cr.chunk.FileMeta.ExtendData = mydump2.ExtendColumnData{
+	s.cr.chunk.FileMeta.ExtendData = mydump.ExtendColumnData{
 		Columns: []string{"c_table", "c_schema", "c_source"},
 		Values:  []string{"1", "1", "01"},
 	}
 	defer func() {
-		s.cr.chunk.FileMeta.ExtendData = mydump2.ExtendColumnData{}
+		s.cr.chunk.FileMeta.ExtendData = mydump.ExtendColumnData{}
 	}()
 
 	kvEncoder, err := kv.NewTableKVEncoder(&encode.EncodingConfig{
@@ -428,7 +428,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 	reader, err := store.Open(ctx, fileName, nil)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 1, "io")
-	p, err := mydump2.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
 	require.NoError(s.T(), err)
 	s.cr.parser = p
 
@@ -507,7 +507,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 	reader, err := store.Open(ctx, fileName, nil)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 5, "io")
-	p, err := mydump2.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
 	require.NoError(s.T(), err)
 
 	err = s.cr.parser.Close()
@@ -606,7 +606,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	reader, err := store.Open(ctx, fileName, nil)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 5, "io")
-	p, err := mydump2.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil)
+	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil)
 	require.NoError(s.T(), err)
 
 	err = s.cr.parser.Close()
@@ -717,7 +717,7 @@ func TestCompressChunkRestore(t *testing.T) {
 	store, err := storage.NewLocalStorage(fakeDataDir)
 	require.NoError(t, err)
 
-	fakeDataFiles := make([]mydump2.FileInfo, 0)
+	fakeDataFiles := make([]mydump.FileInfo, 0)
 
 	csvName := "db.table.1.csv.gz"
 	file, err := os.Create(filepath.Join(fakeDataDir, csvName))
@@ -736,21 +736,21 @@ func TestCompressChunkRestore(t *testing.T) {
 	err = file.Close()
 	require.NoError(t, err)
 
-	fakeDataFiles = append(fakeDataFiles, mydump2.FileInfo{
+	fakeDataFiles = append(fakeDataFiles, mydump.FileInfo{
 		TableName: filter.Table{Schema: "db", Name: "table"},
-		FileMeta: mydump2.SourceFileMeta{
+		FileMeta: mydump.SourceFileMeta{
 			Path:        csvName,
-			Type:        mydump2.SourceTypeCSV,
-			Compression: mydump2.CompressionGZ,
+			Type:        mydump.SourceTypeCSV,
+			Compression: mydump.CompressionGZ,
 			SortKey:     "99",
 			FileSize:    totalBytes,
 		},
 	})
 
-	chunk := checkpoints2.ChunkCheckpoint{
-		Key:      checkpoints2.ChunkCheckpointKey{Path: fakeDataFiles[0].FileMeta.Path, Offset: 0},
+	chunk := checkpoints.ChunkCheckpoint{
+		Key:      checkpoints.ChunkCheckpointKey{Path: fakeDataFiles[0].FileMeta.Path, Offset: 0},
 		FileMeta: fakeDataFiles[0].FileMeta,
-		Chunk: mydump2.Chunk{
+		Chunk: mydump.Chunk{
 			Offset:       0,
 			EndOffset:    totalBytes,
 			PrevRowIDMax: 0,
@@ -787,10 +787,10 @@ func TestCompressChunkRestore(t *testing.T) {
 	require.Equal(t, int64(33), rowID)
 
 	// test read starting from compress files' middle
-	chunk = checkpoints2.ChunkCheckpoint{
-		Key:      checkpoints2.ChunkCheckpointKey{Path: fakeDataFiles[0].FileMeta.Path, Offset: offset},
+	chunk = checkpoints.ChunkCheckpoint{
+		Key:      checkpoints.ChunkCheckpointKey{Path: fakeDataFiles[0].FileMeta.Path, Offset: offset},
 		FileMeta: fakeDataFiles[0].FileMeta,
-		Chunk: mydump2.Chunk{
+		Chunk: mydump.Chunk{
 			Offset:       offset,
 			EndOffset:    totalBytes,
 			PrevRowIDMax: rowID,

@@ -25,14 +25,14 @@ import (
 	"github.com/pingcap/tidb/lightning/pkg/server"
 	"github.com/pingcap/tidb/lightning/pkg/web"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
 
 func main() {
-	globalCfg := config2.Must(config2.LoadGlobalConfig(os.Args[1:], nil))
+	globalCfg := config.Must(config.LoadGlobalConfig(os.Args[1:], nil))
 	logToFile := globalCfg.App.File != "" && globalCfg.App.File != "-"
 	if logToFile {
 		fmt.Fprintf(os.Stdout, "Verbose debug logs will be written to %s\n\n", globalCfg.App.Config.File)
@@ -67,7 +67,7 @@ func main() {
 	//
 	// Local mode need much more memory than importer/tidb mode, if the gc percentage is too high,
 	// lightning memory usage will also be high.
-	if globalCfg.TikvImporter.Backend != config2.BackendLocal {
+	if globalCfg.TikvImporter.Backend != config.BackendLocal {
 		gogc := os.Getenv("GOGC")
 		if gogc == "" {
 			old := debug.SetGCPercent(500)
@@ -89,7 +89,7 @@ func main() {
 		if globalCfg.App.ServerMode {
 			return app.RunServer()
 		}
-		cfg := config2.NewConfig()
+		cfg := config.NewConfig()
 		if err := cfg.LoadFromGlobal(globalCfg); err != nil {
 			return err
 		}

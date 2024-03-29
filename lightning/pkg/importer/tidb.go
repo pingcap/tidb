@@ -25,7 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
@@ -48,7 +48,7 @@ type TiDBManager struct {
 
 // DBFromConfig creates a new connection to the TiDB database.
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
-	param := common2.MySQLConnectParam{
+	param := common.MySQLConnectParam{
 		Host:                     dsn.Host,
 		Port:                     dsn.Port,
 		User:                     dsn.User,
@@ -105,7 +105,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 }
 
 // NewTiDBManager creates a new TiDB manager.
-func NewTiDBManager(ctx context.Context, dsn config.DBStore, _ *common2.TLS) (*TiDBManager, error) {
+func NewTiDBManager(ctx context.Context, dsn config.DBStore, _ *common.TLS) (*TiDBManager, error) {
 	db, err := DBFromConfig(ctx, dsn)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -134,7 +134,7 @@ func (timgr *TiDBManager) Close() {
 func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
 	stmts, _, err := p.ParseSQL(createTable)
 	if err != nil {
-		return []string{}, common2.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
+		return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
 	}
 
 	var res strings.Builder
@@ -162,7 +162,7 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 			node.IfExists = true
 		}
 		if err := stmt.Restore(ctx); err != nil {
-			return []string{}, common2.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
+			return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
 		}
 		ctx.WritePlain(";")
 		retStmts = append(retStmts, res.String())
@@ -174,7 +174,7 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 
 // DropTable drops a table.
 func (timgr *TiDBManager) DropTable(ctx context.Context, tableName string) error {
-	sql := common2.SQLWithRetry{
+	sql := common.SQLWithRetry{
 		DB:     timgr.db,
 		Logger: log.FromContext(ctx).With(zap.String("table", tableName)),
 	}
@@ -207,7 +207,7 @@ func LoadSchemaInfo(
 		for _, tbl := range schema.Tables {
 			tblInfo, ok := tableMap[strings.ToLower(tbl.Name)]
 			if !ok {
-				return nil, common2.ErrSchemaNotExists.GenWithStackByArgs(tbl.DB, tbl.Name)
+				return nil, common.ErrSchemaNotExists.GenWithStackByArgs(tbl.DB, tbl.Name)
 			}
 			tableName := tblInfo.Name.String()
 			if tblInfo.State != model.StatePublic {
@@ -242,7 +242,7 @@ func ObtainImportantVariables(ctx context.Context, db *sql.DB, needTiDBVars bool
 	var query strings.Builder
 	query.WriteString("SHOW VARIABLES WHERE Variable_name IN ('")
 	first := true
-	for k := range common2.DefaultImportantVariables {
+	for k := range common.DefaultImportantVariables {
 		if first {
 			first = false
 		} else {
@@ -251,13 +251,13 @@ func ObtainImportantVariables(ctx context.Context, db *sql.DB, needTiDBVars bool
 		query.WriteString(k)
 	}
 	if needTiDBVars {
-		for k := range common2.DefaultImportVariablesTiDB {
+		for k := range common.DefaultImportVariablesTiDB {
 			query.WriteString("','")
 			query.WriteString(k)
 		}
 	}
 	query.WriteString("')")
-	exec := common2.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}
+	exec := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}
 	kvs, err := exec.QueryStringRows(ctx, "obtain system variables", query.String())
 	if err != nil {
 		// error is not fatal
@@ -265,7 +265,7 @@ func ObtainImportantVariables(ctx context.Context, db *sql.DB, needTiDBVars bool
 	}
 
 	// convert result into a map. fill in any missing variables with default values.
-	result := make(map[string]string, len(common2.DefaultImportantVariables)+len(common2.DefaultImportVariablesTiDB))
+	result := make(map[string]string, len(common.DefaultImportantVariables)+len(common.DefaultImportVariablesTiDB))
 	for _, kv := range kvs {
 		result[kv[0]] = kv[1]
 	}
@@ -277,9 +277,9 @@ func ObtainImportantVariables(ctx context.Context, db *sql.DB, needTiDBVars bool
 			}
 		}
 	}
-	setDefaultValue(result, common2.DefaultImportantVariables)
+	setDefaultValue(result, common.DefaultImportantVariables)
 	if needTiDBVars {
-		setDefaultValue(result, common2.DefaultImportVariablesTiDB)
+		setDefaultValue(result, common.DefaultImportVariablesTiDB)
 	}
 
 	return result
@@ -289,7 +289,7 @@ func ObtainImportantVariables(ctx context.Context, db *sql.DB, needTiDBVars bool
 func ObtainNewCollationEnabled(ctx context.Context, db *sql.DB) (bool, error) {
 	newCollationEnabled := false
 	var newCollationVal string
-	exec := common2.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}
+	exec := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}
 	err := exec.QueryRow(ctx, "obtain new collation enabled", "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'", &newCollationVal)
 	if err == nil && newCollationVal == "True" {
 		newCollationEnabled = true
@@ -318,7 +318,7 @@ func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr 
 	}
 	query := fmt.Sprintf("ALTER TABLE %s %s AUTO_INCREMENT=%d", tableName, forceStr, base)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_increment")
-	exec := common2.SQLWithRetry{DB: db, Logger: logger}
+	exec := common.SQLWithRetry{DB: db, Logger: logger}
 	err := exec.Exec(ctx, "alter table auto_increment", query)
 	task.End(zap.ErrorLevel, err)
 	if err != nil {
@@ -351,7 +351,7 @@ func AlterAutoRandom(ctx context.Context, db *sql.DB, tableName string, randomBa
 	// if new base is smaller than current, this query will success with a warning
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_random")
-	exec := common2.SQLWithRetry{DB: db, Logger: logger}
+	exec := common.SQLWithRetry{DB: db, Logger: logger}
 	err := exec.Exec(ctx, "alter table auto_random_base", query)
 	task.End(zap.ErrorLevel, err)
 	if err != nil {

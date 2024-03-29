@@ -37,13 +37,13 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	local2 "github.com/pingcap/tidb/pkg/lightning/backend/local"
-	checkpoints2 "github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
-	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
-	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -64,9 +64,9 @@ import (
 type TableImporter struct {
 	// The unique table name in the form "`db`.`tbl`".
 	tableName string
-	dbInfo    *checkpoints2.TidbDBInfo
-	tableInfo *checkpoints2.TidbTableInfo
-	tableMeta *mydump2.MDTableMeta
+	dbInfo    *checkpoints.TidbDBInfo
+	tableInfo *checkpoints.TidbTableInfo
+	tableMeta *mydump.MDTableMeta
 	encTable  table.Table
 	alloc     autoid.Allocators
 	logger    log.Logger
@@ -83,10 +83,10 @@ type TableImporter struct {
 // NewTableImporter creates a new TableImporter.
 func NewTableImporter(
 	tableName string,
-	tableMeta *mydump2.MDTableMeta,
-	dbInfo *checkpoints2.TidbDBInfo,
-	tableInfo *checkpoints2.TidbTableInfo,
-	cp *checkpoints2.TableCheckpoint,
+	tableMeta *mydump.MDTableMeta,
+	dbInfo *checkpoints.TidbDBInfo,
+	tableInfo *checkpoints.TidbTableInfo,
+	cp *checkpoints.TableCheckpoint,
 	ignoreColumns map[string]struct{},
 	kvStore tidbkv.Storage,
 	etcdCli *clientv3.Client,
@@ -117,7 +117,7 @@ func NewTableImporter(
 func (tr *TableImporter) importTable(
 	ctx context.Context,
 	rc *Controller,
-	cp *checkpoints2.TableCheckpoint,
+	cp *checkpoints.TableCheckpoint,
 ) (bool, error) {
 	// 1. Load the table info.
 	select {
@@ -137,7 +137,7 @@ func (tr *TableImporter) importTable(
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-	} else if cp.Status < checkpoints2.CheckpointStatusAllWritten {
+	} else if cp.Status < checkpoints.CheckpointStatusAllWritten {
 		if err := tr.populateChunks(ctx, rc, cp); err != nil {
 			return false, errors.Trace(err)
 		}
@@ -174,7 +174,7 @@ func (tr *TableImporter) importTable(
 					cp.Checksum = *checksum
 					rc.saveCpCh <- saveCp{
 						tableName: tr.tableName,
-						merger: &checkpoints2.TableChecksumMerger{
+						merger: &checkpoints.TableChecksumMerger{
 							Checksum: cp.Checksum,
 						},
 					}
@@ -201,17 +201,17 @@ func (tr *TableImporter) importTable(
 		}
 		rc.saveCpCh <- saveCp{
 			tableName: tr.tableName,
-			merger: &checkpoints2.RebaseCheckpointMerger{
+			merger: &checkpoints.RebaseCheckpointMerger{
 				AllocBase: cp.AllocBase,
 			},
 		}
 	}
 
 	// 2. Do duplicate detection if needed
-	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.PrecheckConflictBeforeImport && rc.cfg.Conflict.Strategy != config2.NoneOnDup {
-		_, uuid := backend.MakeUUID(tr.tableName, common2.IndexEngineID)
-		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local2.DupDetectDirSuffix)
-		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local2.DupResultDirSuffix)
+	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.PrecheckConflictBeforeImport && rc.cfg.Conflict.Strategy != config.NoneOnDup {
+		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
+		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupDetectDirSuffix)
+		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupResultDirSuffix)
 
 		dupIgnoreRows, err := extsort.OpenDiskSorter(resultDir, &extsort.DiskSorterOptions{
 			Concurrency: rc.cfg.App.RegionConcurrency,
@@ -221,9 +221,9 @@ func (tr *TableImporter) importTable(
 		}
 		tr.dupIgnoreRows = dupIgnoreRows
 
-		if cp.Status < checkpoints2.CheckpointStatusDupDetected {
+		if cp.Status < checkpoints.CheckpointStatusDupDetected {
 			err := tr.preDeduplicate(ctx, rc, cp, workingDir)
-			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints2.WholeTableEngineID, err, checkpoints2.CheckpointStatusDupDetected)
+			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusDupDetected)
 			if err := firstErr(err, saveCpErr); err != nil {
 				return false, errors.Trace(err)
 			}
@@ -241,9 +241,9 @@ func (tr *TableImporter) importTable(
 	}
 
 	// 3. Drop indexes if add-index-by-sql is enabled
-	if cp.Status < checkpoints2.CheckpointStatusIndexDropped && isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.AddIndexBySQL {
+	if cp.Status < checkpoints.CheckpointStatusIndexDropped && isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.AddIndexBySQL {
 		err := tr.dropIndexes(ctx, rc.db)
-		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints2.WholeTableEngineID, err, checkpoints2.CheckpointStatusIndexDropped)
+		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexDropped)
 		if err := firstErr(err, saveCpErr); err != nil {
 			return false, errors.Trace(err)
 		}
@@ -273,10 +273,10 @@ func (tr *TableImporter) Close() {
 	tr.logger.Info("restore done")
 }
 
-func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp *checkpoints2.TableCheckpoint) error {
+func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	task := tr.logger.Begin(zap.InfoLevel, "load engines and files")
-	divideConfig := mydump2.NewDataDivideConfig(rc.cfg, len(tr.tableInfo.Core.Columns), rc.ioWorkers, rc.store, tr.tableMeta)
-	tableRegions, err := mydump2.MakeTableRegions(ctx, divideConfig)
+	divideConfig := mydump.NewDataDivideConfig(rc.cfg, len(tr.tableInfo.Core.Columns), rc.ioWorkers, rc.store, tr.tableMeta)
+	tableRegions, err := mydump.MakeTableRegions(ctx, divideConfig)
 	if err == nil {
 		timestamp := time.Now().Unix()
 		failpoint.Inject("PopulateChunkTimestamp", func(v failpoint.Value) {
@@ -285,13 +285,13 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 		for _, region := range tableRegions {
 			engine, found := cp.Engines[region.EngineID]
 			if !found {
-				engine = &checkpoints2.EngineCheckpoint{
-					Status: checkpoints2.CheckpointStatusLoaded,
+				engine = &checkpoints.EngineCheckpoint{
+					Status: checkpoints.CheckpointStatusLoaded,
 				}
 				cp.Engines[region.EngineID] = engine
 			}
-			ccp := &checkpoints2.ChunkCheckpoint{
-				Key: checkpoints2.ChunkCheckpointKey{
+			ccp := &checkpoints.ChunkCheckpoint{
+				Key: checkpoints.ChunkCheckpointKey{
 					Path:   region.FileMeta.Path,
 					Offset: region.Chunk.Offset,
 				},
@@ -315,7 +315,7 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 		}
 
 		// Add index engine checkpoint
-		cp.Engines[common2.IndexEngineID] = &checkpoints2.EngineCheckpoint{Status: checkpoints2.CheckpointStatusLoaded}
+		cp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
 	}
 	task.End(zap.ErrorLevel, err,
 		zap.Int("enginesCnt", len(cp.Engines)),
@@ -338,7 +338,7 @@ func (tr *TableImporter) AutoIDClient() *autoid.ClientDiscover {
 }
 
 // RebaseChunkRowIDs rebase the row id of the chunks.
-func (*TableImporter) RebaseChunkRowIDs(cp *checkpoints2.TableCheckpoint, rowIDBase int64) {
+func (*TableImporter) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
 	if rowIDBase == 0 {
 		return
 	}
@@ -363,7 +363,7 @@ func (*TableImporter) RebaseChunkRowIDs(cp *checkpoints2.TableCheckpoint, rowIDB
 // The column permutation of (d, b, a) is set to be [2, 1, -1, 0].
 //
 // The argument `columns` _must_ be in lower case.
-func (tr *TableImporter) initializeColumns(columns []string, ccp *checkpoints2.ChunkCheckpoint) error {
+func (tr *TableImporter) initializeColumns(columns []string, ccp *checkpoints.ChunkCheckpoint) error {
 	colPerm, err := createColumnPermutation(columns, tr.ignoreColumns, tr.tableInfo.Core, tr.logger)
 	if err != nil {
 		return err
@@ -381,7 +381,7 @@ func createColumnPermutation(
 	var colPerm []int
 	if len(columns) == 0 {
 		colPerm = make([]int, 0, len(tableInfo.Columns)+1)
-		shouldIncludeRowID := common2.TableHasAutoRowID(tableInfo)
+		shouldIncludeRowID := common.TableHasAutoRowID(tableInfo)
 
 		// no provided columns, so use identity permutation.
 		for i, col := range tableInfo.Columns {
@@ -406,11 +406,11 @@ func createColumnPermutation(
 	return colPerm, nil
 }
 
-func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp *checkpoints2.TableCheckpoint) error {
-	indexEngineCp := cp.Engines[common2.IndexEngineID]
+func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
+	indexEngineCp := cp.Engines[common.IndexEngineID]
 	if indexEngineCp == nil {
 		tr.logger.Error("fail to importEngines because indexengine is nil")
-		return common2.ErrCheckpointNotFound.GenWithStack("table %v index engine checkpoint not found", tr.tableName)
+		return common.ErrCheckpointNotFound.GenWithStack("table %v index engine checkpoint not found", tr.tableName)
 	}
 
 	ctx, cancel := context.WithCancel(pCtx)
@@ -433,18 +433,18 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 	idxEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
 	}
-	if indexEngineCp.Status < checkpoints2.CheckpointStatusClosed {
+	if indexEngineCp.Status < checkpoints.CheckpointStatusClosed {
 		handleDataEngineThisRun = true
 		indexWorker := rc.indexWorkers.Apply()
 		defer rc.indexWorkers.Recycle(indexWorker)
 
-		if rc.cfg.TikvImporter.Backend == config2.BackendLocal {
+		if rc.cfg.TikvImporter.Backend == config.BackendLocal {
 			// for index engine, the estimate factor is non-clustered index count
 			idxCnt := len(tr.tableInfo.Core.Indices)
-			if !common2.TableHasAutoRowID(tr.tableInfo.Core) {
+			if !common.TableHasAutoRowID(tr.tableInfo.Core) {
 				idxCnt--
 			}
-			threshold := local2.EstimateCompactionThreshold(tr.tableMeta.DataFiles, cp, int64(idxCnt))
+			threshold := local.EstimateCompactionThreshold(tr.tableMeta.DataFiles, cp, int64(idxCnt))
 			idxEngineCfg.Local = backend.LocalEngineConfig{
 				Compact:            threshold > 0,
 				CompactConcurrency: 4,
@@ -457,11 +457,11 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 		var indexEngine *backend.OpenedEngine
 		var err error
 		for engineID, engine := range cp.Engines {
-			if engineID == common2.IndexEngineID {
+			if engineID == common.IndexEngineID {
 				continue
 			}
-			if engine.Status < checkpoints2.CheckpointStatusAllWritten {
-				indexEngine, err = rc.engineMgr.OpenEngine(ctx, idxEngineCfg, tr.tableName, common2.IndexEngineID)
+			if engine.Status < checkpoints.CheckpointStatusAllWritten {
+				indexEngine, err = rc.engineMgr.OpenEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -471,7 +471,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 
 		logTask := tr.logger.Begin(zap.InfoLevel, "import whole table")
 		var wg sync.WaitGroup
-		var engineErr common2.OnceError
+		var engineErr common.OnceError
 		setError := func(err error) {
 			engineErr.Set(err)
 			// cancel this context to fail fast
@@ -480,7 +480,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 
 		type engineCheckpoint struct {
 			engineID   int32
-			checkpoint *checkpoints2.EngineCheckpoint
+			checkpoint *checkpoints.EngineCheckpoint
 		}
 		allEngines := make([]engineCheckpoint, 0, len(cp.Engines))
 		for engineID, engine := range cp.Engines {
@@ -508,13 +508,13 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 				continue
 			}
 
-			if engine.Status < checkpoints2.CheckpointStatusImported {
+			if engine.Status < checkpoints.CheckpointStatusImported {
 				wg.Add(1)
 
 				// If the number of chunks is small, it means that this engine may be finished in a few times.
 				// We do not limit it in TableConcurrency
 				restoreWorker := rc.tableWorkers.Apply()
-				go func(w *worker.Worker, eid int32, ecp *checkpoints2.EngineCheckpoint) {
+				go func(w *worker.Worker, eid int32, ecp *checkpoints.EngineCheckpoint) {
 					defer wg.Done()
 					engineLogTask := tr.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
 					dataClosedEngine, err := tr.preprocessEngine(ctx, rc, indexEngine, eid, ecp)
@@ -524,7 +524,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 						dataWorker := rc.closedEngineLimit.Apply()
 						defer rc.closedEngineLimit.Recycle(dataWorker)
 						err = tr.importEngine(ctx, dataClosedEngine, rc, ecp)
-						if rc.status != nil && rc.status.backend == config2.BackendLocal {
+						if rc.status != nil && rc.status.backend == config.BackendLocal {
 							for _, chunk := range ecp.Chunks {
 								rc.status.FinishedFileSize.Add(chunk.TotalSize())
 							}
@@ -552,16 +552,16 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 		if indexEngine != nil {
 			closedIndexEngine, restoreErr = indexEngine.Close(ctx)
 		} else {
-			closedIndexEngine, restoreErr = rc.engineMgr.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, common2.IndexEngineID)
+			closedIndexEngine, restoreErr = rc.engineMgr.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
 		}
 
-		if err = rc.saveStatusCheckpoint(ctx, tr.tableName, common2.IndexEngineID, restoreErr, checkpoints2.CheckpointStatusClosed); err != nil {
+		if err = rc.saveStatusCheckpoint(ctx, tr.tableName, common.IndexEngineID, restoreErr, checkpoints.CheckpointStatusClosed); err != nil {
 			return errors.Trace(firstErr(restoreErr, err))
 		}
-	} else if indexEngineCp.Status == checkpoints2.CheckpointStatusClosed {
+	} else if indexEngineCp.Status == checkpoints.CheckpointStatusClosed {
 		// If index engine file has been closed but not imported only if context cancel occurred
 		// when `importKV()` execution, so `UnsafeCloseEngine` and continue import it.
-		closedIndexEngine, restoreErr = rc.engineMgr.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, common2.IndexEngineID)
+		closedIndexEngine, restoreErr = rc.engineMgr.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, common.IndexEngineID)
 	}
 	if restoreErr != nil {
 		return errors.Trace(restoreErr)
@@ -576,9 +576,9 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 		}
 	}
 
-	if cp.Status < checkpoints2.CheckpointStatusIndexImported {
+	if cp.Status < checkpoints.CheckpointStatusIndexImported {
 		var err error
-		if indexEngineCp.Status < checkpoints2.CheckpointStatusImported {
+		if indexEngineCp.Status < checkpoints.CheckpointStatusImported {
 			failpoint.Inject("FailBeforeStartImportingIndexEngine", func() {
 				errMsg := "fail before importing index KV data"
 				tr.logger.Warn(errMsg)
@@ -596,7 +596,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 			})
 		}
 
-		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints2.WholeTableEngineID, err, checkpoints2.CheckpointStatusIndexImported)
+		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexImported)
 		if err = firstErr(err, saveCpErr); err != nil {
 			return errors.Trace(err)
 		}
@@ -613,12 +613,12 @@ func (tr *TableImporter) preprocessEngine(
 	rc *Controller,
 	indexEngine *backend.OpenedEngine,
 	engineID int32,
-	cp *checkpoints2.EngineCheckpoint,
+	cp *checkpoints.EngineCheckpoint,
 ) (*backend.ClosedEngine, error) {
 	ctx, cancel := context.WithCancel(pCtx)
 	defer cancel()
 	// all data has finished written, we can close the engine directly.
-	if cp.Status >= checkpoints2.CheckpointStatusAllWritten {
+	if cp.Status >= checkpoints.CheckpointStatusAllWritten {
 		engineCfg := &backend.EngineConfig{
 			TableInfo: tr.tableInfo,
 		}
@@ -627,7 +627,7 @@ func (tr *TableImporter) preprocessEngine(
 		if err != nil {
 			return closedEngine, errors.Trace(err)
 		}
-		if rc.status != nil && rc.status.backend == config2.BackendTiDB {
+		if rc.status != nil && rc.status.backend == config.BackendTiDB {
 			for _, chunk := range cp.Chunks {
 				rc.status.FinishedFileSize.Add(chunk.Chunk.EndOffset - chunk.Key.Offset)
 			}
@@ -642,7 +642,7 @@ func (tr *TableImporter) preprocessEngine(
 	// - no partition table
 	// - no explicit _tidb_rowid field (At this time we can't determine if the source file contains _tidb_rowid field,
 	//   so we will do this check in LocalWriter when the first row is received.)
-	hasAutoIncrementAutoID := common2.TableHasAutoRowID(tr.tableInfo.Core) &&
+	hasAutoIncrementAutoID := common.TableHasAutoRowID(tr.tableInfo.Core) &&
 		tr.tableInfo.Core.AutoRandomBits == 0 && tr.tableInfo.Core.ShardRowIDBits == 0 &&
 		tr.tableInfo.Core.Partition == nil
 	dataWriterCfg := &backend.LocalWriterConfig{
@@ -657,7 +657,7 @@ func (tr *TableImporter) preprocessEngine(
 	if !tr.tableMeta.IsRowOrdered {
 		dataEngineCfg.Local.Compact = true
 		dataEngineCfg.Local.CompactConcurrency = 4
-		dataEngineCfg.Local.CompactThreshold = local2.CompactionUpperThreshold
+		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
 	}
 	dataEngine, err := rc.engineMgr.OpenEngine(ctx, dataEngineCfg, tr.tableName, engineID)
 	if err != nil {
@@ -665,19 +665,19 @@ func (tr *TableImporter) preprocessEngine(
 	}
 
 	var wg sync.WaitGroup
-	var chunkErr common2.OnceError
+	var chunkErr common.OnceError
 
 	type chunkFlushStatus struct {
 		dataStatus  backend.ChunkFlushStatus
 		indexStatus backend.ChunkFlushStatus
-		chunkCp     *checkpoints2.ChunkCheckpoint
+		chunkCp     *checkpoints.ChunkCheckpoint
 	}
 
 	// chunks that are finished writing, but checkpoints are not finished due to flush not finished.
 	var checkFlushLock sync.Mutex
 	flushPendingChunks := make([]chunkFlushStatus, 0, 16)
 
-	chunkCpChan := make(chan *checkpoints2.ChunkCheckpoint, 16)
+	chunkCpChan := make(chan *checkpoints.ChunkCheckpoint, 16)
 	go func() {
 		for {
 			select {
@@ -702,7 +702,7 @@ func (tr *TableImporter) preprocessEngine(
 	// Restore table data
 ChunkLoop:
 	for chunkIndex, chunk := range cp.Chunks {
-		if rc.status != nil && rc.status.backend == config2.BackendTiDB {
+		if rc.status != nil && rc.status.backend == config.BackendTiDB {
 			rc.status.FinishedFileSize.Add(chunk.Chunk.Offset - chunk.Key.Offset)
 		}
 		if chunk.Chunk.Offset >= chunk.Chunk.EndOffset {
@@ -770,7 +770,7 @@ ChunkLoop:
 			break
 		}
 
-		if chunk.FileMeta.Type == mydump2.SourceTypeParquet {
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
 			// TODO: use the compressed size of the chunk to conduct memory control
 			if _, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store); err != nil {
 				return nil, errors.Trace(err)
@@ -838,7 +838,7 @@ ChunkLoop:
 	for _, chunk := range cp.Chunks {
 		totalKVSize += chunk.Checksum.SumSize()
 		totalSQLSize += chunk.UnfinishedSize()
-		if chunk.FileMeta.Type == mydump2.SourceTypeParquet {
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
 			logKeyName = "read(rows)"
 		}
 	}
@@ -868,13 +868,13 @@ ChunkLoop:
 	// so there may be data lose if exit at here. So we don't write this checkpoint
 	// here like other mode.
 	if !isLocalBackend(rc.cfg) {
-		if saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints2.CheckpointStatusAllWritten); saveCpErr != nil {
+		if saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusAllWritten); saveCpErr != nil {
 			return nil, errors.Trace(firstErr(err, saveCpErr))
 		}
 	}
 	if err != nil {
 		// if process is canceled, we should flush all chunk checkpoints for local backend
-		if isLocalBackend(rc.cfg) && common2.IsContextCanceledError(err) {
+		if isLocalBackend(rc.cfg) && common.IsContextCanceledError(err) {
 			// ctx is canceled, so to avoid Close engine failed, we use `context.Background()` here
 			if _, err2 := dataEngine.Close(context.Background()); err2 != nil {
 				log.FromContext(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
@@ -898,7 +898,7 @@ ChunkLoop:
 			return nil, errors.Trace(err)
 		}
 	}
-	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints2.CheckpointStatusClosed)
+	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusClosed)
 	if err = firstErr(err, saveCpErr); err != nil {
 		// If any error occurred, recycle worker immediately
 		return nil, errors.Trace(err)
@@ -910,9 +910,9 @@ func (tr *TableImporter) importEngine(
 	ctx context.Context,
 	closedEngine *backend.ClosedEngine,
 	rc *Controller,
-	cp *checkpoints2.EngineCheckpoint,
+	cp *checkpoints.EngineCheckpoint,
 ) error {
-	if cp.Status >= checkpoints2.CheckpointStatusImported {
+	if cp.Status >= checkpoints.CheckpointStatusImported {
 		return nil
 	}
 
@@ -941,7 +941,7 @@ func (tr *TableImporter) importEngine(
 func (tr *TableImporter) postProcess(
 	ctx context.Context,
 	rc *Controller,
-	cp *checkpoints2.TableCheckpoint,
+	cp *checkpoints.TableCheckpoint,
 	forcePostProcess bool,
 	metaMgr tableMetaMgr,
 ) (bool, error) {
@@ -950,15 +950,15 @@ func (tr *TableImporter) postProcess(
 	}
 
 	// alter table set auto_increment
-	if cp.Status < checkpoints2.CheckpointStatusAlteredAutoInc {
+	if cp.Status < checkpoints.CheckpointStatusAlteredAutoInc {
 		tblInfo := tr.tableInfo.Core
 		var err error
 		if tblInfo.ContainsAutoRandomBits() {
-			ft := &common2.GetAutoRandomColumn(tblInfo).FieldType
+			ft := &common.GetAutoRandomColumn(tblInfo).FieldType
 			shardFmt := autoid.NewShardIDFormat(ft, tblInfo.AutoRandomBits, tblInfo.AutoRandomRangeBits)
 			maxCap := shardFmt.IncrementalBitsCapacity()
 			err = AlterAutoRandom(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
-		} else if common2.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
+		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
 			// only alter auto increment id iff table contains auto-increment column or generated handle.
 			// ALTER TABLE xxx AUTO_INCREMENT = yyy has a bad naming.
 			// if a table has implicit _tidb_rowid column & tbl.SepAutoID=false, then it works on _tidb_rowid
@@ -972,20 +972,20 @@ func (tr *TableImporter) postProcess(
 				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
 				// not for allocator of _tidb_rowid.
 				// So we need to rebase IDs for those 2 allocators explicitly.
-				err = common2.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr, tr.dbInfo.ID, tr.tableInfo.Core)
+				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr, tr.dbInfo.ID, tr.tableInfo.Core)
 			}
 		}
-		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints2.WholeTableEngineID, err, checkpoints2.CheckpointStatusAlteredAutoInc)
+		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
 		if err = firstErr(err, saveCpErr); err != nil {
 			return false, errors.Trace(err)
 		}
-		cp.Status = checkpoints2.CheckpointStatusAlteredAutoInc
+		cp.Status = checkpoints.CheckpointStatusAlteredAutoInc
 	}
 
 	// tidb backend don't need checksum & analyze
-	if rc.cfg.PostRestore.Checksum == config2.OpLevelOff && rc.cfg.PostRestore.Analyze == config2.OpLevelOff {
+	if rc.cfg.PostRestore.Checksum == config.OpLevelOff && rc.cfg.PostRestore.Analyze == config.OpLevelOff {
 		tr.logger.Debug("skip checksum & analyze, either because not supported by this backend or manually disabled")
-		err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints2.WholeTableEngineID, nil, checkpoints2.CheckpointStatusAnalyzeSkipped)
+		err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusAnalyzeSkipped)
 		return false, errors.Trace(err)
 	}
 
@@ -998,7 +998,7 @@ func (tr *TableImporter) postProcess(
 
 	shouldSkipAnalyze := false
 	estimatedModifyCnt := 100_000_000
-	if cp.Status < checkpoints2.CheckpointStatusChecksumSkipped {
+	if cp.Status < checkpoints.CheckpointStatusChecksumSkipped {
 		// 4. do table checksum
 		var localChecksum verify.KVChecksum
 		for _, engine := range cp.Engines {
@@ -1007,7 +1007,7 @@ func (tr *TableImporter) postProcess(
 			}
 		}
 		indexNum := len(tr.tableInfo.Core.Indices)
-		if common2.TableHasAutoRowID(tr.tableInfo.Core) {
+		if common.TableHasAutoRowID(tr.tableInfo.Core) {
 			indexNum++
 		}
 		estimatedModifyCnt = int(localChecksum.SumKVS()) / (1 + indexNum)
@@ -1017,10 +1017,10 @@ func (tr *TableImporter) postProcess(
 		// if we came here, it must be a local backend.
 		// todo: remove this cast after we refactor the backend interface. Physical mode is so different, we shouldn't
 		// try to abstract it with logical mode.
-		localBackend := rc.backend.(*local2.Backend)
+		localBackend := rc.backend.(*local.Backend)
 		dupeController := localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
 		hasDupe := false
-		if rc.cfg.Conflict.Strategy != config2.NoneOnDup {
+		if rc.cfg.Conflict.Strategy != config.NoneOnDup {
 			opts := &encode.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
@@ -1047,7 +1047,7 @@ func (tr *TableImporter) postProcess(
 		needChecksum := !otherHasDupe && needRemoteDupe
 		hasDupe = hasDupe || otherHasDupe
 
-		if needRemoteDupe && rc.cfg.Conflict.Strategy != config2.NoneOnDup {
+		if needRemoteDupe && rc.cfg.Conflict.Strategy != config.NoneOnDup {
 			opts := &encode.SessionOptions{
 				SQLMode: mysql.ModeStrictAllTables,
 				SysVars: rc.sysVars,
@@ -1072,15 +1072,15 @@ func (tr *TableImporter) postProcess(
 			rc.dupIndicator.CompareAndSwap(false, hasDupe)
 		}
 
-		nextStage := checkpoints2.CheckpointStatusChecksummed
-		if rc.cfg.PostRestore.Checksum != config2.OpLevelOff && !hasDupe && needChecksum {
+		nextStage := checkpoints.CheckpointStatusChecksummed
+		if rc.cfg.PostRestore.Checksum != config.OpLevelOff && !hasDupe && needChecksum {
 			if cp.Checksum.SumKVS() > 0 || baseTotalChecksum.SumKVS() > 0 {
 				localChecksum.Add(&cp.Checksum)
 				localChecksum.Add(baseTotalChecksum)
 				tr.logger.Info("merged local checksum", zap.Object("checksum", &localChecksum))
 			}
 
-			var remoteChecksum *local2.RemoteChecksum
+			var remoteChecksum *local.RemoteChecksum
 			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
 			failpoint.Inject("checksum-error", func() {
 				tr.logger.Info("failpoint checksum-error injected.")
@@ -1088,7 +1088,7 @@ func (tr *TableImporter) postProcess(
 				err = status.Error(codes.Unknown, "Checksum meets error.")
 			})
 			if err != nil {
-				if rc.cfg.PostRestore.Checksum != config2.OpLevelOptional {
+				if rc.cfg.PostRestore.Checksum != config.OpLevelOptional {
 					return false, errors.Trace(err)
 				}
 				tr.logger.Warn("do checksum failed, will skip this error and go on", log.ShortError(err))
@@ -1097,7 +1097,7 @@ func (tr *TableImporter) postProcess(
 			if remoteChecksum != nil {
 				err = tr.compareChecksum(remoteChecksum, localChecksum)
 				// with post restore level 'optional', we will skip checksum error
-				if rc.cfg.PostRestore.Checksum == config2.OpLevelOptional {
+				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
 					if err != nil {
 						tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
 						err = nil
@@ -1106,7 +1106,7 @@ func (tr *TableImporter) postProcess(
 			}
 		} else {
 			switch {
-			case rc.cfg.PostRestore.Checksum == config2.OpLevelOff:
+			case rc.cfg.PostRestore.Checksum == config.OpLevelOff:
 				tr.logger.Info("skip checksum because the checksum option is off")
 			case hasDupe:
 				tr.logger.Info("skip checksum&analyze because duplicates were detected")
@@ -1116,7 +1116,7 @@ func (tr *TableImporter) postProcess(
 				shouldSkipAnalyze = true
 			}
 			err = nil
-			nextStage = checkpoints2.CheckpointStatusChecksumSkipped
+			nextStage = checkpoints.CheckpointStatusChecksumSkipped
 		}
 
 		// Don't call FinishTable when other lightning will calculate checksum.
@@ -1124,14 +1124,14 @@ func (tr *TableImporter) postProcess(
 			err = metaMgr.FinishTable(ctx)
 		}
 
-		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints2.WholeTableEngineID, err, nextStage)
+		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, nextStage)
 		if err = firstErr(err, saveCpErr); err != nil {
 			return false, errors.Trace(err)
 		}
 		cp.Status = nextStage
 	}
 
-	if cp.Status < checkpoints2.CheckpointStatusIndexAdded {
+	if cp.Status < checkpoints.CheckpointStatusIndexAdded {
 		var err error
 		if rc.cfg.TikvImporter.AddIndexBySQL {
 			w := rc.addIndexLimit.Apply()
@@ -1140,39 +1140,39 @@ func (tr *TableImporter) postProcess(
 			// Analyze will be automatically triggered after indexes are added by SQL. We can skip manual analyze.
 			shouldSkipAnalyze = true
 		}
-		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints2.WholeTableEngineID, err, checkpoints2.CheckpointStatusIndexAdded)
+		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexAdded)
 		if err = firstErr(err, saveCpErr); err != nil {
 			return false, errors.Trace(err)
 		}
-		cp.Status = checkpoints2.CheckpointStatusIndexAdded
+		cp.Status = checkpoints.CheckpointStatusIndexAdded
 	}
 
 	// do table analyze
-	if cp.Status < checkpoints2.CheckpointStatusAnalyzeSkipped {
+	if cp.Status < checkpoints.CheckpointStatusAnalyzeSkipped {
 		switch {
-		case shouldSkipAnalyze || rc.cfg.PostRestore.Analyze == config2.OpLevelOff:
+		case shouldSkipAnalyze || rc.cfg.PostRestore.Analyze == config.OpLevelOff:
 			if !shouldSkipAnalyze {
 				updateStatsMeta(ctx, rc.db, tr.tableInfo.ID, estimatedModifyCnt)
 			}
 			tr.logger.Info("skip analyze")
-			if err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints2.WholeTableEngineID, nil, checkpoints2.CheckpointStatusAnalyzeSkipped); err != nil {
+			if err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusAnalyzeSkipped); err != nil {
 				return false, errors.Trace(err)
 			}
-			cp.Status = checkpoints2.CheckpointStatusAnalyzeSkipped
+			cp.Status = checkpoints.CheckpointStatusAnalyzeSkipped
 		case forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast:
 			err := tr.analyzeTable(ctx, rc.db)
 			// witch post restore level 'optional', we will skip analyze error
-			if rc.cfg.PostRestore.Analyze == config2.OpLevelOptional {
+			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
 				if err != nil {
 					tr.logger.Warn("analyze table failed, will skip this error and go on", log.ShortError(err))
 					err = nil
 				}
 			}
-			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints2.WholeTableEngineID, err, checkpoints2.CheckpointStatusAnalyzed)
+			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAnalyzed)
 			if err = firstErr(err, saveCpErr); err != nil {
 				return false, errors.Trace(err)
 			}
-			cp.Status = checkpoints2.CheckpointStatusAnalyzed
+			cp.Status = checkpoints.CheckpointStatusAnalyzed
 		}
 	}
 
@@ -1181,14 +1181,14 @@ func (tr *TableImporter) postProcess(
 
 func getChunkCompressedSizeForParquet(
 	ctx context.Context,
-	chunk *checkpoints2.ChunkCheckpoint,
+	chunk *checkpoints.ChunkCheckpoint,
 	store storage.ExternalStorage,
 ) (int64, error) {
-	reader, err := mydump2.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	parser, err := mydump2.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
+	parser, err := mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
 	if err != nil {
 		_ = reader.Close()
 		return 0, errors.Trace(err)
@@ -1214,7 +1214,7 @@ func getChunkCompressedSizeForParquet(
 }
 
 func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) {
-	s := common2.SQLWithRetry{
+	s := common.SQLWithRetry{
 		DB:     db,
 		Logger: log.FromContext(ctx).With(zap.Int64("tableID", tableID)),
 	}
@@ -1272,7 +1272,7 @@ func parseColumnPermutations(
 	}
 
 	if len(unknownCols) > 0 {
-		return colPerm, common2.ErrUnknownColumns.GenWithStackByArgs(strings.Join(unknownCols, ","), tableInfo.Name)
+		return colPerm, common.ErrUnknownColumns.GenWithStackByArgs(strings.Join(unknownCols, ","), tableInfo.Name)
 	}
 
 	for _, colInfo := range tableInfo.Columns {
@@ -1322,10 +1322,10 @@ func (tr *TableImporter) importKV(
 	regionSplitKeys := int64(rc.cfg.TikvImporter.RegionSplitKeys)
 
 	if regionSplitSize == 0 && rc.taskMgr != nil {
-		regionSplitSize = int64(config2.SplitRegionSize)
+		regionSplitSize = int64(config.SplitRegionSize)
 		if err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 			if len(tasks) > 0 {
-				regionSplitSize = int64(config2.SplitRegionSize) * int64(min(len(tasks), config2.MaxSplitRegionSizeRatio))
+				regionSplitSize = int64(config.SplitRegionSize) * int64(min(len(tasks), config.MaxSplitRegionSizeRatio))
 			}
 			return nil, nil
 		}); err != nil {
@@ -1333,17 +1333,17 @@ func (tr *TableImporter) importKV(
 		}
 	}
 	if regionSplitKeys == 0 {
-		if regionSplitSize > int64(config2.SplitRegionSize) {
-			regionSplitKeys = int64(float64(regionSplitSize) / float64(config2.SplitRegionSize) * float64(config2.SplitRegionKeys))
+		if regionSplitSize > int64(config.SplitRegionSize) {
+			regionSplitKeys = int64(float64(regionSplitSize) / float64(config.SplitRegionSize) * float64(config.SplitRegionKeys))
 		} else {
-			regionSplitKeys = int64(config2.SplitRegionKeys)
+			regionSplitKeys = int64(config.SplitRegionKeys)
 		}
 	}
 	err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys)
-	if common2.ErrFoundDuplicateKeys.Equal(err) {
-		err = local2.ConvertToErrFoundConflictRecords(err, tr.encTable)
+	if common.ErrFoundDuplicateKeys.Equal(err) {
+		err = local.ConvertToErrFoundConflictRecords(err, tr.encTable)
 	}
-	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, closedEngine.GetID(), err, checkpoints2.CheckpointStatusImported)
+	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, closedEngine.GetID(), err, checkpoints.CheckpointStatusImported)
 	// Don't clean up when save checkpoint failed, because we will verifyLocalFile and import engine again after restart.
 	if err == nil && saveCpErr == nil {
 		err = multierr.Append(err, closedEngine.Cleanup(ctx))
@@ -1366,11 +1366,11 @@ func (tr *TableImporter) importKV(
 }
 
 // do checksum for each table.
-func (tr *TableImporter) compareChecksum(remoteChecksum *local2.RemoteChecksum, localChecksum verify.KVChecksum) error {
+func (tr *TableImporter) compareChecksum(remoteChecksum *local.RemoteChecksum, localChecksum verify.KVChecksum) error {
 	if remoteChecksum.Checksum != localChecksum.Sum() ||
 		remoteChecksum.TotalKVs != localChecksum.SumKVS() ||
 		remoteChecksum.TotalBytes != localChecksum.SumSize() {
-		return common2.ErrChecksumMismatch.GenWithStackByArgs(
+		return common.ErrChecksumMismatch.GenWithStackByArgs(
 			remoteChecksum.Checksum, localChecksum.Sum(),
 			remoteChecksum.TotalKVs, localChecksum.SumKVS(),
 			remoteChecksum.TotalBytes, localChecksum.SumSize(),
@@ -1383,7 +1383,7 @@ func (tr *TableImporter) compareChecksum(remoteChecksum *local2.RemoteChecksum, 
 
 func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB) error {
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
-	exec := common2.SQLWithRetry{
+	exec := common.SQLWithRetry{
 		DB:     db,
 		Logger: tr.logger,
 	}
@@ -1396,13 +1396,13 @@ func (tr *TableImporter) dropIndexes(ctx context.Context, db *sql.DB) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tr.tableName))
 
 	tblInfo := tr.tableInfo
-	remainIndexes, dropIndexes := common2.GetDropIndexInfos(tblInfo.Core)
+	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo.Core)
 	for _, idxInfo := range dropIndexes {
-		sqlStr := common2.BuildDropIndexSQL(tblInfo.DB, tblInfo.Name, idxInfo)
+		sqlStr := common.BuildDropIndexSQL(tblInfo.DB, tblInfo.Name, idxInfo)
 
 		logger.Info("drop index", zap.String("sql", sqlStr))
 
-		s := common2.SQLWithRetry{
+		s := common.SQLWithRetry{
 			DB:     db,
 			Logger: logger,
 		}
@@ -1415,7 +1415,7 @@ func (tr *TableImporter) dropIndexes(ctx context.Context, db *sql.DB) error {
 					continue
 				}
 			}
-			return common2.ErrDropIndexFailed.Wrap(err).GenWithStackByArgs(common2.EscapeIdentifier(idxInfo.Name.O), tr.tableName)
+			return common.ErrDropIndexFailed.Wrap(err).GenWithStackByArgs(common.EscapeIdentifier(idxInfo.Name.O), tr.tableName)
 		}
 	}
 	if len(remainIndexes) < len(tblInfo.Core.Indices) {
@@ -1443,7 +1443,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	tblInfo := tr.tableInfo
 	tableName := tr.tableName
 
-	singleSQL, multiSQLs := common2.BuildAddIndexSQL(tableName, tblInfo.Core, tblInfo.Desired)
+	singleSQL, multiSQLs := common.BuildAddIndexSQL(tableName, tblInfo.Core, tblInfo.Desired)
 	if len(multiSQLs) == 0 {
 		return nil
 	}
@@ -1460,7 +1460,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 			if cause == nil {
 				cause = retErr
 			}
-			retErr = common2.ErrAddIndexFailed.GenWithStack(
+			retErr = common.ErrAddIndexFailed.GenWithStack(
 				"add index failed on table %s: %v, you can add index manually by the following SQL: %s",
 				tableName, cause, singleSQL)
 		}
@@ -1485,7 +1485,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	if err == nil {
 		return nil
 	}
-	if !common2.IsDupKeyError(err) {
+	if !common.IsDupKeyError(err) {
 		return err
 	}
 	if len(multiSQLs) == 1 {
@@ -1503,7 +1503,7 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 				logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 			}
 		})
-		if err != nil && !common2.IsDupKeyError(err) {
+		if err != nil && !common.IsDupKeyError(err) {
 			return err
 		}
 		baseProgress += 1.0 / float64(len(multiSQLs))
@@ -1521,7 +1521,7 @@ func (*TableImporter) executeDDL(
 	logger := log.FromContext(ctx).With(zap.String("ddl", ddl))
 	logger.Info("execute ddl")
 
-	s := common2.SQLWithRetry{
+	s := common.SQLWithRetry{
 		DB:     db,
 		Logger: logger,
 	}
@@ -1538,7 +1538,7 @@ func (*TableImporter) executeDDL(
 	}()
 
 	failpoint.Inject("AddIndexCrash", func() {
-		_ = common2.KillMySelf()
+		_ = common.KillMySelf()
 	})
 
 	var ddlErr error
@@ -1562,7 +1562,7 @@ func (*TableImporter) executeDDL(
 		}
 
 		var status *ddlStatus
-		err := common2.Retry("query ddl status", logger, func() error {
+		err := common.Retry("query ddl status", logger, func() error {
 			var err error
 			status, err = getDDLStatus(ctx, db, ddl, time.Unix(currentTS, 0))
 			return err
@@ -1702,7 +1702,7 @@ func getDDLJobIDByQuery(ctx context.Context, db *sql.DB, wantQuery string) (int6
 func (tr *TableImporter) preDeduplicate(
 	ctx context.Context,
 	rc *Controller,
-	cp *checkpoints2.TableCheckpoint,
+	cp *checkpoints.TableCheckpoint,
 	workingDir string,
 ) error {
 	d := &dupDetector{

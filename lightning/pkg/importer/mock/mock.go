@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/pkg/errno"
-	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
@@ -53,46 +53,46 @@ type DBSourceData struct {
 // ImportSource defines a mock import source
 type ImportSource struct {
 	dbSrcDataMap  map[string]*DBSourceData
-	dbFileMetaMap map[string]*mydump2.MDDatabaseMeta
+	dbFileMetaMap map[string]*mydump.MDDatabaseMeta
 	srcStorage    storage.ExternalStorage
 }
 
 // NewImportSource creates a ImportSource object.
 func NewImportSource(dbSrcDataMap map[string]*DBSourceData) (*ImportSource, error) {
 	ctx := context.Background()
-	dbFileMetaMap := make(map[string]*mydump2.MDDatabaseMeta)
+	dbFileMetaMap := make(map[string]*mydump.MDDatabaseMeta)
 	mapStore := storage.NewMemStorage()
 	for dbName, dbData := range dbSrcDataMap {
-		dbFileInfo := mydump2.FileInfo{
+		dbFileInfo := mydump.FileInfo{
 			TableName: filter.Table{
 				Schema: dbName,
 			},
-			FileMeta: mydump2.SourceFileMeta{Type: mydump2.SourceTypeSchemaSchema},
+			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeSchemaSchema},
 		}
-		dbMeta := mydump2.NewMDDatabaseMeta("binary")
+		dbMeta := mydump.NewMDDatabaseMeta("binary")
 		dbMeta.Name = dbName
 		dbMeta.SchemaFile = dbFileInfo
-		dbMeta.Tables = []*mydump2.MDTableMeta{}
+		dbMeta.Tables = []*mydump.MDTableMeta{}
 		for tblName, tblData := range dbData.Tables {
-			tblMeta := mydump2.NewMDTableMeta("binary")
+			tblMeta := mydump.NewMDTableMeta("binary")
 			tblMeta.DB = dbName
 			tblMeta.Name = tblName
-			compression := mydump2.CompressionNone
+			compression := mydump.CompressionNone
 			if strings.HasSuffix(tblData.SchemaFile.FileName, ".gz") {
-				compression = mydump2.CompressionGZ
+				compression = mydump.CompressionGZ
 			}
-			tblMeta.SchemaFile = mydump2.FileInfo{
+			tblMeta.SchemaFile = mydump.FileInfo{
 				TableName: filter.Table{
 					Schema: dbName,
 					Name:   tblName,
 				},
-				FileMeta: mydump2.SourceFileMeta{
+				FileMeta: mydump.SourceFileMeta{
 					Path:        tblData.SchemaFile.FileName,
-					Type:        mydump2.SourceTypeTableSchema,
+					Type:        mydump.SourceTypeTableSchema,
 					Compression: compression,
 				},
 			}
-			tblMeta.DataFiles = []mydump2.FileInfo{}
+			tblMeta.DataFiles = []mydump.FileInfo{}
 			if err := mapStore.WriteFile(ctx, tblData.SchemaFile.FileName, tblData.SchemaFile.Data); err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -103,12 +103,12 @@ func NewImportSource(dbSrcDataMap map[string]*DBSourceData) (*ImportSource, erro
 					fileSize = len(tblDataFile.Data)
 				}
 				totalFileSize += fileSize
-				fileInfo := mydump2.FileInfo{
+				fileInfo := mydump.FileInfo{
 					TableName: filter.Table{
 						Schema: dbName,
 						Name:   tblName,
 					},
-					FileMeta: mydump2.SourceFileMeta{
+					FileMeta: mydump.SourceFileMeta{
 						Path:     tblDataFile.FileName,
 						FileSize: int64(fileSize),
 						RealSize: int64(fileSize),
@@ -117,15 +117,15 @@ func NewImportSource(dbSrcDataMap map[string]*DBSourceData) (*ImportSource, erro
 				fileName := tblDataFile.FileName
 				if strings.HasSuffix(fileName, ".gz") {
 					fileName = strings.TrimSuffix(tblDataFile.FileName, ".gz")
-					fileInfo.FileMeta.Compression = mydump2.CompressionGZ
+					fileInfo.FileMeta.Compression = mydump.CompressionGZ
 				}
 				switch {
 				case strings.HasSuffix(fileName, ".csv"):
-					fileInfo.FileMeta.Type = mydump2.SourceTypeCSV
+					fileInfo.FileMeta.Type = mydump.SourceTypeCSV
 				case strings.HasSuffix(fileName, ".sql"):
-					fileInfo.FileMeta.Type = mydump2.SourceTypeSQL
+					fileInfo.FileMeta.Type = mydump.SourceTypeSQL
 				case strings.HasSuffix(fileName, ".parquet"):
-					fileInfo.FileMeta.Type = mydump2.SourceTypeParquet
+					fileInfo.FileMeta.Type = mydump.SourceTypeParquet
 				default:
 					return nil, errors.Errorf("unsupported file type: %s", tblDataFile.FileName)
 				}
@@ -152,13 +152,13 @@ func (m *ImportSource) GetStorage() storage.ExternalStorage {
 }
 
 // GetDBMetaMap gets the Mydumper database metadata map on the mock source.
-func (m *ImportSource) GetDBMetaMap() map[string]*mydump2.MDDatabaseMeta {
+func (m *ImportSource) GetDBMetaMap() map[string]*mydump.MDDatabaseMeta {
 	return m.dbFileMetaMap
 }
 
 // GetAllDBFileMetas gets all the Mydumper database metadatas on the mock source.
-func (m *ImportSource) GetAllDBFileMetas() []*mydump2.MDDatabaseMeta {
-	result := make([]*mydump2.MDDatabaseMeta, len(m.dbFileMetaMap))
+func (m *ImportSource) GetAllDBFileMetas() []*mydump.MDDatabaseMeta {
+	result := make([]*mydump.MDDatabaseMeta, len(m.dbFileMetaMap))
 	i := 0
 	for _, dbMeta := range m.dbFileMetaMap {
 		result[i] = dbMeta

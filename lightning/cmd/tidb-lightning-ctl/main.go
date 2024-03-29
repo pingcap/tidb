@@ -24,13 +24,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	importer2 "github.com/pingcap/tidb/lightning/pkg/importer"
+	"github.com/pingcap/tidb/lightning/pkg/importer"
 	"github.com/pingcap/tidb/lightning/pkg/server"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
 )
@@ -55,7 +55,7 @@ func run() error {
 		fsUsage func()
 	)
 
-	globalCfg := config2.Must(config2.LoadGlobalConfig(os.Args[1:], func(fs *flag.FlagSet) {
+	globalCfg := config.Must(config.LoadGlobalConfig(os.Args[1:], func(fs *flag.FlagSet) {
 		// change the default of `-d` from empty to 'noop://'.
 		// there is a check if `-d` points to a valid storage, and '' is not.
 		// since tidb-lightning-ctl does not need `-d` we change the default to a valid but harmless value.
@@ -79,7 +79,7 @@ func run() error {
 
 	ctx := context.Background()
 
-	cfg := config2.NewConfig()
+	cfg := config.NewConfig()
 	if err := cfg.LoadFromGlobal(globalCfg); err != nil {
 		return err
 	}
@@ -141,7 +141,7 @@ func compactCluster(ctx context.Context, cli pdhttp.Client, tls *common.TLS) err
 		cli,
 		metapb.StoreState_Offline,
 		func(c context.Context, store *pdhttp.MetaStore) error {
-			return tikv.Compact(c, tls, store.Address, importer2.FullLevelCompact, "")
+			return tikv.Compact(c, tls, store.Address, importer.FullLevelCompact, "")
 		},
 	)
 }
@@ -163,7 +163,7 @@ func fetchMode(ctx context.Context, cli pdhttp.Client, tls *common.TLS) error {
 	)
 }
 
-func checkpointErrorIgnore(ctx context.Context, cfg *config2.Config, tableName string) error {
+func checkpointErrorIgnore(ctx context.Context, cfg *config.Config, tableName string) error {
 	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -174,7 +174,7 @@ func checkpointErrorIgnore(ctx context.Context, cfg *config2.Config, tableName s
 	return errors.Trace(cpdb.IgnoreErrorCheckpoint(ctx, tableName))
 }
 
-func checkpointErrorDestroy(ctx context.Context, cfg *config2.Config, tls *common.TLS, tableName string) error {
+func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common.TLS, tableName string) error {
 	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -182,7 +182,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config2.Config, tls *commo
 	//nolint: errcheck
 	defer cpdb.Close()
 
-	target, err := importer2.NewTiDBManager(ctx, cfg.TiDB, tls)
+	target, err := importer.NewTiDBManager(ctx, cfg.TiDB, tls)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -209,7 +209,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config2.Config, tls *commo
 	// we need either lightning process alive or engine map persistent.
 	// both of them seems unnecessary if we only need to do is cleanup specify engine directory.
 	// so we didn't choose to use common API.
-	if cfg.TikvImporter.Backend == config2.BackendLocal {
+	if cfg.TikvImporter.Backend == config.BackendLocal {
 		for _, table := range targetTables {
 			for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
 				fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
@@ -232,7 +232,7 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config2.Config, tls *commo
 	return errors.Trace(errors.Join(errs...))
 }
 
-func checkpointDump(ctx context.Context, cfg *config2.Config, dumpFolder string) error {
+func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) error {
 	cpdb, err := checkpoints.OpenCheckpointsDB(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -277,7 +277,7 @@ func checkpointDump(ctx context.Context, cfg *config2.Config, dumpFolder string)
 	return nil
 }
 
-func getLocalStoringTables(ctx context.Context, cfg *config2.Config) (err2 error) {
+func getLocalStoringTables(ctx context.Context, cfg *config.Config) (err2 error) {
 	//nolint: prealloc
 	var tables []string
 	defer func() {
@@ -290,7 +290,7 @@ func getLocalStoringTables(ctx context.Context, cfg *config2.Config) (err2 error
 		}
 	}()
 
-	if cfg.TikvImporter.Backend != config2.BackendLocal {
+	if cfg.TikvImporter.Backend != config.BackendLocal {
 		return nil
 	}
 	exist, err := checkpoints.IsCheckpointsDBExists(ctx, cfg)

@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
-	checkpoints2 "github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	config2 "github.com/pingcap/tidb/pkg/lightning/config"
-	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -57,7 +57,7 @@ func TestCheckCSVHeader(t *testing.T) {
 	}
 
 	cases := []struct {
-		ignoreColumns []*config2.IgnoreColumns
+		ignoreColumns []*config.IgnoreColumns
 		// empty msg means check pass
 		level   precheck.CheckType
 		Sources map[string][]*tableSource
@@ -164,7 +164,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		},
 		// ignore primary key, should still be warn
 		{
-			[]*config2.IgnoreColumns{
+			[]*config.IgnoreColumns{
 				{
 					DB:      "db",
 					Table:   "tbl1",
@@ -187,7 +187,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		},
 		// ignore primary key, but has other unique key
 		{
-			[]*config2.IgnoreColumns{
+			[]*config.IgnoreColumns{
 				{
 					DB:      "db",
 					Table:   "tbl1",
@@ -210,7 +210,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		},
 		// ignore primary key, non other unique key
 		{
-			[]*config2.IgnoreColumns{
+			[]*config.IgnoreColumns{
 				{
 					DB:      "db",
 					Table:   "tbl1",
@@ -250,7 +250,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		},
 		// non unique key, but ignore inconsistent field
 		{
-			[]*config2.IgnoreColumns{
+			[]*config.IgnoreColumns{
 				{
 					DB:      "db",
 					Table:   "tbl1",
@@ -322,10 +322,10 @@ func TestCheckCSVHeader(t *testing.T) {
 		},
 	}
 
-	cfg := &config2.Config{
-		Mydumper: config2.MydumperRuntime{
-			ReadBlockSize: config2.ReadBlockSize,
-			CSV: config2.CSVConfig{
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize: config.ReadBlockSize,
+			CSV: config.CSVConfig{
 				Separator:   ",",
 				Delimiter:   `"`,
 				Header:      false,
@@ -357,14 +357,14 @@ func TestCheckCSVHeader(t *testing.T) {
 	for _, ca := range cases {
 		rc.checkTemplate = NewSimpleTemplate()
 		cfg.Mydumper.IgnoreColumns = ca.ignoreColumns
-		rc.dbInfos = make(map[string]*checkpoints2.TidbDBInfo)
+		rc.dbInfos = make(map[string]*checkpoints.TidbDBInfo)
 
-		dbMetas := make([]*mydump2.MDDatabaseMeta, 0)
+		dbMetas := make([]*mydump.MDDatabaseMeta, 0)
 		for db, tbls := range ca.Sources {
-			tblMetas := make([]*mydump2.MDTableMeta, 0, len(tbls))
-			dbInfo := &checkpoints2.TidbDBInfo{
+			tblMetas := make([]*mydump.MDTableMeta, 0, len(tbls))
+			dbInfo := &checkpoints.TidbDBInfo{
 				Name:   db,
-				Tables: make(map[string]*checkpoints2.TidbTableInfo),
+				Tables: make(map[string]*checkpoints.TidbTableInfo),
 			}
 			rc.dbInfos[db] = dbInfo
 
@@ -374,33 +374,33 @@ func TestCheckCSVHeader(t *testing.T) {
 				core, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 0xabcdef)
 				require.NoError(t, err)
 				core.State = model.StatePublic
-				dbInfo.Tables[tbl.Name] = &checkpoints2.TidbTableInfo{
+				dbInfo.Tables[tbl.Name] = &checkpoints.TidbTableInfo{
 					ID:   core.ID,
 					DB:   db,
 					Name: tbl.Name,
 					Core: core,
 				}
 
-				fileInfos := make([]mydump2.FileInfo, 0, len(tbl.Sources))
+				fileInfos := make([]mydump.FileInfo, 0, len(tbl.Sources))
 				for i, s := range tbl.Sources {
 					fileName := fmt.Sprintf("%s.%s.%d.csv", db, tbl.Name, i)
 					err = os.WriteFile(filepath.Join(dir, fileName), []byte(s), 0o644)
 					require.NoError(t, err)
-					fileInfos = append(fileInfos, mydump2.FileInfo{
-						FileMeta: mydump2.SourceFileMeta{
+					fileInfos = append(fileInfos, mydump.FileInfo{
+						FileMeta: mydump.SourceFileMeta{
 							Path:     fileName,
-							Type:     mydump2.SourceTypeCSV,
+							Type:     mydump.SourceTypeCSV,
 							FileSize: int64(len(s)),
 						},
 					})
 				}
-				tblMetas = append(tblMetas, &mydump2.MDTableMeta{
+				tblMetas = append(tblMetas, &mydump.MDTableMeta{
 					DB:        db,
 					Name:      tbl.Name,
 					DataFiles: fileInfos,
 				})
 			}
-			dbMetas = append(dbMetas, &mydump2.MDDatabaseMeta{
+			dbMetas = append(dbMetas, &mydump.MDDatabaseMeta{
 				Name:   db,
 				Tables: tblMetas,
 			})
@@ -426,12 +426,12 @@ func TestCheckCSVHeader(t *testing.T) {
 func TestCheckTableEmpty(t *testing.T) {
 	dir := t.TempDir()
 
-	cfg := config2.NewConfig()
+	cfg := config.NewConfig()
 	cfg.Checkpoint.Enable = false
-	dbMetas := []*mydump2.MDDatabaseMeta{
+	dbMetas := []*mydump.MDDatabaseMeta{
 		{
 			Name: "test1",
-			Tables: []*mydump2.MDTableMeta{
+			Tables: []*mydump.MDTableMeta{
 				{
 					DB:   "test1",
 					Name: "tbl1",
@@ -444,7 +444,7 @@ func TestCheckTableEmpty(t *testing.T) {
 		},
 		{
 			Name: "test2",
-			Tables: []*mydump2.MDTableMeta{
+			Tables: []*mydump.MDTableMeta{
 				{
 					DB:   "test2",
 					Name: "tbl1",
@@ -472,7 +472,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	rc := &Controller{
 		cfg:                 cfg,
 		dbMetas:             dbMetas,
-		checkpointsDB:       checkpoints2.NewNullCheckpointsDB(),
+		checkpointsDB:       checkpoints.NewNullCheckpointsDB(),
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: theCheckBuilder,
 	}
@@ -480,12 +480,12 @@ func TestCheckTableEmpty(t *testing.T) {
 	ctx := context.Background()
 
 	// test tidb will do nothing
-	rc.cfg.TikvImporter.Backend = config2.BackendTiDB
+	rc.cfg.TikvImporter.Backend = config.BackendTiDB
 	err := rc.checkTableEmpty(ctx)
 	require.NoError(t, err)
 
 	// test parallel mode
-	rc.cfg.TikvImporter.Backend = config2.BackendLocal
+	rc.cfg.TikvImporter.Backend = config.BackendLocal
 	rc.cfg.TikvImporter.ParallelImport = true
 	err = rc.checkTableEmpty(ctx)
 	require.NoError(t, err)
@@ -550,10 +550,10 @@ func TestCheckTableEmpty(t *testing.T) {
 	require.Equal(t, "table(s) [`test1`.`tbl1`, `test2`.`tbl1`] are not empty", tmpl.criticalMsgs[0])
 
 	// init checkpoint with only two of the three tables
-	dbInfos := map[string]*checkpoints2.TidbDBInfo{
+	dbInfos := map[string]*checkpoints.TidbDBInfo{
 		"test1": {
 			Name: "test1",
-			Tables: map[string]*checkpoints2.TidbTableInfo{
+			Tables: map[string]*checkpoints.TidbTableInfo{
 				"tbl1": {
 					Name: "tbl1",
 				},
@@ -561,7 +561,7 @@ func TestCheckTableEmpty(t *testing.T) {
 		},
 		"test2": {
 			Name: "test2",
-			Tables: map[string]*checkpoints2.TidbTableInfo{
+			Tables: map[string]*checkpoints.TidbTableInfo{
 				"tbl1": {
 					Name: "tbl1",
 				},
@@ -569,7 +569,7 @@ func TestCheckTableEmpty(t *testing.T) {
 		},
 	}
 	rc.cfg.Checkpoint.Enable = true
-	rc.checkpointsDB, err = checkpoints2.NewFileCheckpointsDB(ctx, filepath.Join(dir, "cp.pb"))
+	rc.checkpointsDB, err = checkpoints.NewFileCheckpointsDB(ctx, filepath.Join(dir, "cp.pb"))
 	require.NoError(t, err)
 	err = rc.checkpointsDB.Initialize(ctx, cfg, dbInfos)
 	require.NoError(t, err)
@@ -609,7 +609,7 @@ func TestLocalResource(t *testing.T) {
 		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize")
 	}()
 
-	cfg := config2.NewConfig()
+	cfg := config.NewConfig()
 	cfg.Mydumper.SourceDir = dir
 	cfg.TikvImporter.SortedKVDir = dir
 	cfg.TikvImporter.Backend = "local"
@@ -659,7 +659,7 @@ func TestLocalResource(t *testing.T) {
 
 	// 3. source-size is bigger than disk-size, with a vaild disk-quota will trigger a warning
 	rc.checkTemplate = NewSimpleTemplate()
-	rc.cfg.TikvImporter.DiskQuota = config2.ByteSize(1024)
+	rc.cfg.TikvImporter.DiskQuota = config.ByteSize(1024)
 	estimatedSizeResult.SizeWithIndex = 4096
 	err = rc.localResource(ctx)
 	require.NoError(t, err)

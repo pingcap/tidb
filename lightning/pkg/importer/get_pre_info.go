@@ -30,15 +30,15 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	kv2 "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
-	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -78,7 +78,7 @@ type PreImportInfoGetter interface {
 	// ReadFirstNRowsByTableName reads the first N rows of data of an importing source table.
 	ReadFirstNRowsByTableName(ctx context.Context, schemaName string, tableName string, n int) (cols []string, rows [][]types.Datum, err error)
 	// ReadFirstNRowsByFileMeta reads the first N rows of an data file.
-	ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump2.SourceFileMeta, n int) (cols []string, rows [][]types.Datum, err error)
+	ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) (cols []string, rows [][]types.Datum, err error)
 	// EstimateSourceDataSize estimates the datasize to generate during the import as well as some other sub-informaiton.
 	// It will return:
 	// * the estimated data size to generate during the import,
@@ -115,13 +115,13 @@ const (
 )
 
 // WithPreInfoGetterDBMetas returns a new context with the specified dbMetas.
-func WithPreInfoGetterDBMetas(ctx context.Context, dbMetas []*mydump2.MDDatabaseMeta) context.Context {
+func WithPreInfoGetterDBMetas(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta) context.Context {
 	return context.WithValue(ctx, preInfoGetterKeyDBMetas, dbMetas)
 }
 
 // TargetInfoGetterImpl implements the operations to get information from the target.
 type TargetInfoGetterImpl struct {
-	cfg       *config2.Config
+	cfg       *config.Config
 	db        *sql.DB
 	backend   backend.TargetInfoGetter
 	pdHTTPCli pdhttp.Client
@@ -129,7 +129,7 @@ type TargetInfoGetterImpl struct {
 
 // NewTargetInfoGetterImpl creates a TargetInfoGetterImpl object.
 func NewTargetInfoGetterImpl(
-	cfg *config2.Config,
+	cfg *config.Config,
 	targetDB *sql.DB,
 	pdHTTPCli pdhttp.Client,
 ) (*TargetInfoGetterImpl, error) {
@@ -139,15 +139,15 @@ func NewTargetInfoGetterImpl(
 	}
 	var backendTargetInfoGetter backend.TargetInfoGetter
 	switch cfg.TikvImporter.Backend {
-	case config2.BackendTiDB:
+	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
-	case config2.BackendLocal:
+	case config.BackendLocal:
 		if pdHTTPCli == nil {
-			return nil, common2.ErrUnknown.GenWithStack("pd HTTP client is required when using local backend")
+			return nil, common.ErrUnknown.GenWithStack("pd HTTP client is required when using local backend")
 		}
 		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdHTTPCli)
 	default:
-		return nil, common2.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
+		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
 	return &TargetInfoGetterImpl{
 		cfg:       cfg,
@@ -172,10 +172,10 @@ func (g *TargetInfoGetterImpl) FetchRemoteTableModels(ctx context.Context, schem
 // It implements the TargetInfoGetter interface.
 // Mydump database metas are retrieved from the context.
 func (g *TargetInfoGetterImpl) CheckVersionRequirements(ctx context.Context) error {
-	var dbMetas []*mydump2.MDDatabaseMeta
+	var dbMetas []*mydump.MDDatabaseMeta
 	dbmetasVal := ctx.Value(preInfoGetterKeyDBMetas)
 	if dbmetasVal != nil {
-		if m, ok := dbmetasVal.([]*mydump2.MDDatabaseMeta); ok {
+		if m, ok := dbmetasVal.([]*mydump.MDDatabaseMeta); ok {
 			dbMetas = m
 		}
 	}
@@ -192,7 +192,7 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 	failpoint.Inject("CheckTableEmptyFailed", func() {
 		failpoint.Return(nil, errors.New("mock error"))
 	})
-	exec := common2.SQLWithRetry{
+	exec := common.SQLWithRetry{
 		DB:     g.db,
 		Logger: log.FromContext(ctx),
 	}
@@ -203,7 +203,7 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 		// the data is partially imported, but the index data has not been imported.
 		// In this situation, if no hint is added, the SQL executor might fetch the record from index,
 		// which is empty.  This will result in missing check.
-		common2.SprintfWithIdentifiers("SELECT 1 FROM %s.%s USE INDEX() LIMIT 1", schemaName, tableName),
+		common.SprintfWithIdentifiers("SELECT 1 FROM %s.%s USE INDEX() LIMIT 1", schemaName, tableName),
 		&dump,
 	)
 
@@ -261,16 +261,16 @@ func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdhttp
 
 // PreImportInfoGetterImpl implements the operations to get information used in importing preparation.
 type PreImportInfoGetterImpl struct {
-	cfg              *config2.Config
+	cfg              *config.Config
 	getPreInfoCfg    *ropts.GetPreInfoConfig
 	srcStorage       storage.ExternalStorage
 	ioWorkers        *worker.Pool
 	encBuilder       encode.EncodingBuilder
 	targetInfoGetter TargetInfoGetter
 
-	dbMetas          []*mydump2.MDDatabaseMeta
-	mdDBMetaMap      map[string]*mydump2.MDDatabaseMeta
-	mdDBTableMetaMap map[string]map[string]*mydump2.MDTableMeta
+	dbMetas          []*mydump.MDDatabaseMeta
+	mdDBMetaMap      map[string]*mydump.MDDatabaseMeta
+	mdDBTableMetaMap map[string]map[string]*mydump.MDTableMeta
 
 	dbInfosCache       map[string]*checkpoints.TidbDBInfo
 	sysVarsCache       map[string]string
@@ -279,8 +279,8 @@ type PreImportInfoGetterImpl struct {
 
 // NewPreImportInfoGetter creates a PreImportInfoGetterImpl object.
 func NewPreImportInfoGetter(
-	cfg *config2.Config,
-	dbMetas []*mydump2.MDDatabaseMeta,
+	cfg *config.Config,
+	dbMetas []*mydump.MDDatabaseMeta,
 	srcStorage storage.ExternalStorage,
 	targetInfoGetter TargetInfoGetter,
 	ioWorkers *worker.Pool,
@@ -292,12 +292,12 @@ func NewPreImportInfoGetter(
 	}
 	if encBuilder == nil {
 		switch cfg.TikvImporter.Backend {
-		case config2.BackendTiDB:
+		case config.BackendTiDB:
 			encBuilder = tidb.NewEncodingBuilder()
-		case config2.BackendLocal:
+		case config.BackendLocal:
 			encBuilder = local.NewEncodingBuilder(context.Background())
 		default:
-			return nil, common2.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
+			return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 		}
 	}
 
@@ -320,14 +320,14 @@ func NewPreImportInfoGetter(
 
 // Init initializes some internal data and states for PreImportInfoGetterImpl.
 func (p *PreImportInfoGetterImpl) Init() {
-	mdDBMetaMap := make(map[string]*mydump2.MDDatabaseMeta)
-	mdDBTableMetaMap := make(map[string]map[string]*mydump2.MDTableMeta)
+	mdDBMetaMap := make(map[string]*mydump.MDDatabaseMeta)
+	mdDBTableMetaMap := make(map[string]map[string]*mydump.MDTableMeta)
 	for _, dbMeta := range p.dbMetas {
 		dbName := dbMeta.Name
 		mdDBMetaMap[dbName] = dbMeta
 		mdTableMetaMap, ok := mdDBTableMetaMap[dbName]
 		if !ok {
-			mdTableMetaMap = make(map[string]*mydump2.MDTableMeta)
+			mdTableMetaMap = make(map[string]*mydump.MDTableMeta)
 			mdDBTableMetaMap[dbName] = mdTableMetaMap
 		}
 		for _, tblMeta := range dbMeta.Tables {
@@ -365,7 +365,7 @@ func (p *PreImportInfoGetterImpl) GetAllTableStructures(ctx context.Context, opt
 	return dbInfos, nil
 }
 
-func (p *PreImportInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Context, dbSrcFileMeta *mydump2.MDDatabaseMeta, getPreInfoCfg *ropts.GetPreInfoConfig) ([]*model.TableInfo, error) {
+func (p *PreImportInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Context, dbSrcFileMeta *mydump.MDDatabaseMeta, getPreInfoCfg *ropts.GetPreInfoConfig) ([]*model.TableInfo, error) {
 	dbName := dbSrcFileMeta.Name
 	failpoint.Inject(
 		"getTableStructuresByFileMeta_BeforeFetchRemoteTableModels",
@@ -462,30 +462,30 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context,
 
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreImportInfoGetter interface.
-func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump2.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	reader, err := mydump2.OpenReader(ctx, &dataFileMeta, p.srcStorage, storage.DecompressConfig{})
+func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
+	reader, err := mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage, storage.DecompressConfig{})
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
-	var parser mydump2.Parser
+	var parser mydump.Parser
 	blockBufSize := int64(p.cfg.Mydumper.ReadBlockSize)
 	switch dataFileMeta.Type {
-	case mydump2.SourceTypeCSV:
+	case mydump.SourceTypeCSV:
 		hasHeader := p.cfg.Mydumper.CSV.Header
 		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
-		charsetConvertor, err := mydump2.NewCharsetConvertor(p.cfg.Mydumper.DataCharacterSet, p.cfg.Mydumper.DataInvalidCharReplace)
+		charsetConvertor, err := mydump.NewCharsetConvertor(p.cfg.Mydumper.DataCharacterSet, p.cfg.Mydumper.DataInvalidCharReplace)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		parser, err = mydump2.NewCSVParser(ctx, &p.cfg.Mydumper.CSV, reader, blockBufSize, p.ioWorkers, hasHeader, charsetConvertor)
+		parser, err = mydump.NewCSVParser(ctx, &p.cfg.Mydumper.CSV, reader, blockBufSize, p.ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-	case mydump2.SourceTypeSQL:
-		parser = mydump2.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
-	case mydump2.SourceTypeParquet:
-		parser, err = mydump2.NewParquetParser(ctx, p.srcStorage, reader, dataFileMeta.Path)
+	case mydump.SourceTypeSQL:
+		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
+	case mydump.SourceTypeParquet:
+		parser, err = mydump.NewParquetParser(ctx, p.srcStorage, reader, dataFileMeta.Path)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -552,7 +552,7 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 				tableSize := tbl.TotalSize
 				// Do not sample small table because there may a large number of small table and it will take a long
 				// time to sample data for all of them.
-				if isTiDBBackend(p.cfg) || tbl.TotalSize < int64(config2.SplitRegionSize) {
+				if isTiDBBackend(p.cfg) || tbl.TotalSize < int64(config.SplitRegionSize) {
 					tbl.IndexRatio = 1.0
 					tbl.IsRowOrdered = false
 				} else {
@@ -565,7 +565,7 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 
 					tableSize = int64(float64(tbl.TotalSize) * tbl.IndexRatio)
 
-					if tbl.TotalSize > int64(config2.DefaultBatchSize)*2 && !tbl.IsRowOrdered {
+					if tbl.TotalSize > int64(config.DefaultBatchSize)*2 && !tbl.IsRowOrdered {
 						unSortedBigTableCount++
 					}
 				}
@@ -601,7 +601,7 @@ func (p *PreImportInfoGetterImpl) EstimateSourceDataSize(ctx context.Context, op
 func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	ctx context.Context,
 	dbName string,
-	tableMeta *mydump2.MDTableMeta,
+	tableMeta *mydump.MDTableMeta,
 	tableInfo *model.TableInfo,
 	errMgr *errormanager.ErrorManager,
 	sysVars map[string]string,
@@ -612,11 +612,11 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	reader, err := mydump2.OpenReader(ctx, &sampleFile, p.srcStorage, storage.DecompressConfig{})
+	reader, err := mydump.OpenReader(ctx, &sampleFile, p.srcStorage, storage.DecompressConfig{})
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
-	idAlloc := kv2.NewPanickingAllocators(0)
+	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
@@ -637,23 +637,23 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	}
 	blockBufSize := int64(p.cfg.Mydumper.ReadBlockSize)
 
-	var parser mydump2.Parser
+	var parser mydump.Parser
 	switch tableMeta.DataFiles[0].FileMeta.Type {
-	case mydump2.SourceTypeCSV:
+	case mydump.SourceTypeCSV:
 		hasHeader := p.cfg.Mydumper.CSV.Header
 		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
-		charsetConvertor, err := mydump2.NewCharsetConvertor(p.cfg.Mydumper.DataCharacterSet, p.cfg.Mydumper.DataInvalidCharReplace)
+		charsetConvertor, err := mydump.NewCharsetConvertor(p.cfg.Mydumper.DataCharacterSet, p.cfg.Mydumper.DataInvalidCharReplace)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)
 		}
-		parser, err = mydump2.NewCSVParser(ctx, &p.cfg.Mydumper.CSV, reader, blockBufSize, p.ioWorkers, hasHeader, charsetConvertor)
+		parser, err = mydump.NewCSVParser(ctx, &p.cfg.Mydumper.CSV, reader, blockBufSize, p.ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)
 		}
-	case mydump2.SourceTypeSQL:
-		parser = mydump2.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
-	case mydump2.SourceTypeParquet:
-		parser, err = mydump2.NewParquetParser(ctx, p.srcStorage, reader, sampleFile.Path)
+	case mydump.SourceTypeSQL:
+		parser = mydump.NewChunkParser(ctx, p.cfg.TiDB.SQLMode, reader, blockBufSize, p.ioWorkers)
+	case mydump.SourceTypeParquet:
+		parser, err = mydump.NewParquetParser(ctx, p.srcStorage, reader, sampleFile.Path)
 		if err != nil {
 			return 0.0, false, errors.Trace(err)
 		}
@@ -741,7 +741,7 @@ outloop:
 		}
 		if isRowOrdered {
 			kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
-			for _, kv := range kv2.Rows2KvPairs(dataKVs) {
+			for _, kv := range kv.Rows2KvPairs(dataKVs) {
 				if len(lastKey) == 0 {
 					lastKey = kv.Key
 				} else if bytes.Compare(lastKey, kv.Key) > 0 {
