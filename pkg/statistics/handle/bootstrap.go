@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -77,12 +78,6 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache,
 	tables, err := cache.NewStatsCacheImpl(h)
 	if err != nil {
 		return nil, err
-	}
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		ls := initstats.NewWorker(rc.Next, h.initStatsMeta4Chunk)
-		ls.LoadStats(is, tables, rc)
-		ls.Wait()
-		return tables, nil
 	}
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
@@ -242,12 +237,6 @@ func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statsty
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		ls := initstats.NewWorker(rc.Next, h.initStatsHistograms4ChunkLite)
-		ls.LoadStats(is, cache, rc)
-		ls.Wait()
-		return nil
-	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
@@ -271,12 +260,6 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		ls := initstats.NewWorker(rc.Next, h.initStatsHistograms4Chunk)
-		ls.LoadStats(is, cache, rc)
-		ls.Wait()
-		return nil
-	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
@@ -290,6 +273,69 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 		}
 		h.initStatsHistograms4Chunk(is, cache, iter)
 	}
+	return nil
+}
+
+func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task) error {
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id >= ? and table_id < ?"
+	rc, err := util.Exec(h.initStatsCtx, sql, task.StartTid, task.EndTid)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer terror.Call(rc.Close)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	req := rc.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	for {
+		err := rc.Next(ctx, req)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		h.initStatsHistograms4Chunk(is, cache, iter)
+	}
+	return nil
+}
+
+func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
+	sql := "select HIGH_PRIORITY min(table_id), max(table_id)  from mysql.stats_histograms"
+	rs, err := util.Exec(h.initStatsCtx, sql)
+	if err != nil {
+		return err
+	}
+	var rows []chunk.Row
+	rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 64)
+	if err != nil {
+		return err
+	}
+	err = rs.Close()
+	if err != nil {
+		return err
+	}
+	var maxTid, minTid int64
+	if len(rows) > 0 {
+		minTid = rows[0].GetInt64(0)
+		maxTid = rows[0].GetInt64(1)
+	}
+	ls := initstats.NewWorker(func(task initstats.Task) error {
+		return h.initStatsHistogramsByPaging(is, cache, task)
+	})
+	ls.LoadStats()
+	tid := minTid
+	for tid <= maxTid {
+		ls.SendTask(initstats.Task{
+			StartTid: tid,
+			EndTid:   tid + 1000,
+		})
+		tid += 1000
+	}
+	ls.SendTask(initstats.Task{
+		StartTid: tid,
+		EndTid:   tid + 1000,
+	})
+	ls.Wait()
 	return nil
 }
 
@@ -326,14 +372,6 @@ func (h *Handle) initStatsTopN(cache statstypes.StatsCache) error {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		ls := initstats.NewWorker(rc.Next, func(_ infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
-			h.initStatsTopN4Chunk(cache, iter)
-		})
-		ls.LoadStats(nil, cache, rc)
-		ls.Wait()
-		return nil
-	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
@@ -458,26 +496,18 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		ls := initstats.NewWorker(rc.Next, func(_ infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
-			h.initStatsBuckets4Chunk(cache, iter)
-		})
-		ls.LoadStats(nil, cache, rc)
-		ls.Wait()
-	} else {
-		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-		req := rc.NewChunk(nil)
-		iter := chunk.NewIterator4Chunk(req)
-		for {
-			err := rc.Next(ctx, req)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if req.NumRows() == 0 {
-				break
-			}
-			h.initStatsBuckets4Chunk(cache, iter)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	req := rc.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	for {
+		err := rc.Next(ctx, req)
+		if err != nil {
+			return errors.Trace(err)
 		}
+		if req.NumRows() == 0 {
+			break
+		}
+		h.initStatsBuckets4Chunk(cache, iter)
 	}
 	tables := cache.Values()
 	for _, table := range tables {
@@ -544,9 +574,16 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = h.initStatsHistograms(is, cache)
-	if err != nil {
-		return errors.Trace(err)
+	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
+		err = h.initStatsHistogramsConcurrency(is, cache)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		err = h.initStatsHistograms(is, cache)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	err = h.initStatsTopN(cache)
 	if err != nil {
