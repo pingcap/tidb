@@ -451,77 +451,6 @@ func TestGetSplitKeyPerRegionSkipSmallRegions(t *testing.T) {
 	require.Len(t, result, 0)
 }
 
-func TestRegionConsistency(t *testing.T) {
-	cases := []struct {
-		startKey []byte
-		endKey   []byte
-		err      string
-		regions  []*RegionInfo
-	}{
-		{
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			"scan region return empty result, startKey: (.*?), endKey: (.*?)",
-			[]*RegionInfo{},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			"first region 1's startKey(.*?) > startKey(.*?)",
-			[]*RegionInfo{
-				{
-					Region: &metapb.Region{
-						Id:       1,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
-					},
-				},
-			},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("b")),
-			codec.EncodeBytes([]byte{}, []byte("e")),
-			"last region 100's endKey(.*?) < endKey(.*?)",
-			[]*RegionInfo{
-				{
-					Region: &metapb.Region{
-						Id:       100,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
-					},
-				},
-			},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("c")),
-			codec.EncodeBytes([]byte{}, []byte("e")),
-			"region 6's endKey not equal to next region 8's startKey(.*?)",
-			[]*RegionInfo{
-				{
-					Region: &metapb.Region{
-						Id:          6,
-						StartKey:    codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
-						RegionEpoch: nil,
-					},
-				},
-				{
-					Region: &metapb.Region{
-						Id:       8,
-						StartKey: codec.EncodeBytes([]byte{}, []byte("e")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("f")),
-					},
-				},
-			},
-		},
-	}
-	for _, ca := range cases {
-		err := CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions)
-		require.Error(t, err)
-		require.Regexp(t, ca.err, err.Error())
-	}
-}
-
 func TestPaginateScanRegion(t *testing.T) {
 	ctx := context.Background()
 	mockPDClient := NewMockPDClientForSplit()
@@ -629,4 +558,75 @@ func TestPaginateScanRegion(t *testing.T) {
 	got, err = PaginateScanRegion(ctx, mockClient, []byte{1}, []byte{5}, 100)
 	require.NoError(t, err)
 	checkRegionsBoundaries(t, got, [][]byte{{1}, {2}, {3}, {4}, {5}})
+}
+
+func TestRegionConsistency(t *testing.T) {
+	cases := []struct {
+		startKey []byte
+		endKey   []byte
+		err      string
+		regions  []*RegionInfo
+	}{
+		{
+			codec.EncodeBytes([]byte{}, []byte("a")),
+			codec.EncodeBytes([]byte{}, []byte("a")),
+			"scan region return empty result, startKey: (.*?), endKey: (.*?)",
+			[]*RegionInfo{},
+		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("a")),
+			codec.EncodeBytes([]byte{}, []byte("a")),
+			"first region 1's startKey(.*?) > startKey(.*?)",
+			[]*RegionInfo{
+				{
+					Region: &metapb.Region{
+						Id:       1,
+						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+					},
+				},
+			},
+		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("b")),
+			codec.EncodeBytes([]byte{}, []byte("e")),
+			"last region 100's endKey(.*?) < endKey(.*?)",
+			[]*RegionInfo{
+				{
+					Region: &metapb.Region{
+						Id:       100,
+						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+					},
+				},
+			},
+		},
+		{
+			codec.EncodeBytes([]byte{}, []byte("c")),
+			codec.EncodeBytes([]byte{}, []byte("e")),
+			"region 6's endKey not equal to next region 8's startKey(.*?)",
+			[]*RegionInfo{
+				{
+					Region: &metapb.Region{
+						Id:          6,
+						StartKey:    codec.EncodeBytes([]byte{}, []byte("b")),
+						EndKey:      codec.EncodeBytes([]byte{}, []byte("d")),
+						RegionEpoch: nil,
+					},
+				},
+				{
+					Region: &metapb.Region{
+						Id:       8,
+						StartKey: codec.EncodeBytes([]byte{}, []byte("e")),
+						EndKey:   codec.EncodeBytes([]byte{}, []byte("f")),
+					},
+				},
+			},
+		},
+	}
+	for _, ca := range cases {
+		err := CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions)
+		require.Error(t, err)
+		require.Regexp(t, ca.err, err.Error())
+	}
 }
