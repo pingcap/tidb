@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	kv2 "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -42,17 +42,17 @@ func TestIterRawIndexKeysClusteredPK(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.True(t, info.IsCommonHandle)
-	tbl, err := tables.TableFromMeta(kv2.NewPanickingAllocators(0), info)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), info)
 	require.NoError(t, err)
 
 	sessionOpts := &encode.SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
 	}
-	decoder, err := kv2.NewTableKVDecoder(tbl, "`test`.`c1`", sessionOpts, log.L())
+	decoder, err := kv.NewTableKVDecoder(tbl, "`test`.`c1`", sessionOpts, log.L())
 	require.NoError(t, err)
 
-	sctx := kv2.NewSession(sessionOpts, log.L())
+	sctx := kv.NewSession(sessionOpts, log.L())
 	handle, err := tbl.AddRecord(sctx.GetTableCtx(), []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)})
 	require.NoError(t, err)
 	paris := sctx.TakeKvPairs()
@@ -81,17 +81,17 @@ func TestIterRawIndexKeysIntPK(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.True(t, info.PKIsHandle)
-	tbl, err := tables.TableFromMeta(kv2.NewPanickingAllocators(0), info)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), info)
 	require.NoError(t, err)
 
 	sessionOpts := &encode.SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
 	}
-	decoder, err := kv2.NewTableKVDecoder(tbl, "`test`.`c1`", sessionOpts, log.L())
+	decoder, err := kv.NewTableKVDecoder(tbl, "`test`.`c1`", sessionOpts, log.L())
 	require.NoError(t, err)
 
-	sctx := kv2.NewSession(sessionOpts, log.L())
+	sctx := kv.NewSession(sessionOpts, log.L())
 	handle, err := tbl.AddRecord(sctx.GetTableCtx(), []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)})
 	require.NoError(t, err)
 	paris := sctx.TakeKvPairs()

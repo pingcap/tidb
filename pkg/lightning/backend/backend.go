@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -371,8 +371,8 @@ func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionS
 	for i := 0; i < importMaxRetryTimes; i++ {
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
 		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize, regionSplitKeys)
-		if !common2.IsRetryableError(err) {
-			if common2.ErrFoundDuplicateKeys.Equal(err) {
+		if !common.IsRetryableError(err) {
+			if common.ErrFoundDuplicateKeys.Equal(err) {
 				task.End(zap.WarnLevel, err)
 			} else {
 				task.End(zap.ErrorLevel, err)

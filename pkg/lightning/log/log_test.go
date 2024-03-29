@@ -24,7 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
-	log2 "github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -33,17 +33,17 @@ import (
 )
 
 func TestConfigAdjust(t *testing.T) {
-	cfg := &log2.Config{}
+	cfg := &log.Config{}
 	cfg.Adjust()
 	require.Equal(t, "info", cfg.Level)
 
 	cfg.File = "."
-	err := log2.InitLogger(cfg, "info")
+	err := log.InitLogger(cfg, "info")
 	require.EqualError(t, err, "can't use directory as log file name")
 }
 
 func TestTestLogger(t *testing.T) {
-	logger, buffer := log2.MakeTestLogger()
+	logger, buffer := log.MakeTestLogger()
 	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
 	require.Equal(t, `{"$lvl":"WARN","$msg":"the message","number":123456,"array":[7,8,9]}`, buffer.Stripped())
 }
@@ -70,10 +70,10 @@ func TestInitStdoutLogger(t *testing.T) {
 		outputC <- string(buf[:n])
 	}()
 
-	logCfg := &log2.Config{File: "-"}
-	err = log2.InitLogger(logCfg, "info")
+	logCfg := &log.Config{File: "-"}
+	err = log.InitLogger(logCfg, "info")
 	require.NoError(t, err)
-	log2.L().Info(msg)
+	log.L().Info(msg)
 
 	os.Stdout = oldStdout
 	require.NoError(t, w.Close())
@@ -83,25 +83,25 @@ func TestInitStdoutLogger(t *testing.T) {
 
 	// filter packages on default
 	require.Equal(t, "", os.Getenv(logutil.GRPCDebugEnvName))
-	require.IsType(t, &log2.FilterCore{}, log2.L().Logger.Core())
+	require.IsType(t, &log.FilterCore{}, log.L().Logger.Core())
 	// output all packages when EnableDiagnoseLogs=true
 	logCfg.EnableDiagnoseLogs = true
-	require.NoError(t, log2.InitLogger(logCfg, "info"))
-	require.IsType(t, &zaplog.TextIOCore{}, log2.L().Logger.Core())
+	require.NoError(t, log.InitLogger(logCfg, "info"))
+	require.IsType(t, &zaplog.TextIOCore{}, log.L().Logger.Core())
 	require.Equal(t, "true", os.Getenv(logutil.GRPCDebugEnvName))
 	// reset GRPCDebugEnvName
 	require.NoError(t, os.Unsetenv(logutil.GRPCDebugEnvName))
 }
 
 func TestIsContextCanceledError(t *testing.T) {
-	require.True(t, log2.IsContextCanceledError(context.Canceled))
-	require.True(t, log2.IsContextCanceledError(status.Error(codes.Canceled, "")))
-	require.True(t, log2.IsContextCanceledError(errors.Annotate(context.Canceled, "foo")))
-	require.True(t, log2.IsContextCanceledError(awserr.New(request.CanceledErrorCode, "", context.Canceled)))
-	require.True(t, log2.IsContextCanceledError(awserr.New(
+	require.True(t, log.IsContextCanceledError(context.Canceled))
+	require.True(t, log.IsContextCanceledError(status.Error(codes.Canceled, "")))
+	require.True(t, log.IsContextCanceledError(errors.Annotate(context.Canceled, "foo")))
+	require.True(t, log.IsContextCanceledError(awserr.New(request.CanceledErrorCode, "", context.Canceled)))
+	require.True(t, log.IsContextCanceledError(awserr.New(
 		"MultipartUpload", "upload multipart failed",
 		awserr.New(request.CanceledErrorCode, "", context.Canceled))))
-	require.True(t, log2.IsContextCanceledError(awserr.New(request.ErrCodeRequestError, "", context.Canceled)))
+	require.True(t, log.IsContextCanceledError(awserr.New(request.ErrCodeRequestError, "", context.Canceled)))
 
-	require.False(t, log2.IsContextCanceledError(nil))
+	require.False(t, log.IsContextCanceledError(nil))
 }

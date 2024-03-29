@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -87,10 +87,10 @@ type engineMeta struct {
 
 type syncedRanges struct {
 	sync.Mutex
-	ranges []common2.Range
+	ranges []common.Range
 }
 
-func (r *syncedRanges) add(g common2.Range) {
+func (r *syncedRanges) add(g common.Range) {
 	r.Lock()
 	r.ranges = append(r.ranges, g)
 	r.Unlock()
@@ -120,7 +120,7 @@ type Engine struct {
 	cancel       context.CancelFunc
 	sstDir       string
 	sstMetasChan chan metaOrFlush
-	ingestErr    common2.OnceError
+	ingestErr    common.OnceError
 	wg           sync.WaitGroup
 	sstIngester  sstIngester
 
@@ -134,7 +134,7 @@ type Engine struct {
 	config    backend.LocalEngineConfig
 	tableInfo *checkpoints.TidbTableInfo
 
-	dupDetectOpt common2.DupDetectOpt
+	dupDetectOpt common.DupDetectOpt
 
 	// total size of SST files waiting to be ingested
 	pendingFileSize atomic.Int64
@@ -143,7 +143,7 @@ type Engine struct {
 	importedKVSize  atomic.Int64
 	importedKVCount atomic.Int64
 
-	keyAdapter         common2.KeyAdapter
+	keyAdapter         common.KeyAdapter
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
 
@@ -304,14 +304,14 @@ func (e *Engine) SplitRanges(
 	startKey, endKey []byte,
 	sizeLimit, keysLimit int64,
 	logger log.Logger,
-) ([]common2.Range, error) {
+) ([]common.Range, error) {
 	sizeProps, err := getSizePropertiesFn(logger, e.getDB(), e.keyAdapter)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	ranges := splitRangeBySizeProps(
-		common2.Range{Start: startKey, End: endKey},
+		common.Range{Start: startKey, End: endKey},
 		sizeProps,
 		sizeLimit,
 		keysLimit,
@@ -462,7 +462,7 @@ func (s *sizeProperties) iter(f func(p *rangeProperty) bool) {
 	})
 }
 
-func decodeRangeProperties(data []byte, keyAdapter common2.KeyAdapter) (rangeProperties, error) {
+func decodeRangeProperties(data []byte, keyAdapter common.KeyAdapter) (rangeProperties, error) {
 	r := make(rangeProperties, 0, 16)
 	for len(data) > 0 {
 		if len(data) < 4 {
@@ -493,7 +493,7 @@ func decodeRangeProperties(data []byte, keyAdapter common2.KeyAdapter) (rangePro
 // getSizePropertiesFn is used to let unit test replace the real function.
 var getSizePropertiesFn = getSizeProperties
 
-func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter common2.KeyAdapter) (*sizeProperties, error) {
+func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter common.KeyAdapter) (*sizeProperties, error) {
 	sstables, err := db.SSTables(pebble.WithProperties())
 	if err != nil {
 		logger.Warn("get sst table properties failed", log.ShortError(err))
@@ -985,7 +985,7 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions, buf *m
 		return &pebbleIter{Iterator: e.getDB().NewIter(opts), buf: buf}
 	}
 	logger := log.FromContext(ctx).With(
-		zap.String("table", common2.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
+		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
 	return newDupDetectIter(
@@ -999,7 +999,7 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions, buf *m
 	)
 }
 
-var _ common2.IngestData = (*Engine)(nil)
+var _ common.IngestData = (*Engine)(nil)
 
 // GetFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
 // in the engine. Empty upperBound means unbounded.
@@ -1042,7 +1042,7 @@ func (e *Engine) NewIter(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 	bufPool *membuf.Pool,
-) common2.ForwardIter {
+) common.ForwardIter {
 	return e.newKVIter(
 		ctx,
 		&pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound},
@@ -1071,14 +1071,14 @@ func (e *Engine) Finish(totalBytes, totalCount int64) {
 // IngestData interface.
 func (e *Engine) LoadIngestData(
 	ctx context.Context,
-	regionRanges []common2.Range,
-	outCh chan<- common2.DataAndRange,
+	regionRanges []common.Range,
+	outCh chan<- common.DataAndRange,
 ) error {
 	for _, r := range regionRanges {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case outCh <- common2.DataAndRange{Data: e, Range: r}:
+		case outCh <- common.DataAndRange{Data: e, Range: r}:
 		}
 	}
 	return nil
@@ -1109,7 +1109,7 @@ type Writer struct {
 
 	// bytes buffer for writeBatch
 	kvBuffer   *membuf.Buffer
-	writeBatch []common2.KvPair
+	writeBatch []common.KvPair
 	// if the kvs in writeBatch are in order, we can avoid doing a `sort.Slice` which
 	// is quite slow. in our bench, the sort operation eats about 5% of total CPU
 	isWriteBatchSorted bool
@@ -1123,7 +1123,7 @@ type Writer struct {
 	tikvCodec tikv.Codec
 }
 
-func (w *Writer) appendRowsSorted(kvs []common2.KvPair) (err error) {
+func (w *Writer) appendRowsSorted(kvs []common.KvPair) (err error) {
 	writer := w.writer.Load()
 	if writer == nil {
 		writer, err = w.createSSTWriter()
@@ -1143,15 +1143,15 @@ func (w *Writer) appendRowsSorted(kvs []common2.KvPair) (err error) {
 	w.batchCount += len(kvs)
 	// NoopKeyAdapter doesn't really change the key,
 	// skipping the encoding to avoid unnecessary alloc and copy.
-	if _, ok := keyAdapter.(common2.NoopKeyAdapter); !ok {
+	if _, ok := keyAdapter.(common.NoopKeyAdapter); !ok {
 		if cap(w.sortedKeyBuf) < totalKeySize {
 			w.sortedKeyBuf = make([]byte, totalKeySize)
 		}
 		buf := w.sortedKeyBuf[:0]
-		newKvs := make([]common2.KvPair, len(kvs))
+		newKvs := make([]common.KvPair, len(kvs))
 		for i := 0; i < len(kvs); i++ {
 			buf = keyAdapter.Encode(buf, kvs[i].Key, kvs[i].RowID)
-			newKvs[i] = common2.KvPair{Key: buf, Val: kvs[i].Val}
+			newKvs[i] = common.KvPair{Key: buf, Val: kvs[i].Val}
 			buf = buf[len(buf):]
 		}
 		kvs = newKvs
@@ -1163,7 +1163,7 @@ func (w *Writer) appendRowsSorted(kvs []common2.KvPair) (err error) {
 	return nil
 }
 
-func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common2.KvPair) error {
+func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) error {
 	l := len(w.writeBatch)
 	cnt := w.batchCount
 	var lastKey []byte
@@ -1184,7 +1184,7 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common2.KvPair) e
 			w.writeBatch[cnt].Key = key
 			w.writeBatch[cnt].Val = val
 		} else {
-			w.writeBatch = append(w.writeBatch, common2.KvPair{Key: key, Val: val})
+			w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
 		}
 		cnt++
 	}
@@ -1304,7 +1304,7 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	if !w.isWriteBatchSorted {
-		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common2.KvPair) int {
+		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) int {
 			return bytes.Compare(i.Key, j.Key)
 		})
 		w.isWriteBatchSorted = true
@@ -1320,7 +1320,7 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 	}
 
 	failpoint.Inject("orphanWriterGoRoutine", func() {
-		_ = common2.KillMySelf()
+		_ = common.KillMySelf()
 		// mimic we meet context cancel error when `addSST`
 		<-ctx.Done()
 		time.Sleep(5 * time.Second)
@@ -1379,7 +1379,7 @@ func newSSTWriter(path string, blockSize int) (*sstable.Writer, error) {
 	return writer, nil
 }
 
-func (sw *sstWriter) writeKVs(kvs []common2.KvPair) error {
+func (sw *sstWriter) writeKVs(kvs []common.KvPair) error {
 	if len(kvs) == 0 {
 		return nil
 	}

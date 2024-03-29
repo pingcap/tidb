@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -114,7 +113,7 @@ func TestWriter(t *testing.T) {
 	writer := NewEngineWriter(w)
 
 	kvCnt := rand.Intn(10) + 10
-	kvs := make([]common2.KvPair, kvCnt)
+	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		randLen := rand.Intn(10) + 1
 		kvs[i].Key = make([]byte, randLen)
@@ -130,7 +129,7 @@ func TestWriter(t *testing.T) {
 	_, err := writer.Close(ctx)
 	require.NoError(t, err)
 
-	slices.SortFunc(kvs, func(i, j common2.KvPair) int {
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
 	})
 
@@ -178,7 +177,7 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 
 	// 200 bytes key values.
 	kvCnt := 10
-	kvs := make([]common2.KvPair, kvCnt)
+	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		kvs[i].Key = make([]byte, 10)
 		_, err := rand.Read(kvs[i].Key)
@@ -275,12 +274,12 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	dir := t.TempDir()
 	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
 	require.NoError(t, err)
-	keyAdapter := common2.DupDetectKeyAdapter{}
+	keyAdapter := common.DupDetectKeyAdapter{}
 	data := &MemoryIngestData{
 		keyAdapter:         keyAdapter,
 		duplicateDetection: true,
 		duplicateDB:        db,
-		dupDetectOpt:       common2.DupDetectOpt{ReportErrOnDup: true},
+		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
 		keys:               keys,
 		values:             values,
 		ts:                 123,
@@ -346,46 +345,46 @@ func TestWriterMultiFileStat(t *testing.T) {
 		SetOnCloseFunc(closeFn).
 		Build(memStore, "/test", "0")
 
-	kvs := make([]common2.KvPair, 0, 18)
+	kvs := make([]common.KvPair, 0, 18)
 	// [key01, key02], [key03, key04], [key05, key06]
 	for i := 1; i <= 6; i++ {
-		kvs = append(kvs, common2.KvPair{
+		kvs = append(kvs, common.KvPair{
 			Key: []byte(fmt.Sprintf("key%02d", i)),
 			Val: []byte("56789"),
 		})
 	}
 	// [key11, key13], [key12, key15], [key14, key16]
-	kvs = append(kvs, common2.KvPair{
+	kvs = append(kvs, common.KvPair{
 		Key: []byte("key11"),
 		Val: []byte("56789"),
 	})
-	kvs = append(kvs, common2.KvPair{
+	kvs = append(kvs, common.KvPair{
 		Key: []byte("key13"),
 		Val: []byte("56789"),
 	})
-	kvs = append(kvs, common2.KvPair{
+	kvs = append(kvs, common.KvPair{
 		Key: []byte("key12"),
 		Val: []byte("56789"),
 	})
-	kvs = append(kvs, common2.KvPair{
+	kvs = append(kvs, common.KvPair{
 		Key: []byte("key15"),
 		Val: []byte("56789"),
 	})
-	kvs = append(kvs, common2.KvPair{
+	kvs = append(kvs, common.KvPair{
 		Key: []byte("key14"),
 		Val: []byte("56789"),
 	})
-	kvs = append(kvs, common2.KvPair{
+	kvs = append(kvs, common.KvPair{
 		Key: []byte("key16"),
 		Val: []byte("56789"),
 	})
 	// [key20, key22], [key21, key23], [key22, key24]
 	for i := 0; i < 3; i++ {
-		kvs = append(kvs, common2.KvPair{
+		kvs = append(kvs, common.KvPair{
 			Key: []byte(fmt.Sprintf("key2%d", i)),
 			Val: []byte("56789"),
 		})
-		kvs = append(kvs, common2.KvPair{
+		kvs = append(kvs, common.KvPair{
 			Key: []byte(fmt.Sprintf("key2%d", i+2)),
 			Val: []byte("56789"),
 		})
@@ -499,13 +498,13 @@ func TestWriterSort(t *testing.T) {
 	t.Skip("it only tests the performance of sorty")
 	commonPrefix := "abcabcabcabcabcabcabcabc"
 
-	kvs := make([]common2.KvPair, 1000000)
+	kvs := make([]common.KvPair, 1000000)
 	for i := 0; i < 1000000; i++ {
 		kvs[i].Key = []byte(commonPrefix + strconv.Itoa(int(rand.Int31())))
 		kvs[i].Val = []byte(commonPrefix)
 	}
 
-	kvs2 := make([]common2.KvPair, 1000000)
+	kvs2 := make([]common.KvPair, 1000000)
 	copy(kvs2, kvs)
 
 	ts := time.Now()
@@ -522,7 +521,7 @@ func TestWriterSort(t *testing.T) {
 	println("thread quick sort", time.Since(ts).String())
 
 	ts = time.Now()
-	slices.SortFunc(kvs2, func(i, j common2.KvPair) int {
+	slices.SortFunc(kvs2, func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
 	})
 	println("quick sort", time.Since(ts).String())

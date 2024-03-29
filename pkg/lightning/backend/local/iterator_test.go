@@ -26,7 +26,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/membuf"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
 )
@@ -38,58 +38,58 @@ func randBytes(n int) []byte {
 }
 
 func TestDupDetectIterator(t *testing.T) {
-	var pairs []common2.KvPair
+	var pairs []common.KvPair
 	prevRowMax := int64(0)
 	// Unique pairs.
 	for i := 0; i < 20; i++ {
-		pairs = append(pairs, common2.KvPair{
+		pairs = append(pairs, common.KvPair{
 			Key:   randBytes(32),
 			Val:   randBytes(128),
-			RowID: common2.EncodeIntRowID(prevRowMax),
+			RowID: common.EncodeIntRowID(prevRowMax),
 		})
 		prevRowMax++
 	}
 	// Duplicate pairs which repeat the same key twice.
 	for i := 20; i < 40; i++ {
 		key := randBytes(32)
-		pairs = append(pairs, common2.KvPair{
+		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: common2.EncodeIntRowID(prevRowMax),
+			RowID: common.EncodeIntRowID(prevRowMax),
 		})
 		prevRowMax++
-		pairs = append(pairs, common2.KvPair{
+		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: common2.EncodeIntRowID(prevRowMax),
+			RowID: common.EncodeIntRowID(prevRowMax),
 		})
 		prevRowMax++
 	}
 	// Duplicate pairs which repeat the same key three times.
 	for i := 40; i < 50; i++ {
 		key := randBytes(32)
-		pairs = append(pairs, common2.KvPair{
+		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: common2.EncodeIntRowID(prevRowMax),
+			RowID: common.EncodeIntRowID(prevRowMax),
 		})
 		prevRowMax++
-		pairs = append(pairs, common2.KvPair{
+		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: common2.EncodeIntRowID(prevRowMax),
+			RowID: common.EncodeIntRowID(prevRowMax),
 		})
 		prevRowMax++
-		pairs = append(pairs, common2.KvPair{
+		pairs = append(pairs, common.KvPair{
 			Key:   key,
 			Val:   randBytes(128),
-			RowID: common2.EncodeIntRowID(prevRowMax),
+			RowID: common.EncodeIntRowID(prevRowMax),
 		})
 		prevRowMax++
 	}
 
 	// Find duplicates from the generated pairs.
-	var dupPairs []common2.KvPair
+	var dupPairs []common.KvPair
 	sort.Slice(pairs, func(i, j int) bool {
 		return bytes.Compare(pairs[i].Key, pairs[j].Key) < 0
 	})
@@ -110,7 +110,7 @@ func TestDupDetectIterator(t *testing.T) {
 		i = j
 	}
 
-	keyAdapter := common2.DupDetectKeyAdapter{}
+	keyAdapter := common.DupDetectKeyAdapter{}
 
 	// Write pairs to db after shuffling the pairs.
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -131,7 +131,7 @@ func TestDupDetectIterator(t *testing.T) {
 	require.NoError(t, err)
 	pool := membuf.NewPool()
 	defer pool.Destroy()
-	iter := newDupDetectIter(db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L(), common2.DupDetectOpt{}, pool.NewBuffer())
+	iter := newDupDetectIter(db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L(), common.DupDetectOpt{}, pool.NewBuffer())
 	sort.Slice(pairs, func(i, j int) bool {
 		key1 := keyAdapter.Encode(nil, pairs[i].Key, pairs[i].RowID)
 		key2 := keyAdapter.Encode(nil, pairs[j].Key, pairs[j].RowID)
@@ -162,9 +162,9 @@ func TestDupDetectIterator(t *testing.T) {
 
 	// Check duplicates detected by dupDetectIter.
 	iter2 := newDupDBIter(dupDB, keyAdapter, &pebble.IterOptions{})
-	var detectedPairs []common2.KvPair
+	var detectedPairs []common.KvPair
 	for iter2.First(); iter2.Valid(); iter2.Next() {
-		detectedPairs = append(detectedPairs, common2.KvPair{
+		detectedPairs = append(detectedPairs, common.KvPair{
 			Key: append([]byte{}, iter2.Key()...),
 			Val: append([]byte{}, iter2.Value()...),
 		})
@@ -189,9 +189,9 @@ func TestDupDetectIterator(t *testing.T) {
 }
 
 func TestKeyAdapterEncoding(t *testing.T) {
-	keyAdapter := common2.DupDetectKeyAdapter{}
+	keyAdapter := common.DupDetectKeyAdapter{}
 	srcKey := []byte{1, 2, 3}
-	v := keyAdapter.Encode(nil, srcKey, common2.EncodeIntRowID(1))
+	v := keyAdapter.Encode(nil, srcKey, common.EncodeIntRowID(1))
 	resKey, err := keyAdapter.Decode(nil, v)
 	require.NoError(t, err)
 	require.EqualValues(t, srcKey, resKey)
@@ -203,7 +203,7 @@ func TestKeyAdapterEncoding(t *testing.T) {
 }
 
 func BenchmarkDupDetectIter(b *testing.B) {
-	keyAdapter := common2.DupDetectKeyAdapter{}
+	keyAdapter := common.DupDetectKeyAdapter{}
 	db, _ := pebble.Open(filepath.Join(b.TempDir(), "kv"), &pebble.Options{})
 	wb := db.NewBatch()
 	val := []byte("value")
@@ -230,7 +230,7 @@ func BenchmarkDupDetectIter(b *testing.B) {
 			&pebble.IterOptions{},
 			dupDB,
 			log.L(),
-			common2.DupDetectOpt{},
+			common.DupDetectOpt{},
 			pool.NewBuffer(),
 		)
 		keyCnt := 0

@@ -17,14 +17,14 @@ package local
 import (
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/membuf"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"go.uber.org/multierr"
 )
 
 // IngestLocalEngineIter abstract iterator method for iterator.
 type IngestLocalEngineIter interface {
-	common2.ForwardIter
+	common.ForwardIter
 	// Last moves this iter to the last key.
 	Last() bool
 }
@@ -61,9 +61,9 @@ func (p *pebbleIter) Value() []byte {
 var _ IngestLocalEngineIter = &pebbleIter{}
 
 type dupDetectIter struct {
-	keyAdapter  common2.KeyAdapter
+	keyAdapter  common.KeyAdapter
 	iter        *pebble.Iterator
-	dupDetector *common2.DupDetector
+	dupDetector *common.DupDetector
 	err         error
 
 	curKey, curVal []byte
@@ -148,22 +148,22 @@ var _ IngestLocalEngineIter = &dupDetectIter{}
 
 func newDupDetectIter(
 	db *pebble.DB,
-	keyAdapter common2.KeyAdapter,
+	keyAdapter common.KeyAdapter,
 	opts *pebble.IterOptions,
 	dupDB *pebble.DB,
 	logger log.Logger,
-	dupOpt common2.DupDetectOpt,
+	dupOpt common.DupDetectOpt,
 	buf *membuf.Buffer,
 ) *dupDetectIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
-		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, common2.MinRowID)
+		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, common.MinRowID)
 	}
 	if len(opts.UpperBound) > 0 {
-		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, common2.MinRowID)
+		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, common.MinRowID)
 	}
 
-	detector := common2.NewDupDetector(keyAdapter, dupDB.NewBatch(), logger, dupOpt)
+	detector := common.NewDupDetector(keyAdapter, dupDB.NewBatch(), logger, dupOpt)
 	return &dupDetectIter{
 		keyAdapter:  keyAdapter,
 		iter:        db.NewIter(newOpts),
@@ -175,7 +175,7 @@ func newDupDetectIter(
 
 type dupDBIter struct {
 	iter       *pebble.Iterator
-	keyAdapter common2.KeyAdapter
+	keyAdapter common.KeyAdapter
 	curKey     []byte
 	err        error
 }
@@ -248,13 +248,13 @@ type Iter interface {
 
 var _ Iter = &dupDBIter{}
 
-func newDupDBIter(dupDB *pebble.DB, keyAdapter common2.KeyAdapter, opts *pebble.IterOptions) *dupDBIter {
+func newDupDBIter(dupDB *pebble.DB, keyAdapter common.KeyAdapter, opts *pebble.IterOptions) *dupDBIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
-		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, common2.MinRowID)
+		newOpts.LowerBound = keyAdapter.Encode(nil, opts.LowerBound, common.MinRowID)
 	}
 	if len(opts.UpperBound) > 0 {
-		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, common2.MinRowID)
+		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, common.MinRowID)
 	}
 	return &dupDBIter{
 		iter:       dupDB.NewIter(newOpts),

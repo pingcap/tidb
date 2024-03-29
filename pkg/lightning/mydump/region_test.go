@@ -21,7 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
-	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	. "github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/stretchr/testify/assert"
@@ -166,11 +166,11 @@ func TestAllocateEngineIDs(t *testing.T) {
 }
 
 func TestMakeTableRegionsSplitLargeFile(t *testing.T) {
-	cfg := &config2.Config{
-		Mydumper: config2.MydumperRuntime{
-			ReadBlockSize: config2.ReadBlockSize,
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize: config.ReadBlockSize,
 			MaxRegionSize: 1,
-			CSV: config2.CSVConfig{
+			CSV: config.CSVConfig{
 				Separator:         ",",
 				Delimiter:         "",
 				Header:            true,
@@ -276,10 +276,10 @@ func TestSplitLargeFile(t *testing.T) {
 		DB:   "csv",
 		Name: "large_csv_file",
 	}
-	cfg := &config2.Config{
-		Mydumper: config2.MydumperRuntime{
-			ReadBlockSize: config2.ReadBlockSize,
-			CSV: config2.CSVConfig{
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize: config.ReadBlockSize,
+			CSV: config.CSVConfig{
 				Separator:         ",",
 				Delimiter:         "",
 				Header:            true,
@@ -304,7 +304,7 @@ func TestSplitLargeFile(t *testing.T) {
 	divideConfig := NewDataDivideConfig(cfg, 3, ioWorker, store, meta)
 	columns := []string{"a", "b", "c"}
 	for _, tc := range []struct {
-		maxRegionSize config2.ByteSize
+		maxRegionSize config.ByteSize
 		offsets       [][]int64
 	}{
 		{1, [][]int64{{6, 12}, {12, 18}, {18, 24}, {24, 30}}},
@@ -333,10 +333,10 @@ func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 		DB:   "csv",
 		Name: "large_csv_file",
 	}
-	cfg := &config2.Config{
-		Mydumper: config2.MydumperRuntime{
-			ReadBlockSize: config2.ReadBlockSize,
-			CSV: config2.CSVConfig{
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize: config.ReadBlockSize,
+			CSV: config.CSVConfig{
 				Separator:         ",",
 				Delimiter:         "",
 				Header:            true,
@@ -389,10 +389,10 @@ func TestSplitLargeFileWithCustomTerminator(t *testing.T) {
 		DB:   "csv",
 		Name: "large_csv_with_custom_terminator",
 	}
-	cfg := &config2.Config{
-		Mydumper: config2.MydumperRuntime{
-			ReadBlockSize: config2.ReadBlockSize,
-			CSV: config2.CSVConfig{
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize: config.ReadBlockSize,
+			CSV: config.CSVConfig{
 				Separator:  "|+|",
 				Terminator: "|+|\n",
 			},
@@ -437,10 +437,10 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 		DB:   "csv",
 		Name: "large_csv_file",
 	}
-	cfg := &config2.Config{
-		Mydumper: config2.MydumperRuntime{
-			ReadBlockSize: config2.ReadBlockSize,
-			CSV: config2.CSVConfig{
+	cfg := &config.Config{
+		Mydumper: config.MydumperRuntime{
+			ReadBlockSize: config.ReadBlockSize,
+			CSV: config.CSVConfig{
 				Separator:         ",",
 				Delimiter:         "",
 				Header:            true,

@@ -22,14 +22,13 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/membuf"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
 func testGetFirstAndLastKey(
 	t *testing.T,
-	data common2.IngestData,
+	data common.IngestData,
 	lowerBound, upperBound []byte,
 	expectedFirstKey, expectedLastKey []byte,
 ) {
@@ -41,7 +40,7 @@ func testGetFirstAndLastKey(
 
 func testNewIter(
 	t *testing.T,
-	data common2.IngestData,
+	data common.IngestData,
 	lowerBound, upperBound []byte,
 	expectedKeys, expectedValues [][]byte,
 	bufPool *membuf.Pool,
@@ -98,7 +97,7 @@ func TestMemoryIngestData(t *testing.T) {
 		[]byte("value5"),
 	}
 	data := &MemoryIngestData{
-		keyAdapter: common2.NoopKeyAdapter{},
+		keyAdapter: common.NoopKeyAdapter{},
 		keys:       keys,
 		values:     values,
 		ts:         123,
@@ -125,7 +124,7 @@ func TestMemoryIngestData(t *testing.T) {
 	dir := t.TempDir()
 	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
 	require.NoError(t, err)
-	keyAdapter := common2.DupDetectKeyAdapter{}
+	keyAdapter := common.DupDetectKeyAdapter{}
 	data = &MemoryIngestData{
 		keyAdapter:         keyAdapter,
 		duplicateDetection: true,

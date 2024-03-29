@@ -37,7 +37,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -254,7 +254,7 @@ type DupKVStreamImpl struct {
 }
 
 // NewLocalDupKVStream creates a new DupKVStreamImpl with the given duplicate db and key range.
-func NewLocalDupKVStream(dupDB *pebble.DB, keyAdapter common2.KeyAdapter, keyRange tidbkv.KeyRange) *DupKVStreamImpl {
+func NewLocalDupKVStream(dupDB *pebble.DB, keyAdapter common.KeyAdapter, keyRange tidbkv.KeyRange) *DupKVStreamImpl {
 	opts := &pebble.IterOptions{
 		LowerBound: keyRange.StartKey,
 		UpperBound: keyRange.EndKey,
@@ -501,7 +501,7 @@ func (m *DupeDetector) RecordDataConflictError(ctx context.Context, stream DupKV
 		}
 
 		if algorithm == config.ErrorOnDup {
-			return errors.Trace(common2.ErrFoundDataConflictRecords.FastGenByArgs(m.tbl.Meta().Name, h.String(), m.decoder.DecodeRawRowDataAsStr(h, val)))
+			return errors.Trace(common.ErrFoundDataConflictRecords.FastGenByArgs(m.tbl.Meta().Name, h.String(), m.decoder.DecodeRawRowDataAsStr(h, val)))
 		}
 	}
 	if len(dataConflictInfos) > 0 {
@@ -590,7 +590,7 @@ func (m *DupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 // RetrieveKeyAndValueFromErrFoundDuplicateKeys retrieves the key and value
 // from ErrFoundDuplicateKeys error.
 func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, error) {
-	if !common2.ErrFoundDuplicateKeys.Equal(err) {
+	if !common.ErrFoundDuplicateKeys.Equal(err) {
 		return nil, nil, err
 	}
 	tErr, ok := errors.Cause(err).(*terror.Error)
@@ -629,7 +629,7 @@ func newErrFoundConflictRecords(key []byte, value []byte, tbl table.Table) error
 
 		rowData := decoder.DecodeRawRowDataAsStr(handle, value)
 
-		return errors.Trace(common2.ErrFoundDataConflictRecords.FastGenByArgs(tbl.Meta().Name, handle.String(), rowData))
+		return errors.Trace(common.ErrFoundDataConflictRecords.FastGenByArgs(tbl.Meta().Name, handle.String(), rowData))
 	}
 
 	// for index KV
@@ -659,14 +659,14 @@ func newErrFoundIndexConflictRecords(key []byte, value []byte, tbl table.Table, 
 	if err != nil {
 		log.L().Warn("decode index key value / column value failed", zap.String("index", indexName),
 			zap.String("key", hex.EncodeToString(key)), zap.String("value", hex.EncodeToString(value)), zap.Error(err))
-		return errors.Trace(common2.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, indexName, key, value))
+		return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, indexName, key, value))
 	}
 
 	h, err := decoder.DecodeHandleFromIndex(idxInfo, key, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(common2.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, indexName, valueStr, h))
+	return errors.Trace(common.ErrFoundIndexConflictRecords.FastGenByArgs(tbl.Meta().Name, indexName, valueStr, h))
 }
 
 // ConvertToErrFoundConflictRecords converts ErrFoundDuplicateKeys
@@ -767,7 +767,7 @@ func (m *DupeDetector) buildIndexDupTasks() ([]dupTask, error) {
 func (m *DupeDetector) splitLocalDupTaskByKeys(
 	task dupTask,
 	dupDB *pebble.DB,
-	keyAdapter common2.KeyAdapter,
+	keyAdapter common.KeyAdapter,
 	sizeLimit int64,
 	keysLimit int64,
 ) ([]dupTask, error) {
@@ -775,7 +775,7 @@ func (m *DupeDetector) splitLocalDupTaskByKeys(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ranges := splitRangeBySizeProps(common2.Range{Start: task.StartKey, End: task.EndKey}, sizeProps, sizeLimit, keysLimit)
+	ranges := splitRangeBySizeProps(common.Range{Start: task.StartKey, End: task.EndKey}, sizeProps, sizeLimit, keysLimit)
 	newDupTasks := make([]dupTask, 0, len(ranges))
 	for _, r := range ranges {
 		newDupTasks = append(newDupTasks, dupTask{
@@ -790,7 +790,7 @@ func (m *DupeDetector) splitLocalDupTaskByKeys(
 	return newDupTasks, nil
 }
 
-func (m *DupeDetector) buildLocalDupTasks(dupDB *pebble.DB, keyAdapter common2.KeyAdapter) ([]dupTask, error) {
+func (m *DupeDetector) buildLocalDupTasks(dupDB *pebble.DB, keyAdapter common.KeyAdapter) ([]dupTask, error) {
 	tasks, err := m.buildDupTasks()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -809,7 +809,7 @@ func (m *DupeDetector) buildLocalDupTasks(dupDB *pebble.DB, keyAdapter common2.K
 }
 
 // CollectDuplicateRowsFromDupDB collects duplicates from the duplicate DB and records all duplicate row info into errorMgr.
-func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB *pebble.DB, keyAdapter common2.KeyAdapter, algorithm config.DuplicateResolutionAlgorithm) error {
+func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB *pebble.DB, keyAdapter common.KeyAdapter, algorithm config.DuplicateResolutionAlgorithm) error {
 	tasks, err := m.buildLocalDupTasks(dupDB, keyAdapter)
 	if err != nil {
 		return errors.Trace(err)
@@ -822,7 +822,7 @@ func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB 
 	for _, task := range tasks {
 		task := task
 		pool.ApplyOnErrorGroup(g, func() error {
-			if err := common2.Retry("collect local duplicate rows", logger, func() error {
+			if err := common.Retry("collect local duplicate rows", logger, func() error {
 				stream := NewLocalDupKVStream(dupDB, keyAdapter, task.KeyRange)
 				var err error
 				if task.indexInfo == nil {
@@ -836,8 +836,8 @@ func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB 
 			}
 
 			// Delete the key range in duplicate DB since we have the duplicates have been collected.
-			rawStartKey := keyAdapter.Encode(nil, task.StartKey, common2.MinRowID)
-			rawEndKey := keyAdapter.Encode(nil, task.EndKey, common2.MinRowID)
+			rawStartKey := keyAdapter.Encode(nil, task.StartKey, common.MinRowID)
+			rawEndKey := keyAdapter.Encode(nil, task.EndKey, common.MinRowID)
 			err = dupDB.DeleteRange(rawStartKey, rawEndKey, nil)
 			return errors.Trace(err)
 		})
@@ -911,7 +911,7 @@ func (m *DupeDetector) processRemoteDupTaskOnce(
 		keyRanges = append(keyRanges, subKeyRanges...)
 	}
 
-	var metErr common2.OnceError
+	var metErr common.OnceError
 	wg := &sync.WaitGroup{}
 	atomicMadeProgress := atomic.NewBool(false)
 	for i := 0; i < len(regions); i++ {
@@ -1055,7 +1055,7 @@ type DupeController struct {
 	// on TiKV, it is the max number of regions being checked concurrently
 	dupeConcurrency     int
 	duplicateDB         *pebble.DB
-	keyAdapter          common2.KeyAdapter
+	keyAdapter          common.KeyAdapter
 	importClientFactory ImportClientFactory
 	resourceGroupName   string
 	taskType            string
@@ -1096,7 +1096,7 @@ func (local *DupeController) CollectRemoteDuplicateRows(ctx context.Context, tbl
 	}
 	err = duplicateManager.CollectDuplicateRowsFromTiKV(ctx, local.importClientFactory, algorithm)
 	if err != nil {
-		return common2.ErrFoundDataConflictRecords.Equal(err) || common2.ErrFoundIndexConflictRecords.Equal(err), errors.Trace(err)
+		return common.ErrFoundDataConflictRecords.Equal(err) || common.ErrFoundIndexConflictRecords.Equal(err), errors.Trace(err)
 	}
 	return duplicateManager.HasDuplicate(), nil
 }
@@ -1140,7 +1140,7 @@ func (local *DupeController) ResolveDuplicateRows(ctx context.Context, tbl table
 			err := local.deleteDuplicateRow(ctx, logger, key)
 			if err != nil {
 				logger.Warn("delete duplicate rows encounter error", log.ShortError(err))
-				return common2.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
+				return common.ErrResolveDuplicateRows.Wrap(errors.Trace(err)).GenWithStackByArgs(tableName)
 			}
 			return nil
 		},

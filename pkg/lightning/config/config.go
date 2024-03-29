@@ -35,7 +35,7 @@ import (
 	gomysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	tidbcfg "github.com/pingcap/tidb/pkg/config"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
@@ -155,7 +155,7 @@ func (d *DBStore) adjust(
 	ctx context.Context,
 	i *TikvImporter,
 	s *Security,
-	tlsObj *common2.TLS,
+	tlsObj *common.TLS,
 ) error {
 	if i.Backend == BackendLocal {
 		if d.BuildStatsConcurrency == 0 {
@@ -171,7 +171,7 @@ func (d *DBStore) adjust(
 	var err error
 	d.SQLMode, err = mysql.GetSQLMode(d.StrSQLMode)
 	if err != nil {
-		return common2.ErrInvalidConfig.Wrap(err).GenWithStack("`mydumper.tidb.sql_mode` must be a valid SQL_MODE")
+		return common.ErrInvalidConfig.Wrap(err).GenWithStack("`mydumper.tidb.sql_mode` must be a valid SQL_MODE")
 	}
 
 	if d.Security == nil {
@@ -191,12 +191,12 @@ func (d *DBStore) adjust(
 		}
 	case "cluster":
 		if len(s.CAPath) == 0 {
-			return common2.ErrInvalidConfig.GenWithStack("cannot set `tidb.tls` to 'cluster' without a [security] section")
+			return common.ErrInvalidConfig.GenWithStack("cannot set `tidb.tls` to 'cluster' without a [security] section")
 		}
 	case "", "false":
 		d.TLS = "false"
 	default:
-		return common2.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
+		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
 	}
 
 	mustHaveInternalConnections := i.Backend == BackendLocal
@@ -205,7 +205,7 @@ func (d *DBStore) adjust(
 		var settings tidbcfg.Config
 		err = tlsObj.GetJSON(ctx, "/settings", &settings)
 		if err != nil {
-			return common2.ErrInvalidConfig.Wrap(err).GenWithStack("cannot fetch settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot fetch settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
 		}
 		if d.Port <= 0 {
 			d.Port = int(settings.Port)
@@ -216,10 +216,10 @@ func (d *DBStore) adjust(
 			for _, ip := range pdAddrs {
 				ipPort := strings.Split(ip, ":")
 				if len(ipPort[0]) == 0 {
-					return common2.ErrInvalidConfig.GenWithStack("invalid `tidb.pd-addr` setting")
+					return common.ErrInvalidConfig.GenWithStack("invalid `tidb.pd-addr` setting")
 				}
 				if len(ipPort[1]) == 0 || ipPort[1] == "0" {
-					return common2.ErrInvalidConfig.GenWithStack("invalid `tidb.port` setting")
+					return common.ErrInvalidConfig.GenWithStack("invalid `tidb.port` setting")
 				}
 			}
 			d.PdAddr = settings.Path
@@ -227,11 +227,11 @@ func (d *DBStore) adjust(
 	}
 
 	if d.Port <= 0 {
-		return common2.ErrInvalidConfig.GenWithStack("invalid `tidb.port` setting")
+		return common.ErrInvalidConfig.GenWithStack("invalid `tidb.port` setting")
 	}
 
 	if mustHaveInternalConnections && len(d.PdAddr) == 0 {
-		return common2.ErrInvalidConfig.GenWithStack("invalid `tidb.pd-addr` setting")
+		return common.ErrInvalidConfig.GenWithStack("invalid `tidb.pd-addr` setting")
 	}
 	return nil
 }
@@ -245,7 +245,7 @@ func (r *Routes) adjust(m *MydumperRuntime) error {
 			rule.ToLower()
 		}
 		if err := rule.Valid(); err != nil {
-			return common2.ErrInvalidConfig.Wrap(err).GenWithStack("file route rule is invalid")
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("file route rule is invalid")
 		}
 	}
 	return nil
@@ -278,9 +278,9 @@ func (cfg *Config) String() string {
 }
 
 // ToTLS creates a common.TLS from the config.
-func (cfg *Config) ToTLS() (*common2.TLS, error) {
+func (cfg *Config) ToTLS() (*common.TLS, error) {
 	hostPort := net.JoinHostPort(cfg.TiDB.Host, strconv.Itoa(cfg.TiDB.StatusPort))
-	return common2.NewTLS(
+	return common.NewTLS(
 		cfg.Security.CAPath,
 		cfg.Security.CertPath,
 		cfg.Security.KeyPath,
@@ -802,15 +802,15 @@ type CSVConfig struct {
 
 func (csv *CSVConfig) adjust() error {
 	if len(csv.Separator) == 0 {
-		return common2.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` must not be empty")
+		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` must not be empty")
 	}
 
 	if len(csv.Delimiter) > 0 && (strings.HasPrefix(csv.Separator, csv.Delimiter) || strings.HasPrefix(csv.Delimiter, csv.Separator)) {
-		return common2.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
+		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
 	}
 
 	if len(csv.EscapedBy) > 1 {
-		return common2.ErrInvalidConfig.GenWithStack("`mydumper.csv.escaped-by` must be empty or a single character")
+		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.escaped-by` must be empty or a single character")
 	}
 	if csv.BackslashEscape && csv.EscapedBy == "" {
 		csv.EscapedBy = `\`
@@ -826,13 +826,13 @@ func (csv *CSVConfig) adjust() error {
 
 	if len(csv.EscapedBy) > 0 {
 		if csv.Separator == csv.EscapedBy {
-			return common2.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV separator and `mydumper.csv.escaped-by`", csv.EscapedBy)
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV separator and `mydumper.csv.escaped-by`", csv.EscapedBy)
 		}
 		if csv.Delimiter == csv.EscapedBy {
-			return common2.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV delimiter and `mydumper.csv.escaped-by`", csv.EscapedBy)
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV delimiter and `mydumper.csv.escaped-by`", csv.EscapedBy)
 		}
 		if csv.Terminator == csv.EscapedBy {
-			return common2.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV terminator and `mydumper.csv.escaped-by`", csv.EscapedBy)
+			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV terminator and `mydumper.csv.escaped-by`", csv.EscapedBy)
 		}
 	}
 	return nil
@@ -877,12 +877,12 @@ func (m *MydumperRuntime) adjust() error {
 		if filepath.IsAbs(rule.Path) {
 			relPath, err := filepath.Rel(m.SourceDir, rule.Path)
 			if err != nil {
-				return common2.ErrInvalidConfig.Wrap(err).
+				return common.ErrInvalidConfig.Wrap(err).
 					GenWithStack("cannot find relative path for file route path %s", rule.Path)
 			}
 			// ".." means that this path is not in source dir, so we should return an error
 			if strings.HasPrefix(relPath, "..") {
-				return common2.ErrInvalidConfig.GenWithStack(
+				return common.ErrInvalidConfig.GenWithStack(
 					"file route path '%s' is not in source dir '%s'", rule.Path, m.SourceDir)
 			}
 			rule.Path = relPath
@@ -899,7 +899,7 @@ func (m *MydumperRuntime) adjust() error {
 	}
 	charset, err1 := ParseCharset(m.DataCharacterSet)
 	if err1 != nil {
-		return common2.ErrInvalidConfig.Wrap(err1).GenWithStack("invalid `mydumper.data-character-set`")
+		return common.ErrInvalidConfig.Wrap(err1).GenWithStack("invalid `mydumper.data-character-set`")
 	}
 	if charset == GBK || charset == GB18030 {
 		log.L().Warn(
@@ -946,7 +946,7 @@ func (m *MydumperRuntime) adjustFilePath() error {
 		var err error
 		u, err = url.Parse(m.SourceDir)
 		if err != nil {
-			return common2.ErrInvalidConfig.Wrap(err).GenWithStack("cannot parse `mydumper.data-source-dir` %s", m.SourceDir)
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot parse `mydumper.data-source-dir` %s", m.SourceDir)
 		}
 	} else {
 		u = &url.URL{}
@@ -955,14 +955,14 @@ func (m *MydumperRuntime) adjustFilePath() error {
 	// convert path and relative path to a valid file url
 	if u.Scheme == "" {
 		if m.SourceDir == "" {
-			return common2.ErrInvalidConfig.GenWithStack("`mydumper.data-source-dir` is not set")
+			return common.ErrInvalidConfig.GenWithStack("`mydumper.data-source-dir` is not set")
 		}
-		if !common2.IsDirExists(m.SourceDir) {
-			return common2.ErrInvalidConfig.GenWithStack("'%s': `mydumper.data-source-dir` does not exist", m.SourceDir)
+		if !common.IsDirExists(m.SourceDir) {
+			return common.ErrInvalidConfig.GenWithStack("'%s': `mydumper.data-source-dir` does not exist", m.SourceDir)
 		}
 		absPath, err := filepath.Abs(m.SourceDir)
 		if err != nil {
-			return common2.ErrInvalidConfig.Wrap(err).GenWithStack("covert data-source-dir '%s' to absolute path failed", m.SourceDir)
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("covert data-source-dir '%s' to absolute path failed", m.SourceDir)
 		}
 		u.Path = filepath.ToSlash(absPath)
 		u.Scheme = "file"
@@ -977,7 +977,7 @@ func (m *MydumperRuntime) adjustFilePath() error {
 		}
 	}
 	if !found {
-		return common2.ErrInvalidConfig.GenWithStack(
+		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported data-source-dir url '%s', supported storage types are %s",
 			m.SourceDir, strings.Join(supportedStorageTypes, ","))
 	}
@@ -1016,7 +1016,7 @@ func (igCols AllIgnoreColumns) GetIgnoreColumns(db string, table string, caseSen
 		}
 		f, err := filter.Parse(ig.TableFilter)
 		if err != nil {
-			return nil, common2.ErrInvalidConfig.GenWithStack("invalid table filter %s in ignore columns", strings.Join(ig.TableFilter, ","))
+			return nil, common.ErrInvalidConfig.GenWithStack("invalid table filter %s in ignore columns", strings.Join(ig.TableFilter, ","))
 		}
 		if f.MatchTable(db, table) {
 			return igCols[i], nil
@@ -1083,7 +1083,7 @@ type TikvImporter struct {
 
 func (t *TikvImporter) adjust() error {
 	if t.Backend == "" {
-		return common2.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
+		return common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
 	}
 	t.Backend = strings.ToLower(t.Backend)
 	// only need to assign t.IncrementalImport to t.ParallelImport when t.ParallelImport is false and t.IncrementalImport is true
@@ -1093,23 +1093,23 @@ func (t *TikvImporter) adjust() error {
 	switch t.Backend {
 	case BackendTiDB:
 		if t.LogicalImportBatchSize <= 0 {
-			return common2.ErrInvalidConfig.GenWithStack(
+			return common.ErrInvalidConfig.GenWithStack(
 				"`tikv-importer.logical-import-batch-size` got %d, should be larger than 0",
 				t.LogicalImportBatchSize)
 		}
 		if t.LogicalImportBatchRows <= 0 {
-			return common2.ErrInvalidConfig.GenWithStack(
+			return common.ErrInvalidConfig.GenWithStack(
 				"`tikv-importer.logical-import-batch-rows` got %d, should be larger than 0",
 				t.LogicalImportBatchRows)
 		}
 	case BackendLocal:
 		if t.RegionSplitBatchSize <= 0 {
-			return common2.ErrInvalidConfig.GenWithStack(
+			return common.ErrInvalidConfig.GenWithStack(
 				"`tikv-importer.region-split-batch-size` got %d, should be larger than 0",
 				t.RegionSplitBatchSize)
 		}
 		if t.RegionSplitConcurrency <= 0 {
-			return common2.ErrInvalidConfig.GenWithStack(
+			return common.ErrInvalidConfig.GenWithStack(
 				"`tikv-importer.region-split-concurrency` got %d, should be larger than 0",
 				t.RegionSplitConcurrency)
 		}
@@ -1127,12 +1127,12 @@ func (t *TikvImporter) adjust() error {
 		}
 
 		if t.ParallelImport && t.AddIndexBySQL {
-			return common2.ErrInvalidConfig.
+			return common.ErrInvalidConfig.
 				GenWithStack("tikv-importer.add-index-using-ddl cannot be used with tikv-importer.parallel-import")
 		}
 
 		if len(t.SortedKVDir) == 0 {
-			return common2.ErrInvalidConfig.GenWithStack("tikv-importer.sorted-kv-dir must not be empty!")
+			return common.ErrInvalidConfig.GenWithStack("tikv-importer.sorted-kv-dir must not be empty!")
 		}
 
 		storageSizeDir := filepath.Clean(t.SortedKVDir)
@@ -1142,14 +1142,14 @@ func (t *TikvImporter) adjust() error {
 		case os.IsNotExist(err):
 		case err == nil:
 			if !sortedKVDirInfo.IsDir() {
-				return common2.ErrInvalidConfig.
+				return common.ErrInvalidConfig.
 					GenWithStack("tikv-importer.sorted-kv-dir ('%s') is not a directory", storageSizeDir)
 			}
 		default:
-			return common2.ErrInvalidConfig.Wrap(err).GenWithStack("invalid tikv-importer.sorted-kv-dir")
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid tikv-importer.sorted-kv-dir")
 		}
 	default:
-		return common2.ErrInvalidConfig.GenWithStack(
+		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported `tikv-importer.backend` (%s)",
 			t.Backend)
 	}
@@ -1158,19 +1158,19 @@ func (t *TikvImporter) adjust() error {
 	switch t.PausePDSchedulerScope {
 	case PausePDSchedulerScopeTable, PausePDSchedulerScopeGlobal:
 	default:
-		return common2.ErrInvalidConfig.GenWithStack("pause-pd-scheduler-scope is invalid, allowed value include: table, global")
+		return common.ErrInvalidConfig.GenWithStack("pause-pd-scheduler-scope is invalid, allowed value include: table, global")
 	}
 	return nil
 }
 
 // Checkpoint is the config for checkpoint.
 type Checkpoint struct {
-	Schema           string                     `toml:"schema" json:"schema"`
-	DSN              string                     `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
-	MySQLParam       *common2.MySQLConnectParam `toml:"-" json:"-"`   // For some security reason, we use MySQLParam instead of DSN.
-	Driver           string                     `toml:"driver" json:"driver"`
-	Enable           bool                       `toml:"enable" json:"enable"`
-	KeepAfterSuccess CheckpointKeepStrategy     `toml:"keep-after-success" json:"keep-after-success"`
+	Schema           string                    `toml:"schema" json:"schema"`
+	DSN              string                    `toml:"dsn" json:"-"` // DSN may contain password, don't expose this to JSON.
+	MySQLParam       *common.MySQLConnectParam `toml:"-" json:"-"`   // For some security reason, we use MySQLParam instead of DSN.
+	Driver           string                    `toml:"driver" json:"driver"`
+	Enable           bool                      `toml:"enable" json:"enable"`
+	KeepAfterSuccess CheckpointKeepStrategy    `toml:"keep-after-success" json:"keep-after-success"`
 }
 
 // adjust assigns default values and check illegal values. The input DBStore
@@ -1185,7 +1185,7 @@ func (c *Checkpoint) adjust(t *DBStore) {
 	if len(c.DSN) == 0 {
 		switch c.Driver {
 		case CheckpointDriverMySQL:
-			param := common2.MySQLConnectParam{
+			param := common.MySQLConnectParam{
 				Host:                     t.Host,
 				Port:                     t.Port,
 				User:                     t.User,
@@ -1358,21 +1358,21 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 	switch c.Strategy {
 	case ReplaceOnDup, IgnoreOnDup, ErrorOnDup, NoneOnDup:
 	default:
-		return common2.ErrInvalidConfig.GenWithStack(
+		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported `%s` (%s)", strategyConfigFrom, c.Strategy)
 	}
 	if !strategyFromDuplicateResolution && c.Strategy != NoneOnDup && i.DuplicateResolution != NoneOnDup {
-		return common2.ErrInvalidConfig.GenWithStack(
+		return common.ErrInvalidConfig.GenWithStack(
 			"%s cannot be used with tikv-importer.duplicate-resolution",
 			strategyConfigFrom)
 	}
 	if c.Strategy == IgnoreOnDup && i.Backend == BackendLocal {
-		return common2.ErrInvalidConfig.GenWithStack(
+		return common.ErrInvalidConfig.GenWithStack(
 			`%s cannot be set to "ignore" when use tikv-importer.backend = "local"`,
 			strategyConfigFrom)
 	}
 	if c.PrecheckConflictBeforeImport && i.Backend == BackendTiDB {
-		return common2.ErrInvalidConfig.GenWithStack(
+		return common.ErrInvalidConfig.GenWithStack(
 			`conflict.precheck-conflict-before-import cannot be set to true when use tikv-importer.backend = "tidb"`)
 	}
 
@@ -1390,7 +1390,7 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 		}
 	}
 	if c.Threshold > 0 && c.Strategy == ErrorOnDup {
-		return common2.ErrInvalidConfig.GenWithStack(
+		return common.ErrInvalidConfig.GenWithStack(
 			`conflict.threshold cannot be set when use conflict.strategy = "error"`)
 	}
 
@@ -1412,12 +1412,12 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 	} else {
 		// only check it when it is set by user.
 		if c.MaxRecordRows > c.Threshold {
-			return common2.ErrInvalidConfig.GenWithStack(
+			return common.ErrInvalidConfig.GenWithStack(
 				"conflict.max-record-rows (%d) cannot be larger than conflict.threshold (%d)",
 				c.MaxRecordRows, c.Threshold)
 		}
 		if c.Strategy == ReplaceOnDup && i.Backend == BackendTiDB {
-			return common2.ErrInvalidConfig.GenWithStack(
+			return common.ErrInvalidConfig.GenWithStack(
 				`cannot record duplication (conflict.max-record-rows > 0) when use tikv-importer.backend = "tidb" and conflict.strategy = "replace"`)
 		}
 	}

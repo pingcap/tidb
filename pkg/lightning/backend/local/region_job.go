@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/kv"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
@@ -94,7 +94,7 @@ func (j jobStageTp) String() string {
 // to a region. The keyRange may be changed when processing because of writing
 // partial data to TiKV or region split.
 type regionJob struct {
-	keyRange common2.Range
+	keyRange common.Range
 	// TODO: check the keyRange so that it's always included in region
 	region *split.RegionInfo
 	// stage should be updated only by convertStageTo
@@ -102,7 +102,7 @@ type regionJob struct {
 	// writeResult is available only in wrote and ingested stage
 	writeResult *tikvWriteResult
 
-	ingestData      common2.IngestData
+	ingestData      common.IngestData
 	regionSplitSize int64
 	regionSplitKeys int64
 	metrics         *metric.Common
@@ -190,7 +190,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	if err == nil {
 		return nil
 	}
-	if !common2.IsRetryableError(err) {
+	if !common.IsRetryableError(err) {
 		return err
 	}
 	// currently only one case will restart write
@@ -219,7 +219,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	})
 
 	var cancel context.CancelFunc
-	ctx, cancel = context.WithTimeoutCause(ctx, 15*time.Minute, common2.ErrWriteTooSlow)
+	ctx, cancel = context.WithTimeoutCause(ctx, 15*time.Minute, common.ErrWriteTooSlow)
 	defer cancel()
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
@@ -455,7 +455,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 			logutil.Region(region), logutil.Leader(j.region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
-		return common2.ErrNoLeader.GenWithStackByArgs(region.Id, leaderID)
+		return common.ErrNoLeader.GenWithStackByArgs(region.Id, leaderID)
 	}
 
 	takeTime := time.Since(begin)
@@ -515,7 +515,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 			return nil
 		}
 		if err != nil {
-			if common2.IsContextCanceledError(err) {
+			if common.IsContextCanceledError(err) {
 				return err
 			}
 			log.FromContext(ctx).Warn("meet underlying error, will retry ingest",
@@ -524,7 +524,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 			continue
 		}
 		canContinue, err := j.convertStageOnIngestError(resp)
-		if common2.IsContextCanceledError(err) {
+		if common.IsContextCanceledError(err) {
 			return err
 		}
 		if !canContinue {
@@ -677,14 +677,14 @@ func (j *regionJob) convertStageOnIngestError(
 	var newRegion *split.RegionInfo
 	switch errPb := resp.GetError(); {
 	case errPb.NotLeader != nil:
-		j.lastRetryableErr = common2.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
+		j.lastRetryableErr = common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
 
 		// meet a problem that the region leader+peer are all updated but the return
 		// error is only "NotLeader", we should update the whole region info.
 		j.convertStageTo(needRescan)
 		return false, nil
 	case errPb.EpochNotMatch != nil:
-		j.lastRetryableErr = common2.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
+		j.lastRetryableErr = common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
 
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
@@ -718,21 +718,21 @@ func (j *regionJob) convertStageOnIngestError(
 		j.convertStageTo(needRescan)
 		return false, nil
 	case strings.Contains(errPb.Message, "raft: proposal dropped"):
-		j.lastRetryableErr = common2.ErrKVRaftProposalDropped.GenWithStack(errPb.GetMessage())
+		j.lastRetryableErr = common.ErrKVRaftProposalDropped.GenWithStack(errPb.GetMessage())
 
 		j.convertStageTo(needRescan)
 		return false, nil
 	case errPb.ServerIsBusy != nil:
-		j.lastRetryableErr = common2.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
+		j.lastRetryableErr = common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
 
 		return false, nil
 	case errPb.RegionNotFound != nil:
-		j.lastRetryableErr = common2.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
+		j.lastRetryableErr = common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
 
 		j.convertStageTo(needRescan)
 		return false, nil
 	case errPb.ReadIndexNotReady != nil:
-		j.lastRetryableErr = common2.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
+		j.lastRetryableErr = common.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
 
 		// this error happens when this region is splitting, the error might be:
 		//   read index not ready, reason can not read index due to split, region 64037
@@ -743,12 +743,12 @@ func (j *regionJob) convertStageOnIngestError(
 		j.convertStageTo(needRescan)
 		return false, nil
 	case errPb.DiskFull != nil:
-		j.lastRetryableErr = common2.ErrKVIngestFailed.GenWithStack(errPb.GetMessage())
+		j.lastRetryableErr = common.ErrKVIngestFailed.GenWithStack(errPb.GetMessage())
 
 		return false, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 	}
 	// all others doIngest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
-	j.lastRetryableErr = common2.ErrKVIngestFailed.GenWithStack(resp.GetError().GetMessage())
+	j.lastRetryableErr = common.ErrKVIngestFailed.GenWithStack(resp.GetError().GetMessage())
 	j.convertStageTo(regionScanned)
 	return false, nil
 }

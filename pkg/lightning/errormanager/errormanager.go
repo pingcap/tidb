@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	kv2 "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -474,7 +474,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		// TODO: need to find the correct value for SQLMode
 		SQLMode: mysql.ModeStrictAllTables,
 	}
-	encoder, err := kv2.NewBaseKVEncoder(&encode.EncodingConfig{
+	encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
 		Table:          tbl,
 		SessionOptions: sessionOpts,
 		Logger:         em.logger,
@@ -630,7 +630,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		defer dataKvRows.Close()
 
 		var previousRawKey, latestValue []byte
-		var mustKeepKvPairs *kv2.Pairs
+		var mustKeepKvPairs *kv.Pairs
 
 		for dataKvRows.Next() {
 			var rawKey, rawValue []byte

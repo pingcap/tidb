@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	kv2 "github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -49,7 +49,7 @@ import (
 )
 
 var extraHandleTableColumn = &table.Column{
-	ColumnInfo:    kv2.ExtraHandleColumnInfo,
+	ColumnInfo:    kv.ExtraHandleColumnInfo,
 	GeneratedExpr: nil,
 	DefaultExpr:   nil,
 }
@@ -106,7 +106,7 @@ func NewEncodingBuilder() encode.EncodingBuilder {
 // NewEncoder creates a KV encoder.
 // It implements the `backend.EncodingBuilder` interface.
 func (*encodingBuilder) NewEncoder(ctx context.Context, config *encode.EncodingConfig) (encode.Encoder, error) {
-	se := kv2.NewSessionCtx(&config.SessionOptions, log.FromContext(ctx))
+	se := kv.NewSessionCtx(&config.SessionOptions, log.FromContext(ctx))
 	if config.SQLMode.HasStrictMode() {
 		se.GetSessionVars().SkipUTF8Check = false
 		se.GetSessionVars().SkipASCIICheck = false
@@ -142,7 +142,7 @@ func NewTargetInfoGetter(db *sql.DB) backend.TargetInfoGetter {
 func (b *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
 	results := []*model.DBInfo{}
 	logger := log.FromContext(ctx)
-	s := common2.SQLWithRetry{
+	s := common.SQLWithRetry{
 		DB:     b.db,
 		Logger: logger,
 	}
@@ -177,7 +177,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 	var err error
 	results := []*model.TableInfo{}
 	logger := log.FromContext(ctx)
-	s := common2.SQLWithRetry{
+	s := common.SQLWithRetry{
 		DB:     b.db,
 		Logger: logger,
 	}
@@ -261,7 +261,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 
 		// init auto id column for each table
 		for _, tbl := range tables {
-			tblName := common2.UniqueTable(schemaName, tbl.Name.O)
+			tblName := common.UniqueTable(schemaName, tbl.Name.O)
 			autoIDInfos, err := FetchTableAutoIDInfos(ctx, tx, tblName)
 			if err != nil {
 				logger.Warn("fetch table auto ID infos error. Ignore this table and continue.", zap.String("table_name", tblName), zap.Error(err))
@@ -552,7 +552,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 		// 1. if len(row) < enc.columnCnt: data in row cannot populate the insert statement, because
 		// there are enc.columnCnt elements to insert but fewer columns in row
 		enc.logger.Error("column count mismatch", zap.Ints("column_permutation", columnPermutation),
-			zap.Array("data", kv2.RowArrayMarshaller(row)))
+			zap.Array("data", kv.RowArrayMarshaller(row)))
 		return emptyTiDBRow, errors.Errorf("column count mismatch, expected %d, got %d", enc.columnCnt, len(row))
 	}
 
@@ -560,7 +560,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 		// 2. if len(row) > len(columnIdx): raw row data has more columns than those
 		// in the table
 		enc.logger.Error("column count mismatch", zap.Ints("column_count", enc.columnIdx),
-			zap.Array("data", kv2.RowArrayMarshaller(row)))
+			zap.Array("data", kv.RowArrayMarshaller(row)))
 		return emptyTiDBRow, errors.Errorf("column count mismatch, at most %d but got %d", len(enc.columnIdx), len(row))
 	}
 
@@ -578,7 +578,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 		datum := field
 		if err := enc.appendSQL(&encoded, &datum, getColumnByIndex(cols, enc.columnIdx[i])); err != nil {
 			enc.logger.Error("tidb encode failed",
-				zap.Array("original", kv2.RowArrayMarshaller(row)),
+				zap.Array("original", kv.RowArrayMarshaller(row)),
 				zap.Int("originalCol", i),
 				log.ShortError(err),
 			)
@@ -650,7 +650,7 @@ rowLoop:
 			switch {
 			case err == nil:
 				continue rowLoop
-			case common2.IsRetryableError(err):
+			case common.IsRetryableError(err):
 				// retry next loop
 			case be.errorMgr.TypeErrorsRemain() > 0 ||
 				be.errorMgr.ConflictErrorsRemain() > 0 ||
@@ -746,7 +746,7 @@ func (be *tidbBackend) buildStmt(tableName string, columnNames []string) *string
 			if i != 0 {
 				insertStmt.WriteByte(',')
 			}
-			common2.WriteMySQLIdentifier(&insertStmt, colName)
+			common.WriteMySQLIdentifier(&insertStmt, colName)
 		}
 		insertStmt.WriteByte(')')
 	}
@@ -782,7 +782,7 @@ stmtLoop:
 				continue stmtLoop
 			}
 
-			if !common2.IsContextCanceledError(err) {
+			if !common.IsContextCanceledError(err) {
 				log.FromContext(ctx).Error("execute statement failed",
 					zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.Value(stmt)), zap.Error(err))
 			}
@@ -790,7 +790,7 @@ stmtLoop:
 			if batch {
 				return errors.Trace(err)
 			}
-			if !common2.IsRetryableError(err) {
+			if !common.IsRetryableError(err) {
 				break
 			}
 		}

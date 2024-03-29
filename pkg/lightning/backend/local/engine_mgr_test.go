@@ -25,7 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
@@ -39,7 +39,7 @@ func getBackendConfig(t *testing.T) BackendConfig {
 		DisableAutomaticCompactions: true,
 		LocalStoreDir:               path.Join(t.TempDir(), "sorted-kv"),
 		DupeDetectEnabled:           false,
-		DuplicateDetectOpt:          common2.DupDetectOpt{},
+		DuplicateDetectOpt:          common.DupDetectOpt{},
 		WorkerConcurrency:           8,
 		LocalWriterMemCacheSize:     config.DefaultLocalWriterMemCacheSize,
 		CheckpointEnabled:           false,
@@ -107,7 +107,7 @@ func TestEngineManager(t *testing.T) {
 
 func TestGetExternalEngineKVStatistics(t *testing.T) {
 	em := &engineManager{
-		externalEngine: map[uuid.UUID]common2.Engine{},
+		externalEngine: map[uuid.UUID]common.Engine{},
 	}
 	// non existent uuid
 	size, count := em.getExternalEngineKVStatistics(uuid.New())

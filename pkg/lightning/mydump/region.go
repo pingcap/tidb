@@ -23,7 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"go.uber.org/zap"
@@ -173,11 +173,11 @@ type DataDivideConfig struct {
 	DataCharacterSet       string
 	DataInvalidCharReplace string
 	ReadBlockSize          int64
-	CSV                    config2.CSVConfig
+	CSV                    config.CSVConfig
 }
 
 // NewDataDivideConfig creates a new DataDivideConfig from lightning cfg.
-func NewDataDivideConfig(cfg *config2.Config,
+func NewDataDivideConfig(cfg *config.Config,
 	columns int,
 	ioWorkers *worker.Pool,
 	store storage.ExternalStorage,
@@ -303,9 +303,9 @@ func CalculateBatchSize(mydumperBatchSize float64, isRowOrdered bool, totalSize 
 	batchSize := mydumperBatchSize
 	if batchSize <= 0 {
 		if isRowOrdered {
-			batchSize = float64(config2.DefaultBatchSize)
+			batchSize = float64(config.DefaultBatchSize)
 		} else {
-			batchSize = math.Max(float64(config2.DefaultBatchSize), totalSize)
+			batchSize = math.Max(float64(config.DefaultBatchSize), totalSize)
 		}
 	}
 	return batchSize

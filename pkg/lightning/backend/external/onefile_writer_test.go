@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -53,7 +52,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 	require.NoError(t, writer.Init(ctx, 5*1024*1024))
 
 	kvCnt := 100
-	kvs := make([]common2.KvPair, kvCnt)
+	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		randLen := rand.Intn(10) + 1
 		kvs[i].Key = make([]byte, randLen)
@@ -122,9 +121,9 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 		BuildOneFile(memStore, "/"+prefix, "0")
 
 	require.NoError(t, writer.Init(ctx, 5*1024*1024))
-	kvs := make([]common2.KvPair, 0, kvCnt)
+	kvs := make([]common.KvPair, 0, kvCnt)
 	for i := 0; i < kvCnt; i++ {
-		kvs = append(kvs, common2.KvPair{
+		kvs = append(kvs, common.KvPair{
 			Key: []byte(fmt.Sprintf("key%02d", i)),
 			Val: []byte("56789"),
 		})
@@ -236,12 +235,12 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	dir := t.TempDir()
 	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
 	require.NoError(t, err)
-	keyAdapter := common2.DupDetectKeyAdapter{}
+	keyAdapter := common.DupDetectKeyAdapter{}
 	data := &MemoryIngestData{
 		keyAdapter:         keyAdapter,
 		duplicateDetection: true,
 		duplicateDB:        db,
-		dupDetectOpt:       common2.DupDetectOpt{ReportErrOnDup: true},
+		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
 		keys:               keys,
 		values:             values,
 		ts:                 123,
@@ -273,7 +272,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 
 	kvCnt := 100000
 	expectedTotalSize := 0
-	kvs := make([]common2.KvPair, kvCnt)
+	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		randLen := rand.Intn(10) + 1
 		kvs[i].Key = make([]byte, randLen)
@@ -288,7 +287,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		expectedTotalSize += randLen
 	}
 
-	slices.SortFunc(kvs, func(i, j common2.KvPair) int {
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
 	})
 
@@ -371,7 +370,7 @@ func TestOnefilePropOffset(t *testing.T) {
 	require.NoError(t, writer.Init(ctx, 5*1024*1024))
 
 	kvCnt := 10000
-	kvs := make([]common2.KvPair, kvCnt)
+	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		randLen := rand.Intn(10) + 1
 		kvs[i].Key = make([]byte, randLen)

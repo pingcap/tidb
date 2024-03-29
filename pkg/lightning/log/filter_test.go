@@ -7,32 +7,32 @@ import (
 	"strings"
 	"testing"
 
-	log2 "github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 func TestFilter(t *testing.T) {
-	logger, buffer := log2.MakeTestLogger()
+	logger, buffer := log.MakeTestLogger()
 	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
 
 	require.Equal(t, `{"$lvl":"WARN","$msg":"the message","number":123456,"array":[7,8,9]}`, buffer.Stripped())
 
-	logger, buffer = log2.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
-		return log2.NewFilterCore(c, "github.com/pingcap/br/")
+	logger, buffer = log.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
+		return log.NewFilterCore(c, "github.com/pingcap/br/")
 	}), zap.AddCaller())
 	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
 	require.Len(t, buffer.Stripped(), 0)
 
-	logger, buffer = log2.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
-		return log2.NewFilterCore(c, "github.com/pingcap/tidb/br/").With([]zap.Field{zap.String("a", "b")})
+	logger, buffer = log.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
+		return log.NewFilterCore(c, "github.com/pingcap/tidb/br/").With([]zap.Field{zap.String("a", "b")})
 	}), zap.AddCaller())
 	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
 	require.Equal(t, `{"$lvl":"WARN","$msg":"the message","a":"b","number":123456,"array":[7,8,9]}`, buffer.Stripped())
 
-	logger, buffer = log2.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
-		return log2.NewFilterCore(c, "github.com/pingcap/br/").With([]zap.Field{zap.String("a", "b")})
+	logger, buffer = log.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
+		return log.NewFilterCore(c, "github.com/pingcap/br/").With([]zap.Field{zap.String("a", "b")})
 	}), zap.AddCaller())
 	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
 	require.Len(t, buffer.Stripped(), 0)

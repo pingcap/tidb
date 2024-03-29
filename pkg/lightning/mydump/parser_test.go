@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -31,7 +31,7 @@ import (
 
 func runTestCases(t *testing.T, mode mysql.SQLMode, blockBufSize int64, cases []testCase) {
 	for _, tc := range cases {
-		parser := mydump2.NewChunkParser(context.Background(), mode, mydump2.NewStringReader(tc.input), blockBufSize, ioWorkersForCSV)
+		parser := mydump.NewChunkParser(context.Background(), mode, mydump.NewStringReader(tc.input), blockBufSize, ioWorkersForCSV)
 		for i, row := range tc.expected {
 			e := parser.ReadRow()
 			comment := fmt.Sprintf("input = %q, row = %d, err = %s", tc.input, i+1, errors.ErrorStack(e))
@@ -45,23 +45,23 @@ func runTestCases(t *testing.T, mode mysql.SQLMode, blockBufSize int64, cases []
 
 func runFailingTestCases(t *testing.T, mode mysql.SQLMode, blockBufSize int64, cases []string) {
 	for _, tc := range cases {
-		parser := mydump2.NewChunkParser(context.Background(), mode, mydump2.NewStringReader(tc), blockBufSize, ioWorkersForCSV)
+		parser := mydump.NewChunkParser(context.Background(), mode, mydump.NewStringReader(tc), blockBufSize, ioWorkersForCSV)
 		assert.Regexpf(t, "syntax error.*", parser.ReadRow().Error(), "input = %q", tc)
 	}
 }
 
 func TestReadRow(t *testing.T) {
-	reader := mydump2.NewStringReader(
+	reader := mydump.NewStringReader(
 		"/* whatever pragmas */;" +
 			"INSERT INTO `namespaced`.`table` (columns, more, columns) VALUES (1,-2, 3),\n(4,5., 6);" +
 			"INSERT `namespaced`.`table` (x,y,z) VALUES (7,8,9);" +
 			"insert another_table values (10,11e1,12, '(13)', '(', 14, ')');",
 	)
 
-	parser := mydump2.NewChunkParser(context.Background(), mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkersForCSV)
+	parser := mydump.NewChunkParser(context.Background(), mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkersForCSV)
 
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, mydump2.Row{
+	require.Equal(t, mydump.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewUintDatum(1),
@@ -76,7 +76,7 @@ func TestReadRow(t *testing.T) {
 	require.Equal(t, int64(1), rowID)
 
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, mydump2.Row{
+	require.Equal(t, mydump.Row{
 		RowID: 2,
 		Row: []types.Datum{
 			types.NewUintDatum(4),
@@ -91,7 +91,7 @@ func TestReadRow(t *testing.T) {
 	require.Equal(t, int64(2), rowID)
 
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, mydump2.Row{
+	require.Equal(t, mydump.Row{
 		RowID: 3,
 		Row: []types.Datum{
 			types.NewUintDatum(7),
@@ -106,7 +106,7 @@ func TestReadRow(t *testing.T) {
 	require.Equal(t, int64(3), rowID)
 
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, mydump2.Row{
+	require.Equal(t, mydump.Row{
 		RowID: 4,
 		Row: []types.Datum{
 			types.NewUintDatum(10),
@@ -128,17 +128,17 @@ func TestReadRow(t *testing.T) {
 }
 
 func TestReadChunks(t *testing.T) {
-	reader := mydump2.NewStringReader(`
+	reader := mydump.NewStringReader(`
 		INSERT foo VALUES (1,2,3,4),(5,6,7,8),(9,10,11,12);
 		INSERT foo VALUES (13,14,15,16),(17,18,19,20),(21,22,23,24),(25,26,27,28);
 		INSERT foo VALUES (29,30,31,32),(33,34,35,36);
 	`)
 
-	parser := mydump2.NewChunkParser(context.Background(), mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkersForCSV)
+	parser := mydump.NewChunkParser(context.Background(), mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkersForCSV)
 
-	chunks, err := mydump2.ReadChunks(parser, 32)
+	chunks, err := mydump.ReadChunks(parser, 32)
 	require.NoError(t, err)
-	require.Equal(t, []mydump2.Chunk{
+	require.Equal(t, []mydump.Chunk{
 		{
 			Offset:       0,
 			EndOffset:    40,
@@ -173,18 +173,18 @@ func TestReadChunks(t *testing.T) {
 }
 
 func TestNestedRow(t *testing.T) {
-	reader := mydump2.NewStringReader(`
+	reader := mydump.NewStringReader(`
 		INSERT INTO exam_detail VALUES
 		("123",CONVERT("{}" USING UTF8MB4)),
 		("456",CONVERT("{\"a\":4}" USING UTF8MB4)),
 		("789",CONVERT("[]" USING UTF8MB4));
 	`)
 
-	parser := mydump2.NewChunkParser(context.Background(), mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkersForCSV)
-	chunks, err := mydump2.ReadChunks(parser, 96)
+	parser := mydump.NewChunkParser(context.Background(), mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkersForCSV)
+	chunks, err := mydump.ReadChunks(parser, 96)
 
 	require.NoError(t, err)
-	require.Equal(t, []mydump2.Chunk{
+	require.Equal(t, []mydump.Chunk{
 		{
 			Offset:       0,
 			EndOffset:    117,
@@ -372,7 +372,7 @@ func TestContinuation(t *testing.T) {
 }
 
 func TestPseudoKeywords(t *testing.T) {
-	reader := mydump2.NewStringReader(`
+	reader := mydump.NewStringReader(`
 		INSERT INTO t (
 			c, C,
 			co, CO,
@@ -413,7 +413,7 @@ func TestPseudoKeywords(t *testing.T) {
 		) VALUES ();
 	`)
 
-	parser := mydump2.NewChunkParser(context.Background(), mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkersForCSV)
+	parser := mydump.NewChunkParser(context.Background(), mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkersForCSV)
 	require.NoError(t, parser.ReadRow())
 	require.Equal(t, []string{
 		"c", "c",

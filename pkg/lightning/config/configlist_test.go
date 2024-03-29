@@ -19,15 +19,15 @@ import (
 	"testing"
 	"time"
 
-	config2 "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNormalPushPop(t *testing.T) {
-	cl := config2.NewConfigList()
+	cl := config.NewConfigList()
 
-	cl.Push(&config2.Config{TikvImporter: config2.TikvImporter{SortedKVDir: "/tmp/sorted1"}})
-	cl.Push(&config2.Config{TikvImporter: config2.TikvImporter{SortedKVDir: "/tmp/sorted2"}})
+	cl.Push(&config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted1"}})
+	cl.Push(&config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted2"}})
 
 	startTime := time.Now()
 	cfg, err := cl.Pop(context.Background()) // these two should never block.
@@ -45,7 +45,7 @@ func TestNormalPushPop(t *testing.T) {
 
 	go func() {
 		time.Sleep(400 * time.Millisecond)
-		cl.Push(&config2.Config{TikvImporter: config2.TikvImporter{SortedKVDir: "/tmp/sorted3"}})
+		cl.Push(&config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted3"}})
 	}()
 
 	cfg, err = cl.Pop(context.Background()) // this should block for ≥400ms
@@ -56,7 +56,7 @@ func TestNormalPushPop(t *testing.T) {
 
 func TestContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cl := config2.NewConfigList()
+	cl := config.NewConfigList()
 
 	go func() {
 		time.Sleep(400 * time.Millisecond)
@@ -70,13 +70,13 @@ func TestContextCancel(t *testing.T) {
 }
 
 func TestGetRemove(t *testing.T) {
-	cl := config2.NewConfigList()
+	cl := config.NewConfigList()
 
-	cfg1 := &config2.Config{TikvImporter: config2.TikvImporter{SortedKVDir: "/tmp/sorted1"}}
+	cfg1 := &config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted1"}}
 	cl.Push(cfg1)
-	cfg2 := &config2.Config{TikvImporter: config2.TikvImporter{SortedKVDir: "/tmp/sorted2"}}
+	cfg2 := &config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted2"}}
 	cl.Push(cfg2)
-	cfg3 := &config2.Config{TikvImporter: config2.TikvImporter{SortedKVDir: "/tmp/sorted3"}}
+	cfg3 := &config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted3"}}
 	cl.Push(cfg3)
 
 	cfg, ok := cl.Get(cfg2.TaskID)
@@ -103,13 +103,13 @@ func TestGetRemove(t *testing.T) {
 }
 
 func TestMoveFrontBack(t *testing.T) {
-	cl := config2.NewConfigList()
+	cl := config.NewConfigList()
 
-	cfg1 := &config2.Config{TikvImporter: config2.TikvImporter{SortedKVDir: "/tmp/sorted1"}}
+	cfg1 := &config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted1"}}
 	cl.Push(cfg1)
-	cfg2 := &config2.Config{TikvImporter: config2.TikvImporter{SortedKVDir: "/tmp/sorted2"}}
+	cfg2 := &config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted2"}}
 	cl.Push(cfg2)
-	cfg3 := &config2.Config{TikvImporter: config2.TikvImporter{SortedKVDir: "/tmp/sorted3"}}
+	cfg3 := &config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted3"}}
 	cl.Push(cfg3)
 
 	require.Equal(t, []int64{cfg1.TaskID, cfg2.TaskID, cfg3.TaskID}, cl.AllIDs())

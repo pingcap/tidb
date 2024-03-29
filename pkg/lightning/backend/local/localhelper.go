@@ -32,10 +32,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
-	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/multierr"
@@ -63,7 +63,7 @@ var (
 // Too many split&scatter requests may put a lot of pressure on TiKV and PD.
 func (local *Backend) SplitAndScatterRegionInBatches(
 	ctx context.Context,
-	ranges []common2.Range,
+	ranges []common.Range,
 	needSplit bool,
 	batchCnt int,
 ) error {
@@ -85,7 +85,7 @@ func (local *Backend) SplitAndScatterRegionInBatches(
 // TODO: remove this file and use br internal functions
 func (local *Backend) SplitAndScatterRegionByRanges(
 	ctx context.Context,
-	ranges []common2.Range,
+	ranges []common.Range,
 	needSplit bool,
 ) (err error) {
 	if len(ranges) == 0 {
@@ -143,7 +143,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 			break
 		}
 
-		needSplitRanges := make([]common2.Range, 0, len(ranges))
+		needSplitRanges := make([]common.Range, 0, len(ranges))
 		startKey := make([]byte, 0)
 		endKey := make([]byte, 0)
 		for _, r := range ranges {
@@ -234,7 +234,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 											logutil.Key("key", codec.EncodeBytes([]byte{}, key)))
 									}
 									return err1
-								} else if common2.IsContextCanceledError(err1) {
+								} else if common.IsContextCanceledError(err1) {
 									// do not retry on context.Canceled error
 									return err1
 								}
@@ -343,7 +343,7 @@ func (local *Backend) hasRegion(ctx context.Context, regionID uint64) (bool, err
 	return regionInfo != nil, nil
 }
 
-func getSplitKeysByRanges(ranges []common2.Range, regions []*split.RegionInfo) map[uint64][][]byte {
+func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo) map[uint64][][]byte {
 	checkKeys := make([][]byte, 0)
 	var lastEnd []byte
 	for _, rg := range ranges {
@@ -373,7 +373,7 @@ func keyInsideRegion(region *metapb.Region, key []byte) bool {
 	return bytes.Compare(key, region.GetStartKey()) >= 0 && (beforeEnd(key, region.GetEndKey()))
 }
 
-func intersectRange(region *metapb.Region, rg common2.Range) common2.Range {
+func intersectRange(region *metapb.Region, rg common.Range) common.Range {
 	var startKey, endKey []byte
 	if len(region.StartKey) > 0 {
 		_, startKey, _ = codec.DecodeBytes(region.StartKey, []byte{})
@@ -388,7 +388,7 @@ func intersectRange(region *metapb.Region, rg common2.Range) common2.Range {
 		endKey = rg.End
 	}
 
-	return common2.Range{Start: startKey, End: endKey}
+	return common.Range{Start: startKey, End: endKey}
 }
 
 // StoreWriteLimiter is used to limit the write rate of a store.
@@ -475,7 +475,7 @@ const (
 // Try to limit the total SST files number under 500. But size compress 32GB SST files cost about 20min,
 // we set the upper bound to 32GB to avoid too long compression time.
 // factor is the non-clustered(1 for data engine and number of non-clustered index count for index engine).
-func EstimateCompactionThreshold(files []mydump2.FileInfo, cp *checkpoints.TableCheckpoint, factor int64) int64 {
+func EstimateCompactionThreshold(files []mydump.FileInfo, cp *checkpoints.TableCheckpoint, factor int64) int64 {
 	totalRawFileSize := int64(0)
 	var lastFile string
 	fileSizeMap := make(map[string]int64, len(files))
@@ -492,7 +492,7 @@ func EstimateCompactionThreshold(files []mydump2.FileInfo, cp *checkpoints.Table
 			if !ok {
 				size = chunk.FileMeta.FileSize
 			}
-			if chunk.FileMeta.Type == mydump2.SourceTypeParquet {
+			if chunk.FileMeta.Type == mydump.SourceTypeParquet {
 				// parquet file is compressed, thus estimates with a factor of 2
 				size *= 2
 			}

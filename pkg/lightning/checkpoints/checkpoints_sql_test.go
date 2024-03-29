@@ -11,8 +11,8 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	checkpoints2 "github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	mydump2 "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
@@ -21,7 +21,7 @@ import (
 type cpSQLSuite struct {
 	db   *sql.DB
 	mock sqlmock.Sqlmock
-	cpdb *checkpoints2.MySQLCheckpointsDB
+	cpdb *checkpoints.MySQLCheckpointsDB
 }
 
 func newCPSQLSuite(t *testing.T) *cpSQLSuite {
@@ -48,7 +48,7 @@ func newCPSQLSuite(t *testing.T) *cpSQLSuite {
 		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.`chunk_v\\d+` .+").
 		WillReturnResult(sqlmock.NewResult(5, 1))
 
-	cpdb, err := checkpoints2.NewMySQLCheckpointsDB(context.Background(), s.db, "mock-schema")
+	cpdb, err := checkpoints.NewMySQLCheckpointsDB(context.Background(), s.db, "mock-schema")
 	require.NoError(t, err)
 	require.Nil(t, s.mock.ExpectationsWereMet())
 	s.cpdb = cpdb
@@ -101,10 +101,10 @@ func TestNormalOperations(t *testing.T) {
 
 	s.mock.MatchExpectationsInOrder(false)
 	cfg := newTestConfig()
-	err = cpdb.Initialize(ctx, cfg, map[string]*checkpoints2.TidbDBInfo{
+	err = cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
 		"db1": {
 			Name: "db1",
-			Tables: map[string]*checkpoints2.TidbTableInfo{
+			Tables: map[string]*checkpoints.TidbTableInfo{
 				"t1": {
 					Name: "t1",
 					ID:   1,
@@ -123,7 +123,7 @@ func TestNormalOperations(t *testing.T) {
 		},
 		"db2": {
 			Name: "db2",
-			Tables: map[string]*checkpoints2.TidbTableInfo{
+			Tables: map[string]*checkpoints.TidbTableInfo{
 				"t3": {
 					Name: "t3",
 					ID:   3,
@@ -155,25 +155,25 @@ func TestNormalOperations(t *testing.T) {
 		ExpectPrepare("REPLACE INTO `mock-schema`\\.`chunk_v\\d+` .+")
 	insertChunkStmt.
 		ExpectExec().
-		WithArgs("`db1`.`t2`", 0, "/tmp/path/1.sql", 0, mydump2.SourceTypeSQL, 0, "", 123, []byte("null"), 12, 102400, 1, 5000, 1234567890).
+		WithArgs("`db1`.`t2`", 0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", 123, []byte("null"), 12, 102400, 1, 5000, 1234567890).
 		WillReturnResult(sqlmock.NewResult(10, 1))
 	s.mock.ExpectCommit()
 
 	s.mock.MatchExpectationsInOrder(false)
-	err = cpdb.InsertEngineCheckpoints(ctx, "`db1`.`t2`", map[int32]*checkpoints2.EngineCheckpoint{
+	err = cpdb.InsertEngineCheckpoints(ctx, "`db1`.`t2`", map[int32]*checkpoints.EngineCheckpoint{
 		0: {
-			Status: checkpoints2.CheckpointStatusLoaded,
-			Chunks: []*checkpoints2.ChunkCheckpoint{{
-				Key: checkpoints2.ChunkCheckpointKey{
+			Status: checkpoints.CheckpointStatusLoaded,
+			Chunks: []*checkpoints.ChunkCheckpoint{{
+				Key: checkpoints.ChunkCheckpointKey{
 					Path:   "/tmp/path/1.sql",
 					Offset: 0,
 				},
-				FileMeta: mydump2.SourceFileMeta{
+				FileMeta: mydump.SourceFileMeta{
 					Path:     "/tmp/path/1.sql",
-					Type:     mydump2.SourceTypeSQL,
+					Type:     mydump.SourceTypeSQL,
 					FileSize: 123,
 				},
-				Chunk: mydump2.Chunk{
+				Chunk: mydump.Chunk{
 					Offset:       12,
 					EndOffset:    102400,
 					PrevRowIDMax: 1,
@@ -183,7 +183,7 @@ func TestNormalOperations(t *testing.T) {
 			}},
 		},
 		-1: {
-			Status: checkpoints2.CheckpointStatusLoaded,
+			Status: checkpoints.CheckpointStatusLoaded,
 			Chunks: nil,
 		},
 	})
@@ -193,28 +193,28 @@ func TestNormalOperations(t *testing.T) {
 
 	// 4. update some checkpoints
 
-	cpd := checkpoints2.NewTableCheckpointDiff()
-	scm := checkpoints2.StatusCheckpointMerger{
+	cpd := checkpoints.NewTableCheckpointDiff()
+	scm := checkpoints.StatusCheckpointMerger{
 		EngineID: 0,
-		Status:   checkpoints2.CheckpointStatusImported,
+		Status:   checkpoints.CheckpointStatusImported,
 	}
 	scm.MergeInto(cpd)
-	scm = checkpoints2.StatusCheckpointMerger{
-		EngineID: checkpoints2.WholeTableEngineID,
-		Status:   checkpoints2.CheckpointStatusAllWritten,
+	scm = checkpoints.StatusCheckpointMerger{
+		EngineID: checkpoints.WholeTableEngineID,
+		Status:   checkpoints.CheckpointStatusAllWritten,
 	}
 	scm.MergeInto(cpd)
-	rcm := checkpoints2.RebaseCheckpointMerger{
+	rcm := checkpoints.RebaseCheckpointMerger{
 		AllocBase: 132861,
 	}
 	rcm.MergeInto(cpd)
-	cksum := checkpoints2.TableChecksumMerger{
+	cksum := checkpoints.TableChecksumMerger{
 		Checksum: verification.MakeKVChecksum(4492, 686, 486070148910),
 	}
 	cksum.MergeInto(cpd)
-	ccm := checkpoints2.ChunkCheckpointMerger{
+	ccm := checkpoints.ChunkCheckpointMerger{
 		EngineID: 0,
-		Key:      checkpoints2.ChunkCheckpointKey{Path: "/tmp/path/1.sql", Offset: 0},
+		Key:      checkpoints.ChunkCheckpointKey{Path: "/tmp/path/1.sql", Offset: 0},
 		Checksum: verification.MakeKVChecksum(4491, 586, 486070148917),
 		Pos:      55904,
 		RowID:    681,
@@ -254,7 +254,7 @@ func TestNormalOperations(t *testing.T) {
 	s.mock.ExpectCommit()
 
 	s.mock.MatchExpectationsInOrder(false)
-	cpdb.Update(ctx, map[string]*checkpoints2.TableCheckpointDiff{"`db1`.`t2`": cpd})
+	cpdb.Update(ctx, map[string]*checkpoints.TableCheckpointDiff{"`db1`.`t2`": cpd})
 	s.mock.MatchExpectationsInOrder(true)
 	require.Nil(t, s.mock.ExpectationsWereMet())
 
@@ -279,7 +279,7 @@ func TestNormalOperations(t *testing.T) {
 				"kvc_bytes", "kvc_kvs", "kvc_checksum", "unix_timestamp(create_time)",
 			}).
 				AddRow(
-					0, "/tmp/path/1.sql", 0, mydump2.SourceTypeSQL, 0, "", 123, "[]",
+					0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", 123, "[]",
 					55904, 102400, 681, 5000,
 					4491, 586, 486070148917, 1234567894,
 				),
@@ -295,29 +295,29 @@ func TestNormalOperations(t *testing.T) {
 
 	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
 	require.Nil(t, err)
-	require.Equal(t, &checkpoints2.TableCheckpoint{
-		Status:    checkpoints2.CheckpointStatusAllWritten,
+	require.Equal(t, &checkpoints.TableCheckpoint{
+		Status:    checkpoints.CheckpointStatusAllWritten,
 		AllocBase: 132861,
 		TableID:   int64(2),
 		TableInfo: &model.TableInfo{
 			Name: model.NewCIStr("t2"),
 		},
-		Engines: map[int32]*checkpoints2.EngineCheckpoint{
-			-1: {Status: checkpoints2.CheckpointStatusLoaded},
+		Engines: map[int32]*checkpoints.EngineCheckpoint{
+			-1: {Status: checkpoints.CheckpointStatusLoaded},
 			0: {
-				Status: checkpoints2.CheckpointStatusImported,
-				Chunks: []*checkpoints2.ChunkCheckpoint{{
-					Key: checkpoints2.ChunkCheckpointKey{
+				Status: checkpoints.CheckpointStatusImported,
+				Chunks: []*checkpoints.ChunkCheckpoint{{
+					Key: checkpoints.ChunkCheckpointKey{
 						Path:   "/tmp/path/1.sql",
 						Offset: 0,
 					},
-					FileMeta: mydump2.SourceFileMeta{
+					FileMeta: mydump.SourceFileMeta{
 						Path:     "/tmp/path/1.sql",
-						Type:     mydump2.SourceTypeSQL,
+						Type:     mydump.SourceTypeSQL,
 						FileSize: 123,
 					},
 					ColumnPermutation: []int{},
-					Chunk: mydump2.Chunk{
+					Chunk: mydump.Chunk{
 						Offset:       55904,
 						EndOffset:    102400,
 						PrevRowIDMax: 681,
@@ -396,11 +396,11 @@ func TestIgnoreAllErrorCheckpoints_SQL(t *testing.T) {
 	s.mock.ExpectBegin()
 	s.mock.
 		ExpectExec("UPDATE `mock-schema`\\.`engine_v\\d+` SET status = \\? WHERE status <= \\?").
-		WithArgs(checkpoints2.CheckpointStatusLoaded, 25).
+		WithArgs(checkpoints.CheckpointStatusLoaded, 25).
 		WillReturnResult(sqlmock.NewResult(5, 3))
 	s.mock.
 		ExpectExec("UPDATE `mock-schema`\\.`table_v\\d+` SET status = \\? WHERE status <= \\?").
-		WithArgs(checkpoints2.CheckpointStatusLoaded, 25).
+		WithArgs(checkpoints.CheckpointStatusLoaded, 25).
 		WillReturnResult(sqlmock.NewResult(6, 2))
 	s.mock.ExpectCommit()
 
@@ -414,11 +414,11 @@ func TestIgnoreOneErrorCheckpoint(t *testing.T) {
 	s.mock.ExpectBegin()
 	s.mock.
 		ExpectExec("UPDATE `mock-schema`\\.`engine_v\\d+` SET status = \\? WHERE table_name = \\? AND status <= \\?").
-		WithArgs(checkpoints2.CheckpointStatusLoaded, "`db1`.`t2`", 25).
+		WithArgs(checkpoints.CheckpointStatusLoaded, "`db1`.`t2`", 25).
 		WillReturnResult(sqlmock.NewResult(5, 2))
 	s.mock.
 		ExpectExec("UPDATE `mock-schema`\\.`table_v\\d+` SET status = \\? WHERE table_name = \\? AND status <= \\?").
-		WithArgs(checkpoints2.CheckpointStatusLoaded, "`db1`.`t2`", 25).
+		WithArgs(checkpoints.CheckpointStatusLoaded, "`db1`.`t2`", 25).
 		WillReturnResult(sqlmock.NewResult(6, 1))
 	s.mock.ExpectCommit()
 
@@ -453,7 +453,7 @@ func TestDestroyAllErrorCheckpoints_SQL(t *testing.T) {
 
 	dtc, err := s.cpdb.DestroyErrorCheckpoint(context.Background(), "all")
 	require.NoError(t, err)
-	require.Equal(t, []checkpoints2.DestroyedTableCheckpoint{{
+	require.Equal(t, []checkpoints.DestroyedTableCheckpoint{{
 		TableName:   "`db1`.`t2`",
 		MinEngineID: -1,
 		MaxEngineID: 0,
@@ -487,7 +487,7 @@ func TestDestroyOneErrorCheckpoints(t *testing.T) {
 
 	dtc, err := s.cpdb.DestroyErrorCheckpoint(context.Background(), "`db1`.`t2`")
 	require.NoError(t, err)
-	require.Equal(t, []checkpoints2.DestroyedTableCheckpoint{{
+	require.Equal(t, []checkpoints.DestroyedTableCheckpoint{{
 		TableName:   "`db1`.`t2`",
 		MinEngineID: -1,
 		MaxEngineID: 0,
@@ -508,7 +508,7 @@ func TestDump(t *testing.T) {
 				"kvc_bytes", "kvc_kvs", "kvc_checksum",
 				"create_time", "update_time",
 			}).AddRow(
-				"`db1`.`t2`", "/tmp/path/1.sql", 0, mydump2.SourceTypeSQL, mydump2.CompressionNone, "", 456, "[]",
+				"`db1`.`t2`", "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, mydump.CompressionNone, "", 456, "[]",
 				55904, 102400, 681, 5000,
 				4491, 586, 486070148917,
 				tm, tm,

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/manual"
 	"github.com/tikv/client-go/v2/oracle"
@@ -59,10 +59,10 @@ type engineManager struct {
 	BackendConfig
 	StoreHelper
 	engines        sync.Map // sync version of map[uuid.UUID]*Engine
-	externalEngine map[uuid.UUID]common2.Engine
+	externalEngine map[uuid.UUID]common.Engine
 	bufferPool     *membuf.Pool
 	duplicateDB    *pebble.DB
-	keyAdapter     common2.KeyAdapter
+	keyAdapter     common.KeyAdapter
 	logger         log.Logger
 }
 
@@ -78,13 +78,13 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 		return nil, err
 	}
 
-	keyAdapter := common2.KeyAdapter(common2.NoopKeyAdapter{})
+	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
 	if config.DupeDetectEnabled {
 		duplicateDB, err = openDuplicateDB(config.LocalStoreDir)
 		if err != nil {
-			return nil, common2.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
+			return nil, common.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
 		}
-		keyAdapter = common2.DupDetectKeyAdapter{}
+		keyAdapter = common.DupDetectKeyAdapter{}
 	}
 	alloc := manual.Allocator{}
 	if RunInTest {
@@ -95,7 +95,7 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 		BackendConfig:  config,
 		StoreHelper:    storeHelper,
 		engines:        sync.Map{},
-		externalEngine: map[uuid.UUID]common2.Engine{},
+		externalEngine: map[uuid.UUID]common.Engine{},
 		bufferPool:     membuf.NewPool(membuf.WithAllocator(alloc)),
 		duplicateDB:    duplicateDB,
 		keyAdapter:     keyAdapter,
@@ -233,7 +233,7 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 			return errors.Trace(err)
 		}
 	}
-	if !common2.IsDirExists(sstDir) {
+	if !common.IsDirExists(sstDir) {
 		if err := os.Mkdir(sstDir, 0o750); err != nil {
 			return errors.Trace(err)
 		}
@@ -414,7 +414,7 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 	if err == nil {
 		localEngine.db.Store(db)
 		localEngine.engineMeta = engineMeta{}
-		if !common2.IsDirExists(localEngine.sstDir) {
+		if !common.IsDirExists(localEngine.sstDir) {
 			if err := os.Mkdir(localEngine.sstDir, 0o750); err != nil {
 				return errors.Trace(err)
 			}
@@ -503,7 +503,7 @@ func (em *engineManager) close() {
 	for _, e := range em.externalEngine {
 		_ = e.Close()
 	}
-	em.externalEngine = map[uuid.UUID]common2.Engine{}
+	em.externalEngine = map[uuid.UUID]common.Engine{}
 	allLocalEngines := em.lockAllEnginesUnless(importMutexStateClose, 0)
 	for _, e := range allLocalEngines {
 		_ = e.Close()
@@ -541,7 +541,7 @@ func (em *engineManager) close() {
 
 	// if checkpoint is disabled, or we finish load all data successfully, then files in this
 	// dir will be useless, so we clean up this dir and all files in it.
-	if !em.CheckpointEnabled || common2.IsEmptyDir(em.LocalStoreDir) {
+	if !em.CheckpointEnabled || common.IsEmptyDir(em.LocalStoreDir) {
 		err := os.RemoveAll(em.LocalStoreDir)
 		if err != nil {
 			em.logger.Warn("remove local db file failed", zap.Error(err))
@@ -549,7 +549,7 @@ func (em *engineManager) close() {
 	}
 }
 
-func (em *engineManager) getExternalEngine(uuid uuid.UUID) (common2.Engine, bool) {
+func (em *engineManager) getExternalEngine(uuid uuid.UUID) (common.Engine, bool) {
 	e, ok := em.externalEngine[uuid]
 	return e, ok
 }
@@ -570,7 +570,7 @@ func (em *engineManager) getDuplicateDB() *pebble.DB {
 	return em.duplicateDB
 }
 
-func (em *engineManager) getKeyAdapter() common2.KeyAdapter {
+func (em *engineManager) getKeyAdapter() common.KeyAdapter {
 	return em.keyAdapter
 }
 
@@ -604,7 +604,7 @@ func prepareSortDir(config BackendConfig) error {
 	if shouldCreate {
 		err := os.Mkdir(config.LocalStoreDir, 0o700)
 		if err != nil {
-			return common2.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(config.LocalStoreDir)
+			return common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(config.LocalStoreDir)
 		}
 	}
 	return nil

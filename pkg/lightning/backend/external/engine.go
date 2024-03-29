@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -113,10 +113,10 @@ type Engine struct {
 	checkHotspot          bool
 	mergerIterConcurrency int
 
-	keyAdapter         common2.KeyAdapter
+	keyAdapter         common.KeyAdapter
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
-	dupDetectOpt       common2.DupDetectOpt
+	dupDetectOpt       common.DupDetectOpt
 	workerConcurrency  int
 	ts                 uint64
 
@@ -141,16 +141,16 @@ func NewExternalEngine(
 	endKey []byte,
 	splitKeys [][]byte,
 	regionSplitSize int64,
-	keyAdapter common2.KeyAdapter,
+	keyAdapter common.KeyAdapter,
 	duplicateDetection bool,
 	duplicateDB *pebble.DB,
-	dupDetectOpt common2.DupDetectOpt,
+	dupDetectOpt common.DupDetectOpt,
 	workerConcurrency int,
 	ts uint64,
 	totalKVSize int64,
 	totalKVCount int64,
 	checkHotspot bool,
-) common2.Engine {
+) common.Engine {
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
 		storage:         storage,
@@ -257,7 +257,7 @@ func getFilesReadConcurrency(
 	return result, startOffs, nil
 }
 
-func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byte, outCh chan<- common2.DataAndRange) error {
+func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byte, outCh chan<- common.DataAndRange) error {
 	readAndSortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read_and_sort")
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_and_sort")
 	readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read")
@@ -266,8 +266,8 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
 	readStart := time.Now()
-	readDtStartKey := e.keyAdapter.Encode(nil, startKey, common2.MinRowID)
-	readDtEndKey := e.keyAdapter.Encode(nil, endKey, common2.MinRowID)
+	readDtStartKey := e.keyAdapter.Encode(nil, startKey, common.MinRowID)
+	readDtEndKey := e.keyAdapter.Encode(nil, endKey, common.MinRowID)
 	err := readAllData(
 		ctx,
 		e.storage,
@@ -329,7 +329,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	e.memKVsAndBuffers.memKVBuffers = nil
 	e.memKVsAndBuffers.size = 0
 
-	sendFn := func(dr common2.DataAndRange) error {
+	sendFn := func(dr common.DataAndRange) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -337,9 +337,9 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 		}
 		return nil
 	}
-	return sendFn(common2.DataAndRange{
+	return sendFn(common.DataAndRange{
 		Data: data,
-		Range: common2.Range{
+		Range: common.Range{
 			Start: startKey,
 			End:   endKey,
 		},
@@ -352,8 +352,8 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 // MemoryIngestData.DecRef().
 func (e *Engine) LoadIngestData(
 	ctx context.Context,
-	regionRanges []common2.Range,
-	outCh chan<- common2.DataAndRange,
+	regionRanges []common.Range,
+	outCh chan<- common.DataAndRange,
 ) error {
 	// try to make every worker busy for each batch
 	regionBatchSize := e.workerConcurrency
@@ -405,7 +405,7 @@ func (e *Engine) ID() string {
 
 // GetKeyRange implements common.Engine.
 func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
-	if _, ok := e.keyAdapter.(common2.NoopKeyAdapter); ok {
+	if _, ok := e.keyAdapter.(common.NoopKeyAdapter); ok {
 		return e.startKey, e.endKey, nil
 	}
 
@@ -438,7 +438,7 @@ func (e *Engine) SplitRanges(
 	startKey, endKey []byte,
 	_, _ int64,
 	_ log.Logger,
-) ([]common2.Range, error) {
+) ([]common.Range, error) {
 	splitKeys := e.splitKeys
 	for i, k := range e.splitKeys {
 		var err error
@@ -447,15 +447,15 @@ func (e *Engine) SplitRanges(
 			return nil, err
 		}
 	}
-	ranges := make([]common2.Range, 0, len(splitKeys)+1)
-	ranges = append(ranges, common2.Range{Start: startKey})
+	ranges := make([]common.Range, 0, len(splitKeys)+1)
+	ranges = append(ranges, common.Range{Start: startKey})
 	for i := 0; i < len(splitKeys); i++ {
 		ranges[len(ranges)-1].End = splitKeys[i]
 		var endK []byte
 		if i < len(splitKeys)-1 {
 			endK = splitKeys[i+1]
 		}
-		ranges = append(ranges, common2.Range{Start: splitKeys[i], End: endK})
+		ranges = append(ranges, common.Range{Start: splitKeys[i], End: endK})
 	}
 	ranges[len(ranges)-1].End = endKey
 	return ranges, nil
@@ -499,10 +499,10 @@ func (e *Engine) Reset() error {
 
 // MemoryIngestData is the in-memory implementation of IngestData.
 type MemoryIngestData struct {
-	keyAdapter         common2.KeyAdapter
+	keyAdapter         common.KeyAdapter
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
-	dupDetectOpt       common2.DupDetectOpt
+	dupDetectOpt       common.DupDetectOpt
 
 	keys   [][]byte
 	values [][]byte
@@ -514,12 +514,12 @@ type MemoryIngestData struct {
 	importedKVCount *atomic.Int64
 }
 
-var _ common2.IngestData = (*MemoryIngestData)(nil)
+var _ common.IngestData = (*MemoryIngestData)(nil)
 
 func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (int, int) {
 	firstKeyIdx := 0
 	if len(lowerBound) > 0 {
-		lowerBound = m.keyAdapter.Encode(nil, lowerBound, common2.MinRowID)
+		lowerBound = m.keyAdapter.Encode(nil, lowerBound, common.MinRowID)
 		firstKeyIdx = sort.Search(len(m.keys), func(i int) bool {
 			return bytes.Compare(lowerBound, m.keys[i]) <= 0
 		})
@@ -530,7 +530,7 @@ func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (
 
 	lastKeyIdx := len(m.keys) - 1
 	if len(upperBound) > 0 {
-		upperBound = m.keyAdapter.Encode(nil, upperBound, common2.MinRowID)
+		upperBound = m.keyAdapter.Encode(nil, upperBound, common.MinRowID)
 		i := sort.Search(len(m.keys), func(i int) bool {
 			reverseIdx := len(m.keys) - 1 - i
 			return bytes.Compare(upperBound, m.keys[reverseIdx]) > 0
@@ -615,7 +615,7 @@ func (m *memoryDataIter) ReleaseBuf() {}
 
 type memoryDataDupDetectIter struct {
 	iter           *memoryDataIter
-	dupDetector    *common2.DupDetector
+	dupDetector    *common.DupDetector
 	err            error
 	curKey, curVal []byte
 	buf            *membuf.Buffer
@@ -683,7 +683,7 @@ func (m *MemoryIngestData) NewIter(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 	bufPool *membuf.Pool,
-) common2.ForwardIter {
+) common.ForwardIter {
 	firstKeyIdx, lastKeyIdx := m.firstAndLastKeyIndex(lowerBound, upperBound)
 	iter := &memoryDataIter{
 		keys:        m.keys,
@@ -695,7 +695,7 @@ func (m *MemoryIngestData) NewIter(
 		return iter
 	}
 	logger := log.FromContext(ctx)
-	detector := common2.NewDupDetector(m.keyAdapter, m.duplicateDB.NewBatch(), logger, m.dupDetectOpt)
+	detector := common.NewDupDetector(m.keyAdapter, m.duplicateDB.NewBatch(), logger, m.dupDetectOpt)
 	return &memoryDataDupDetectIter{
 		iter:        iter,
 		dupDetector: detector,

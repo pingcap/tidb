@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	common2 "github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
@@ -110,7 +110,7 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	// set it back finally
 	defer e.manager.removeOneJob(ctx, e.db)
 
-	tableName := common2.UniqueTable(tableInfo.DB, tableInfo.Name)
+	tableName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 
 	task := log.FromContext(ctx).With(zap.String("table", tableName)).Begin(zap.InfoLevel, "remote checksum")
 
@@ -130,7 +130,7 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	// +---------+------------+---------------------+-----------+-------------+
 	// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
 	// +---------+------------+---------------------+-----------+-------------+
-	backoffWeight, err := common2.GetBackoffWeightFromDB(ctx, e.db)
+	backoffWeight, err := common.GetBackoffWeightFromDB(ctx, e.db)
 	if err == nil && backoffWeight < DefaultBackoffWeight {
 		task.Info("increase tidb_backoff_weight", zap.Int("original", backoffWeight), zap.Int("new", DefaultBackoffWeight))
 		// increase backoff weight
@@ -146,7 +146,7 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	}
 
 	cs := RemoteChecksum{}
-	err = common2.SQLWithRetry{DB: conn, Logger: task.Logger}.QueryRow(ctx, "compute remote checksum",
+	err = common.SQLWithRetry{DB: conn, Logger: task.Logger}.QueryRow(ctx, "compute remote checksum",
 		"ADMIN CHECKSUM TABLE "+tableName, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes,
 	)
 	dur := task.End(zap.ErrorLevel, err)
@@ -248,7 +248,7 @@ func increaseGCLifeTime(ctx context.Context, manager *gcLifeTimeManager, db *sql
 // obtainGCLifeTime obtains the current GC lifetime.
 func obtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
 	var gcLifeTime string
-	err := common2.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}.QueryRow(
+	err := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}.QueryRow(
 		ctx,
 		"obtain GC lifetime",
 		"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
@@ -259,7 +259,7 @@ func obtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
 
 // updateGCLifeTime updates the current GC lifetime.
 func updateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error {
-	sql := common2.SQLWithRetry{
+	sql := common.SQLWithRetry{
 		DB:     db,
 		Logger: log.FromContext(ctx).With(zap.String("gcLifeTime", gcLifeTime)),
 	}
@@ -327,7 +327,7 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 			zap.Int("concurrency", distSQLScanConcurrency), zap.Int("retry", i))
 
 		// do not retry context.Canceled error
-		if !common2.IsRetryableError(err) {
+		if !common.IsRetryableError(err) {
 			break
 		}
 		if distSQLScanConcurrency > MinDistSQLScanConcurrency {
@@ -342,7 +342,7 @@ var retryGetTSInterval = time.Second
 
 // Checksum implements the ChecksumManager interface.
 func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
-	tbl := common2.UniqueTable(tableInfo.DB, tableInfo.Name)
+	tbl := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	var (
 		physicalTS, logicalTS int64
 		err                   error
