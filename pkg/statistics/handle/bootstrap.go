@@ -581,7 +581,10 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 
 func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		h.initStatsBucketsConcurrency(cache)
+		err := h.initStatsBucketsConcurrency(cache)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	} else {
 		sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
 		rc, err := util.Exec(h.initStatsCtx, sql)
@@ -692,7 +695,6 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache) error 
 		EndTid:   tid + 1000,
 	})
 	ls.Wait()
-	return nil
 	return nil
 }
 
