@@ -9,7 +9,7 @@ package mock
 import (
 	reflect "reflect"
 
-	gomock "github.com/golang/mock/gomock"
+	gomock "go.uber.org/mock/gomock"
 	kv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	log "github.com/pingcap/tidb/br/pkg/lightning/log"
 	verification "github.com/pingcap/tidb/br/pkg/lightning/verification"

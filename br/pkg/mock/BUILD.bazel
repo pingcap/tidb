@@ -47,7 +47,7 @@ go_library(
         "@io_opencensus_go//stats/view",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//metadata",
-        "@org_uber_go_mock//gomock:go_default_library",
+        "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//:zap",
     ],
 )
