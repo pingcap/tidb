@@ -212,7 +212,7 @@ func (t *MockTargetInfo) SetTableInfo(schemaName string, tableName string, tblIn
 }
 
 // FetchRemoteDBModels implements the TargetInfoGetter interface.
-func (t *TargetInfo) FetchRemoteDBModels(_ context.Context) ([]*model.DBInfo, error) {
+func (t *MockTargetInfo) FetchRemoteDBModels(_ context.Context) ([]*model.DBInfo, error) {
 	resultInfos := []*model.DBInfo{}
 	for dbName := range t.dbTblInfoMap {
 		resultInfos = append(resultInfos, &model.DBInfo{Name: model.NewCIStr(dbName)})
