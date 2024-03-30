@@ -16,6 +16,8 @@ package handle
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -35,13 +37,20 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
+var maxTidRecord MaxTidRecord
+
+type MaxTidRecord struct {
+	mu  sync.Mutex
+	tid atomic.Int64
+}
+
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+	var physicalID int64
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		physicalID := row.GetInt64(1)
+		physicalID = row.GetInt64(1)
 		// The table is read-only. Please do not modify it.
 		table, ok := h.TableInfoByID(is, physicalID)
 		if !ok {
@@ -65,6 +74,11 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 			IsPkIsHandle:          tableInfo.PKIsHandle,
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
+	}
+	maxTidRecord.mu.Lock()
+	maxTidRecord.mu.Unlock()
+	if maxTidRecord.tid.Load() < physicalID {
+		maxTidRecord.tid.Store(physicalID)
 	}
 }
 
@@ -317,30 +331,13 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 }
 
 func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
-	sql := "select HIGH_PRIORITY min(table_id), max(table_id)  from mysql.stats_histograms"
-	rs, err := util.Exec(h.initStatsCtx, sql)
-	if err != nil {
-		return err
-	}
-	var rows []chunk.Row
-	rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 64)
-	if err != nil {
-		return err
-	}
-	err = rs.Close()
-	if err != nil {
-		return err
-	}
-	var maxTid, minTid int64
-	if len(rows) > 0 {
-		minTid = rows[0].GetInt64(0)
-		maxTid = rows[0].GetInt64(1)
-	}
+	var maxTid int64
+	maxTid = maxTidRecord.tid.Load()
+	tid := int64(0)
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
 		return h.initStatsHistogramsByPaging(is, cache, task)
 	})
 	ls.LoadStats()
-	tid := minTid
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
 			StartTid: tid,
@@ -439,30 +436,13 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 }
 
 func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache) error {
-	sql := "select HIGH_PRIORITY min(table_id), max(table_id) from mysql.stats_top_n where is_index = 1"
-	rs, err := util.Exec(h.initStatsCtx, sql)
-	if err != nil {
-		return err
-	}
-	var rows []chunk.Row
-	rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 64)
-	if err != nil {
-		return err
-	}
-	err = rs.Close()
-	if err != nil {
-		return err
-	}
-	var maxTid, minTid int64
-	if len(rows) > 0 {
-		minTid = rows[0].GetInt64(0)
-		maxTid = rows[0].GetInt64(1)
-	}
+	var maxTid int64
+	maxTid = maxTidRecord.tid.Load()
+	tid := int64(0)
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
 		return h.initStatsTopNByPaging(cache, task)
 	})
 	ls.LoadStats()
-	tid := minTid
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
 			StartTid: tid,
@@ -659,30 +639,13 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 }
 
 func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache) error {
-	sql := "select HIGH_PRIORITY min(table_id), max(table_id) from mysql.stats_buckets"
-	rs, err := util.Exec(h.initStatsCtx, sql)
-	if err != nil {
-		return err
-	}
-	var rows []chunk.Row
-	rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 64)
-	if err != nil {
-		return err
-	}
-	err = rs.Close()
-	if err != nil {
-		return err
-	}
-	var maxTid, minTid int64
-	if len(rows) > 0 {
-		minTid = rows[0].GetInt64(0)
-		maxTid = rows[0].GetInt64(1)
-	}
+	var maxTid int64
+	maxTid = maxTidRecord.tid.Load()
+	tid := int64(0)
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
 		return h.initStatsBucketsByPaging(cache, task)
 	})
 	ls.LoadStats()
-	tid := minTid
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
 			StartTid: tid,
