@@ -42,6 +42,7 @@ import (
 
 var maxTidRecord MaxTidRecord
 
+// MaxTidRecord is to record the max tid.
 type MaxTidRecord struct {
 	mu  sync.Mutex
 	tid atomic.Int64
