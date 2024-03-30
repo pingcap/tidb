@@ -195,6 +195,9 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		}
 	} else {
 		// Update record to new value and update index.
+		if onDup {
+			ctx = context.WithValue(ctx, "from_on_dup", struct{}{})
+		}
 		if err := t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
 			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
 				return false, nil

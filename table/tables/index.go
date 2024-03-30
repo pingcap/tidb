@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"go.uber.org/zap"
 )
 
 // index is the data structure for index data in the KV store.
@@ -112,6 +114,14 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	var opt table.CreateIdxOpt
 	for _, fn := range opts {
 		fn(&opt)
+	}
+	if v := opt.Ctx.Value("from_on_dup"); v != nil {
+		if !c.idxInfo.Unique {
+			// Insert on duplicate key update should not modify non unique indexes.
+			logutil.BgLogger().Warn("insert on duplicate key update should not modify non-unique indexes",
+				zap.String("index", c.idxInfo.Name.L),
+				zap.Uint64("startTS", txn.StartTS()))
+		}
 	}
 	vars := sctx.GetSessionVars()
 	writeBufs := vars.GetWriteStmtBufs()
