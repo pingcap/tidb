@@ -245,6 +245,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		e.stats.Prefetch += time.Since(prefetchStart)
 	}
 
+	tblInfo := e.InsertValues.Table.Meta()
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
 			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
@@ -254,6 +255,14 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 
 			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
 			if err == nil {
+				// Newly allocated handle is found in old row,
+				// this should not happen for auto_increment/auto_random cases.
+				if tblInfo.PKIsHandle &&
+					!e.ctx.GetSessionVars().AllowAutoRandExplicitInsert &&
+					(tblInfo.AutoRandomBits > 0 || tblInfo.AutoIncID > 0) {
+					logutil.BgLogger().Warn("insert on duplicate update found auto ID conflict",
+						zap.String("handle", hex.EncodeToString(handle.Encoded())))
+				}
 				continue
 			}
 			if !kv.IsErrNotFound(err) {
