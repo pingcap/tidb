@@ -76,7 +76,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
 	maxTidRecord.mu.Lock()
-	maxTidRecord.mu.Unlock()
+	defer maxTidRecord.mu.Unlock()
 	if maxTidRecord.tid.Load() < physicalID {
 		maxTidRecord.tid.Store(physicalID)
 	}
@@ -331,8 +331,7 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 }
 
 func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
-	var maxTid int64
-	maxTid = maxTidRecord.tid.Load()
+	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
 		return h.initStatsHistogramsByPaging(is, cache, task)
@@ -436,8 +435,7 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 }
 
 func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache) error {
-	var maxTid int64
-	maxTid = maxTidRecord.tid.Load()
+	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
 		return h.initStatsTopNByPaging(cache, task)
@@ -639,8 +637,7 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 }
 
 func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache) error {
-	var maxTid int64
-	maxTid = maxTidRecord.tid.Load()
+	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
 		return h.initStatsBucketsByPaging(cache, task)
