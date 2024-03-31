@@ -1479,25 +1479,9 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 	}
 	buckets = buckets[:tail]
 
-	var sortError error
-	// Sort the bucket by upper bound first, then by lower bound.
-	// If bkt[i].upper = bkt[i+1].upper, then we'll get bkt[i].lower < bukt[i+1].lower.
-	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
-		res, err := i.upper.Compare(sc.TypeCtx(), j.upper, collate.GetBinaryCollator())
-		if err != nil {
-			sortError = err
-		}
-		if res != 0 {
-			return res
-		}
-		res, err = i.lower.Compare(sc.TypeCtx(), j.lower, collate.GetBinaryCollator())
-		if err != nil {
-			sortError = err
-		}
-		return res
-	})
-	if sortError != nil {
-		return nil, sortError
+	err := sortBucketsByUpperBound(sc.TypeCtx(), buckets)
+	if err != nil {
+		return nil, err
 	}
 
 	var sum, prevSum int64
@@ -1505,6 +1489,9 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 	bucketCount := int64(1)
 	gBucketCountThreshold := (totCount / expBucketNumber) * 80 / 100 // expectedBucketSize * 0.8
 	var bucketNDV int64
+	mergeBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber)-1)/int(expBucketNumber))
+	fullyInsideBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber))/int(expBucketNumber))
+	cutAndFixBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber))/int(expBucketNumber))
 	var currentLeftMost *types.Datum
 	for i := len(buckets) - 1; i >= 0; i-- {
 		if currentLeftMost == nil {
@@ -1545,6 +1532,11 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 			}
 
 			// Iterate possible overlapped ones.
+			// We need to re-sort this part.
+			mergeBuffer = mergeBuffer[:0]
+			fullyInsideBuffer = fullyInsideBuffer[:0]
+			cutAndFixBuffer = cutAndFixBuffer[:0]
+			origI := i
 			for ; i > 0; i-- {
 				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
 				if err != nil {
@@ -1563,6 +1555,8 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 				if res >= 0 {
 					sum += buckets[i-1].Count
 					bucketNDV += buckets[i-1].NDV
+					fullyInsideBuffer = append(fullyInsideBuffer, buckets[i-1])
+					mergeBuffer = append(mergeBuffer, buckets[i])
 					continue
 				}
 				// Now buckets[i-1].lower < currentLeftMost < buckets[i-1].upper
@@ -1573,11 +1567,36 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 				bucketNDV += overlappedNDV
 				buckets[i-1].Count -= overlappedCount
 				buckets[i-1].NDV -= overlappedNDV
+
 				// Cut it.
+				cutBkt := newBucket4Meging()
+				buckets[i-1].upper.Copy(cutBkt.upper)
+				currentLeftMost.Copy(cutBkt.lower)
+				cutBkt.Count = overlappedCount
+				cutBkt.NDV = overlappedNDV
+				mergeBuffer = append(mergeBuffer, cutBkt)
+				cutAndFixBuffer = append(cutAndFixBuffer, cutBkt)
+
 				currentLeftMost.Copy(buckets[i-1].upper)
 				buckets[i-1].Repeat = 0
 			}
-			merged, err := mergePartitionBuckets(sc, buckets[i:r])
+			var merged *bucket4Merging
+			if len(cutAndFixBuffer) == 0 {
+				merged, err = mergePartitionBuckets(sc, buckets[i:r])
+			} else {
+				// The buckets in buckets[i:origI] needs a re-sort.
+				err = sortBucketsByUpperBound(sc.TypeCtx(), buckets[i:origI])
+				if err != nil {
+					return nil, err
+				}
+				// The content in the merge buffer don't need a re-sort since we just fix some lower bound for them.
+				mergeBuffer = append(mergeBuffer, buckets[origI:r]...)
+				merged, err = mergePartitionBuckets(sc, mergeBuffer)
+				for _, bkt := range cutAndFixBuffer {
+					releasebucket4MergingForRecycle(bkt)
+				}
+				i = origI
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -1659,6 +1678,27 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 		globalHist.AppendBucketWithNDV(bucket.lower, bucket.upper, bucket.Count, bucket.Repeat, bucket.NDV)
 	}
 	return globalHist, nil
+}
+
+// sortBucketsByUpperBound the bucket by upper bound first, then by lower bound.
+// If bkt[i].upper = bkt[i+1].upper, then we'll get bkt[i].lower < bukt[i+1].lower.
+func sortBucketsByUpperBound(ctx types.Context, buckets []*bucket4Merging) error {
+	var sortError error
+	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
+		res, err := i.upper.Compare(ctx, j.upper, collate.GetBinaryCollator())
+		if err != nil {
+			sortError = err
+		}
+		if res != 0 {
+			return res
+		}
+		res, err = i.lower.Compare(ctx, j.lower, collate.GetBinaryCollator())
+		if err != nil {
+			sortError = err
+		}
+		return res
+	})
+	return sortError
 }
 
 const (
