@@ -270,7 +270,7 @@ func (e *ShowExec) fetchAllPlacementPolicies() error {
 
 func (e *ShowExec) fetchRangesPlacementPlocy(ctx context.Context) error {
 	fetchFn := func(ctx context.Context, rangeBundleID string) error {
-		policyName, err := ddl.GetRangePlacementPolicyName(context.TODO(), rangeBundleID)
+		policyName, err := ddl.GetRangePlacementPolicyName(ctx, rangeBundleID)
 		if err != nil {
 			return err
 		}
