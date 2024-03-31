@@ -30,7 +30,7 @@ require (
 	github.com/coocood/freecache v1.2.1
 	github.com/coreos/go-semver v0.3.1
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
-	github.com/daixiang0/gci v0.12.1
+	github.com/daixiang0/gci v0.12.3
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
@@ -48,7 +48,7 @@ require (
 	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v0.0.4
 	github.com/golangci/gofmt v0.0.0-20231019111953-be8c47862aaa
-	github.com/golangci/golangci-lint v1.56.2
+	github.com/golangci/golangci-lint v1.57.2
 	github.com/golangci/gosec v0.0.0-20180901114220-8afd9cbb6cfb
 	github.com/golangci/misspell v0.4.1
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
@@ -96,7 +96,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sasha-s/go-deadlock v0.3.1
 	github.com/scalalang2/golang-fifo v0.1.5
-	github.com/shirou/gopsutil/v3 v3.24.1
+	github.com/shirou/gopsutil/v3 v3.24.2
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/cobra v1.8.0
@@ -136,7 +136,7 @@ require (
 	golang.org/x/term v0.18.0
 	golang.org/x/text v0.14.0
 	golang.org/x/time v0.5.0
-	golang.org/x/tools v0.18.0
+	golang.org/x/tools v0.19.0
 	google.golang.org/api v0.162.0
 	google.golang.org/grpc v1.62.1
 	gopkg.in/yaml.v2 v2.4.0
@@ -273,7 +273,7 @@ require (
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20220101234140-673ab2c3ae75 // indirect
 	github.com/uber/jaeger-lib v2.4.1+incompatible // indirect
 	github.com/xiang90/probing v0.0.0-20221125231312-a49e3df8f510 // indirect
-	github.com/yusufpapurcu/wmi v1.2.3 // indirect
+	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.etcd.io/bbolt v1.3.8 // indirect
 	go.etcd.io/etcd/client/v2 v2.305.12 // indirect
 	go.etcd.io/etcd/pkg/v3 v3.5.12 // indirect
@@ -288,7 +288,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.22.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.1.0 // indirect
 	golang.org/x/crypto v0.21.0 // indirect
-	golang.org/x/exp/typeparams v0.0.0-20231219180239-dc181d75b848 // indirect
+	golang.org/x/exp/typeparams v0.0.0-20240314144324-c7f7c6466f7f // indirect
 	golang.org/x/mod v0.16.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	gonum.org/v1/gonum v0.8.2 // indirect
