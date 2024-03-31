@@ -466,9 +466,8 @@ func (c *constraintsGroup) MergeTransformableRoles() {
 }
 
 // GetRangeStartAndEndKeyHex get startKeyHex and endKeyHex of range by rangeBundleID.
-func GetRangeStartAndEndKeyHex(rangeBundleID string) (string, string) {
-	startKey := ""
-	endKey := ""
+func GetRangeStartAndEndKeyHex(rangeBundleID string) (startKey string, endKey string) {
+	startKey, endKey = "", ""
 	if rangeBundleID == TiDBBundleRangePrefixForMeta {
 		startKey = hex.EncodeToString(metaPrefix)
 		endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(0)))
