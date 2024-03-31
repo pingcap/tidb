@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -1408,24 +1407,24 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	return res, nil
 }
 
-func (t *TopNMeta) buildBucket4Merging(sctx sessionctx.Context, d *types.Datum) *bucket4Merging {
+func (t *TopNMeta) buildBucket4Merging(d *types.Datum, analyzeVer int) *bucket4Merging {
 	res := newbucket4MergingForRecycle()
 	d.Copy(res.lower)
 	d.Copy(res.upper)
 	res.Count = int64(t.Count)
 	res.Repeat = int64(t.Count)
-	if sctx.GetSessionVars().AnalyzeVersion <= Version2 {
+	if analyzeVer <= Version2 {
 		res.NDV = 0
 	}
 	failpoint.Inject("github.com/pingcap/pkg/statistics/enableTopNNDV", func(_ failpoint.Value) {
 		res.NDV = 1
 	})
-	intest.Assert(sctx.GetSessionVars().AnalyzeVersion <= Version2)
+	intest.Assert(analyzeVer <= Version2)
 	return res
 }
 
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
-func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool) (*Histogram, error) {
+func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool, analyzeVer int) (*Histogram, error) {
 	var totCount, totNull, totColSize int64
 	var bucketNumber int
 	if expBucketNumber == 0 {
@@ -1461,7 +1460,7 @@ func MergePartitionHist2GlobalHist(sctx sessionctx.Context, sc *stmtctx.Statemen
 		if err != nil {
 			return nil, err
 		}
-		buckets = append(buckets, meta.buildBucket4Merging(sctx, &d))
+		buckets = append(buckets, meta.buildBucket4Merging(&d, analyzeVer))
 	}
 
 	// Remove empty buckets

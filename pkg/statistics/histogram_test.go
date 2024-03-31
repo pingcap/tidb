@@ -456,7 +456,7 @@ func TestMergePartitionLevelHist(t *testing.T) {
 			}
 			poped = append(poped, tmp)
 		}
-		globalHist, err := MergePartitionHist2GlobalHist(ctx, sc, hists, poped, int64(tt.expBucketNumber), true)
+		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, int64(tt.expBucketNumber), true, Version2)
 		require.NoError(t, err)
 		require.Equal(t, tt.expBucketNumber, len(globalHist.Buckets))
 		for i, b := range tt.expHist {

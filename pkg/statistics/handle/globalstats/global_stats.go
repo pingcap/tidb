@@ -331,8 +331,8 @@ func blockingMergePartitionStats2GlobalStats(
 		}
 
 		// Merge histogram.
-		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc, sc.GetSessionVars().StmtCtx, allHg[i], poppedTopN,
-			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
+		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], poppedTopN,
+			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex, sc.GetSessionVars().AnalyzeVersion)
 		if err != nil {
 			return
 		}
