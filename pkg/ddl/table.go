@@ -186,6 +186,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	createTableEvent := statsutil.NewCreateTableEvent(
+		job.SchemaID,
 		tbInfo,
 	)
 	asyncNotifyEvent(d, createTableEvent)
@@ -263,6 +264,7 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 
 	for i := range args {
 		createTableEvent := statsutil.NewCreateTableEvent(
+			job.SchemaID,
 			args[i],
 		)
 		asyncNotifyEvent(d, createTableEvent)

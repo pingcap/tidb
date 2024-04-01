@@ -16,14 +16,21 @@ package util
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 )
 
 // DDLEvent contains the information of a ddl event that is used to update stats.
 type DDLEvent struct {
+	// schemaID is the ID of the schema that the table belongs to.
+	// Used to filter out the system or memory tables.
+	schemaID int64
 	// For different ddl types, the following fields are used.
 	// They have different meanings for different ddl types.
 	// Please do **not** use these fields directly, use the corresponding
@@ -39,12 +46,24 @@ type DDLEvent struct {
 	tp         model.ActionType
 }
 
+// IsMemOrSysDB checks whether the table is in the memory or system database.
+func (e *DDLEvent) IsMemOrSysDB(sctx sessionctx.Context) (bool, error) {
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	schema, ok := is.SchemaByID(e.schemaID)
+	if !ok {
+		return false, fmt.Errorf("schema not found for table %s", e.tableInfo.Name)
+	}
+	return util.IsMemOrSysDB(strings.ToLower(schema.Name.O)), nil
+}
+
 // NewCreateTableEvent creates a new ddl event that creates a table.
 func NewCreateTableEvent(
+	schemaID int64,
 	newTableInfo *model.TableInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:        model.ActionCreateTable,
+		schemaID:  schemaID,
 		tableInfo: newTableInfo,
 	}
 }
@@ -187,7 +206,7 @@ func NewExchangePartitionEvent(
 	}
 }
 
-// GetExchangePartitionInfo gets the table info of the table that is exchanged a partition.\
+// GetExchangePartitionInfo gets the table info of the table that is exchanged a partition.
 // Note: All information pertains to the state before the exchange.
 func (e *DDLEvent) GetExchangePartitionInfo() (
 	globalTableInfo *model.TableInfo,
@@ -307,6 +326,9 @@ func (e *DDLEvent) GetType() model.ActionType {
 // String implements fmt.Stringer interface.
 func (e *DDLEvent) String() string {
 	ret := fmt.Sprintf("(Event Type: %s", e.tp)
+	if e.schemaID != 0 {
+		ret += fmt.Sprintf(", Schema ID: %d", e.schemaID)
+	}
 	if e.tableInfo != nil {
 		ret += fmt.Sprintf(", Table ID: %d, Table Name: %s", e.tableInfo.ID, e.tableInfo.Name)
 	}

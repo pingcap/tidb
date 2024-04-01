@@ -20,9 +20,11 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
+	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"go.uber.org/zap"
 )
 
 type ddlHandlerImpl struct {
@@ -48,6 +50,20 @@ func NewDDLHandler(
 
 // HandleDDLEvent begins to process a ddl task.
 func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
+	sctx, err := h.statsHandler.SPool().Get()
+	if err != nil {
+		return err
+	}
+	defer h.statsHandler.SPool().Put(sctx)
+	if isSysDB, err := t.IsMemOrSysDB(sctx.(sessionctx.Context)); err != nil {
+
+		return err
+	} else if isSysDB {
+		logutil.StatsLogger().Info("Skip handle system database ddl event", zap.Stringer("event", t))
+		return nil
+	}
+	logutil.StatsLogger().Info("Handle ddl event", zap.Stringer("event", t))
+
 	switch t.GetType() {
 	case model.ActionCreateTable:
 		newTableInfo := t.GetCreateTableInfo()

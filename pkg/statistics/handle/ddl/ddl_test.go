@@ -103,8 +103,7 @@ func TestCreateASystemTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 	statsTbl := h.GetTableStats(tableInfo)
-	// FIXME: We should not collect stats for system tables.
-	require.False(t, statsTbl.Pseudo)
+	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
 }
 
 func TestTruncateTable(t *testing.T) {
