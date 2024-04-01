@@ -40,6 +40,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// initStatsStep is the step to load stats by paging.
 const initStatsStep = int64(500)
 
 var maxTidRecord MaxTidRecord
