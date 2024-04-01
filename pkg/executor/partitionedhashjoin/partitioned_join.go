@@ -363,7 +363,7 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 
 	for chk := range srcChkCh {
 		start := time.Now()
-		usedRows := builder.ResetBuffer(chk)
+		builder.ResetBuffer(chk)
 		if w.HashJoinCtx.BuildFilter != nil {
 			builder.filterVector, err = expression.VectorizedFilter(w.HashJoinCtx.SessCtx.GetExprCtx(), w.HashJoinCtx.SessCtx.GetSessionVars().EnableVectorizedExpression, w.HashJoinCtx.BuildFilter, chunk.NewIterator4Chunk(chk), builder.filterVector)
 			if err != nil {
@@ -372,7 +372,7 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 		}
 		// split partition
 		for index, colIdx := range builder.buildKeyIndex {
-			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, usedRows, builder.filterVector, builder.nullKeyVector, hashTableMeta.serializeModes[index], builder.serializedKeyVectorBuffer)
+			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, builder.usedRows, builder.filterVector, builder.nullKeyVector, hashTableMeta.serializeModes[index], builder.serializedKeyVectorBuffer)
 			if err != nil {
 				return err
 			}
@@ -380,7 +380,7 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 
 		h := fnv.New64()
 		fakePartIndex := 0
-		for logicalRowIndex, physicalRowIndex := range usedRows {
+		for logicalRowIndex, physicalRowIndex := range builder.usedRows {
 			if (builder.filterVector != nil && !builder.filterVector[physicalRowIndex]) || (builder.nullKeyVector != nil && builder.nullKeyVector[physicalRowIndex]) {
 				builder.hashValue[logicalRowIndex] = uint64(fakePartIndex)
 				builder.partIdxVector[logicalRowIndex] = fakePartIndex
@@ -395,7 +395,7 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 		}
 
 		// 2. build rowtable
-		builder.appendToRowTable(typeCtx, chk, usedRows, w.rowTables, hashTableMeta)
+		builder.appendToRowTable(typeCtx, chk, w.rowTables, hashTableMeta)
 		cost += int64(time.Since(start))
 	}
 	start := time.Now()
@@ -1017,7 +1017,7 @@ func (e *hashJoinRuntimeStats) String() string {
 		buf.WriteString(", total:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndBuildHashTable)))
 		buf.WriteString(", fetch:")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndBuildHashTable - e.buildHashTable - e.partitionData)))
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndBuildHashTable - e.maxBuildHashTable - e.maxPartitionData)))
 		buf.WriteString(", partition:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.partitionData)))
 		buf.WriteString(", max partition:")
