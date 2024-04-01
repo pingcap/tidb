@@ -1583,7 +1583,7 @@ type SessionVars struct {
 	DivPrecisionIncrement int
 
 	// GroupConcatMaxLen represents the maximum length of the result of GROUP_CONCAT.
-	GroupConcatMaxLen string
+	GroupConcatMaxLen uint64
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

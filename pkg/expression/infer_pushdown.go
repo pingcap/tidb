@@ -422,7 +422,7 @@ type PushDownContext struct {
 	evalCtx           EvalContext
 	client            kv.Client
 	warnHandler       contextutil.WarnHandler
-	groupConcatMaxLen string
+	groupConcatMaxLen uint64
 }
 
 type pushDownWarnHandler struct {
@@ -440,7 +440,7 @@ func (h *pushDownWarnHandler) AppendWarning(err error) {
 }
 
 // NewPushDownContext returns a new PushDownContext
-func NewPushDownContext(evalCtx EvalContext, client kv.Client, inExplainStmt bool, appendWarning func(err error), appendExtraWarning func(err error), groupConcatMaxLen string) PushDownContext {
+func NewPushDownContext(evalCtx EvalContext, client kv.Client, inExplainStmt bool, appendWarning func(err error), appendExtraWarning func(err error), groupConcatMaxLen uint64) PushDownContext {
 	var warnHandler contextutil.WarnHandler
 	if appendWarning != nil && appendExtraWarning != nil {
 		warnHandler = &pushDownWarnHandler{
@@ -485,7 +485,7 @@ func (ctx PushDownContext) Client() kv.Client {
 }
 
 // GetGroupConcatMaxLen returns the max length of group_concat
-func (ctx PushDownContext) GetGroupConcatMaxLen() string {
+func (ctx PushDownContext) GetGroupConcatMaxLen() uint64 {
 	return ctx.groupConcatMaxLen
 }
 
