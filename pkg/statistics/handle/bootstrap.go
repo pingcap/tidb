@@ -39,6 +39,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const initStatsStep = int64(500)
+
 var maxTidRecord MaxTidRecord
 
 // MaxTidRecord is to record the max tid.
@@ -343,14 +345,10 @@ func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache 
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
 			StartTid: tid,
-			EndTid:   tid + 1000,
+			EndTid:   tid + initStatsStep,
 		})
-		tid += 1000
+		tid += initStatsStep
 	}
-	ls.SendTask(initstats.Task{
-		StartTid: tid,
-		EndTid:   tid + 1000,
-	})
 	ls.Wait()
 	return nil
 }
@@ -455,14 +453,10 @@ func (h *Handle) initStatsTopNConcurrency(cache util.StatsCache) error {
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
 			StartTid: tid,
-			EndTid:   tid + 1000,
+			EndTid:   tid + initStatsStep,
 		})
-		tid += 1000
+		tid += initStatsStep
 	}
-	ls.SendTask(initstats.Task{
-		StartTid: tid,
-		EndTid:   tid + 1000,
-	})
 	ls.Wait()
 	return nil
 }
@@ -658,14 +652,10 @@ func (h *Handle) initStatsBucketsConcurrency(cache util.StatsCache) error {
 	for tid <= maxTid {
 		ls.SendTask(initstats.Task{
 			StartTid: tid,
-			EndTid:   tid + 1000,
+			EndTid:   tid + initStatsStep,
 		})
-		tid += 1000
+		tid += initStatsStep
 	}
-	ls.SendTask(initstats.Task{
-		StartTid: tid,
-		EndTid:   tid + 1000,
-	})
 	ls.Wait()
 	return nil
 }
