@@ -28,7 +28,7 @@ restart_services
 
 # prepare the data
 echo "prepare the data"
-run_sql "CREATE TABLE test.common (a BIGINT UNSIGNED AUTO_RANDOM(1), b VARCHAR(255), uid INT, c VARCHAR(255) DEFAULT 'c', PRIMARY KEY (`a`, `b`), UNIQUE INDEX (`uid`));"
+run_sql "CREATE TABLE test.common (a BIGINT UNSIGNED AUTO_RANDOM(1), b VARCHAR(255), uid INT, c VARCHAR(255) DEFAULT 'c', PRIMARY KEY (a, b), UNIQUE INDEX (uid));"
 run_sql "INSERT INTO test.common (b, uid, c) values ('a', 1, 'a');"
 run_sql "INSERT INTO test.common (b, uid, c) values ('a', 2, 'a');"
 run_sql "INSERT INTO test.common (b, uid, c) values ('a', 3, 'a');"
@@ -40,7 +40,7 @@ run_sql "INSERT INTO test.common (b, uid, c) values ('a', 8, 'a');"
 run_sql "INSERT INTO test.common (b, uid, c) values ('a', 9, 'a');"
 run_sql "INSERT INTO test.common (b, uid, c) values ('a', 10, 'a');"
 
-run_sql "CREATE TABLE test.pk (a BIGINT UNSIGNED AUTO_RANDOM(1), uid INT, c VARCHAR(255) DEFAULT 'c', PRIMARY KEY (`a`), UNIQUE INDEX (`uid`));"
+run_sql "CREATE TABLE test.pk (a BIGINT UNSIGNED AUTO_RANDOM(1), uid INT, c VARCHAR(255) DEFAULT 'c', PRIMARY KEY (a), UNIQUE INDEX (uid));"
 run_sql "INSERT INTO test.pk (uid, c) values (1, 'a');"
 run_sql "INSERT INTO test.pk (uid, c) values (2, 'a');"
 run_sql "INSERT INTO test.pk (uid, c) values (3, 'a');"
