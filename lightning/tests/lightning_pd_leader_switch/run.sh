@@ -18,9 +18,7 @@
 set -eu
 
 cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
-. $cur/../_utils/run_services
-PD_CONFIG=${PD_CONFIG:-"$cur/../config/pd.toml"}
-TIDB_CONFIG=${TIDB_CONFIG:-"$cur/../config/tidb.toml"}
+. $UTILS_DIR/run_services
 
 bin/pd-server --join "https://$PD_ADDR" \
   --client-urls "https://${PD_ADDR}2" \

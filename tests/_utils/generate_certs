@@ -21,11 +21,11 @@ mkdir -p $TEST_DIR/certs
 openssl ecparam -out "$TEST_DIR/certs/ca.key" -name prime256v1 -genkey
 # CA's Common Name must not be the same as signed certificate.
 openssl req -new -batch -sha256 -subj '/CN=br_tests' -key "$TEST_DIR/certs/ca.key" -out "$TEST_DIR/certs/ca.csr"
-openssl x509 -req -sha256 -days 2 -in "$TEST_DIR/certs/ca.csr" -extfile "${cur_dir}/../config/rootca.conf" -extensions ext -signkey "$TEST_DIR/certs/ca.key" -out "$TEST_DIR/certs/ca.pem"
+openssl x509 -req -sha256 -days 2 -in "$TEST_DIR/certs/ca.csr" -extfile "${cur_dir}/config/rootca.conf" -extensions ext -signkey "$TEST_DIR/certs/ca.key" -out "$TEST_DIR/certs/ca.pem"
 for cluster in tidb pd tikv lightning tiflash curl ticdc br; do
     openssl ecparam -out "$TEST_DIR/certs/$cluster.key" -name prime256v1 -genkey
     openssl req -new -batch -sha256 -subj '/CN=localhost' -key "$TEST_DIR/certs/$cluster.key" -out "$TEST_DIR/certs/$cluster.csr"
-    openssl x509 -req -sha256 -days 1 -extensions EXT -extfile "${cur_dir}/../config/ipsan.cnf" \
+    openssl x509 -req -sha256 -days 1 -extensions EXT -extfile "${cur_dir}/config/ipsan.cnf" \
         -in "$TEST_DIR/certs/$cluster.csr" \
         -CA "$TEST_DIR/certs/ca.pem" \
         -CAkey "$TEST_DIR/certs/ca.key" \

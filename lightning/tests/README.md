@@ -1,32 +1,3 @@
-# Unit tests
-
-Unit tests (the `*_test.go` files inside the source directory) should *never* rely on external
-programs.
-
-Run `make br_unit_test` to execute all unit tests for br.
-
-To run a specific test, pass `ARGS` into `make test` like
-
-```sh
-make br_unit_test ARGS='github.com/pingcap/tidb/br/pkg/cdclog --test.v --check.v --check.f TestColumn'
-#                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-#                       which package to test                  more extra test flags
-```
-
-You can also run unit tests directly via `go test` like:
-
-```sh
-make failpoint-enable
-
-go test github.com/pingcap/tidb/br/pkg/cdclog --test.v --check.v --check.f TestColumn
-
-make failpoint-disable
-```
-
-but note that:
-
-* failpoints must be toggled manually
-
 # Integration tests
 
 This folder contains all tests which relies on external processes such as TiDB.
@@ -61,9 +32,6 @@ This folder contains all tests which relies on external processes such as TiDB.
 3. The user executing the tests must have permission to create the folder
     `/tmp/backup_restore_test`. All test artifacts will be written into this folder.
 
-If you have docker installed, you can skip step 1 and step 2 by running
-`br/tests/up.sh --pull-images` (in `tidb` directory) to build and run a testing Docker container.
-
 ## Running
 
 Link `bin` directory by `cd br && ln -s ../bin bin` and run `make br_integration_test` to execute the integration tests.
@@ -82,14 +50,11 @@ This script will
 
 Run `tests/run.sh --debug` to pause immediately after all servers are started.
 
-After executing the tests, run `make br_coverage` to get a coverage report at
-`/tmp/backup_restore_test/all_cov.html`.
-
 ## Writing new tests
 
 1. New integration tests can be written as shell scripts in `tests/TEST_NAME/run.sh`.
 The script should exit with a nonzero error code on failure.
-2. Add TEST_NAME to existing group in [run_group_br_tests.sh](./run_group_br_tests.sh)(Recommended), or add a new group for it.
+2. Add TEST_NAME to existing group in [run_group_lightning_tests.sh](./run_group_lightning_tests.sh)(Recommended), or add a new group for it.
 3. If you add a new group, the name of the new group must be added to CI [br-integration-test](https://github.com/PingCAP-QE/ci/blob/main/pipelines/pingcap/tidb/latest/pull_br_integration_test.groovy) or [lightning-integration-test](https://github.com/PingCAP-QE/ci/blob/main/pipelines/pingcap/tidb/latest/pull_lightning_integration_test.groovy).
 
 Several convenient commands are provided:
