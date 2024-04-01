@@ -206,6 +206,27 @@ func TestAddNewPartitionToASystemTable(t *testing.T) {
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
 }
 
+func TestDropPartitionOfASystemTable(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	// Test drop partition of a system table.
+	testKit.MustExec("create table mysql.test (c1 int, c2 int) partition by range (c1) (partition p0 values less than (6), partition p1 values less than (11))")
+	// Drop partition p1.
+	testKit.MustExec("alter table mysql.test drop partition p1")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("mysql"), model.NewCIStr("test"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	// Find the drop partition event.
+	dropPartitionEvent := findEvent(h.DDLEventCh(), model.ActionDropTablePartition)
+	err = h.HandleDDLEvent(dropPartitionEvent)
+	require.Nil(t, h.Update(is))
+	statsTbl := h.GetTableStats(tableInfo)
+	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
+}
+
 func TestTruncateTable(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)

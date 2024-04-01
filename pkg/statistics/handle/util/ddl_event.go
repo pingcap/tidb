@@ -174,11 +174,13 @@ func (e *DDLEvent) GetAddPartitionInfo() (globalTableInfo *model.TableInfo, adde
 
 // NewDropPartitionEvent creates a new ddl event that drops partitions.
 func NewDropPartitionEvent(
+	schemaID int64,
 	globalTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:          model.ActionDropTablePartition,
+		schemaID:    schemaID,
 		tableInfo:   globalTableInfo,
 		oldPartInfo: droppedPartInfo,
 	}

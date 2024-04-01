@@ -2153,6 +2153,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		job.SchemaState = model.StateNone
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		dropPartitionEvent := statsutil.NewDropPartitionEvent(
+			job.SchemaID,
 			tblInfo,
 			&model.PartitionInfo{Definitions: droppedDefs},
 		)
