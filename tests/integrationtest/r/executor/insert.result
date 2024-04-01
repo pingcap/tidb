@@ -1219,11 +1219,10 @@ select * from t;
 id	c1
 32767	1
 insert ignore into t(id) values ('*') on duplicate key update c1 = 2;
-affected rows: 2
-info: 
+Error 1467 (HY000): newly allocated auto ID conflicts with the existing one
 select * from t;
 id	c1
-32767	2
+32767	1
 drop table if exists t;
 create table t (i int not null primary key, j int unique key);
 insert into t values (1, 1), (2, 2);
@@ -2128,3 +2127,21 @@ Level	Code	Message
 Warning	1264	Out of range value for column 'd' at row 1
 Warning	1292	Truncated incorrect INTEGER value: '18446744073709551616'
 set sql_mode=DEFAULT;
+drop table if exists t;
+create table t (id bigint primary key auto_increment, uid int, amount int, pad varchar(255), unique index (uid));
+insert into t(uid, amount, pad) values (1, 10, 'aaa');
+insert into t(uid, amount, pad) values (2, 50, 'bbb');
+alter table t force auto_increment = 1;
+insert into t(uid, amount, pad) values (2, 10, 'bbb') on duplicate key update amount = amount + 10;
+Error 1467 (HY000): newly allocated auto ID conflicts with the existing one
+select * from t;
+id	uid	amount	pad
+1	1	10	aaa
+2	2	50	bbb
+drop table if exists t;
+create table t (id bigint primary key auto_increment, b char(255));
+insert into t(b) values ('bbb');
+insert into t values (1, 'ccc') on duplicate key update b = 'ccc';
+select * from t;
+id	b
+1	ccc

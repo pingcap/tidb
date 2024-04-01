@@ -959,6 +959,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 		hasRefCols:                v.NeedFillDefaultValue,
 		SelectExec:                selectExec,
 		rowLen:                    v.RowLen,
+		colUsedGenID:              make(map[int64]struct{}, 0),
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {

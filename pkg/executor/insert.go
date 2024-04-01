@@ -249,7 +249,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				// Newly allocated handle is found in old row,
 				// this should not happen for auto_increment/auto_random cases.
 				if pkHasAutoID {
-					return errors.New("new allocated auto ID is conflict with existing one, this may cause unexpected behavior")
+					return autoid.ErrAutoincReadFailed.FastGen("newly allocated auto ID conflicts with the existing one")
 				}
 				continue
 			}

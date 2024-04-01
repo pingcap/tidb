@@ -951,6 +951,7 @@ insert ignore into t(id) values (194626268);
 --disable_info
 select * from t;
 --enable_info
+-- error 1467
 insert ignore into t(id) values ('*') on duplicate key update c1 = 2;
 --disable_info
 select * from t;
@@ -1600,3 +1601,18 @@ set sql_mode='';
 insert into t values (cast('18446744073709551616' as unsigned));
 --disable_warnings
 set sql_mode=DEFAULT;
+
+drop table if exists t;
+create table t (id bigint primary key auto_increment, uid int, amount int, pad varchar(255), unique index (uid));
+insert into t(uid, amount, pad) values (1, 10, 'aaa');
+insert into t(uid, amount, pad) values (2, 50, 'bbb');
+alter table t force auto_increment = 1;
+-- error 1467
+insert into t(uid, amount, pad) values (2, 10, 'bbb') on duplicate key update amount = amount + 10;
+select * from t;
+
+drop table if exists t;
+create table t (id bigint primary key auto_increment, b char(255));
+insert into t(b) values ('bbb');
+insert into t values (1, 'ccc') on duplicate key update b = 'ccc';
+select * from t;

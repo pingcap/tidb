@@ -899,6 +899,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				}
 				retryInfo.AddAutoIncrementID(id)
 			}
+			e.colUsedGenID[col.ID] = struct{}{}
 			continue
 		}
 
