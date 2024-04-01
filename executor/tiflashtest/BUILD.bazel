@@ -9,11 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD:executor/tiflashtest/BUILD.bazel
     shard_count = 28,
-=======
-    shard_count = 42,
->>>>>>> 542907f2801 (executor: check schema when build table reader executor (#50425)):pkg/executor/test/tiflashtest/BUILD.bazel
     deps = [
         "//config",
         "//domain",
