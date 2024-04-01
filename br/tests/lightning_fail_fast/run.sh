@@ -18,7 +18,7 @@ set -eux
 
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/importer/SlowDownWriteRows=sleep(100);github.com/pingcap/tidb/br/pkg/lightning/importer/SetMinDeliverBytes=return(1)'
+export GO_FAILPOINTS='github.com/pingcap/tidb/lightning/pkg/importer/SlowDownWriteRows=sleep(100);github.com/pingcap/tidb/lightning/pkg/importer/SetMinDeliverBytes=return(1)'
 
 for CFG in chunk engine; do
   rm -f "$TEST_DIR/lightning-tidb.log"

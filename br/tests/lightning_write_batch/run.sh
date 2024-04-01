@@ -40,7 +40,7 @@ set -x
 
 # send-kv-pairs is deprecated, will not takes effect
 rm -rf $TEST_DIR/lightning.log
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/afterFlushKVs=return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/lightning/backend/local/afterFlushKVs=return(true)"
 run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/kv-count.toml"
 check_contains 'afterFlushKVs count=100,' $TEST_DIR/lightning.log
 check_not_contains 'afterFlushKVs count=20,' $TEST_DIR/lightning.log
@@ -59,7 +59,7 @@ done
 set -x
 
 rm -rf $TEST_DIR/lightning.log
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/afterFlushKVs=return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/lightning/backend/local/afterFlushKVs=return(true)"
 run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/kv-size.toml"
 # each kv is 64b, so each kv is a batch
 check_contains 'afterFlushKVs count=1,' $TEST_DIR/lightning.log

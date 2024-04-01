@@ -54,4 +54,13 @@ header:
     - "pkg/disttask/**/mock/**/*_mock.go"
     - "pkg/util/sqlexec/mock/*_mock.go"
     - "pkg/extension/enterprise/"
+    - "lightning/pkg/web/res_vfsdata.go"
+    - "lightning/web/docs/api.yaml"
+    - "lightning/web/public/index.html"
+    - "lightning/web/webpack.config.js"
+    - "pkg/lightning/checkpoints/checkpointspb/file_checkpoints.pb.go"
+    - "pkg/lightning/manual/manual.go"
+    - "pkg/lightning/manual/manual_nocgo.go"
+    - "pkg/lightning/mydump/bytes.go"
+    - "pkg/lightning/mydump/examples/metadata"
   comment: on-failure

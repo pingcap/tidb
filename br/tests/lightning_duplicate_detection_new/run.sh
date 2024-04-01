@@ -92,7 +92,7 @@ check_contains "count(*): 1"
 # 5. Test fail after duplicate detection.
 cleanup
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/FailAfterDuplicateDetection=return()"
+export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/FailAfterDuplicateDetection=return()"
 run_lightning --enable-checkpoint=1 --backend local --config "$CUR/local-replace.toml" --log-file "$LOG_FILE" || true
 
 unset GO_FAILPOINTS
