@@ -29,9 +29,6 @@ import (
 
 // DDLEvent contains the information of a ddl event that is used to update stats.
 type DDLEvent struct {
-	// schemaID is the ID of the schema that the table belongs to.
-	// Used to filter out the system or memory tables.
-	schemaID int64
 	// For different ddl types, the following fields are used.
 	// They have different meanings for different ddl types.
 	// Please do **not** use these fields directly, use the corresponding
@@ -41,6 +38,9 @@ type DDLEvent struct {
 	oldTableInfo *model.TableInfo
 	oldPartInfo  *model.PartitionInfo
 	columnInfos  []*model.ColumnInfo
+	// schemaID is the ID of the schema that the table belongs to.
+	// Used to filter out the system or memory tables.
+	schemaID int64
 	// This value is used to store the table ID during a transition.
 	// It applies when a table structure is being changed from partitioned to non-partitioned, or vice versa.
 	oldTableID int64
