@@ -977,13 +977,16 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 
 func decodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
 	var seg IndexValueSegments
-	if getIndexVersion(value) == 1 {
-		seg = SplitIndexValueForClusteredIndexVersion1(value)
-	} else {
+	if getIndexVersion(value) == 0 {
+		// For Old Encoding (IntHandle without any others options)
 		if len(value) <= MaxOldEncodeValueLen {
 			return decodeIntHandleInIndexValue(value), nil
 		}
+		// For IndexValueVersion0
 		seg = SplitIndexValue(value)
+	} else {
+		// For IndexValueForClusteredIndexVersion1
+		seg = SplitIndexValueForClusteredIndexVersion1(value)
 	}
 	if len(seg.IntHandle) != 0 {
 		handle = decodeIntHandleInIndexValue(seg.IntHandle)
