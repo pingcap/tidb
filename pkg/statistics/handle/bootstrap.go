@@ -39,9 +39,6 @@ import (
 	"go.uber.org/zap"
 )
 
-<<<<<<< HEAD
-func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
-=======
 var maxTidRecord MaxTidRecord
 
 // MaxTidRecord is to record the max tid.
@@ -50,9 +47,8 @@ type MaxTidRecord struct {
 	tid atomic.Int64
 }
 
-func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
 	var physicalID int64
->>>>>>> 150233ddf31 (*: fix panic when to enable lite-init-stats and concurrently-init-stats (#52226))
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
 		// The table is read-only. Please do not modify it.
@@ -304,17 +300,14 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache util.StatsC
 	return nil
 }
 
-<<<<<<< HEAD
-func (*Handle) initStatsTopN4Chunk(cache util.StatsCache, iter *chunk.Iterator4Chunk) {
-=======
-func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task) error {
-	se, err := h.Pool.SPool().Get()
+func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache util.StatsCache, task initstats.Task) error {
+	se, err := h.SPool().Get()
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err == nil { // only recycle when no error
-			h.Pool.SPool().Put(se)
+			h.SPool().Put(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)
@@ -340,7 +333,7 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 	return nil
 }
 
-func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
+func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache util.StatsCache) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
@@ -362,8 +355,7 @@ func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache 
 	return nil
 }
 
-func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
->>>>>>> 150233ddf31 (*: fix panic when to enable lite-init-stats and concurrently-init-stats (#52226))
+func (*Handle) initStatsTopN4Chunk(cache util.StatsCache, iter *chunk.Iterator4Chunk) {
 	affectedIndexes := make(map[*statistics.Index]struct{})
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := cache.Get(row.GetInt64(0))
@@ -396,7 +388,6 @@ func (h *Handle) initStatsTopN(cache util.StatsCache) error {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-<<<<<<< HEAD
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		ls := initstats.NewWorker(rc.Next, func(_ infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
 			h.initStatsTopN4Chunk(cache, iter)
@@ -405,8 +396,6 @@ func (h *Handle) initStatsTopN(cache util.StatsCache) error {
 		ls.Wait()
 		return nil
 	}
-=======
->>>>>>> 150233ddf31 (*: fix panic when to enable lite-init-stats and concurrently-init-stats (#52226))
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
@@ -423,17 +412,14 @@ func (h *Handle) initStatsTopN(cache util.StatsCache) error {
 	return nil
 }
 
-<<<<<<< HEAD
-func (*Handle) initStatsFMSketch4Chunk(cache util.StatsCache, iter *chunk.Iterator4Chunk) {
-=======
-func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initstats.Task) error {
-	se, err := h.Pool.SPool().Get()
+func (h *Handle) initStatsTopNByPaging(cache util.StatsCache, task initstats.Task) error {
+	se, err := h.SPool().Get()
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err == nil { // only recycle when no error
-			h.Pool.SPool().Put(se)
+			h.SPool().Put(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)
@@ -459,7 +445,7 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 	return nil
 }
 
-func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache) error {
+func (h *Handle) initStatsTopNConcurrency(cache util.StatsCache) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
@@ -481,8 +467,7 @@ func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache) error {
 	return nil
 }
 
-func (*Handle) initStatsFMSketch4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
->>>>>>> 150233ddf31 (*: fix panic when to enable lite-init-stats and concurrently-init-stats (#52226))
+func (*Handle) initStatsFMSketch4Chunk(cache util.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
@@ -584,28 +569,12 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 	}
 }
 
-<<<<<<< HEAD
 func (h *Handle) initStatsBuckets(cache util.StatsCache) error {
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
-	rc, err := util.Exec(h.initStatsCtx, sql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer terror.Call(rc.Close)
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		ls := initstats.NewWorker(rc.Next, func(_ infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
-			h.initStatsBuckets4Chunk(cache, iter)
-		})
-		ls.LoadStats(nil, cache, rc)
-		ls.Wait()
-=======
-func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
 		err := h.initStatsBucketsConcurrency(cache)
 		if err != nil {
 			return errors.Trace(err)
 		}
->>>>>>> 150233ddf31 (*: fix panic when to enable lite-init-stats and concurrently-init-stats (#52226))
 	} else {
 		sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
 		rc, err := util.Exec(h.initStatsCtx, sql)
@@ -646,14 +615,14 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 	return nil
 }
 
-func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task initstats.Task) error {
-	se, err := h.Pool.SPool().Get()
+func (h *Handle) initStatsBucketsByPaging(cache util.StatsCache, task initstats.Task) error {
+	se, err := h.SPool().Get()
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err == nil { // only recycle when no error
-			h.Pool.SPool().Put(se)
+			h.SPool().Put(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)
@@ -679,7 +648,7 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 	return nil
 }
 
-func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache) error {
+func (h *Handle) initStatsBucketsConcurrency(cache util.StatsCache) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
