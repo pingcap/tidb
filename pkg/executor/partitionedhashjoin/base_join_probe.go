@@ -75,12 +75,14 @@ type baseJoinProbe struct {
 	workID uint
 
 	currentChunk *chunk.Chunk
-	selRows      []int
+	// if currentChunk.Sel() == nil, then construct a fake selRows
+	selRows  []int
+	usedRows []int
 	// matchedRowsHeaders, currentRowsPos, serializedKeys is indexed by logical row index
 	matchedRowsHeaders []uintptr // the start address of each matched rows
 	currentRowsPos     []uintptr // the current address of each matched rows
 	serializedKeys     [][]byte  // used for save serialized keys
-	// filterVector and nullKeyVector is indexed by physical row index
+	// filterVector and nullKeyVector is indexed by physical row index because the return vector of VectorizedFilter is based on physical row index
 	filterVector    []bool              // if there is filter before probe, filterVector saves the filter result
 	nullKeyVector   []bool              // nullKeyVector[i] = true if any of the key is null
 	hashValues      [][]posAndHashValue // the start address of each matched rows
@@ -128,12 +130,17 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	logicalRows := chk.NumRows()
 	// if chk.sel != nil, then physicalRows is different from logicalRows
 	physicalRows := chk.Column(0).Rows()
-	usedRows := chk.Sel()
-	if usedRows == nil {
+	j.usedRows = chk.Sel()
+	if j.usedRows == nil {
+		if cap(j.selRows) >= logicalRows {
+			j.selRows = j.selRows[:0]
+		} else {
+			j.selRows = make([]int, 0, logicalRows)
+		}
 		for i := 0; i < logicalRows; i++ {
 			j.selRows = append(j.selRows, i)
 		}
-		usedRows = j.selRows
+		j.usedRows = j.selRows
 	}
 	j.chunkRows = logicalRows
 	if cap(j.matchedRowsHeaders) >= logicalRows {
@@ -183,15 +190,17 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 
 	// generate serialized key
 	for index, keyIndex := range j.keyIndex {
-		err = codec.SerializeKeys(j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.columnTypes[keyIndex], keyIndex, usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes[index], j.serializedKeys)
+		err = codec.SerializeKeys(j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.columnTypes[keyIndex], keyIndex, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes[index], j.serializedKeys)
 		if err != nil {
 			return err
 		}
 	}
 	// generate hash value
 	hash := fnv.New64()
-	for logicalRowIndex, physicalRowIndex := range usedRows {
+	for logicalRowIndex, physicalRowIndex := range j.usedRows {
 		if (j.filterVector != nil && !j.filterVector[physicalRowIndex]) || (j.nullKeyVector != nil && j.nullKeyVector[physicalRowIndex]) {
+			// explicit set the matchedRowsHeaders[logicalRowIndex] to nil to indicate there is no matched rows
+			j.matchedRowsHeaders[logicalRowIndex] = 0
 			continue
 		}
 		hash.Reset()
@@ -215,7 +224,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 
 func (j *baseJoinProbe) appendOffsetAndLength(offset int, length int) {
 	if length > 0 {
-		j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: offset, length: length})
+		j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: j.usedRows[offset], length: length})
 	}
 }
 
