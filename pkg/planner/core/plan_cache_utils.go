@@ -17,8 +17,11 @@ package core
 import (
 	"cmp"
 	"context"
+	"fmt"
+	"hash/fnv"
 	"math"
 	"slices"
+	"sort"
 	"strconv"
 	"time"
 	"unsafe"
@@ -128,6 +131,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtType:      ast.GetStmtLabel(paramStmt),
 		Params:        extractor.markers,
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
+		RelateVersion: make(map[int64]uint64),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
@@ -206,6 +210,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		}
 		dbName = append(dbName, db.Name)
 		tbls = append(tbls, tbl)
+		prepared.RelateVersion[id] = tbl.Meta().TableVersion
 	}
 
 	preparedObj := &PlanCacheStmt{
@@ -261,6 +266,23 @@ type planCacheKey struct {
 	hash        []byte
 }
 
+func hashInt64Uint64Map(m map[int64]uint64) uint64 {
+	keys := make([]int64, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i] < keys[j]
+	})
+
+	h := fnv.New64a()
+	for _, k := range keys {
+		v := m[k]
+		_, _ = h.Write([]byte(fmt.Sprintf("%d:%d", k, v)))
+	}
+	return h.Sum64()
+}
+
 // Hash implements Key interface.
 func (key *planCacheKey) Hash() []byte {
 	if len(key.hash) == 0 {
@@ -271,6 +293,7 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
+		key.hash = codec.EncodeUint(key.hash, hashInt64Uint64Map(key.tblVersionMap))
 		key.hash = codec.EncodeInt(key.hash, key.lastUpdatedSchemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
@@ -330,8 +353,7 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 // NewPlanCacheKey creates a new planCacheKey object.
 // Note: lastUpdatedSchemaVersion will only be set in the case of rc or for update read in order to
 // differentiate the cache key. In other cases, it will be 0.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64,
-	lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistTS int64) (kvcache.Key, error) {
+func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion, lastUpdatedSchemaVersion int64, bindSQL string, exprBlacklistTS int64, relatedSchemaVersion map[int64]uint64) (kvcache.Key, error) {
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
@@ -352,6 +374,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		connID:                   sessionVars.ConnectionID,
 		stmtText:                 stmtText,
 		schemaVersion:            schemaVersion,
+		tblVersionMap:            relatedSchemaVersion,
 		lastUpdatedSchemaVersion: lastUpdatedSchemaVersion,
 		sqlMode:                  sessionVars.SQLMode,
 		timezoneOffset:           timezoneOffset,

@@ -556,6 +556,7 @@ type Prepared struct {
 	StmtType      string
 	Params        []ParamMarkerExpr
 	SchemaVersion int64
+	RelateVersion map[int64]uint64
 	CachedPlan    interface{}
 	CachedNames   interface{}
 }
