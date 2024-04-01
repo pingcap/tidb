@@ -44,11 +44,11 @@ run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/config_gz.toml"
 run_sql 'DROP DATABASE test;'
 run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/config_gzip.toml" --log-file "$LOG_FILE3" -L debug
 
-uncompress=$(grep "import write" /tmp/backup_restore_test/lightning-import-compress1.log |
+uncompress=$(grep "import write" $LOG_FILE1 |
   grep -Eo "bytes=[0-9]+" | sed 's/bytes=//g' | awk '{sum+=$1} END {print sum}')
-gzip=$(grep "import write" /tmp/backup_restore_test/lightning-import-compress2.log |
+gzip=$(grep "import write" $LOG_FILE2 |
   grep -Eo "bytes=[0-9]+" | sed 's/bytes=//g' | awk '{sum+=$1} END {print sum}')
-gz=$(grep "import write" /tmp/backup_restore_test/lightning-import-compress3.log |
+gz=$(grep "import write" $LOG_FILE3 |
   grep -Eo "bytes=[0-9]+" | sed 's/bytes=//g' | awk '{sum+=$1} END {print sum}')
 
 echo "uncompress: ${uncompress}, gzip: ${gzip}, gz: ${gz}"

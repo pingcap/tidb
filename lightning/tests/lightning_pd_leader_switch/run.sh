@@ -20,7 +20,7 @@ set -eu
 cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 . $UTILS_DIR/run_services
 
-bin/pd-server --join "https://$PD_ADDR" \
+pd-server --join "https://$PD_ADDR" \
   --client-urls "https://${PD_ADDR}2" \
   --peer-urls "https://${PD_PEER_ADDR}2" \
   --log-file "$TEST_DIR/pd2.log" \
@@ -31,7 +31,7 @@ bin/pd-server --join "https://$PD_ADDR" \
 # strange that new PD can't join too quickly
 sleep 10
 
-bin/pd-server --join "https://$PD_ADDR" \
+pd-server --join "https://$PD_ADDR" \
   --client-urls "https://${PD_ADDR}3" \
   --peer-urls "https://${PD_PEER_ADDR}3" \
   --log-file "$TEST_DIR/pd3.log" \
@@ -50,7 +50,7 @@ run_lightning --backend local --enable-checkpoint=0 --pd-urls '127.0.0.1:9999,12
 lightning_pid=$!
 # in many libraries, etcd client's auto-sync-interval is 30s, so we need to wait at least 30s before kill PD leader
 sleep 45
-kill $(cat /tmp/backup_restore_test/pd_pid.txt)
+kill $(cat $TEST_DIR/pd_pid.txt)
 
 # Check that everything is correctly imported
 wait $lightning_pid

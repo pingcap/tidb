@@ -339,7 +339,7 @@ build_for_lightning_integration_test:
 		-coverpkg=github.com/pingcap/tidb/lightning/...,github.com/pingcap/tidb/pkg/lightning/... \
 		-o $(LIGHTNING_CTL_BIN).test \
 		github.com/pingcap/tidb/lightning/cmd/tidb-lightning-ctl && \
-	$(GOBUILD) $(RACE_FLAG) -o bin/oauth tools/fake-oauth/main.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/fake-oauth tools/fake-oauth/main.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/parquet_gen tools/gen-parquet/main.go \
 	) || (make failpoint-disable && exit 1)
 	@make failpoint-disable
@@ -352,7 +352,7 @@ build_for_br_integration_test:
 		github.com/pingcap/tidb/br/cmd/br && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/locker br/tests/br_key_locked/*.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/gc br/tests/br_z_gc_safepoint/*.go && \
-	$(GOBUILD) $(RACE_FLAG) -o bin/oauth tools/fake-oauth/main.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/fake-oauth tools/fake-oauth/main.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/rawkv br/tests/br_rawkv/*.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/txnkv br/tests/br_txn/*.go \
 	) || (make failpoint-disable && exit 1)

@@ -38,7 +38,7 @@ export MINIO_BROWSER=off
 export S3_ENDPOINT=127.0.0.1:9900
 rm -rf "${TEST_DIR:?}/${DB:?}"
 mkdir -p "$TEST_DIR/$DB"
-bin/minio server --address $S3_ENDPOINT "$DBPATH" &
+minio server --address $S3_ENDPOINT "$DBPATH" &
 i=0
 while ! curl -o /dev/null -v -s "http://$S3_ENDPOINT/"; do
     i=$((i+1))

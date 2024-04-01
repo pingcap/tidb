@@ -32,7 +32,7 @@ rm -rf $GCS_STORAGE
 mkdir -p "$TEST_DIR/$DB"
 
 # we need set public-host for download file, or it will return 404 when using client to read.
-bin/fake-gcs-server -scheme http -host $GCS_HOST -port $GCS_PORT -filesystem-root $GCS_STORAGE -public-host $GCS_HOST:$GCS_PORT &
+fake-gcs-server -scheme http -host $GCS_HOST -port $GCS_PORT -filesystem-root $GCS_STORAGE -public-host $GCS_HOST:$GCS_PORT &
 i=0
 while ! curl -o /dev/null -v -s "http://$GCS_HOST:$GCS_PORT/"; do
     i=$(($i+1))
@@ -44,11 +44,11 @@ while ! curl -o /dev/null -v -s "http://$GCS_HOST:$GCS_PORT/"; do
 done
 
 # start oauth server
-bin/oauth &
+fake-oauth &
 
 stop_gcs() {
     killall -9 fake-gcs-server || true
-    killall -9 oauth || true
+    killall -9 fake-oauth || true
 }
 trap stop_gcs EXIT
 

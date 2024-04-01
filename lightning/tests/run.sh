@@ -21,6 +21,10 @@ export PATH="$PATH:$CUR/../../bin:$UTILS_DIR"
 export TEST_DIR=/tmp/lightning_test
 export COV_DIR="/tmp/group_cover"
 mkdir -p $COV_DIR || true
+export TIDB_CONFIG="$CUR/config/tidb.toml"
+export TIKV_CONFIG="$CUR/config/tikv.toml"
+export PD_CONFIG="$CUR/config/pd.toml"
+export TESTS_ROOT="$CUR"
 source $UTILS_DIR/run_services
 
 # Create COV_DIR if not exists
@@ -67,7 +71,7 @@ run_case() {
     TIDB_ADDR="$TIDB_ADDR" \
     TIDB_STATUS_ADDR="$TIDB_STATUS_ADDR" \
     TIKV_ADDR="$TIKV_ADDR" \
-    bash "$script" && echo "TEST: [$case] success!"
+    bash "$script" && echo "*===== TEST: [$case] success! =====*"
 }
 
 # wait for global variable cache invalid

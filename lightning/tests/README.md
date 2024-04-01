@@ -30,7 +30,7 @@ This folder contains all tests which relies on external processes such as TiDB.
     * `lsof`
 
 3. The user executing the tests must have permission to create the folder
-    `/tmp/backup_restore_test`. All test artifacts will be written into this folder.
+    `/tmp/lightning_test`. All test artifacts will be written into this folder.
 
 ## Running
 

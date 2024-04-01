@@ -5,7 +5,7 @@ region-concurrency = 1
 enable = true
 schema = "tidb_lightning_checkpoint_timestamp"
 driver = "file"
-dsn = "/tmp/backup_restore_test/cpts.pb"
+dsn = "/tmp/lightning_test/cpts.pb"
 
 [tikv-importer]
 backend = "local"

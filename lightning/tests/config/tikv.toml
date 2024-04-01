@@ -1,8 +1,7 @@
 # config of tikv
 [storage]
 reserve-space = "1KB"
-data-dir = "/tmp/backup_restore_test/tikv1/"
-engine = "partitioned-raft-kv"
+data-dir = "/tmp/lightning_test/tikv1/"
 
 [coprocessor]
 region-max-keys = 100
@@ -24,6 +23,13 @@ pd-heartbeat-tick-interval = "1s"
 hibernate-regions-compatible=false
 
 [security]
-ca-path = "/tmp/backup_restore_test/certs/ca.pem"
-cert-path = "/tmp/backup_restore_test/certs/tikv.pem"
-key-path = "/tmp/backup_restore_test/certs/tikv.key"
+ca-path = "/tmp/lightning_test/certs/ca.pem"
+cert-path = "/tmp/lightning_test/certs/tikv.pem"
+key-path = "/tmp/lightning_test/certs/tikv.key"
+
+[security.encryption]
+data-encryption-method = "aes256-ctr"
+
+[security.encryption.master-key]
+type = "file"
+path = "/tmp/lightning_test/master-key-file"

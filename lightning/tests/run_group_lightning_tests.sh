@@ -59,8 +59,8 @@ elif [[ " ${!groups[*]} " =~ " ${group} " ]]; then
 		echo "Run cases: ${test_names}"
         for case_name in $test_names; do
             echo "Run cases: ${case_name}"
-            rm -rf /tmp/backup_restore_test
-            mkdir -p /tmp/backup_restore_test
+            rm -rf /tmp/lightning_test
+            mkdir -p /tmp/lightning_test
             TEST_NAME=${case_name} ${CUR}/run.sh
         done
 	fi
