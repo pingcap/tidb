@@ -414,6 +414,7 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
 			dropTableEvent := statsutil.NewDropTableEvent(
+				job.SchemaID,
 				tblInfo,
 			)
 			asyncNotifyEvent(d, dropTableEvent)

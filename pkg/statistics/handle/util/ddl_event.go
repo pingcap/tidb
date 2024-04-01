@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -48,6 +49,9 @@ type DDLEvent struct {
 
 // IsMemOrSysDB checks whether the table is in the memory or system database.
 func (e *DDLEvent) IsMemOrSysDB(sctx sessionctx.Context) (bool, error) {
+	if intest.InTest {
+		intest.Assert(e.schemaID != 0, "schemaID should not be 0, please set it when creating the event")
+	}
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	schema, ok := is.SchemaByID(e.schemaID)
 	if !ok {
@@ -94,10 +98,12 @@ func (e *DDLEvent) GetTruncateTableInfo() (newTableInfo *model.TableInfo, droppe
 
 // NewDropTableEvent creates a new ddl event that drops a table.
 func NewDropTableEvent(
+	schemaID int64,
 	droppedTableInfo *model.TableInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:           model.ActionDropTable,
+		schemaID:     schemaID,
 		oldTableInfo: droppedTableInfo,
 	}
 }
