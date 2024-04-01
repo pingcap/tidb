@@ -236,6 +236,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		e.stats.Prefetch += time.Since(prefetchStart)
 	}
 
+	pkHasAutoID := e.InsertValues.pkHasAutoID()
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
 			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
@@ -245,6 +246,11 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 
 			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
 			if err == nil {
+				// Newly allocated handle is found in old row,
+				// this should not happen for auto_increment/auto_random cases.
+				if pkHasAutoID {
+					return errors.New("new allocated auto ID is conflict with existing one, this may cause unexpected behavior")
+				}
 				continue
 			}
 			if !kv.IsErrNotFound(err) {

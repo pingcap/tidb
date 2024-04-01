@@ -80,6 +80,7 @@ type InsertValues struct {
 
 	hasRefCols     bool
 	hasExtraHandle bool
+	colUsedGenID   map[int64]struct{}
 
 	// lazyFillAutoID indicates whatever had been filled the autoID lazily to datum. This is used for being compatible with JDBC using getGeneratedKeys().
 	// `insert|replace values` can guarantee consecutive autoID in a batch.
@@ -955,6 +956,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(
 		if e.handleErr(c, &d, 0, err) != nil {
 			return types.Datum{}, err
 		}
+		e.colUsedGenID[c.ID] = struct{}{}
 		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 		// Cause autoID may be specified by user, judge only the first row is not suitable.
 		if e.lastInsertID == 0 {
@@ -1040,6 +1042,7 @@ func (e *InsertValues) adjustAutoRandomDatum(
 		if err != nil {
 			return types.Datum{}, err
 		}
+		e.colUsedGenID[c.ID] = struct{}{}
 		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 		// Cause autoID may be specified by user, judge only the first row is not suitable.
 		if e.lastInsertID == 0 {
@@ -1440,6 +1443,32 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 		}
 	}
 	return nil
+}
+
+func (e *InsertValues) pkHasAutoID() bool {
+	tblInfo := e.Table.Meta()
+	switch {
+	case tblInfo.PKIsHandle:
+		for _, col := range tblInfo.Columns {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
+				_, ok := e.colUsedGenID[col.ID]
+				return ok
+			}
+		}
+		return false
+	case tblInfo.IsCommonHandle:
+		pk := tables.FindPrimaryIndex(tblInfo)
+		for _, col := range pk.Columns {
+			colInfo := tblInfo.Columns[col.Offset]
+			_, ok := e.colUsedGenID[colInfo.ID]
+			if ok {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 // CreateSession will be assigned by session package.
