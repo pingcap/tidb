@@ -54,7 +54,7 @@ insert into t0 values (4, default);
 insert into t1 values (4, default);
 show create table t0;
 show create table t1;
--- error 1292
+-- error 0, 1292
 alter table t0 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
 alter table t0 alter column c1 SET DEFAULT (date_format(now(), '%Y-%m-%d'));
 insert into t0 values (5, default);
