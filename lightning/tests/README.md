@@ -4,17 +4,15 @@ This folder contains all tests which relies on external processes such as TiDB.
 
 ## Preparations
 
-1. The following 9 executables must be copied or linked into these locations:
+1. The following executables must be copied or linked into these locations:
 
     * `bin/tidb-server`
     * `bin/tikv-server`
     * `bin/pd-server`
     * `bin/pd-ctl`
-    * `bin/go-ycsb`
     * `bin/minio`
     * `bin/mc`
     * `bin/tiflash`
-    * `bin/cdc`
 
     The versions must be ≥2.1.0.
 
@@ -34,19 +32,11 @@ This folder contains all tests which relies on external processes such as TiDB.
 
 ## Running
 
-Link `bin` directory by `cd br && ln -s ../bin bin` and run `make br_integration_test` to execute the integration tests.
+Run `make lightning_integration_test` to execute the integration tests.
 This command will
 
-1. Build `br`
-2. Check that all 9 required executables and `br` executable exist
-3. Execute `tests/run.sh`
-4. To start cluster with tiflash, please run `TIFLASH=1 tests/run.sh`
-
-If the first two steps are done before, you could also run `tests/run.sh` directly.
-This script will
-
-1. Start PD, TiKV and TiDB in background with local storage
-2. Find out all `tests/*/run.sh` and run it
+- Build `lightning`
+- Execute `tests/run.sh`
 
 Run `tests/run.sh --debug` to pause immediately after all servers are started.
 
@@ -55,7 +45,7 @@ Run `tests/run.sh --debug` to pause immediately after all servers are started.
 1. New integration tests can be written as shell scripts in `tests/TEST_NAME/run.sh`.
 The script should exit with a nonzero error code on failure.
 2. Add TEST_NAME to existing group in [run_group_lightning_tests.sh](./run_group_lightning_tests.sh)(Recommended), or add a new group for it.
-3. If you add a new group, the name of the new group must be added to CI [br-integration-test](https://github.com/PingCAP-QE/ci/blob/main/pipelines/pingcap/tidb/latest/pull_br_integration_test.groovy) or [lightning-integration-test](https://github.com/PingCAP-QE/ci/blob/main/pipelines/pingcap/tidb/latest/pull_lightning_integration_test.groovy).
+3. If you add a new group, the name of the new group must be added to CI  [lightning-integration-test](https://github.com/PingCAP-QE/ci/blob/main/pipelines/pingcap/tidb/latest/pull_lightning_integration_test.groovy).
 
 Several convenient commands are provided:
 

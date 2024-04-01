@@ -344,6 +344,9 @@ build_for_lightning_integration_test:
 	) || (make failpoint-disable && exit 1)
 	@make failpoint-disable
 
+lightning_integration_test: build_lightning build_for_lightning_integration_test
+	@cd lightning && tests/run.sh
+
 build_for_br_integration_test:
 	@make failpoint-enable
 	($(GOTEST) -c -cover -covermode=count \
