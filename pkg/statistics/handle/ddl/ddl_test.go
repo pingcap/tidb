@@ -88,6 +88,25 @@ func TestDDLTable(t *testing.T) {
 	require.False(t, statsTbl.Pseudo)
 }
 
+func TestCreateASystemTable(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	// Test create a system table.
+	testKit.MustExec("create table mysql.test (c1 int, c2 int)")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("mysql"), model.NewCIStr("test"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
+	statsTbl := h.GetTableStats(tableInfo)
+	// FIXME: We should not collect stats for system tables.
+	require.False(t, statsTbl.Pseudo)
+}
+
 func TestTruncateTable(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
