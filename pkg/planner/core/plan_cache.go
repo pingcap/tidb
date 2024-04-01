@@ -106,6 +106,16 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	schemaNotMatch := false
 	for i := 0; i < len(stmt.dbName); i++ {
+		_, ok := is.TableByID(stmt.tbls[i].Meta().ID)
+		if !ok {
+			tblByName, err := is.TableByName(stmt.dbName[i], stmt.tbls[i].Meta().Name)
+			if err != nil {
+				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+			}
+			delete(stmtAst.RelateVersion, stmt.tbls[i].Meta().ID)
+			stmt.tbls[i] = tblByName
+			stmtAst.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().TableVersion
+		}
 		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
 		if err != nil {
 			return err
