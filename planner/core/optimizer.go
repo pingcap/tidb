@@ -301,6 +301,9 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	}
 	flag |= flagCollectPredicateColumnsPoint
 	flag |= flagSyncWaitStatsLoadPoint
+	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
+		flag |= flagPartitionProcessor // apply partition pruning under static mode
+	}
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err
@@ -327,47 +330,7 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if sessVars.StmtCtx.EnableOptimizeTrace {
 		sessVars.StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.buildPlanTrace())
 	}
-<<<<<<< HEAD:planner/core/optimizer.go
 	return finalPlan, cost, nil
-=======
-	return logic, finalPlan, cost, nil
-}
-
-func adjustOptimizationFlags(flag uint64, logic LogicalPlan) uint64 {
-	// If there is something after flagPrunColumns, do flagPrunColumnsAgain.
-	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
-		flag |= flagPrunColumnsAgain
-	}
-	if checkStableResultMode(logic.SCtx()) {
-		flag |= flagStabilizeResults
-	}
-	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
-		// When we use the straight Join Order hint, we should disable the join reorder optimization.
-		flag &= ^flagJoinReOrder
-	}
-	flag |= flagCollectPredicateColumnsPoint
-	flag |= flagSyncWaitStatsLoadPoint
-	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
-		flag |= flagPartitionProcessor // apply partition pruning under static mode
-	}
-	return flag
-}
-
-// DoOptimize optimizes a logical plan to a physical plan.
-func DoOptimize(
-	ctx context.Context,
-	sctx PlanContext,
-	flag uint64,
-	logic LogicalPlan,
-) (PhysicalPlan, float64, error) {
-	sessVars := sctx.GetSessionVars()
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
-	_, finalPlan, cost, err := doOptimize(ctx, sctx, flag, logic)
-	return finalPlan, cost, err
->>>>>>> f4e366ea0c3 (planner: apply rule_partition_pruning when optimizing CTE under static mode (#51903)):pkg/planner/core/optimizer.go
 }
 
 // refineCETrace will adjust the content of CETrace.
