@@ -194,6 +194,7 @@ func (e *DDLEvent) GetDropPartitionInfo() (globalTableInfo *model.TableInfo, dro
 // NewExchangePartitionEvent creates a new ddl event that exchanges a partition.
 // Please make sure pass the information before the exchange.
 func NewExchangePartitionEvent(
+	schemaID int64,
 	globalTableInfo *model.TableInfo,
 	originalPartInfo *model.PartitionInfo,
 	originalTableInfo *model.TableInfo,
@@ -216,6 +217,7 @@ func NewExchangePartitionEvent(
 	}
 	return &DDLEvent{
 		tp:           model.ActionExchangeTablePartition,
+		schemaID:     schemaID,
 		tableInfo:    globalTableInfo,
 		partInfo:     originalPartInfo,
 		oldTableInfo: originalTableInfo,

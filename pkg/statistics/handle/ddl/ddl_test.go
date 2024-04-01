@@ -227,6 +227,28 @@ func TestDropPartitionOfASystemTable(t *testing.T) {
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
 }
 
+func TestExchangePartitionWithASystemTable(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	// Test exchange partition with a system table.
+	testKit.MustExec("create table t (c1 int, c2 int) partition by range (c1) (partition p0 values less than (6))")
+	testKit.MustExec("create table mysql.test (c1 int, c2 int)")
+	// Exchange partition.
+	testKit.MustExec("alter table t exchange partition p0 with table mysql.test")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	// Find the exchange partition event.
+	exchangePartitionEvent := findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
+	err = h.HandleDDLEvent(exchangePartitionEvent)
+	require.Nil(t, h.Update(is))
+	statsTbl := h.GetTableStats(tableInfo)
+	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
+}
+
 func TestTruncateTable(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)

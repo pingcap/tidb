@@ -2755,6 +2755,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, pt)
 	exchangePartitionEvent := statsutil.NewExchangePartitionEvent(
+		job.SchemaID,
 		pt,
 		&model.PartitionInfo{Definitions: []model.PartitionDefinition{originalPartitionDef}},
 		originalNt,

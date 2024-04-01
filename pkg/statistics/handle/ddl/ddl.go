@@ -56,9 +56,12 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	}
 	defer h.statsHandler.SPool().Put(sctx)
 	if isSysDB, err := t.IsMemOrSysDB(sctx.(sessionctx.Context)); err != nil {
-
 		return err
 	} else if isSysDB {
+		// NOTE FOR EXCHANGE PARTITION EVENT: When exchanging a partition with a (system)table,
+		// we need to adjust the global statistics based on the count delta and modify count delta.
+		// However, due to the system table involved, a complete update of the global statistics isn't feasible.
+		// As a result, we bypass the statistics update for the table in this scenario.
 		logutil.StatsLogger().Info("Skip handle system database ddl event", zap.Stringer("event", t))
 		return nil
 	}
