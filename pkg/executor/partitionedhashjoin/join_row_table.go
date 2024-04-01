@@ -374,9 +374,11 @@ type rowTableBuilder struct {
 	serializedKeyVectorBuffer [][]byte
 	partIdxVector             []int
 	selRows                   []int
+	usedRows                  []int
 	hashValue                 []uint64
-	filterVector              []bool // if there is filter before probe, filterVector saves the filter result
-	nullKeyVector             []bool // nullKeyVector[i] = true if any of the key is null
+	// filterVector and nullKeyVector is indexed by physical row index because the return vector of VectorizedFilter is based on physical row index
+	filterVector  []bool // if there is filter before probe, filterVector saves the filter result
+	nullKeyVector []bool // nullKeyVector[i] = true if any of the key is null
 
 	crrntSizeOfRowTable []int64
 	// store the start position of each row in the rawData,
@@ -399,15 +401,20 @@ func (b *rowTableBuilder) initBuffer() {
 	}
 }
 
-func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) []int {
-	usedRows := chk.Sel()
+func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) {
+	b.usedRows = chk.Sel()
 	logicalRows := chk.NumRows()
 	physicalRows := chk.Column(0).Rows()
-	if usedRows == nil {
+	if b.usedRows == nil {
+		if cap(b.selRows) >= logicalRows {
+			b.selRows = b.partIdxVector[:0]
+		} else {
+			b.selRows = make([]int, 0, logicalRows)
+		}
 		for i := 0; i < logicalRows; i++ {
 			b.selRows = append(b.selRows, i)
 		}
-		usedRows = b.selRows
+		b.usedRows = b.selRows
 	}
 	if cap(b.serializedKeyVectorBuffer) >= logicalRows {
 		b.serializedKeyVectorBuffer = b.serializedKeyVectorBuffer[:logicalRows]
@@ -444,7 +451,6 @@ func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) []int {
 			b.nullKeyVector = append(b.nullKeyVector, false)
 		}
 	}
-	return usedRows
 }
 
 func newRowTable(meta *JoinTableMeta) *rowTable {
@@ -467,9 +473,9 @@ func (builder *rowTableBuilder) appendRemainingRowLocations(rowTables []*rowTabl
 	}
 }
 
-func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chunk.Chunk, usedRows []int, rowTables []*rowTable, rowTableMeta *JoinTableMeta) {
+func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chunk.Chunk, rowTables []*rowTable, rowTableMeta *JoinTableMeta) {
 	fakeAddrByte := make([]byte, 8)
-	for logicalRowIndex, physicalRowIndex := range usedRows {
+	for logicalRowIndex, physicalRowIndex := range builder.usedRows {
 		needInsertedToHashTable := (!builder.hasFilter || builder.filterVector[physicalRowIndex]) && (!builder.hasNullableKey || !builder.nullKeyVector[physicalRowIndex])
 		if !needInsertedToHashTable && !builder.keepFilteredRows {
 			continue
