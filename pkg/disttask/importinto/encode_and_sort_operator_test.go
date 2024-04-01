@@ -101,7 +101,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	// cancel on error and log other errors
 	mockErr2 := errors.New("mock err 2")
 	source = operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, 2, 1)
+	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, 2, 2)
 	op.SetSource(source)
 	executor1 := mock.NewMockMiniTaskExecutor(ctrl)
 	executor2 := mock.NewMockMiniTaskExecutor(ctrl)
