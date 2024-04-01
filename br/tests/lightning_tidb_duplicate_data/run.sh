@@ -25,7 +25,7 @@ sed -i.bak 's/new/old/g' "$CUR/data/dup.dup.sql" && rm $CUR/data/dup.dup.sql.bak
 for type in replace ignore error; do
     run_sql 'DROP DATABASE IF EXISTS dup;'
 
-    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/tidb/FailIfImportedSomeRows=return"
+    export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/lightning/backend/tidb/FailIfImportedSomeRows=return"
     set +e
     run_lightning --config "$CUR/$type.toml" 2> /dev/null
     ERRORCODE=$?

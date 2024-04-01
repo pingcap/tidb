@@ -77,7 +77,7 @@ errdoc:tools/bin/errdoc-gen
 lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml ./br/pkg/lightning/...
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml ./lightning/...
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/overview.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/performance_overview.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb.json
@@ -380,9 +380,9 @@ bench-daily:
 .PHONY: build_tools
 build_tools: build_br build_lightning build_lightning-ctl
 
-.PHONY: br_web
-br_web:
-	@cd br/web && npm install && npm run build
+.PHONY: lightning_web
+lightning_web:
+	@cd lightning/web && npm install && npm run build
 
 .PHONY: build_br
 build_br:
@@ -390,15 +390,15 @@ build_br:
 
 .PHONY: build_lightning_for_web
 build_lightning_for_web:
-	CGO_ENABLED=1 $(GOBUILD) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) br/cmd/tidb-lightning/main.go
+	CGO_ENABLED=1 $(GOBUILD) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) lightning/cmd/tidb-lightning/main.go
 
 .PHONY: build_lightning
 build_lightning:
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./br/cmd/tidb-lightning
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
 
 .PHONY: build_lightning-ctl
 build_lightning-ctl:
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./br/cmd/tidb-lightning-ctl
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./lightning/cmd/tidb-lightning-ctl
 
 .PHONY: build_for_br_integration_test
 build_for_br_integration_test:
@@ -408,13 +408,13 @@ build_for_br_integration_test:
 		-o $(BR_BIN).test \
 		github.com/pingcap/tidb/br/cmd/br && \
 	$(GOTEST) -c -cover -covermode=count \
-		-coverpkg=github.com/pingcap/tidb/br/... \
+		-coverpkg=github.com/pingcap/tidb/lightning/...,github.com/pingcap/tidb/pkg/lightning/... \
 		-o $(LIGHTNING_BIN).test \
-		github.com/pingcap/tidb/br/cmd/tidb-lightning && \
+		github.com/pingcap/tidb/lightning/cmd/tidb-lightning && \
 	$(GOTEST) -c -cover -covermode=count \
-		-coverpkg=github.com/pingcap/tidb/br/... \
+		-coverpkg=github.com/pingcap/tidb/lightning/...,github.com/pingcap/tidb/pkg/lightning/... \
 		-o $(LIGHTNING_CTL_BIN).test \
-		github.com/pingcap/tidb/br/cmd/tidb-lightning-ctl && \
+		github.com/pingcap/tidb/lightning/cmd/tidb-lightning-ctl && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/locker br/tests/br_key_locked/*.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/gc br/tests/br_z_gc_safepoint/*.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/oauth br/tests/br_gcs/*.go && \
@@ -424,7 +424,7 @@ build_for_br_integration_test:
 	) || (make failpoint-disable && exit 1)
 	@make failpoint-disable
 
-.PHONY:br_unit_test
+.PHONY: br_unit_test
 br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
@@ -465,9 +465,9 @@ mock_s3iface: mockgen
 # mock interface for lightning and IMPORT INTO
 .PHONY: mock_lightning
 mock_lightning: mockgen
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter,ChunkFlushStatus > br/pkg/mock/backend.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
-	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/br/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter,ChunkFlushStatus > br/pkg/mock/backend.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
+	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
 
 .PHONY: gen_mock
@@ -510,9 +510,9 @@ br_bins:
 	@rm tmp_parser.go
 
 .PHONY: data_parsers
-data_parsers: tools/bin/vfsgendev br/pkg/lightning/mydump/parser_generated.go br_web
-	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOPATH)/src" br/pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
-	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/br/pkg/lightning/web".Res' && mv res_vfsdata.go br/pkg/lightning/web/
+data_parsers: tools/bin/vfsgendev pkg/lightning/mydump/parser_generated.go lightning_web
+	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOPATH)/src" pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
+	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/lightning/pkg/web".Res' && mv res_vfsdata.go lightning/pkg/web/
 
 .PHONY: build_dumpling
 build_dumpling:
