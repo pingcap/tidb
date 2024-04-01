@@ -202,14 +202,7 @@ func TestSplitAndScatter(t *testing.T) {
 	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
-	// old regions: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	// ranges: [bbd, bbf), [bbf, bbj), [xxa, xxe), [xxe, xxz)
-	// should split on: bbf, xxa, xxe, xxz,
-	// should skip bbj because [bbf, bbj) already contains region boundary bbh
-	//   and [bbj, xxa) already contains region boundary cca
-	keys := [...]string{"", "aay", "bba", "bbf", "bbh", "cca", "xxe", "xxz", ""}
-
-	if !validateRegionsExt(regions, keys[:], false) {
+	if !validateRegions(regions) {
 		for _, region := range regions {
 			t.Logf("region: %v\n", region.Region)
 		}

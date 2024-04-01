@@ -19,7 +19,6 @@ import (
 	"context"
 	"math"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -142,26 +141,6 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 			break
 		}
 
-		needSplitRanges := make([]common.Range, 0, len(ranges))
-		startKey := make([]byte, 0)
-		endKey := make([]byte, 0)
-		for _, r := range ranges {
-			startKey = codec.EncodeBytes(startKey, r.Start)
-			endKey = codec.EncodeBytes(endKey, r.End)
-			idx := sort.Search(len(regions), func(i int) bool {
-				return beforeEnd(startKey, regions[i].Region.EndKey)
-			})
-			if idx < 0 || idx >= len(regions) {
-				log.FromContext(ctx).Error("target region not found", logutil.Key("start_key", startKey),
-					logutil.RegionBy("first_region", regions[0].Region),
-					logutil.RegionBy("last_region", regions[len(regions)-1].Region))
-				return errors.New("target region not found")
-			}
-			if bytes.Compare(startKey, regions[idx].Region.StartKey) > 0 || bytes.Compare(endKey, regions[idx].Region.EndKey) < 0 {
-				needSplitRanges = append(needSplitRanges, r)
-			}
-		}
-		ranges = needSplitRanges
 		if len(ranges) == 0 {
 			log.FromContext(ctx).Info("no ranges need to be split, skipped.")
 			return nil

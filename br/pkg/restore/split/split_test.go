@@ -326,10 +326,47 @@ func TestSplitCtxCancel(t *testing.T) {
 }
 
 func TestGetSplitKeyPerRegion(t *testing.T) {
+	// test case moved from BR
+	sortedKeys := [][]byte{
+		[]byte("b"),
+		[]byte("d"),
+		[]byte("g"),
+		[]byte("j"),
+		[]byte("l"),
+	}
+	sortedRegions := []*RegionInfo{
+		{
+			Region: &metapb.Region{
+				Id:       1,
+				StartKey: []byte("a"),
+				EndKey:   []byte("g"),
+			},
+		},
+		{
+			Region: &metapb.Region{
+				Id:       2,
+				StartKey: []byte("g"),
+				EndKey:   []byte("k"),
+			},
+		},
+		{
+			Region: &metapb.Region{
+				Id:       3,
+				StartKey: []byte("k"),
+				EndKey:   []byte("m"),
+			},
+		},
+	}
+	result := GetSplitKeysOfRegions(sortedKeys, sortedRegions, false)
+	require.Equal(t, 3, len(result))
+	require.Equal(t, [][]byte{[]byte("b"), []byte("d")}, result[sortedRegions[0]])
+	require.Equal(t, [][]byte{[]byte("g"), []byte("j")}, result[sortedRegions[1]])
+	require.Equal(t, [][]byte{[]byte("l")}, result[sortedRegions[2]])
+
 	// test case moved from lightning
 	tableID := int64(1)
 	keys := []int64{1, 10, 100, 1000, 10000, -1}
-	sortedRegions := make([]*RegionInfo, 0, len(keys))
+	sortedRegions = make([]*RegionInfo, 0, len(keys))
 	start := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(0))
 	regionStart := codec.EncodeBytes([]byte{}, start)
 	for i, end := range keys {
@@ -361,7 +398,7 @@ func TestGetSplitKeyPerRegion(t *testing.T) {
 		50000: 5,
 	}
 	expected := map[uint64][][]byte{}
-	sortedKeys := make([][]byte, 0, len(checkKeys))
+	sortedKeys = make([][]byte, 0, len(checkKeys))
 
 	for hdl, idx := range checkKeys {
 		key := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(hdl))
@@ -395,60 +432,6 @@ func checkRegionsBoundaries(t *testing.T, regions []*RegionInfo, expected [][]by
 		require.Equal(t, expected[i-1], regions[i-1].Region.StartKey)
 		require.Equal(t, expected[i], regions[i-1].Region.EndKey)
 	}
-}
-
-func TestGetSplitKeyPerRegionSkipSmallRegions(t *testing.T) {
-	// regions are [a, b), [b, ba), [ba, ca), [ca, da), [da, e)
-	// keys are a, b, c, d, e
-	// for a, b, e, they are in region boundary, so they should be skipped
-	// for c, because [b, c) and [c, d) are already split, so it should be skipped
-	// for d, because [c, d) and [d, e) are already split, so it should be skipped
-	sortedKeys := [][]byte{
-		[]byte("a"),
-		[]byte("b"),
-		[]byte("c"),
-		[]byte("d"),
-		[]byte("e"),
-	}
-	sortedRegions := []*RegionInfo{
-		{
-			Region: &metapb.Region{
-				Id:       1,
-				StartKey: []byte("a"),
-				EndKey:   []byte("b"),
-			},
-		},
-		{
-			Region: &metapb.Region{
-				Id:       2,
-				StartKey: []byte("b"),
-				EndKey:   []byte("ba"),
-			},
-		},
-		{
-			Region: &metapb.Region{
-				Id:       3,
-				StartKey: []byte("ba"),
-				EndKey:   []byte("ca"),
-			},
-		},
-		{
-			Region: &metapb.Region{
-				Id:       4,
-				StartKey: []byte("ca"),
-				EndKey:   []byte("da"),
-			},
-		},
-		{
-			Region: &metapb.Region{
-				Id:       5,
-				StartKey: []byte("da"),
-				EndKey:   []byte("e"),
-			},
-		},
-	}
-	result := GetSplitKeysOfRegions(sortedKeys, sortedRegions, true)
-	require.Len(t, result, 0)
 }
 
 func TestPaginateScanRegion(t *testing.T) {
