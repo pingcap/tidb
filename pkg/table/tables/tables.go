@@ -2282,6 +2282,11 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 	if tableInfo.IsCommonHandle {
 		tsExec.PrimaryPrefixColumnIds = PrimaryPrefixColumnIDs(tableInfo)
 	}
+	str := ""
+	for _, col := range tsExec.Columns {
+		str += fmt.Sprintf("col:%#v, tp:%v", col, col.Tp)
+	}
+	logutil.BgLogger().Warn(fmt.Sprintf("xxx------------------------------------ name:%s, id:%d, cols:%v", tableInfo.Name, tableInfo.ID, str))
 	return tsExec
 }
 
