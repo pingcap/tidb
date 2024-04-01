@@ -270,6 +270,27 @@ func TestRemovePartitioningOfASystemTable(t *testing.T) {
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
 }
 
+func TestTruncateAPartitionOfASystemTable(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	// Test truncate a partition of a system table.
+	testKit.MustExec("create table mysql.test (c1 int, c2 int) partition by range (c1) (partition p0 values less than (6), partition p1 values less than (11))")
+	// Truncate partition p1.
+	testKit.MustExec("alter table mysql.test truncate partition p1")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("mysql"), model.NewCIStr("test"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	// Find the truncate partition event.
+	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
+	err = h.HandleDDLEvent(truncatePartitionEvent)
+	require.Nil(t, h.Update(is))
+	statsTbl := h.GetTableStats(tableInfo)
+	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
+}
+
 func TestTruncateTable(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)

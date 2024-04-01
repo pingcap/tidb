@@ -262,12 +262,14 @@ func (e *DDLEvent) GetReorganizePartitionInfo() (
 
 // NewTruncatePartitionEvent creates a new ddl event that truncates partitions.
 func NewTruncatePartitionEvent(
+	schemaID int64,
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:          model.ActionTruncateTablePartition,
+		schemaID:    schemaID,
 		tableInfo:   globalTableInfo,
 		partInfo:    addedPartInfo,
 		oldPartInfo: droppedPartInfo,
