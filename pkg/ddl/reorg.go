@@ -319,13 +319,15 @@ func extractElemIDs(r *reorgInfo) []int64 {
 
 func (w *worker) mergeWarningsIntoJob(job *model.Job) {
 	rc := w.getReorgCtx(job.ID)
-	rc.mu.Lock()
-	partWarnings := rc.mu.warnings
-	partWarningsCount := rc.mu.warningsCount
-	rc.mu.Unlock()
-	warnings, warningsCount := job.GetWarnings()
-	warnings, warningsCount = mergeWarningsAndWarningsCount(partWarnings, warnings, partWarningsCount, warningsCount)
-	job.SetWarnings(warnings, warningsCount)
+	if rc != nil {
+		rc.mu.Lock()
+		partWarnings := rc.mu.warnings
+		partWarningsCount := rc.mu.warningsCount
+		rc.mu.Unlock()
+		warnings, warningsCount := job.GetWarnings()
+		warnings, warningsCount = mergeWarningsAndWarningsCount(partWarnings, warnings, partWarningsCount, warningsCount)
+		job.SetWarnings(warnings, warningsCount)
+	}
 }
 
 func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
