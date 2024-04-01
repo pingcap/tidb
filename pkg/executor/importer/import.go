@@ -1309,6 +1309,7 @@ func (e *LoadDataController) getBackendWorkerConcurrency() int {
 	// IO intensive, so CPU usage is below ThreadCnt in our tests.
 	// The real concurrency used is adjusted in external engine later.
 	// when using local sort, use the default value as lightning.
+	// TODO(lance6716): can we remove this assignment branch?
 	if e.IsGlobalSort() {
 		return e.ThreadCnt * 2
 	}
