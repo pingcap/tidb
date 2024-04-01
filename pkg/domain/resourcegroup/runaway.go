@@ -248,6 +248,7 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 	return m
 }
 
+// MarkSyncerInitialized is used to mark the syncer is initialized.
 func (rm *RunawayManager) MarkSyncerInitialized() {
 	rm.syncerInitialized.Store(true)
 }
