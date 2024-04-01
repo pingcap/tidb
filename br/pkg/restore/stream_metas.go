@@ -364,13 +364,13 @@ func ReplaceMetadata(meta *backuppb.Metadata, filegroups []*backuppb.DataFileGro
 	if len(meta.FileGroups) == 0 {
 		meta.MinTs = 0
 		meta.MaxTs = 0
-		meta.ResolvedTs = 0
+		meta.Watermark = 0
 		return
 	}
 
 	meta.MinTs = meta.FileGroups[0].MinTs
 	meta.MaxTs = meta.FileGroups[0].MaxTs
-	meta.ResolvedTs = meta.FileGroups[0].MinResolvedTs
+	meta.Watermark = meta.FileGroups[0].MinWatermark
 	for _, group := range meta.FileGroups {
 		if group.MinTs < meta.MinTs {
 			meta.MinTs = group.MinTs
@@ -378,8 +378,8 @@ func ReplaceMetadata(meta *backuppb.Metadata, filegroups []*backuppb.DataFileGro
 		if group.MaxTs > meta.MaxTs {
 			meta.MaxTs = group.MaxTs
 		}
-		if group.MinResolvedTs < meta.ResolvedTs {
-			meta.ResolvedTs = group.MinResolvedTs
+		if group.MinWatermark < meta.Watermark {
+			meta.Watermark = group.MinWatermark
 		}
 	}
 }

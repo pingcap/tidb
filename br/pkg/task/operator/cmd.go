@@ -208,7 +208,7 @@ func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {
 		BackupTS: cx.cfg.SafePoint,
 	}
 	if sp.BackupTS == 0 {
-		rts, err := cx.pdMgr.GetMinResolvedTS(cx)
+		rts, err := cx.pdMgr.GetMinWatermark(cx)
 		if err != nil {
 			return err
 		}

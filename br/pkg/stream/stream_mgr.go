@@ -274,7 +274,7 @@ func (*MetadataHelper) ParseToMetadataHard(rawMetaData []byte) (*backuppb.Metada
 				DataFilesInfo: []*backuppb.DataFileInfo{d},
 				MaxTs:         d.MaxTs,
 				MinTs:         d.MinTs,
-				MinResolvedTs: d.ResolvedTs,
+				MinWatermark: d.Watermark,
 				// File from MetaVersion_V1 isn't compressed.
 				Length: d.Length,
 				// Other fields are Unused.

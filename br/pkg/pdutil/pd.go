@@ -598,9 +598,9 @@ func (p *PdController) doRemoveSchedulersWith(
 	return s, errors.Trace(err)
 }
 
-// GetMinResolvedTS get min-resolved-ts from pd
-func (p *PdController) GetMinResolvedTS(ctx context.Context) (uint64, error) {
-	ts, _, err := p.pdHTTPCli.GetMinResolvedTSByStoresIDs(ctx, nil)
+// GetMinWatermark get min-watermark from pd
+func (p *PdController) GetMinWatermark(ctx context.Context) (uint64, error) {
+	ts, _, err := p.pdHTTPCli.GetMinWatermarkByStoresIDs(ctx, nil)
 	return ts, errors.Trace(err)
 }
 
