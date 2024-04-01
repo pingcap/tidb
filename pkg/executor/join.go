@@ -518,6 +518,9 @@ func (w *probeWorker) runJoinWorker() {
 			break
 		}
 		start := time.Now()
+		// waitTime is the time cost on w.sendingResult(), it should not be added to probe time, because if
+		// parent executor does not call `e.Next()`, `sendingResult()` will hang, and this hang has nothing to do
+		// with the probe
 		waitTime := int64(0)
 		if w.hashJoinCtx.useOuterToBuild {
 			ok, waitTime, joinResult = w.join2ChunkForOuterHashJoin(probeSideResult, hCtx, joinResult)
