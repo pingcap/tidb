@@ -3861,7 +3861,6 @@ PARTITION BY RANGE COLUMNS(position_date)
 	tk.MustExec(`insert into h1 values(1,'2024-01-01',1,1)`)
 	tk.MustExec(`insert into h2 values(1,'2024-01-01',1,1)`)
 	tk.MustExec(`analyze table h1`)
-	tk.MustExec(`set @@tidb_skip_missing_partition_stats=0`)
 	tk.MustQuery(`with assetBalance AS
     (SELECT asset_id, portfolio_code FROM h1 pab WHERE pab.position_date = '2024-01-01' ),
 cashBalance AS (SELECT portfolio_code, asset_id
