@@ -143,6 +143,26 @@ func TestDropASystemTable(t *testing.T) {
 	testKit.MustQuery("select count(*) from mysql.stats_meta where table_id = ?", tableID).Check(testkit.Rows("0"))
 }
 
+func TestAddColumnToASystemTable(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	// Test add column to a system table.
+	testKit.MustExec("create table mysql.test (c1 int, c2 int)")
+	testKit.MustExec("alter table mysql.test add column c3 int")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("mysql"), model.NewCIStr("test"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	// Find the add column event.
+	addColumnEvent := findEvent(h.DDLEventCh(), model.ActionAddColumn)
+	err = h.HandleDDLEvent(addColumnEvent)
+	require.Nil(t, h.Update(is))
+	statsTbl := h.GetTableStats(tableInfo)
+	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
+}
+
 func TestTruncateTable(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)

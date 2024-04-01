@@ -185,6 +185,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		addColumnEvent := statsutil.NewAddColumnEvent(
+			job.SchemaID,
 			tblInfo,
 			[]*model.ColumnInfo{columnInfo},
 		)

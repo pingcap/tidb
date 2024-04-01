@@ -116,11 +116,13 @@ func (e *DDLEvent) GetDropTableInfo() (newTableInfo *model.TableInfo) {
 // NewAddColumnEvent creates a new ddl event that
 // adds a column.
 func NewAddColumnEvent(
+	schemaID int64,
 	newTableInfo *model.TableInfo,
 	newColumnInfo []*model.ColumnInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:          model.ActionAddColumn,
+		schemaID:    schemaID,
 		tableInfo:   newTableInfo,
 		columnInfos: newColumnInfo,
 	}
