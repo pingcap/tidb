@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -192,7 +191,7 @@ func TestIndexRangesToKVRanges(t *testing.T) {
 		},
 	}
 
-	actual, err := IndexRangesToKVRanges(stmtctx.NewStmtCtx(), 12, 15, ranges)
+	actual, err := IndexRangesToKVRanges(DefaultDistSQLContext, 12, 15, ranges)
 	require.NoError(t, err)
 	for i := range actual.FirstPartitionRange() {
 		require.Equal(t, expect[i], actual.FirstPartitionRange()[i])
@@ -237,7 +236,7 @@ func TestRequestBuilder1(t *testing.T) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars(nil)).
+		SetFromSessionVars(DefaultDistSQLContext).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -317,11 +316,11 @@ func TestRequestBuilder2(t *testing.T) {
 		},
 	}
 
-	actual, err := (&RequestBuilder{}).SetIndexRanges(stmtctx.NewStmtCtx(), 12, 15, ranges).
+	actual, err := (&RequestBuilder{}).SetIndexRanges(DefaultDistSQLContext, 12, 15, ranges).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars(nil)).
+		SetFromSessionVars(DefaultDistSQLContext).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -375,7 +374,7 @@ func TestRequestBuilder3(t *testing.T) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars(nil)).
+		SetFromSessionVars(DefaultDistSQLContext).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -441,7 +440,7 @@ func TestRequestBuilder4(t *testing.T) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars(nil)).
+		SetFromSessionVars(DefaultDistSQLContext).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -549,12 +548,12 @@ func TestRequestBuilder7(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		replicaRead := replicaRead
 		t.Run(replicaRead.src, func(t *testing.T) {
-			vars := variable.NewSessionVars(nil)
-			vars.SetReplicaRead(replicaRead.replicaReadType)
+			dctx := NewDistSQLContextForTest()
+			dctx.ReplicaReadType = replicaRead.replicaReadType
 
 			concurrency := 10
 			actual, err := (&RequestBuilder{}).
-				SetFromSessionVars(vars).
+				SetFromSessionVars(dctx).
 				SetConcurrency(concurrency).
 				Build()
 			require.NoError(t, err)
@@ -581,10 +580,10 @@ func TestRequestBuilder7(t *testing.T) {
 }
 
 func TestRequestBuilder8(t *testing.T) {
-	sv := variable.NewSessionVars(nil)
-	sv.StmtCtx.ResourceGroupName = "test"
+	dctx := NewDistSQLContextForTest()
+	dctx.ResourceGroupName = "test"
 	actual, err := (&RequestBuilder{}).
-		SetFromSessionVars(sv).
+		SetFromSessionVars(dctx).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -607,10 +606,10 @@ func TestRequestBuilder8(t *testing.T) {
 }
 
 func TestRequestBuilderTiKVClientReadTimeout(t *testing.T) {
-	sv := variable.NewSessionVars(nil)
-	sv.TiKVClientReadTimeout = 100
+	dctx := NewDistSQLContextForTest()
+	dctx.TiKVClientReadTimeout = 100
 	actual, err := (&RequestBuilder{}).
-		SetFromSessionVars(sv).
+		SetFromSessionVars(dctx).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -662,7 +661,7 @@ func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 			Collators: collate.GetBinaryCollatorSlice(1),
 		},
 	}
-	actual, err := IndexRangesToKVRanges(stmtctx.NewStmtCtx(), 0, 0, ranges)
+	actual, err := IndexRangesToKVRanges(DefaultDistSQLContext, 0, 0, ranges)
 	require.NoError(t, err)
 	expect := []kv.KeyRange{
 		{
@@ -676,7 +675,7 @@ func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 }
 
 func TestScanLimitConcurrency(t *testing.T) {
-	vars := variable.NewSessionVars(nil)
+	dctx := NewDistSQLContextForTest()
 	for _, tt := range []struct {
 		tp          tipb.ExecType
 		limit       uint64
@@ -685,8 +684,8 @@ func TestScanLimitConcurrency(t *testing.T) {
 	}{
 		{tipb.ExecType_TypeTableScan, 1, 1, "TblScan_Def"},
 		{tipb.ExecType_TypeIndexScan, 1, 1, "IdxScan_Def"},
-		{tipb.ExecType_TypeTableScan, 1000000, vars.Concurrency.DistSQLScanConcurrency(), "TblScan_SessionVars"},
-		{tipb.ExecType_TypeIndexScan, 1000000, vars.Concurrency.DistSQLScanConcurrency(), "IdxScan_SessionVars"},
+		{tipb.ExecType_TypeTableScan, 1000000, dctx.DistSQLConcurrency, "TblScan_SessionVars"},
+		{tipb.ExecType_TypeIndexScan, 1000000, dctx.DistSQLConcurrency, "IdxScan_SessionVars"},
 	} {
 		// copy iterator variable into a new variable, see issue #27779
 		tt := tt
@@ -703,7 +702,7 @@ func TestScanLimitConcurrency(t *testing.T) {
 			dag := &tipb.DAGRequest{Executors: []*tipb.Executor{firstExec, limitExec}}
 			actual, err := (&RequestBuilder{}).
 				SetDAGRequest(dag).
-				SetFromSessionVars(vars).
+				SetFromSessionVars(dctx).
 				Build()
 			require.NoError(t, err)
 			require.Equal(t, tt.concurrency, actual.Concurrency)

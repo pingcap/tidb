@@ -16,7 +16,7 @@
 
 set -euE
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/SetIOTotalBytes=return(1)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/server/SetIOTotalBytes=return(1)"
 run_lightning
 
 grep 'IOTotal' "$TEST_DIR/lightning.log" | grep -v 'IOTotalBytes=0'

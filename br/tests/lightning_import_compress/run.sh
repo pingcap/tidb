@@ -18,7 +18,7 @@ set -eu
 
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/LoggingImportBytes=return"
+export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/lightning/backend/local/LoggingImportBytes=return"
 
 mkdir -p "$TEST_DIR/data"
 

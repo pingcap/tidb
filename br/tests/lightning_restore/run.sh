@@ -29,7 +29,7 @@ done
 
 # Count OpenEngine and CloseEngine events.
 # Abort if number of unbalanced OpenEngine is >= 4
-export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/backend/FailIfEngineCountExceeds=return(4)'
+export GO_FAILPOINTS='github.com/pingcap/tidb/pkg/lightning/backend/FailIfEngineCountExceeds=return(4)'
 
 # Start importing
 run_sql 'DROP DATABASE IF EXISTS restore_tsr'
@@ -51,8 +51,8 @@ for i in $(seq "$TABLE_COUNT"); do
     echo "INSERT INTO tbl$i VALUES (1);" > "$DBPATH2/restore_tsr.tbl$i.sql"
 done
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/setExtStorage=return(\"$DBPATH2\")"
-export GO_FAILPOINTS="$GO_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/setCheckpointName=return(\"test_checkpoint.pb\")"
+export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/server/setExtStorage=return(\"$DBPATH2\")"
+export GO_FAILPOINTS="$GO_FAILPOINTS;github.com/pingcap/tidb/lightning/pkg/server/setCheckpointName=return(\"test_checkpoint.pb\")"
 
 run_sql 'DROP DATABASE IF EXISTS restore_tsr'
 run_lightning
