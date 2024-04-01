@@ -127,7 +127,7 @@ kv_outage() {
             if [ -e "${TIKV_PIDS}_$i" ]; then
                 TIKV_CONFIG=$(cat "${TIKV_PIDS}_$i" | awk '{print $2}')
             else
-                TIKV_CONFIG=${TIKV_CONFIG:-"$cur_dir/config/tikv.toml"}
+                TIKV_CONFIG=${TIKV_CONFIG:-"$TESTS_ROOT/config/tikv.toml"}
             fi
             start_tikv "$i"
         done
@@ -193,7 +193,6 @@ start_services_impl() {
     stop_services || true
     cleanup_data || true
 
-    TIKV_CONFIG=${TIKV_CONFIG:-"$cur_dir/config/tikv.toml"}
     RUN_TIFLASH=true
 
     while [[ $# -gt 0 ]]

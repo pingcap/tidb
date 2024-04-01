@@ -16,7 +16,6 @@
 
 set -eu
 DB="$TEST_NAME"
-CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 run_sql "CREATE DATABASE $DB;"
 
@@ -59,7 +58,7 @@ for i in $(seq $TIKV_COUNT); do
       -A "$TIKV_ADDR$i" \
       --status-addr "$TIKV_STATUS_ADDR$i" \
       --log-file "$TEST_DIR/restore-tikv${i}.log" \
-      -C "$CUR/restore-tikv.toml" \
+      -C "$CUR/../config/restore-tikv.toml" \
       -s "$TEST_DIR/restore-tikv${i}" &
 done
 sleep 5

@@ -21,6 +21,10 @@ export PATH="$PATH:$CUR/../../bin:$CUR/../bin:$UTILS_DIR"
 export TEST_DIR=/tmp/backup_restore_test
 export COV_DIR="/tmp/group_cover"
 mkdir -p $COV_DIR || true
+export TIDB_CONFIG="$CUR/config/tidb.toml"
+export TIKV_CONFIG="$CUR/config/tikv.toml"
+export PD_CONFIG="$CUR/config/pd.toml"
+export TESTS_ROOT="$CUR"
 source $UTILS_DIR/run_services
 
 # Create COV_DIR if not exists
