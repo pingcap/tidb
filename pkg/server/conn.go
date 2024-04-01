@@ -206,6 +206,7 @@ type clientConn struct {
 
 	writeChunksOnce sync.Once
 	writeChunksCh   chan chunkErrorChan
+	tickerCheckExit *time.Ticker
 }
 
 type chunkErrorChan struct {
@@ -414,6 +415,7 @@ func closeConn(cc *clientConn) error {
 		}
 		if cc.writeChunksCh != nil {
 			close(cc.writeChunksCh)
+			cc.tickerCheckExit.Stop()
 		}
 	})
 	return err
@@ -2319,24 +2321,22 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 }
 
 func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.ResultSet, binary bool, serverStatus uint16, stmtDetail *execdetails.StmtExecDetails) (firstNext bool, err error) {
+	// Using different goroutines to call functions for rs.Next and cc.writePacket, to handling exit signals in time.
 	cc.createWriteChunksGoroutine()
 	var (
 		req            = rs.NewChunk(cc.chunkAlloc)
 		gotColumnInfo  = false
 		validNextCount = 0
-		chkCh          = make(chan *chunk.Chunk)
+		chkCh          = make(chan *chunk.Chunk, 1)
 		errCh          = make(chan error, 1)
 	)
 	cc.writeChunksCh <- chunkErrorChan{ctx, rs, binary, stmtDetail, chkCh, errCh}
 	firstNext = true
 	var start time.Time
 
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
 	defer func() {
 		channel.Clear(errCh)
 		cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusWaitQueryFinished, false)
-		cc.ctx.UpdateProcessInfo()
 	}()
 	defer close(chkCh)
 	defer func() {
@@ -2344,7 +2344,6 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 			err = finErr
 		}
 	}()
-	// Using different goroutines to call functions for rs.Next and cc.writePacket, to handling exit signals in time.
 
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
@@ -2404,7 +2403,7 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 					return false, err
 				}
 				break InnerFor
-			case <-ticker.C:
+			case <-cc.tickerCheckExit.C:
 				if err = cc.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 					cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusWaitQueryFinished, true)
 					cc.ctx.UpdateProcessInfo()
@@ -2419,6 +2418,7 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 func (cc *clientConn) createWriteChunksGoroutine() {
 	cc.writeChunksOnce.Do(func() {
 		cc.writeChunksCh = make(chan chunkErrorChan)
+		cc.tickerCheckExit = time.NewTicker(3 * time.Second)
 		go func() {
 			var (
 				err        error
