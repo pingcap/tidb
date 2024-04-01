@@ -105,13 +105,6 @@ func CopySelectedRows(dstCol *Column, srcCol *Column, selected []bool) {
 	})
 }
 
-// CopyRangeSelectedRows copies the selected rows in srcCol to dstCol
-func CopyRangeSelectedRows(dstCol *Column, srcCol *Column, start int, end int, selected []bool) {
-	CopySelectedRowsWithRowIdFunc(dstCol, srcCol, selected, start, end, func(i int) int {
-		return i
-	})
-}
-
 // CopySelectedRowsWithRowIdFunc copies the selected rows in srcCol to dstCol
 func CopySelectedRowsWithRowIdFunc(dstCol *Column, srcCol *Column, selected []bool, start int, end int, rowIdFunc func(int) int) {
 	if srcCol.isFixed() {

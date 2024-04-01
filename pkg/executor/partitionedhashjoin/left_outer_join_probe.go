@@ -22,7 +22,7 @@ import (
 
 type leftOuterJoinProbe struct {
 	innerJoinProbe
-	// used when build right side
+	// used when build right side, isNotMatchedRows is indexed by logical row index
 	isNotMatchedRows []bool
 	// used when build left side
 	rowIter *rowIter
@@ -120,7 +120,7 @@ func (j *leftOuterJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, j
 			chunk.CopySelectedRowsWithRowIdFunc(dstCol, srcCol, j.selected, 0, len(j.selected), func(i int) int {
 				ret := j.rowIndexInfos[i].probeRowIndex
 				j.isNotMatchedRows[ret] = false
-				return ret
+				return j.usedRows[ret]
 			})
 		}
 	}
@@ -167,7 +167,9 @@ func (j *leftOuterJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, star
 		dstCol := chk.Column(index)
 		srcCol := j.currentChunk.Column(colIndex)
 		prevRows = dstCol.Rows()
-		chunk.CopyRangeSelectedRows(dstCol, srcCol, startProbeRow, j.currentProbeRow, j.isNotMatchedRows)
+		chunk.CopySelectedRowsWithRowIdFunc(dstCol, srcCol, j.isNotMatchedRows, startProbeRow, j.currentProbeRow, func(i int) int {
+			return j.usedRows[i]
+		})
 		afterRows = dstCol.Rows()
 	}
 	nullRows := afterRows - prevRows
@@ -208,6 +210,9 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
+			// it could be
+			// 1. no match when lookup the hash table
+			// 2. filter by probeFilter
 			j.appendOffsetAndLength(j.currentProbeRow, length)
 			length = 0
 			j.advanceCurrentProbeRow()
