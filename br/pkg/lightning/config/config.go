@@ -782,7 +782,8 @@ type CSVConfig struct {
 	// deprecated, use `escaped-by` instead.
 	BackslashEscape bool `toml:"backslash-escape" json:"backslash-escape"`
 	// EscapedBy has higher priority than BackslashEscape, currently it must be a single character if set.
-	EscapedBy string `toml:"escaped-by" json:"escaped-by"`
+	Base64Encoded bool   `toml:"base64-encoded" json:"base64-encoded"`
+	EscapedBy     string `toml:"escaped-by" json:"escaped-by"`
 
 	// hide these options for lightning configuration file, they can only be used by LOAD DATA
 	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-field-line-handling
