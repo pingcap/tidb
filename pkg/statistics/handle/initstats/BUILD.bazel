@@ -9,7 +9,6 @@ go_library(
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/statistics/handle/logutil",
-        "//pkg/statistics/handle/types",
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec",

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
-	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -32,7 +32,7 @@ import (
 // Worker is used to load stats concurrently.
 type Worker struct {
 	taskFunc func(ctx context.Context, req *chunk.Chunk) error
-	dealFunc func(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk)
+	dealFunc func(is infoschema.InfoSchema, cache statsutil.StatsCache, iter *chunk.Iterator4Chunk)
 	mu       sync.Mutex
 	wg       util.WaitGroupWrapper
 }
@@ -40,7 +40,7 @@ type Worker struct {
 // NewWorker creates a new Worker.
 func NewWorker(
 	taskFunc func(ctx context.Context, req *chunk.Chunk) error,
-	dealFunc func(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk)) *Worker {
+	dealFunc func(is infoschema.InfoSchema, cache statsutil.StatsCache, iter *chunk.Iterator4Chunk)) *Worker {
 	return &Worker{
 		taskFunc: taskFunc,
 		dealFunc: dealFunc,
@@ -48,7 +48,7 @@ func NewWorker(
 }
 
 // LoadStats loads stats concurrently when to init stats
-func (ls *Worker) LoadStats(is infoschema.InfoSchema, cache statstypes.StatsCache, rc sqlexec.RecordSet) {
+func (ls *Worker) LoadStats(is infoschema.InfoSchema, cache statsutil.StatsCache, rc sqlexec.RecordSet) {
 	concurrency := runtime.GOMAXPROCS(0)
 	for n := 0; n < concurrency; n++ {
 		ls.wg.Run(func() {
@@ -58,7 +58,7 @@ func (ls *Worker) LoadStats(is infoschema.InfoSchema, cache statstypes.StatsCach
 	}
 }
 
-func (ls *Worker) loadStats(is infoschema.InfoSchema, cache statstypes.StatsCache, req *chunk.Chunk) {
+func (ls *Worker) loadStats(is infoschema.InfoSchema, cache statsutil.StatsCache, req *chunk.Chunk) {
 	iter := chunk.NewIterator4Chunk(req)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	for {
