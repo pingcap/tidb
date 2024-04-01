@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/assert"
@@ -68,6 +69,11 @@ func TestLogFormat(t *testing.T) {
 	assert.Equal(t, "2013265920 Bytes (1.88 GB)", logFields[5].String)
 	assert.Equal(t, "sql", logFields[6].Key)
 	assert.Equal(t, "select * from table where a > 1", logFields[6].String)
+
+	info.RedactSQL = errors.RedactLogMarker
+	logFields = GenLogFields(costTime, info, true)
+	assert.Equal(t, "select * from table where `a` > ‹1›", logFields[6].String)
+	info.RedactSQL = ""
 
 	logFields = GenLogFields(costTime, info, true)
 	assert.Equal(t, "select * from table where a > 1", logFields[6].String)

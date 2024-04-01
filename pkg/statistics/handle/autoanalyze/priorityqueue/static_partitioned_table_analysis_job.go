@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -79,7 +80,7 @@ func NewStaticPartitionTableAnalysisJob(
 // Analyze analyzes the specified static partition or indexes.
 func (j *StaticPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) error {
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
@@ -104,10 +105,9 @@ func (j *StaticPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
 
 // IsValidToAnalyze checks whether the partition is valid to analyze.
 // Only the specified static partition is checked.
-func (j *StaticPartitionedTableAnalysisJob) IsValidToAnalyze(sctx sessionctx.Context) (bool, string) {
-	if valid, failReason := isValidWeight(j.Weight); !valid {
-		return false, failReason
-	}
+func (j *StaticPartitionedTableAnalysisJob) IsValidToAnalyze(
+	sctx sessionctx.Context,
+) (bool, string) {
 	// Check whether the partition is valid to analyze.
 	// For static partition table we only need to check the specified static partition.
 	if j.StaticPartitionName != "" {
@@ -147,10 +147,10 @@ func (j *StaticPartitionedTableAnalysisJob) String() string {
 			"\tStaticPartition: %s\n"+
 			"\tStaticPartitionID: %d\n"+
 			"\tTableStatsVer: %d\n"+
-			"\tChangePercentage: %.2f\n"+
+			"\tChangePercentage: %.6f\n"+
 			"\tTableSize: %.2f\n"+
 			"\tLastAnalysisDuration: %s\n"+
-			"\tWeight: %.4f\n",
+			"\tWeight: %.6f\n",
 		j.getAnalyzeType(),
 		strings.Join(j.Indexes, ", "),
 		j.TableSchema, j.GlobalTableName, j.GlobalTableID,
@@ -172,7 +172,7 @@ func (j *StaticPartitionedTableAnalysisJob) getAnalyzeType() analyzeType {
 func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartition(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) {
 	sql, params := j.GenSQLForAnalyzeStaticPartition()
 	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
@@ -181,12 +181,17 @@ func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartition(
 func (j *StaticPartitionedTableAnalysisJob) analyzeStaticPartitionIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) {
-	for _, index := range j.Indexes {
-		sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(index)
-		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	if len(j.Indexes) == 0 {
+		return
 	}
+	// Only analyze the first index.
+	// This is because analyzing a single index also analyzes all other indexes and columns.
+	// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
+	firstIndex := j.Indexes[0]
+	sql, params := j.GenSQLForAnalyzeStaticPartitionIndex(firstIndex)
+	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
 
 // GenSQLForAnalyzeStaticPartition generates the SQL for analyzing the specified static partition.

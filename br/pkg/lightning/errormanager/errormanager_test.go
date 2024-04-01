@@ -27,11 +27,11 @@ import (
 	tidbkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
@@ -42,14 +42,15 @@ func TestInit(t *testing.T) {
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = config.BackendLocal
-	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
+	cfg.TikvImporter.DuplicateResolution = config.NoneOnDup
 	cfg.Conflict.Strategy = config.ReplaceOnDup
+	cfg.Conflict.PrecheckConflictBeforeImport = true
 	cfg.App.MaxError.Type.Store(10)
 	cfg.Conflict.Threshold = 20
 	cfg.App.TaskInfoSchemaName = "lightning_errors"
 
 	em := New(db, cfg, log.L())
-	require.False(t, em.conflictV1Enabled)
+	require.True(t, em.conflictV1Enabled)
 	require.True(t, em.conflictV2Enabled)
 	require.Equal(t, cfg.App.MaxError.Type.Load(), em.remainingError.Type.Load())
 	require.Equal(t, cfg.Conflict.Threshold, em.conflictErrRemain.Load())
@@ -297,7 +298,8 @@ func TestReplaceConflictOneKey(t *testing.T) {
 	mockDB.ExpectCommit()
 
 	cfg := config.NewConfig()
-	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
+	cfg.Conflict.Strategy = config.ReplaceOnDup
+	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.App.TaskInfoSchemaName = "lightning_task_info"
 	em := New(db, cfg, log.L())
 	err = em.Init(ctx)
@@ -305,7 +307,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 
 	fnGetLatestCount := atomic.NewInt32(0)
 	fnDeleteKeyCount := atomic.NewInt32(0)
-	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
+	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
 		ctx, tbl, "test", pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
@@ -501,7 +503,8 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 	mockDB.ExpectCommit()
 
 	cfg := config.NewConfig()
-	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
+	cfg.Conflict.Strategy = config.ReplaceOnDup
+	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.App.TaskInfoSchemaName = "lightning_task_info"
 	em := New(db, cfg, log.L())
 	err = em.Init(ctx)
@@ -509,7 +512,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 
 	fnGetLatestCount := atomic.NewInt32(0)
 	fnDeleteKeyCount := atomic.NewInt32(0)
-	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
+	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
 		ctx, tbl, "test", pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {

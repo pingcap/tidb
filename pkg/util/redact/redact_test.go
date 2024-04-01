@@ -15,6 +15,9 @@
 package redact
 
 import (
+	"bytes"
+	"encoding/hex"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -43,4 +46,45 @@ func TestRedact(t *testing.T) {
 		require.Equal(t, c.output, String(c.mode, c.input))
 		require.Equal(t, c.output, Stringer(c.mode, &testStringer{c.input}).String())
 	}
+}
+
+func TestDeRedact(t *testing.T) {
+	for _, c := range []struct {
+		remove bool
+		input  string
+		output string
+	}{
+		{true, "‹fxcv›ggg", "?ggg"},
+		{false, "‹fxcv›ggg", "fxcvggg"},
+		{true, "fxcv", "fxcv"},
+		{false, "fxcv", "fxcv"},
+		{true, "‹fxcv›ggg‹fxcv›eee", "?ggg?eee"},
+		{false, "‹fxcv›ggg‹fxcv›eee", "fxcvgggfxcveee"},
+		{true, "‹›", "?"},
+		{false, "‹›", ""},
+		{true, "gg‹ee", "gg‹ee"},
+		{false, "gg‹ee", "gg‹ee"},
+		{true, "gg›ee", "gg›ee"},
+		{false, "gg›ee", "gg›ee"},
+		{true, "gg‹ee‹ee", "gg‹ee‹ee"},
+		{false, "gg‹ee‹gg", "gg‹ee‹gg"},
+		{true, "gg›ee›gg", "gg›ee›gg"},
+		{false, "gg›ee›ee", "gg›ee›ee"},
+	} {
+		w := bytes.NewBuffer(nil)
+		require.NoError(t, DeRedact(c.remove, strings.NewReader(c.input), w, ""))
+		require.Equal(t, c.output, w.String())
+	}
+}
+
+func TestRedactInitAndValueAndKey(t *testing.T) {
+	redacted, secret := "?", "secret"
+
+	InitRedact(false)
+	require.Equal(t, Value(secret), secret)
+	require.Equal(t, Key([]byte(secret)), hex.EncodeToString([]byte(secret)))
+
+	InitRedact(true)
+	require.Equal(t, Value(secret), redacted)
+	require.Equal(t, Key([]byte(secret)), redacted)
 }

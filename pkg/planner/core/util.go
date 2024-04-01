@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -136,7 +137,7 @@ func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, nam
 }
 
 // inlineProjection prunes unneeded columns inline a executor.
-func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) {
+func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *util.LogicalOptimizeOp) {
 	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(s.SCtx().GetExprCtx(), parentUsedCols, s.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
@@ -468,4 +469,9 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 		return nil, err
 	}
 	return encodedIdxVals, nil
+}
+
+// GetPushDownCtx creates a PushDownContext from PlanContext
+func GetPushDownCtx(sctx PlanContext) expression.PushDownContext {
+	return expression.NewPushDownContext(sctx.GetExprCtx(), sctx.GetSessionVars(), sctx.GetClient())
 }

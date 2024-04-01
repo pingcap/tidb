@@ -189,8 +189,11 @@ type MemBuffer interface {
 	// RemoveFromBuffer removes the entry from the buffer. It's used for testing.
 	RemoveFromBuffer(Key)
 
-	// MayFlush will be called in pipelined txn
-	MayFlush() error
+	// GetLocal checks if the key exists in the buffer in local memory.
+	GetLocal(context.Context, []byte) ([]byte, error)
+
+	// BatchGet gets values from the memory buffer.
+	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
 }
 
 // FindKeysInStage returns all keys in the given stage that satisfies the given condition.
@@ -281,6 +284,8 @@ type Transaction interface {
 	UpdateMemBufferFlags(key []byte, flags ...FlagsOp)
 	// IsPipelined returns whether the transaction is used for pipelined DML.
 	IsPipelined() bool
+	// MayFlush flush the pipelined memdb if the keys or size exceeds threshold, no effect for standard DML.
+	MayFlush() error
 }
 
 // AssertionProto is an interface defined for the assertion protocol.
@@ -376,8 +381,8 @@ func NewPartitionedKeyRanges(ranges [][]KeyRange) *KeyRanges {
 	return NewPartitionedKeyRangesWithHints(ranges, nil)
 }
 
-// NewNonParitionedKeyRanges constructs a new RequestRange for a non partitioned table.
-func NewNonParitionedKeyRanges(ranges []KeyRange) *KeyRanges {
+// NewNonPartitionedKeyRanges constructs a new RequestRange for a non-partitioned table.
+func NewNonPartitionedKeyRanges(ranges []KeyRange) *KeyRanges {
 	return NewNonParitionedKeyRangesWithHint(ranges, nil)
 }
 

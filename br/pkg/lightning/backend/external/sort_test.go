@@ -33,6 +33,17 @@ import (
 	"golang.org/x/exp/rand"
 )
 
+func changePropDist(t *testing.T, sizeDist, keysDist uint64) {
+	sizeDistBak := defaultPropSizeDist
+	keysDistBak := defaultPropKeysDist
+	t.Cleanup(func() {
+		defaultPropSizeDist = sizeDistBak
+		defaultPropKeysDist = keysDistBak
+	})
+	defaultPropSizeDist = sizeDist
+	defaultPropKeysDist = keysDist
+}
+
 func TestGlobalSortLocalBasic(t *testing.T) {
 	// 1. write data step
 	seed := time.Now().Unix()
@@ -90,6 +101,7 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 }
 
 func TestGlobalSortLocalWithMerge(t *testing.T) {
+	changePropDist(t, 100, 2)
 	// 1. write data step
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
@@ -99,8 +111,6 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	memSizeLimit := (rand.Intn(10) + 1) * 400
 
 	w := NewWriterBuilder().
-		SetPropSizeDistance(100).
-		SetPropKeysDistance(2).
 		SetMemorySizeLimit(uint64(memSizeLimit)).
 		SetBlockSize(memSizeLimit).
 		Build(memStore, "/test", "0")
@@ -151,19 +161,22 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	mergeMemSize := (rand.Intn(10) + 1) * 100
 	// use random mergeMemSize to test different memLimit of writer.
 	// reproduce one bug, see https://github.com/pingcap/tidb/issues/49590
+	bufSizeBak := defaultReadBufferSize
+	memLimitBak := defaultOneWriterMemSizeLimit
+	t.Cleanup(func() {
+		defaultReadBufferSize = bufSizeBak
+		defaultOneWriterMemSizeLimit = memLimitBak
+	})
+	defaultReadBufferSize = 100
+	defaultOneWriterMemSizeLimit = uint64(mergeMemSize)
 	for _, group := range dataGroup {
 		require.NoError(t, MergeOverlappingFiles(
 			ctx,
 			group,
 			memStore,
 			int64(5*size.MB),
-			100,
 			"/test2",
 			mergeMemSize,
-			uint64(mergeMemSize),
-			8*1024,
-			100,
-			2,
 			closeFn,
 			1,
 			true,

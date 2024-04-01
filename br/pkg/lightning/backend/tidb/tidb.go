@@ -35,8 +35,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -44,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -75,7 +75,7 @@ type tidbRows []tidbRow
 // MarshalLogArray implements the zapcore.ArrayMarshaler interface
 func (rows tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 	for _, r := range rows {
-		encoder.AppendString(redact.String(r.insertStmt))
+		encoder.AppendString(redact.Value(r.insertStmt))
 	}
 	return nil
 }
@@ -136,6 +136,38 @@ func NewTargetInfoGetter(db *sql.DB) backend.TargetInfoGetter {
 	return &targetInfoGetter{
 		db: db,
 	}
+}
+
+// FetchRemoteDBModels implements the `backend.TargetInfoGetter` interface.
+func (b *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	results := []*model.DBInfo{}
+	logger := log.FromContext(ctx)
+	s := common.SQLWithRetry{
+		DB:     b.db,
+		Logger: logger,
+	}
+	err := s.Transact(ctx, "fetch db models", func(_ context.Context, tx *sql.Tx) error {
+		results = results[:0]
+
+		rows, e := tx.Query("SHOW DATABASES")
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var dbName string
+			if e := rows.Scan(&dbName); e != nil {
+				return e
+			}
+			dbInfo := &model.DBInfo{
+				Name: model.NewCIStr(dbName),
+			}
+			results = append(results, dbInfo)
+		}
+		return rows.Err()
+	})
+	return results, err
 }
 
 // FetchRemoteTableModels obtains the models of all tables given the schema name.
@@ -270,7 +302,7 @@ type tidbBackend struct {
 	// onDuplicate is the type of INSERT SQL. It may be different with
 	// conflictCfg.Strategy to implement other feature, but the behaviour in caller's
 	// view should be the same.
-	onDuplicate string
+	onDuplicate config.DuplicateResolutionAlgorithm
 	errorMgr    *errormanager.ErrorManager
 	// maxChunkSize and maxChunkRows are the target size and number of rows of each INSERT SQL
 	// statement to be sent to downstream. Sometimes we want to reduce the txn size to avoid
@@ -292,7 +324,7 @@ func NewTiDBBackend(
 	errorMgr *errormanager.ErrorManager,
 ) backend.Backend {
 	conflict := cfg.Conflict
-	var onDuplicate string
+	var onDuplicate config.DuplicateResolutionAlgorithm
 	switch conflict.Strategy {
 	case config.ErrorOnDup:
 		onDuplicate = config.ErrorOnDup
@@ -752,7 +784,7 @@ stmtLoop:
 
 			if !common.IsContextCanceledError(err) {
 				log.FromContext(ctx).Error("execute statement failed",
-					zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.String(stmt)), zap.Error(err))
+					zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.Value(stmt)), zap.Error(err))
 			}
 			// It's batch mode, just return the error. Caller will fall back to row-by-row mode.
 			if batch {
@@ -873,7 +905,7 @@ type TableAutoIDInfo struct {
 }
 
 // FetchTableAutoIDInfos fetches the auto id information of a table.
-func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableName string) ([]*TableAutoIDInfo, error) {
+func FetchTableAutoIDInfos(ctx context.Context, exec dbutil.QueryExecutor, tableName string) ([]*TableAutoIDInfo, error) {
 	rows, e := exec.QueryContext(ctx, fmt.Sprintf("SHOW TABLE %s NEXT_ROW_ID", tableName))
 	if e != nil {
 		return nil, errors.Trace(e)

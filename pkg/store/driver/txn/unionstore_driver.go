@@ -68,24 +68,14 @@ func (m *memBuffer) GetFlags(key kv.Key) (kv.KeyFlags, error) {
 }
 
 func (m *memBuffer) Staging() kv.StagingHandle {
-	if m.isPipelinedDML {
-		// 0 stands for staging not supported.
-		return 0
-	}
 	return kv.StagingHandle(m.MemBuffer.Staging())
 }
 
 func (m *memBuffer) Cleanup(h kv.StagingHandle) {
-	if m.isPipelinedDML {
-		return
-	}
 	m.MemBuffer.Cleanup(int(h))
 }
 
 func (m *memBuffer) Release(h kv.StagingHandle) {
-	if m.isPipelinedDML {
-		return
-	}
 	m.MemBuffer.Release(int(h))
 }
 
@@ -148,13 +138,15 @@ func (m *memBuffer) SnapshotGetter() kv.Getter {
 	return newKVGetter(m.MemBuffer.SnapshotGetter())
 }
 
-// MayFlush implements kv.MemBuffer.MayFlush interface.
-func (m *memBuffer) MayFlush() error {
-	if !m.isPipelinedDML {
-		return nil
-	}
-	_, err := m.MemBuffer.Flush(false)
-	return err
+// GetLocal implements kv.MemBuffer interface
+func (m *memBuffer) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
+	data, err := m.MemBuffer.GetLocal(ctx, key)
+	return data, derr.ToTiDBErr(err)
+}
+
+func (m *memBuffer) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+	data, err := m.MemBuffer.BatchGet(ctx, keys)
+	return data, derr.ToTiDBErr(err)
 }
 
 type tikvGetter struct {

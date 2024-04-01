@@ -70,7 +70,7 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 	})
 	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
 	sharedVars := e.mTtask.SharedVars
-	checksum := verify.NewKVGroupChecksumWithKeyspace(sharedVars.TableImporter.GetCodec())
+	checksum := verify.NewKVGroupChecksumWithKeyspace(sharedVars.TableImporter.GetKeySpace())
 	if sharedVars.TableImporter.IsLocalSort() {
 		if err := importer.ProcessChunk(
 			ctx,
@@ -106,7 +106,7 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 }
 
 // postProcess does the post-processing for the task.
-func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
+func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
 	failpoint.Inject("syncBeforePostProcess", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
@@ -117,7 +117,7 @@ func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProce
 		callLog.End(zap.ErrorLevel, err)
 	}()
 
-	if err = importer.RebaseAllocatorBases(ctx, subtaskMeta.MaxIDs, &taskMeta.Plan, logger); err != nil {
+	if err = importer.RebaseAllocatorBases(ctx, store, subtaskMeta.MaxIDs, &taskMeta.Plan, logger); err != nil {
 		return err
 	}
 

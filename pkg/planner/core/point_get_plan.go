@@ -934,7 +934,8 @@ func getLockWaitTime(ctx PlanContext, lockInfo *ast.SelectLockInfo) (lock bool, 
 			// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
 			// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
 			sessVars := ctx.GetSessionVars()
-			if !sessVars.IsAutocommit() || sessVars.InTxn() || config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
+			if !sessVars.IsAutocommit() || sessVars.InTxn() || (config.GetGlobalConfig().
+				PessimisticTxn.PessimisticAutoCommit.Load() && !sessVars.BulkDMLEnabled) {
 				lock = true
 				waitTime = sessVars.LockWaitTimeout
 				if lockInfo.LockType == ast.SelectLockForUpdateWaitN {
@@ -1705,11 +1706,11 @@ func getNameValuePairs(ctx PlanContext, tbl *model.TableInfo, tblName model.CISt
 			d.SetString(d.GetString(), col.FieldType.GetCollate())
 		}
 
-		if col.GetType() == mysql.TypeString && col.GetCollate() == charset.CollationBin { // This type we needn't to pad `\0` in here.
-			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), false
-		}
 		if !checkCanConvertInPointGet(col, d) {
 			return nil, false
+		}
+		if col.GetType() == mysql.TypeString && col.GetCollate() == charset.CollationBin { // This type we needn't to pad `\0` in here.
+			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), false
 		}
 		dVal, err := d.ConvertTo(stmtCtx.TypeCtx(), &col.FieldType)
 		if err != nil {

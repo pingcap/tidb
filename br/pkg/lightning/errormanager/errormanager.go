@@ -30,13 +30,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbtbl "github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -155,19 +155,6 @@ const (
 		WHERE key_data = "" and row_data = "";
 	`
 
-	selectConflictKeysCountError = `
-		SELECT COUNT(*)
-		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ?;
-	`
-
-	selectConflictKeysError = `
-		SELECT raw_key, raw_row
-		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ?
-		LIMIT 1;
-	`
-
 	insertIntoDupRecord = `
 		INSERT INTO %s.` + DupRecordTable + `
 		(task_id, table_name, path, offset, error, row_id, row_data)
@@ -221,7 +208,7 @@ func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 		taskID:                cfg.TaskID,
 		configError:           &cfg.App.MaxError,
 		remainingError:        cfg.App.MaxError,
-		conflictV1Enabled:     cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		conflictV1Enabled:     cfg.TikvImporter.Backend == config.BackendLocal && cfg.Conflict.Strategy != config.NoneOnDup,
 		configConflict:        &cfg.Conflict,
 		conflictErrRemain:     conflictErrRemain,
 		conflictRecordsRemain: conflictRecordsRemain,
@@ -230,7 +217,7 @@ func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 	}
 	switch cfg.TikvImporter.Backend {
 	case config.BackendLocal:
-		if cfg.Conflict.Strategy != "" {
+		if cfg.Conflict.PrecheckConflictBeforeImport && cfg.Conflict.Strategy != config.NoneOnDup {
 			em.conflictV2Enabled = true
 		}
 	case config.BackendTiDB:
@@ -311,7 +298,7 @@ func (em *ErrorManager) RecordTypeError(
 		errMsg := encodeErr.Error()
 		logger = logger.With(
 			zap.Int64("offset", offset),
-			zap.String("row", redact.String(rowText)),
+			zap.String("row", redact.Value(rowText)),
 			zap.String("message", errMsg))
 
 		// put it into the database.
@@ -475,7 +462,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	ctx context.Context,
 	tbl tidbtbl.Table,
 	tableName string,
-	pool *utils.WorkerPool,
+	pool *util.WorkerPool,
 	fnGetLatest func(ctx context.Context, key []byte) ([]byte, error),
 	fnDeleteKey func(ctx context.Context, key []byte) error,
 ) error {
@@ -769,64 +756,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	return errors.Trace(g.Wait())
 }
 
-// ResolveConflictKeysError query all conflicting rows (handle and their
-// values) from the current error report and return error
-// if the number of the conflicting rows is larger than 0.
-func (em *ErrorManager) ResolveConflictKeysError(
-	ctx context.Context,
-	tableName string,
-) error {
-	if em.db == nil {
-		return nil
-	}
-
-	_, gCtx := errgroup.WithContext(ctx)
-
-	kvRows, err := em.db.QueryContext(
-		gCtx, common.SprintfWithIdentifiers(selectConflictKeysCountError, em.schema),
-		tableName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer kvRows.Close()
-	var kvRowsCount int64
-	for kvRows.Next() {
-		if err := kvRows.Scan(&kvRowsCount); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	if err := kvRows.Err(); err != nil {
-		return errors.Trace(err)
-	}
-
-	em.logger.Debug("got kv rows count from table",
-		zap.Int64("kv rows count", kvRowsCount))
-	if kvRowsCount > 0 {
-		rows, err := em.db.QueryContext(
-			gCtx, common.SprintfWithIdentifiers(selectConflictKeysError, em.schema),
-			tableName)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer rows.Close()
-
-		var rawKey, rawRow []byte
-		for rows.Next() {
-			if err := rows.Scan(&rawKey, &rawRow); err != nil {
-				return errors.Trace(err)
-			}
-			em.logger.Debug("got raw_key, raw_row from table",
-				logutil.Key("raw_key", rawKey),
-				zap.Binary("raw_row", rawRow))
-		}
-		if err := rows.Err(); err != nil {
-			return errors.Trace(err)
-		}
-		return common.ErrFoundDuplicateKeys.FastGenByArgs(rawKey, rawRow)
-	}
-	return nil
-}
-
 // RecordDuplicateCount reduce the counter of "duplicate entry" errors.
 // Currently, the count will not be shared for multiple lightning instances.
 func (em *ErrorManager) RecordDuplicateCount(cnt int64) error {
@@ -978,7 +907,8 @@ func (em *ErrorManager) LogErrorDetails() {
 	if errCnt := em.conflictError(); errCnt > 0 {
 		if em.conflictV1Enabled {
 			em.logger.Warn(fmtErrMsg(errCnt, "conflict", ConflictErrorTableName))
-		} else {
+		}
+		if em.conflictV2Enabled {
 			em.logger.Warn(fmtErrMsg(errCnt, "conflict", DupRecordTable))
 		}
 	}
@@ -1024,7 +954,8 @@ func (em *ErrorManager) Output() string {
 		count++
 		if em.conflictV1Enabled {
 			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(ConflictErrorTableName)})
-		} else {
+		}
+		if em.conflictV2Enabled {
 			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(DupRecordTable)})
 		}
 	}

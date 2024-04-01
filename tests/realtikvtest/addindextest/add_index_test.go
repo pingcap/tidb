@@ -107,8 +107,43 @@ func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
 	tk.MustExec("update employee set pid=0 where id=1")
 	tk.MustGetErrMsg("alter table employee add foreign key fk_1(pid) references employee(id)",
 		"[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`fk_index`.`employee`, CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `employee` (`id`))")
-	tk.MustExec("update employee set pid=null where id=1")
 	tk.MustExec("insert into employee (pid) select pid from employee")
-	tk.MustExec("update employee set pid=id-1 where id>1 and pid is null")
+	tk.MustExec("update employee set pid=id")
+
 	tk.MustExec("alter table employee add foreign key fk_1(pid) references employee(id)")
+}
+
+func TestIssue51162(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_fast_table_check=0")
+	tk.MustExec(`CREATE TABLE tl (
+	 col_42 json NOT NULL,
+	 col_43 tinyint(1) DEFAULT NULL,
+	 col_44 char(168) CHARACTER SET gbk COLLATE gbk_bin DEFAULT NULL,
+	 col_45 json DEFAULT NULL,
+	 col_46 text COLLATE utf8mb4_unicode_ci NOT NULL,
+	 col_47 char(43) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'xW2YNb99pse4)',
+	 col_48 time NOT NULL DEFAULT '12:31:25',
+	 PRIMARY KEY (col_47,col_46(2)) /*T![clustered_index] CLUSTERED */
+	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`)
+
+	tk.MustExec(`INSERT INTO tl VALUES
+	('[\"1\"]',0,'1','[1]','Wxup81','1','10:14:20');`)
+
+	tk.MustExec("alter table tl add index idx_16(`col_48`,(cast(`col_45` as signed array)),`col_46`(5));")
+	tk.MustExec("admin check table tl")
+}
+
+func TestAddUKWithSmallIntHandles(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists small;")
+	tk.MustExec("create database small;")
+	tk.MustExec("use small;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	tk.MustExec("create table t (a bigint, b int, primary key (a) clustered)")
+	tk.MustExec("insert into t values (-9223372036854775808, 1),(-9223372036854775807, 1)")
+	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
 }

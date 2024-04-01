@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -33,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -109,7 +110,7 @@ func (row RowArrayMarshaller) MarshalLogArray(encoder zapcore.ArrayEncoder) erro
 		}
 		if err := encoder.AppendObject(zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
 			enc.AddString("kind", kindStr[kind])
-			enc.AddString("val", redact.String(str))
+			enc.AddString("val", redact.Value(str))
 			return nil
 		})); err != nil {
 			return err
@@ -201,7 +202,7 @@ func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64
 	kvPairs := e.SessionCtx.TakeKvPairs()
 	for i := 0; i < len(kvPairs.Pairs); i++ {
 		var encoded [9]byte // The max length of encoded int64 is 9.
-		kvPairs.Pairs[i].RowID = common.EncodeIntRowIDToBuf(encoded[:0], rowID)
+		kvPairs.Pairs[i].RowID = codec.EncodeComparableVarint(encoded[:0], rowID)
 	}
 	e.recordCache = record[:0]
 	return kvPairs, nil

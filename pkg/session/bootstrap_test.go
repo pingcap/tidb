@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -36,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	tbctximpl "github.com/pingcap/tidb/pkg/table/contextimpl"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // This test file have many problem.
@@ -330,7 +333,7 @@ func TestUpgrade(t *testing.T) {
 	require.Equal(t, currentBootstrapVersion, ver)
 
 	// Verify that 'new_collation_enabled' is false.
-	r = MustExecToRecodeSet(t, se2, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s'`, tidbNewCollationEnabled))
+	r = MustExecToRecodeSet(t, se2, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s'`, TidbNewCollationEnabled))
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
@@ -2184,4 +2187,80 @@ func TestTiDBUpgradeToVer179(t *testing.T) {
 	require.NoError(t, r.Close())
 
 	dom.Close()
+}
+
+func testTiDBUpgradeWithDistTask(t *testing.T, injectQuery string, fatal bool) {
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ver178 := version178
+	seV178 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver178))
+	require.NoError(t, err)
+	MustExec(t, seV178, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver178))
+	MustExec(t, seV178, injectQuery)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV178)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver178), ver)
+
+	conf := new(log.Config)
+	lg, p, e := log.InitLogger(conf, zap.WithFatalHook(zapcore.WriteThenPanic))
+	require.NoError(t, e)
+	rs := log.ReplaceGlobals(lg, p)
+	defer func() {
+		rs()
+	}()
+
+	var dom *domain.Domain
+
+	fatal2panic := false
+	fc := func() {
+		defer func() {
+			if err := recover(); err != nil {
+				fatal2panic = true
+			}
+		}()
+		dom, _ = BootstrapSession(store)
+	}
+	fc()
+
+	if fatal {
+		dom = domain.GetDomain(seV178)
+	}
+	dom.Close()
+	require.Equal(t, fatal, fatal2panic)
+}
+
+func TestTiDBUpgradeWithDistTaskEnable(t *testing.T) {
+	t.Run("test enable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 1", true) })
+	t.Run("test disable dist task", func(t *testing.T) { testTiDBUpgradeWithDistTask(t, "set global tidb_enable_dist_task = 0", false) })
+}
+
+func TestTiDBUpgradeWithDistTaskRunning(t *testing.T) {
+	t.Run("test dist task running", func(t *testing.T) {
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'running'", true)
+	})
+	t.Run("test dist task succeed", func(t *testing.T) {
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'succeed'", false)
+	})
+	t.Run("test dist task failed", func(t *testing.T) {
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'failed'", false)
+	})
+	t.Run("test dist task reverted", func(t *testing.T) {
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'reverted'", false)
+	})
+	t.Run("test dist task paused", func(t *testing.T) {
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'paused'", true)
+	})
+	t.Run("test dist task other", func(t *testing.T) {
+		testTiDBUpgradeWithDistTask(t, "insert into mysql.tidb_global_task set id = 1, task_key = 'aaa', type= 'aaa', state = 'other'", true)
+	})
 }

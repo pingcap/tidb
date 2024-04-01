@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	pd "github.com/tikv/pd/client/http"
 )
 
@@ -110,7 +109,7 @@ func (*showPlacementLabelsResultBuilder) sortMapKeys(m map[string]any) []string 
 }
 
 func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "SELECT DISTINCT LABEL FROM %n.%n", "INFORMATION_SCHEMA", infoschema.TableTiKVStoreStatus)
 	if err != nil {
 		return errors.Trace(err)

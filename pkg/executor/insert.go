@@ -120,7 +120,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			e.stats.CheckInsertTime += time.Since(start)
 		}
 	}
-	return nil
+	return txn.MayFlush()
 }
 
 func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string][]byte, error) {

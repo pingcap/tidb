@@ -516,6 +516,8 @@ func NewMergeKVIter(
 		outerConcurrency = 1
 	}
 	concurrentReaderConcurrency := max(256/outerConcurrency, 8)
+	// TODO: merge-sort step passes outerConcurrency=0, so this bufSize might be
+	// too large when checkHotspot = true(add-index).
 	largeBufSize := ConcurrentReaderBufferSizePerConc * concurrentReaderConcurrency
 	memPool := membuf.NewPool(
 		membuf.WithBlockNum(1), // currently only one reader will become hotspot
@@ -793,7 +795,6 @@ func NewMergePropIter(
 	ctx context.Context,
 	multiStat []MultipleFilesStat,
 	exStorage storage.ExternalStorage,
-	_ bool,
 ) (*MergePropIter, error) {
 	closeReaderFlag := false
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, mergePropBaseIter], 0, len(multiStat))

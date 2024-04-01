@@ -20,13 +20,13 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -366,8 +366,8 @@ func GoValidateFileRanges(
 					}
 				}
 				// Merge small ranges to reduce split and scatter regions.
-				ranges, stat, err := MergeFileRanges(
-					files, splitSizeBytes, splitKeyCount)
+				ranges, stat, err := MergeAndRewriteFileRanges(
+					files, t.RewriteRule, splitSizeBytes, splitKeyCount)
 				if err != nil {
 					errCh <- err
 					return
@@ -507,7 +507,6 @@ func SplitRanges(
 	ctx context.Context,
 	client *Client,
 	ranges []rtree.Range,
-	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
 	isRawKv bool,
 ) error {
@@ -518,7 +517,7 @@ func SplitRanges(
 		isRawKv,
 	))
 
-	return splitter.ExecuteSplit(ctx, ranges, rewriteRules, client.GetStoreCount(), isRawKv, func(keys [][]byte) {
+	return splitter.ExecuteSplit(ctx, ranges, client.GetStoreCount(), isRawKv, func(keys [][]byte) {
 		for range keys {
 			updateCh.Inc()
 		}
@@ -773,7 +772,7 @@ func CheckConsistencyAndValidPeer(regionInfos []*RecoverRegionInfo) (map[uint64]
 		if !keyEq(prevEndKey, iter.Key().([]byte)) {
 			log.Error("regions are not adjacent", zap.Uint64("pre region", prevRegion), zap.Uint64("cur region", v.RegionId))
 			// TODO, some enhancement may need, a PoC or test may need for decision
-			return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange,
+			return nil, errors.Annotatef(berrors.ErrInvalidRange,
 				"invalid region range")
 		}
 		prevEndKey = v.EndKey

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -71,6 +72,7 @@ type CheckpointAdvancer struct {
 	lastCheckpoint   *checkpoint
 	lastCheckpointMu sync.Mutex
 	inResolvingLock  atomic.Bool
+	isPaused         atomic.Bool
 
 	checkpoints   *spans.ValueSortedFull
 	checkpointsMu sync.Mutex
@@ -223,7 +225,7 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
 	defer utils.PanicToErr(&err)
 
 	ranges := spans.Collapse(length, getRange)
-	workers := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance)*4, "sub ranges")
+	workers := util.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance)*4, "sub ranges")
 	eg, cx := errgroup.WithContext(ctx)
 	collector := NewClusterCollector(ctx, c.env)
 	collector.SetOnSuccessHook(func(u uint64, kr kv.KeyRange) {
@@ -446,6 +448,14 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 			log.Warn("failed to remove service GC safepoint", logutil.ShortError(err))
 		}
 		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
+	case EventPause:
+		if c.task.GetName() == e.Name {
+			c.isPaused.CompareAndSwap(false, true)
+		}
+	case EventResume:
+		if c.task.GetName() == e.Name {
+			c.isPaused.CompareAndSwap(true, false)
+		}
 	case EventErr:
 		return e.Err
 	}
@@ -544,12 +554,42 @@ func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
 	return c.subscriber.PendingErrors()
 }
 
+func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context) (bool, error) {
+	if c.cfg.CheckPointLagLimit <= 0 {
+		return false, nil
+	}
+
+	now, err := c.env.FetchCurrentTS(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	lagDuration := oracle.GetTimeFromTS(now).Sub(oracle.GetTimeFromTS(c.lastCheckpoint.TS))
+	if lagDuration > c.cfg.CheckPointLagLimit {
+		log.Warn("checkpoint lag is too large", zap.String("category", "log backup advancer"),
+			zap.Stringer("lag", lagDuration))
+		return true, nil
+	}
+	return false, nil
+}
+
 func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	c.checkpointsMu.Lock()
 	c.setCheckpoint(ctx, c.checkpoints.Min())
 	c.checkpointsMu.Unlock()
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
+	}
+	isLagged, err := c.isCheckpointLagged(ctx)
+	if err != nil {
+		return errors.Annotate(err, "failed to check timestamp")
+	}
+	if isLagged {
+		err := c.env.PauseTask(ctx, c.task.Name)
+		if err != nil {
+			return errors.Annotate(err, "failed to pause task")
+		}
+		return errors.Annotate(errors.Errorf("check point lagged too large"), "check point lagged too large")
 	}
 	p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint.safeTS())
 	if err != nil {
@@ -606,7 +646,7 @@ func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
 func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
-	if c.task == nil {
+	if c.task == nil || c.isPaused.Load() {
 		log.Debug("No tasks yet, skipping advancing.")
 		return nil
 	}
@@ -640,7 +680,7 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 			return tikv.ResolveLocksForRange(
 				ctx, c.env, math.MaxUint64, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
 		}
-		workerPool := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
+		workerPool := util.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
 		var wg sync.WaitGroup
 		for _, r := range targets {
 			targetRange := r

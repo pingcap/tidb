@@ -212,3 +212,24 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 	}
 	require.True(t, valid)
 }
+
+func TestPointGetIntHandleNotFirst(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (
+		c int,
+		a int not null,
+		b int,
+		primary key  (a) /*T![clustered_index] clustered */
+	  )`)
+	tk.MustExec(`insert into t values(1, 13, 1)`)
+	tk.MustQuery("select * from t WHERE `a` BETWEEN 13 AND 13").Check(testkit.Rows("1 13 1"))
+	tk.MustExec(`alter table t
+	  partition by range (a)
+	  (partition p0 values less than (10),
+	   partition p1 values less than (maxvalue))`)
+
+	tk.MustQuery("select * from t WHERE a BETWEEN 13 AND 13").Check(testkit.Rows("1 13 1"))
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 13 1"))
+}

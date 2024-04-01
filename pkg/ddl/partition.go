@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/slice"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -2004,18 +2003,20 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
-		if partInfo.DDLType != model.PartitionTypeNone {
+		// ALTER TABLE ... PARTITION BY
+		if partInfo.Type != model.PartitionTypeNone {
 			// Also remove anything with the new table id
-			physicalTableIDs = append(physicalTableIDs, tblInfo.Partition.NewTableID)
+			physicalTableIDs = append(physicalTableIDs, partInfo.NewTableID)
 			// Reset if it was normal table before
-			if tblInfo.Partition.Type == model.PartitionTypeNone {
+			if tblInfo.Partition.Type == model.PartitionTypeNone ||
+				tblInfo.Partition.DDLType == model.PartitionTypeNone {
 				tblInfo.Partition = nil
 			} else {
-				tblInfo.Partition.NewTableID = 0
-				tblInfo.Partition.DDLExpr = ""
-				tblInfo.Partition.DDLColumns = nil
-				tblInfo.Partition.DDLType = model.PartitionTypeNone
+				tblInfo.Partition.ClearReorgIntermediateInfo()
 			}
+		} else {
+			// REMOVE PARTITIONING
+			tblInfo.Partition.ClearReorgIntermediateInfo()
 		}
 
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
@@ -3082,10 +3083,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				tblInfo.Partition = nil
 			} else {
 				// ALTER TABLE ... PARTITION BY
-				tblInfo.Partition.DDLType = model.PartitionTypeNone
-				tblInfo.Partition.DDLExpr = ""
-				tblInfo.Partition.DDLColumns = nil
-				tblInfo.Partition.NewTableID = 0
+				tblInfo.Partition.ClearReorgIntermediateInfo()
 			}
 			err = t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Put(autoIDs)
 			if err != nil {
@@ -3551,7 +3549,7 @@ func checkExchangePartitionRecordValidation(w *worker, ptbl, ntbl table.Table, p
 		}
 		defer w.sessPool.Put(ctx)
 
-		rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, nil, sql, params...)
+		rows, _, err := ctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(w.ctx, nil, sql, params...)
 		if err != nil {
 			return errors.Trace(err)
 		}

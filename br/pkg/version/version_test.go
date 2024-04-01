@@ -23,6 +23,10 @@ type mockPDClient struct {
 	getAllStores func() []*metapb.Store
 }
 
+func (m *mockPDClient) GetClusterID(_ context.Context) uint64 {
+	return 1
+}
+
 func (m *mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	if m.getAllStores != nil {
 		return m.getAllStores(), nil

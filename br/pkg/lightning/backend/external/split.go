@@ -96,7 +96,6 @@ func NewRangeSplitter(
 	externalStorage storage.ExternalStorage,
 	rangesGroupSize, rangesGroupKeys int64,
 	maxRangeSize, maxRangeKeys int64,
-	checkHotSpot bool,
 ) (*RangeSplitter, error) {
 	logger := logutil.Logger(ctx)
 	overlaps := make([]int64, 0, len(multiFileStat))
@@ -112,9 +111,8 @@ func NewRangeSplitter(
 		zap.Int64("rangesGroupKeys", rangesGroupKeys),
 		zap.Int64("maxRangeSize", maxRangeSize),
 		zap.Int64("maxRangeKeys", maxRangeKeys),
-		zap.Bool("checkHotSpot", checkHotSpot),
 	)
-	propIter, err := NewMergePropIter(ctx, multiFileStat, externalStorage, checkHotSpot)
+	propIter, err := NewMergePropIter(ctx, multiFileStat, externalStorage)
 	if err != nil {
 		return nil, err
 	}

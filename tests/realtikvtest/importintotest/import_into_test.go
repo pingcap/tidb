@@ -958,11 +958,11 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	}()
 	// wait for the task to be registered
 	<-importinto.TestSyncChan
-	// cannot run 2 import job at the same time
+	// cannot run 2 import job to the same target table.
 	tk2 := testkit.NewTestKit(s.T(), s.store)
 	err = tk2.QueryToErr(sql)
 	s.ErrorIs(err, exeerrors.ErrLoadDataPreCheckFailed)
-	s.ErrorContains(err, "there's pending or running jobs")
+	s.ErrorContains(err, "there is active job on the target table already")
 
 	client, err := importer.GetEtcdClient()
 	s.NoError(err)

@@ -187,10 +187,38 @@ func testInitStatsMemTrace(t *testing.T) {
 }
 
 func TestInitStatsMemTraceWithLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = false
+	})
 	testInitStatsMemTraceFunc(t, true)
 }
 
 func TestInitStatsMemTraceWithoutLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = false
+	})
+	testInitStatsMemTraceFunc(t, false)
+}
+
+func TestInitStatsMemTraceWithConcurrrencyLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = true
+	})
+	testInitStatsMemTraceFunc(t, true)
+}
+
+func TestInitStatsMemTraceWithoutConcurrrencyLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = true
+	})
 	testInitStatsMemTraceFunc(t, false)
 }
 
@@ -233,8 +261,25 @@ func TestInitStats(t *testing.T) {
 	require.Equal(t, uint8(0x38), cols[3].LastAnalyzePos.GetBytes()[0])
 	h.Clear()
 	require.NoError(t, h.Update(is))
-	table1 := h.GetTableStats(tbl.Meta())
-	internal.AssertTableEqual(t, table0, table1)
+	// Index and pk are loaded.
+	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
+column:1 ndv:6 totColSize:0
+num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
+num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
+num: 1 lower_bound: 3 upper_bound: 3 repeats: 1 ndv: 0
+num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0
+num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0
+num: 1 lower_bound: 6 upper_bound: 6 repeats: 1 ndv: 0
+column:2 ndv:6 totColSize:6
+column:3 ndv:6 totColSize:6
+index:1 ndv:6
+num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
+num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
+num: 1 lower_bound: 3 upper_bound: 3 repeats: 1 ndv: 0
+num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0
+num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0
+num: 1 lower_bound: 7 upper_bound: 7 repeats: 1 ndv: 0`, tbl.Meta().ID)
+	require.Equal(t, needed, table0.String())
 	h.SetLease(0)
 }
 
@@ -266,11 +311,26 @@ func TestInitStats51358(t *testing.T) {
 }
 
 func TestInitStatsVer2(t *testing.T) {
-	originValue := config.GetGlobalConfig().Performance.LiteInitStats
-	defer func() {
-		config.GetGlobalConfig().Performance.LiteInitStats = originValue
-	}()
-	config.GetGlobalConfig().Performance.LiteInitStats = false
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		config.GetGlobalConfig().Performance.LiteInitStats = false
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
+	})
+	initStatsVer2(t)
+}
+
+func TestInitStatsVer2Concurrency(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		config.GetGlobalConfig().Performance.LiteInitStats = false
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
+	})
+	initStatsVer2(t)
+}
+
+func initStatsVer2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

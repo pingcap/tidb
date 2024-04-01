@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
@@ -266,6 +267,7 @@ func MockSignedTable() *model.TableInfo {
 	col5.SetFlag(mysql.NotNullFlag)
 	col6.SetFlag(mysql.NoDefaultValueFlag)
 	table := &model.TableInfo{
+		ID:         1,
 		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5, col6, col7},
 		Indices:    indices,
 		Name:       model.NewCIStr("t"),
@@ -335,6 +337,7 @@ func MockUnsignedTable() *model.TableInfo {
 	col0.SetFlag(mysql.NotNullFlag)
 	col1.SetFlag(mysql.UnsignedFlag)
 	table := &model.TableInfo{
+		ID:         2,
 		Columns:    []*model.ColumnInfo{pkColumn, col0, col1},
 		Indices:    indices,
 		Name:       model.NewCIStr("t2"),
@@ -364,6 +367,7 @@ func MockNoPKTable() *model.TableInfo {
 	col0.SetFlag(mysql.NotNullFlag)
 	col1.SetFlag(mysql.UnsignedFlag)
 	table := &model.TableInfo{
+		ID:         3,
 		Columns:    []*model.ColumnInfo{col0, col1},
 		Name:       model.NewCIStr("t3"),
 		PKIsHandle: true,
@@ -394,6 +398,7 @@ func MockView() *model.TableInfo {
 	}
 	view := &model.ViewInfo{SelectStmt: selectStmt, Security: model.SecurityDefiner, Definer: &auth.UserIdentity{Username: "root", Hostname: ""}, Cols: []model.CIStr{col0.Name, col1.Name, col2.Name}}
 	table := &model.TableInfo{
+		ID:      4,
 		Name:    model.NewCIStr("v"),
 		Columns: []*model.ColumnInfo{col0, col1, col2},
 		View:    view,
@@ -412,6 +417,7 @@ func MockContext() *mock.Context {
 		Client: &mock.Client{},
 	}
 	ctx.GetSessionVars().CurrentDB = "test"
+	ctx.GetSessionVars().DivPrecisionIncrement = variable.DefDivPrecisionIncrement
 	do := domain.NewMockDomain()
 	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
@@ -460,6 +466,7 @@ func MockRangePartitionTable() *model.TableInfo {
 		},
 	}
 	tableInfo := MockSignedTable()
+	tableInfo.ID = 5
 	tableInfo.Name = model.NewCIStr("pt1")
 	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
 	cols = append(cols, tableInfo.Columns...)
@@ -495,6 +502,7 @@ func MockHashPartitionTable() *model.TableInfo {
 		},
 	}
 	tableInfo := MockSignedTable()
+	tableInfo.ID = 6
 	tableInfo.Name = model.NewCIStr("pt2")
 	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
 	cols = append(cols, tableInfo.Columns...)
@@ -541,6 +549,7 @@ func MockListPartitionTable() *model.TableInfo {
 		},
 	}
 	tableInfo := MockSignedTable()
+	tableInfo.ID = 7
 	tableInfo.Name = model.NewCIStr("pt3")
 	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
 	cols = append(cols, tableInfo.Columns...)
@@ -608,6 +617,7 @@ func MockStateNoneColumnTable() *model.TableInfo {
 	col0.SetFlag(mysql.NotNullFlag)
 	col1.SetFlag(mysql.UnsignedFlag)
 	table := &model.TableInfo{
+		ID:         8,
 		Columns:    []*model.ColumnInfo{pkColumn, col0, col1},
 		Indices:    indices,
 		Name:       model.NewCIStr("T_StateNoneColumn"),

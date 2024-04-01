@@ -40,7 +40,7 @@ TODO : test with specified 'regionBlockSize' ...
 */
 func TestTableRegion(t *testing.T) {
 	cfg := newConfigWithSourceDir("./examples")
-	loader, _ := NewMyDumpLoader(context.Background(), cfg)
+	loader, _ := NewLoader(context.Background(), NewLoaderCfg(cfg))
 	dbMeta := loader.GetDatabases()[0]
 
 	ioWorkers := worker.NewPool(context.Background(), 1, "io")

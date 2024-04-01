@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -86,7 +87,7 @@ func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.P
 	jobCtx *JobContext) (backfillScheduler, error) {
 	if tp == typeAddIndexWorker && info.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		ctx = logutil.WithCategory(ctx, "ddl-ingest")
-		return newIngestBackfillScheduler(ctx, info, sessPool, tbl, false), nil
+		return newIngestBackfillScheduler(ctx, info, sessPool, tbl, false)
 	}
 	return newTxnBackfillScheduler(ctx, info, sessPool, tp, tbl, sessCtx, jobCtx)
 }
@@ -312,6 +313,7 @@ type ingestBackfillScheduler struct {
 	sessPool   *sess.Pool
 	tbl        table.PhysicalTable
 	distribute bool
+	avgRowSize int
 
 	closed bool
 
@@ -327,18 +329,30 @@ type ingestBackfillScheduler struct {
 	checkpointMgr *ingest.CheckpointManager
 }
 
-func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
-	sessPool *sess.Pool, tbl table.PhysicalTable, distribute bool) *ingestBackfillScheduler {
+func newIngestBackfillScheduler(
+	ctx context.Context,
+	info *reorgInfo,
+	sessPool *sess.Pool,
+	tbl table.PhysicalTable,
+	distribute bool,
+) (*ingestBackfillScheduler, error) {
+	sctx, err := sessPool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer sessPool.Put(sctx)
+	avgRowSize := estimateTableRowSize(ctx, info.d.store, sctx.GetRestrictedSQLExecutor(), tbl)
 	return &ingestBackfillScheduler{
 		ctx:        ctx,
 		reorgInfo:  info,
 		sessPool:   sessPool,
 		tbl:        tbl,
+		avgRowSize: avgRowSize,
 		taskCh:     make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultCh:   make(chan *backfillResult, backfillTaskChanSize),
 		poolErr:    make(chan error),
 		distribute: distribute,
-	}
+	}, nil
 }
 
 func (b *ingestBackfillScheduler) setupWorkers() error {
@@ -366,6 +380,8 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	b.writerPool = writerPool
 	b.copReqSenderPool.chunkSender = writerPool
 	b.copReqSenderPool.adjustSize(readerCnt)
+	logutil.Logger(b.ctx).Info("setup ingest backfill workers",
+		zap.Int64("jobID", job.ID), zap.Int("reader", readerCnt), zap.Int("writer", writerCnt))
 	return nil
 }
 
@@ -501,15 +517,29 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.sessPool, b.checkpointMgr), nil
 }
 
-func (*ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
-	return expectedIngestWorkerCnt()
+func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
+	return expectedIngestWorkerCnt(b.avgRowSize)
 }
 
-func expectedIngestWorkerCnt() (readerCnt, writerCnt int) {
+func expectedIngestWorkerCnt(avgRowSize int) (readerCnt, writerCnt int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
-	readerCnt = max(readerCnt, 1)
-	writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
+	if avgRowSize == 0 {
+		// Statistic data not exist, use default concurrency.
+		readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
+		readerCnt = max(readerCnt, 1)
+		writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
+		return readerCnt, writerCnt
+	}
+
+	readerRatio := []float64{0.5, 1, 2, 4, 8}
+	rowSize := []uint64{200, 500, 1000, 3000, math.MaxUint64}
+	for i, s := range rowSize {
+		if uint64(avgRowSize) <= s {
+			readerCnt = max(int(float64(workerCnt)*readerRatio[i]), 1)
+			writerCnt = max(workerCnt, 1)
+			break
+		}
+	}
 	return readerCnt, writerCnt
 }
 

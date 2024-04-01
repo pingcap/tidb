@@ -60,7 +60,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 		return errors.Trace(err)
 	}
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, reader); err != nil {
+	if err = client.InitBackupMeta(c, backupMeta, u, reader, true); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -78,8 +78,8 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	}
 	summary.CollectInt("restore files", len(files))
 
-	ranges, _, err := restore.MergeFileRanges(
-		files, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
+	ranges, _, err := restore.MergeAndRewriteFileRanges(
+		files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -93,7 +93,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 		!cfg.LogProgress)
 
 	// RawKV restore does not need to rewrite keys.
-	err = restore.SplitRanges(ctx, client, ranges, nil, updateCh, false)
+	err = restore.SplitRanges(ctx, client, ranges, updateCh, false)
 	if err != nil {
 		return errors.Trace(err)
 	}

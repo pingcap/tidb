@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/backup"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -53,11 +52,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/types"
@@ -124,8 +125,8 @@ const (
 )
 
 var (
-	minTiKVVersionForDuplicateResolution = *semver.New("5.2.0")
-	maxTiKVVersionForDuplicateResolution = version.NextMajorVersion()
+	minTiKVVersionForConflictStrategy = *semver.New("5.2.0")
+	maxTiKVVersionForConflictStrategy = version.NextMajorVersion()
 )
 
 // DeliverPauser is a shared pauser to pause progress to (*chunkProcessor).encodeLoop
@@ -373,13 +374,13 @@ func NewImportControllerWithPauser(
 			pdhttp.WithTLSConfig(tls.TLSConfig()),
 		).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 
-		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-			if err := tikv.CheckTiKVVersion(ctx, pdHTTPCli, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
+		if isLocalBackend(cfg) && cfg.Conflict.Strategy != config.NoneOnDup {
+			if err := tikv.CheckTiKVVersion(ctx, pdHTTPCli, minTiKVVersionForConflictStrategy, maxTiKVVersionForConflictStrategy); err != nil {
 				if !berrors.Is(err, berrors.ErrVersionMismatch) {
 					return nil, common.ErrCheckKVVersion.Wrap(err).GenWithStackByArgs()
 				}
-				log.FromContext(ctx).Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
-				cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
+				log.FromContext(ctx).Warn("TiKV version doesn't support conflict strategy. The resolution algorithm will fall back to 'none'", zap.Error(err))
+				cfg.Conflict.Strategy = config.NoneOnDup
 			}
 		}
 
@@ -625,29 +626,47 @@ type restoreSchemaWorker struct {
 func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
 	stmts, err := createIfNotExistsStmt(worker.parser, sqlStr, job.dbName, job.tblName)
 	if err != nil {
-		worker.logger.Warn("failed to rewrite statement, will use raw input instead",
-			zap.String("db", job.dbName),
-			zap.String("table", job.tblName),
-			zap.String("statement", sqlStr),
-			zap.Error(err))
-		job.stmts = []string{sqlStr}
-	} else {
-		job.stmts = stmts
+		return errors.Trace(err)
 	}
+	job.stmts = stmts
 	return worker.appendJob(job)
 }
 
 func (worker *restoreSchemaWorker) makeJobs(
 	dbMetas []*mydump.MDDatabaseMeta,
+	getDBs func(context.Context) ([]*model.DBInfo, error),
 	getTables func(context.Context, string) ([]*model.TableInfo, error),
 ) error {
 	defer func() {
 		close(worker.jobCh)
 		worker.quit()
 	}()
-	var err error
+
+	if len(dbMetas) == 0 {
+		return nil
+	}
+
 	// 1. restore databases, execute statements concurrency
+
+	dbs, err := getDBs(worker.ctx)
+	if err != nil {
+		worker.logger.Warn("get databases from downstream failed", zap.Error(err))
+	}
+	dbSet := make(set.StringSet, len(dbs))
+	for _, db := range dbs {
+		dbSet.Insert(db.Name.L)
+	}
+
 	for _, dbMeta := range dbMetas {
+		// if downstream already has this database, we can skip ddl job
+		if dbSet.Exist(strings.ToLower(dbMeta.Name)) {
+			worker.logger.Info(
+				"database already exists in downstream, skip processing the source file",
+				zap.String("db", dbMeta.Name),
+			)
+			continue
+		}
+
 		sql := dbMeta.GetSchema(worker.ctx, worker.store)
 		err = worker.addJob(sql, &schemaJob{
 			dbName:   dbMeta.Name,
@@ -662,18 +681,28 @@ func (worker *restoreSchemaWorker) makeJobs(
 	if err != nil {
 		return err
 	}
+
 	// 2. restore tables, execute statements concurrency
+
 	for _, dbMeta := range dbMetas {
 		// we can ignore error here, and let check failed later if schema not match
-		tables, _ := getTables(worker.ctx, dbMeta.Name)
-		tableMap := make(map[string]struct{})
+		tables, err := getTables(worker.ctx, dbMeta.Name)
+		if err != nil {
+			worker.logger.Warn("get tables from downstream failed", zap.Error(err))
+		}
+		tableSet := make(set.StringSet, len(tables))
 		for _, t := range tables {
-			tableMap[t.Name.L] = struct{}{}
+			tableSet.Insert(t.Name.L)
 		}
 		for _, tblMeta := range dbMeta.Tables {
-			if _, ok := tableMap[strings.ToLower(tblMeta.Name)]; ok {
+			if tableSet.Exist(strings.ToLower(tblMeta.Name)) {
 				// we already has this table in TiDB.
 				// we should skip ddl job and let SchemaValid check.
+				worker.logger.Info(
+					"table already exists in downstream, skip processing the source file",
+					zap.String("db", dbMeta.Name),
+					zap.String("table", tblMeta.Name),
+				)
 				continue
 			} else if tblMeta.SchemaFile.FileMeta.Path == "" {
 				return common.ErrSchemaNotExists.GenWithStackByArgs(dbMeta.Name, tblMeta.Name)
@@ -748,7 +777,6 @@ loop:
 			var err error
 			if session == nil {
 				session, err = func() (*sql.Conn, error) {
-					// TODO: support lightning in SQL
 					return worker.db.Conn(worker.ctx)
 				}()
 				if err != nil {
@@ -871,7 +899,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	for i := 0; i < concurrency; i++ {
 		go worker.doJob()
 	}
-	err := worker.makeJobs(rc.dbMetas, rc.preInfoGetter.FetchRemoteTableModels)
+	err := worker.makeJobs(rc.dbMetas, rc.preInfoGetter.FetchRemoteDBModels, rc.preInfoGetter.FetchRemoteTableModels)
 	logTask.End(zap.ErrorLevel, err)
 	if err != nil {
 		return err
@@ -1426,7 +1454,7 @@ func (rc *Controller) buildTablesRanges() []tidbkv.KeyRange {
 	var keyRanges []tidbkv.KeyRange
 	for _, dbInfo := range rc.dbInfos {
 		for _, tableInfo := range dbInfo.Tables {
-			if ranges, err := backup.BuildTableRanges(tableInfo.Core); err == nil {
+			if ranges, err := distsql.BuildTableRanges(tableInfo.Core); err == nil {
 				keyRanges = append(keyRanges, ranges...)
 			}
 		}
@@ -1530,7 +1558,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	// output error summary
 	defer rc.outputErrorSummary()
 
-	if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.Strategy != config.NoneOnDup {
 		subCtx, cancel := context.WithCancel(ctx)
 		exitCh, err := rc.keepPauseGCForDupeRes(subCtx)
 		if err != nil {
@@ -2048,7 +2076,7 @@ func (rc *Controller) setGlobalVariables(ctx context.Context) error {
 	// we should enable/disable new collation here since in server mode, tidb config
 	// may be different in different tasks
 	collate.SetNewCollationEnabledForTest(enabled)
-	log.FromContext(ctx).Info(utils.TidbNewCollationEnabled, zap.Bool("enabled", enabled))
+	log.FromContext(ctx).Info(session.TidbNewCollationEnabled, zap.Bool("enabled", enabled))
 
 	return nil
 }

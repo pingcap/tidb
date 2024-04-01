@@ -105,7 +105,7 @@ func (s *restoreSchemaSuite) SetupSuite() {
 	config.Mydumper.DefaultFileRules = true
 	config.Mydumper.CharacterSet = "utf8mb4"
 	config.App.RegionConcurrency = 8
-	mydumpLoader, err := mydump.NewMyDumpLoaderWithStore(ctx, config, store)
+	mydumpLoader, err := mydump.NewLoaderWithStore(ctx, mydump.NewLoaderCfg(config), store)
 	s.Require().NoError(err)
 
 	dbMetas := mydumpLoader.GetDatabases()
@@ -136,6 +136,10 @@ func (s *restoreSchemaSuite) SetupTest() {
 	s.controller, s.ctx = gomock.WithContext(context.Background(), s.T())
 	mockTargetInfoGetter := mock.NewMockTargetInfoGetter(s.controller)
 	mockBackend := mock.NewMockBackend(s.controller)
+	mockTargetInfoGetter.EXPECT().
+		FetchRemoteDBModels(gomock.Any()).
+		AnyTimes().
+		Return([]*model.DBInfo{{Name: model.NewCIStr("fakedb")}}, nil)
 	mockTargetInfoGetter.EXPECT().
 		FetchRemoteTableModels(gomock.Any(), gomock.Any()).
 		AnyTimes().

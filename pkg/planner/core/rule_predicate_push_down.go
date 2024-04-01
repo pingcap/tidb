@@ -41,13 +41,13 @@ type exprPrefixAdder struct {
 	lengths   []int
 }
 
-func (*ppdSolver) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (*ppdSolver) optimize(_ context.Context, lp LogicalPlan, opt *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	_, p := lp.PredicatePushDown(nil, opt)
 	return p, planChanged, nil
 }
 
-func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expression, chIdx int, opt *logicalOptimizeOp) {
+func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expression, chIdx int, opt *util.LogicalOptimizeOp) {
 	if len(conditions) == 0 {
 		p.Children()[chIdx] = child
 		return
@@ -73,7 +73,7 @@ func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expr
 }
 
 // PredicatePushDown implements LogicalPlan interface.
-func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	if len(p.children) == 0 {
 		return predicates, p.self
 	}
@@ -97,7 +97,7 @@ func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expressio
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	predicates = DeleteTrueExprs(p, predicates)
 	p.Conditions = DeleteTrueExprs(p, p.Conditions)
 	var child LogicalPlan
@@ -123,7 +123,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	retainedPredicates, _ := p.children[0].PredicatePushDown(predicates, opt)
 	p.conditions = make([]expression.Expression, 0, len(predicates))
 	p.conditions = append(p.conditions, predicates...)
@@ -132,25 +132,25 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression,
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	predicates = expression.PropagateConstant(ds.SCtx().GetExprCtx(), predicates)
 	predicates = DeleteTrueExprs(ds, predicates)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
 	predicates = ds.AddPrefix4ShardIndexes(ds.SCtx(), predicates)
 	ds.allConds = predicates
-	ds.pushedDownConds, predicates = expression.PushDownExprs(ds.SCtx().GetExprCtx(), predicates, ds.SCtx().GetClient(), kv.UnSpecified)
+	ds.pushedDownConds, predicates = expression.PushDownExprs(GetPushDownCtx(ds.SCtx()), predicates, kv.UnSpecified)
 	appendDataSourcePredicatePushDownTraceStep(ds, opt)
 	return predicates, ds
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression, _ *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression, _ *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	return predicates, p
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
+func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
 	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
@@ -395,14 +395,6 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 		innerTable, outerTable = outerTable, innerTable
 	}
 
-	// first simplify embedded outer join.
-	if innerPlan, ok := innerTable.(*LogicalJoin); ok {
-		simplifyOuterJoin(innerPlan, predicates)
-	}
-	if outerPlan, ok := outerTable.(*LogicalJoin); ok {
-		simplifyOuterJoin(outerPlan, predicates)
-	}
-
 	if p.JoinType == InnerJoin {
 		return
 	}
@@ -501,7 +493,7 @@ func specialNullRejectedCase1(ctx PlanContext, schema *expression.Schema, expr e
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
+func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
 	// Note that, grouping column related predicates can't be pushed down, since grouping column has nullability change after Expand OP itself.
 	// condition related with grouping column shouldn't be pushed down through it.
 	// currently, since expand is adjacent to aggregate, any filter above aggregate wanted to be push down through expand only have two cases:
@@ -513,7 +505,7 @@ func (p *LogicalExpand) PredicatePushDown(predicates []expression.Expression, op
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
+func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
 	for _, expr := range p.Exprs {
@@ -536,7 +528,7 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
+func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
 	for i, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		newExprs = append(newExprs, predicates...)
@@ -637,7 +629,7 @@ func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expressio
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
+func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
 	var condsToPush []expression.Expression
 	exprsOriginal := make([]expression.Expression, 0, len(la.AggFuncs))
 	for _, fun := range la.AggFuncs {
@@ -659,14 +651,14 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalLimit) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalLimit) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	// Limit forbids any condition to push down.
 	p.baseLogicalPlan.PredicatePushDown(nil, opt)
 	return predicates, p
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	// MaxOneRow forbids any condition to push down.
 	p.baseLogicalPlan.PredicatePushDown(nil, opt)
 	return predicates, p
@@ -817,7 +809,7 @@ func (p *LogicalWindow) GetPartitionByCols() []*expression.Column {
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, opt *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
 	partitionCols := expression.NewSchema(p.GetPartitionByCols()...)
@@ -835,7 +827,7 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, _ *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	if p.Extractor != nil {
 		predicates = p.Extractor.Extract(p.SCtx(), p.schema, p.names, predicates)
 	}
@@ -846,7 +838,7 @@ func (*ppdSolver) name() string {
 	return "predicate_push_down"
 }
 
-func appendTableDualTraceStep(replaced LogicalPlan, dual LogicalPlan, conditions []expression.Expression, opt *logicalOptimizeOp) {
+func appendTableDualTraceStep(replaced LogicalPlan, dual LogicalPlan, conditions []expression.Expression, opt *util.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v is replaced by %v_%v", replaced.TP(), replaced.ID(), dual.TP(), dual.ID())
 	}
@@ -861,10 +853,10 @@ func appendTableDualTraceStep(replaced LogicalPlan, dual LogicalPlan, conditions
 		buffer.WriteString("] are constant false or null")
 		return buffer.String()
 	}
-	opt.appendStepToCurrent(dual.ID(), dual.TP(), reason, action)
+	opt.AppendStepToCurrent(dual.ID(), dual.TP(), reason, action)
 }
 
-func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions []expression.Expression, opt *logicalOptimizeOp) {
+func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions []expression.Expression, opt *util.LogicalOptimizeOp) {
 	action := func() string {
 		return fmt.Sprintf("%v_%v is removed", p.TP(), p.ID())
 	}
@@ -884,10 +876,10 @@ func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions [
 			return buffer.String()
 		}
 	}
-	opt.appendStepToCurrent(p.ID(), p.TP(), reason, action)
+	opt.AppendStepToCurrent(p.ID(), p.TP(), reason, action)
 }
 
-func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *logicalOptimizeOp) {
+func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *util.LogicalOptimizeOp) {
 	if len(ds.pushedDownConds) < 1 {
 		return
 	}
@@ -905,17 +897,17 @@ func appendDataSourcePredicatePushDownTraceStep(ds *DataSource, opt *logicalOpti
 		fmt.Fprintf(buffer, "] are pushed down across %v_%v", ds.TP(), ds.ID())
 		return buffer.String()
 	}
-	opt.appendStepToCurrent(ds.ID(), ds.TP(), reason, action)
+	opt.AppendStepToCurrent(ds.ID(), ds.TP(), reason, action)
 }
 
-func appendAddSelectionTraceStep(p LogicalPlan, child LogicalPlan, sel *LogicalSelection, opt *logicalOptimizeOp) {
+func appendAddSelectionTraceStep(p LogicalPlan, child LogicalPlan, sel *LogicalSelection, opt *util.LogicalOptimizeOp) {
 	reason := func() string {
 		return ""
 	}
 	action := func() string {
 		return fmt.Sprintf("add %v_%v to connect %v_%v and %v_%v", sel.TP(), sel.ID(), p.TP(), p.ID(), child.TP(), child.ID())
 	}
-	opt.appendStepToCurrent(sel.ID(), sel.TP(), reason, action)
+	opt.AppendStepToCurrent(sel.ID(), sel.TP(), reason, action)
 }
 
 // AddPrefix4ShardIndexes add expression prefix for shard index. e.g. an index is test.uk(tidb_shard(a), a).
@@ -1039,7 +1031,7 @@ func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.Scalar
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	if p.cte.recursivePartLogicalPlan != nil {
 		// Doesn't support recursive CTE yet.
 		return predicates, p.self
@@ -1075,7 +1067,7 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, _ *lo
 
 // PredicatePushDown implements the LogicalPlan interface.
 // Currently, we only maintain the main query tree.
-func (p *LogicalSequence) PredicatePushDown(predicates []expression.Expression, op *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalSequence) PredicatePushDown(predicates []expression.Expression, op *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	lastIdx := len(p.children) - 1
 	remained, newLastChild := p.children[lastIdx].PredicatePushDown(predicates, op)
 	p.SetChild(lastIdx, newLastChild)
