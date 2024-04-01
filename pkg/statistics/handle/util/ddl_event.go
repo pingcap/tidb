@@ -75,11 +75,13 @@ func (e *DDLEvent) GetCreateTableInfo() (newTableInfo *model.TableInfo) {
 
 // NewTruncateTableEvent creates a new ddl event that truncates a table.
 func NewTruncateTableEvent(
+	schemaID int64,
 	newTableInfo *model.TableInfo,
 	droppedTableInfo *model.TableInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:           model.ActionTruncateTable,
+		schemaID:     schemaID,
 		tableInfo:    newTableInfo,
 		oldTableInfo: droppedTableInfo,
 	}

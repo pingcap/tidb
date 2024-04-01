@@ -858,6 +858,7 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	truncateTableEvent := statsutil.NewTruncateTableEvent(
+		job.SchemaID,
 		tblInfo,
 		oldTblInfo,
 	)

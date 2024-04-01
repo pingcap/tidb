@@ -106,6 +106,27 @@ func TestCreateASystemTable(t *testing.T) {
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
 }
 
+func TestTruncateASystemTable(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	// Test truncate a system table.
+	testKit.MustExec("create table mysql.test (c1 int, c2 int)")
+	testKit.MustExec("truncate table mysql.test")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("mysql"), model.NewCIStr("test"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	// Find the truncate table partition event.
+	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
+	err = h.HandleDDLEvent(truncateTableEvent)
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
+	statsTbl := h.GetTableStats(tableInfo)
+	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
+}
+
 func TestTruncateTable(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
