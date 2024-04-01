@@ -278,7 +278,7 @@ func hashInt64Uint64Map(m map[int64]uint64) uint64 {
 	h := fnv.New64a()
 	for _, k := range keys {
 		v := m[k]
-		_, _ = h.Write([]byte(fmt.Sprintf("%d:%d", k, v)))
+		_, _ = fmt.Fprintf(h, "%d:%d", k, v)
 	}
 	return h.Sum64()
 }
