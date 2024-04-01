@@ -5,7 +5,7 @@
 set -eux
 
 echo "testing checksum-error..."
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/checksum-error=1*return()"
+export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/checksum-error=1*return()"
 
 run_sql 'DROP DATABASE IF EXISTS routes_a0;'
 run_sql 'DROP DATABASE IF EXISTS routes_a1;'

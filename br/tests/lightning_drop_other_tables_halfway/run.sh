@@ -20,7 +20,7 @@ run_sql 'DROP DATABASE IF EXISTS lntest'
 run_sql 'CREATE DATABASE lntest'
 run_sql 'CREATE TABLE lntest.tbl02 (id BIGINT PRIMARY KEY AUTO_INCREMENT, val VARCHAR(255));'
 
-GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/getTableStructuresByFileMeta_BeforeFetchRemoteTableModels=return(6000)" run_lightning &
+GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/getTableStructuresByFileMeta_BeforeFetchRemoteTableModels=return(6000)" run_lightning &
 pid=$!
 
 sleep 4

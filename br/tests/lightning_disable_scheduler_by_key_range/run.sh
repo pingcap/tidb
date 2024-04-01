@@ -16,8 +16,8 @@
 
 set -eux
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/EnableTestAPI=return"
-export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/br/pkg/lightning/backend/local/ReadyForImportEngine=sleep(10000)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/server/EnableTestAPI=return"
+export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/pkg/lightning/backend/local/ReadyForImportEngine=sleep(10000)"
 
 run_lightning --backend='local' &
 shpid="$!"

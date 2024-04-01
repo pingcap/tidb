@@ -19,7 +19,7 @@ set -eux
 
 check_cluster_version 4 0 0 'local backend' || exit 0
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/FailBeforeStartImportingIndexEngine=return"
+export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/FailBeforeStartImportingIndexEngine=return"
 set +e
 if run_lightning; then
     echo "The first import doesn't fail as expected" >&2
