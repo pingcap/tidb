@@ -136,11 +136,13 @@ func (e *DDLEvent) GetAddColumnInfo() (newTableInfo *model.TableInfo, newColumnI
 // NewModifyColumnEvent creates a new ddl event that
 // modifies a column.
 func NewModifyColumnEvent(
+	schemaID int64,
 	newTableInfo *model.TableInfo,
 	modifiedColumnInfo []*model.ColumnInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:          model.ActionModifyColumn,
+		schemaID:    schemaID,
 		tableInfo:   newTableInfo,
 		columnInfos: modifiedColumnInfo,
 	}

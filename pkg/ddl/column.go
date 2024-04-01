@@ -795,6 +795,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Refactor the job args to add the old index ids into delete range table.
 		job.Args = []any{rmIdxIDs, getPartitionIDs(tblInfo)}
 		modifyColumnEvent := statsutil.NewModifyColumnEvent(
+			job.SchemaID,
 			tblInfo,
 			[]*model.ColumnInfo{changingCol},
 		)

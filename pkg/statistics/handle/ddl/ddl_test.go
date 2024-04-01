@@ -163,6 +163,28 @@ func TestAddColumnToASystemTable(t *testing.T) {
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
 }
 
+func TestModifyColumnOfASystemTable(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	// Test modify column of a system table.
+	// NOTE: Types have to be different, otherwise it won't trigger the modify column event.
+	testKit.MustExec("create table mysql.test (c1 varchar(255), c2 int)")
+	testKit.MustExec("insert into mysql.test values ('1',2)")
+	testKit.MustExec("alter table mysql.test modify column c1 int")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("mysql"), model.NewCIStr("test"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	// Find the modify column event.
+	modifyColumnEvent := findEvent(h.DDLEventCh(), model.ActionModifyColumn)
+	err = h.HandleDDLEvent(modifyColumnEvent)
+	require.Nil(t, h.Update(is))
+	statsTbl := h.GetTableStats(tableInfo)
+	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
+}
+
 func TestTruncateTable(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
