@@ -155,11 +155,13 @@ func (e *DDLEvent) GetModifyColumnInfo() (newTableInfo *model.TableInfo, modifie
 
 // NewAddPartitionEvent creates a new ddl event that adds partitions.
 func NewAddPartitionEvent(
+	schemaID int64,
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:        model.ActionAddTablePartition,
+		schemaID:  schemaID,
 		tableInfo: globalTableInfo,
 		partInfo:  addedPartInfo,
 	}
