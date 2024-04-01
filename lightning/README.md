@@ -25,9 +25,7 @@ When TiDB-Lightning is built successfully, you can find binary in the `bin` dire
 
 ## Running tests
 
-See [this document](../br/tests/README.md) for how to run integration tests.
-
-Due to history reasons, BR and TiDB-Lightning share the same test directory. You can find the test cases in the [`tests`](../br/tests) directory.
+See [this document](../lightning/tests/README.md) for how to run integration tests.
 
 ## Quick start
 See [Quick Start for TiDB Lightning](https://docs.pingcap.com/tidb/stable/get-started-with-tidb-lightning).
