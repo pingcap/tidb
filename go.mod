@@ -107,8 +107,8 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20240322070737-05aaba6cc6f7
-	github.com/tikv/pd/client v0.0.0-20240322051414-fb9e2d561b6e
+	github.com/tikv/client-go/v2 v2.0.8-0.20240329080557-69310ffc497d
+	github.com/tikv/pd/client v0.0.0-20240401035715-75b8a4b68295
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -320,5 +320,3 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
-
-replace github.com/tikv/client-go/v2 => /Users/yaojingyi/yaojingyi_workspace/workspace_master/client-go_gcv2_yjy

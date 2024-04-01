@@ -82,8 +82,8 @@ func getTsFromPD(store kv.Storage, tikvStore tikv.Storage) (uint64, error) {
 	if config.GetGlobalConfig().EnableKeyspaceLevelGC {
 		return tikvStore.CurrentTimestamp(kv.GlobalTxnScope)
 	}
-	// For safe point v1.
-	return store.CurrentMinTimestampInAllTSOGroup()
+	// For global gc.
+	return store.CurrentAllTSOKeyspaceGroupMinTs()
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -1254,7 +1254,7 @@ func (w *GCWorker) getAllKeyspace(ctx context.Context) ([]*keyspacepb.KeyspaceMe
 
 // IsKeyspaceMetaEnableSafePointV2 return true if keyspace meta config has safe point version is 'keyspace_level_gc'.
 func IsKeyspaceMetaEnableSafePointV2(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
-	if val, ok := keyspaceMeta.Config[gcutil.SafePointVersion]; ok {
+	if val, ok := keyspaceMeta.Config[gcutil.GCManagementType]; ok {
 		return val == gcutil.KeyspaceLevelGC
 	}
 	return false

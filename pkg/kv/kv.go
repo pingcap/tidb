@@ -694,8 +694,8 @@ type Storage interface {
 	UUID() string
 	// CurrentVersion returns current max committed version with the given txnScope (local or global).
 	CurrentVersion(txnScope string) (Version, error)
-	// CurrentMinTimestampInAllTSOGroup returns current minimum ts for all TSO groups
-	CurrentMinTimestampInAllTSOGroup() (uint64, error)
+	// CurrentAllTSOKeyspaceGroupMinTs returns current minimum ts from all TSO keyspace groups.
+	CurrentAllTSOKeyspaceGroupMinTs() (uint64, error)
 	// GetOracle gets a timestamp oracle client.
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.

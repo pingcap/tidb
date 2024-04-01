@@ -260,17 +260,17 @@ func (d TiKVDriver) UpdateSafePointVersionAndConfig(keyspaceMeta *keyspacepb.Key
 		return nil
 	}
 
-	// If safe point version in PD keyspace config is not v2.
+	// If safe point version in PD keyspace config is not 'keyspace_level_gc'.
 	if !gcworker.IsKeyspaceMetaEnableSafePointV2(keyspaceMeta) {
-		// Tidb config safe point version v2. Update safe point version in PD keyspace config to v2.
+		// Tidb config safe point version v2. Update safe point version in PD keyspace config to 'keyspace_level_gc'.
 		if config.GetGlobalConfig().EnableKeyspaceLevelGC {
 			ctx := context.Background()
-			keyspaceSafePointVersionConfig := pdhttp.KeyspaceSafePointVersionConfig{
-				Config: pdhttp.KeyspaceSafePointVersion{
-					SafePointVersion: gcutil.KeyspaceLevelGC,
+			keyspaceSafePointVersionConfig := pdhttp.KeyspaceGCManagementTypeConfig{
+				Config: pdhttp.KeyspaceGCManagementType{
+					GCManagementType: gcutil.KeyspaceLevelGC,
 				},
 			}
-			err := pdHTTPCli.UpdateKeyspaceSafePointVersion(ctx, keyspaceMeta.GetName(), &keyspaceSafePointVersionConfig)
+			err := pdHTTPCli.UpdateKeyspaceGCManagementType(ctx, keyspaceMeta.GetName(), &keyspaceSafePointVersionConfig)
 			if err != nil {
 				return err
 			}
@@ -278,11 +278,11 @@ func (d TiKVDriver) UpdateSafePointVersionAndConfig(keyspaceMeta *keyspacepb.Key
 		}
 	}
 
-	// If safe point version in PD keyspace config is v2,
-	// TiDB config safe point version is not v2.
-	// Set the enable safe point v2 in tidb config is true.
+	// If safe point version in PD keyspace config is 'keyspace_level_gc',
+	// but in TiDB config file 'enable-keyspace-level-gc' is not true.
+	// Set the EnableKeyspaceLevelGC = true in TiDB global config.
 	if !config.GetGlobalConfig().EnableKeyspaceLevelGC {
-		logutil.BgLogger().Warn("Safe point v2 etcd path exists, config.EnableKeyspaceLevelGC must be true.")
+		logutil.BgLogger().Warn("keyspace level gc etcd path exists, config.EnableKeyspaceLevelGC must be true.")
 		config.UpdateGlobal(func(c *config.Config) {
 			c.EnableKeyspaceLevelGC = true
 		})
@@ -427,8 +427,8 @@ func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 }
 
 // CurrentMinTimestamp returns current minimum timestamp across all keyspace groups.
-func (s *tikvStore) CurrentMinTimestampInAllTSOGroup() (uint64, error) {
-	ts, err := s.KVStore.CurrentMinTimestampInAllTSOGroup()
+func (s *tikvStore) CurrentAllTSOKeyspaceGroupMinTs() (uint64, error) {
+	ts, err := s.KVStore.CurrentAllTSOKeyspaceGroupMinTs()
 
 	if err != nil && strings.Contains(err.Error(), "Unimplemented") {
 		ts, err = s.KVStore.CurrentTimestamp(kv.GlobalTxnScope)
