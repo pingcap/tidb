@@ -104,8 +104,20 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		return errors.Trace(err)
 	}
 
+	schemaNotMatch := false
+	for i := 0; i < len(stmt.dbName); i++ {
+		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+		if err != nil {
+			return err
+		}
+		if stmt.tbls[i].Meta().TableVersion != newTbl.Meta().TableVersion {
+			schemaNotMatch = true
+		}
+		stmt.tbls[i] = newTbl
+	}
+
 	// step 3: check schema version
-	if stmtAst.SchemaVersion != is.SchemaMetaVersion() {
+	if schemaNotMatch || stmtAst.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
@@ -179,30 +191,11 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	skip := false
-	if stmtCtx.UseCache {
-		// Acquire the metadata lock and update the schema version.
-		for i := 0; i < len(stmt.dbName); i++ {
-			prevVersion := stmt.tbls[i].Meta().TableVersion
-			tbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
-			if err != nil || tbl.Meta().TableVersion != prevVersion {
-				// Handle the case that the schema is updated for select statement.
-				latestSchemaVersion := domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
-				if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), stmt.StmtText,
-					stmt.StmtDB, stmtAst.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
-					return nil, nil, err
-				}
-				skip = true
-				break
-			}
-		}
-	}
-
 	// In rc or for update read, we need the latest schema version to decide whether we need to
 	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
 	var latestSchemaVersion int64
 
-	if stmtCtx.UseCache && !skip {
+	if stmtCtx.UseCache {
 		if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || stmt.ForUpdateRead {
 			// In Rc or ForUpdateRead, we should check if the information schema has been changed since
 			// last time. If it changed, we should rebuild the plan. Here, we use a different and more

@@ -239,6 +239,7 @@ type planCacheKey struct {
 	connID        uint64
 	stmtText      string
 	schemaVersion int64
+	tblVersionMap map[int64]uint64
 
 	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
