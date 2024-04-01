@@ -33,27 +33,27 @@ func init() {
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
-func GetRowCountByColumnRanges(sctx context.PlanContext, coll *statistics.HistColl, colID int64, colRanges []*ranger.Range) (result float64, err error) {
+func GetRowCountByColumnRanges(sctx context.PlanContext, coll *statistics.HistColl, colUniqueID int64, colRanges []*ranger.Range) (result float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
-		debugTraceGetRowCountInput(sctx, colID, colRanges)
+		debugTraceGetRowCountInput(sctx, colUniqueID, colRanges)
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	sc := sctx.GetSessionVars().StmtCtx
-	c, ok := coll.Columns[colID]
-	colInfoID := colID
+	c, ok := coll.Columns[colUniqueID]
+	colInfoID := colUniqueID
 	if len(coll.UniqueID2colInfoID) > 0 {
-		colInfoID = coll.UniqueID2colInfoID[colID]
+		colInfoID = coll.UniqueID2colInfoID[colUniqueID]
 	}
 	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colInfoID)
 	if c != nil && c.Info != nil {
 		name = c.Info.Name.O
 	}
-	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colID) {
+	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colUniqueID) {
 		result, err = getPseudoRowCountByColumnRanges(sc.TypeCtx(), float64(coll.RealtimeCount), colRanges, 0)
 		if err == nil && sc.EnableOptimizerCETrace && ok {
 			ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
@@ -75,27 +75,27 @@ func GetRowCountByColumnRanges(sctx context.PlanContext, coll *statistics.HistCo
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-func GetRowCountByIntColumnRanges(sctx context.PlanContext, coll *statistics.HistColl, colID int64, intRanges []*ranger.Range) (result float64, err error) {
+func GetRowCountByIntColumnRanges(sctx context.PlanContext, coll *statistics.HistColl, colUniqueID int64, intRanges []*ranger.Range) (result float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
-		debugTraceGetRowCountInput(sctx, colID, intRanges)
+		debugTraceGetRowCountInput(sctx, colUniqueID, intRanges)
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result)
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
 	sc := sctx.GetSessionVars().StmtCtx
-	c, ok := coll.Columns[colID]
-	colInfoID := colID
+	c, ok := coll.Columns[colUniqueID]
+	colInfoID := colUniqueID
 	if len(coll.UniqueID2colInfoID) > 0 {
-		colInfoID = coll.UniqueID2colInfoID[colID]
+		colInfoID = coll.UniqueID2colInfoID[colUniqueID]
 	}
 	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colInfoID)
 	if c != nil && c.Info != nil {
 		name = c.Info.Name.O
 	}
-	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colID) {
+	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colUniqueID) {
 		if len(intRanges) == 0 {
 			return 0, nil
 		}

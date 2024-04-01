@@ -170,19 +170,19 @@ func getIndexRowCountForStatsV1(sctx context.PlanContext, coll *statistics.HistC
 			}
 			var count float64
 			var err error
-			colIDs := coll.Idx2ColUniqueIDs[idxID]
-			var colID int64
-			if rangePosition >= len(colIDs) {
-				colID = -1
+			colUniqueIDs := coll.Idx2ColUniqueIDs[idxID]
+			var colUniqueID int64
+			if rangePosition >= len(colUniqueIDs) {
+				colUniqueID = -1
 			} else {
-				colID = colIDs[rangePosition]
+				colUniqueID = colUniqueIDs[rangePosition]
 			}
 			// prefer index stats over column stats
-			if idxIDs, ok := coll.ColUniqueID2IdxIDs[colID]; ok && len(idxIDs) > 0 {
+			if idxIDs, ok := coll.ColUniqueID2IdxIDs[colUniqueID]; ok && len(idxIDs) > 0 {
 				idxID := idxIDs[0]
 				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, []*ranger.Range{&rang})
 			} else {
-				count, err = GetRowCountByColumnRanges(sctx, coll, colID, []*ranger.Range{&rang})
+				count, err = GetRowCountByColumnRanges(sctx, coll, colUniqueID, []*ranger.Range{&rang})
 			}
 			if err != nil {
 				return 0, errors.Trace(err)
