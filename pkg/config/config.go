@@ -738,6 +738,9 @@ type Performance struct {
 	// If ForceInitStats is false, tidb can provide service before init stats is finished. Note that during the period
 	// of init stats the optimizer may make bad decisions due to pseudo stats.
 	ForceInitStats bool `toml:"force-init-stats" json:"force-init-stats"`
+
+	// ConcurrentlyInitStats indicates whether to use concurrency to init stats.
+	ConcurrentlyInitStats bool `toml:"concurrently-init-stats" json:"concurrently-init-stats"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -1007,6 +1010,7 @@ var defaultConf = Config{
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
+		ConcurrentlyInitStats:             false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
