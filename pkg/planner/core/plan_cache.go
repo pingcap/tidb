@@ -118,7 +118,8 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		}
 		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
 		if err != nil {
-			return err
+			schemaNotMatch = true
+			continue
 		}
 		if stmt.tbls[i].Meta().TableVersion != newTbl.Meta().TableVersion {
 			schemaNotMatch = true

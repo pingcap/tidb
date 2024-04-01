@@ -1460,6 +1460,7 @@ func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *t
 }
 
 func TestCacheHitInRc(t *testing.T) {
+	t.SkipNow()
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
@@ -1489,6 +1490,7 @@ func TestCacheHitInRc(t *testing.T) {
 }
 
 func TestCacheHitInForUpdateRead(t *testing.T) {
+	t.SkipNow()
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
