@@ -227,7 +227,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		return nil, errors.Trace(err)
 	}
 
-	err = d.UpdateSafePointVersionAndConfig(keyspaceMeta, s.GetPDHTTPClient())
+	err = d.SyncGCManagementTypeAndConfig(keyspaceMeta, s.GetPDHTTPClient())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -255,7 +255,8 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 	return store, nil
 }
 
-func (d TiKVDriver) UpdateSafePointVersionAndConfig(keyspaceMeta *keyspacepb.KeyspaceMeta, pdHTTPCli pdhttp.Client) error {
+// SyncGCManagementTypeAndConfig sync gc management and TiDB config.
+func (d TiKVDriver) SyncGCManagementTypeAndConfig(keyspaceMeta *keyspacepb.KeyspaceMeta, pdHTTPCli pdhttp.Client) error {
 	if keyspaceMeta == nil {
 		return nil
 	}
