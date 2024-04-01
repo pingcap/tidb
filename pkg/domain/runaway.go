@@ -54,7 +54,8 @@ const (
 	runawayRecordGCBatchSize       = 100
 	runawayRecordGCSelectBatchSize = runawayRecordGCBatchSize * 5
 
-	maxIDRetries = 3
+	maxIDRetries                = 3
+	runawayLoopLogErrorInterval = 5 * time.Minute
 )
 
 var systemSchemaCIStr = model.NewCIStr("mysql")
@@ -140,12 +141,42 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 	}
 }
 
+func (do *Domain) runawayStartLoop() {
+	defer util.Recover(metrics.LabelDomain, "runawayStartLoop", nil, false)
+	runawayWatchSyncTicker := time.NewTicker(runawayWatchSyncInterval)
+	count := 0
+	var err error
+	logutil.BgLogger().Info(
+		"try to start runaway manager loop",
+		zap.Error(err))
+	for {
+		select {
+		case <-do.exit:
+			return
+		case <-runawayWatchSyncTicker.C:
+			// Due to the watch and watch done tables is created later than runaway queries table
+			err = do.updateNewAndDoneWatch()
+			if err == nil {
+				do.wg.Run(do.runawayRecordFlushLoop, "runawayRecordFlushLoop")
+				do.wg.Run(do.runawayWatchSyncLoop, "runawayWatchSyncLoop")
+				do.runawayManager.MarkSyncerInitialized()
+				return
+			}
+		}
+		count++
+		if count == 1800 {
+			logutil.BgLogger().Warn(
+				"failed to start runaway manager loop, please check whether the bootstrap or update is finished",
+				zap.Error(err))
+		}
+	}
+}
+
 func (do *Domain) updateNewAndDoneWatch() error {
 	do.runawaySyncer.mu.Lock()
 	defer do.runawaySyncer.mu.Unlock()
 	records, err := do.runawaySyncer.getNewWatchRecords()
 	if err != nil {
-		logutil.BgLogger().Error("try to get new runaway watch", zap.Error(err))
 		return err
 	}
 	for _, r := range records {
@@ -153,7 +184,6 @@ func (do *Domain) updateNewAndDoneWatch() error {
 	}
 	doneRecords, err := do.runawaySyncer.getNewWatchDoneRecords()
 	if err != nil {
-		logutil.BgLogger().Error("try to get done runaway watch", zap.Error(err))
 		return err
 	}
 	for _, r := range doneRecords {
@@ -165,6 +195,7 @@ func (do *Domain) updateNewAndDoneWatch() error {
 func (do *Domain) runawayWatchSyncLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayWatchSyncLoop", nil, false)
 	runawayWatchSyncTicker := time.NewTicker(runawayWatchSyncInterval)
+	lastLogErrorTime := time.Now()
 	for {
 		select {
 		case <-do.exit:
@@ -172,7 +203,10 @@ func (do *Domain) runawayWatchSyncLoop() {
 		case <-runawayWatchSyncTicker.C:
 			err := do.updateNewAndDoneWatch()
 			if err != nil {
-				logutil.BgLogger().Warn("get runaway watch record failed", zap.Error(err))
+				if now := time.Now(); now.Sub(lastLogErrorTime) > runawayLoopLogErrorInterval {
+					logutil.BgLogger().Warn("get runaway watch record failed", zap.Error(err))
+					lastLogErrorTime = now
+				}
 			}
 		}
 	}
