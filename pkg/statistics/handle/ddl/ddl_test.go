@@ -158,6 +158,7 @@ func TestAddColumnToASystemTable(t *testing.T) {
 	// Find the add column event.
 	addColumnEvent := findEvent(h.DDLEventCh(), model.ActionAddColumn)
 	err = h.HandleDDLEvent(addColumnEvent)
+	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 	statsTbl := h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
@@ -180,6 +181,7 @@ func TestModifyColumnOfASystemTable(t *testing.T) {
 	// Find the modify column event.
 	modifyColumnEvent := findEvent(h.DDLEventCh(), model.ActionModifyColumn)
 	err = h.HandleDDLEvent(modifyColumnEvent)
+	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 	statsTbl := h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
@@ -201,6 +203,7 @@ func TestAddNewPartitionToASystemTable(t *testing.T) {
 	// Find the add partition event.
 	addPartitionEvent := findEvent(h.DDLEventCh(), model.ActionAddTablePartition)
 	err = h.HandleDDLEvent(addPartitionEvent)
+	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 	statsTbl := h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
@@ -222,6 +225,7 @@ func TestDropPartitionOfASystemTable(t *testing.T) {
 	// Find the drop partition event.
 	dropPartitionEvent := findEvent(h.DDLEventCh(), model.ActionDropTablePartition)
 	err = h.HandleDDLEvent(dropPartitionEvent)
+	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 	statsTbl := h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
@@ -244,6 +248,7 @@ func TestExchangePartitionWithASystemTable(t *testing.T) {
 	// Find the exchange partition event.
 	exchangePartitionEvent := findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
 	err = h.HandleDDLEvent(exchangePartitionEvent)
+	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 	statsTbl := h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
@@ -265,6 +270,7 @@ func TestRemovePartitioningOfASystemTable(t *testing.T) {
 	// Find the remove partitioning event.
 	removePartitioningEvent := findEvent(h.DDLEventCh(), model.ActionRemovePartitioning)
 	err = h.HandleDDLEvent(removePartitioningEvent)
+	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 	statsTbl := h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
@@ -286,6 +292,7 @@ func TestTruncateAPartitionOfASystemTable(t *testing.T) {
 	// Find the truncate partition event.
 	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
 	err = h.HandleDDLEvent(truncatePartitionEvent)
+	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 	statsTbl := h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
