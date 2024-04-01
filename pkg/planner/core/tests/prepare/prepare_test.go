@@ -1460,58 +1460,57 @@ func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *t
 }
 
 func TestCacheHitInRc(t *testing.T) {
-	t.SkipNow()
-	ctx := context.Background()
-	store := testkit.CreateMockStore(t)
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk1.MustExec("set global tidb_enable_metadata_lock=0")
-	tk1.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	tk2.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	tk1.MustExec("use test")
-	tk2.MustExec("use test")
-	tk1.MustExec("drop table if exists t1")
-	tk1.MustExec("create table t1(id int primary key, c int)")
-	tk1.MustExec("insert into t1 values(1, 1), (2, 2)")
-	// prepare text protocol
-	tk1.MustExec("prepare s from 'select * from t1'")
-	// prepare binary protocol
-	stmtID, _, _, err := tk1.Session().PrepareStmt("select * from t1")
-	require.Nil(t, err)
-
-	// Test for RC
-	tk1.MustExec("set tx_isolation='READ-COMMITTED'")
-	tk1.MustExec("begin pessimistic")
-
-	// Verify for the RC isolation
-	verifyCache(ctx, t, tk1, tk2, stmtID)
-	tk1.MustExec("rollback")
+	//t.SkipNow()
+	//ctx := context.Background()
+	//store := testkit.CreateMockStore(t)
+	//
+	//tk1 := testkit.NewTestKit(t, store)
+	//tk2 := testkit.NewTestKit(t, store)
+	//tk1.MustExec("set global tidb_enable_metadata_lock=0")
+	//tk1.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	//tk2.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	//tk1.MustExec("use test")
+	//tk2.MustExec("use test")
+	//tk1.MustExec("drop table if exists t1")
+	//tk1.MustExec("create table t1(id int primary key, c int)")
+	//tk1.MustExec("insert into t1 values(1, 1), (2, 2)")
+	//// prepare text protocol
+	//tk1.MustExec("prepare s from 'select * from t1'")
+	//// prepare binary protocol
+	//stmtID, _, _, err := tk1.Session().PrepareStmt("select * from t1")
+	//require.Nil(t, err)
+	//
+	//// Test for RC
+	//tk1.MustExec("set tx_isolation='READ-COMMITTED'")
+	//tk1.MustExec("begin pessimistic")
+	//
+	//// Verify for the RC isolation
+	//verifyCache(ctx, t, tk1, tk2, stmtID)
+	//tk1.MustExec("rollback")
 }
 
 func TestCacheHitInForUpdateRead(t *testing.T) {
-	t.SkipNow()
-	ctx := context.Background()
-	store := testkit.CreateMockStore(t)
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk1.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	tk2.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	tk1.MustExec("use test")
-	tk2.MustExec("use test")
-	tk1.MustExec("drop table if exists t1")
-	tk1.MustExec("create table t1(id int primary key, c int)")
-	tk1.MustExec("insert into t1 values(1, 1), (2, 2)")
-
-	tk1.MustExec("prepare s from 'select * from t1 where id = 1 for update'")
-	stmtID, _, _, err := tk1.Session().PrepareStmt("select * from t1 where id = 1 for update")
-	require.Nil(t, err)
-	tk1.MustExec("begin pessimistic")
-
-	// Verify for the for update read
-	verifyCache(ctx, t, tk1, tk2, stmtID)
-	tk1.MustExec("rollback")
+	//ctx := context.Background()
+	//store := testkit.CreateMockStore(t)
+	//
+	//tk1 := testkit.NewTestKit(t, store)
+	//tk2 := testkit.NewTestKit(t, store)
+	//tk1.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	//tk2.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	//tk1.MustExec("use test")
+	//tk2.MustExec("use test")
+	//tk1.MustExec("drop table if exists t1")
+	//tk1.MustExec("create table t1(id int primary key, c int)")
+	//tk1.MustExec("insert into t1 values(1, 1), (2, 2)")
+	//
+	//tk1.MustExec("prepare s from 'select * from t1 where id = 1 for update'")
+	//stmtID, _, _, err := tk1.Session().PrepareStmt("select * from t1 where id = 1 for update")
+	//require.Nil(t, err)
+	//tk1.MustExec("begin pessimistic")
+	//
+	//// Verify for the for update read
+	//verifyCache(ctx, t, tk1, tk2, stmtID)
+	//tk1.MustExec("rollback")
 }
 
 func TestPointGetForUpdateAutoCommitCache(t *testing.T) {
