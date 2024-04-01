@@ -21,7 +21,7 @@ CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 rm -f "$TEST_DIR/lightning-checkpoint-dirty-tableid.log"
 run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint'
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/InitializeCheckpointExit=return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/InitializeCheckpointExit=return(true)"
 run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "$CUR/mysql.toml" -d "$CUR/data"
 
 run_sql 'DROP DATABASE IF EXISTS cpdt'
@@ -50,7 +50,7 @@ run_sql 'DROP DATABASE IF EXISTS cpdt'
 rm -f "$TEST_DIR/lightning-checkpoint-dirty-tableid.log"
 rm -f "/tmp/tidb_lightning_checkpoint.pb"
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/InitializeCheckpointExit=return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/InitializeCheckpointExit=return(true)"
 run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "$CUR/file.toml" -d "$CUR/data"
 
 run_sql 'DROP DATABASE IF EXISTS cpdt'

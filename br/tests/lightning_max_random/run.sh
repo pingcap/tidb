@@ -44,7 +44,7 @@ cleanup() {
 
 cleanup
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/changeEpochVersion=1*return(-1)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/lightning/backend/local/changeEpochVersion=1*return(-1)"
 
 # auto_random_max = 2^{64-1-10}-1
 # db.test contains key auto_random_max - 1
@@ -69,7 +69,7 @@ run_sql 'INSERT INTO db.test2(b) VALUES(55);'
 grep 'RequestTooOld' "$TEST_DIR/lightning.log" | grep -q 'needRescan'
 cleanup
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/changeEpochVersion=1*return(10)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/lightning/backend/local/changeEpochVersion=1*return(10)"
 
 # auto_random_max = 2^{64-1-10}-1
 # db.test contains key auto_random_max - 1
