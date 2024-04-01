@@ -944,14 +944,6 @@ func (b *builtinTiDBDecodeKeySig) evalString(ctx EvalContext, row chunk.Row) (st
 	return s, false, nil
 }
 
-// TiDBDecodeKeyFunctionKeyType is used to identify the decoder function in context.
-type TiDBDecodeKeyFunctionKeyType int
-
-// String() implements Stringer.
-func (k TiDBDecodeKeyFunctionKeyType) String() string {
-	return "tidb_decode_key"
-}
-
 type tidbDecodeSQLDigestsFunctionClass struct {
 	baseFunctionClass
 }
