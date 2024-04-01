@@ -112,7 +112,7 @@ func (j *innerJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joined
 			// probe column that is not in joinedChk
 			srcCol := j.currentChunk.Column(colIndex)
 			chunk.CopySelectedRowsWithRowIdFunc(dstCol, srcCol, j.selected, 0, len(j.selected), func(i int) int {
-				return j.rowIndexInfos[i].probeRowIndex
+				return j.usedRows[j.rowIndexInfos[i].probeRowIndex]
 			})
 		}
 	}
