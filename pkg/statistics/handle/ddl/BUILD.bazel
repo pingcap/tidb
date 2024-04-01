@@ -31,7 +31,7 @@ go_test(
     timeout = "short",
     srcs = ["ddl_test.go"],
     flaky = True,
-    shard_count = 25,
+    shard_count = 26,
     deps = [
         "//pkg/parser/model",
         "//pkg/planner/cardinality",

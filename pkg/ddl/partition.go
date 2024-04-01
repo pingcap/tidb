@@ -3117,6 +3117,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// Include the old table ID, if changed, which may contain global statistics,
 		// so it can be reused for the new (non)partitioned table.
 		event, err := newStatsDDLEventForJob(
+			job.SchemaID,
 			job.Type, oldTblID, tblInfo, statisticsPartInfo, droppedPartInfo,
 		)
 		if err != nil {
@@ -3136,6 +3137,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 // newStatsDDLEventForJob creates a statsutil.DDLEvent for a job.
 // It is used for reorganize partition, add partitioning and remove partitioning.
 func newStatsDDLEventForJob(
+	schemaID int64,
 	jobType model.ActionType,
 	oldTblID int64,
 	tblInfo *model.TableInfo,
@@ -3146,18 +3148,21 @@ func newStatsDDLEventForJob(
 	switch jobType {
 	case model.ActionReorganizePartition:
 		event = statsutil.NewReorganizePartitionEvent(
+			schemaID,
 			tblInfo,
 			addedPartInfo,
 			droppedPartInfo,
 		)
 	case model.ActionAlterTablePartitioning:
 		event = statsutil.NewAddPartitioningEvent(
+			schemaID,
 			oldTblID,
 			tblInfo,
 			addedPartInfo,
 		)
 	case model.ActionRemovePartitioning:
 		event = statsutil.NewRemovePartitioningEvent(
+			schemaID,
 			oldTblID,
 			tblInfo,
 			droppedPartInfo,

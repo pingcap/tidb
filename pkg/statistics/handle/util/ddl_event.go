@@ -237,12 +237,14 @@ func (e *DDLEvent) GetExchangePartitionInfo() (
 // NewReorganizePartitionEvent creates a new ddl event that reorganizes partitions.
 // We also use it for increasing or decreasing the number of hash partitions.
 func NewReorganizePartitionEvent(
+	schemaID int64,
 	globalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:          model.ActionReorganizePartition,
+		schemaID:    schemaID,
 		tableInfo:   globalTableInfo,
 		partInfo:    addedPartInfo,
 		oldPartInfo: droppedPartInfo,
@@ -284,12 +286,14 @@ func (e *DDLEvent) GetTruncatePartitionInfo() (
 // NewAddPartitioningEvent creates a new ddl event that converts a single table to a partitioned table.
 // For example, `alter table t partition by range (c1) (partition p1 values less than (10))`.
 func NewAddPartitioningEvent(
+	schemaID int64,
 	oldSingleTableID int64,
 	newGlobalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:         model.ActionAlterTablePartitioning,
+		schemaID:   schemaID,
 		oldTableID: oldSingleTableID,
 		tableInfo:  newGlobalTableInfo,
 		partInfo:   addedPartInfo,
@@ -308,12 +312,14 @@ func (e *DDLEvent) GetAddPartitioningInfo() (
 // NewRemovePartitioningEvent creates a new ddl event that converts a partitioned table to a single table.
 // For example, `alter table t remove partitioning`.
 func NewRemovePartitioningEvent(
+	schemaID int64,
 	oldPartitionedTableID int64,
 	newSingleTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:          model.ActionRemovePartitioning,
+		schemaID:    schemaID,
 		oldTableID:  oldPartitionedTableID,
 		tableInfo:   newSingleTableInfo,
 		oldPartInfo: droppedPartInfo,
