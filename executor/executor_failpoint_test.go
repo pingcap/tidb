@@ -555,3 +555,26 @@ func TestDeadlocksTable(t *testing.T) {
 			id2+"/2022-06-11 02:03:04.987654/1/203/<nil>/<nil>/<nil>/<nil>/201",
 		))
 }
+
+func TestShuffleExit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(i int, j int, k int);")
+	tk.MustExec("insert into t1 VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4);")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/shuffleError", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/shuffleError"))
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/shuffleExecFetchDataAndSplit", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/shuffleExecFetchDataAndSplit"))
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/shuffleWorkerRun", "panic(\"ShufflePanic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/shuffleWorkerRun"))
+	}()
+	err := tk.QueryToErr("SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i) ORDER BY 1+SUM(i) OVER w;")
+	require.ErrorContains(t, err, "ShuffleExec.Next error")
+}
