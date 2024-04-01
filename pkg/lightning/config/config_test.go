@@ -1338,5 +1338,5 @@ func TestAdjustBlockSize(t *testing.T) {
 
 	err := cfg.Adjust(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, ByteSize(16384), cfg.TikvImporter.BlockSize)
+	require.EqualValues(t, 16384, cfg.TikvImporter.BlockSize)
 }
