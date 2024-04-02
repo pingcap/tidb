@@ -66,32 +66,32 @@ type ldapAuthImplBuilder struct {
 	ldapConnectionPool *pools.ResourcePool
 }
 
-func (impl *ldapAuthImplBuilder) build() *ldapAuthImpl {
-	impl.RLock()
-	defer impl.RUnlock()
+func (builder *ldapAuthImplBuilder) build() *ldapAuthImpl {
+	builder.RLock()
+	defer builder.RUnlock()
 
 	return &ldapAuthImpl{
-		bindBaseDN:         impl.bindBaseDN,
-		bindRootDN:         impl.bindRootDN,
-		bindRootPWD:        impl.bindRootPWD,
-		searchAttr:         impl.searchAttr,
-		ldapConnectionPool: impl.ldapConnectionPool,
+		bindBaseDN:         builder.bindBaseDN,
+		bindRootDN:         builder.bindRootDN,
+		bindRootPWD:        builder.bindRootPWD,
+		searchAttr:         builder.searchAttr,
+		ldapConnectionPool: builder.ldapConnectionPool,
 	}
 }
 
-func (impl *ldapAuthImplBuilder) initializeCAPool() error {
-	if impl.caPath == "" {
-		impl.caPool = nil
+func (builder *ldapAuthImplBuilder) initializeCAPool() error {
+	if builder.caPath == "" {
+		builder.caPool = nil
 		return nil
 	}
 
-	impl.caPool = x509.NewCertPool()
-	caCert, err := os.ReadFile(impl.caPath)
+	builder.caPool = x509.NewCertPool()
+	caCert, err := os.ReadFile(builder.caPath)
 	if err != nil {
 		return errors.Wrapf(err, "read ca certificate at %s", caCert)
 	}
 
-	ok := impl.caPool.AppendCertsFromPEM(caCert)
+	ok := builder.caPool.AppendCertsFromPEM(caCert)
 	if !ok {
 		return errors.New("fail to parse ca certificate")
 	}
@@ -162,207 +162,207 @@ func ldapConnectionFactory(address string, tlsConfig *tls.Config) func() (pools.
 	}
 }
 
-func (impl *ldapAuthImplBuilder) initializePool() {
-	if impl.ldapConnectionPool != nil {
-		impl.ldapConnectionPool.Close()
-	}
+func (builder *ldapAuthImplBuilder) initializePool() {
+	// skip re-initialization when the variables are not correct
+	if builder.initCapacity > 0 && builder.maxCapacity >= builder.initCapacity {
+		if builder.ldapConnectionPool != nil {
+			builder.ldapConnectionPool.Close()
+		}
 
-	// skip initialization when the variables are not correct
-	if impl.initCapacity > 0 && impl.maxCapacity >= impl.initCapacity {
-		address := net.JoinHostPort(impl.ldapServerHost, strconv.FormatUint(uint64(impl.ldapServerPort), 10))
+		address := net.JoinHostPort(builder.ldapServerHost, strconv.FormatUint(uint64(builder.ldapServerPort), 10))
 		var tlsConfig *tls.Config
-		if impl.enableTLS {
+		if builder.enableTLS {
 			tlsConfig = &tls.Config{
-				RootCAs:    impl.caPool,
-				ServerName: impl.ldapServerHost,
+				RootCAs:    builder.caPool,
+				ServerName: builder.ldapServerHost,
 				MinVersion: tls.VersionTLS12,
 			}
 		}
 
-		impl.ldapConnectionPool = pools.NewResourcePool(ldapConnectionFactory(address, tlsConfig), impl.initCapacity, impl.maxCapacity, 0)
+		builder.ldapConnectionPool = pools.NewResourcePool(ldapConnectionFactory(address, tlsConfig), builder.initCapacity, builder.maxCapacity, 0)
 	}
 }
 
 // SetBindBaseDN updates the BaseDN used to search the user
-func (impl *ldapAuthImplBuilder) SetBindBaseDN(bindBaseDN string) {
-	impl.Lock()
-	defer impl.Unlock()
+func (builder *ldapAuthImplBuilder) SetBindBaseDN(bindBaseDN string) {
+	builder.Lock()
+	defer builder.Unlock()
 
-	impl.bindBaseDN = bindBaseDN
+	builder.bindBaseDN = bindBaseDN
 }
 
 // SetBindRootDN updates the RootDN. Before searching the users, the connection will bind
 // this root user.
-func (impl *ldapAuthImplBuilder) SetBindRootDN(bindRootDN string) {
-	impl.Lock()
-	defer impl.Unlock()
+func (builder *ldapAuthImplBuilder) SetBindRootDN(bindRootDN string) {
+	builder.Lock()
+	defer builder.Unlock()
 
-	impl.bindRootDN = bindRootDN
+	builder.bindRootDN = bindRootDN
 }
 
 // SetBindRootPW updates the password of the user specified by `rootDN`.
-func (impl *ldapAuthImplBuilder) SetBindRootPW(bindRootPW string) {
-	impl.Lock()
-	defer impl.Unlock()
+func (builder *ldapAuthImplBuilder) SetBindRootPW(bindRootPW string) {
+	builder.Lock()
+	defer builder.Unlock()
 
-	impl.bindRootPWD = bindRootPW
+	builder.bindRootPWD = bindRootPW
 }
 
 // SetSearchAttr updates the search attributes.
-func (impl *ldapAuthImplBuilder) SetSearchAttr(searchAttr string) {
-	impl.Lock()
-	defer impl.Unlock()
+func (builder *ldapAuthImplBuilder) SetSearchAttr(searchAttr string) {
+	builder.Lock()
+	defer builder.Unlock()
 
-	impl.searchAttr = searchAttr
+	builder.searchAttr = searchAttr
 }
 
 // SetLDAPServerHost updates the host of LDAP server
-func (impl *ldapAuthImplBuilder) SetLDAPServerHost(ldapServerHost string) {
-	impl.Lock()
-	defer impl.Unlock()
+func (builder *ldapAuthImplBuilder) SetLDAPServerHost(ldapServerHost string) {
+	builder.Lock()
+	defer builder.Unlock()
 
-	if ldapServerHost != impl.ldapServerHost {
-		impl.ldapServerHost = ldapServerHost
-		impl.initializePool()
+	if ldapServerHost != builder.ldapServerHost {
+		builder.ldapServerHost = ldapServerHost
+		builder.initializePool()
 	}
 }
 
 // SetLDAPServerPort updates the port of LDAP server
-func (impl *ldapAuthImplBuilder) SetLDAPServerPort(ldapServerPort int) {
-	impl.Lock()
-	defer impl.Unlock()
+func (builder *ldapAuthImplBuilder) SetLDAPServerPort(ldapServerPort int) {
+	builder.Lock()
+	defer builder.Unlock()
 
-	if ldapServerPort != impl.ldapServerPort {
-		impl.ldapServerPort = ldapServerPort
-		impl.initializePool()
+	if ldapServerPort != builder.ldapServerPort {
+		builder.ldapServerPort = ldapServerPort
+		builder.initializePool()
 	}
 }
 
 // SetEnableTLS sets whether to enable StartTLS for LDAP connection
-func (impl *ldapAuthImplBuilder) SetEnableTLS(enableTLS bool) {
-	impl.Lock()
-	defer impl.Unlock()
+func (builder *ldapAuthImplBuilder) SetEnableTLS(enableTLS bool) {
+	builder.Lock()
+	defer builder.Unlock()
 
-	if enableTLS != impl.enableTLS {
-		impl.enableTLS = enableTLS
-		impl.initializePool()
+	if enableTLS != builder.enableTLS {
+		builder.enableTLS = enableTLS
+		builder.initializePool()
 	}
 }
 
 // SetCAPath sets the path of CA certificate used to connect to LDAP server
-func (impl *ldapAuthImplBuilder) SetCAPath(path string) error {
-	impl.Lock()
-	defer impl.Unlock()
+func (builder *ldapAuthImplBuilder) SetCAPath(path string) error {
+	builder.Lock()
+	defer builder.Unlock()
 
-	if path != impl.caPath {
-		impl.caPath = path
-		err := impl.initializeCAPool()
+	if path != builder.caPath {
+		builder.caPath = path
+		err := builder.initializeCAPool()
 		if err != nil {
 			return err
 		}
-		impl.initializePool()
+		builder.initializePool()
 	}
 
 	return nil
 }
 
-func (impl *ldapAuthImplBuilder) SetInitCapacity(initCapacity int) {
-	impl.Lock()
-	defer impl.Unlock()
+func (builder *ldapAuthImplBuilder) SetInitCapacity(initCapacity int) {
+	builder.Lock()
+	defer builder.Unlock()
 
-	if initCapacity != impl.initCapacity {
-		impl.initCapacity = initCapacity
-		impl.initializePool()
+	if initCapacity != builder.initCapacity {
+		builder.initCapacity = initCapacity
+		builder.initializePool()
 	}
 }
 
-func (impl *ldapAuthImplBuilder) SetMaxCapacity(maxCapacity int) {
-	impl.Lock()
-	defer impl.Unlock()
+func (builder *ldapAuthImplBuilder) SetMaxCapacity(maxCapacity int) {
+	builder.Lock()
+	defer builder.Unlock()
 
-	if maxCapacity != impl.maxCapacity {
-		impl.maxCapacity = maxCapacity
-		impl.initializePool()
+	if maxCapacity != builder.maxCapacity {
+		builder.maxCapacity = maxCapacity
+		builder.initializePool()
 	}
 }
 
 // GetBindBaseDN returns the BaseDN used to search the user
-func (impl *ldapAuthImplBuilder) GetBindBaseDN() string {
-	impl.RLock()
-	defer impl.RUnlock()
+func (builder *ldapAuthImplBuilder) GetBindBaseDN() string {
+	builder.RLock()
+	defer builder.RUnlock()
 
-	return impl.bindBaseDN
+	return builder.bindBaseDN
 }
 
 // GetBindRootDN returns the RootDN. Before searching the users, the connection will bind
 // this root user.
-func (impl *ldapAuthImplBuilder) GetBindRootDN() string {
-	impl.RLock()
-	defer impl.RUnlock()
+func (builder *ldapAuthImplBuilder) GetBindRootDN() string {
+	builder.RLock()
+	defer builder.RUnlock()
 
-	return impl.bindRootDN
+	return builder.bindRootDN
 }
 
 // GetBindRootPW returns the password of the user specified by `rootDN`.
-func (impl *ldapAuthImplBuilder) GetBindRootPW() string {
-	impl.RLock()
-	defer impl.RUnlock()
+func (builder *ldapAuthImplBuilder) GetBindRootPW() string {
+	builder.RLock()
+	defer builder.RUnlock()
 
-	return impl.bindRootPWD
+	return builder.bindRootPWD
 }
 
 // GetSearchAttr returns the search attributes.
-func (impl *ldapAuthImplBuilder) GetSearchAttr() string {
-	impl.RLock()
-	defer impl.RUnlock()
+func (builder *ldapAuthImplBuilder) GetSearchAttr() string {
+	builder.RLock()
+	defer builder.RUnlock()
 
-	return impl.searchAttr
+	return builder.searchAttr
 }
 
 // GetLDAPServerHost returns the host of LDAP server
-func (impl *ldapAuthImplBuilder) GetLDAPServerHost() string {
-	impl.RLock()
-	defer impl.RUnlock()
+func (builder *ldapAuthImplBuilder) GetLDAPServerHost() string {
+	builder.RLock()
+	defer builder.RUnlock()
 
-	return impl.ldapServerHost
+	return builder.ldapServerHost
 }
 
 // GetLDAPServerPort returns the port of LDAP server
-func (impl *ldapAuthImplBuilder) GetLDAPServerPort() int {
-	impl.RLock()
-	defer impl.RUnlock()
+func (builder *ldapAuthImplBuilder) GetLDAPServerPort() int {
+	builder.RLock()
+	defer builder.RUnlock()
 
-	return impl.ldapServerPort
+	return builder.ldapServerPort
 }
 
 // GetEnableTLS sets whether to enable StartTLS for LDAP connection
-func (impl *ldapAuthImplBuilder) GetEnableTLS() bool {
-	impl.RLock()
-	defer impl.RUnlock()
+func (builder *ldapAuthImplBuilder) GetEnableTLS() bool {
+	builder.RLock()
+	defer builder.RUnlock()
 
-	return impl.enableTLS
+	return builder.enableTLS
 }
 
 // GetCAPath returns the path of CA certificate used to connect to LDAP server
-func (impl *ldapAuthImplBuilder) GetCAPath() string {
-	impl.RLock()
-	defer impl.RUnlock()
+func (builder *ldapAuthImplBuilder) GetCAPath() string {
+	builder.RLock()
+	defer builder.RUnlock()
 
-	return impl.caPath
+	return builder.caPath
 }
 
-func (impl *ldapAuthImplBuilder) GetInitCapacity() int {
-	impl.RLock()
-	defer impl.RUnlock()
+func (builder *ldapAuthImplBuilder) GetInitCapacity() int {
+	builder.RLock()
+	defer builder.RUnlock()
 
-	return impl.initCapacity
+	return builder.initCapacity
 }
 
-func (impl *ldapAuthImplBuilder) GetMaxCapacity() int {
-	impl.RLock()
-	defer impl.RUnlock()
+func (builder *ldapAuthImplBuilder) GetMaxCapacity() int {
+	builder.RLock()
+	defer builder.RUnlock()
 
-	return impl.maxCapacity
+	return builder.maxCapacity
 }
 
 // ldapAuthImpl gives the internal utilities of authentication with LDAP.
@@ -448,8 +448,7 @@ func (impl *ldapAuthImpl) getConnection() (*ldap.Conn, error) {
 			if retryCount >= getConnectionMaxRetry {
 				return nil, errors.Wrap(err, "fail to bind to anonymous user")
 			}
-			// Be careful that it's still holding the lock of the system variables, so it's not good to sleep here.
-			// TODO: refactor the `RWLock` to avoid the problem of holding the lock.
+
 			time.Sleep(getConnectionRetryInterval)
 			continue
 		}
