@@ -317,7 +317,7 @@ func removeNoRegionStores(
 //
 // The second balance strategy: Not only consider the region count between TiFlash stores, but also try to make the regions' range continuous(stored in TiFlash closely).
 // If balanceWithContinuity is true, the second balance strategy is enable.
-func balanceBatchCopTask(ctx context.Context, aliveStores []*tikv.Store, originalTasks []*batchCopTask, balanceWithContinuity bool, balanceContinuousRegionCount int64) []*batchCopTask {
+func balanceBatchCopTask(aliveStores []*tikv.Store, originalTasks []*batchCopTask, balanceWithContinuity bool, balanceContinuousRegionCount int64) []*batchCopTask {
 	if len(originalTasks) == 0 {
 		log.Info("Batch cop task balancer got an empty task set.")
 		return originalTasks
@@ -1013,7 +1013,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				storesUnionSetForAllTasks = append(storesUnionSetForAllTasks, store)
 			}
 		}
-		batchTasks = balanceBatchCopTask(bo.GetCtx(), storesUnionSetForAllTasks, batchTasks, balanceWithContinuity, balanceContinuousRegionCount)
+		batchTasks = balanceBatchCopTask(storesUnionSetForAllTasks, batchTasks, balanceWithContinuity, balanceContinuousRegionCount)
 		balanceElapsed := time.Since(balanceStart)
 		if log.GetLevel() <= zap.DebugLevel {
 			msg := "After region balance:"
