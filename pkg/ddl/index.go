@@ -1710,9 +1710,8 @@ type addIndexIngestWorker struct {
 	copReqSenderPool *copReqSenderPool
 	checkpointMgr    *ingest.CheckpointManager
 
-	resultCh   chan *backfillResult
-	jobID      int64
-	distribute bool
+	resultCh chan *backfillResult
+	jobID    int64
 }
 
 func newAddIndexIngestWorker(
@@ -1728,7 +1727,6 @@ func newAddIndexIngestWorker(
 	copReqSenderPool *copReqSenderPool,
 	sessCtx sessionctx.Context,
 	checkpointMgr *ingest.CheckpointManager,
-	distribute bool,
 ) (*addIndexIngestWorker, error) {
 	indexes := make([]table.Index, 0, len(indexIDs))
 	writers := make([]ingest.Writer, 0, len(indexIDs))
@@ -1756,7 +1754,6 @@ func newAddIndexIngestWorker(
 		resultCh:         resultCh,
 		jobID:            jobID,
 		checkpointMgr:    checkpointMgr,
-		distribute:       distribute,
 	}, nil
 }
 

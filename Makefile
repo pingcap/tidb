@@ -329,13 +329,9 @@ build_lightning:
 build_lightning-ctl:
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./lightning/cmd/tidb-lightning-ctl
 
-build_for_br_integration_test:
+build_for_lightning_integration_test:
 	@make failpoint-enable
 	($(GOTEST) -c -cover -covermode=count \
-		-coverpkg=github.com/pingcap/tidb/br/... \
-		-o $(BR_BIN).test \
-		github.com/pingcap/tidb/br/cmd/br && \
-	$(GOTEST) -c -cover -covermode=count \
 		-coverpkg=github.com/pingcap/tidb/lightning/...,github.com/pingcap/tidb/pkg/lightning/... \
 		-o $(LIGHTNING_BIN).test \
 		github.com/pingcap/tidb/lightning/cmd/tidb-lightning && \
@@ -343,12 +339,25 @@ build_for_br_integration_test:
 		-coverpkg=github.com/pingcap/tidb/lightning/...,github.com/pingcap/tidb/pkg/lightning/... \
 		-o $(LIGHTNING_CTL_BIN).test \
 		github.com/pingcap/tidb/lightning/cmd/tidb-lightning-ctl && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/fake-oauth tools/fake-oauth/main.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/parquet_gen tools/gen-parquet/main.go \
+	) || (make failpoint-disable && exit 1)
+	@make failpoint-disable
+
+lightning_integration_test: build_lightning build_for_lightning_integration_test
+	lightning/tests/run.sh
+
+build_for_br_integration_test:
+	@make failpoint-enable
+	($(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/br/... \
+		-o $(BR_BIN).test \
+		github.com/pingcap/tidb/br/cmd/br && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/locker br/tests/br_key_locked/*.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/gc br/tests/br_z_gc_safepoint/*.go && \
-	$(GOBUILD) $(RACE_FLAG) -o bin/oauth br/tests/br_gcs/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/fake-oauth tools/fake-oauth/main.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/rawkv br/tests/br_rawkv/*.go && \
-	$(GOBUILD) $(RACE_FLAG) -o bin/txnkv br/tests/br_txn/*.go && \
-	$(GOBUILD) $(RACE_FLAG) -o bin/parquet_gen br/tests/lightning_checkpoint_parquet/*.go \
+	$(GOBUILD) $(RACE_FLAG) -o bin/txnkv br/tests/br_txn/*.go \
 	) || (make failpoint-disable && exit 1)
 	@make failpoint-disable
 

@@ -8,7 +8,7 @@ backup_dir=$TEST_DIR/keep_${TEST_NAME}
 incr_backup_dir=${backup_dir}_inc
 res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 br_log_file=$TEST_DIR/br.log
-source $CUR/../_utils/run_services
+source $UTILS_DIR/run_services
 
 function run_sql_as() {
 	user=$1
