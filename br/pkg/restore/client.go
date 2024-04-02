@@ -49,6 +49,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -1169,7 +1170,7 @@ func (rc *Client) NeedCheckFreshCluster(ExplicitFilter bool, firstRun bool) bool
 // user may have created some users or made other changes.
 func (rc *Client) CheckTargetClusterFresh(ctx context.Context) error {
 	log.Info("checking whether target cluster is fresh")
-	userDBs := GetExistedUserDBs(rc.dom)
+	userDBs, is := GetExistedUserDBNames(rc.dom)
 	if len(userDBs) == 0 {
 		return nil
 	}
@@ -1186,11 +1187,11 @@ func (rc *Client) CheckTargetClusterFresh(ctx context.Context) error {
 	}
 outer:
 	for _, db := range userDBs {
-		if !addName(db.Name.L) {
+		if !addName(db.L) {
 			break outer
 		}
-		for _, tbl := range db.Tables {
-			if !addName(tbl.Name.L) {
+		for _, tbl := range is.SchemaTables(db) {
+			if !addName(tbl.Meta().Name.L) {
 				break outer
 			}
 		}
@@ -3391,7 +3392,7 @@ const (
 func (rc *Client) generateRepairIngestIndexSQLs(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
-	allSchema []*model.DBInfo,
+	is infoschema.InfoSchema,
 	taskName string,
 ) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
@@ -3411,7 +3412,7 @@ func (rc *Client) generateRepairIngestIndexSQLs(
 		}
 	}
 
-	ingestRecorder.UpdateIndexInfo(allSchema)
+	ingestRecorder.UpdateIndexInfo(is)
 	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		var (
 			addSQL  strings.Builder
@@ -3481,7 +3482,7 @@ func (rc *Client) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestr
 	}
 	info := dom.InfoSchema()
 
-	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, info.AllSchemas(), taskName)
+	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, info, taskName)
 	if err != nil {
 		return errors.Trace(err)
 	}

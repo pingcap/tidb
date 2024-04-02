@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -479,22 +480,23 @@ func DDLJobBlockListRule(ddlJob *model.Job) bool {
 }
 
 // GetExistedUserDBs get dbs created or modified by users
-func GetExistedUserDBs(dom *domain.Domain) []*model.DBInfo {
-	databases := dom.InfoSchema().AllSchemas()
-	existedDatabases := make([]*model.DBInfo, 0, 16)
+func GetExistedUserDBNames(dom *domain.Domain) ([]model.CIStr, infoschema.InfoSchema) {
+	is := dom.InfoSchema()
+	databases := is.AllSchemas()
+	existedDatabases := make([]model.CIStr, 0, 16)
 	for _, db := range databases {
 		dbName := db.Name.L
 		if tidbutil.IsMemOrSysDB(dbName) {
 			continue
-		} else if dbName == "test" && len(db.Tables) == 0 {
+		} else if dbName == "test" && len(is.SchemaTables(db.Name)) == 0 {
 			// tidb create test db on fresh cluster
 			// if it's empty we don't take it as user db
 			continue
 		}
-		existedDatabases = append(existedDatabases, db)
+		existedDatabases = append(existedDatabases, db.Name)
 	}
 
-	return existedDatabases
+	return existedDatabases, is
 }
 
 func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {

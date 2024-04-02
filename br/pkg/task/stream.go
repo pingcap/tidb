@@ -1743,11 +1743,11 @@ func buildPauseSafePointName(taskName string) string {
 }
 
 func checkPiTRRequirements(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *conn.Mgr) error {
-	userDBs := restore.GetExistedUserDBs(mgr.GetDomain())
+	userDBs, _ := restore.GetExistedUserDBNames(mgr.GetDomain())
 	if len(userDBs) > 0 {
 		userDBNames := make([]string, 0, len(userDBs))
 		for _, db := range userDBs {
-			userDBNames = append(userDBNames, db.Name.O)
+			userDBNames = append(userDBNames, db.O)
 		}
 		return errors.Annotatef(berrors.ErrDatabasesAlreadyExisted,
 			"databases %s existed in restored cluster, please drop them before execute PiTR",

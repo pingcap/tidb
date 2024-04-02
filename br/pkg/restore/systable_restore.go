@@ -158,7 +158,8 @@ func (rc *Client) getDatabaseByName(name string) (*database, bool) {
 		Name:           model.NewCIStr(name),
 		TemporaryName:  utils.TemporaryDBName(name),
 	}
-	for _, t := range schema.Tables {
+	for _, tbl := range infoSchema.SchemaTables(schema.Name) {
+		t := tbl.Meta()
 		db.ExistingTables[t.Name.L] = t
 	}
 	return db, true

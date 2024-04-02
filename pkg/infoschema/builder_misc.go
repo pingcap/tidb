@@ -156,7 +156,7 @@ func (b *Builder) initMisc(dbInfos []*model.DBInfo, policies []*model.PolicyInfo
 
 	// Maintain foreign key reference information.
 	for _, di := range dbInfos {
-		for _, t := range di.Tables {
+		for _, t := range di.Tables() {
 			b.infoSchema.addReferredForeignKeys(di.Name, t)
 		}
 	}

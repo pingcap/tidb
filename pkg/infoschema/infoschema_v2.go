@@ -746,7 +746,7 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
 		return nil
 	}
 
-	tableIDs := make([]int64, 0, len(di.Tables))
+	tableIDs := make([]int64, 0, len(di.Tables()))
 	tables := b.infoschemaV2.SchemaTables(di.Name)
 	for _, table := range tables {
 		tbl := table.Meta()

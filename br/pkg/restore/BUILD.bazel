@@ -52,6 +52,7 @@ go_library(
         "//pkg/ddl/util",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/parser/model",

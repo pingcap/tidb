@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/restore/ingestrec",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/infoschema",
         "//pkg/parser/model",
         "//pkg/types",
         "@com_github_pingcap_errors//:errors",

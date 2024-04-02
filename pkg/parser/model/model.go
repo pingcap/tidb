@@ -1696,17 +1696,28 @@ type DBInfo struct {
 	Name               CIStr          `json:"db_name"` // DB name.
 	Charset            string         `json:"charset"`
 	Collate            string         `json:"collate"`
-	Tables             []*TableInfo   `json:"-"` // Tables in the DB.
+	tables             []*TableInfo   `json:"-"` // Tables in the DB.
 	State              SchemaState    `json:"state"`
 	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
+}
+
+// Tables returns the tables of this DB.
+// CAUTION: infoschema v2 does not hold tables in DBInfo, use infoschema.SchemaTables(db.Name) API instead.
+func (db *DBInfo) Tables() []*TableInfo {
+	return db.tables
+}
+
+// SetTables set the tables field for DBInfo, do not call this API except the infoschema v1 builder process.
+func (db *DBInfo) SetTables(tables []*TableInfo) {
+	db.tables = tables
 }
 
 // Clone clones DBInfo.
 func (db *DBInfo) Clone() *DBInfo {
 	newInfo := *db
-	newInfo.Tables = make([]*TableInfo, len(db.Tables))
-	for i := range db.Tables {
-		newInfo.Tables[i] = db.Tables[i].Clone()
+	newInfo.tables = make([]*TableInfo, len(db.tables))
+	for i := range db.tables {
+		newInfo.tables[i] = db.tables[i].Clone()
 	}
 	return &newInfo
 }
@@ -1714,8 +1725,8 @@ func (db *DBInfo) Clone() *DBInfo {
 // Copy shallow copies DBInfo.
 func (db *DBInfo) Copy() *DBInfo {
 	newInfo := *db
-	newInfo.Tables = make([]*TableInfo, len(db.Tables))
-	copy(newInfo.Tables, db.Tables)
+	newInfo.tables = make([]*TableInfo, len(db.tables))
+	copy(newInfo.tables, db.tables)
 	return &newInfo
 }
 
