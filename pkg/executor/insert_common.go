@@ -1454,6 +1454,9 @@ func (e *InsertValues) recordAutoIDCol(colID int64) {
 }
 
 func (e *InsertValues) pkHasAutoID() bool {
+	if len(e.colUsedGenID) == 0 {
+		return false
+	}
 	tblInfo := e.Table.Meta()
 	switch {
 	case tblInfo.PKIsHandle:
