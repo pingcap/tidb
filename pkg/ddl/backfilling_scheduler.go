@@ -87,7 +87,7 @@ func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.P
 	jobCtx *JobContext) (backfillScheduler, error) {
 	if tp == typeAddIndexWorker && info.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		ctx = logutil.WithCategory(ctx, "ddl-ingest")
-		return newIngestBackfillScheduler(ctx, info, sessPool, tbl, false)
+		return newIngestBackfillScheduler(ctx, info, sessPool, tbl)
 	}
 	return newTxnBackfillScheduler(ctx, info, sessPool, tp, tbl, sessCtx, jobCtx)
 }
@@ -312,7 +312,6 @@ type ingestBackfillScheduler struct {
 	reorgInfo  *reorgInfo
 	sessPool   *sess.Pool
 	tbl        table.PhysicalTable
-	distribute bool
 	avgRowSize int
 
 	closed bool
@@ -334,7 +333,6 @@ func newIngestBackfillScheduler(
 	info *reorgInfo,
 	sessPool *sess.Pool,
 	tbl table.PhysicalTable,
-	distribute bool,
 ) (*ingestBackfillScheduler, error) {
 	sctx, err := sessPool.Get()
 	if err != nil {
@@ -351,7 +349,6 @@ func newIngestBackfillScheduler(
 		taskCh:     make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultCh:   make(chan *backfillResult, backfillTaskChanSize),
 		poolErr:    make(chan error),
-		distribute: distribute,
 	}, nil
 }
 
@@ -476,7 +473,7 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordCh
 	worker, err := newAddIndexIngestWorker(
 		b.ctx, b.tbl, reorgInfo.d, engines, b.resultCh, job.ID,
 		reorgInfo.SchemaName, indexIDs, b.writerMaxID,
-		b.copReqSenderPool, sessCtx, b.checkpointMgr, b.distribute)
+		b.copReqSenderPool, sessCtx, b.checkpointMgr)
 	if err != nil {
 		// Return an error only if it is the first worker.
 		if b.writerMaxID == 0 {
@@ -518,11 +515,11 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 }
 
 func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
-	return expectedIngestWorkerCnt(b.avgRowSize)
+	return expectedIngestWorkerCnt(int(variable.GetDDLReorgWorkerCounter()), b.avgRowSize)
 }
 
-func expectedIngestWorkerCnt(avgRowSize int) (readerCnt, writerCnt int) {
-	workerCnt := int(variable.GetDDLReorgWorkerCounter())
+func expectedIngestWorkerCnt(concurrency, avgRowSize int) (readerCnt, writerCnt int) {
+	workerCnt := concurrency
 	if avgRowSize == 0 {
 		// Statistic data not exist, use default concurrency.
 		readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
@@ -558,13 +555,11 @@ func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool
 		w.resultCh <- result
 		return
 	}
-	if !w.distribute {
-		err := w.d.isReorgRunnable(w.jobID, false)
-		if err != nil {
-			result.err = err
-			w.resultCh <- result
-			return
-		}
+	err := w.d.isReorgRunnable(w.jobID, false)
+	if err != nil {
+		result.err = err
+		w.resultCh <- result
+		return
 	}
 	count, nextKey, err := w.WriteLocal(&rs)
 	if err != nil {
