@@ -1788,7 +1788,7 @@ type TableItemID struct {
 
 // Key is used to generate unique key for TableItemID to use in the syncload
 func (t TableItemID) Key() string {
-	return fmt.Sprintf("%d%d%t%t", t.ID, t.TableID, t.IsIndex, t.IsSyncLoadFailed)
+	return fmt.Sprintf("%d#%d#%t", t.ID, t.TableID, t.IsIndex)
 }
 
 // StatsLoadItem represents the load unit for statistics's memory loading.
