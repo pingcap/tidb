@@ -21,6 +21,7 @@ go_test(
     shard_count = 3,
     deps = [
         ":ingestrec",
+        "//pkg/infoschema",
         "//pkg/parser/model",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
