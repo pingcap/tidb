@@ -128,7 +128,6 @@ go_test(
         "@com_github_cockroachdb_pebble//sstable",
         "@com_github_coreos_go_semver//semver",
         "@com_github_docker_go_units//:go-units",
-        "@com_github_golang_mock//gomock",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -142,6 +141,7 @@ go_test(
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//:zap",
     ],
 )

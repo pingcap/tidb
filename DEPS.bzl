@@ -5484,6 +5484,13 @@ def go_deps():
         version = "v1.2.0",
     )
     go_repository(
+        name = "org_uber_go_mock",
+        build_file_proto_mode = "disable",
+        importpath = "go.uber.org/mock",
+        sum = "h1:VcM4ZOtdbR4f6VXfiOpwpVJDL6lCReaZ6mw31wqh7KU=",
+        version = "v0.4.0",
+    )
+    go_repository(
         name = "org_uber_go_multierr",
         build_file_proto_mode = "disable_global",
         importpath = "go.uber.org/multierr",

@@ -550,29 +550,47 @@ type restoreSchemaWorker struct {
 func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
 	stmts, err := createIfNotExistsStmt(worker.glue.GetParser(), sqlStr, job.dbName, job.tblName)
 	if err != nil {
-		worker.logger.Warn("failed to rewrite statement, will use raw input instead",
-			zap.String("db", job.dbName),
-			zap.String("table", job.tblName),
-			zap.String("statement", sqlStr),
-			zap.Error(err))
-		job.stmts = []string{sqlStr}
-	} else {
-		job.stmts = stmts
+		return errors.Trace(err)
 	}
+	job.stmts = stmts
 	return worker.appendJob(job)
 }
 
 func (worker *restoreSchemaWorker) makeJobs(
 	dbMetas []*mydump.MDDatabaseMeta,
+	getDBs func(context.Context) ([]*model.DBInfo, error),
 	getTables func(context.Context, string) ([]*model.TableInfo, error),
 ) error {
 	defer func() {
 		close(worker.jobCh)
 		worker.quit()
 	}()
-	var err error
+
+	if len(dbMetas) == 0 {
+		return nil
+	}
+
 	// 1. restore databases, execute statements concurrency
+
+	dbs, err := getDBs(worker.ctx)
+	if err != nil {
+		worker.logger.Warn("get databases from downstream failed", zap.Error(err))
+	}
+	dbSet := make(set.StringSet, len(dbs))
+	for _, db := range dbs {
+		dbSet.Insert(db.Name.L)
+	}
+
 	for _, dbMeta := range dbMetas {
+		// if downstream already has this database, we can skip ddl job
+		if dbSet.Exist(strings.ToLower(dbMeta.Name)) {
+			worker.logger.Info(
+				"database already exists in downstream, skip processing the source file",
+				zap.String("db", dbMeta.Name),
+			)
+			continue
+		}
+
 		sql := dbMeta.GetSchema(worker.ctx, worker.store)
 		err = worker.addJob(sql, &schemaJob{
 			dbName:   dbMeta.Name,
@@ -587,18 +605,28 @@ func (worker *restoreSchemaWorker) makeJobs(
 	if err != nil {
 		return err
 	}
+
 	// 2. restore tables, execute statements concurrency
+
 	for _, dbMeta := range dbMetas {
 		// we can ignore error here, and let check failed later if schema not match
-		tables, _ := getTables(worker.ctx, dbMeta.Name)
-		tableMap := make(map[string]struct{})
+		tables, err := getTables(worker.ctx, dbMeta.Name)
+		if err != nil {
+			worker.logger.Warn("get tables from downstream failed", zap.Error(err))
+		}
+		tableSet := make(set.StringSet, len(tables))
 		for _, t := range tables {
-			tableMap[t.Name.L] = struct{}{}
+			tableSet.Insert(t.Name.L)
 		}
 		for _, tblMeta := range dbMeta.Tables {
-			if _, ok := tableMap[strings.ToLower(tblMeta.Name)]; ok {
+			if tableSet.Exist(strings.ToLower(tblMeta.Name)) {
 				// we already has this table in TiDB.
 				// we should skip ddl job and let SchemaValid check.
+				worker.logger.Info(
+					"table already exists in downstream, skip processing the source file",
+					zap.String("db", dbMeta.Name),
+					zap.String("table", tblMeta.Name),
+				)
 				continue
 			} else if tblMeta.SchemaFile.FileMeta.Path == "" {
 				return common.ErrSchemaNotExists.GenWithStackByArgs(dbMeta.Name, tblMeta.Name)
@@ -797,7 +825,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	for i := 0; i < concurrency; i++ {
 		go worker.doJob()
 	}
-	err := worker.makeJobs(rc.dbMetas, rc.preInfoGetter.FetchRemoteTableModels)
+	err := worker.makeJobs(rc.dbMetas, rc.preInfoGetter.FetchRemoteDBModels, rc.preInfoGetter.FetchRemoteTableModels)
 	logTask.End(zap.ErrorLevel, err)
 	if err != nil {
 		return err

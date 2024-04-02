@@ -155,7 +155,6 @@ go_test(
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_docker_go_units//:go-units",
         "@com_github_go_sql_driver_mysql//:mysql",
-        "@com_github_golang_mock//gomock",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -173,6 +172,7 @@ go_test(
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_tests_v3//integration",
         "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//:zap",
     ],
 )

@@ -127,6 +127,10 @@ type CheckCtx struct {
 
 // TargetInfoGetter defines the interfaces to get target information.
 type TargetInfoGetter interface {
+	// FetchRemoteDBModels obtains the models of all databases. Currently, only
+	// the database name is filled.
+	FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error)
+
 	// FetchRemoteTableModels obtains the models of all tables given the schema
 	// name. The returned table info does not need to be precise if the encoder,
 	// is not requiring them, but must at least fill in the following fields for
@@ -283,6 +287,10 @@ func (be Backend) CheckRequirements(ctx context.Context, checkCtx *CheckCtx) err
 
 func (be Backend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	return be.abstract.FetchRemoteTableModels(ctx, schemaName)
+}
+
+func (be Backend) FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error) {
+	return be.abstract.FetchRemoteDBModels(ctx)
 }
 
 func (be Backend) FlushAll(ctx context.Context) error {

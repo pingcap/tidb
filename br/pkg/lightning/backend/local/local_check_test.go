@@ -19,12 +19,12 @@ import (
 	"testing"
 
 	"github.com/coreos/go-semver/semver"
-	"github.com/golang/mock/gomock"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestCheckRequirementsTiFlash(t *testing.T) {

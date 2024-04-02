@@ -7,7 +7,6 @@ import (
 	"time"
 
 	gmysql "github.com/go-sql-driver/mysql"
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -16,18 +15,19 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/mock/gomock"
 )
 
 type backendSuite struct {
 	controller  *gomock.Controller
-	mockBackend *mock.MockBackend
+	mockBackend *mock.MockAbstractBackend
 	backend     backend.Backend
 	ts          uint64
 }
 
 func createBackendSuite(c gomock.TestReporter) *backendSuite {
 	controller := gomock.NewController(c)
-	mockBackend := mock.NewMockBackend(controller)
+	mockBackend := mock.NewMockAbstractBackend(controller)
 	return &backendSuite{
 		controller:  controller,
 		mockBackend: mockBackend,
