@@ -105,10 +105,12 @@ func TestAddIngestRecorder(t *testing.T) {
 				{
 					Name:   model.NewCIStr("x"),
 					Hidden: false,
+					State:  model.StatePublic,
 				},
 				{
 					Name:   model.NewCIStr("y"),
 					Hidden: false,
+					State:  model.StatePublic,
 				},
 			},
 			Indices: []*model.IndexInfo{
@@ -130,8 +132,10 @@ func TestAddIngestRecorder(t *testing.T) {
 					},
 					Comment: "123",
 					Tp:      model.IndexTypeBtree,
+					State:   model.StatePublic,
 				},
 			},
+			State: model.StatePublic,
 		},
 	})
 	allSchemas := []*model.DBInfo{dbInfo}
@@ -260,15 +264,18 @@ func TestIndexesKind(t *testing.T) {
 				{
 					Name:   model.NewCIStr("x"),
 					Hidden: false,
+					State:  model.StatePublic,
 				},
 				{
 					Name:                model.NewCIStr("_V$_x_0"),
 					Hidden:              true,
 					GeneratedExprString: "`x` * 2",
+					State:               model.StatePublic,
 				},
 				{
 					Name:   model.NewCIStr("z"),
 					Hidden: false,
+					State:  model.StatePublic,
 				},
 			},
 			Indices: []*model.IndexInfo{
@@ -296,8 +303,10 @@ func TestIndexesKind(t *testing.T) {
 					Comment:   "123",
 					Tp:        model.IndexTypeHash,
 					Invisible: true,
+					State:     model.StatePublic,
 				},
 			},
+			State: model.StatePublic,
 		},
 	})
 	allSchemas := []*model.DBInfo{dbInfo}
@@ -350,10 +359,12 @@ func TestRewriteTableID(t *testing.T) {
 				{
 					Name:   model.NewCIStr("x"),
 					Hidden: false,
+					State:  model.StatePublic,
 				},
 				{
 					Name:   model.NewCIStr("y"),
 					Hidden: false,
+					State:  model.StatePublic,
 				},
 			},
 			Indices: []*model.IndexInfo{
@@ -375,8 +386,10 @@ func TestRewriteTableID(t *testing.T) {
 					},
 					Comment: "123",
 					Tp:      model.IndexTypeBtree,
+					State:   model.StatePublic,
 				},
 			},
+			State: model.StatePublic,
 		},
 	})
 	allSchemas := []*model.DBInfo{dbInfo}
