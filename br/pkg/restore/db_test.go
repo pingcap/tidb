@@ -374,7 +374,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 	defer m.Stop()
 	dom := m.Domain
 
-	dbs := restore.GetExistedUserDBs(dom)
+	dbs, _ := restore.GetExistedUserDBNames(dom)
 	require.Equal(t, 0, len(dbs))
 
 	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
@@ -385,7 +385,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 		nil, nil, 1)
 	require.Nil(t, err)
 	dom.MockInfoCacheAndLoadInfoSchema(builder.Build(math.MaxUint64))
-	dbs = restore.GetExistedUserDBs(dom)
+	dbs, _ = restore.GetExistedUserDBNames(dom)
 	require.Equal(t, 0, len(dbs))
 
 	builder, err = infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
@@ -397,23 +397,24 @@ func TestGetExistedUserDBs(t *testing.T) {
 		nil, nil, 1)
 	require.Nil(t, err)
 	dom.MockInfoCacheAndLoadInfoSchema(builder.Build(math.MaxUint64))
-	dbs = restore.GetExistedUserDBs(dom)
+	dbs, _ = restore.GetExistedUserDBNames(dom)
 	require.Equal(t, 1, len(dbs))
 
+	dbInfo3 := &model.DBInfo{
+		Name:  model.NewCIStr("test"),
+		State: model.StatePublic,
+	}
+	dbInfo3.SetTables([]*model.TableInfo{{ID: 1, Name: model.NewCIStr("t1"), State: model.StatePublic}})
 	builder, err = infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("d1")},
-			{
-				Name:   model.NewCIStr("test"),
-				Tables: []*model.TableInfo{{ID: 1, Name: model.NewCIStr("t1"), State: model.StatePublic}},
-				State:  model.StatePublic,
-			},
+			dbInfo3,
 		},
 		nil, nil, 1)
 	require.Nil(t, err)
 	dom.MockInfoCacheAndLoadInfoSchema(builder.Build(math.MaxUint64))
-	dbs = restore.GetExistedUserDBs(dom)
+	dbs, _ = restore.GetExistedUserDBNames(dom)
 	require.Equal(t, 2, len(dbs))
 }
 
