@@ -91,9 +91,9 @@ func TestBasic(t *testing.T) {
 	dbID, err := internal.GenGlobalID(re.Store())
 	require.NoError(t, err)
 	dbInfo := &model.DBInfo{
-		ID:     dbID,
-		Name:   dbName,
-		State:  model.StatePublic,
+		ID:    dbID,
+		Name:  dbName,
+		State: model.StatePublic,
 	}
 	dbInfo.SetTables([]*model.TableInfo{tblInfo})
 	tblInfo.DBID = dbInfo.ID
@@ -338,9 +338,9 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	}()
 
 	dbInfo := &model.DBInfo{
-		ID:     1,
-		Name:   model.NewCIStr("test"),
-		State:  model.StatePublic,
+		ID:    1,
+		Name:  model.NewCIStr("test"),
+		State: model.StatePublic,
 	}
 	dbInfo.SetTables([]*model.TableInfo{})
 	dbInfos := []*model.DBInfo{dbInfo}
