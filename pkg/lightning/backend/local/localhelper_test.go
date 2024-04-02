@@ -112,7 +112,7 @@ func (c *testSplitClient) SplitWaitAndScatter(ctx context.Context, region *split
 	c.splitCount.Inc()
 
 	if c.hook != nil {
-		regionInfo, keys = c.hook.BeforeSplitRegion(ctx, regionInfo, keys)
+		region, keys = c.hook.BeforeSplitRegion(ctx, region, keys)
 	}
 	if len(keys) == 0 {
 		return nil, errors.New("no valid key")
@@ -125,12 +125,12 @@ func (c *testSplitClient) SplitWaitAndScatter(ctx context.Context, region *split
 	}
 
 	newRegions := make([]*split.RegionInfo, 0)
-	target, ok := c.regions[regionInfo.Region.Id]
+	target, ok := c.regions[region.Region.Id]
 	if !ok {
 		return nil, errors.New("region not found")
 	}
-	if target.Region.RegionEpoch.Version != regionInfo.Region.RegionEpoch.Version ||
-		target.Region.RegionEpoch.ConfVer != regionInfo.Region.RegionEpoch.ConfVer {
+	if target.Region.RegionEpoch.Version != region.Region.RegionEpoch.Version ||
+		target.Region.RegionEpoch.ConfVer != region.Region.RegionEpoch.ConfVer {
 		return nil, errors.New("epoch not match")
 	}
 	splitKeys := make([][]byte, 0, len(keys))
@@ -445,7 +445,7 @@ func newCheckScatterClient(inner *testSplitClient) *checkScatterClient {
 }
 
 func (c *checkScatterClient) SplitWaitAndScatter(ctx context.Context, region *split.RegionInfo, keys [][]byte) ([]*split.RegionInfo, error) {
-	rs, err := c.testSplitClient.SplitWaitAndScatter(ctx, regionInfo, keys)
+	rs, err := c.testSplitClient.SplitWaitAndScatter(ctx, region, keys)
 	c.scatterCounter.Add(int32(len(rs)))
 	return rs, err
 }
@@ -512,39 +512,6 @@ func TestMissingScatter(t *testing.T) {
 
 	// the old regions will not be scattered. They are [..., bba), [bba, bbh), [..., cca)
 	require.Equal(t, len(result)-3, int(checkClient.scatterCounter.Load()))
-}
-
-type batchSizeHook struct{}
-
-func (h batchSizeHook) setup(t *testing.T) func() {
-	oldSizeLimit := maxBatchSplitSize
-	oldSplitBackoffTime := splitRegionBaseBackOffTime
-	maxBatchSplitSize = 6
-	splitRegionBaseBackOffTime = time.Millisecond
-	return func() {
-		maxBatchSplitSize = oldSizeLimit
-		splitRegionBaseBackOffTime = oldSplitBackoffTime
-	}
-}
-
-func (h batchSizeHook) check(t *testing.T, cli *testSplitClient) {
-	// so with a batch split key size of 6, there will be 9 time batch split
-	// 1. region: [aay, bba), keys: [b, ba, bb]
-	// 2. region: [bbh, cca), keys: [bc, bd, be]
-	// 3. region: [bf, cca), keys: [bf, bg, bh]
-	// 4. region: [bj, cca), keys: [bi, bj, bk]
-	// 5. region: [bj, cca), keys: [bl, bm, bn]
-	// 6. region: [bn, cca), keys: [bo, bp, bq]
-	// 7. region: [bn, cca), keys: [br, bs, bt]
-	// 9. region: [br, cca), keys: [bu, bv, bw]
-	// 10. region: [bv, cca), keys: [bx, by, bz]
-
-	// since it may encounter error retries, here only check the lower threshold.
-	require.Equal(t, int32(9), cli.splitCount.Load())
-}
-
-func TestBatchSplitRegionByRangesKeySizeLimit(t *testing.T) {
-	doTestBatchSplitRegionByRanges(context.Background(), t, nil, "", batchSizeHook{})
 }
 
 type scanRegionEmptyHook struct {

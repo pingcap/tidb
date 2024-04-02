@@ -184,7 +184,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 						// set global error so if we exceed retry limit, the function will return this error
 						err = multierr.Append(err, err2)
 						syncLock.Unlock()
-						break
+						continue
 					}
 					syncLock.Lock()
 					scatterRegions = append(scatterRegions, newRegions...)

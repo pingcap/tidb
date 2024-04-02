@@ -584,7 +584,7 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, 
 			batchSize+len(keys[end]) > maxBatchSplitSize ||
 			end-start >= c.splitBatchKeyCnt {
 			// split, wait and scatter for this batch
-			originRegion, newRegionsOfBatch, err := c.batchSplitRegionsWithOrigin(ctx, region, keys)
+			originRegion, newRegionsOfBatch, err := c.batchSplitRegionsWithOrigin(ctx, region, keys[start:end])
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -608,8 +608,9 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, 
 
 			// the region with the max start key is the region need to be further split, it
 			// can be the leftmost region or the rightmost region.
-			if bytes.Compare(originRegion.Region.StartKey, newRegions[len(newRegions)-1].Region.StartKey) < 0 {
-				region = newRegions[len(newRegions)-1]
+			lastRegion := newRegionsOfBatch[len(newRegionsOfBatch)-1]
+			if bytes.Compare(originRegion.Region.StartKey, lastRegion.Region.StartKey) < 0 {
+				region = lastRegion
 			} else {
 				region = originRegion
 			}
