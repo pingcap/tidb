@@ -49,9 +49,7 @@ type DDLEvent struct {
 
 // IsMemOrSysDB checks whether the table is in the memory or system database.
 func (e *DDLEvent) IsMemOrSysDB(sctx sessionctx.Context) (bool, error) {
-	if intest.InTest {
-		intest.Assert(e.schemaID != 0, "schemaID should not be 0, please set it when creating the event")
-	}
+	intest.Assert(e.schemaID != 0, "schemaID should not be 0, please set it when creating the event")
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	schema, ok := is.SchemaByID(e.schemaID)
 	if !ok {
