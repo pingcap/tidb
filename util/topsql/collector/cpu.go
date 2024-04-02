@@ -16,16 +16,24 @@ package collector
 
 import (
 	"context"
+	"encoding/hex"
 	"runtime/pprof"
 	"sync"
 	"time"
 
 	"github.com/google/pprof/profile"
+<<<<<<< HEAD:util/topsql/collector/cpu.go
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+=======
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cpuprofile"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+>>>>>>> 8f5f608dd49 (topsql, pprof: use hex string but not binary sql/plan digest in goroutine label (#52216)):pkg/util/topsql/collector/cpu.go
 	"go.uber.org/zap"
 )
 
@@ -193,12 +201,25 @@ func (sp *SQLCPUCollector) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLC
 
 func (*SQLCPUCollector) createSQLStats(sqlMap map[string]*sqlStats) []SQLCPUTimeRecord {
 	stats := make([]SQLCPUTimeRecord, 0, len(sqlMap))
-	for sqlDigest, stmt := range sqlMap {
+	for hexSQLDigest, stmt := range sqlMap {
 		stmt.tune()
-		for planDigest, val := range stmt.plans {
+
+		sqlDigest, err := hex.DecodeString(hexSQLDigest)
+		if err != nil {
+			logutil.BgLogger().Error("decode sql digest failed", zap.String("sqlDigest", hexSQLDigest), zap.Error(err))
+			continue
+		}
+
+		for hexPlanDigest, val := range stmt.plans {
+			planDigest, err := hex.DecodeString(hexPlanDigest)
+			if err != nil {
+				logutil.BgLogger().Error("decode plan digest failed", zap.String("planDigest", hexPlanDigest), zap.Error(err))
+				continue
+			}
+
 			stats = append(stats, SQLCPUTimeRecord{
-				SQLDigest:  []byte(sqlDigest),
-				PlanDigest: []byte(planDigest),
+				SQLDigest:  sqlDigest,
+				PlanDigest: planDigest,
 				CPUTimeMs:  uint32(time.Duration(val).Milliseconds()),
 			})
 		}
@@ -255,12 +276,12 @@ func (s *sqlStats) tune() {
 }
 
 // CtxWithSQLDigest wrap the ctx with sql digest.
-func CtxWithSQLDigest(ctx context.Context, sqlDigest []byte) context.Context {
-	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest))))
+func CtxWithSQLDigest(ctx context.Context, sqlDigest string) context.Context {
+	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest))
 }
 
 // CtxWithSQLAndPlanDigest wrap the ctx with sql digest and plan digest.
-func CtxWithSQLAndPlanDigest(ctx context.Context, sqlDigest, planDigest []byte) context.Context {
-	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest)),
-		labelPlanDigest, string(hack.String(planDigest))))
+func CtxWithSQLAndPlanDigest(ctx context.Context, sqlDigest, planDigest string) context.Context {
+	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, sqlDigest,
+		labelPlanDigest, planDigest))
 }
