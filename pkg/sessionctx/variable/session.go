@@ -3635,6 +3635,21 @@ func (s *SessionVars) GetTiKVClientReadTimeout() uint64 {
 	return s.TiKVClientReadTimeout
 }
 
+// SetDiskFullOpt sets the session variable DiskFullOpt
+func (s *SessionVars) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	s.DiskFullOpt = level
+}
+
+// GetDiskFullOpt returns the value of DiskFullOpt in the current session.
+func (s *SessionVars) GetDiskFullOpt() kvrpcpb.DiskFullOpt {
+	return s.DiskFullOpt
+}
+
+// ClearDiskFullOpt resets the session variable DiskFullOpt to DiskFullOpt_NotAllowedOnFull.
+func (s *SessionVars) ClearDiskFullOpt() {
+	s.DiskFullOpt = kvrpcpb.DiskFullOpt_NotAllowedOnFull
+}
+
 // RuntimeFilterType type of runtime filter "IN"
 type RuntimeFilterType int64
 

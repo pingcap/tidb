@@ -491,7 +491,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	defer func() {
 		s.txn.changeToInvalid()
 		s.sessionVars.SetInTxn(false)
-		s.ClearDiskFullOpt()
+		s.sessionVars.ClearDiskFullOpt()
 	}()
 	// check if the transaction is read-only
 	if s.txn.IsReadOnly() {
@@ -1491,18 +1491,6 @@ func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
 		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
 		SessionMemQuotaQuery:          s.sessionVars.MemQuotaQuery,
 	}
-}
-
-func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	s.sessionVars.DiskFullOpt = level
-}
-
-func (s *session) GetDiskFullOpt() kvrpcpb.DiskFullOpt {
-	return s.sessionVars.DiskFullOpt
-}
-
-func (s *session) ClearDiskFullOpt() {
-	s.sessionVars.DiskFullOpt = kvrpcpb.DiskFullOpt_NotAllowedOnFull
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
@@ -2510,7 +2498,7 @@ func (s *session) Close() {
 	if s.stmtStats != nil {
 		s.stmtStats.SetFinished()
 	}
-	s.ClearDiskFullOpt()
+	s.sessionVars.ClearDiskFullOpt()
 	if s.sessionPlanCache != nil {
 		s.sessionPlanCache.Close()
 	}

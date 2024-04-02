@@ -790,7 +790,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 			if err != nil {
 				return nil, err
 			}
-			sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+			sessForJob.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 			wk.sess = sess.NewSession(sessForJob)
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 			return wk, nil
