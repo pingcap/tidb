@@ -292,6 +292,19 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 	return res, score
 }
 
+// remove stores that have no regions
+func removeNoRegionStores(
+	removedMap map[uint64]*batchCopTask,
+	storesHasRegions map[uint64]map[string]RegionInfo,
+) {
+	for storeID := range removedMap {
+		_, ok := storesHasRegions[storeID]
+		if !ok {
+			delete(removedMap, storeID)
+		}
+	}
+}
+
 // balanceBatchCopTask balance the regions between available stores, the basic rule is
 //  1. the first region of each original batch cop task belongs to its original store because some
 //     meta data(like the rpc context) in batchCopTask is related to it
@@ -368,6 +381,8 @@ func balanceBatchCopTask(ctx context.Context, aliveStores []*tikv.Store, origina
 			}
 		}
 	}
+
+	removeNoRegionStores(storeTaskMap, storeCandidateRegionMap)
 
 	// If balanceBatchCopTaskWithContinuity failed (not balance or return nil), it will fallback to the original balance logic.
 	// So storeTaskMap should not be modify.
