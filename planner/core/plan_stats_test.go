@@ -326,3 +326,124 @@ func TestPlanStatsStatusRecord(t *testing.T) {
 		}
 	}
 }
+<<<<<<< HEAD:planner/core/plan_stats_test.go
+=======
+
+func TestCollectDependingVirtualCols(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c json," +
+		"index ic_char((cast(c->'$' as char(32) array)))," +
+		"index ic_unsigned((cast(c->'$.unsigned' as unsigned array)))," +
+		"index ic_signed((cast(c->'$.signed' as unsigned array)))" +
+		")")
+	tk.MustExec("create table t1(a int, b int, c int," +
+		"vab int as (a + b) virtual," +
+		"vc int as (c - 5) virtual," +
+		"vvc int as (b - vc) virtual," +
+		"vvabvvc int as (vab * vvc) virtual," +
+		"index ib((b + 1))," +
+		"index icvab((c + vab))," +
+		"index ivvcvab((vvc / vab))" +
+		")")
+
+	is := dom.InfoSchema()
+	tableNames := []string{"t", "t1"}
+	tblName2TblID := make(map[string]int64)
+	tblID2Tbl := make(map[int64]table.Table)
+	for _, tblName := range tableNames {
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(tblName))
+		require.NoError(t, err)
+		tblName2TblID[tblName] = tbl.Meta().ID
+		tblID2Tbl[tbl.Meta().ID] = tbl
+	}
+
+	var input []struct {
+		TableName     string
+		InputColNames []string
+	}
+	var output []struct {
+		TableName      string
+		InputColNames  []string
+		OutputColNames []string
+	}
+	testData := GetPlanStatsData()
+	testData.LoadTestCases(t, &input, &output)
+
+	for i, testCase := range input {
+		// prepare the input
+		tbl := tblID2Tbl[tblName2TblID[testCase.TableName]]
+		require.NotNil(t, tbl)
+		neededItems := make([]model.StatsLoadItem, 0, len(testCase.InputColNames))
+		for _, colName := range testCase.InputColNames {
+			col := tbl.Meta().FindPublicColumnByName(colName)
+			require.NotNil(t, col)
+			neededItems = append(neededItems, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tbl.Meta().ID, ID: col.ID}, FullLoad: true})
+		}
+
+		// call the function
+		res := plannercore.CollectDependingVirtualCols(tblID2Tbl, neededItems)
+
+		// record and check the output
+		cols := make([]string, 0, len(res))
+		for _, tblColID := range res {
+			colName := tbl.Meta().FindColumnNameByID(tblColID.ID)
+			require.NotEmpty(t, colName)
+			cols = append(cols, colName)
+		}
+		slices.Sort(cols)
+		testdata.OnRecord(func() {
+			output[i].TableName = testCase.TableName
+			output[i].InputColNames = testCase.InputColNames
+			output[i].OutputColNames = cols
+		})
+		require.Equal(t, output[i].OutputColNames, cols)
+	}
+}
+
+func TestPartialStatsInExplain(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	tk.MustExec("create table t2(a int, primary key(a))")
+	tk.MustExec("insert into t2 values (1),(2),(3)")
+	tk.MustExec(
+		"create table tp(a int, b int, c int, index ic(c)) partition by range(a)" +
+			"(partition p0 values less than (10)," +
+			"partition p1 values less than (20)," +
+			"partition p2 values less than maxvalue)",
+	)
+	tk.MustExec("insert into tp values (1,1,1),(2,2,2),(13,13,13),(14,14,14),(25,25,25),(36,36,36)")
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	defer func() {
+		dom.StatsHandle().SetLease(oriLease)
+	}()
+	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table tp")
+	tk.RequireNoError(dom.StatsHandle().Update(dom.InfoSchema()))
+	tk.MustQuery("explain select * from tp where a = 1")
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
+	var (
+		input  []string
+		output []struct {
+			Query  string
+			Result []string
+		}
+	)
+	testData := GetPlanStatsData()
+	testData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		testdata.OnRecord(func() {
+			output[i].Query = input[i]
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+	}
+}
+>>>>>>> 21e9d3cb40a (planner, statistics: use the correct column ID when recording stats loading status (#52208)):pkg/planner/core/casetest/planstats/plan_stats_test.go

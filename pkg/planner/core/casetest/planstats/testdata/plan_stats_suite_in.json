@@ -1,0 +1,74 @@
+[
+  {
+    "name": "TestCollectDependingVirtualCols",
+    "cases": [
+      {
+        "tableName": "t",
+        "inputColNames": [
+          "a",
+          "b"
+        ]
+      },
+      {
+        "tableName": "t",
+        "inputColNames": [
+          "c"
+        ]
+      },
+      {
+        "tableName": "t",
+        "inputColNames": [
+          "b",
+          "c"
+        ]
+      },
+      {
+        "tableName": "t1",
+        "inputColNames": [
+          "a"
+        ]
+      },
+      {
+        "tableName": "t1",
+        "inputColNames": [
+          "b"
+        ]
+      },
+      {
+        "tableName": "t1",
+        "inputColNames": [
+          "c"
+        ]
+      },
+      {
+        "tableName": "t1",
+        "inputColNames": [
+          "vab"
+        ]
+      },
+      {
+        "tableName": "t1",
+        "inputColNames": [
+          "vab",
+          "c"
+        ]
+      },
+      {
+        "tableName": "t1",
+        "inputColNames": [
+          "vc",
+          "c",
+          "vvc"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "TestPartialStatsInExplain",
+    "cases": [
+      "explain format = brief select * from tp where b = 10",
+      "explain format = brief select * from t join tp where tp.a = 10 and t.b = tp.c",
+      "explain format = brief select * from t join tp partition (p0) join t2 where t.a < 10 and t.b = tp.c and t2.a > 10 and t2.a = tp.c"
+    ]
+  }
+]

@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "planstats_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "plan_stats_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        "//pkg/config",
+        "//pkg/domain",
+        "//pkg/executor",
+        "//pkg/parser",
+        "//pkg/parser/model",
+        "//pkg/planner",
+        "//pkg/planner/core",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/types",
+        "//pkg/table",
+        "//pkg/testkit",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

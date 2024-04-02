@@ -144,6 +144,11 @@
   },
   "fieldalignment": {
     "exclude_files": {
+<<<<<<< HEAD
+=======
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "pkg/statistics/table.go": "disable this limitation that prevents us from splitting struct fields for clarity",
+>>>>>>> 21e9d3cb40a (planner, statistics: use the correct column ID when recording stats loading status (#52208))
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code",
