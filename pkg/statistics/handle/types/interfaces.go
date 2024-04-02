@@ -373,12 +373,32 @@ type NeededItemTask struct {
 }
 
 // StatsLoad is used to load stats concurrently
+// TODO(hawkingrei): Our implementation of loading statistics is flawed.
+// Currently, we enqueue tasks that require loading statistics into a channel,
+// from which workers retrieve tasks to process. Then, using the singleflight mechanism,
+// we filter out duplicate tasks. However, the issue with this approach is that it does
+// not filter out all duplicate tasks, but only the duplicates within the number of workers.
+// Such an implementation is not reasonable.
+//
+// We should first filter all tasks through singleflight as shown in the diagram, and then use workers to load stats.
+//
+// ┌─────────▼──────────▼─────────────▼──────────────▼────────────────▼────────────────────┐
+// │                                                                                       │
+// │                                       singleflight                                    │
+// │                                                                                       │
+// └───────────────────────────────────────────────────────────────────────────────────────┘
+//
+//		            │                │
+//	   ┌────────────▼──────┐ ┌───────▼───────────┐
+//	   │                   │ │                   │
+//	   │  syncload worker  │ │  syncload worker  │
+//	   │                   │ │                   │
+//	   └───────────────────┘ └───────────────────┘
 type StatsLoad struct {
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
-
-	Singleflight singleflight.Group
-	SubCtxs      []sessionctx.Context
+	Singleflight   singleflight.Group
+	SubCtxs        []sessionctx.Context
 	sync.Mutex
 }
 
