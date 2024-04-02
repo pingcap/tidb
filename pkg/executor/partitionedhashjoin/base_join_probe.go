@@ -133,12 +133,12 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	j.usedRows = chk.Sel()
 	if j.usedRows == nil {
 		if cap(j.selRows) >= logicalRows {
-			j.selRows = j.selRows[:0]
+			j.selRows = j.selRows[:logicalRows]
 		} else {
 			j.selRows = make([]int, 0, logicalRows)
-		}
-		for i := 0; i < logicalRows; i++ {
-			j.selRows = append(j.selRows, i)
+			for i := 0; i < logicalRows; i++ {
+				j.selRows = append(j.selRows, i)
+			}
 		}
 		j.usedRows = j.selRows
 	}
@@ -407,6 +407,9 @@ func NewJoinProbe(ctx *PartitionedHashJoinCtx, workID uint, joinType core.JoinTy
 	base.cachedBuildRows = make([]rowIndexInfo, 0, BATCH_BUILD_ROW_SIZE)
 	base.matchedRowsHeaders = make([]uintptr, 0, chunk.InitialCapacity)
 	base.selRows = make([]int, 0, chunk.InitialCapacity)
+	for i := 0; i < chunk.InitialCapacity; i++ {
+		base.selRows = append(base.selRows, i)
+	}
 	base.hashValues = make([][]posAndHashValue, ctx.PartitionNumber)
 	for i := 0; i < ctx.PartitionNumber; i++ {
 		base.hashValues[i] = make([]posAndHashValue, 0, chunk.InitialCapacity)
