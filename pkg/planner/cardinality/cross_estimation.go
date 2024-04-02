@@ -139,7 +139,7 @@ func crossEstimateRowCount(sctx context.PlanContext,
 	if col == nil || len(path.AccessConds) > 0 {
 		return 0, false, corr
 	}
-	colID := col.UniqueID
+	colUniqueID := col.UniqueID
 	if corr < 0 {
 		desc = !desc
 	}
@@ -152,11 +152,11 @@ func crossEstimateRowCount(sctx context.PlanContext,
 		return 0, err == nil, corr
 	}
 	idxID := int64(-1)
-	idxIDs, idxExists := dsStatsInfo.HistColl.ColID2IdxIDs[colID]
+	idxIDs, idxExists := dsStatsInfo.HistColl.ColUniqueID2IdxIDs[colUniqueID]
 	if idxExists && len(idxIDs) > 0 {
 		idxID = idxIDs[0]
 	}
-	rangeCounts, ok := getColumnRangeCounts(sctx, colID, ranges, dsTableStats.HistColl, idxID)
+	rangeCounts, ok := getColumnRangeCounts(sctx, colUniqueID, ranges, dsTableStats.HistColl, idxID)
 	if !ok {
 		return 0, false, corr
 	}
@@ -168,7 +168,7 @@ func crossEstimateRowCount(sctx context.PlanContext,
 	if idxExists {
 		rangeCount, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges)
 	} else {
-		rangeCount, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colID, convertedRanges)
+		rangeCount, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colUniqueID, convertedRanges)
 	}
 	if err != nil {
 		return 0, false, corr
