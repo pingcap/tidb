@@ -157,26 +157,7 @@ func Selectivity(
 	slices.Sort(idxIDs)
 	for _, id := range idxIDs {
 		idxStats := coll.Indices[id]
-<<<<<<< HEAD
-		idxCols := findPrefixOfIndexByCol(extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
-=======
-		idxInfo := idxStats.Info
-		if idxInfo.MVIndex {
-			totalSelectivity, mask, ok := getMaskAndSelectivityForMVIndex(ctx, coll, id, remainedExprs)
-			if !ok {
-				continue
-			}
-			nodes = append(nodes, &StatsNode{
-				Tp:          IndexType,
-				ID:          id,
-				mask:        mask,
-				numCols:     len(idxInfo.Columns),
-				Selectivity: totalSelectivity,
-			})
-			continue
-		}
-		idxCols := findPrefixOfIndexByCol(ctx, extractedCols, coll.Idx2ColUniqueIDs[id], id2Paths[idxStats.ID])
->>>>>>> 21e9d3cb40a (planner, statistics: use the correct column ID when recording stats loading status (#52208))
+		idxCols := findPrefixOfIndexByCol(extractedCols, coll.Idx2ColUniqueIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
 			for i := 0; i < len(idxCols) && i < len(idxStats.Info.Columns); i++ {

@@ -33,11 +33,7 @@ func init() {
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
-<<<<<<< HEAD
-func GetRowCountByColumnRanges(sctx sessionctx.Context, coll *statistics.HistColl, colID int64, colRanges []*ranger.Range) (result float64, err error) {
-=======
-func GetRowCountByColumnRanges(sctx context.PlanContext, coll *statistics.HistColl, colUniqueID int64, colRanges []*ranger.Range) (result float64, err error) {
->>>>>>> 21e9d3cb40a (planner, statistics: use the correct column ID when recording stats loading status (#52208))
+func GetRowCountByColumnRanges(sctx sessionctx.Context, coll *statistics.HistColl, colUniqueID int64, colRanges []*ranger.Range) (result float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -57,13 +53,8 @@ func GetRowCountByColumnRanges(sctx context.PlanContext, coll *statistics.HistCo
 	if c != nil && c.Info != nil {
 		name = c.Info.Name.O
 	}
-<<<<<<< HEAD
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
 		result, err = getPseudoRowCountByColumnRanges(sc, float64(coll.RealtimeCount), colRanges, 0)
-=======
-	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colUniqueID) {
-		result, err = getPseudoRowCountByColumnRanges(sc.TypeCtx(), float64(coll.RealtimeCount), colRanges, 0)
->>>>>>> 21e9d3cb40a (planner, statistics: use the correct column ID when recording stats loading status (#52208))
 		if err == nil && sc.EnableOptimizerCETrace && ok {
 			ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
 		}
@@ -84,11 +75,7 @@ func GetRowCountByColumnRanges(sctx context.PlanContext, coll *statistics.HistCo
 }
 
 // GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
-<<<<<<< HEAD
-func GetRowCountByIntColumnRanges(sctx sessionctx.Context, coll *statistics.HistColl, colID int64, intRanges []*ranger.Range) (result float64, err error) {
-=======
-func GetRowCountByIntColumnRanges(sctx context.PlanContext, coll *statistics.HistColl, colUniqueID int64, intRanges []*ranger.Range) (result float64, err error) {
->>>>>>> 21e9d3cb40a (planner, statistics: use the correct column ID when recording stats loading status (#52208))
+func GetRowCountByIntColumnRanges(sctx sessionctx.Context, coll *statistics.HistColl, colUniqueID int64, intRanges []*ranger.Range) (result float64, err error) {
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -108,11 +95,7 @@ func GetRowCountByIntColumnRanges(sctx context.PlanContext, coll *statistics.His
 	if c != nil && c.Info != nil {
 		name = c.Info.Name.O
 	}
-<<<<<<< HEAD
 	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
-=======
-	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colUniqueID) {
->>>>>>> 21e9d3cb40a (planner, statistics: use the correct column ID when recording stats loading status (#52208))
 		if len(intRanges) == 0 {
 			return 0, nil
 		}

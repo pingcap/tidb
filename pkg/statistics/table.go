@@ -100,21 +100,11 @@ const (
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
-<<<<<<< HEAD
-	Columns map[int64]*Column
-	Indices map[int64]*Index
-	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
-	Idx2ColumnIDs map[int64][]int64
-	// ColID2IdxIDs maps the column id to a list index ids whose first column is it. It's used to calculate the selectivity in planner.
-	ColID2IdxIDs map[int64][]int64
-	PhysicalID   int64
-=======
 	// Note that when used in a query, Column use UniqueID as the key while Indices use the index ID in the
 	// metadata. (See GenerateHistCollFromColumnInfo() for details)
 	Columns    map[int64]*Column
 	Indices    map[int64]*Index
 	PhysicalID int64
->>>>>>> 21e9d3cb40a (planner, statistics: use the correct column ID when recording stats loading status (#52208))
 	// TODO: add AnalyzeCount here
 	RealtimeCount int64 // RealtimeCount is the current table row count, maintained by applying stats delta based on AnalyzeCount.
 	ModifyCount   int64 // Total modify count in a table.
@@ -123,8 +113,6 @@ type HistColl struct {
 	// The physical id is used when try to load column stats from storage.
 	HavePhysicalID bool
 	Pseudo         bool
-<<<<<<< HEAD
-=======
 
 	/*
 		Fields below are only used in a query, like for estimation, and they will be useless when stored in
@@ -139,11 +127,6 @@ type HistColl struct {
 	ColUniqueID2IdxIDs map[int64][]int64
 	// UniqueID2colInfoID maps the column UniqueID to its ID in the metadata.
 	UniqueID2colInfoID map[int64]int64
-	// MVIdx2Columns maps the index id to its columns by expression.Column.
-	// For normal index, the column id is enough, as we already have in Idx2ColUniqueIDs. But currently, mv index needs more
-	// information to match the filter against the mv index columns, and we need this map to provide this information.
-	MVIdx2Columns map[int64][]*expression.Column
->>>>>>> 21e9d3cb40a (planner, statistics: use the correct column ID when recording stats loading status (#52208))
 }
 
 // TableMemoryUsage records tbl memory usage
@@ -624,17 +607,6 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		slices.Sort(idxIDs)
 	}
 	newColl := &HistColl{
-<<<<<<< HEAD
-		PhysicalID:     coll.PhysicalID,
-		HavePhysicalID: coll.HavePhysicalID,
-		Pseudo:         coll.Pseudo,
-		RealtimeCount:  coll.RealtimeCount,
-		ModifyCount:    coll.ModifyCount,
-		Columns:        newColHistMap,
-		Indices:        newIdxHistMap,
-		ColID2IdxIDs:   colID2IdxIDs,
-		Idx2ColumnIDs:  idx2Columns,
-=======
 		PhysicalID:         coll.PhysicalID,
 		HavePhysicalID:     coll.HavePhysicalID,
 		Pseudo:             coll.Pseudo,
@@ -645,8 +617,6 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		ColUniqueID2IdxIDs: colID2IdxIDs,
 		Idx2ColUniqueIDs:   idx2Columns,
 		UniqueID2colInfoID: uniqueID2colInfoID,
-		MVIdx2Columns:      mvIdx2Columns,
->>>>>>> 21e9d3cb40a (planner, statistics: use the correct column ID when recording stats loading status (#52208))
 	}
 	return newColl
 }
