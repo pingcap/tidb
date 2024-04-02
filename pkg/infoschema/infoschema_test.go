@@ -93,9 +93,9 @@ func TestBasic(t *testing.T) {
 	dbInfo := &model.DBInfo{
 		ID:     dbID,
 		Name:   dbName,
-		Tables: []*model.TableInfo{tblInfo},
 		State:  model.StatePublic,
 	}
+	dbInfo.SetTables([]*model.TableInfo{tblInfo})
 	tblInfo.DBID = dbInfo.ID
 
 	dbInfos := []*model.DBInfo{dbInfo}
@@ -234,7 +234,7 @@ func TestBasic(t *testing.T) {
 	is = builder.Build(math.MaxUint64)
 	schema, ok = is.SchemaByID(dbID)
 	require.True(t, ok)
-	require.Equal(t, 1, len(schema.Tables))
+	require.Equal(t, 1, len(schema.Tables()))
 }
 
 func TestMockInfoSchema(t *testing.T) {
@@ -340,9 +340,9 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	dbInfo := &model.DBInfo{
 		ID:     1,
 		Name:   model.NewCIStr("test"),
-		Tables: []*model.TableInfo{},
 		State:  model.StatePublic,
 	}
+	dbInfo.SetTables([]*model.TableInfo{})
 	dbInfos := []*model.DBInfo{dbInfo}
 	data := infoschema.NewData()
 	builder, err := infoschema.NewBuilder(re, nil, data).InitWithDBInfos(dbInfos, nil, nil, 1)
@@ -449,7 +449,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	for _, table := range tables {
 		tblInfos = append(tblInfos, table.Meta())
 	}
-	newDB.Tables = tblInfos
+	newDB.SetTables(tblInfos)
 	require.True(t, ok)
 	builder, err = infoschema.NewBuilder(re, nil, data).InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.SchemaMetaVersion())
 	require.NoError(t, err)
