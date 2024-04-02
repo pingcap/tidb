@@ -125,13 +125,13 @@ func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
 func TestBalanceBatchCopTaskWithEmptyTaskSet(t *testing.T) {
 	{
 		var nilTaskSet []*batchCopTask
-		nilResult := balanceBatchCopTask(nil, nil, nilTaskSet, false, 0)
+		nilResult := balanceBatchCopTask(nil, nilTaskSet, false, 0)
 		require.True(t, nilResult == nil)
 	}
 
 	{
 		emptyTaskSet := make([]*batchCopTask, 0)
-		emptyResult := balanceBatchCopTask(nil, nil, emptyTaskSet, false, 0)
+		emptyResult := balanceBatchCopTask(nil, emptyTaskSet, false, 0)
 		require.True(t, emptyResult != nil)
 		require.True(t, len(emptyResult) == 0)
 	}
@@ -281,4 +281,9 @@ func TestTopoFetcherBackoff(t *testing.T) {
 	require.GreaterOrEqual(t, dura, time.Duration(fetchTopoMaxBackoff*1000))
 	require.GreaterOrEqual(t, dura, 30*time.Second)
 	require.LessOrEqual(t, dura, 50*time.Second)
+}
+
+// Some stores that have no regions may take part in the balance, we need to remove them.
+func TestRemoveEmptyStoreBeforeBalance(t *testing.T) {
+
 }
