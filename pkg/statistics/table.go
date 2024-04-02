@@ -606,7 +606,7 @@ func (coll *HistColl) GetScaledRealtimeAndModifyCnt(idxStats *Index) (realtimeCn
 // GetStatsHealthy calculates stats healthy if the table stats is not pseudo.
 // If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, true.
 func (t *Table) GetStatsHealthy() (int64, bool) {
-	if t == nil || t.Pseudo {
+	if t == nil || t.Pseudo || !t.IsAnalyzed() {
 		return 0, false
 	}
 	var healthy int64
