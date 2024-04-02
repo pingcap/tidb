@@ -8,9 +8,6 @@
       "\\.bzl$"
     ]    
   },
-  "git-submodules": {
-    "enabled": true
-  },
   "packageRules": [
     {
       "matchCategories": ["bazel", "golang"],
