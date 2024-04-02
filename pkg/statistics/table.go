@@ -119,7 +119,6 @@ type HistColl struct {
 		the stats cache. (See GenerateHistCollFromColumnInfo() for details)
 	*/
 
-	CanNotTriggerLoad bool
 	// Idx2ColUniqueIDs maps the index id to its column UniqueIDs. It's used to calculate the selectivity in planner.
 	Idx2ColUniqueIDs map[int64][]int64
 	// ColUniqueID2IdxIDs maps the column UniqueID to a list index ids whose first column is it.
