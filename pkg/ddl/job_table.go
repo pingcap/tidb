@@ -35,16 +35,13 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	tidb_util "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -250,70 +247,6 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 	})
 }
 
-// startLocalWorkerLoop starts the local worker loop to run the DDL job of v2.
-func (d *ddl) startLocalWorkerLoop() {
-	for {
-		select {
-		case <-d.ctx.Done():
-			return
-		case task, ok := <-d.localJobCh:
-			if !ok {
-				return
-			}
-			d.delivery2LocalWorker(d.localWorkerPool, task)
-		}
-	}
-}
-
-func (d *ddl) startDispatchLoop() {
-	sessCtx, err := d.sessPool.Get()
-	if err != nil {
-		logutil.BgLogger().Fatal("dispatch loop get session failed, it should not happen, please try restart TiDB", zap.Error(err))
-	}
-	defer d.sessPool.Put(sessCtx)
-	se := sess.NewSession(sessCtx)
-	var notifyDDLJobByEtcdCh clientv3.WatchChan
-	if d.etcdCli != nil {
-		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
-	}
-	if err := d.checkAndUpdateClusterState(true); err != nil {
-		logutil.BgLogger().Fatal("dispatch loop get cluster state failed, it should not happen, please try restart TiDB", zap.Error(err))
-	}
-	ticker := time.NewTicker(dispatchLoopWaitingDuration)
-	defer ticker.Stop()
-	isOnce := false
-	for {
-		if d.ctx.Err() != nil {
-			return
-		}
-		if !d.isOwner() {
-			isOnce = true
-			d.onceMap = make(map[int64]struct{}, jobOnceCapacity)
-			time.Sleep(dispatchLoopWaitingDuration)
-			continue
-		}
-		select {
-		case <-d.ddlJobCh:
-		case <-ticker.C:
-		case _, ok := <-notifyDDLJobByEtcdCh:
-			if !ok {
-				logutil.BgLogger().Warn("start worker watch channel closed", zap.String("category", "ddl"), zap.String("watch key", addingDDLJobConcurrent))
-				notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
-				time.Sleep(time.Second)
-				continue
-			}
-		case <-d.ctx.Done():
-			return
-		}
-		if err := d.checkAndUpdateClusterState(isOnce); err != nil {
-			continue
-		}
-		isOnce = false
-		d.loadDDLJobAndRun(se, d.generalDDLWorkerPool, d.getGeneralJob)
-		d.loadDDLJobAndRun(se, d.reorgWorkerPool, d.getReorgJob)
-	}
-}
-
 func (d *ddl) checkAndUpdateClusterState(needUpdate bool) error {
 	select {
 	case _, ok := <-d.stateSyncer.WatchChan():
@@ -349,153 +282,6 @@ func (d *ddl) checkAndUpdateClusterState(needUpdate bool) error {
 	}
 	logutil.BgLogger().Info("the owner sets owner operator value", zap.String("category", "ddl"), zap.Stringer("ownerOp", ownerOp))
 	return nil
-}
-
-func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*sess.Session) (*model.Job, error)) {
-	wk, err := pool.get()
-	if err != nil || wk == nil {
-		logutil.BgLogger().Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))
-		return
-	}
-
-	d.mu.RLock()
-	d.mu.hook.OnGetJobBefore(pool.tp().String())
-	d.mu.RUnlock()
-
-	startTime := time.Now()
-	job, err := getJob(se)
-	if job == nil || err != nil {
-		if err != nil {
-			wk.jobLogger(job).Warn("get job met error", zap.Duration("take time", time.Since(startTime)), zap.Error(err))
-		}
-		pool.put(wk)
-		return
-	}
-	d.mu.RLock()
-	d.mu.hook.OnGetJobAfter(pool.tp().String(), job)
-	d.mu.RUnlock()
-
-	d.delivery2Worker(wk, pool, job)
-}
-
-// delivery2LocalWorker runs the DDL job of v2 in local.
-// send the result to the error channels in the task.
-// delivery2Localworker owns the worker, need to put it back to the pool in this function.
-func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
-	job := task.job
-	wk, err := pool.get()
-	if err != nil {
-		task.NotifyError(err)
-		return
-	}
-	for wk == nil {
-		select {
-		case <-d.ctx.Done():
-			return
-		case <-time.After(localWorkerWaitingDuration):
-		}
-		wk, err = pool.get()
-		if err != nil {
-			task.NotifyError(err)
-			return
-		}
-	}
-	d.wg.Run(func() {
-		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-		defer func() {
-			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
-		}()
-
-		err := wk.HandleLocalDDLJob(d.ddlCtx, job)
-		pool.put(wk)
-		if err != nil {
-			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
-		}
-		task.NotifyError(err)
-	})
-}
-
-// delivery2Worker owns the worker, need to put it back to the pool in this function.
-func (d *ddl) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
-	injectFailPointForGetJob(job)
-	d.runningJobs.add(job)
-	d.wg.Run(func() {
-		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
-		defer func() {
-			d.runningJobs.remove(job)
-			asyncNotify(d.ddlJobCh)
-			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
-		}()
-		// check if this ddl job is synced to all servers.
-		if !job.NotStarted() && (!d.isSynced(job) || !d.maybeAlreadyRunOnce(job.ID)) {
-			if variable.EnableMDL.Load() {
-				exist, version, err := checkMDLInfo(job.ID, d.sessPool)
-				if err != nil {
-					wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
-					// Release the worker resource.
-					pool.put(wk)
-					return
-				} else if exist {
-					// Release the worker resource.
-					pool.put(wk)
-					err = waitSchemaSyncedForMDL(d.ddlCtx, job, version)
-					if err != nil {
-						return
-					}
-					d.setAlreadyRunOnce(job.ID)
-					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
-					// Don't have a worker now.
-					return
-				}
-			} else {
-				err := waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
-				if err != nil {
-					time.Sleep(time.Second)
-					// Release the worker resource.
-					pool.put(wk)
-					return
-				}
-				d.setAlreadyRunOnce(job.ID)
-			}
-		}
-
-		schemaVer, err := wk.HandleDDLJobTable(d.ddlCtx, job)
-		logCtx := wk.logCtx
-		pool.put(wk)
-		if err != nil {
-			logutil.Logger(logCtx).Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
-		} else {
-			failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
-				if val.(bool) {
-					if mockDDLErrOnce == 0 {
-						mockDDLErrOnce = schemaVer
-						failpoint.Return()
-					}
-				}
-			})
-
-			// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
-			// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
-			// the newest schema.
-			err := waitSchemaChanged(d.ddlCtx, d.lease*2, schemaVer, job)
-			if err != nil {
-				return
-			}
-			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
-			d.synced(job)
-
-			if RunInGoTest {
-				// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
-				d.mu.RLock()
-				d.mu.hook.OnSchemaStateChanged(schemaVer)
-				d.mu.RUnlock()
-			}
-
-			d.mu.RLock()
-			d.mu.hook.OnJobUpdated(job)
-			d.mu.RUnlock()
-		}
-	})
 }
 
 func (*ddl) markJobProcessing(se *sess.Session, job *model.Job) error {
@@ -752,4 +538,24 @@ func getJobsBySQL(se *sess.Session, tbl, condition string) ([]*model.Job, error)
 		jobs = append(jobs, &job)
 	}
 	return jobs, nil
+}
+
+func get2JobsFromTable(sess *sess.Session) (*model.Job, *model.Job, error) {
+	var generalJob, reorgJob *model.Job
+	jobs, err := getJobsBySQL(sess, JobTable, "not reorg order by job_id limit 1")
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	if len(jobs) != 0 {
+		generalJob = jobs[0]
+	}
+	jobs, err = getJobsBySQL(sess, JobTable, "reorg order by job_id limit 1")
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if len(jobs) != 0 {
+		reorgJob = jobs[0]
+	}
+	return generalJob, reorgJob, nil
 }

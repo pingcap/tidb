@@ -264,20 +264,6 @@ type DDL interface {
 	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
 }
 
-type limitJobTask struct {
-	job *model.Job
-	// when we combine multiple jobs into one task,
-	// append the errChs to this slice.
-	errChs   []chan error
-	cacheErr error
-}
-
-func (t *limitJobTask) NotifyError(err error) {
-	for _, errCh := range t.errChs {
-		errCh <- err
-	}
-}
-
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
 	m          sync.RWMutex
@@ -1124,14 +1110,6 @@ func setDDLJobMode(job *model.Job) {
 	default:
 	}
 	job.LocalMode = false
-}
-
-func (d *ddl) deliverJobTask(task *limitJobTask) {
-	if task.job.LocalMode {
-		d.limitJobChV2 <- task
-	} else {
-		d.limitJobCh <- task
-	}
 }
 
 func (*ddl) shouldCheckHistoryJob(job *model.Job) bool {

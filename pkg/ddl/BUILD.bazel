@@ -36,6 +36,7 @@ go_library(
         "ddl_workerpool.go",
         "delete_range.go",
         "delete_range_util.go",
+        "dispatch.go",
         "dist_owner.go",
         "foreign_key.go",
         "generated_column.go",
