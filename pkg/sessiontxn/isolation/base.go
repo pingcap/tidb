@@ -529,7 +529,7 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(txn kv.Transaction, comm
 		return nil
 	}
 
-	// set resource tagger again for internal tasks seperated in different transactions
+	// set resource tagger again for internal tasks separated in different transactions
 	txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
 
 	// Get the related table or partition IDs.
