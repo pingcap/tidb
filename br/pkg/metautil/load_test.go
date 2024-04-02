@@ -250,7 +250,7 @@ func buildBenchmarkBackupmeta(b *testing.B, dbName string, tableCount, fileCount
 			ID:   1,
 			Name: model.NewCIStr(dbName),
 		}
-		mockDB.SetTables( []*model.TableInfo{
+		mockDB.SetTables([]*model.TableInfo{
 			mockTbl,
 		})
 		dbBytes, err := json.Marshal(mockDB)
