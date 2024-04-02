@@ -462,6 +462,13 @@ func sendSplitRegionRequest(
 	return false, resp, nil
 }
 
+// batchSplitRegionsWithOrigin calls the batch split region API and groups the
+// returned regions into two groups: the region with the same ID as the origin,
+// and the other regions. The former does not need to be scattered while the
+// latter need to be scattered.
+//
+// Depending on the TiKV configuration right-derive-when-split, the origin region
+// can be the first return region or the last return region.
 func (c *pdClient) batchSplitRegionsWithOrigin(
 	ctx context.Context, regionInfo *RegionInfo, keys [][]byte,
 ) (*RegionInfo, []*RegionInfo, error) {
@@ -606,11 +613,12 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, 
 				)
 			}
 
-			// the region with the max start key is the region need to be further split, it
-			// can be the leftmost region or the rightmost region.
-			lastRegion := newRegionsOfBatch[len(newRegionsOfBatch)-1]
-			if bytes.Compare(originRegion.Region.StartKey, lastRegion.Region.StartKey) < 0 {
-				region = lastRegion
+			// the region with the max start key is the region need to be further split,
+			// depending on the origin region is the first region or last region, we need to
+			// compare the origin region and the last one of new regions.
+			lastNewRegion := newRegionsOfBatch[len(newRegionsOfBatch)-1]
+			if bytes.Compare(originRegion.Region.StartKey, lastNewRegion.Region.StartKey) < 0 {
+				region = lastNewRegion
 			} else {
 				region = originRegion
 			}
