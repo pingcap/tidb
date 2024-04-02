@@ -228,9 +228,9 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 		rowCount := rc.getRowCount()
 		job.SetRowCount(rowCount)
 		if err != nil {
-			logutil.BgLogger().Warn("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount), zap.Error(err))
+			logutil.BgLogger().Warn("run reorg job done", zap.Int64("jobID", job.ID), zap.String("category", "ddl"), zap.Int64("handled rows", rowCount), zap.Error(err))
 		} else {
-			logutil.BgLogger().Info("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount))
+			logutil.BgLogger().Info("run reorg job done", zap.Int64("jobID", job.ID), zap.String("category", "ddl"), zap.Int64("handled rows", rowCount))
 		}
 
 		// Update a job's warnings.
@@ -246,7 +246,7 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 			return errors.Trace(err)
 		}
 	case <-w.ctx.Done():
-		logutil.BgLogger().Info("run reorg job quit", zap.String("category", "ddl"))
+		logutil.BgLogger().Info("run reorg job quit", zap.Int64("jobID", job.ID), zap.String("category", "ddl"))
 		d.removeReorgCtx(job.ID)
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
@@ -260,7 +260,7 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 
 		rc.resetWarnings()
 
-		logutil.BgLogger().Info("run reorg job wait timeout", zap.String("category", "ddl"),
+		logutil.BgLogger().Info("run reorg job wait timeout", zap.Int64("jobID", job.ID), zap.String("category", "ddl"),
 			zap.Duration("wait time", waitTimeout),
 			zap.Int64("total added row count", rowCount))
 		// If timeout, we will return, check the owner and retry to wait job done again.
