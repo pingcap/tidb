@@ -2417,7 +2417,7 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 
 func (cc *clientConn) createWriteChunksGoroutine() {
 	cc.writeChunksOnce.Do(func() {
-		cc.writeChunksCh = make(chan chunkErrorChan)
+		cc.writeChunksCh = make(chan chunkErrorChan, 1)
 		cc.tickerCheckExit = time.NewTicker(3 * time.Second)
 		go func() {
 			var (
