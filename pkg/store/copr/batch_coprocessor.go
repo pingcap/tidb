@@ -53,6 +53,8 @@ import (
 
 const fetchTopoMaxBackoff = 20000
 
+var regionNotFoundFlagForTest = false
+
 // batchCopTask comprises of multiple copTask that will send to same store.
 type batchCopTask struct {
 	storeAddr string
@@ -149,6 +151,7 @@ const (
 func selectRegion(storeID uint64, candidateRegionInfos []RegionInfo, selected []bool, storeID2RegionIndex map[uint64][]int, cnt int64) []RegionInfo {
 	regionIndexes, ok := storeID2RegionIndex[storeID]
 	if !ok {
+		regionNotFoundFlagForTest = true
 		logutil.BgLogger().Error("selectRegion: storeID2RegionIndex not found", zap.Uint64("storeID", storeID))
 		return nil
 	}
@@ -210,10 +213,16 @@ func checkBatchCopTaskBalance(storeTasks map[uint64]*batchCopTask, balanceContin
 // Second, build a storeID2RegionIndex data structure to fastly locate regions of a store (avoid scanning candidateRegionInfos repeatly).
 // Third, each store will take balanceContinuousRegionCount from the sorted candidateRegionInfos. These regions are stored very close to each other in TiFlash.
 // Fourth, if the region count is not balance between TiFlash, it may fallback to the original balance logic.
-func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, candidateRegionInfos []RegionInfo, balanceContinuousRegionCount int64) ([]*batchCopTask, int) {
+func balanceBatchCopTaskWithContinuity(
+	storeTaskMap map[uint64]*batchCopTask,
+	storeCandidateRegionMap map[uint64]map[string]RegionInfo,
+	candidateRegionInfos []RegionInfo,
+	balanceContinuousRegionCount int64,
+) ([]*batchCopTask, int) {
 	if len(candidateRegionInfos) < 500 {
 		return nil, 0
 	}
+	removeNoRegionStores(storeTaskMap, storeCandidateRegionMap)
 	funcStart := time.Now()
 	regionCount := regionTotalCount(storeTaskMap, candidateRegionInfos)
 	storeTasks := deepCopyStoreTaskMap(storeTaskMap)
@@ -382,14 +391,12 @@ func balanceBatchCopTask(aliveStores []*tikv.Store, originalTasks []*batchCopTas
 		}
 	}
 
-	removeNoRegionStores(storeTaskMap, storeCandidateRegionMap)
-
 	// If balanceBatchCopTaskWithContinuity failed (not balance or return nil), it will fallback to the original balance logic.
 	// So storeTaskMap should not be modify.
 	var contiguousTasks []*batchCopTask = nil
 	contiguousBalanceScore := 0
 	if balanceWithContinuity {
-		contiguousTasks, contiguousBalanceScore = balanceBatchCopTaskWithContinuity(storeTaskMap, candidateRegionInfos, balanceContinuousRegionCount)
+		contiguousTasks, contiguousBalanceScore = balanceBatchCopTaskWithContinuity(storeTaskMap, storeCandidateRegionMap, candidateRegionInfos, balanceContinuousRegionCount)
 		if isBalance(contiguousBalanceScore) && contiguousTasks != nil {
 			return contiguousTasks
 		}
