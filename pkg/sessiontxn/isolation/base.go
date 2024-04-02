@@ -496,10 +496,12 @@ func (p *baseTxnContextProvider) SetOptionsAfterBegin(txn kv.Transaction) {
 		// We guarantee the commitTS of any transaction must not exceed the next timestamp from the TSO.
 		// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
 		// of any previously committed transactions.
-		// Additionally, it's required to guarantee linearizability for snapshot read-only transactions now though it only affects commitTS now.
+		// Additionally, it's required to guarantee linearizability for snapshot read-only transactions though
+		// it does take effects on read-only transactions now.
 		txn.SetOption(kv.GuaranteeLinearizability,
 			!sessVars.IsAutocommit() ||
 				sessVars.SnapshotTS > 0 ||
+				p.enterNewTxnType == sessiontxn.EnterNewTxnDefault ||
 				p.enterNewTxnType == sessiontxn.EnterNewTxnWithBeginStmt)
 	}
 }
