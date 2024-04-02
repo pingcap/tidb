@@ -48,7 +48,6 @@ func NewStatsSyncLoad(statsHandle statstypes.StatsHandle) statstypes.StatsSyncLo
 	s.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	s.StatsLoad.NeededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	s.StatsLoad.TimeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
-	//s.StatsLoad.WorkingColMap = map[model.TableItemID][]chan stmtctx.StatsLoadResult{}
 	return s
 }
 
@@ -231,13 +230,13 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 	} else {
 		task = lastTask
 	}
-	resultChan := s.StatsLoad.Singleflight.DoChan(task.Item.Key(), func() (interface{}, error) {
+	resultChan := s.StatsLoad.Singleflight.DoChan(task.Item.Key(), func() (any, error) {
 		return s.handleOneItemTask(sctx, task)
 	})
-	timeout := task.ToTimeout.Sub(time.Now())
+	timeout := time.Until(task.ToTimeout)
 	select {
 	case result := <-resultChan:
-		if result.Err != nil {
+		if result.Err == nil {
 			slr := *(result.Val.(*stmtctx.StatsLoadResult))
 			if slr.Error != nil {
 				return task, slr.Error
@@ -251,14 +250,20 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 	}
 }
 
-func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statstypes.NeededItemTask) (*stmtctx.StatsLoadResult, error) {
-	result := &stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
+func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statstypes.NeededItemTask) (result *stmtctx.StatsLoadResult, err error) {
+	defer func() {
+		// recover for each task, worker keeps working
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
+			err = errors.Errorf("stats loading panicked: %v", r)
+		}
+	}()
+	result = &stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
 	item := result.Item
 	tbl, ok := s.statsHandle.Get(item.TableID)
 	if !ok {
 		return result, nil
 	}
-	var err error
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, loadNeeded := tbl.IndexIsLoadNeeded(item.ID)
