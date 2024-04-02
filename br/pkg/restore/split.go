@@ -228,7 +228,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 func (rs *RegionSplitter) splitAndScatterRegions(
 	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte, _ bool,
 ) ([]*split.RegionInfo, error) {
-	_, newRegions, err := rs.client.SplitWaitAndScatter(ctx, regionInfo, keys)
+	newRegions, err := rs.client.SplitWaitAndScatter(ctx, regionInfo, keys)
 	return newRegions, err
 }
 

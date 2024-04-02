@@ -101,9 +101,7 @@ func (c *TestClient) GetRegionByID(ctx context.Context, regionID uint64) (*split
 	return region, nil
 }
 
-func (c *TestClient) SplitWaitAndScatter(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
-) (*split.RegionInfo, []*split.RegionInfo, error) {
+func (c *TestClient) SplitWaitAndScatter(ctx context.Context, region *split.RegionInfo, keys [][]byte) ([]*split.RegionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	newRegions := make([]*split.RegionInfo, 0)
@@ -134,7 +132,7 @@ func (c *TestClient) SplitWaitAndScatter(
 		region = target
 		newRegions = append(newRegions, newRegion)
 	}
-	return region, newRegions, nil
+	return newRegions, nil
 }
 
 func (c *TestClient) GetOperator(context.Context, uint64) (*pdpb.GetOperatorResponse, error) {

@@ -19,7 +19,6 @@ import (
 	"context"
 	"math"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -47,9 +46,7 @@ const (
 )
 
 var (
-	// the max total key size in a split region batch.
-	// our threshold should be smaller than TiKV's raft max entry size(default is 8MB).
-	maxBatchSplitSize = 6 * units.MiB
+
 	// the base exponential backoff time
 	// the variable is only changed in unit test for running test faster.
 	splitRegionBaseBackOffTime = time.Second
@@ -169,73 +166,29 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 		for splitWorker := 0; splitWorker < size; splitWorker++ {
 			eg.Go(func() error {
 				for sp := range ch {
-					var newRegions []*split.RegionInfo
-					var err1 error
 					region := sp.region
 					keys := sp.keys
-					slices.SortFunc(keys, bytes.Compare)
-					splitRegion := region
-					startIdx := 0
-					endIdx := 0
-					batchKeySize := 0
-					for endIdx <= len(keys) {
-						if endIdx == len(keys) ||
-							batchKeySize+len(keys[endIdx]) > maxBatchSplitSize ||
-							endIdx-startIdx >= local.RegionSplitBatchSize {
-							splitRegionStart := codec.EncodeBytes([]byte{}, keys[startIdx])
-							splitRegionEnd := codec.EncodeBytes([]byte{}, keys[endIdx-1])
-							if bytes.Compare(splitRegionStart, splitRegion.Region.StartKey) < 0 || !beforeEnd(splitRegionEnd, splitRegion.Region.EndKey) {
-								log.FromContext(ctx).Fatal("no valid key in region",
-									logutil.Key("startKey", splitRegionStart), logutil.Key("endKey", splitRegionEnd),
-									logutil.Key("regionStart", splitRegion.Region.StartKey), logutil.Key("regionEnd", splitRegion.Region.EndKey),
-									logutil.Region(splitRegion.Region), logutil.Leader(splitRegion.Leader))
-							}
-							splitRegion, newRegions, err1 = local.splitCli.SplitWaitAndScatter(splitCtx, splitRegion, keys[startIdx:endIdx])
-							if err1 != nil {
-								if strings.Contains(err1.Error(), "no valid key") {
-									for _, key := range keys {
-										log.FromContext(ctx).Warn("no valid key",
-											logutil.Key("startKey", region.Region.StartKey),
-											logutil.Key("endKey", region.Region.EndKey),
-											logutil.Key("key", codec.EncodeBytes([]byte{}, key)))
-									}
-									return err1
-								} else if common.IsContextCanceledError(err1) {
-									// do not retry on context.Canceled error
-									return err1
-								}
-								log.FromContext(ctx).Warn("split regions", log.ShortError(err1), zap.Int("retry time", i),
-									zap.Uint64("region_id", region.Region.Id))
-
-								syncLock.Lock()
-								retryKeys = append(retryKeys, keys[startIdx:]...)
-								// set global error so if we exceed retry limit, the function will return this error
-								err = multierr.Append(err, err1)
-								syncLock.Unlock()
-								break
-							}
-							log.FromContext(ctx).Info("batch split region", zap.Uint64("region_id", splitRegion.Region.Id),
-								zap.Int("keys", endIdx-startIdx), zap.Binary("firstKey", keys[startIdx]),
-								zap.Binary("end", keys[endIdx-1]))
-							slices.SortFunc(newRegions, func(i, j *split.RegionInfo) int {
-								return bytes.Compare(i.Region.StartKey, j.Region.StartKey)
-							})
-							syncLock.Lock()
-							scatterRegions = append(scatterRegions, newRegions...)
-							syncLock.Unlock()
-							// the region with the max start key is the region need to be further split.
-							if bytes.Compare(splitRegion.Region.StartKey, newRegions[len(newRegions)-1].Region.StartKey) < 0 {
-								splitRegion = newRegions[len(newRegions)-1]
-							}
-
-							batchKeySize = 0
-							startIdx = endIdx
+					newRegions, err2 := local.splitCli.SplitWaitAndScatter(splitCtx, region, keys)
+					if err2 != nil {
+						if common.IsContextCanceledError(err2) {
+							return err2
 						}
-						if endIdx < len(keys) {
-							batchKeySize += len(keys[endIdx])
-						}
-						endIdx++
+						log.FromContext(ctx).Warn("split regions",
+							log.ShortError(err2),
+							zap.Int("retry time", i),
+							zap.Uint64("region_id", region.Region.Id))
+						// TODO(lance6716): now the retryKeys can not be shrank to the middle of the keys
+						// and it will retry all keys of the region. Will fix it in future PR.
+						syncLock.Lock()
+						retryKeys = append(retryKeys, keys...)
+						// set global error so if we exceed retry limit, the function will return this error
+						err = multierr.Append(err, err2)
+						syncLock.Unlock()
+						break
 					}
+					syncLock.Lock()
+					scatterRegions = append(scatterRegions, newRegions...)
+					syncLock.Unlock()
 				}
 				return nil
 			})
