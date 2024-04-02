@@ -218,7 +218,7 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 	}
 
 	if !ok {
-		db := ctx.CurrentDB()
+		db := ctx.GetEvalCtx().CurrentDB()
 		if db == "" {
 			return nil, errors.Trace(plannererrors.ErrNoDB)
 		}

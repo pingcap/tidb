@@ -57,6 +57,11 @@ func NewExprExtendedImpl(sctx sessionctx.Context) *ExprCtxExtendedImpl {
 	}
 }
 
+// GetEvalCtx returns the EvalContext.
+func (ctx *ExprCtxExtendedImpl) GetEvalCtx() exprctx.EvalContext {
+	return ctx.SessionEvalContext
+}
+
 // SessionEvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.
 type SessionEvalContext struct {
 	sctx  sessionctx.Context

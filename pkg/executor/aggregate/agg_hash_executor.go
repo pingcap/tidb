@@ -647,7 +647,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 					chk.SetNumVirtualRows(chk.NumRows() + 1)
 				}
 				for i, af := range e.PartialAggFuncs {
-					if err := af.AppendFinalResult2Chunk(exprCtx, partialResults[i], chk); err != nil {
+					if err := af.AppendFinalResult2Chunk(exprCtx.GetEvalCtx(), partialResults[i], chk); err != nil {
 						return err
 					}
 				}
@@ -740,7 +740,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			partialResults := e.getPartialResults(groupKey)
 			for i, af := range e.PartialAggFuncs {
 				tmpBuf[0] = e.childResult.GetRow(j)
-				memDelta, err := af.UpdatePartialResult(exprCtx, tmpBuf[:], partialResults[i])
+				memDelta, err := af.UpdatePartialResult(exprCtx.GetEvalCtx(), tmpBuf[:], partialResults[i])
 				if err != nil {
 					return err
 				}

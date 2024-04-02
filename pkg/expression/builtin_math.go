@@ -329,7 +329,7 @@ func calculateDecimal4RoundAndTruncate(ctx BuildContext, args []Expression, retT
 	if !secondIsConst {
 		return args[0].GetType().GetDecimal()
 	}
-	argDec, isNull, err := secondConst.EvalInt(ctx, chunk.Row{})
+	argDec, isNull, err := secondConst.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil || isNull || argDec < 0 {
 		return 0
 	}
@@ -1036,7 +1036,7 @@ func (c *randFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 		// If an integer argument N is specified, it is used as the seed value:
 		// With a constant initializer argument, the seed is initialized once
 		// when the statement is prepared, prior to execution.
-		seed, isNull, err := args[0].EvalInt(ctx, chunk.Row{})
+		seed, isNull, err := args[0].EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return nil, err
 		}
