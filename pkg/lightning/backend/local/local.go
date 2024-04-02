@@ -840,39 +840,41 @@ func (local *Backend) prepareAndSendJob(
 	// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 	// the table when table is created.
 	needSplit := len(initialSplitRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
-	var err error
 	// split region by given ranges
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 		needSplit = true
 	})
-	logger := log.FromContext(ctx).With(zap.String("uuid", engine.ID())).Begin(zap.InfoLevel, "split and scatter ranges")
-	backOffTime := 10 * time.Second
-	maxbackoffTime := 120 * time.Second
-	for i := 0; i < maxRetryTimes; i++ {
-		failpoint.Inject("skipSplitAndScatter", func() {
-			failpoint.Break()
-		})
+	if needSplit {
+		var err error
+		logger := log.FromContext(ctx).With(zap.String("uuid", engine.ID())).Begin(zap.InfoLevel, "split and scatter ranges")
+		backOffTime := 10 * time.Second
+		maxbackoffTime := 120 * time.Second
+		for i := 0; i < maxRetryTimes; i++ {
+			failpoint.Inject("skipSplitAndScatter", func() {
+				failpoint.Break()
+			})
 
-		err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, needSplit, maxBatchSplitRanges)
-		if err == nil || common.IsContextCanceledError(err) {
-			break
-		}
+			err = local.SplitAndScatterRegionInBatches(ctx, initialSplitRanges, maxBatchSplitRanges)
+			if err == nil || common.IsContextCanceledError(err) {
+				break
+			}
 
-		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.String("engine ID", engine.ID()),
-			log.ShortError(err), zap.Int("retry", i))
-		select {
-		case <-time.After(backOffTime):
-		case <-ctx.Done():
-			return ctx.Err()
+			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.String("engine ID", engine.ID()),
+				log.ShortError(err), zap.Int("retry", i))
+			select {
+			case <-time.After(backOffTime):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			backOffTime *= 2
+			if backOffTime > maxbackoffTime {
+				backOffTime = maxbackoffTime
+			}
 		}
-		backOffTime *= 2
-		if backOffTime > maxbackoffTime {
-			backOffTime = maxbackoffTime
+		logger.End(zap.ErrorLevel, err)
+		if err != nil {
+			return err
 		}
-	}
-	logger.End(zap.ErrorLevel, err)
-	if err != nil {
-		return err
 	}
 
 	return local.generateAndSendJob(
