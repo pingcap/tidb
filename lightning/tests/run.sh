@@ -17,8 +17,8 @@
 set -eu
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export UTILS_DIR="$CUR/../../tests/_utils"
-export PATH="$PATH:$CUR/../../bin:$CUR/../bin:$UTILS_DIR"
-export TEST_DIR=/tmp/backup_restore_test
+export PATH="$PATH:$CUR/../../bin:$UTILS_DIR"
+export TEST_DIR=/tmp/lightning_test
 export COV_DIR="/tmp/group_cover"
 mkdir -p $COV_DIR || true
 export TIDB_CONFIG="$CUR/config/tidb.toml"
@@ -71,8 +71,7 @@ run_case() {
     TIDB_ADDR="$TIDB_ADDR" \
     TIDB_STATUS_ADDR="$TIDB_STATUS_ADDR" \
     TIKV_ADDR="$TIKV_ADDR" \
-    BR_LOG_TO_TERM=1 \
-    bash "$script" && echo "TEST: [$case] success!"
+    bash "$script" && echo "*===== TEST: [$case] success! =====*"
 }
 
 # wait for global variable cache invalid

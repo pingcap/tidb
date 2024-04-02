@@ -15,17 +15,24 @@
 # limitations under the License.
 
 set -eux
-DB="$TEST_NAME"
-TABLE="usertable"
-DB_COUNT=3
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+DB="gcs_test"
+TABLE="tbl"
+
+check_cluster_version 4 0 0 'local backend' || exit 0
 
 GCS_HOST="localhost"
 GCS_PORT=21808
-BUCKET="test"
+GCS_STORAGE=$TEST_DIR/storage
+BUCKET="lightning-gcs"
+rm -rf "$TEST_DIR/$DB"
+# NOTE: if the bucket alredy exists, 
+#       the opration of the bucket in fake-gcs-server will fail.
+rm -rf $GCS_STORAGE
+mkdir -p "$TEST_DIR/$DB"
 
 # we need set public-host for download file, or it will return 404 when using client to read.
-bin/fake-gcs-server -scheme http -host $GCS_HOST -port $GCS_PORT -backend memory -public-host $GCS_HOST:$GCS_PORT &
+fake-gcs-server -scheme http -host $GCS_HOST -port $GCS_PORT -filesystem-root $GCS_STORAGE -public-host $GCS_HOST:$GCS_PORT &
 i=0
 while ! curl -o /dev/null -v -s "http://$GCS_HOST:$GCS_PORT/"; do
     i=$(($i+1))
@@ -37,7 +44,7 @@ while ! curl -o /dev/null -v -s "http://$GCS_HOST:$GCS_PORT/"; do
 done
 
 # start oauth server
-bin/fake-oauth &
+fake-oauth &
 
 stop_gcs() {
     killall -9 fake-gcs-server || true
@@ -45,15 +52,6 @@ stop_gcs() {
 }
 trap stop_gcs EXIT
 
-rm -rf "$TEST_DIR/$DB"
-mkdir -p "$TEST_DIR/$DB"
-
-# start gcs-server
-# Fill in the database
-for i in $(seq $DB_COUNT); do
-    run_sql "CREATE DATABASE $DB${i};"
-    go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
-done
 
 # we need start a oauth server or gcs client will failed to handle request.
 KEY=$(cat <<- EOF
@@ -73,76 +71,34 @@ echo $KEY > "$CUR/config.json"
 export GOOGLE_APPLICATION_CREDENTIALS="$CUR/config.json"
 
 # create gcs bucket
-curl -XPOST http://$GCS_HOST:$GCS_PORT/storage/v1/b -d '{"name":"test"}'
+curl -XPOST http://$GCS_HOST:$GCS_PORT/storage/v1/b -d "{\"name\":\"${BUCKET}\"}"
 
-for i in $(seq $DB_COUNT); do
-  row_count_ori[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
-done
+DATA_PATH="$TEST_DIR/$DB"
+mkdir -p $DATA_PATH/$DB
+echo "CREATE DATABASE $DB;" > "$DATA_PATH/$DB-schema-create.sql"
+echo "CREATE TABLE $TABLE(i INT, s varchar(32));" > "$DATA_PATH/$DB.$TABLE-schema.sql"
+echo "INSERT INTO $TABLE (i, s) VALUES (1, \"1\"),(2, \"test2\"), (3, \"qqqtest\");" > "$DATA_PATH/$DB.$TABLE.sql"
+cat > "$DATA_PATH/$DB.$TABLE.0.csv" << _EOF_
+i,s
+100,"test100"
+101,"\""
+102,"😄😄😄😄😄"
+104,""
+_EOF_
 
-# new version backup full
-echo "backup start..."
-run_br --pd $PD_ADDR backup full -s "gcs://$BUCKET/$DB?endpoint=http://$GCS_HOST:$GCS_PORT/storage/v1/"
+# upload files to gcs
+curl -XPOST --data-binary @$DATA_PATH/$DB-schema-create.sql "http://$GCS_HOST:$GCS_PORT/upload/storage/v1/b/$BUCKET/o?uploadType=media&name=$DB/$DB-schema-create.sql"
+curl -XPOST --data-binary @$DATA_PATH/$DB.$TABLE-schema.sql "http://$GCS_HOST:$GCS_PORT/upload/storage/v1/b/$BUCKET/o?uploadType=media&name=$DB/$DB.$TABLE-schema.sql"
+curl -XPOST --data-binary @$DATA_PATH/$DB.$TABLE.sql "http://$GCS_HOST:$GCS_PORT/upload/storage/v1/b/$BUCKET/o?uploadType=media&name=$DB/$DB.$TABLE.sql"
+curl -XPOST --data-binary @$DATA_PATH/$DB.$TABLE.0.csv "http://$GCS_HOST:$GCS_PORT/upload/storage/v1/b/$BUCKET/o?uploadType=media&name=$DB/$DB.$TABLE.0.csv"
 
-# old version backup full v4.0.8 and disable check-requirements
-echo "v4.0.8 backup start..."
-bin/brv4.0.8 backup full \
-    -L "debug" \
-    --ca "$TEST_DIR/certs/ca.pem" \
-    --cert "$TEST_DIR/certs/br.pem" \
-    --key "$TEST_DIR/certs/br.key" \
-    --pd $PD_ADDR -s "gcs://$BUCKET/${DB}_old?endpoint=http://$GCS_HOST:$GCS_PORT/storage/v1/" --check-requirements=false
+# Fill in the database
+# Start importing the tables.
+run_sql "DROP DATABASE IF EXISTS $DB;"
+run_sql "DROP TABLE IF EXISTS $DB.$TABLE;"
 
-# clean up
-for i in $(seq $DB_COUNT); do
-    run_sql "DROP DATABASE $DB${i};"
-done
-
-# new version restore full
-echo "restore start..."
-run_br restore full -s "gcs://$BUCKET/$DB?" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT/storage/v1/" --check-requirements=false
-
-for i in $(seq $DB_COUNT); do
-    row_count_new[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
-done
-
-fail=false
-for i in $(seq $DB_COUNT); do
-    if [ "${row_count_ori[i]}" != "${row_count_new[i]}" ];then
-        fail=true
-        echo "TEST: [$TEST_NAME] fail on database $DB${i}"
-    fi
-    echo "database $DB${i} [original] row count: ${row_count_ori[i]}, [after br] row count: ${row_count_new[i]}"
-done
-
-if $fail; then
-    echo "TEST: [$TEST_NAME] failed!"
-    exit 1
-else
-    echo "TEST: [$TEST_NAME] new version successd!"
-fi
-
-# clean up
-for i in $(seq $DB_COUNT); do
-    run_sql "DROP DATABASE $DB${i};"
-done
-
-echo "v4.0.8 version restore start..."
-run_br restore full -s "gcs://$BUCKET/${DB}_old" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT/storage/v1/" --check-requirements=false
-
-for i in $(seq $DB_COUNT); do
-    row_count_new[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
-done
-
-fail=false
-for i in $(seq $DB_COUNT); do
-    if [ "${row_count_ori[i]}" != "${row_count_new[i]}" ];then
-        fail=true
-        echo "TEST: [$TEST_NAME] fail on database $DB${i}"
-    fi
-    echo "database $DB${i} [original] row count: ${row_count_ori[i]}, [after br] row count: ${row_count_new[i]}"
-done
-
-if $fail; then
-    echo "TEST: [$TEST_NAME] failed!"
-    exit 1
-fi
+SOURCE_DIR="gcs://$BUCKET/$DB?endpoint=http://$GCS_HOST:$GCS_PORT/storage/v1/"
+run_lightning -d $SOURCE_DIR --backend local 2> /dev/null
+run_sql "SELECT count(*), sum(i) FROM \`$DB\`.$TABLE"
+check_contains "count(*): 7"
+check_contains "sum(i): 413"
