@@ -16,7 +16,6 @@ package common
 
 import (
 	"bytes"
-
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -95,7 +94,7 @@ func (d *DupDetector) Next(iter KVIter) (key []byte, value []byte, ok bool, err 
 		}
 		if d.option.ReportErrOnDup {
 			dupKey := make([]byte, len(d.curKey))
-			dupVal := make([]byte, len(val))
+			dupVal := make([]byte, len(d.curVal))
 			copy(dupKey, d.curKey)
 			copy(dupVal, d.curVal)
 			return nil, nil, false, ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupVal)
