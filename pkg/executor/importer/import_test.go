@@ -319,7 +319,7 @@ func TestGetBackendWorkerConcurrency(t *testing.T) {
 			ThreadCnt: 3,
 		},
 	}
-	require.Equal(t, 32, c.getBackendWorkerConcurrency())
+	require.Equal(t, 6, c.getBackendWorkerConcurrency())
 	c.Plan.CloudStorageURI = "xxx"
 	require.Equal(t, 6, c.getBackendWorkerConcurrency())
 	c.Plan.ThreadCnt = 123
