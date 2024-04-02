@@ -290,7 +290,7 @@ func (coll *HistColl) Selectivity(
 	slices.Sort(idxIDs)
 	for _, id := range idxIDs {
 		idxStats := coll.Indices[id]
-		idxCols := FindPrefixOfIndexByCol(extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
+		idxCols := FindPrefixOfIndexByCol(extractedCols, coll.Idx2ColUniqueIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
 			for i := 0; i < len(idxCols) && i < len(idxStats.Info.Columns); i++ {
