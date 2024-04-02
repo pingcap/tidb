@@ -28,7 +28,7 @@ func SortRanges(ranges []rtree.Range) ([]rtree.Range, error) {
 				logutil.Key("endKeyOut", out.EndKey),
 				logutil.Key("startKeyIn", rg.StartKey),
 				logutil.Key("endKeyIn", rg.EndKey))
-			return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "ranges overlapped")
+			return nil, errors.Annotatef(berrors.ErrInvalidRange, "ranges overlapped")
 		}
 	}
 	sortedRanges := rangeTree.GetSortedRanges()

@@ -186,7 +186,7 @@ func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err
 			return
 		}
 	}
-	return nil, ErrTableNotExists.GenWithStackByArgs(schema, table)
+	return nil, ErrTableNotExists.FastGenByArgs(schema, table)
 }
 
 // TableInfoByName implements InfoSchema.TableInfoByName

@@ -15,11 +15,13 @@
 package distsql
 
 import (
+	"math"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -189,7 +191,7 @@ func TestIndexRangesToKVRanges(t *testing.T) {
 		},
 	}
 
-	actual, err := IndexRangesToKVRanges(stmtctx.NewStmtCtx(), 12, 15, ranges)
+	actual, err := IndexRangesToKVRanges(DefaultDistSQLContext, 12, 15, ranges)
 	require.NoError(t, err)
 	for i := range actual.FirstPartitionRange() {
 		require.Equal(t, expect[i], actual.FirstPartitionRange()[i])
@@ -234,14 +236,14 @@ func TestRequestBuilder1(t *testing.T) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars(nil)).
+		SetFromSessionVars(DefaultDistSQLContext).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
 		Tp:      103,
 		StartTs: 0x0,
 		Data:    []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
-		KeyRanges: kv.NewNonParitionedKeyRanges([]kv.KeyRange{
+		KeyRanges: kv.NewNonPartitionedKeyRanges([]kv.KeyRange{
 			{
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3},
@@ -314,18 +316,18 @@ func TestRequestBuilder2(t *testing.T) {
 		},
 	}
 
-	actual, err := (&RequestBuilder{}).SetIndexRanges(stmtctx.NewStmtCtx(), 12, 15, ranges).
+	actual, err := (&RequestBuilder{}).SetIndexRanges(DefaultDistSQLContext, 12, 15, ranges).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars(nil)).
+		SetFromSessionVars(DefaultDistSQLContext).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
 		Tp:      103,
 		StartTs: 0x0,
 		Data:    []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
-		KeyRanges: kv.NewNonParitionedKeyRanges([]kv.KeyRange{
+		KeyRanges: kv.NewNonPartitionedKeyRanges([]kv.KeyRange{
 			{
 				StartKey: kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1},
 				EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3},
@@ -372,7 +374,7 @@ func TestRequestBuilder3(t *testing.T) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars(nil)).
+		SetFromSessionVars(DefaultDistSQLContext).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
@@ -438,14 +440,14 @@ func TestRequestBuilder4(t *testing.T) {
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars(nil)).
+		SetFromSessionVars(DefaultDistSQLContext).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
 		Tp:                103,
 		StartTs:           0x0,
 		Data:              []uint8{0x18, 0x0, 0x20, 0x0, 0x40, 0x0, 0x5a, 0x0},
-		KeyRanges:         kv.NewNonParitionedKeyRanges(keyRanges),
+		KeyRanges:         kv.NewNonPartitionedKeyRanges(keyRanges),
 		Cacheable:         true,
 		KeepOrder:         false,
 		Desc:              false,
@@ -493,7 +495,7 @@ func TestRequestBuilder5(t *testing.T) {
 		Tp:               104,
 		StartTs:          0x0,
 		Data:             []uint8{0x8, 0x0, 0x18, 0x0, 0x20, 0x0},
-		KeyRanges:        kv.NewNonParitionedKeyRanges(keyRanges),
+		KeyRanges:        kv.NewNonPartitionedKeyRanges(keyRanges),
 		KeepOrder:        true,
 		Desc:             false,
 		Concurrency:      15,
@@ -522,7 +524,7 @@ func TestRequestBuilder6(t *testing.T) {
 		Tp:               105,
 		StartTs:          0x0,
 		Data:             []uint8{0x10, 0x0, 0x18, 0x0},
-		KeyRanges:        kv.NewNonParitionedKeyRanges(keyRanges),
+		KeyRanges:        kv.NewNonPartitionedKeyRanges(keyRanges),
 		KeepOrder:        false,
 		Desc:             false,
 		Concurrency:      concurrency,
@@ -546,12 +548,12 @@ func TestRequestBuilder7(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		replicaRead := replicaRead
 		t.Run(replicaRead.src, func(t *testing.T) {
-			vars := variable.NewSessionVars(nil)
-			vars.SetReplicaRead(replicaRead.replicaReadType)
+			dctx := NewDistSQLContextForTest()
+			dctx.ReplicaReadType = replicaRead.replicaReadType
 
 			concurrency := 10
 			actual, err := (&RequestBuilder{}).
-				SetFromSessionVars(vars).
+				SetFromSessionVars(dctx).
 				SetConcurrency(concurrency).
 				Build()
 			require.NoError(t, err)
@@ -559,7 +561,7 @@ func TestRequestBuilder7(t *testing.T) {
 				Tp:                0,
 				StartTs:           0x0,
 				KeepOrder:         false,
-				KeyRanges:         kv.NewNonParitionedKeyRanges(nil),
+				KeyRanges:         kv.NewNonPartitionedKeyRanges(nil),
 				Desc:              false,
 				Concurrency:       concurrency,
 				IsolationLevel:    0,
@@ -578,17 +580,17 @@ func TestRequestBuilder7(t *testing.T) {
 }
 
 func TestRequestBuilder8(t *testing.T) {
-	sv := variable.NewSessionVars(nil)
-	sv.StmtCtx.ResourceGroupName = "test"
+	dctx := NewDistSQLContextForTest()
+	dctx.ResourceGroupName = "test"
 	actual, err := (&RequestBuilder{}).
-		SetFromSessionVars(sv).
+		SetFromSessionVars(dctx).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
 		Tp:                0,
 		StartTs:           0x0,
 		Data:              []uint8(nil),
-		KeyRanges:         kv.NewNonParitionedKeyRanges(nil),
+		KeyRanges:         kv.NewNonPartitionedKeyRanges(nil),
 		Concurrency:       variable.DefDistSQLScanConcurrency,
 		IsolationLevel:    0,
 		Priority:          0,
@@ -604,17 +606,17 @@ func TestRequestBuilder8(t *testing.T) {
 }
 
 func TestRequestBuilderTiKVClientReadTimeout(t *testing.T) {
-	sv := variable.NewSessionVars(nil)
-	sv.TiKVClientReadTimeout = 100
+	dctx := NewDistSQLContextForTest()
+	dctx.TiKVClientReadTimeout = 100
 	actual, err := (&RequestBuilder{}).
-		SetFromSessionVars(sv).
+		SetFromSessionVars(dctx).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
 		Tp:                    0,
 		StartTs:               0x0,
 		Data:                  []uint8(nil),
-		KeyRanges:             kv.NewNonParitionedKeyRanges(nil),
+		KeyRanges:             kv.NewNonPartitionedKeyRanges(nil),
 		Concurrency:           variable.DefDistSQLScanConcurrency,
 		IsolationLevel:        0,
 		Priority:              0,
@@ -659,7 +661,7 @@ func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 			Collators: collate.GetBinaryCollatorSlice(1),
 		},
 	}
-	actual, err := IndexRangesToKVRanges(stmtctx.NewStmtCtx(), 0, 0, ranges)
+	actual, err := IndexRangesToKVRanges(DefaultDistSQLContext, 0, 0, ranges)
 	require.NoError(t, err)
 	expect := []kv.KeyRange{
 		{
@@ -673,7 +675,7 @@ func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 }
 
 func TestScanLimitConcurrency(t *testing.T) {
-	vars := variable.NewSessionVars(nil)
+	dctx := NewDistSQLContextForTest()
 	for _, tt := range []struct {
 		tp          tipb.ExecType
 		limit       uint64
@@ -682,8 +684,8 @@ func TestScanLimitConcurrency(t *testing.T) {
 	}{
 		{tipb.ExecType_TypeTableScan, 1, 1, "TblScan_Def"},
 		{tipb.ExecType_TypeIndexScan, 1, 1, "IdxScan_Def"},
-		{tipb.ExecType_TypeTableScan, 1000000, vars.Concurrency.DistSQLScanConcurrency(), "TblScan_SessionVars"},
-		{tipb.ExecType_TypeIndexScan, 1000000, vars.Concurrency.DistSQLScanConcurrency(), "IdxScan_SessionVars"},
+		{tipb.ExecType_TypeTableScan, 1000000, dctx.DistSQLConcurrency, "TblScan_SessionVars"},
+		{tipb.ExecType_TypeIndexScan, 1000000, dctx.DistSQLConcurrency, "IdxScan_SessionVars"},
 	} {
 		// copy iterator variable into a new variable, see issue #27779
 		tt := tt
@@ -700,7 +702,7 @@ func TestScanLimitConcurrency(t *testing.T) {
 			dag := &tipb.DAGRequest{Executors: []*tipb.Executor{firstExec, limitExec}}
 			actual, err := (&RequestBuilder{}).
 				SetDAGRequest(dag).
-				SetFromSessionVars(vars).
+				SetFromSessionVars(dctx).
 				Build()
 			require.NoError(t, err)
 			require.Equal(t, tt.concurrency, actual.Concurrency)
@@ -720,4 +722,89 @@ func getExpectedRanges(tid int64, hrs []*handleRange) []kv.KeyRange {
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	return krs
+}
+
+func TestBuildTableRangeIntHandle(t *testing.T) {
+	type Case struct {
+		ids []int64
+		trs []kv.KeyRange
+	}
+	low := codec.EncodeInt(nil, math.MinInt64)
+	high := kv.Key(codec.EncodeInt(nil, math.MaxInt64)).PrefixNext()
+	cases := []Case{
+		{ids: []int64{1}, trs: []kv.KeyRange{
+			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
+		}},
+		{ids: []int64{1, 2, 3}, trs: []kv.KeyRange{
+			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
+			{StartKey: tablecodec.EncodeRowKey(2, low), EndKey: tablecodec.EncodeRowKey(2, high)},
+			{StartKey: tablecodec.EncodeRowKey(3, low), EndKey: tablecodec.EncodeRowKey(3, high)},
+		}},
+		{ids: []int64{1, 3}, trs: []kv.KeyRange{
+			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
+			{StartKey: tablecodec.EncodeRowKey(3, low), EndKey: tablecodec.EncodeRowKey(3, high)},
+		}},
+	}
+	for _, cs := range cases {
+		t.Log(cs)
+		tbl := &model.TableInfo{Partition: &model.PartitionInfo{Enable: true}}
+		for _, id := range cs.ids {
+			tbl.Partition.Definitions = append(tbl.Partition.Definitions,
+				model.PartitionDefinition{ID: id})
+		}
+		ranges, err := BuildTableRanges(tbl)
+		require.NoError(t, err)
+		require.Equal(t, cs.trs, ranges)
+	}
+
+	tbl := &model.TableInfo{ID: 7}
+	ranges, err := BuildTableRanges(tbl)
+	require.NoError(t, err)
+	require.Equal(t, []kv.KeyRange{
+		{StartKey: tablecodec.EncodeRowKey(7, low), EndKey: tablecodec.EncodeRowKey(7, high)},
+	}, ranges)
+}
+
+func TestBuildTableRangeCommonHandle(t *testing.T) {
+	type Case struct {
+		ids []int64
+		trs []kv.KeyRange
+	}
+	low, errL := codec.EncodeKey(time.UTC, nil, []types.Datum{types.MinNotNullDatum()}...)
+	require.NoError(t, errL)
+	high, errH := codec.EncodeKey(time.UTC, nil, []types.Datum{types.MaxValueDatum()}...)
+	require.NoError(t, errH)
+	high = kv.Key(high).PrefixNext()
+	cases := []Case{
+		{ids: []int64{1}, trs: []kv.KeyRange{
+			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
+		}},
+		{ids: []int64{1, 2, 3}, trs: []kv.KeyRange{
+			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
+			{StartKey: tablecodec.EncodeRowKey(2, low), EndKey: tablecodec.EncodeRowKey(2, high)},
+			{StartKey: tablecodec.EncodeRowKey(3, low), EndKey: tablecodec.EncodeRowKey(3, high)},
+		}},
+		{ids: []int64{1, 3}, trs: []kv.KeyRange{
+			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
+			{StartKey: tablecodec.EncodeRowKey(3, low), EndKey: tablecodec.EncodeRowKey(3, high)},
+		}},
+	}
+	for _, cs := range cases {
+		t.Log(cs)
+		tbl := &model.TableInfo{Partition: &model.PartitionInfo{Enable: true}, IsCommonHandle: true}
+		for _, id := range cs.ids {
+			tbl.Partition.Definitions = append(tbl.Partition.Definitions,
+				model.PartitionDefinition{ID: id})
+		}
+		ranges, err := BuildTableRanges(tbl)
+		require.NoError(t, err)
+		require.Equal(t, cs.trs, ranges)
+	}
+
+	tbl := &model.TableInfo{ID: 7, IsCommonHandle: true}
+	ranges, errR := BuildTableRanges(tbl)
+	require.NoError(t, errR)
+	require.Equal(t, []kv.KeyRange{
+		{StartKey: tablecodec.EncodeRowKey(7, low), EndKey: tablecodec.EncodeRowKey(7, high)},
+	}, ranges)
 }

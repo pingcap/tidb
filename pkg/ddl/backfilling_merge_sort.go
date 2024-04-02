@@ -22,11 +22,10 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
@@ -89,7 +88,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	prefix := path.Join(strconv.Itoa(int(m.jobID)), strconv.Itoa(int(subtask.ID)))
-	partSize, err := getMergeSortPartSize(m.avgRowSize, int(variable.GetDDLReorgWorkerCounter()), m.idxNum)
+	partSize, err := getMergeSortPartSize(m.avgRowSize, subtask.Concurrency, m.idxNum)
 	if err != nil {
 		return err
 	}
@@ -102,7 +101,9 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		prefix,
 		external.DefaultBlockSize,
 		onClose,
-		int(variable.GetDDLReorgWorkerCounter()), true)
+		subtask.Concurrency,
+		true,
+	)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
