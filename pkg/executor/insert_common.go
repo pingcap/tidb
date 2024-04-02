@@ -899,7 +899,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				}
 				retryInfo.AddAutoIncrementID(id)
 			}
-			e.colUsedGenID[col.ID] = struct{}{}
+			e.recordAutoIDCol(col.ID)
 			continue
 		}
 
@@ -957,7 +957,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(
 		if e.handleErr(c, &d, 0, err) != nil {
 			return types.Datum{}, err
 		}
-		e.colUsedGenID[c.ID] = struct{}{}
+		e.recordAutoIDCol(c.ID)
 		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 		// Cause autoID may be specified by user, judge only the first row is not suitable.
 		if e.lastInsertID == 0 {
@@ -1043,7 +1043,7 @@ func (e *InsertValues) adjustAutoRandomDatum(
 		if err != nil {
 			return types.Datum{}, err
 		}
-		e.colUsedGenID[c.ID] = struct{}{}
+		e.recordAutoIDCol(c.ID)
 		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 		// Cause autoID may be specified by user, judge only the first row is not suitable.
 		if e.lastInsertID == 0 {
@@ -1444,6 +1444,13 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 		}
 	}
 	return nil
+}
+
+func (e *InsertValues) recordAutoIDCol(colID int64) {
+	if e.colUsedGenID == nil {
+		e.colUsedGenID = make(map[int64]struct{})
+	}
+	e.colUsedGenID[colID] = struct{}{}
 }
 
 func (e *InsertValues) pkHasAutoID() bool {
