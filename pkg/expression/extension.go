@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -130,11 +129,8 @@ func checkPrivileges(ctx EvalContext, fnDef *extension.FunctionDef) error {
 		return nil
 	}
 
-	manager := privilege.GetPrivilegeManager(ctx)
-	activeRoles := ctx.GetSessionVars().ActiveRoles
-
 	for _, priv := range privs {
-		if !manager.RequestDynamicVerification(activeRoles, priv, false) {
+		if !ctx.RequestDynamicVerification(priv, false) {
 			msg := priv
 			if !semEnabled {
 				msg = "SUPER or " + msg

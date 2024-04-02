@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,7 +37,7 @@ func TestJobHappyPath(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	ctx := context.Background()
-	conn := tk.Session().(sqlexec.SQLExecutor)
+	conn := tk.Session().GetSQLExecutor()
 
 	cases := []struct {
 		action          func(jobID int64)
@@ -153,7 +152,7 @@ func TestGetAndCancelJob(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	ctx := context.Background()
-	conn := tk.Session().(sqlexec.SQLExecutor)
+	conn := tk.Session().GetSQLExecutor()
 	jobInfo := &importer.JobInfo{
 		TableSchema: "test",
 		TableName:   "t",
@@ -284,7 +283,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	ctx := context.Background()
-	conn := tk.Session().(sqlexec.SQLExecutor)
+	conn := tk.Session().GetSQLExecutor()
 	jobInfo := &importer.JobInfo{
 		TableSchema: "test",
 		TableName:   "t",

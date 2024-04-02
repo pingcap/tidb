@@ -346,7 +346,7 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 		idx++
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 	_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		return err
@@ -519,9 +519,15 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
-			resultsCh <- &statistics.AnalyzeResults{
-				Err: getAnalyzePanicErr(r),
+			// If errExitCh is closed, it means the whole analyze task is aborted. So we do not need to send the result to resultsCh.
+			err := getAnalyzePanicErr(r)
+			select {
+			case resultsCh <- &statistics.AnalyzeResults{
+				Err: err,
 				Job: task.job,
+			}:
+			case <-e.errExitCh:
+				logutil.BgLogger().Error("analyze worker exits because the whole analyze task is aborted", zap.Error(err))
 			}
 		}
 	}()
@@ -594,7 +600,7 @@ func StartAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	}
 	job.StartTime = time.Now()
 	job.Progress.SetLastDumpTime(job.StartTime)
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
 	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
@@ -620,7 +626,7 @@ func UpdateAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCo
 	if delta == 0 {
 		return
 	}
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	const sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %? WHERE id = %?"
 	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, delta, *job.ID)
@@ -658,7 +664,7 @@ func FinishAnalyzeMergeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, 
 		sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
 		args = []any{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
 	}
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)
 	if err != nil {
@@ -702,7 +708,7 @@ func FinishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
 		args = []any{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
 	}
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)
 	if err != nil {

@@ -70,7 +70,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/set"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
@@ -6981,7 +6980,7 @@ func (d *ddl) dropTableObject(
 					zap.String("database", fullti.Schema.O),
 					zap.String("table", fullti.Name.O),
 				)
-				exec := ctx.(sqlexec.RestrictedSQLExecutor)
+				exec := ctx.GetRestrictedSQLExecutor()
 				internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 				_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
 				if err != nil {
@@ -9201,7 +9200,7 @@ func (d *ddl) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err error)
 	// Initialize the cached table meta lock info in `mysql.table_cache_meta`.
 	// The operation shouldn't fail in most cases, and if it does, return the error directly.
 	// This DML and the following DDL is not atomic, that's not a problem.
-	_, _, err = sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil,
+	_, _, err = sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil,
 		"replace into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)

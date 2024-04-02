@@ -13,7 +13,6 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",
-        "//pkg/planner/core",
         "//pkg/session",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
@@ -36,7 +37,7 @@ import (
 type semiJoinRewriter struct {
 }
 
-func (smj *semiJoinRewriter) optimize(_ context.Context, p LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (smj *semiJoinRewriter) optimize(_ context.Context, p LogicalPlan, _ *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	newLogicalPlan, err := smj.recursivePlan(p)
 	return newLogicalPlan, planChanged, err

@@ -188,6 +188,17 @@ func TestNonTransactionalDMLErrorMessage(t *testing.T) {
 		"33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: UPDATE `test`.`t` SET `b`=42 WHERE `a` BETWEEN 3 AND 5, injected batch(non-transactional) DML error;\n",
 	)
 
+	tk.MustExec("set @@tidb_redact_log=marker")
+	require.NoError(
+		t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/batchDMLError", `1*return(false)->return(true)`),
+	)
+	err = tk.ExecToErr("batch on a limit 3 update t set b = 32")
+	require.ErrorContains(
+		t, err,
+		"33/34 jobs failed in the non-transactional DML: job id: 2, estimated size: 3, sql: ‹UPDATE `test`.`t` SET `b`=32 WHERE `a` BETWEEN 3 AND 5›, injected batch(non-transactional) DML error;\n",
+	)
+	tk.MustExec("set @@tidb_redact_log=0")
+
 	require.NoError(
 		t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/batchDMLError", `1*return(false)->return(true)`),
 	)

@@ -91,7 +91,7 @@ require (
 	github.com/pingcap/tipb v0.0.0-20240318032315-55a7867ddd50
 	github.com/prometheus/client_golang v1.19.0
 	github.com/prometheus/client_model v0.6.0
-	github.com/prometheus/common v0.48.0
+	github.com/prometheus/common v0.51.0
 	github.com/prometheus/prometheus v0.50.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sasha-s/go-deadlock v0.3.1
@@ -107,7 +107,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20240320090330-ab337d6c51d2
+	github.com/tikv/client-go/v2 v2.0.8-0.20240322070737-05aaba6cc6f7
 	github.com/tikv/pd/client v0.0.0-20240322051414-fb9e2d561b6e
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6

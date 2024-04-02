@@ -25,9 +25,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -35,6 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -331,8 +331,8 @@ func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 	if useLocalDisk {
 		regionBatch = avgTasksPerInstance
 	} else {
-		// For cloud storage, each subtask should contain no more than 100 regions.
-		regionBatch = min(100, avgTasksPerInstance)
+		// For cloud storage, each subtask should contain no more than 4000 regions.
+		regionBatch = min(4000, avgTasksPerInstance)
 	}
 	regionBatch = max(regionBatch, 1)
 	return regionBatch

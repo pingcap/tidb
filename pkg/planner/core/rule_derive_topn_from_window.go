@@ -28,7 +28,7 @@ import (
 type deriveTopNFromWindow struct {
 }
 
-func appendDerivedTopNTrace(topN LogicalPlan, opt *logicalOptimizeOp) {
+func appendDerivedTopNTrace(topN LogicalPlan, opt *util.LogicalOptimizeOp) {
 	child := topN.Children()[0]
 	action := func() string {
 		return fmt.Sprintf("%v_%v top N added below  %v_%v ", topN.TP(), topN.ID(), child.TP(), child.ID())
@@ -36,7 +36,7 @@ func appendDerivedTopNTrace(topN LogicalPlan, opt *logicalOptimizeOp) {
 	reason := func() string {
 		return fmt.Sprintf("%v filter on row number", topN.TP())
 	}
-	opt.appendStepToCurrent(topN.ID(), topN.TP(), reason, action)
+	opt.AppendStepToCurrent(topN.ID(), topN.TP(), reason, action)
 }
 
 // checkPartitionBy mainly checks if partition by of window function is a prefix of
@@ -116,12 +116,12 @@ func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 	return false, 0
 }
 
-func (*deriveTopNFromWindow) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (*deriveTopNFromWindow) optimize(_ context.Context, p LogicalPlan, opt *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	return p.deriveTopN(opt), planChanged, nil
 }
 
-func (s *baseLogicalPlan) deriveTopN(opt *logicalOptimizeOp) LogicalPlan {
+func (s *baseLogicalPlan) deriveTopN(opt *util.LogicalOptimizeOp) LogicalPlan {
 	p := s.self
 	if p.SCtx().GetSessionVars().AllowDeriveTopN {
 		for i, child := range p.Children() {
@@ -132,7 +132,7 @@ func (s *baseLogicalPlan) deriveTopN(opt *logicalOptimizeOp) LogicalPlan {
 	return p
 }
 
-func (s *LogicalSelection) deriveTopN(opt *logicalOptimizeOp) LogicalPlan {
+func (s *LogicalSelection) deriveTopN(opt *util.LogicalOptimizeOp) LogicalPlan {
 	p := s.self.(*LogicalSelection)
 	windowIsTopN, limitValue := windowIsTopN(p)
 	if windowIsTopN {

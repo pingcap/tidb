@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/mock/mocklocal",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/lightning/backend",
+        "//pkg/lightning/backend",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_mock//gomock",

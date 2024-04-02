@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -42,7 +43,7 @@ func NewDebugCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			build.LogInfo(build.BR)
-			utils.LogEnvVariables()
+			tidblogutil.LogEnvVariables()
 			task.LogArguments(c)
 			return nil
 		},

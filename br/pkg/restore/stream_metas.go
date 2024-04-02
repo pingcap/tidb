@@ -15,7 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
-	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -155,7 +155,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 		item []string
 		sync.Mutex
 	}
-	worker := utils.NewWorkerPool(ms.MetadataDownloadBatchSize, "delete files")
+	worker := util.NewWorkerPool(ms.MetadataDownloadBatchSize, "delete files")
 	eg, cx := errgroup.WithContext(ctx)
 	for path, metaInfo := range ms.metadataInfos {
 		path := path

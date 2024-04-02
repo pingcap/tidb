@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -172,12 +173,12 @@ func (rs *RegionSplitter) executeSplitByKeys(
 		if err != nil {
 			return err
 		}
-		splitKeyMap := getSplitSortedKeysFromSortedRegions(splitContext, sortedKeys, regions)
+		splitKeyMap := split.GetSplitKeysOfRegions(sortedKeys, regions, splitContext.isRawKv)
 		regionMap := make(map[uint64]*split.RegionInfo)
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region
 		}
-		workerPool := utils.NewWorkerPool(uint(splitContext.storeCount)+1, "split keys")
+		workerPool := util.NewWorkerPool(uint(splitContext.storeCount)+1, "split keys")
 		eg, ectx := errgroup.WithContext(ctx)
 		for regionID, splitKeys := range splitKeyMap {
 			region := regionMap[regionID]
@@ -261,40 +262,6 @@ func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regi
 	return leftRegions
 }
 
-// TestGetSplitSortedKeysFromSortedRegionsTest is used only in unit test
-var TestGetSplitSortedKeysFromSortedRegionsTest = getSplitSortedKeysFromSortedRegions
-
-// getSplitSortedKeysFromSortedRegions checks if the sorted regions should be split by the end key of
-// the sorted ranges, and groups the split keys by region id.
-//
-// ASSERT: sortedRegions[0].StartKey <= sortedKeys[0]
-func getSplitSortedKeysFromSortedRegions(splitContext SplitContext, sortedKeys [][]byte, sortedRegions []*split.RegionInfo) map[uint64][][]byte {
-	splitKeyMap := make(map[uint64][][]byte)
-	curKeyIndex := 0
-	for _, region := range sortedRegions {
-		for ; curKeyIndex < len(sortedKeys); curKeyIndex += 1 {
-			if len(sortedKeys[curKeyIndex]) == 0 {
-				continue
-			}
-			splitKey := codec.EncodeBytesExt(nil, sortedKeys[curKeyIndex], splitContext.isRawKv)
-			// If splitKey is the boundary of the region
-			if bytes.Equal(splitKey, region.Region.GetStartKey()) {
-				continue
-			}
-			// If splitKey is not in a region
-			if !region.ContainsInterior(splitKey) {
-				break
-			}
-			splitKeys, ok := splitKeyMap[region.Region.GetId()]
-			if !ok {
-				splitKeys = make([][]byte, 0, 1)
-			}
-			splitKeyMap[region.Region.GetId()] = append(splitKeys, sortedKeys[curKeyIndex])
-		}
-	}
-	return splitKeyMap
-}
-
 func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *sst.RewriteRule) {
 	// We should search the dataRules firstly.
 	for _, rule := range rewriteRules.Data {
@@ -343,7 +310,7 @@ type LogSplitHelper struct {
 	tableSplitter map[int64]*split.SplitHelper
 	rules         map[int64]*RewriteRules
 	client        split.SplitClient
-	pool          *utils.WorkerPool
+	pool          *util.WorkerPool
 	eg            *errgroup.Group
 	regionsCh     chan []*split.RegionInfo
 
@@ -356,7 +323,7 @@ func NewLogSplitHelper(rules map[int64]*RewriteRules, client split.SplitClient, 
 		tableSplitter: make(map[int64]*split.SplitHelper),
 		rules:         rules,
 		client:        client,
-		pool:          utils.NewWorkerPool(128, "split region"),
+		pool:          util.NewWorkerPool(128, "split region"),
 		eg:            nil,
 
 		splitThreSholdSize: splitSize,
@@ -741,7 +708,7 @@ func (bo *splitBackoffer) NextBackoff(err error) time.Duration {
 	case strings.Contains(err.Error(), "no valid key"):
 		bo.state.GiveUp()
 		return 0
-	case berrors.ErrRestoreInvalidRange.Equal(err):
+	case berrors.ErrInvalidRange.Equal(err):
 		bo.state.GiveUp()
 		return 0
 	}

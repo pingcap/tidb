@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	brlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	brlog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -368,9 +368,9 @@ func sendSplitRegionRequest(
 	retry int,
 ) (bool, *kvrpcpb.SplitRegionResponse, error) {
 	if intest.InTest {
-		mockCli, ok := c.client.(*mockPDClientForSplit)
+		mockCli, ok := c.client.(*MockPDClientForSplit)
 		if ok {
-			return mockCli.splitRegions.fn()
+			return mockCli.SplitRegion(regionInfo, keys, c.isRawKv)
 		}
 	}
 	var peer *metapb.Peer

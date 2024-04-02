@@ -64,7 +64,7 @@ errdoc:tools/bin/errdoc-gen
 lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml ./br/pkg/lightning/...
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml ./lightning/...
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/overview.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/performance_overview.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/tidb.json
@@ -272,7 +272,7 @@ tools/bin/gotestsum:
 
 # mockgen@v0.2.0 is imcompatible with v0.3.0, so install it always.
 mockgen:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install go.uber.org/mock/mockgen@v0.3.0
+	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/lance6716/mock/mockgen@v0.4.0-patch
 
 # Usage:
 #
@@ -314,20 +314,20 @@ bench-daily:
 
 build_tools: build_br build_lightning build_lightning-ctl
 
-br_web:
-	@cd br/web && npm install && npm run build
+lightning_web:
+	@cd lightning/web && npm install && npm run build
 
 build_br:
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 
 build_lightning_for_web:
-	CGO_ENABLED=1 $(GOBUILD) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) br/cmd/tidb-lightning/main.go
+	CGO_ENABLED=1 $(GOBUILD) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) lightning/cmd/tidb-lightning/main.go
 
 build_lightning:
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./br/cmd/tidb-lightning
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
 
 build_lightning-ctl:
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./br/cmd/tidb-lightning-ctl
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./lightning/cmd/tidb-lightning-ctl
 
 build_for_br_integration_test:
 	@make failpoint-enable
@@ -336,13 +336,13 @@ build_for_br_integration_test:
 		-o $(BR_BIN).test \
 		github.com/pingcap/tidb/br/cmd/br && \
 	$(GOTEST) -c -cover -covermode=count \
-		-coverpkg=github.com/pingcap/tidb/br/... \
+		-coverpkg=github.com/pingcap/tidb/lightning/...,github.com/pingcap/tidb/pkg/lightning/... \
 		-o $(LIGHTNING_BIN).test \
-		github.com/pingcap/tidb/br/cmd/tidb-lightning && \
+		github.com/pingcap/tidb/lightning/cmd/tidb-lightning && \
 	$(GOTEST) -c -cover -covermode=count \
-		-coverpkg=github.com/pingcap/tidb/br/... \
+		-coverpkg=github.com/pingcap/tidb/lightning/...,github.com/pingcap/tidb/pkg/lightning/... \
 		-o $(LIGHTNING_CTL_BIN).test \
-		github.com/pingcap/tidb/br/cmd/tidb-lightning-ctl && \
+		github.com/pingcap/tidb/lightning/cmd/tidb-lightning-ctl && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/locker br/tests/br_key_locked/*.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/gc br/tests/br_z_gc_safepoint/*.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/oauth br/tests/br_gcs/*.go && \
@@ -384,16 +384,16 @@ mock_s3iface: mockgen
 
 # mock interface for lightning and IMPORT INTO
 mock_lightning: mockgen
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter,ChunkFlushStatus > br/pkg/mock/backend.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
-	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/br/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter,ChunkFlushStatus > br/pkg/mock/backend.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
+	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
 
 gen_mock: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor TaskTable,Pool,TaskExecutor,Extension > pkg/disttask/framework/mock/task_executor_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler Scheduler,CleanUpRoutine,TaskManager > pkg/disttask/framework/mock/scheduler_mock.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler Extension > pkg/disttask/framework/scheduler/mock/scheduler_mock.go
-	tools/bin/mockgen -package execute github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute StepExecutor > pkg/disttask/framework/mock/execute/execute_mock.go
+	tools/bin/mockgen -destination pkg/disttask/framework/scheduler/mock/scheduler_mock.go -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler Extension
+	tools/bin/mockgen -embed -package mockexecute github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute StepExecutor > pkg/disttask/framework/mock/execute/execute_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/importinto MiniTaskExecutor > pkg/disttask/importinto/mock/import_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/planner LogicalPlan,PipelineSpec > pkg/disttask/framework/mock/plan_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/util/sqlexec RestrictedSQLExecutor > pkg/util/sqlexec/mock/restricted_sql_executor_mock.go
@@ -426,9 +426,9 @@ br_bins:
 	@echo '// Code generated by ragel DO NOT EDIT.' | cat - tmp_parser.go | sed 's|//line |//.... |g' > $@
 	@rm tmp_parser.go
 
-data_parsers: tools/bin/vfsgendev br/pkg/lightning/mydump/parser_generated.go br_web
-	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOPATH)/src" br/pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
-	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/br/pkg/lightning/web".Res' && mv res_vfsdata.go br/pkg/lightning/web/
+data_parsers: tools/bin/vfsgendev pkg/lightning/mydump/parser_generated.go lightning_web
+	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOPATH)/src" pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
+	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/lightning/pkg/web".Res' && mv res_vfsdata.go lightning/pkg/web/
 
 build_dumpling:
 	$(DUMPLING_GOBUILD) $(RACE_FLAG) -tags codes -o $(DUMPLING_BIN) dumpling/cmd/dumpling/main.go

@@ -427,3 +427,9 @@ TableReader_7	1.00	root	partition:p0,p6	data:Selection_6
 select * from t where col_29 between -7 and -6;
 col_29
 -6
+create table issue52198 (a int, b int, primary key (b)) partition by hash(b) partitions 5;
+insert into issue52198 values (1,1);
+select space(1), b from issue52198 where b in (1);
+space(1)	b
+ 	1
+drop table issue52198;

@@ -808,7 +808,7 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 
 func fetchRecordFromClusterStmtSummary(sctx PlanContext, planDigest string) ([]chunk.Row, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
-	exec, _ := sctx.(sqlexec.SQLExecutor)
+	exec := sctx.GetSQLExecutor()
 	fields := "stmt_type, schema_name, digest_text, sample_user, prepared, query_sample_text, charset, collation, plan_hint, plan_digest"
 	sql := fmt.Sprintf("select %s from information_schema.cluster_statements_summary where plan_digest = '%s' union distinct ", fields, planDigest) +
 		fmt.Sprintf("select %s from information_schema.cluster_statements_summary_history where plan_digest = '%s' ", fields, planDigest) +
@@ -1710,7 +1710,7 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 	tableInfo := as.Tables[0].TableInfo
 	tbl, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tblName.DBInfo.Name.O, tableInfo.Name.O)
+		return nil, infoschema.ErrTableNotExists.FastGenByArgs(tblName.DBInfo.Name.O, tableInfo.Name.O)
 	}
 	p := &CheckTable{
 		DBName: tblName.Schema.O,
@@ -2409,7 +2409,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 // getSavedAnalyzeOpts gets the analyze options which are saved in mysql.analyze_options.
 func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.TableInfo) (map[ast.AnalyzeOptionType]uint64, model.ColumnChoice, []*model.ColumnInfo, error) {
 	analyzeOptions := map[ast.AnalyzeOptionType]uint64{}
-	exec := b.ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := b.ctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select sample_num,sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id = %?", physicalID)
 	if err != nil {
@@ -3611,11 +3611,11 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (Plan, error) {
 	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
+		return nil, infoschema.ErrTableNotExists.FastGenByArgs()
 	}
 	tn, ok := ts.Source.(*ast.TableName)
 	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
+		return nil, infoschema.ErrTableNotExists.FastGenByArgs()
 	}
 	tableInfo := tn.TableInfo
 	if tableInfo.IsView() {
@@ -4123,7 +4123,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		db := b.ctx.GetSessionVars().CurrentDB
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
+		return nil, infoschema.ErrTableNotExists.FastGenByArgs(db, tableInfo.Name.O)
 	}
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), model.NewCIStr(""), tableInfo)
 	if err != nil {
@@ -4223,7 +4223,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			return nil, errors.New("can not execute IMPORT statement when 'tidb_snapshot' is set")
 		}
 		db := b.ctx.GetSessionVars().CurrentDB
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
+		return nil, infoschema.ErrTableNotExists.FastGenByArgs(db, tableInfo.Name.O)
 	}
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), model.NewCIStr(""), tableInfo)
 	if err != nil {

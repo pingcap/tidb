@@ -24,7 +24,7 @@ LOG_FILE1="$TEST_DIR/lightning-duplicate-resolution1.log"
 LOG_FILE2="$TEST_DIR/lightning-duplicate-resolution2.log"
 
 # let lightning run a bit slow to avoid some table in the first lightning finish too fast.
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/SlowDownCheckDupe=return(10)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/SlowDownCheckDupe=return(10)"
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_resolution_incremental.sorted1" \
   --enable-checkpoint=1 --log-file "$LOG_FILE1" --config "$CUR/config1.toml" &
 

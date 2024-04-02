@@ -17,7 +17,7 @@
 set -eu
 
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/AddIndexFail=return()"
+export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/AddIndexFail=return()"
 
 LOG_FILE1="$TEST_DIR/lightning-add-index1.log"
 LOG_FILE2="$TEST_DIR/lightning-add-index2.log"
@@ -82,7 +82,7 @@ grep -Fq "ALTER TABLE \`add_index\`.\`non_pk_auto_inc\` DROP PRIMARY KEY" "$LOG_
 grep -Fq "ALTER TABLE \`add_index\`.\`non_pk_auto_inc\` ADD PRIMARY KEY (\`pk\`)" "$LOG_FILE2"
 
 # 3. Check for recovering from checkpoint
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/AddIndexCrash=return()"
+export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/AddIndexCrash=return()"
 run_sql "DROP DATABASE add_index;"
 run_lightning --enable-checkpoint=1 --config "$CUR/config2.toml" --log-file "$LOG_FILE2"
 grep -Fq "task canceled" "$LOG_FILE2"

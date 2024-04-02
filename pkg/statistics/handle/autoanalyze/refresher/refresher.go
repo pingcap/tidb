@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
@@ -46,7 +47,7 @@ const (
 // NOTE: Refresher is not thread-safe.
 type Refresher struct {
 	statsHandle    statstypes.StatsHandle
-	sysProcTracker sessionctx.SysProcTracker
+	sysProcTracker sysproctrack.Tracker
 	// This will be refreshed every time we rebuild the priority queue.
 	autoAnalysisTimeWindow
 
@@ -58,7 +59,7 @@ type Refresher struct {
 // NewRefresher creates a new Refresher and starts the goroutine.
 func NewRefresher(
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) *Refresher {
 	r := &Refresher{
 		statsHandle:    statsHandle,

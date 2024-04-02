@@ -22,16 +22,15 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -50,7 +49,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
 
 	// create job
-	conn := tk.Session().(sqlexec.SQLExecutor)
+	conn := tk.Session().GetSQLExecutor()
 	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
 		"root", &importer.ImportParameters{}, 123)
 	require.NoError(t, err)
@@ -185,7 +184,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, mgr.InitMeta(ctx, ":4000", ""))
 
 	// create job
-	conn := tk.Session().(sqlexec.SQLExecutor)
+	conn := tk.Session().GetSQLExecutor()
 	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
 		"root", &importer.ImportParameters{}, 123)
 	require.NoError(t, err)

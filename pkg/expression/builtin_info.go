@@ -27,14 +27,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/printer"
@@ -906,12 +904,21 @@ func (c *tidbDecodeKeyFunctionClass) getFunction(ctx BuildContext, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTiDBDecodeKeySig{bf}
+	sig := &builtinTiDBDecodeKeySig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
+// DecodeKeyFromString is used to decode key by expressions
+var DecodeKeyFromString func(types.Context, infoschema.MetaOnlyInfoSchema, string) string
+
 type builtinTiDBDecodeKeySig struct {
 	baseBuiltinFunc
+	contextopt.InfoSchemaPropReader
+}
+
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinTiDBDecodeKeySig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.InfoSchemaPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinTiDBDecodeKeySig) Clone() builtinFunc {
@@ -926,23 +933,16 @@ func (b *builtinTiDBDecodeKeySig) evalString(ctx EvalContext, row chunk.Row) (st
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	decode := func(ctx EvalContext, s string) string { return s }
-	if fn := ctx.Value(TiDBDecodeKeyFunctionKey); fn != nil {
-		decode = fn.(func(ctx EvalContext, s string) string)
+	is, err := b.GetDomainInfoSchema(ctx)
+	if err != nil {
+		return "", true, err
 	}
-	return decode(ctx, s), false, nil
+
+	if fn := DecodeKeyFromString; fn != nil {
+		s = fn(ctx.TypeCtx(), is, s)
+	}
+	return s, false, nil
 }
-
-// TiDBDecodeKeyFunctionKeyType is used to identify the decoder function in context.
-type TiDBDecodeKeyFunctionKeyType int
-
-// String() implements Stringer.
-func (k TiDBDecodeKeyFunctionKeyType) String() string {
-	return "tidb_decode_key"
-}
-
-// TiDBDecodeKeyFunctionKey is used to identify the decoder function in context.
-const TiDBDecodeKeyFunctionKey TiDBDecodeKeyFunctionKeyType = 0
 
 type tidbDecodeSQLDigestsFunctionClass struct {
 	baseFunctionClass
@@ -953,8 +953,7 @@ func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx BuildContext, args [
 		return nil, err
 	}
 
-	pm := privilege.GetPrivilegeManager(ctx)
-	if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+	if !ctx.RequestVerification("", "", "", mysql.ProcessPriv) {
 		return nil, errSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 
@@ -968,12 +967,20 @@ func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx BuildContext, args [
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTiDBDecodeSQLDigestsSig{bf}
+	sig := &builtinTiDBDecodeSQLDigestsSig{baseBuiltinFunc: bf}
 	return sig, nil
 }
 
 type builtinTiDBDecodeSQLDigestsSig struct {
 	baseBuiltinFunc
+	contextopt.SessionVarsPropReader
+	contextopt.SQLExecutorPropReader
+}
+
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinTiDBDecodeSQLDigestsSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps() |
+		b.SQLExecutorPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinTiDBDecodeSQLDigestsSig) Clone() builtinFunc {
@@ -1026,15 +1033,26 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 		}
 	}
 
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return "", true, err
+	}
+
 	// Querying may take some time and it takes a context.Context as argument, which is not available here.
 	// We simply create a context with a timeout here.
-	timeout := time.Duration(ctx.GetSessionVars().GetMaxExecutionTime()) * time.Millisecond
+	timeout := time.Duration(vars.GetMaxExecutionTime()) * time.Millisecond
 	if timeout == 0 || timeout > 20*time.Second {
 		timeout = 20 * time.Second
 	}
 	goCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	err = retriever.RetrieveGlobal(goCtx, ctx)
+
+	exec, err := b.GetSQLExecutor(ctx)
+	if err != nil {
+		return "", true, err
+	}
+
+	err = retriever.RetrieveGlobal(goCtx, exec)
 	if err != nil {
 		if errors.Cause(err) == context.DeadlineExceeded || errors.Cause(err) == context.Canceled {
 			return "", true, errUnknown.GenWithStack("Retrieving cancelled internally with error: %v", err)
@@ -1189,13 +1207,20 @@ func (c *nextValFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinNextValSig{bf}
+	sig := &builtinNextValSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(10)
 	return sig, nil
 }
 
 type builtinNextValSig struct {
 	baseBuiltinFunc
+	contextopt.SequenceOperatorPropReader
+	contextopt.SessionVarsPropReader
+}
+
+func (b *builtinNextValSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SequenceOperatorPropReader.RequiredOptionalEvalProps() |
+		b.SessionVarsPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinNextValSig) Clone() builtinFunc {
@@ -1214,22 +1239,26 @@ func (b *builtinNextValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 		db = ctx.CurrentDB()
 	}
 	// Check the tableName valid.
-	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := b.GetSequenceOperator(ctx, db, seq)
+	if err != nil {
+		return 0, false, err
+	}
+	// Get session vars
+	vars, err := b.GetSessionVars(ctx)
 	if err != nil {
 		return 0, false, err
 	}
 	// Do the privilege check.
-	checker := privilege.GetPrivilegeManager(ctx)
-	user := ctx.GetSessionVars().User
-	if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.InsertPriv) {
+	user := vars.User
+	if !ctx.RequestVerification(db, seq, "", mysql.InsertPriv) {
 		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, seq)
 	}
-	nextVal, err := sequence.GetSequenceNextVal(ctx, db, seq)
+	nextVal, err := sequence.GetSequenceNextVal()
 	if err != nil {
 		return 0, false, err
 	}
 	// update the sequenceState.
-	ctx.GetSessionVars().SequenceState.UpdateState(sequence.GetSequenceID(), nextVal)
+	vars.SequenceState.UpdateState(sequence.GetSequenceID(), nextVal)
 	return nextVal, false, nil
 }
 
@@ -1245,13 +1274,20 @@ func (c *lastValFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinLastValSig{bf}
+	sig := &builtinLastValSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(10)
 	return sig, nil
 }
 
 type builtinLastValSig struct {
 	baseBuiltinFunc
+	contextopt.SequenceOperatorPropReader
+	contextopt.SessionVarsPropReader
+}
+
+func (b *builtinLastValSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SequenceOperatorPropReader.RequiredOptionalEvalProps() |
+		b.SessionVarsPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinLastValSig) Clone() builtinFunc {
@@ -1270,17 +1306,21 @@ func (b *builtinLastValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 		db = ctx.CurrentDB()
 	}
 	// Check the tableName valid.
-	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := b.GetSequenceOperator(ctx, db, seq)
+	if err != nil {
+		return 0, false, err
+	}
+	// Get session vars
+	vars, err := b.GetSessionVars(ctx)
 	if err != nil {
 		return 0, false, err
 	}
 	// Do the privilege check.
-	checker := privilege.GetPrivilegeManager(ctx)
-	user := ctx.GetSessionVars().User
-	if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.SelectPriv) {
+	user := vars.User
+	if !ctx.RequestVerification(db, seq, "", mysql.SelectPriv) {
 		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, seq)
 	}
-	return ctx.GetSessionVars().SequenceState.GetLastValue(sequence.GetSequenceID())
+	return vars.SequenceState.GetLastValue(sequence.GetSequenceID())
 }
 
 type setValFunctionClass struct {
@@ -1295,13 +1335,20 @@ func (c *setValFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinSetValSig{bf}
+	sig := &builtinSetValSig{baseBuiltinFunc: bf}
 	bf.tp.SetFlen(args[1].GetType().GetFlen())
 	return sig, nil
 }
 
 type builtinSetValSig struct {
 	baseBuiltinFunc
+	contextopt.SequenceOperatorPropReader
+	contextopt.SessionVarsPropReader
+}
+
+func (b *builtinSetValSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SequenceOperatorPropReader.RequiredOptionalEvalProps() |
+		b.SessionVarsPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinSetValSig) Clone() builtinFunc {
@@ -1320,21 +1367,25 @@ func (b *builtinSetValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 		db = ctx.CurrentDB()
 	}
 	// Check the tableName valid.
-	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := b.GetSequenceOperator(ctx, db, seq)
+	if err != nil {
+		return 0, false, err
+	}
+	// Get session vars
+	vars, err := b.GetSessionVars(ctx)
 	if err != nil {
 		return 0, false, err
 	}
 	// Do the privilege check.
-	checker := privilege.GetPrivilegeManager(ctx)
-	user := ctx.GetSessionVars().User
-	if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.InsertPriv) {
+	user := vars.User
+	if !ctx.RequestVerification(db, seq, "", mysql.InsertPriv) {
 		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, seq)
 	}
 	setValue, isNull, err := b.args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return sequence.SetSequenceVal(ctx, setValue, db, seq)
+	return sequence.SetSequenceVal(setValue)
 }
 
 func getSchemaAndSequence(sequenceName string) (string, string) {
