@@ -950,7 +950,6 @@ alter table t add column c1 int default 1;
 insert ignore into t(id) values (194626268);
 --disable_info
 select * from t;
---enable_info
 -- error 1467
 insert ignore into t(id) values ('*') on duplicate key update c1 = 2;
 --disable_info
