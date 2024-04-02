@@ -1339,7 +1339,7 @@ type Conflict struct {
 
 // adjust assigns default values and check illegal values. The arguments must be
 // adjusted before calling this function.
-func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
+func (c *Conflict) adjust(i *TikvImporter) error {
 	strategyConfigFrom := "conflict.strategy"
 	if c.Strategy == NoneOnDup {
 		if i.OnDuplicate == NoneOnDup && i.Backend == BackendTiDB {
@@ -1607,7 +1607,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	if err = cfg.Routes.adjust(&cfg.Mydumper); err != nil {
 		return err
 	}
-	return cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App)
+	return cfg.Conflict.adjust(&cfg.TikvImporter)
 }
 
 // AdjustForDDL acts like Adjust, but DDL will not use some functionalities so

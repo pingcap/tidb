@@ -1295,36 +1295,36 @@ func TestAdjustConflict(t *testing.T) {
 
 	require.NoError(t, dra.FromStringValue("REPLACE"))
 	cfg.Conflict.Strategy = dra
-	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
+	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
 	require.Equal(t, int64(10000), cfg.Conflict.Threshold)
 
 	require.NoError(t, dra.FromStringValue("IGNORE"))
 	cfg.Conflict.Strategy = dra
-	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `conflict.strategy cannot be set to "ignore" when use tikv-importer.backend = "local"`)
+	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter), `conflict.strategy cannot be set to "ignore" when use tikv-importer.backend = "local"`)
 
 	cfg.Conflict.Strategy = ErrorOnDup
 	cfg.Conflict.Threshold = 1
-	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `conflict.threshold cannot be set when use conflict.strategy = "error"`)
+	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter), `conflict.threshold cannot be set when use conflict.strategy = "error"`)
 
 	cfg.TikvImporter.Backend = BackendTiDB
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.Conflict.MaxRecordRows = -1
-	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
+	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
 	require.Equal(t, int64(0), cfg.Conflict.MaxRecordRows)
 
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Threshold = 1
 	cfg.Conflict.MaxRecordRows = 1
-	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
+	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
 	cfg.Conflict.MaxRecordRows = 2
-	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
+	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
 	require.Equal(t, int64(1), cfg.Conflict.MaxRecordRows)
 
 	cfg.TikvImporter.Backend = BackendTiDB
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.Conflict.Threshold = 1
 	cfg.Conflict.MaxRecordRows = 1
-	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App))
+	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
 	require.Equal(t, int64(0), cfg.Conflict.MaxRecordRows)
 }
 
