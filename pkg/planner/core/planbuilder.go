@@ -1018,6 +1018,10 @@ func fillContentForTablePath(tablePath *util.AccessPath, tblInfo *model.TableInf
 			}
 		}
 	} else {
+		tablePath.Index = &model.IndexInfo{
+			Name: tblInfo.Name,
+			ID:   -1,
+		}
 		tablePath.IsIntHandlePath = true
 	}
 }
