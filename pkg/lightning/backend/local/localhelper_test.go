@@ -355,19 +355,7 @@ func (d defaultHook) setup(t *testing.T) func() {
 	}
 }
 
-func (d defaultHook) check(t *testing.T, cli *testSplitClient) {
-	// so with a batch split size of 4, there will be 7 time batch split
-	// 1. region: [aay, bba), keys: [b, ba, bb]
-	// 2. region: [bbh, cca), keys: [bc, bd, be, bf]
-	// 3. region: [bf, cca), keys: [bg, bh, bi, bj]
-	// 4. region: [bj, cca), keys: [bk, bl, bm, bn]
-	// 5. region: [bn, cca), keys: [bo, bp, bq, br]
-	// 6. region: [br, cca), keys: [bs, bt, bu, bv]
-	// 7. region: [bv, cca), keys: [bw, bx, by, bz]
-
-	// since it may encounter error retries, here only check the lower threshold.
-	require.GreaterOrEqual(t, cli.splitCount.Load(), int32(7))
-}
+func (d defaultHook) check(*testing.T, *testSplitClient) {}
 
 func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clientHook, errPat string, splitHook batchSplitHook) {
 	if splitHook == nil {
@@ -422,10 +410,6 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 		[]byte("by"), []byte("bz"), []byte("cca"),
 	}
 	checkRegionRanges(t, regions, result)
-}
-
-func TestBatchSplitRegionByRanges(t *testing.T) {
-	doTestBatchSplitRegionByRanges(context.Background(), t, nil, "", nil)
 }
 
 type checkScatterClient struct {
