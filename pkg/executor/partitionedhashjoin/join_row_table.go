@@ -399,6 +399,10 @@ func (b *rowTableBuilder) initBuffer() {
 			b.nullKeyVector = append(b.nullKeyVector, false)
 		}
 	}
+	b.selRows = make([]int, 0, chunk.InitialCapacity)
+	for i := 0; i < chunk.InitialCapacity; i++ {
+		b.selRows = append(b.selRows, i)
+	}
 }
 
 func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) {
@@ -407,12 +411,12 @@ func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) {
 	physicalRows := chk.Column(0).Rows()
 	if b.usedRows == nil {
 		if cap(b.selRows) >= logicalRows {
-			b.selRows = b.partIdxVector[:0]
+			b.selRows = b.selRows[:logicalRows]
 		} else {
 			b.selRows = make([]int, 0, logicalRows)
-		}
-		for i := 0; i < logicalRows; i++ {
-			b.selRows = append(b.selRows, i)
+			for i := 0; i < logicalRows; i++ {
+				b.selRows = append(b.selRows, i)
+			}
 		}
 		b.usedRows = b.selRows
 	}
