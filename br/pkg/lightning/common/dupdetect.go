@@ -16,6 +16,7 @@ package common
 
 import (
 	"bytes"
+
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
