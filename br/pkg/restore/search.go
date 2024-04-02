@@ -17,7 +17,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
-	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -85,7 +85,7 @@ func (s *StreamBackupSearch) SetEndTs(endTs uint64) {
 
 func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backuppb.DataFileInfo) error {
 	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
-	pool := utils.NewWorkerPool(64, "read backup meta")
+	pool := util.NewWorkerPool(64, "read backup meta")
 	eg, egCtx := errgroup.WithContext(ctx)
 	err := s.storage.WalkDir(egCtx, opt, func(path string, size int64) error {
 		if !strings.Contains(path, stream.GetStreamBackupMetaPrefix()) {
@@ -158,7 +158,7 @@ func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error
 		}
 	}()
 
-	pool := utils.NewWorkerPool(16, "search key")
+	pool := util.NewWorkerPool(16, "search key")
 	var wg sync.WaitGroup
 
 	for dataFile := range dataFilesCh {

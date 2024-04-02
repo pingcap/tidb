@@ -29,16 +29,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	litlog "github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
@@ -1303,16 +1303,10 @@ func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]ex
 }
 
 func (e *LoadDataController) getBackendWorkerConcurrency() int {
-	// when using global sort, write&ingest step buffers KV data in memory,
 	// suppose cpu:mem ratio 1:2(true in most case), and we assign 1G per concurrency,
 	// so we can use 2 * threadCnt as concurrency. write&ingest step is mostly
 	// IO intensive, so CPU usage is below ThreadCnt in our tests.
-	// The real concurrency used is adjusted in external engine later.
-	// when using local sort, use the default value as lightning.
-	if e.IsGlobalSort() {
-		return e.ThreadCnt * 2
-	}
-	return config.DefaultRangeConcurrency * 2
+	return e.ThreadCnt * 2
 }
 
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {

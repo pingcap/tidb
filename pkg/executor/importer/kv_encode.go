@@ -20,10 +20,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports

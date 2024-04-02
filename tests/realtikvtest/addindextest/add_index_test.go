@@ -107,9 +107,9 @@ func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
 	tk.MustExec("update employee set pid=0 where id=1")
 	tk.MustGetErrMsg("alter table employee add foreign key fk_1(pid) references employee(id)",
 		"[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`fk_index`.`employee`, CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `employee` (`id`))")
-	tk.MustExec("update employee set pid=null where id=1")
 	tk.MustExec("insert into employee (pid) select pid from employee")
-	tk.MustExec("update employee set pid=id-1 where id>1 and pid is null")
+	tk.MustExec("update employee set pid=id")
+
 	tk.MustExec("alter table employee add foreign key fk_1(pid) references employee(id)")
 }
 
