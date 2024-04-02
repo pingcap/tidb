@@ -1310,7 +1310,7 @@ func TestAdjustConflict(t *testing.T) {
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.Conflict.MaxRecordRows = -1
 	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
-	require.Equal(t, int64(0), cfg.Conflict.MaxRecordRows)
+	require.EqualValues(t, 0, cfg.Conflict.MaxRecordRows)
 
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Threshold = 1
@@ -1318,14 +1318,14 @@ func TestAdjustConflict(t *testing.T) {
 	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
 	cfg.Conflict.MaxRecordRows = 2
 	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
-	require.Equal(t, int64(1), cfg.Conflict.MaxRecordRows)
+	require.EqualValues(t, 1, cfg.Conflict.MaxRecordRows)
 
 	cfg.TikvImporter.Backend = BackendTiDB
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.Conflict.Threshold = 1
 	cfg.Conflict.MaxRecordRows = 1
 	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
-	require.Equal(t, int64(0), cfg.Conflict.MaxRecordRows)
+	require.EqualValues(t, 0, cfg.Conflict.MaxRecordRows)
 }
 
 func TestAdjustBlockSize(t *testing.T) {
