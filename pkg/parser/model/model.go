@@ -1786,6 +1786,10 @@ type TableItemID struct {
 	IsSyncLoadFailed bool
 }
 
+func (t TableItemID) Key() string {
+	return fmt.Sprintf("%d%d%t%t", t.ID, t.TableID, t.IsIndex, t.IsSyncLoadFailed)
+}
+
 // StatsLoadItem represents the load unit for statistics's memory loading.
 type StatsLoadItem struct {
 	TableItemID
