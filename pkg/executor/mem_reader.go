@@ -656,7 +656,7 @@ type memIndexLookUpReader struct {
 	idxReader *memIndexReader
 
 	// partition mode
-	partitionMode     bool                  // if it is accessing a partition table
+	partitionMode     bool                  // if this executor is accessing a local index with partition table
 	partitionTables   []table.PhysicalTable // partition tables to access
 	partitionKVRanges [][]kv.KeyRange       // kv ranges for these partition tables
 
@@ -742,9 +742,7 @@ func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum,
 	}
 
 	if m.desc {
-		for i, j := 0, len(tblKVRanges)-1; i < j; i, j = i+1, j-1 {
-			tblKVRanges[i], tblKVRanges[j] = tblKVRanges[j], tblKVRanges[i]
-		}
+		slices.Reverse(tblKVRanges)
 	}
 
 	colIDs, pkColIDs, rd := getColIDAndPkColIDs(m.ctx, m.table, m.columns)

@@ -560,7 +560,15 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle) ([]kv.KeyRange, []in
 	hints := make([]int, 0, len(handles))
 	i := 0
 	for i < len(handles) {
-		if commonHandle, ok := handles[i].(*kv.CommonHandle); ok {
+		var isCommonHandle bool
+		var commonHandle *kv.CommonHandle
+		if partitionHandle, ok := handles[i].(kv.PartitionHandle); ok {
+			tid = partitionHandle.PartitionID
+			commonHandle, isCommonHandle = partitionHandle.Handle.(*kv.CommonHandle)
+		} else {
+			commonHandle, isCommonHandle = handles[i].(*kv.CommonHandle)
+		}
+		if isCommonHandle {
 			ran := kv.KeyRange{
 				StartKey: tablecodec.EncodeRowKey(tid, commonHandle.Encoded()),
 				EndKey:   tablecodec.EncodeRowKey(tid, kv.Key(commonHandle.Encoded()).Next()),
@@ -572,6 +580,9 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle) ([]kv.KeyRange, []in
 		}
 		j := i + 1
 		for ; j < len(handles) && handles[j-1].IntValue() != math.MaxInt64; j++ {
+			if p, ok := handles[j].(kv.PartitionHandle); ok && p.PartitionID != tid {
+				break
+			}
 			if handles[j].IntValue() != handles[j-1].IntValue()+1 {
 				break
 			}

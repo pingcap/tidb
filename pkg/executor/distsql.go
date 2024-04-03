@@ -437,7 +437,7 @@ type IndexLookUpExecutor struct {
 	avgRowSize     float64
 
 	// fields about accessing partition tables
-	partitionTableMode bool                  // if this executor is accessing a partition table
+	partitionTableMode bool                  // if this executor is accessing a local index with partition table
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
 	partitionIDMap     map[int64]struct{}    // partitionIDs that global index access
 	partitionRangeMap  map[int64][]*ranger.Range

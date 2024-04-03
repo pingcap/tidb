@@ -182,7 +182,7 @@ func Selectivity(
 			})
 			continue
 		}
-		idxCols := findPrefixOfIndexByCol(ctx, extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
+		idxCols := findPrefixOfIndexByCol(ctx, extractedCols, coll.Idx2ColUniqueIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
 			for i := 0; i < len(idxCols) && i < len(idxStats.Info.Columns); i++ {
@@ -920,7 +920,7 @@ func findAvailableStatsForCol(sctx context.PlanContext, coll *statistics.HistCol
 		return false, uniqueID
 	}
 	// try to find available stats in single column index stats (except for prefix index)
-	for idxStatsIdx, cols := range coll.Idx2ColumnIDs {
+	for idxStatsIdx, cols := range coll.Idx2ColUniqueIDs {
 		if len(cols) == 1 && cols[0] == uniqueID {
 			idxStats := coll.Indices[idxStatsIdx]
 			if !statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxStatsIdx) &&
@@ -969,7 +969,7 @@ func getEqualCondSelectivity(sctx context.PlanContext, coll *statistics.HistColl
 			return outOfRangeEQSelectivity(sctx, idx.NDV, realtimeCnt, int64(idx.TotalRowCount())), nil
 		}
 		// The equal condition only uses prefix columns of the index.
-		colIDs := coll.Idx2ColumnIDs[idx.ID]
+		colIDs := coll.Idx2ColUniqueIDs[idx.ID]
 		var ndv int64
 		for i, colID := range colIDs {
 			if i >= usedColsLen {
@@ -1051,7 +1051,7 @@ func crossValidationSelectivity(
 		}()
 	}
 	minRowCount = math.MaxFloat64
-	cols := coll.Idx2ColumnIDs[idx.ID]
+	cols := coll.Idx2ColUniqueIDs[idx.ID]
 	crossValidationSelectivity = 1.0
 	totalRowCount := idx.TotalRowCount()
 	for i, colID := range cols {

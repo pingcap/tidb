@@ -1167,7 +1167,7 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 	// 2. Try to get NDV from index stats.
 	// Note that we don't need to specially handle prefix index here, because the NDV of a prefix index is
 	// equal or less than the corresponding normal index, and that's safe here since we want a lower bound.
-	for idxID, idxCols := range histColl.Idx2ColumnIDs {
+	for idxID, idxCols := range histColl.Idx2ColUniqueIDs {
 		if len(idxCols) != len(colUIDs) {
 			continue
 		}
