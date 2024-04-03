@@ -267,7 +267,7 @@ func (d TiKVDriver) CheckTiDBGCManagementTypeAndKeyspaceMeta(keyspaceMeta *keysp
 	if !gcworker.IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta) && config.GetGlobalConfig().EnableKeyspaceLevelGC {
 		// If gc_management_type=keyspace_level_gc was not set in the keyspace config when the keyspace was created,
 		// then don't supported setting enable-keyspace-level-gc = true tidb config now.
-		return errors.New("Do not support a keyspace that is not created with keyspace-level-gc, enable keyspace level gc in TiDB config")
+		return errors.New("If 'gc_management_type' is not set to ' keyspace_level_gc' in keyspace meta config when keyspace is created, then it is not supported enable keyspace level gc in TiDB")
 	}
 	return nil
 }
