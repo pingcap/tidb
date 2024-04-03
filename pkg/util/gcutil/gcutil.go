@@ -30,7 +30,7 @@ const (
 	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?`
 	// GCManagementType is gc management type in keyspace meta config.
 	GCManagementType = "gc_management_type"
-	// KeyspaceLevelGC is means safe point version of keyspace meta is v2.If keyspace meta has configured with safe_point_version = v2, this keyspace will calculate gc safe point on its own.
+	// KeyspaceLevelGC is means a type of gc management type in keyspace meta config,it means this keyspace will calculate gc safe point by its own.
 	KeyspaceLevelGC = "keyspace_level_gc"
 )
 
