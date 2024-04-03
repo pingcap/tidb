@@ -115,7 +115,6 @@ go_test(
         "meta_manager_test.go",
         "precheck_impl_test.go",
         "precheck_test.go",
-        "restore_schema_test.go",
         "table_import_test.go",
         "tidb_test.go",
     ],
