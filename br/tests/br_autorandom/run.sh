@@ -59,3 +59,6 @@ run_sql "SELECT COUNT(*) AS RESCNT FROM ${DB}.common WHERE uid < 10 AND c = 'b';
 check_contains "RESCNT: 0"
 run_sql "SELECT COUNT(*) AS RESCNT FROM ${DB}.pk WHERE uid < 10 AND c = 'b';"
 check_contains "RESCNT: 0"
+
+# clean the data
+run_sql "DROP DATABASE $DB;"
