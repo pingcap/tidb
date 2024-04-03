@@ -83,6 +83,7 @@ func NewSchemaImporter(logger log.Logger, sqlMode mysql.SQLMode, db *sql.DB, sto
 	}
 }
 
+// Run imports all schemas from the given database metas.
 func (si *SchemaImporter) Run(ctx context.Context, dbMetas []*MDDatabaseMeta) (err error) {
 	logTask := si.logger.Begin(zap.InfoLevel, "restore all schema")
 	defer func() {
@@ -129,7 +130,7 @@ func (si *SchemaImporter) importDatabases(ctx context.Context, dbMetas []*MDData
 	}
 	eg.Go(func() error {
 		defer close(ch)
-		for i, _ := range dbMetas {
+		for i := range dbMetas {
 			dbMeta := dbMetas[i]
 			// if downstream already has this database, we can skip ddl job
 			if existingSchemas.Exist(strings.ToLower(dbMeta.Name)) {
@@ -183,7 +184,7 @@ func (si *SchemaImporter) importTables(ctx context.Context, dbMetas []*MDDatabas
 			if err != nil {
 				return err
 			}
-			for i, _ := range dbMeta.Tables {
+			for i := range dbMeta.Tables {
 				tblMeta := dbMeta.Tables[i]
 				if tables.Exist(strings.ToLower(tblMeta.Name)) {
 					// we already has this table in TiDB.
