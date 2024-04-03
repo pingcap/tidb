@@ -237,11 +237,11 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 	select {
 	case result := <-resultChan:
 		if result.Err == nil {
-			slr := *(result.Val.(*stmtctx.StatsLoadResult))
+			slr := result.Val.(*stmtctx.StatsLoadResult)
 			if slr.Error != nil {
 				return task, slr.Error
 			}
-			task.ResultCh <- slr
+			task.ResultCh <- *slr
 			return nil, nil
 		}
 		return task, result.Err
