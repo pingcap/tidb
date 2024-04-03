@@ -354,7 +354,7 @@ func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Colum
 	mutRow := chunk.MutRowFromDatums(record)
 	for _, gc := range genCols {
 		col := cols[gc.Index].ToInfo()
-		evaluated, err := gc.Expr.Eval(se.GetExprCtx(), mutRow.ToRow())
+		evaluated, err := gc.Expr.Eval(se.GetExprCtx().GetEvalCtx(), mutRow.ToRow())
 		if err != nil {
 			return col, err
 		}

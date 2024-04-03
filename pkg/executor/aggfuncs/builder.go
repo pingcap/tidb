@@ -168,7 +168,7 @@ func buildApproxPercentile(sctx AggFuncBuildContext, aggFuncDesc *aggregation.Ag
 	}
 
 	// Checked while building descriptor
-	percent, _, err := aggFuncDesc.Args[1].EvalInt(sctx, chunk.Row{})
+	percent, _, err := aggFuncDesc.Args[1].EvalInt(sctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		// Should not reach here
 		logutil.BgLogger().Error("Error happened when buildApproxPercentile", zap.Error(err))
@@ -472,7 +472,7 @@ func buildGroupConcat(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncD
 	default:
 		// The last arg is promised to be a not-null string constant, so the error can be ignored.
 		c, _ := aggFuncDesc.Args[len(aggFuncDesc.Args)-1].(*expression.Constant)
-		sep, _, err := c.EvalString(ctx, chunk.Row{})
+		sep, _, err := c.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 		// This err should never happen.
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", err.Error()))
@@ -689,7 +689,7 @@ func buildNthValue(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc
 		ordinal: ordinal,
 	}
 	// Already checked when building the function description.
-	nth, _, _ := expression.GetUint64FromConstant(ctx, aggFuncDesc.Args[1])
+	nth, _, _ := expression.GetUint64FromConstant(ctx.GetEvalCtx(), aggFuncDesc.Args[1])
 	return &nthValue{baseAggFunc: base, tp: aggFuncDesc.RetTp, nth: nth}
 }
 
@@ -698,7 +698,7 @@ func buildNtile(ctx AggFuncBuildContext, aggFuncDes *aggregation.AggFuncDesc, or
 		args:    aggFuncDes.Args,
 		ordinal: ordinal,
 	}
-	n, _, _ := expression.GetUint64FromConstant(ctx, aggFuncDes.Args[0])
+	n, _, _ := expression.GetUint64FromConstant(ctx.GetEvalCtx(), aggFuncDes.Args[0])
 	return &ntile{baseAggFunc: base, n: n}
 }
 
@@ -712,7 +712,7 @@ func buildPercentRank(ordinal int, orderByCols []*expression.Column) AggFunc {
 func buildLeadLag(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag {
 	offset := uint64(1)
 	if len(aggFuncDesc.Args) >= 2 {
-		offset, _, _ = expression.GetUint64FromConstant(ctx, aggFuncDesc.Args[1])
+		offset, _, _ = expression.GetUint64FromConstant(ctx.GetEvalCtx(), aggFuncDesc.Args[1])
 	}
 	var defaultExpr expression.Expression
 	defaultExpr = expression.NewNull()

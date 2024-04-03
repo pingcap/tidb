@@ -1452,13 +1452,11 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 				}
 			}
 		}
-		tables := schemas[last].Tables()
-		tables = append(tables, &model.TableInfo{
+		schemas[last].SetTables(append(schemas[last].Tables(), &model.TableInfo{
 			ID:        tidbTableID,
 			Name:      model.CIStr{O: tableName},
 			Partition: partition,
-		})
-		schemas[last].SetTables(tables)
+		}))
 		return nil
 	})
 	return schemas, err

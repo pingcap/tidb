@@ -396,14 +396,14 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 	// Update old row when the key is duplicated.
 	e.evalBuffer4Dup.SetDatums(e.row4Update...)
 	sctx := e.Ctx()
-	exprCtx := sctx.GetExprCtx()
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for _, col := range cols {
 		if col.LazyErr != nil {
 			return col.LazyErr
 		}
-		val, err1 := col.Expr.Eval(exprCtx, e.evalBuffer4Dup.ToRow())
+		val, err1 := col.Expr.Eval(evalCtx, e.evalBuffer4Dup.ToRow())
 		if err1 != nil {
 			return err1
 		}

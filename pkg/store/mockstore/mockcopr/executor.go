@@ -406,7 +406,7 @@ func (e *selectionExec) Counts() []int64 {
 // evalBool evaluates expression to a boolean value.
 func evalBool(exprs []expression.Expression, row []types.Datum, ctx sessionctx.Context) (bool, error) {
 	for _, expr := range exprs {
-		data, err := expr.Eval(ctx.GetExprCtx(), chunk.MutRowFromDatums(row).ToRow())
+		data, err := expr.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(row).ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -541,7 +541,7 @@ func (e *topNExec) evalTopN(value [][]byte) error {
 		return errors.Trace(err)
 	}
 	for i, expr := range e.orderByExprs {
-		newRow.key[i], err = expr.Eval(e.evalCtx.sctx.GetExprCtx(), chunk.MutRowFromDatums(e.row).ToRow())
+		newRow.key[i], err = expr.Eval(e.evalCtx.sctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(e.row).ToRow())
 		if err != nil {
 			return errors.Trace(err)
 		}

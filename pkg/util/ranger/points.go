@@ -272,7 +272,7 @@ func (r *builder) build(
 }
 
 func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
-	dt, err := expr.Eval(r.sctx.GetExprCtx(), chunk.Row{})
+	dt, err := expr.Eval(r.sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		r.err = err
 		return nil
@@ -362,7 +362,7 @@ func (r *builder) buildFromBinOp(
 	var ok bool
 	if col, ok = expr.GetArgs()[0].(*expression.Column); ok {
 		ft = col.RetType
-		value, err = expr.GetArgs()[1].Eval(r.sctx.GetExprCtx(), chunk.Row{})
+		value, err = expr.GetArgs()[1].Eval(r.sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return nil
 		}
@@ -373,7 +373,7 @@ func (r *builder) buildFromBinOp(
 			return nil
 		}
 		ft = col.RetType
-		value, err = expr.GetArgs()[0].Eval(r.sctx.GetExprCtx(), chunk.Row{})
+		value, err = expr.GetArgs()[0].Eval(r.sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return nil
 		}
@@ -654,13 +654,14 @@ func (r *builder) buildFromIn(
 	ft := expr.GetArgs()[0].GetType()
 	colCollate := ft.GetCollate()
 	tc := r.sctx.GetSessionVars().StmtCtx.TypeCtx()
+	evalCtx := r.sctx.GetExprCtx().GetEvalCtx()
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
 			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
 			return getFullRange(), hasNull
 		}
-		dt, err := v.Eval(r.sctx.GetExprCtx(), chunk.Row{})
+		dt, err := v.Eval(evalCtx, chunk.Row{})
 		if err != nil {
 			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
 			return getFullRange(), hasNull
@@ -748,7 +749,7 @@ func (r *builder) newBuildFromPatternLike(
 	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().GetCollate(), collation) {
 		return getFullRange()
 	}
-	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(r.sctx.GetExprCtx(), chunk.Row{})
+	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(r.sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 	tpOfPattern := expr.GetArgs()[0].GetType()
 	if err != nil {
 		r.err = errors.Trace(err)
@@ -774,7 +775,7 @@ func (r *builder) newBuildFromPatternLike(
 		return res
 	}
 	lowValue := make([]byte, 0, len(pattern))
-	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(r.sctx.GetExprCtx(), chunk.Row{})
+	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(r.sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()
