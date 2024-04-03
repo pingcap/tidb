@@ -16,7 +16,6 @@ package util
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -55,7 +54,7 @@ func (e *DDLEvent) IsMemOrSysDB(sctx sessionctx.Context) (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("schema not found for table %s", e.tableInfo.Name)
 	}
-	return util.IsMemOrSysDB(strings.ToLower(schema.Name.O)), nil
+	return util.IsMemOrSysDB(schema.Name.L), nil
 }
 
 // NewCreateTableEvent creates a new ddl event that creates a table.
