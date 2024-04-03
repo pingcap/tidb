@@ -5858,15 +5858,6 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-<<<<<<< HEAD
-        sha256 = "95f1bd8447c012c516789e30c09f72149f14e9df53d58bc3f74d54b7473119a0",
-        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20230919054518-dfd7d194838f",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20230919054518-dfd7d194838f.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20230919054518-dfd7d194838f.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20230919054518-dfd7d194838f.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20230919054518-dfd7d194838f.zip",
-=======
         sha256 = "42c365f3f99d2577fe29c89d433894b2d0d69b054248bb3bafbced33332933e3",
         strip_prefix = "github.com/pingcap/tipb@v0.0.0-20240318032315-55a7867ddd50",
         urls = [
@@ -5874,7 +5865,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20240318032315-55a7867ddd50.zip",
             "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20240318032315-55a7867ddd50.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20240318032315-55a7867ddd50.zip",
->>>>>>> 3f915c0a369 (execdetails: add statistical data of table scanning of TiFlash (#51726))
         ],
     )
     go_repository(
