@@ -753,8 +753,12 @@ func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "cannot read request", err)
 		return
 	}
+<<<<<<< HEAD:br/pkg/lightning/lightning.go
 	filteredData := utils.HideSensitive(string(data))
 	log.L().Info("received task config", zap.String("content", filteredData))
+=======
+	log.L().Info("received task config")
+>>>>>>> 555ce023522 (lightning: Don't log "received task config" in server mode (#52336)):lightning/pkg/server/lightning.go
 
 	cfg := config.NewConfig()
 	if err = cfg.LoadFromGlobal(l.globalCfg); err != nil {
