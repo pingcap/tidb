@@ -29,7 +29,7 @@ type Store struct {
 }
 
 // CurrentAllTSOKeyspaceGroupMinTs implements kv.Storage interface.
-func (s *Store) CurrentAllTSOKeyspaceGroupMinTs() (uint64, error) {
+func (*Store) CurrentAllTSOKeyspaceGroupMinTs() (uint64, error) {
 	return 0, nil
 }
 
