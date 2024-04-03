@@ -180,9 +180,8 @@ type RetryAndSplitRequestEnv struct {
 }
 
 func (r RetryAndSplitRequestEnv) ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error) {
-	// Retry for about 2 minutes.
-	rs := utils.InitialRetryState(12, 10*time.Second, 10*time.Second)
-	bo := utils.Backoffer(&rs)
+	rs := utils.ConstantBackoff(10 * time.Second)
+	bo := utils.Backoffer(rs)
 	if r.GetBackoffer != nil {
 		bo = r.GetBackoffer()
 	}
