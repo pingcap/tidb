@@ -282,9 +282,6 @@ func (*transaction) MayFlush() error {
 	return nil
 }
 
-// AssertCommitterNotWorking implements the kv.Transaction interface.
-func (t *transaction) AssertCommitterNotWorking() {}
-
 type planCtxImpl struct {
 	*Session
 	*planctximpl.PlanCtxExtendedImpl

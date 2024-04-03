@@ -210,6 +210,9 @@ func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 }
 
 func (txn *tikvTxn) SetOption(opt int, val any) {
+	if intest.InTest {
+		txn.assertCommitterNotWorking()
+	}
 	switch opt {
 	case kv.BinlogInfo:
 		txn.SetBinlogExecutor(&binlogExecutor{
@@ -449,10 +452,9 @@ func (txn *tikvTxn) MayFlush() error {
 	return txn.extractKeyErr(err)
 }
 
-func (txn *tikvTxn) AssertCommitterNotWorking() {
-	if intest.InTest {
-		return
-	}
+// assertCommitterNotWorking asserts that the committer is not working, so it's safe to modify the options for txn and committer.
+// It panics when committer is working, only use it when test with --tags=intest tag.
+func (txn *tikvTxn) assertCommitterNotWorking() {
 	if txn.isCommitterWorking.Load() {
 		panic("committer is working")
 	}

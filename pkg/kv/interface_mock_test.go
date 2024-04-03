@@ -183,7 +183,6 @@ func (t *mockTxn) DoneFairLocking(_ context.Context) error   { return nil }
 func (t *mockTxn) IsInFairLockingMode() bool                 { return false }
 func (t *mockTxn) IsPipelined() bool                         { return false }
 func (t *mockTxn) MayFlush() error                           { return nil }
-func (t *mockTxn) AssertCommitterNotWorking()                {}
 
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
