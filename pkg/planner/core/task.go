@@ -542,6 +542,12 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 		partTp:   outerTask.partTp,
 		hashCols: outerTask.hashCols,
 	}
+	// Current TiFlash doesn't support receive Join executors' schema info directly from TiDB.
+	// Instead, it calculates Join executors' output schema using algorithm like BuildPhysicalJoinSchema which
+	// produces full semantic schema.
+	// Thus, the column prune optimization achievements will be abandoned here.
+	// To avoid the performance issue, add a projection here above the Join operator to prune useless columns explicitly.
+	// TODO(hyb): transfer Join executors' schema to TiFlash through DagRequest, and use it directly in TiFlash.
 	defaultSchema := BuildPhysicalJoinSchema(p.JoinType, p)
 	if p.schema.Len() < defaultSchema.Len() {
 		if p.schema.Len() > 0 {

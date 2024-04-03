@@ -416,7 +416,10 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	if ds.handleCols != nil && ds.handleCols.IsInt() && ds.schema.ColumnIndex(ds.handleCols.GetCol(0)) == -1 {
 		ds.handleCols = nil
 	}
-	if !addOneHandle && ds.schema.Len() > len(parentUsedCols) && ds.SCtx().GetSessionVars().IsMPPEnforced() {
+	// Current DataSource operator contains all the filters on this table, and the columns used by these filters are always included
+	// in the output schema. Even if they are not needed by DataSource's parent operator. Thus add a projection here to prune useless columns
+	// Limit to MPP tasks, because TiKV can't benefit from this now(projection can't be pushed down to TiKV now).
+	if !addOneHandle && ds.schema.Len() > len(parentUsedCols) && ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.tableInfo.TiFlashReplica != nil {
 		proj := LogicalProjection{
 			Exprs: expression.Column2Exprs(parentUsedCols),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
