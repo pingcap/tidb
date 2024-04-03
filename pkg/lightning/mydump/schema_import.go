@@ -210,6 +210,8 @@ func (si *SchemaImporter) importTables(ctx context.Context, dbMetas []*MDDatabas
 	return eg.Wait()
 }
 
+// dumpling dump a view as a table-schema sql file which creates a table of same name
+// as the view, and a view-schema sql file which drops the table and creates the view.
 func (si *SchemaImporter) importViews(ctx context.Context, dbMetas []*MDDatabaseMeta) error {
 	// 3. restore views. Since views can cross database we must restore views after all table schemas are restored.
 	// we don't support restore views concurrency, cauz it maybe will raise a error
@@ -287,6 +289,7 @@ func (si *SchemaImporter) getExistingDatabases(ctx context.Context) (set.StringS
 	return si.getExistingSchemas(ctx, `SELECT SCHEMA_NAME FROM information_schema.SCHEMATA`)
 }
 
+// the result contains views too, but as table and view share the same name space, it's ok.
 func (si *SchemaImporter) getExistingTables(ctx context.Context, dbName string) (set.StringSet, error) {
 	sb := new(strings.Builder)
 	sqlescape.MustFormatSQL(sb, `SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = %?`, dbName)
