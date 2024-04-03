@@ -1252,8 +1252,8 @@ func (w *GCWorker) getAllKeyspace(ctx context.Context) ([]*keyspacepb.KeyspaceMe
 	return allkeyspaces, nil
 }
 
-// IsKeyspaceMetaEnableSafePointV2 return true if keyspace meta config has safe point version is 'keyspace_level_gc'.
-func IsKeyspaceMetaEnableSafePointV2(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
+// IsKeyspaceMetaUseKeyspaceLevelGC return true if keyspace meta config has 'gc_management_type' is 'keyspace_level_gc'.
+func IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	if val, ok := keyspaceMeta.Config[gcutil.GCManagementType]; ok {
 		return val == gcutil.KeyspaceLevelGC
 	}
@@ -1291,7 +1291,7 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 	for i := range keyspaces {
 		keyspaceMeta := keyspaces[i]
 		// Skip the keyspace which state is not enabled or not enable keyspace level gc.
-		if keyspaceMeta.State != keyspacepb.KeyspaceState_ENABLED || IsKeyspaceMetaEnableSafePointV2(keyspaceMeta) {
+		if keyspaceMeta.State != keyspacepb.KeyspaceState_ENABLED || IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta) {
 			logutil.BgLogger().Debug("[gc worker] skip keyspace resolve locks", zap.Bool("is-not-enabled", keyspaceMeta.State != keyspacepb.KeyspaceState_ENABLED))
 			continue
 		}

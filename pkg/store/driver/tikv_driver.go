@@ -36,7 +36,6 @@ import (
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
-	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	cli_config "github.com/tikv/client-go/v2/config"
@@ -261,32 +260,17 @@ func (d TiKVDriver) SyncGCManagementTypeAndConfig(keyspaceMeta *keyspacepb.Keysp
 		return nil
 	}
 
-	// If safe point version in PD keyspace config is not 'keyspace_level_gc'.
-	if !gcworker.IsKeyspaceMetaEnableSafePointV2(keyspaceMeta) {
-		// Tidb config safe point version v2. Update safe point version in PD keyspace config to 'keyspace_level_gc'.
-		if config.GetGlobalConfig().EnableKeyspaceLevelGC {
-			ctx := context.Background()
-			keyspaceSafePointVersionConfig := pdhttp.KeyspaceGCManagementTypeConfig{
-				Config: pdhttp.KeyspaceGCManagementType{
-					GCManagementType: gcutil.KeyspaceLevelGC,
-				},
-			}
-			err := pdHTTPCli.UpdateKeyspaceGCManagementType(ctx, keyspaceMeta.GetName(), &keyspaceSafePointVersionConfig)
-			if err != nil {
-				return err
-			}
-			return nil
+	if gcworker.IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta) {
+		// If 'gc_management_type' in PD keyspace meta config is 'keyspace_level_gc',
+		// but in TiDB global config EnableKeyspaceLevelGC is not true.
+		// Set the EnableKeyspaceLevelGC = true in TiDB global config.
+		// It cannot fall back to the global gc.
+		if !config.GetGlobalConfig().EnableKeyspaceLevelGC {
+			logutil.BgLogger().Warn("keyspace level gc etcd path exists, config.EnableKeyspaceLevelGC must be true.")
+			config.UpdateGlobal(func(c *config.Config) {
+				c.EnableKeyspaceLevelGC = true
+			})
 		}
-	}
-
-	// If safe point version in PD keyspace config is 'keyspace_level_gc',
-	// but in TiDB config file 'enable-keyspace-level-gc' is not true.
-	// Set the EnableKeyspaceLevelGC = true in TiDB global config.
-	if !config.GetGlobalConfig().EnableKeyspaceLevelGC {
-		logutil.BgLogger().Warn("keyspace level gc etcd path exists, config.EnableKeyspaceLevelGC must be true.")
-		config.UpdateGlobal(func(c *config.Config) {
-			c.EnableKeyspaceLevelGC = true
-		})
 	}
 
 	return nil

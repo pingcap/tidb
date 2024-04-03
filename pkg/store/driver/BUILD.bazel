@@ -15,7 +15,6 @@ go_library(
         "//pkg/store/driver/error",
         "//pkg/store/driver/txn",
         "//pkg/store/gcworker",
-        "//pkg/util/gcutil",
         "//pkg/util/logutil",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
