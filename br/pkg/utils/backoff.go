@@ -6,6 +6,11 @@ import (
 	"context"
 	"database/sql"
 	"io"
+<<<<<<< HEAD
+=======
+	"math"
+	"strings"
+>>>>>>> cc3c1baf306 (operator: make an infinity retry for connecting to store (#52177))
 	"time"
 
 	"github.com/pingcap/errors"
@@ -40,6 +45,34 @@ const (
 	flashbackMaxWaitInterval = 15 * time.Second
 )
 
+<<<<<<< HEAD
+=======
+// At least, there are two possible cancel() call,
+// one from go context, another from gRPC, here we retry when gRPC cancel with connection closing
+func isGRPCCancel(err error) bool {
+	if s, ok := status.FromError(err); ok {
+		if strings.Contains(s.Message(), gRPC_Cancel) {
+			return true
+		}
+	}
+	return false
+}
+
+// ConstantBackoff is a backoffer that retry forever until success.
+type ConstantBackoff time.Duration
+
+// NextBackoff returns a duration to wait before retrying again
+func (c ConstantBackoff) NextBackoff(err error) time.Duration {
+	return time.Duration(c)
+}
+
+// Attempt returns the remain attempt times
+func (c ConstantBackoff) Attempt() int {
+	// A large enough value. Also still safe for arithmetic operations (won't easily overflow).
+	return math.MaxInt16
+}
+
+>>>>>>> cc3c1baf306 (operator: make an infinity retry for connecting to store (#52177))
 // RetryState is the mutable state needed for retrying.
 // It likes the `utils.Backoffer`, but more fundamental:
 // this only control the backoff time and knows nothing about what error happens.
