@@ -25,7 +25,11 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+<<<<<<< HEAD:pkg/statistics/handle/util/interfaces.go
 	"github.com/tiancaiamao/gp"
+=======
+	"golang.org/x/sync/singleflight"
+>>>>>>> 3ba874c77f5 (statistics: fix wrong singleflight implementation for stats' syncload (#52301)):pkg/statistics/handle/types/interfaces.go
 )
 
 // StatsGC is used to GC unnecessary stats.
@@ -297,6 +301,68 @@ type StatsReadWriter interface {
 	SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error)
 }
 
+<<<<<<< HEAD:pkg/statistics/handle/util/interfaces.go
+=======
+// NeededItemTask represents one needed column/indices with expire time.
+type NeededItemTask struct {
+	ToTimeout time.Time
+	ResultCh  chan stmtctx.StatsLoadResult
+	Item      model.StatsLoadItem
+}
+
+// StatsLoad is used to load stats concurrently
+// TODO(hawkingrei): Our implementation of loading statistics is flawed.
+// Currently, we enqueue tasks that require loading statistics into a channel,
+// from which workers retrieve tasks to process. Then, using the singleflight mechanism,
+// we filter out duplicate tasks. However, the issue with this approach is that it does
+// not filter out all duplicate tasks, but only the duplicates within the number of workers.
+// Such an implementation is not reasonable.
+//
+// We should first filter all tasks through singleflight as shown in the diagram, and then use workers to load stats.
+//
+// ┌─────────▼──────────▼─────────────▼──────────────▼────────────────▼────────────────────┐
+// │                                                                                       │
+// │                                       singleflight                                    │
+// │                                                                                       │
+// └───────────────────────────────────────────────────────────────────────────────────────┘
+//
+//		            │                │
+//	   ┌────────────▼──────┐ ┌───────▼───────────┐
+//	   │                   │ │                   │
+//	   │  syncload worker  │ │  syncload worker  │
+//	   │                   │ │                   │
+//	   └───────────────────┘ └───────────────────┘
+type StatsLoad struct {
+	NeededItemsCh  chan *NeededItemTask
+	TimeoutItemsCh chan *NeededItemTask
+	Singleflight   singleflight.Group
+	SubCtxs        []sessionctx.Context
+	sync.Mutex
+}
+
+// StatsSyncLoad implement the sync-load feature.
+type StatsSyncLoad interface {
+	// SendLoadRequests sends load requests to the channel.
+	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.StatsLoadItem, timeout time.Duration) error
+
+	// SyncWaitStatsLoad will wait for the load requests to finish.
+	SyncWaitStatsLoad(sc *stmtctx.StatementContext) error
+
+	// AppendNeededItem appends a needed item to the channel.
+	AppendNeededItem(task *NeededItemTask, timeout time.Duration) error
+
+	// SubLoadWorker will start a goroutine to handle the load requests.
+	SubLoadWorker(sctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper)
+
+	// HandleOneTask will handle one task.
+	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
+
+	// SetSubCtxs sets the sessionctx which is used to run queries background.
+	// TODO: use SessionPool instead.
+	SetSubCtxs(idx int, sctx sessionctx.Context)
+}
+
+>>>>>>> 3ba874c77f5 (statistics: fix wrong singleflight implementation for stats' syncload (#52301)):pkg/statistics/handle/types/interfaces.go
 // StatsGlobal is used to manage partition table global stats.
 type StatsGlobal interface {
 	// MergePartitionStats2GlobalStatsByTableID merges partition stats to global stats by table ID.

@@ -37,6 +37,24 @@ import (
 	"go.uber.org/zap"
 )
 
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
+=======
+type statsSyncLoad struct {
+	statsHandle statstypes.StatsHandle
+	StatsLoad   statstypes.StatsLoad
+}
+
+// NewStatsSyncLoad creates a new StatsSyncLoad.
+func NewStatsSyncLoad(statsHandle statstypes.StatsHandle) statstypes.StatsSyncLoad {
+	s := &statsSyncLoad{statsHandle: statsHandle}
+	cfg := config.GetGlobalConfig()
+	s.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
+	s.StatsLoad.NeededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
+	s.StatsLoad.TimeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
+	return s
+}
+
+>>>>>>> 3ba874c77f5 (statistics: fix wrong singleflight implementation for stats' syncload (#52301)):pkg/statistics/handle/syncload/stats_syncload.go
 type statsWrapper struct {
 	col *statistics.Column
 	idx *statistics.Index
@@ -221,46 +239,96 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 	} else {
 		task = lastTask
 	}
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 	return h.handleOneItemTask(sctx, task)
 }
 
 func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask) (*NeededItemTask, error) {
 	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
+=======
+	resultChan := s.StatsLoad.Singleflight.DoChan(task.Item.Key(), func() (any, error) {
+		return s.handleOneItemTask(sctx, task)
+	})
+	timeout := time.Until(task.ToTimeout)
+	select {
+	case result := <-resultChan:
+		if result.Err == nil {
+			slr := result.Val.(*stmtctx.StatsLoadResult)
+			if slr.Error != nil {
+				return task, slr.Error
+			}
+			task.ResultCh <- *slr
+			return nil, nil
+		}
+		return task, result.Err
+	case <-time.After(timeout):
+		return task, nil
+	}
+}
+
+func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statstypes.NeededItemTask) (result *stmtctx.StatsLoadResult, err error) {
+	defer func() {
+		// recover for each task, worker keeps working
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
+			err = errors.Errorf("stats loading panicked: %v", r)
+		}
+	}()
+	result = &stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
+>>>>>>> 3ba874c77f5 (statistics: fix wrong singleflight implementation for stats' syncload (#52301)):pkg/statistics/handle/syncload/stats_syncload.go
 	item := result.Item
 	tbl, ok := h.Get(item.TableID)
 	if !ok {
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 		h.writeToResultChan(task.ResultCh, result)
 		return nil, nil
+=======
+		return result, nil
+>>>>>>> 3ba874c77f5 (statistics: fix wrong singleflight implementation for stats' syncload (#52301)):pkg/statistics/handle/syncload/stats_syncload.go
 	}
-	var err error
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 		index, ok := tbl.Indices[item.ID]
 		if !ok || index.IsFullLoad() {
 			h.writeToResultChan(task.ResultCh, result)
 			return nil, nil
+=======
+		index, loadNeeded := tbl.IndexIsLoadNeeded(item.ID)
+		if !loadNeeded {
+			return result, nil
+>>>>>>> 3ba874c77f5 (statistics: fix wrong singleflight implementation for stats' syncload (#52301)):pkg/statistics/handle/syncload/stats_syncload.go
 		}
 		wrapper.idx = index
 	} else {
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 		col, ok := tbl.Columns[item.ID]
 		if !ok || col.IsFullLoad() {
 			h.writeToResultChan(task.ResultCh, result)
 			return nil, nil
+=======
+		col, loadNeeded := tbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
+		if !loadNeeded {
+			return result, nil
+>>>>>>> 3ba874c77f5 (statistics: fix wrong singleflight implementation for stats' syncload (#52301)):pkg/statistics/handle/syncload/stats_syncload.go
 		}
 		wrapper.col = col
 	}
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 	// to avoid duplicated handling in concurrent scenario
 	working := h.setWorking(result.Item, task.ResultCh)
 	if !working {
 		h.writeToResultChan(task.ResultCh, result)
 		return nil, nil
 	}
+=======
+>>>>>>> 3ba874c77f5 (statistics: fix wrong singleflight implementation for stats' syncload (#52301)):pkg/statistics/handle/syncload/stats_syncload.go
 	t := time.Now()
 	needUpdate := false
 	wrapper, err = h.readStatsForOneItem(sctx, item, wrapper)
 	if err != nil {
 		result.Error = err
-		return task, err
+		return result, err
 	}
 	if item.IsIndex {
 		if wrapper.idx != nil {
@@ -272,10 +340,16 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 		}
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 	if needUpdate && h.updateCachedItem(item, wrapper.col, wrapper.idx) {
 		h.writeToResultChan(task.ResultCh, result)
 	}
 	h.finishWorking(result)
+=======
+	if needUpdate && s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad) {
+		return result, nil
+	}
+>>>>>>> 3ba874c77f5 (statistics: fix wrong singleflight implementation for stats' syncload (#52301)):pkg/statistics/handle/syncload/stats_syncload.go
 	return nil, nil
 }
 
@@ -466,6 +540,7 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	return true
 }
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 
 func (h *Handle) setWorking(item model.TableItemID, resultCh chan stmtctx.StatsLoadResult) bool {
 	h.StatsLoad.Lock()
@@ -495,3 +570,5 @@ func (h *Handle) finishWorking(result stmtctx.StatsLoadResult) {
 	}
 	delete(h.StatsLoad.WorkingColMap, result.Item)
 }
+=======
+>>>>>>> 3ba874c77f5 (statistics: fix wrong singleflight implementation for stats' syncload (#52301)):pkg/statistics/handle/syncload/stats_syncload.go

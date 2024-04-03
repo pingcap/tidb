@@ -1761,9 +1761,32 @@ func (cis *CIStr) MemoryUsage() (sum int64) {
 
 // TableItemID is composed by table ID and column/index ID
 type TableItemID struct {
+<<<<<<< HEAD
 	TableID int64
 	ID      int64
 	IsIndex bool
+=======
+	TableID          int64
+	ID               int64
+	IsIndex          bool
+	IsSyncLoadFailed bool
+}
+
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (t TableItemID) Key() string {
+	return fmt.Sprintf("%d#%d#%t", t.ID, t.TableID, t.IsIndex)
+}
+
+// StatsLoadItem represents the load unit for statistics's memory loading.
+type StatsLoadItem struct {
+	TableItemID
+	FullLoad bool
+>>>>>>> 3ba874c77f5 (statistics: fix wrong singleflight implementation for stats' syncload (#52301))
+}
+
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (s StatsLoadItem) Key() string {
+	return fmt.Sprintf("%s#%t", s.TableItemID.Key(), s.FullLoad)
 }
 
 // PolicyRefInfo is the struct to refer the placement policy.
