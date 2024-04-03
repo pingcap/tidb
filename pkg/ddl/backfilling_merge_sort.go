@@ -88,16 +88,15 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	prefix := path.Join(strconv.Itoa(int(m.jobID)), strconv.Itoa(int(subtask.ID)))
-	partSize, err := getMergeSortPartSize(m.avgRowSize, subtask.Concurrency, m.idxNum)
-	if err != nil {
-		return err
-	}
+	res := m.GetResource()
+	memSizePerCon := res.Mem.Capacity() / int64(subtask.Concurrency)
+	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
 
 	return external.MergeOverlappingFiles(
 		ctx,
 		sm.DataFiles,
 		store,
-		int64(partSize),
+		partSize,
 		prefix,
 		external.DefaultBlockSize,
 		onClose,
