@@ -1661,6 +1661,8 @@ func (e *hashJoinRuntimeStats) String() string {
 		buf.WriteString(execdetails.FormatDuration(time.Duration(atomic.LoadInt64(&e.maxFetchAndProbe))))
 		buf.WriteString(", probe:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.probe)))
+		// fetch time is the time wait fetch result from its child executor,
+		// wait time is the time wait its parent executor to fetch the joined result
 		buf.WriteString(", fetch and wait:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe - e.probe)))
 		if e.hashStat.probeCollision > 0 {
