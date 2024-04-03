@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -49,7 +50,12 @@ func NewWorker(
 
 // LoadStats loads stats concurrently when to init stats
 func (ls *Worker) LoadStats(is infoschema.InfoSchema, cache statstypes.StatsCache, rc sqlexec.RecordSet) {
-	concurrency := runtime.GOMAXPROCS(0)
+	var concurrency int
+	if config.GetGlobalConfig().Performance.ForceInitStats {
+		concurrency = min(max(2, runtime.GOMAXPROCS(0)-2), 16)
+	} else {
+		concurrency = min(max(2, runtime.GOMAXPROCS(0)/2), 16)
+	}
 	for n := 0; n < concurrency; n++ {
 		ls.wg.Run(func() {
 			req := rc.NewChunk(nil)
