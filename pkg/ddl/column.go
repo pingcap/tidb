@@ -185,6 +185,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		addColumnEvent := statsutil.NewAddColumnEvent(
+			job.SchemaID,
 			tblInfo,
 			[]*model.ColumnInfo{columnInfo},
 		)
@@ -794,6 +795,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Refactor the job args to add the old index ids into delete range table.
 		job.Args = []any{rmIdxIDs, getPartitionIDs(tblInfo)}
 		modifyColumnEvent := statsutil.NewModifyColumnEvent(
+			job.SchemaID,
 			tblInfo,
 			[]*model.ColumnInfo{changingCol},
 		)
