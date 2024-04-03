@@ -94,6 +94,10 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 }
 
 func (txn *tikvTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keysInput ...kv.Key) error {
+	if intest.InTest {
+		txn.isCommitterWorking.Store(true)
+		defer txn.isCommitterWorking.Store(false)
+	}
 	keys := toTiKVKeys(keysInput)
 	err := txn.KVTxn.LockKeysFunc(ctx, lockCtx, fn, keys...)
 	if err != nil {
@@ -442,11 +446,11 @@ func (txn *tikvTxn) IsInFairLockingMode() bool {
 
 // MayFlush wraps the flush function and extract the error.
 func (txn *tikvTxn) MayFlush() error {
-	if intest.InTest {
-		txn.isCommitterWorking.Store(true)
-	}
 	if !txn.IsPipelined() {
 		return nil
+	}
+	if intest.InTest {
+		txn.isCommitterWorking.Store(true)
 	}
 	_, err := txn.KVTxn.GetMemBuffer().Flush(false)
 	return txn.extractKeyErr(err)
