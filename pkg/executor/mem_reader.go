@@ -195,10 +195,7 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 	ds := make([]types.Datum, 0, len(m.outputOffset))
 	for i, offset := range m.outputOffset {
 		if m.physTblIDIdx == i {
-			tid, _, _, err := tablecodec.DecodeKeyHead(key)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+			tid, _, _, _ := tablecodec.DecodeKeyHead(key)
 			ds = append(ds, types.NewIntDatum(tid))
 			continue
 		}
