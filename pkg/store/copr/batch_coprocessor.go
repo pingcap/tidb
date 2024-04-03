@@ -918,10 +918,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 	if !isTiDBLabelZoneSet {
 		tiflashReplicaReadPolicy = tiflash.AllReplicas
 	}
-	aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, ttl, store, tiflashReplicaReadPolicy, tidbZone)
-	if tiflashReplicaReadPolicy.IsClosestReplicas() {
-		maxRemoteReadCountAllowed = len(aliveStores.storeIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
-	}
+
 	for {
 		var tasks []*copTask
 		rangesLen = 0
@@ -941,6 +938,14 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				})
 			}
 		}
+
+		// TODO
+		// 1. 拿到所有 task 的 store 的集合
+		// 2. 再对 store 做探活
+		// aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, ttl, store, tiflashReplicaReadPolicy, tidbZone)
+		// if tiflashReplicaReadPolicy.IsClosestReplicas() {
+		// 	maxRemoteReadCountAllowed = len(aliveStores.storeIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
+		// }
 
 		var batchTasks []*batchCopTask
 		var regionIDsInOtherZones []uint64
