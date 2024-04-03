@@ -273,10 +273,11 @@ func (j *baseJoinProbe) appendBuildRowToChunk(chk *chunk.Chunk, currentColumnInd
 }
 
 func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols []int, forOtherCondition bool, colOffset int, currentColumnInRow int) {
+	chkRows := chk.NumRows()
 	if len(usedCols) == 0 || len(j.cachedBuildRows) == 0 {
+		chk.SetNumVirtualRows(chkRows + len(j.cachedBuildRows))
 		return
 	}
-	chkRows := chk.NumRows()
 	for i := 0; i < len(j.cachedBuildRows); i++ {
 		if j.cachedBuildRows[i].buildRowData == 0 {
 			j.cachedBuildRows[i].buildRowData = j.ctx.hashTableMeta.advanceToRowData(j.cachedBuildRows[i].buildRowStart)
