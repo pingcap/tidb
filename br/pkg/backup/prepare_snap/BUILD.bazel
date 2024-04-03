@@ -35,7 +35,11 @@ go_test(
     timeout = "short",
     srcs = ["prepare_test.go"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 7,
+=======
+    shard_count = 10,
+>>>>>>> bd59da125a3 (br/operator: fix stuck when terminating (#52264))
     deps = [
         ":prepare_snap",
         "//br/pkg/utils",
