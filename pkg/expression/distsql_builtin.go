@@ -41,7 +41,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	if err != nil {
 		return nil, err
 	}
-	maxAllowedPacket := ctx.GetMaxAllowedPacket()
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	switch sigCode {
 	case tipb.ScalarFuncSig_CastIntAsInt:
 		f = &builtinCastIntAsIntSig{newBaseBuiltinCastFunc(base, false)}

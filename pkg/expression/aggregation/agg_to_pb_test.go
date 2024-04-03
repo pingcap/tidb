@@ -67,7 +67,7 @@ func TestAggFunc2Pb(t *testing.T) {
 			require.NoError(t, err)
 			aggFunc.RetTp = funcTypes[i]
 			pushCtx := expression.NewPushDownContextFromSessionVars(
-				ctx.GetExprCtx(),
+				ctx,
 				ctx.GetSessionVars(),
 				client,
 			)

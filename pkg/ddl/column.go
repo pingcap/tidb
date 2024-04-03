@@ -1970,7 +1970,7 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 		if ctx == nil {
 			t = time.Now()
 		} else {
-			t, _ = expression.GetStmtTimestamp(ctx.GetExprCtx())
+			t, _ = expression.GetStmtTimestamp(ctx.GetExprCtx().GetEvalCtx())
 		}
 		if col.GetType() == mysql.TypeTimestamp {
 			odValue = types.NewTime(types.FromGoTime(t.UTC()), col.GetType(), col.GetDecimal()).String()

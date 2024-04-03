@@ -139,7 +139,7 @@ func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, nam
 // inlineProjection prunes unneeded columns inline a executor.
 func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *util.LogicalOptimizeOp) {
 	prunedColumns := make([]*expression.Column, 0)
-	used := expression.GetUsedList(s.SCtx().GetExprCtx(), parentUsedCols, s.Schema())
+	used := expression.GetUsedList(s.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, s.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, s.Schema().Columns[i])
@@ -473,5 +473,5 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 
 // GetPushDownCtx creates a PushDownContext from PlanContext
 func GetPushDownCtx(sctx PlanContext) expression.PushDownContext {
-	return expression.NewPushDownContextFromSessionVars(sctx.GetExprCtx(), sctx.GetSessionVars(), sctx.GetClient())
+	return expression.NewPushDownContextFromSessionVars(sctx.GetExprCtx().GetEvalCtx(), sctx.GetSessionVars(), sctx.GetClient())
 }

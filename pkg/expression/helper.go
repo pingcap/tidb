@@ -67,7 +67,7 @@ func GetTimeCurrentTimestamp(ctx BuildContext, tp byte, fsp int) (d types.Datum,
 
 func getTimeCurrentTimeStamp(ctx BuildContext, tp byte, fsp int) (t types.Time, err error) {
 	value := types.NewTime(types.ZeroCoreTime, tp, fsp)
-	defaultTime, err := getStmtTimestamp(ctx)
+	defaultTime, err := getStmtTimestamp(ctx.GetEvalCtx())
 	if err != nil {
 		return value, err
 	}

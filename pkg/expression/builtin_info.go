@@ -634,7 +634,7 @@ func (c *benchmarkFunctionClass) getFunction(ctx BuildContext, args []Expression
 	var constLoopCount int64
 	con, ok := args[0].(*Constant)
 	if ok && con.Value.Kind() == types.KindInt64 {
-		if lc, isNull, err := con.EvalInt(ctx, chunk.Row{}); err == nil && !isNull {
+		if lc, isNull, err := con.EvalInt(ctx.GetEvalCtx(), chunk.Row{}); err == nil && !isNull {
 			constLoopCount = lc
 		}
 	}
@@ -953,7 +953,7 @@ func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx BuildContext, args [
 		return nil, err
 	}
 
-	if !ctx.RequestVerification("", "", "", mysql.ProcessPriv) {
+	if !ctx.GetEvalCtx().RequestVerification("", "", "", mysql.ProcessPriv) {
 		return nil, errSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 

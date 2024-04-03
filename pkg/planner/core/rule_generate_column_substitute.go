@@ -87,7 +87,7 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 
 func tryToSubstituteExpr(expr *expression.Expression, lp LogicalPlan, candidateExpr expression.Expression, tp types.EvalType, schema *expression.Schema, col *expression.Column, opt *util.LogicalOptimizeOp) bool {
 	changed := false
-	if (*expr).Equal(lp.SCtx().GetExprCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+	if (*expr).Equal(lp.SCtx().GetExprCtx().GetEvalCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
 		schema.ColumnIndex(col) != -1 {
 		*expr = col
 		appendSubstituteColumnStep(lp, candidateExpr, col, opt)
@@ -199,7 +199,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 			for i := 0; i < len(aggFunc.Args); i++ {
 				tp = aggFunc.Args[i].GetType().EvalType()
 				for candidateExpr, column := range exprToColumn {
-					if aggFunc.Args[i].Equal(lp.SCtx().GetExprCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+					if aggFunc.Args[i].Equal(lp.SCtx().GetExprCtx().GetEvalCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
 						x.Schema().ColumnIndex(column) != -1 {
 						aggFunc.Args[i] = column
 						appendSubstituteColumnStep(lp, candidateExpr, column, opt)
@@ -210,7 +210,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 		for i := 0; i < len(x.GroupByItems); i++ {
 			tp = x.GroupByItems[i].GetType().EvalType()
 			for candidateExpr, column := range exprToColumn {
-				if x.GroupByItems[i].Equal(lp.SCtx().GetExprCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+				if x.GroupByItems[i].Equal(lp.SCtx().GetExprCtx().GetEvalCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
 					x.Schema().ColumnIndex(column) != -1 {
 					x.GroupByItems[i] = column
 					appendSubstituteColumnStep(lp, candidateExpr, column, opt)
