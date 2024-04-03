@@ -22,18 +22,10 @@ import (
 	"time"
 
 	"github.com/google/pprof/profile"
-<<<<<<< HEAD:util/topsql/collector/cpu.go
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
-=======
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/cpuprofile"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
->>>>>>> 8f5f608dd49 (topsql, pprof: use hex string but not binary sql/plan digest in goroutine label (#52216)):pkg/util/topsql/collector/cpu.go
 	"go.uber.org/zap"
 )
 
