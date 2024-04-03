@@ -218,8 +218,8 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 		}
 
 		mockDB := model.DBInfo{
-			ID:     dbID,
-			Name:   dbName,
+			ID:   dbID,
+			Name: dbName,
 		}
 		mockDB.SetTables(mockTblList)
 		dbID++
