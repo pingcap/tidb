@@ -270,7 +270,7 @@ func TestSelectLockForPartitionTable(t *testing.T) {
 	tk1.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk1.MustExec("analyze table t")
 	tk1.MustExec("begin")
-	tk1.MustHavePlan("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update", "IndexRangeScan")
+	tk1.MustHavePlan("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update", "IndexReader")
 	tk1.MustExec("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update")
 	ch := make(chan bool, 1)
 	go func() {
