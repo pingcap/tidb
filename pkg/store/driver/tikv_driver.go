@@ -226,7 +226,12 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		return nil, errors.Trace(err)
 	}
 
-	err = d.SyncGCManagementTypeAndConfig(keyspaceMeta, s.GetPDHTTPClient())
+	err = d.CheckTiDBGCManagementTypeAndKeyspaceMeta(keyspaceMeta)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	err = d.UpdateTiDBGCManagementTypeByKeyspaceMeta(keyspaceMeta)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -254,25 +259,36 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 	return store, nil
 }
 
-// SyncGCManagementTypeAndConfig sync gc management and TiDB config.
-func (d TiKVDriver) SyncGCManagementTypeAndConfig(keyspaceMeta *keyspacepb.KeyspaceMeta, pdHTTPCli pdhttp.Client) error {
+// CheckTiDBGCManagementTypeAndKeyspaceMeta check TiDB config and 'gc_management_type' in  keyspace meta config.
+func (d TiKVDriver) CheckTiDBGCManagementTypeAndKeyspaceMeta(keyspaceMeta *keyspacepb.KeyspaceMeta) error {
 	if keyspaceMeta == nil {
 		return nil
 	}
+	if !gcworker.IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta) && config.GetGlobalConfig().EnableKeyspaceLevelGC {
+		// If gc_management_type=keyspace_level_gc was not set in the keyspace config when the keyspace was created,
+		// then don't supported setting enable-keyspace-level-gc = true tidb config now.
+		return errors.New("Don't support keyspace upgrade gc management type from global gc to keyspace level gc")
+	}
+	return nil
+}
 
+// UpdateTiDBGCManagementTypeByKeyspaceMeta update TiDB config gc management by keyspace meta .
+func (d TiKVDriver) UpdateTiDBGCManagementTypeByKeyspaceMeta(keyspaceMeta *keyspacepb.KeyspaceMeta) error {
+	if keyspaceMeta == nil {
+		return nil
+	}
 	if gcworker.IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta) {
 		// If 'gc_management_type' in PD keyspace meta config is 'keyspace_level_gc',
 		// but in TiDB global config EnableKeyspaceLevelGC is not true.
 		// Set the EnableKeyspaceLevelGC = true in TiDB global config.
 		// It cannot fall back to the global gc.
 		if !config.GetGlobalConfig().EnableKeyspaceLevelGC {
-			logutil.BgLogger().Warn("keyspace level gc etcd path exists, config.EnableKeyspaceLevelGC must be true.")
+			logutil.BgLogger().Info("keyspace meta config set the keyspace level gc, set config.EnableKeyspaceLevelGC = true in TiDB.")
 			config.UpdateGlobal(func(c *config.Config) {
 				c.EnableKeyspaceLevelGC = true
 			})
 		}
 	}
-
 	return nil
 }
 
