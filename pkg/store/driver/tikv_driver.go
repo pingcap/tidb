@@ -430,10 +430,6 @@ func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 // CurrentMinTimestamp returns current minimum timestamp across all keyspace groups.
 func (s *tikvStore) CurrentAllTSOKeyspaceGroupMinTs() (uint64, error) {
 	ts, err := s.KVStore.CurrentAllTSOKeyspaceGroupMinTs()
-
-	if err != nil && strings.Contains(err.Error(), "Unimplemented") {
-		ts, err = s.KVStore.CurrentTimestamp(kv.GlobalTxnScope)
-	}
 	return ts, derr.ToTiDBErr(err)
 }
 
