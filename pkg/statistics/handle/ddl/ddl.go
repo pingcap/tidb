@@ -58,12 +58,15 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	if isSysDB, err := t.IsMemOrSysDB(sctx.(sessionctx.Context)); err != nil {
 		return err
 	} else if isSysDB {
-		// NOTE FOR EXCHANGE PARTITION EVENT: When exchanging a partition with a system table,
-		// we need to adjust the global statistics based on the count delta and modify count delta.
-		// However, due to the system table involved, a complete update of the global statistics isn't feasible.
-		// As a result, we bypass the statistics update for the table in this scenario.
-		// If the system table is a partitioned table, we will update the global statistics for the partitioned table.
-		// Because it is so rare to exchange a partition from a system table, we can ignore this case.
+		// EXCHANGE PARTITION EVENT NOTES:
+		// 1. When a partition is exchanged with a system table, we need to adjust the global statistics
+		//    based on the count delta and modify count delta. However, due to the involvement of the system table,
+		//    a complete update of the global statistics is not feasible. Therefore, we bypass the statistics update
+		//    for the table in this scenario. Despite this, the table id still changes, so the statistics for the
+		//    system table will still be visible.
+		// 2. If the system table is a partitioned table, we will update the global statistics for the partitioned table.
+		//    It is rare to exchange a partition from a system table, so we can ignore this case. In this case,
+		//    the system table will have statistics, but this is not a significant issue.
 		logutil.StatsLogger().Info("Skip handle system database ddl event", zap.Stringer("event", t))
 		return nil
 	}

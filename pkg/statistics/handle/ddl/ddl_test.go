@@ -139,6 +139,12 @@ func TestDropASystemTable(t *testing.T) {
 	tableInfo := tbl.Meta()
 	tableID := tableInfo.ID
 	testKit.MustExec("drop table mysql.test")
+	h := do.StatsHandle()
+	// Find the drop table partition event.
+	dropTableEvent := findEvent(h.DDLEventCh(), model.ActionDropTable)
+	err = h.HandleDDLEvent(dropTableEvent)
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
 	// No stats for the table.
 	testKit.MustQuery("select count(*) from mysql.stats_meta where table_id = ?", tableID).Check(testkit.Rows("0"))
 }
@@ -207,6 +213,12 @@ func TestAddNewPartitionToASystemTable(t *testing.T) {
 	require.Nil(t, h.Update(is))
 	statsTbl := h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
+	// Check the partitions' stats.
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
+	}
 }
 
 func TestDropPartitionOfASystemTable(t *testing.T) {
@@ -229,6 +241,12 @@ func TestDropPartitionOfASystemTable(t *testing.T) {
 	require.Nil(t, h.Update(is))
 	statsTbl := h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
+	// Check the partitions' stats.
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
+	}
 }
 
 func TestExchangePartitionWithASystemTable(t *testing.T) {
@@ -239,19 +257,27 @@ func TestExchangePartitionWithASystemTable(t *testing.T) {
 	// Test exchange partition with a system table.
 	testKit.MustExec("create table t (c1 int, c2 int) partition by range (c1) (partition p0 values less than (6))")
 	testKit.MustExec("create table mysql.test (c1 int, c2 int)")
+	// Insert some data to table t.
+	testKit.MustExec("insert into t values (1,2),(2,2)")
+	// Analyze table t.
+	testKit.MustExec("analyze table t")
+	// Insert some data to table mysql.test.
+	testKit.MustExec("insert into mysql.test values (1,2),(2,2)")
 	// Exchange partition.
 	testKit.MustExec("alter table t exchange partition p0 with table mysql.test")
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
 	// Find the exchange partition event.
 	exchangePartitionEvent := findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
-	err = h.HandleDDLEvent(exchangePartitionEvent)
+	err := h.HandleDDLEvent(exchangePartitionEvent)
 	require.NoError(t, err)
+	is := do.InfoSchema()
 	require.Nil(t, h.Update(is))
+	tbl, err := is.TableByName(model.NewCIStr("mysql"), model.NewCIStr("test"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	require.NoError(t, err)
 	statsTbl := h.GetTableStats(tableInfo)
-	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
+	// NOTE: This is a rare case and the effort required to address it outweighs the benefits, hence it is not prioritized for a fix.
+	require.False(t, statsTbl.Pseudo, "even we skip the DDL event, but the table ID is still changed, so we can see the stats")
 }
 
 func TestRemovePartitioningOfASystemTable(t *testing.T) {
@@ -296,6 +322,12 @@ func TestTruncateAPartitionOfASystemTable(t *testing.T) {
 	require.Nil(t, h.Update(is))
 	statsTbl := h.GetTableStats(tableInfo)
 	require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
+	// Check the partitions' stats.
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.True(t, statsTbl.Pseudo, "we should not collect stats for system tables")
+	}
 }
 
 func TestTruncateTable(t *testing.T) {
