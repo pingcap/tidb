@@ -62,6 +62,8 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		// we need to adjust the global statistics based on the count delta and modify count delta.
 		// However, due to the system table involved, a complete update of the global statistics isn't feasible.
 		// As a result, we bypass the statistics update for the table in this scenario.
+		// If the system table is a partitioned table, we will update the global statistics for the partitioned table.
+		// Because it is so rare to exchange a partition from a system table, we can ignore this case.
 		logutil.StatsLogger().Info("Skip handle system database ddl event", zap.Stringer("event", t))
 		return nil
 	}
