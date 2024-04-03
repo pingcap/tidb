@@ -437,7 +437,6 @@ func (e *SortExec) generateResult(waitGroups ...*util.WaitGroupWrapper) {
 			processPanicAndLog(e.Parallel.resultChannel, r)
 		}
 
-		close(e.Parallel.resultChannel)
 		for i := range e.Parallel.sortedRowsIters {
 			e.Parallel.sortedRowsIters[i].Reset(nil)
 		}
@@ -447,6 +446,7 @@ func (e *SortExec) generateResult(waitGroups ...*util.WaitGroupWrapper) {
 			}
 		}
 		e.Parallel.merger = nil
+		close(e.Parallel.resultChannel)
 	}()
 
 	if !e.Parallel.spillHelper.isSpillTriggered() {

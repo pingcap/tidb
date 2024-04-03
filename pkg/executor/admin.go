@@ -116,17 +116,16 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	sc := e.Ctx().GetSessionVars().StmtCtx
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return nil
 	}
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(sc, e.table.ID, e.index.ID, ranger.FullRange()).
+	kvReq, err := builder.SetIndexRanges(e.Ctx().GetDistSQLCtx(), e.table.ID, e.index.ID, ranger.FullRange()).
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
-		SetFromSessionVars(e.Ctx().GetSessionVars()).
+		SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
 		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
 		Build()
@@ -134,7 +133,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		return err
 	}
 
-	e.result, err = distsql.Select(ctx, e.Ctx(), kvReq, e.RetFieldTypes())
+	e.result, err = distsql.Select(ctx, e.Ctx().GetDistSQLCtx(), kvReq, e.RetFieldTypes())
 	if err != nil {
 		return err
 	}
@@ -156,7 +155,7 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	if err != nil {
 		return nil, err
 	}
-	distsql.SetEncodeType(e.Ctx(), dagReq)
+	distsql.SetEncodeType(e.Ctx().GetDistSQLCtx(), dagReq)
 	return dagReq, nil
 }
 
@@ -259,7 +258,7 @@ func (e *RecoverIndexExec) buildDAGPB(_ kv.Transaction, limitCnt uint64) (*tipb.
 
 	limitExec := e.constructLimitPB(limitCnt)
 	dagReq.Executors = append(dagReq.Executors, limitExec)
-	distsql.SetEncodeType(e.Ctx(), dagReq)
+	distsql.SetEncodeType(e.Ctx().GetDistSQLCtx(), dagReq)
 	return dagReq, nil
 }
 
@@ -273,12 +272,12 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, err
 	}
-	builder.KeyRanges = kv.NewNonParitionedKeyRanges(keyRanges)
+	builder.KeyRanges = kv.NewNonPartitionedKeyRanges(keyRanges)
 	kvReq, err := builder.
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
-		SetFromSessionVars(e.Ctx().GetSessionVars()).
+		SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
 		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
 		Build()
@@ -289,7 +288,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	// Actually, with limitCnt, the match datas maybe only in one region, so let the concurrency to be 1,
 	// avoid unnecessary region scan.
 	kvReq.Concurrency = 1
-	result, err := distsql.Select(ctx, e.Ctx(), kvReq, e.columnsTypes())
+	result, err := distsql.Select(ctx, e.Ctx().GetDistSQLCtx(), kvReq, e.columnsTypes())
 	if err != nil {
 		return nil, err
 	}
@@ -792,10 +791,9 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, err
 	}
-	sc := e.Ctx().GetSessionVars().StmtCtx
 	var builder distsql.RequestBuilder
 	ranges := ranger.FullRange()
-	keyRanges, err := distsql.IndexRangesToKVRanges(sc, e.physicalID, e.index.Meta().ID, ranges)
+	keyRanges, err := distsql.IndexRangesToKVRanges(e.Ctx().GetDistSQLCtx(), e.physicalID, e.index.Meta().ID, ranges)
 	if err != nil {
 		return nil, err
 	}
@@ -808,7 +806,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
-		SetFromSessionVars(e.Ctx().GetSessionVars()).
+		SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
 		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
 		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
 		Build()
@@ -817,7 +815,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	}
 
 	kvReq.Concurrency = 1
-	result, err := distsql.Select(ctx, e.Ctx(), kvReq, e.getIdxColTypes())
+	result, err := distsql.Select(ctx, e.Ctx().GetDistSQLCtx(), kvReq, e.getIdxColTypes())
 	if err != nil {
 		return nil, err
 	}
@@ -864,7 +862,7 @@ func (e *CleanupIndexExec) buildIdxDAGPB() (*tipb.DAGRequest, error) {
 
 	limitExec := e.constructLimitPB()
 	dagReq.Executors = append(dagReq.Executors, limitExec)
-	distsql.SetEncodeType(e.Ctx(), dagReq)
+	distsql.SetEncodeType(e.Ctx().GetDistSQLCtx(), dagReq)
 	return dagReq, nil
 }
 

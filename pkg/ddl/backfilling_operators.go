@@ -26,14 +26,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -112,11 +112,11 @@ func (ctx *OperatorCtx) OperatorErr() error {
 	return *err
 }
 
-func getWriterMemSize(avgRowSize int, idxNum int) (uint64, error) {
+func getWriterMemSize(avgRowSize, concurrency, idxNum int) (uint64, error) {
 	failpoint.Inject("mockWriterMemSize", func() {
 		failpoint.Return(1*size.GB, nil)
 	})
-	_, writerCnt := expectedIngestWorkerCnt(avgRowSize)
+	_, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 	memTotal, err := memory.MemTotal()
 	if err != nil {
 		return 0, err
@@ -132,7 +132,7 @@ func getWriterMemSize(avgRowSize int, idxNum int) (uint64, error) {
 }
 
 func getMergeSortPartSize(avgRowSize int, concurrency int, idxNum int) (uint64, error) {
-	writerMemSize, err := getWriterMemSize(avgRowSize, idxNum)
+	writerMemSize, err := getWriterMemSize(avgRowSize, concurrency, idxNum)
 	if err != nil {
 		return 0, nil
 	}
@@ -156,6 +156,7 @@ func NewAddIndexIngestPipeline(
 	metricCounter prometheus.Counter,
 	reorgMeta *model.DDLReorgMeta,
 	avgRowSize int,
+	concurrency int,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -172,7 +173,7 @@ func NewAddIndexIngestPipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
-	readerCnt, writerCnt := expectedIngestWorkerCnt(avgRowSize)
+	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
@@ -209,6 +210,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	onClose external.OnCloseFunc,
 	reorgMeta *model.DDLReorgMeta,
 	avgRowSize int,
+	concurrency int,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -225,7 +227,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
-	readerCnt, writerCnt := expectedIngestWorkerCnt(avgRowSize)
+	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
 	if err != nil {
@@ -236,7 +238,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 
-	memSize, err := getWriterMemSize(avgRowSize, len(indexes))
+	memSize, err := getWriterMemSize(avgRowSize, concurrency, len(indexes))
 	if err != nil {
 		return nil, err
 	}
