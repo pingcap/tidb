@@ -596,6 +596,10 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(txn kv.Transaction, comm
 
 		txn.SetOption(kv.TxnSource, txnSource)
 	}
+
+	if commitTSChecker != nil {
+		txn.SetOption(kv.CommitTSUpperBoundCheck, commitTSChecker)
+	}
 	return nil
 }
 

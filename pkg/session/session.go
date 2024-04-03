@@ -524,7 +524,6 @@ func (s *session) doCommit(ctx context.Context) error {
 
 	sessVars := s.GetSessionVars()
 
-	sessiontxn.GetTxnManager(s)
 	var commitTSChecker func(uint64) bool
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
 		c := cachedTableRenewLease{tables: tables}
