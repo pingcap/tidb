@@ -227,8 +227,9 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		require.NoError(t, err3)
 		require.Nil(t, task3)
 
-		require.Len(t, stmtCtx1.StatsLoad.ResultCh, 1)
-		require.Len(t, stmtCtx2.StatsLoad.ResultCh, 1)
+		task, err3 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
+		require.NoError(t, err3)
+		require.Nil(t, task)
 
 		rs1, ok1 := <-stmtCtx1.StatsLoad.ResultCh
 		require.True(t, ok1)
