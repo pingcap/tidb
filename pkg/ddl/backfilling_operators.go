@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -46,7 +48,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -112,34 +113,6 @@ func (ctx *OperatorCtx) OperatorErr() error {
 	return *err
 }
 
-func getWriterMemSize(avgRowSize, concurrency, idxNum int) (uint64, error) {
-	failpoint.Inject("mockWriterMemSize", func() {
-		failpoint.Return(1*size.GB, nil)
-	})
-	_, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
-	memTotal, err := memory.MemTotal()
-	if err != nil {
-		return 0, err
-	}
-	memUsed, err := memory.MemUsed()
-	if err != nil {
-		return 0, err
-	}
-	memAvailable := memTotal - memUsed
-	memSize := (memAvailable / 2) / uint64(writerCnt) / uint64(idxNum)
-	logutil.BgLogger().Info("build operators that write index to cloud storage", zap.Uint64("memory total", memTotal), zap.Uint64("memory used", memUsed), zap.Uint64("memory size", memSize))
-	return memSize, nil
-}
-
-func getMergeSortPartSize(avgRowSize int, concurrency int, idxNum int) (uint64, error) {
-	writerMemSize, err := getWriterMemSize(avgRowSize, concurrency, idxNum)
-	if err != nil {
-		return 0, nil
-	}
-	// Prevent part count being too large.
-	return writerMemSize / uint64(concurrency) / 10000 * uint64(external.MergeSortOverlapThreshold), nil
-}
-
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
 	ctx *OperatorCtx,
@@ -186,6 +159,7 @@ func NewAddIndexIngestPipeline(
 
 	logutil.Logger(ctx).Info("build add index local storage operators",
 		zap.Int64("jobID", jobID),
+		zap.Int("avgRowSize", avgRowSize),
 		zap.Int("reader", readerCnt),
 		zap.Int("writer", writerCnt))
 
@@ -211,6 +185,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	reorgMeta *model.DDLReorgMeta,
 	avgRowSize int,
 	concurrency int,
+	resource *proto.StepResource,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -237,16 +212,16 @@ func NewWriteIndexToExternalStoragePipeline(
 	if err != nil {
 		return nil, err
 	}
-
-	memSize, err := getWriterMemSize(avgRowSize, concurrency, len(indexes))
-	if err != nil {
-		return nil, err
-	}
+	memCap := resource.Mem.Capacity()
+	memSizePerIndex := uint64(memCap / int64(writerCnt*2*len(idxInfos)))
+	failpoint.Inject("mockWriterMemSize", func() {
+		memSizePerIndex = 1 * size.GB
+	})
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
-		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSize, reorgMeta)
+		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSizePerIndex, reorgMeta)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
@@ -255,6 +230,9 @@ func NewWriteIndexToExternalStoragePipeline(
 
 	logutil.Logger(ctx).Info("build add index cloud storage operators",
 		zap.Int64("jobID", jobID),
+		zap.String("memCap", units.BytesSize(float64(memCap))),
+		zap.String("memSizePerIdx", units.BytesSize(float64(memSizePerIndex))),
+		zap.Int("avgRowSize", avgRowSize),
 		zap.Int("reader", readerCnt),
 		zap.Int("writer", writerCnt))
 
