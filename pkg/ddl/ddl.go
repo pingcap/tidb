@@ -1627,26 +1627,6 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	return info, nil
 }
 
-func get2JobsFromTable(sess *sess.Session) (*model.Job, *model.Job, error) {
-	var generalJob, reorgJob *model.Job
-	jobs, err := getJobsBySQL(sess, JobTable, "not reorg order by job_id limit 1")
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
-	if len(jobs) != 0 {
-		generalJob = jobs[0]
-	}
-	jobs, err = getJobsBySQL(sess, JobTable, "reorg order by job_id limit 1")
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	if len(jobs) != 0 {
-		reorgJob = jobs[0]
-	}
-	return generalJob, reorgJob, nil
-}
-
 // cancelRunningJob cancel a DDL job that is in the concurrent state.
 func cancelRunningJob(_ *sess.Session, job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
