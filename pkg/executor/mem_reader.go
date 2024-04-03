@@ -61,6 +61,7 @@ type memIndexReader struct {
 	outputOffset  []int
 	cacheTable    kv.MemBuffer
 	keepOrder     bool
+	physTblIDIdx  int
 	compareExec
 }
 
@@ -87,6 +88,7 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 		cacheTable:    us.cacheTable,
 		keepOrder:     us.keepOrder,
 		compareExec:   us.compareExec,
+		physTblIDIdx:  us.physTblIDIdx,
 	}
 }
 
@@ -191,7 +193,15 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 	}
 
 	ds := make([]types.Datum, 0, len(m.outputOffset))
-	for _, offset := range m.outputOffset {
+	for i, offset := range m.outputOffset {
+		if m.physTblIDIdx == i {
+			tid, _, _, err := tablecodec.DecodeKeyHead(key)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			ds = append(ds, types.NewIntDatum(tid))
+			continue
+		}
 		d, err := tablecodec.DecodeColumnValue(values[offset], tps[offset], m.ctx.GetSessionVars().Location())
 		if err != nil {
 			return nil, err
