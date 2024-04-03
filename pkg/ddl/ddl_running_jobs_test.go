@@ -29,7 +29,7 @@ import (
 )
 
 func mkJob(id int64, schemaTableNames ...string) *model.Job {
-	var schemaInfos []model.InvolvingSchemaInfo
+	schemaInfos := make([]model.InvolvingSchemaInfo, len(schemaTableNames))
 	for _, schemaTableName := range schemaTableNames {
 		ss := strings.Split(schemaTableName, ".")
 		schemaInfos = append(schemaInfos, model.InvolvingSchemaInfo{
