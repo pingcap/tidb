@@ -286,6 +286,9 @@ type Transaction interface {
 	IsPipelined() bool
 	// MayFlush flush the pipelined memdb if the keys or size exceeds threshold, no effect for standard DML.
 	MayFlush() error
+	// AssertCommitterNotWorking asserts that the committer is not working, so it's safe to modify the options for txn and committer.
+	// It panics when test with --tags=intest tag.
+	AssertCommitterNotWorking()
 }
 
 // AssertionProto is an interface defined for the assertion protocol.

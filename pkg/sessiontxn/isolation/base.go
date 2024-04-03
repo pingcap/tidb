@@ -307,7 +307,8 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	txn.SetVars(sessVars.KVVars)
 
-	p.SetOptionsAfterBegin(txn)
+	p.SetOptionsOnTxnActive(txn)
+
 	if p.onTxnActiveFunc != nil {
 		p.onTxnActiveFunc(txn, p.enterNewTxnType)
 	}
@@ -445,7 +446,8 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	return snapshot, nil
 }
 
-func (p *baseTxnContextProvider) SetOptionsAfterBegin(txn kv.Transaction) {
+func (p *baseTxnContextProvider) SetOptionsOnTxnActive(txn kv.Transaction) {
+	txn.AssertCommitterNotWorking()
 	sessVars := p.sctx.GetSessionVars()
 
 	readReplicaType := sessVars.GetReplicaRead()
@@ -528,6 +530,9 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(txn kv.Transaction, comm
 		}
 		return nil
 	}
+
+	// assert guarantees it's safe to modify options.
+	txn.AssertCommitterNotWorking()
 
 	// set resource tagger again for internal tasks separated in different transactions
 	txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
