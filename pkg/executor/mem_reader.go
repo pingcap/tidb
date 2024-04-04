@@ -155,7 +155,7 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 		}
 
 		mutableRow.SetDatums(data...)
-		matched, _, err := expression.EvalBool(m.ctx.GetExprCtx(), m.conditions, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(m.ctx.GetExprCtx().GetEvalCtx(), m.conditions, mutableRow.ToRow())
 		if err != nil || !matched {
 			return err
 		}
@@ -414,7 +414,7 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 		}
 
 		mutableRow.SetDatums(resultRows...)
-		matched, _, err := expression.EvalBool(m.ctx.GetExprCtx(), m.conditions, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(m.ctx.GetExprCtx().GetEvalCtx(), m.conditions, mutableRow.ToRow())
 		if err != nil || !matched {
 			return err
 		}
@@ -656,7 +656,7 @@ type memIndexLookUpReader struct {
 	idxReader *memIndexReader
 
 	// partition mode
-	partitionMode     bool                  // if it is accessing a partition table
+	partitionMode     bool                  // if this executor is accessing a local index with partition table
 	partitionTables   []table.PhysicalTable // partition tables to access
 	partitionKVRanges [][]kv.KeyRange       // kv ranges for these partition tables
 
@@ -742,9 +742,7 @@ func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum,
 	}
 
 	if m.desc {
-		for i, j := 0, len(tblKVRanges)-1; i < j; i, j = i+1, j-1 {
-			tblKVRanges[i], tblKVRanges[j] = tblKVRanges[j], tblKVRanges[i]
-		}
+		slices.Reverse(tblKVRanges)
 	}
 
 	colIDs, pkColIDs, rd := getColIDAndPkColIDs(m.ctx, m.table, m.columns)
@@ -905,7 +903,7 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 
 			mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
 			mutableRow.SetDatums(iter.datumRow...)
-			matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx(), iter.conditions, mutableRow.ToRow())
+			matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx().GetEvalCtx(), iter.conditions, mutableRow.ToRow())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -921,7 +919,7 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 		}
 
 		row := iter.chk.GetRow(0)
-		matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx(), iter.conditions, row)
+		matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx().GetEvalCtx(), iter.conditions, row)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -962,7 +960,7 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 		}
 
 		iter.mutableRow.SetDatums(data...)
-		matched, _, err := expression.EvalBool(iter.memIndexReader.ctx.GetExprCtx(), iter.memIndexReader.conditions, iter.mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(iter.memIndexReader.ctx.GetExprCtx().GetEvalCtx(), iter.memIndexReader.conditions, iter.mutableRow.ToRow())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

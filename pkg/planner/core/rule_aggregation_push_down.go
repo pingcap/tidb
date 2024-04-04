@@ -196,7 +196,7 @@ func (*aggregationPushDownSolver) addGbyCol(ctx PlanContext, gbyCols []*expressi
 	for _, c := range cols {
 		duplicate := false
 		for _, gbyCol := range gbyCols {
-			if c.Equal(ctx.GetExprCtx(), gbyCol) {
+			if c.Equal(ctx.GetExprCtx().GetEvalCtx(), gbyCol) {
 				duplicate = true
 				break
 			}
@@ -248,7 +248,7 @@ func (*aggregationPushDownSolver) decompose(ctx PlanContext, aggFunc *aggregatio
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
 func (a *aggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column,
-	join *LogicalJoin, childIdx int, blockOffset int, opt *logicalOptimizeOp) (_ LogicalPlan, err error) {
+	join *LogicalJoin, childIdx int, blockOffset int, opt *util.LogicalOptimizeOp) (_ LogicalPlan, err error) {
 	child := join.children[childIdx]
 	if aggregation.IsAllFirstRow(aggFuncs) {
 		return child, nil
@@ -433,13 +433,13 @@ func (*aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, uni
 	return newAgg, nil
 }
 
-func (a *aggregationPushDownSolver) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (a *aggregationPushDownSolver) optimize(_ context.Context, p LogicalPlan, opt *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	newLogicalPlan, err := a.aggPushDown(p, opt)
 	return newLogicalPlan, planChanged, err
 }
 
-func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAll, agg *LogicalAggregation, opt *logicalOptimizeOp) error {
+func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAll, agg *LogicalAggregation, opt *util.LogicalOptimizeOp) error {
 	for _, aggFunc := range agg.AggFuncs {
 		if !a.isDecomposableWithUnion(aggFunc) {
 			return nil
@@ -474,7 +474,7 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 }
 
 // aggPushDown tries to push down aggregate functions to join paths.
-func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptimizeOp) (_ LogicalPlan, err error) {
+func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *util.LogicalOptimizeOp) (_ LogicalPlan, err error) {
 	if agg, ok := p.(*LogicalAggregation); ok {
 		proj := a.tryToEliminateAggregation(agg, opt)
 		if proj != nil {
@@ -683,7 +683,7 @@ func (*aggregationPushDownSolver) name() string {
 }
 
 func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, join *LogicalJoin,
-	childIdx int, opt *logicalOptimizeOp) {
+	childIdx int, opt *util.LogicalOptimizeOp) {
 	reason := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v's functions[", oldAgg.TP(), oldAgg.ID()))
 		for i, aggFunc := range aggFuncs {
@@ -705,10 +705,10 @@ func appendAggPushDownAcrossJoinTraceStep(oldAgg, newAgg *LogicalAggregation, ag
 		}(), newAgg.TP(), newAgg.ID())
 		return buffer.String()
 	}
-	opt.appendStepToCurrent(join.ID(), join.TP(), reason, action)
+	opt.AppendStepToCurrent(join.ID(), join.TP(), reason, action)
 }
 
-func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *LogicalProjection, opt *logicalOptimizeOp) {
+func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *LogicalProjection, opt *util.LogicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v is eliminated, and %v_%v's functions changed into[", proj.TP(), proj.ID(), agg.TP(), agg.ID()))
 		for i, aggFunc := range agg.AggFuncs {
@@ -723,10 +723,10 @@ func appendAggPushDownAcrossProjTraceStep(agg *LogicalAggregation, proj *Logical
 	reason := func() string {
 		return fmt.Sprintf("%v_%v is directly below an %v_%v and has no side effects", proj.TP(), proj.ID(), agg.TP(), agg.ID())
 	}
-	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
+	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalAggregation, opt *logicalOptimizeOp) {
+func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalAggregation, opt *util.LogicalOptimizeOp) {
 	reason := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v functions[", agg.TP(), agg.ID()))
 		for i, aggFunc := range agg.AggFuncs {
@@ -749,5 +749,5 @@ func appendAggPushDownAcrossUnionTraceStep(union *LogicalUnionAll, agg *LogicalA
 		buffer.WriteString("]")
 		return buffer.String()
 	}
-	opt.appendStepToCurrent(union.ID(), union.TP(), reason, action)
+	opt.AppendStepToCurrent(union.ID(), union.TP(), reason, action)
 }

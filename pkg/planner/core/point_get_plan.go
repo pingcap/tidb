@@ -1005,7 +1005,7 @@ func newBatchPointGetPlan(
 				if err != nil {
 					return nil
 				}
-				d, err = con.Eval(ctx.GetExprCtx(), chunk.Row{})
+				d, err = con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return nil
 				}
@@ -1120,7 +1120,7 @@ func newBatchPointGetPlan(
 					if err != nil {
 						return nil
 					}
-					d, err := con.Eval(ctx.GetExprCtx(), chunk.Row{})
+					d, err := con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 					if err != nil {
 						return nil
 					}
@@ -1159,7 +1159,7 @@ func newBatchPointGetPlan(
 			if err != nil {
 				return nil
 			}
-			d, err := con.Eval(ctx.GetExprCtx(), chunk.Row{})
+			d, err := con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return nil
 			}
@@ -1667,7 +1667,7 @@ func getNameValuePairs(ctx PlanContext, tbl *model.TableInfo, tblName model.CISt
 				if err != nil {
 					return nil, false
 				}
-				d, err = con.Eval(ctx.GetExprCtx(), chunk.Row{})
+				d, err = con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return nil, false
 				}
@@ -1681,7 +1681,7 @@ func getNameValuePairs(ctx PlanContext, tbl *model.TableInfo, tblName model.CISt
 				if err != nil {
 					return nil, false
 				}
-				d, err = con.Eval(ctx.GetExprCtx(), chunk.Row{})
+				d, err = con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return nil, false
 				}
@@ -1710,11 +1710,11 @@ func getNameValuePairs(ctx PlanContext, tbl *model.TableInfo, tblName model.CISt
 			d.SetString(d.GetString(), col.FieldType.GetCollate())
 		}
 
-		if col.GetType() == mysql.TypeString && col.GetCollate() == charset.CollationBin { // This type we needn't to pad `\0` in here.
-			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), false
-		}
 		if !checkCanConvertInPointGet(col, d) {
 			return nil, false
+		}
+		if col.GetType() == mysql.TypeString && col.GetCollate() == charset.CollationBin { // This type we needn't to pad `\0` in here.
+			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, colFieldType: &col.FieldType, value: d, con: con}), false
 		}
 		dVal, err := d.ConvertTo(stmtCtx.TypeCtx(), &col.FieldType)
 		if err != nil {

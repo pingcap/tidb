@@ -27,12 +27,13 @@ import (
 
 // TransferSubtasks2HistoryWithSession transfer the selected subtasks into tidb_background_subtask_history table by taskID.
 func (*TaskManager) TransferSubtasks2HistoryWithSession(ctx context.Context, se sessionctx.Context, taskID int64) error {
-	_, err := sqlexec.ExecSQL(ctx, se, `insert into mysql.tidb_background_subtask_history select * from mysql.tidb_background_subtask where task_key = %?`, taskID)
+	exec := se.GetSQLExecutor()
+	_, err := sqlexec.ExecSQL(ctx, exec, `insert into mysql.tidb_background_subtask_history select * from mysql.tidb_background_subtask where task_key = %?`, taskID)
 	if err != nil {
 		return err
 	}
 	// delete taskID subtask
-	_, err = sqlexec.ExecSQL(ctx, se, "delete from mysql.tidb_background_subtask where task_key = %?", taskID)
+	_, err = sqlexec.ExecSQL(ctx, exec, "delete from mysql.tidb_background_subtask where task_key = %?", taskID)
 	return err
 }
 
@@ -47,8 +48,9 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 	}
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		// sensitive data in meta might be redacted, need update first.
+		exec := se.GetSQLExecutor()
 		for _, t := range tasks {
-			_, err := sqlexec.ExecSQL(ctx, se, `
+			_, err := sqlexec.ExecSQL(ctx, exec, `
 				update mysql.tidb_global_task
 				set meta= %?, state_update_time = CURRENT_TIMESTAMP()
 				where id = %?`, t.Meta, t.ID)
@@ -56,7 +58,7 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 				return err
 			}
 		}
-		_, err := sqlexec.ExecSQL(ctx, se, `
+		_, err := sqlexec.ExecSQL(ctx, exec, `
 			insert into mysql.tidb_global_task_history
 			select * from mysql.tidb_global_task
 			where id in(`+strings.Join(taskIDStrs, `, `)+`)`)
@@ -64,7 +66,7 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 			return err
 		}
 
-		_, err = sqlexec.ExecSQL(ctx, se, `
+		_, err = sqlexec.ExecSQL(ctx, exec, `
 			delete from mysql.tidb_global_task
 			where id in(`+strings.Join(taskIDStrs, `, `)+`)`)
 

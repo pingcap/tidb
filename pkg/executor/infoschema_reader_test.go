@@ -552,6 +552,11 @@ func TestShowColumnsWithSubQueryView(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
+	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
+		// infoschema v2 requires network, so it cannot be tested this way.
+		t.Skip()
+	}
+
 	tk.MustExec("CREATE TABLE added (`id` int(11), `name` text, `some_date` timestamp);")
 	tk.MustExec("CREATE TABLE incremental (`id` int(11), `name`text, `some_date` timestamp);")
 	tk.MustExec("create view temp_view as (select * from `added` where id > (select max(id) from `incremental`));")

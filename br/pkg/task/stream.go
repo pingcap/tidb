@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -52,7 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
@@ -82,7 +83,7 @@ var (
 	StreamStatus   = "log status"
 	StreamTruncate = "log truncate"
 	StreamMetadata = "log metadata"
-	StreamCtl      = "log ctl"
+	StreamCtl      = "log advancer"
 
 	skipSummaryCommandList = map[string]struct{}{
 		StreamStatus:   {},
@@ -459,7 +460,7 @@ func (s *streamMgr) checkStreamStartEnable(g glue.Glue) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	supportStream, err := utils.IsLogBackupEnabled(execCtx)
 	if err != nil {
 		return errors.Trace(err)
@@ -486,7 +487,7 @@ func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, string, error) 
 		return nil, "", errors.Trace(err)
 	}
 
-	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	oldRatio, err := utils.GetGcRatio(execCtx)
 	if err != nil {
 		return nil, "", errors.Trace(err)
@@ -725,8 +726,8 @@ func RunStreamStop(
 	if err := streamMgr.setGCSafePoint(ctx,
 		utils.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
-			TTL:      utils.DefaultStreamStartSafePointTTL,
-			BackupTS: 0,
+			TTL:      0, // 0 means remove this service safe point.
+			BackupTS: math.MaxUint64,
 		},
 	); err != nil {
 		log.Warn("failed to remove safe point", zap.String("error", err.Error()))
@@ -1083,7 +1084,7 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 
 	// check cdc changefeed
 	if cfg.CheckRequirements {
-		nameSet, err := utils.GetCDCChangefeedNameSet(ctx, etcdCLI)
+		nameSet, err := cdcutil.GetCDCChangefeedNameSet(ctx, etcdCLI)
 		if err != nil {
 			return err
 		}

@@ -495,11 +495,6 @@ func (s *session) doCommit(ctx context.Context) error {
 		return nil
 	}
 
-	// to avoid session set overlap the txn set.
-	if s.GetDiskFullOpt() != kvrpcpb.DiskFullOpt_NotAllowedOnFull {
-		s.txn.SetDiskFullOpt(s.GetDiskFullOpt())
-	}
-
 	defer func() {
 		s.txn.changeToInvalid()
 		s.sessionVars.SetInTxn(false)
@@ -573,29 +568,38 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.txn.IsPipelined() && !s.GetSessionVars().TxnCtx.EnableMDL {
 		return errors.New("cannot commit pipelined transaction without Metadata Lock: MDL is OFF")
 	}
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
-	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
 	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
-	s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
-	s.txn.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
-	if sessVars.StmtCtx.KvExecCounter != nil {
-		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
-		s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
-	}
-	// priority of the sysvar is lower than `start transaction with causal consistency only`
-	if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
-		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
-		// because the property is naturally holds:
-		// We guarantee the commitTS of any transaction must not exceed the next timestamp from the TSO.
-		// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
-		// of any previously committed transactions.
-		s.txn.SetOption(kv.GuaranteeLinearizability,
-			sessVars.TxnCtx.IsExplicit && sessVars.GuaranteeLinearizability)
-	}
-	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
-		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
+	// TODO: refactor SetOption usage to avoid race risk, should detect it in test.
+	// The pipelined txn will may be flushed in background, not touch the options to avoid races.
+	if !s.txn.IsPipelined() {
+		// to avoid session set overlap the txn set.
+		if s.GetDiskFullOpt() != kvrpcpb.DiskFullOpt_NotAllowedOnFull {
+			s.txn.SetDiskFullOpt(s.GetDiskFullOpt())
+		}
+		s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
+		s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+		s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
+		s.txn.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
+		if sessVars.StmtCtx.KvExecCounter != nil {
+			// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+			s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
+		}
+		// priority of the sysvar is lower than `start transaction with causal consistency only`
+		if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
+			// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
+			// because the property is naturally holds:
+			// We guarantee the commitTS of any transaction must not exceed the next timestamp from the TSO.
+			// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
+			// of any previously committed transactions.
+			s.txn.SetOption(kv.GuaranteeLinearizability,
+				sessVars.TxnCtx.IsExplicit && sessVars.GuaranteeLinearizability)
+		}
+		if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
+			s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
+		}
 	}
 
 	var txnSource uint64
@@ -2264,6 +2268,14 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	return recordSet, nil
 }
 
+func (s *session) GetSQLExecutor() sqlexec.SQLExecutor {
+	return s
+}
+
+func (s *session) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return s
+}
+
 func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.StmtNode) error {
 	if s.sessionVars.RetryInfo.Retrying {
 		return sessiontxn.GetTxnManager(s).OnStmtRetry(ctx)
@@ -2625,8 +2637,64 @@ func (s *session) GetTableCtx() tbctx.MutateContext {
 }
 
 // GetDistSQLCtx returns the context used in DistSQL
-func (s *session) GetDistSQLCtx() distsqlctx.DistSQLContext {
-	return s
+func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
+	vars := s.GetSessionVars()
+	sc := vars.StmtCtx
+
+	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
+		return &distsqlctx.DistSQLContext{
+			AppendWarning:   sc.AppendWarning,
+			InRestrictedSQL: sc.InRestrictedSQL,
+			Client:          s.GetClient(),
+
+			EnabledRateLimitAction: vars.EnabledRateLimitAction,
+			EnableChunkRPC:         vars.EnableChunkRPC,
+			OriginalSQL:            sc.OriginalSQL,
+			KVVars:                 vars.KVVars,
+			KvExecCounter:          sc.KvExecCounter,
+			SessionMemTracker:      vars.MemTracker,
+
+			Location:         sc.TimeZone(),
+			RuntimeStatsColl: sc.RuntimeStatsColl,
+			SQLKiller:        &vars.SQLKiller,
+			ErrCtx:           sc.ErrCtx(),
+
+			TiFlashReplicaRead:                   vars.TiFlashReplicaRead,
+			TiFlashMaxThreads:                    vars.TiFlashMaxThreads,
+			TiFlashMaxBytesBeforeExternalJoin:    vars.TiFlashMaxBytesBeforeExternalJoin,
+			TiFlashMaxBytesBeforeExternalGroupBy: vars.TiFlashMaxBytesBeforeExternalGroupBy,
+			TiFlashMaxBytesBeforeExternalSort:    vars.TiFlashMaxBytesBeforeExternalSort,
+			TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
+			TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
+
+			DistSQLConcurrency:            vars.DistSQLScanConcurrency(),
+			ReplicaReadType:               vars.GetReplicaRead(),
+			WeakConsistency:               sc.WeakConsistency,
+			RCCheckTS:                     sc.RCCheckTS,
+			NotFillCache:                  sc.NotFillCache,
+			TaskID:                        sc.TaskID,
+			Priority:                      sc.Priority,
+			ResourceGroupTagger:           sc.GetResourceGroupTagger(),
+			EnablePaging:                  vars.EnablePaging,
+			MinPagingSize:                 vars.MinPagingSize,
+			MaxPagingSize:                 vars.MaxPagingSize,
+			RequestSourceType:             vars.RequestSourceType,
+			ExplicitRequestSourceType:     vars.ExplicitRequestSourceType,
+			StoreBatchSize:                vars.StoreBatchSize,
+			ResourceGroupName:             sc.ResourceGroupName,
+			LoadBasedReplicaReadThreshold: vars.LoadBasedReplicaReadThreshold,
+			RunawayChecker:                sc.RunawayChecker,
+			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
+
+			ReplicaClosestReadThreshold: vars.ReplicaClosestReadThreshold,
+			ConnectionID:                vars.ConnectionID,
+			SessionAlias:                vars.SessionAlias,
+
+			ExecDetails: &sc.SyncExecDetails,
+		}
+	})
+
+	return dctx.(*distsqlctx.DistSQLContext)
 }
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
@@ -3087,7 +3155,7 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
 
 // loadCollationParameter loads collation parameter from mysql.tidb
 func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
-	para, err := se.getTableValue(ctx, mysql.TiDBTable, tidbNewCollationEnabled)
+	para, err := se.getTableValue(ctx, mysql.TiDBTable, TidbNewCollationEnabled)
 	if err != nil {
 		return false, err
 	}
@@ -4078,7 +4146,7 @@ func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 // GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
 // Transaction infoschema is returned if inside an explicit txn.
 // Otherwise the latest infoschema is returned.
-func (s *session) GetInfoSchema() infoschemactx.InfoSchemaMetaVersion {
+func (s *session) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	vars := s.GetSessionVars()
 	var is infoschema.InfoSchema
 	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchema); ok {
@@ -4102,7 +4170,7 @@ func (s *session) GetInfoSchema() infoschemactx.InfoSchemaMetaVersion {
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 }
 
-func (s *session) GetDomainInfoSchema() infoschemactx.InfoSchemaMetaVersion {
+func (s *session) GetDomainInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	is := domain.GetDomain(s).InfoSchema()
 	extIs := &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)
@@ -4345,6 +4413,12 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 	}
 	if s.GetSessionVars().ConstraintCheckInPlace {
 		// we enforce that pipelined DML must lazily check key.
+		stmtCtx.AppendWarning(
+			errors.New(
+				"Pipelined DML can not be used when tidb_constraint_check_in_place=ON. " +
+					"Fallback to standard mode",
+			),
+		)
 		return false
 	}
 	is, ok := s.GetDomainInfoSchema().(infoschema.InfoSchema)

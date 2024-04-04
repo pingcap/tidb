@@ -23,13 +23,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	llog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
@@ -309,11 +309,12 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 		stepLogger.End(zap.InfoLevel, resErr)
 	}()
 
-	stepExecutor, err := e.GetStepExecutor(task, resource)
+	stepExecutor, err := e.GetStepExecutor(task)
 	if err != nil {
 		e.onError(err)
 		return e.getError()
 	}
+	execute.SetFrameworkInfo(stepExecutor, resource)
 
 	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
 		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))

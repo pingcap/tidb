@@ -1112,7 +1112,7 @@ func (p *PhysicalTopN) canExpressionConvertedToPB(storeTp kv.StoreType) bool {
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	return expression.CanExprsPushDown(p.SCtx().GetExprCtx(), exprs, p.SCtx().GetClient(), storeTp)
+	return expression.CanExprsPushDown(GetPushDownCtx(p.SCtx()), exprs, storeTp)
 }
 
 // containVirtualColumn checks whether TopN.ByItems contains virtual generated columns.
@@ -1213,12 +1213,12 @@ func (p *PhysicalExpand) attach2Task(tasks ...task) task {
 func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		if (len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0) && expression.CanExprsPushDown(p.SCtx().GetExprCtx(), p.Exprs, p.SCtx().GetClient(), cop.getStoreType()) {
+		if (len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0) && expression.CanExprsPushDown(GetPushDownCtx(p.SCtx()), p.Exprs, cop.getStoreType()) {
 			copTask := attachPlan2Task(p, cop)
 			return copTask
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
-		if expression.CanExprsPushDown(p.SCtx().GetExprCtx(), p.Exprs, p.SCtx().GetClient(), kv.TiFlash) {
+		if expression.CanExprsPushDown(GetPushDownCtx(p.SCtx()), p.Exprs, kv.TiFlash) {
 			p.SetChildren(mpp.p)
 			mpp.p = p
 			return mpp
@@ -1275,7 +1275,7 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 
 func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	if mppTask, _ := tasks[0].(*mppTask); mppTask != nil { // always push to mpp task.
-		if expression.CanExprsPushDown(sel.SCtx().GetExprCtx(), sel.Conditions, sel.SCtx().GetClient(), kv.TiFlash) {
+		if expression.CanExprsPushDown(GetPushDownCtx(sel.SCtx()), sel.Conditions, kv.TiFlash) {
 			return attachPlan2Task(sel, mppTask.copy())
 		}
 	}
@@ -1287,9 +1287,9 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 // be pushed down to coprocessor.
 func CheckAggCanPushCop(sctx PlanContext, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, storeType kv.StoreType) bool {
 	sc := sctx.GetSessionVars().StmtCtx
-	client := sctx.GetClient()
 	ret := true
 	reason := ""
+	pushDownCtx := GetPushDownCtx(sctx)
 	for _, aggFunc := range aggFuncs {
 		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
 		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
@@ -1302,7 +1302,7 @@ func CheckAggCanPushCop(sctx PlanContext, aggFuncs []*aggregation.AggFuncDesc, g
 			ret = false
 			break
 		}
-		if !expression.CanExprsPushDownWithExtraInfo(sctx.GetExprCtx(), aggFunc.Args, client, storeType, aggFunc.Name == ast.AggFuncSum) {
+		if !expression.CanExprsPushDownWithExtraInfo(GetPushDownCtx(sctx), aggFunc.Args, storeType, aggFunc.Name == ast.AggFuncSum) {
 			reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs"
 			ret = false
 			break
@@ -1313,13 +1313,13 @@ func CheckAggCanPushCop(sctx PlanContext, aggFuncs []*aggregation.AggFuncDesc, g
 			for _, item := range aggFunc.OrderByItems {
 				exprs = append(exprs, item.Expr)
 			}
-			if !expression.CanExprsPushDownWithExtraInfo(sctx.GetExprCtx(), exprs, client, storeType, false) {
+			if !expression.CanExprsPushDownWithExtraInfo(GetPushDownCtx(sctx), exprs, storeType, false) {
 				reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs in order-by clause"
 				ret = false
 				break
 			}
 		}
-		pb, _ := aggregation.AggFuncToPBExpr(sctx.GetExprCtx(), client, aggFunc, storeType)
+		pb, _ := aggregation.AggFuncToPBExpr(pushDownCtx, aggFunc, storeType)
 		if pb == nil {
 			reason = "AggFunc `" + aggFunc.Name + "` can not be converted to pb expr"
 			ret = false
@@ -1330,7 +1330,7 @@ func CheckAggCanPushCop(sctx PlanContext, aggFuncs []*aggregation.AggFuncDesc, g
 		reason = "groupByItems contain virtual columns, which is not supported now"
 		ret = false
 	}
-	if ret && !expression.CanExprsPushDown(sctx.GetExprCtx(), groupByItems, client, storeType) {
+	if ret && !expression.CanExprsPushDown(GetPushDownCtx(sctx), groupByItems, storeType) {
 		reason = "groupByItems contain unsupported exprs"
 		ret = false
 	}
@@ -1432,7 +1432,7 @@ func BuildFinalModeAggregation(
 				// 1. add all args to partial.GroupByItems
 				foundInGroupBy := false
 				for j, gbyExpr := range partial.GroupByItems {
-					if gbyExpr.Equal(sctx.GetExprCtx(), distinctArg) && gbyExpr.GetType().Equal(distinctArg.GetType()) {
+					if gbyExpr.Equal(sctx.GetExprCtx().GetEvalCtx(), distinctArg) && gbyExpr.GetType().Equal(distinctArg.GetType()) {
 						// if the two expressions exactly the same in terms of data types and collation, then can avoid it.
 						foundInGroupBy = true
 						ret = partialGbySchema.Columns[j]
@@ -1896,7 +1896,7 @@ func RemoveUnnecessaryFirstRow(
 				if _, ok := gbyExpr.(*expression.Constant); ok {
 					continue
 				}
-				if gbyExpr.Equal(sctx.GetExprCtx(), aggFunc.Args[0]) {
+				if gbyExpr.Equal(sctx.GetExprCtx().GetEvalCtx(), aggFunc.Args[0]) {
 					canOptimize = true
 					firstRowFuncMap[aggFunc].Args[0] = finalGbyItems[j]
 					break

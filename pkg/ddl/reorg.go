@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -375,11 +374,12 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	}
 	defer w.sessPool.Put(ctx)
 
-	executor, ok := ctx.(sqlexec.RestrictedSQLExecutor)
-	// `mock.Context` is used in tests, which doesn't implement RestrictedSQLExecutor
-	if !ok {
+	// `mock.Context` is used in tests, which doesn't support sql exec
+	if _, ok := ctx.(*mock.Context); ok {
 		return statistics.PseudoRowCount
 	}
+
+	executor := ctx.GetRestrictedSQLExecutor()
 	var rows []chunk.Row
 	if tblInfo.Partition != nil && len(tblInfo.Partition.DroppingDefinitions) > 0 {
 		// if Reorganize Partition, only select number of rows from the selected partitions!
@@ -500,7 +500,7 @@ func buildDescTableScanDAG(ctx sessionctx.Context, tbl table.PhysicalTable, hand
 	tblScanExec := constructDescTableScanPB(tbl.GetPhysicalID(), tbl.Meta(), handleCols)
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 	dagReq.Executors = append(dagReq.Executors, constructLimitPB(limit))
-	distsql.SetEncodeType(ctx, dagReq)
+	distsql.SetEncodeType(ctx.GetDistSQLCtx(), dagReq)
 	return dagReq, nil
 }
 
@@ -528,7 +528,7 @@ func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.
 	} else {
 		ranges = ranger.FullIntRange(false)
 	}
-	builder = b.SetHandleRanges(sctx.GetSessionVars().StmtCtx, tbl.GetPhysicalID(), tbl.Meta().IsCommonHandle, ranges)
+	builder = b.SetHandleRanges(sctx.GetDistSQLCtx(), tbl.GetPhysicalID(), tbl.Meta().IsCommonHandle, ranges)
 	builder.SetDAGRequest(dagPB).
 		SetStartTS(startTS).
 		SetKeepOrder(true).
@@ -547,7 +547,7 @@ func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.
 		return nil, errors.Trace(err)
 	}
 
-	result, err := distsql.Select(ctx.ddlJobCtx, sctx, kvReq, getColumnsTypes(handleCols))
+	result, err := distsql.Select(ctx.ddlJobCtx, sctx.GetDistSQLCtx(), kvReq, getColumnsTypes(handleCols))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

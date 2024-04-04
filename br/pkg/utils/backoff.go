@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -60,6 +61,20 @@ func isGRPCCancel(err error) bool {
 		}
 	}
 	return false
+}
+
+// ConstantBackoff is a backoffer that retry forever until success.
+type ConstantBackoff time.Duration
+
+// NextBackoff returns a duration to wait before retrying again
+func (c ConstantBackoff) NextBackoff(err error) time.Duration {
+	return time.Duration(c)
+}
+
+// Attempt returns the remain attempt times
+func (c ConstantBackoff) Attempt() int {
+	// A large enough value. Also still safe for arithmetic operations (won't easily overflow).
+	return math.MaxInt16
 }
 
 // RetryState is the mutable state needed for retrying.

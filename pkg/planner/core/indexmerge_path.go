@@ -141,15 +141,12 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(
 ) (paths []*util.AccessPath, needSelection bool, usedMap []bool) {
 	paths = make([]*util.AccessPath, 0, len(dnfItems))
 	usedMap = make([]bool, len(dnfItems))
+	pushDownCtx := GetPushDownCtx(ds.SCtx())
 	for offset, item := range dnfItems {
 		cnfItems := expression.SplitCNFItems(item)
 		pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
 		for _, cnfItem := range cnfItems {
-			if expression.CanExprsPushDown(ds.SCtx().GetExprCtx(),
-				[]expression.Expression{cnfItem},
-				ds.SCtx().GetClient(),
-				kv.TiKV,
-			) {
+			if expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cnfItem}, kv.TiKV) {
 				pushedDownCNFItems = append(pushedDownCNFItems, cnfItem)
 			} else {
 				needSelection = true
@@ -184,7 +181,7 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(
 			partialPath.TableFilters = nil
 		}
 		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
-		if len(partialPath.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx().GetExprCtx(), partialPath.IndexFilters, ds.SCtx().GetClient(), kv.TiKV) {
+		if len(partialPath.IndexFilters) != 0 && !expression.CanExprsPushDown(pushDownCtx, partialPath.IndexFilters, kv.TiKV) {
 			needSelection = true
 			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
 			partialPath.IndexFilters = nil
@@ -220,6 +217,7 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(
 //	}
 func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression) error {
 	usedIndexCount := len(ds.possibleAccessPaths)
+	pushDownCtx := GetPushDownCtx(ds.SCtx())
 	for k, cond := range filters {
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
@@ -235,11 +233,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 
 			pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
 			for _, cnfItem := range cnfItems {
-				if expression.CanExprsPushDown(ds.SCtx().GetExprCtx(),
-					[]expression.Expression{cnfItem},
-					ds.SCtx().GetClient(),
-					kv.TiKV,
-				) {
+				if expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cnfItem}, kv.TiKV) {
 					pushedDownCNFItems = append(pushedDownCNFItems, cnfItem)
 				} else {
 					shouldKeepCurrentFilter = true
@@ -559,6 +553,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 	finalFilters := make([]expression.Expression, 0)
 	partialFilters := make([]expression.Expression, 0, len(partialPaths))
 	hashCodeSet := make(map[string]struct{})
+	pushDownCtx := GetPushDownCtx(ds.SCtx())
 	for _, path := range partialPaths {
 		// Classify filters into coveredConds and notCoveredConds.
 		coveredConds := make([]expression.Expression, 0, len(path.AccessConds)+len(path.IndexFilters))
@@ -567,7 +562,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 		coveredConds = append(coveredConds, path.AccessConds...)
 		for i, cond := range path.IndexFilters {
 			// IndexFilters can be covered by partial path if it can be pushed down to TiKV.
-			if !expression.CanExprsPushDown(ds.SCtx().GetExprCtx(), []expression.Expression{cond}, ds.SCtx().GetClient(), kv.TiKV) {
+			if !expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cond}, kv.TiKV) {
 				path.IndexFilters = append(path.IndexFilters[:i], path.IndexFilters[i+1:]...)
 				notCoveredConds = append(notCoveredConds, cond)
 			} else {
@@ -757,7 +752,7 @@ func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, index
 			// PushDownExprs() will append extra warnings, which is annoying. So we reset warnings here.
 			warnings := stmtCtx.GetWarnings()
 			extraWarnings := stmtCtx.GetExtraWarnings()
-			_, remaining := expression.PushDownExprs(ds.SCtx().GetExprCtx(), indexMergeConds, ds.SCtx().GetClient(), kv.UnSpecified)
+			_, remaining := expression.PushDownExprs(GetPushDownCtx(ds.SCtx()), indexMergeConds, kv.UnSpecified)
 			stmtCtx.SetWarnings(warnings)
 			stmtCtx.SetExtraWarnings(extraWarnings)
 			if len(remaining) > 0 {
@@ -1176,9 +1171,9 @@ func buildPartialPaths4MVIndex(
 		}
 	case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
 		var jsonPathIdx int
-		if sf.GetArgs()[0].Equal(sctx.GetExprCtx(), targetJSONPath) {
+		if sf.GetArgs()[0].Equal(sctx.GetExprCtx().GetEvalCtx(), targetJSONPath) {
 			jsonPathIdx = 0 // (json_overlaps(a->'$.zip', '[1, 2, 3]')
-		} else if sf.GetArgs()[1].Equal(sctx.GetExprCtx(), targetJSONPath) {
+		} else if sf.GetArgs()[1].Equal(sctx.GetExprCtx().GetEvalCtx(), targetJSONPath) {
 			jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
 		} else {
 			return nil, false, false, nil
@@ -1507,7 +1502,7 @@ func checkAccessFilter4IdxCol(
 		var tp int
 		switch sf.FuncName.L {
 		case ast.JSONMemberOf: // (1 member of a)
-			if !targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[1]) {
+			if !targetJSONPath.Equal(sctx.GetExprCtx().GetEvalCtx(), sf.GetArgs()[1]) {
 				return false, unspecifiedFilterTp
 			}
 			v, ok := unwrapJSONCast(sf.GetArgs()[0]) // cast(1 as json) --> 1
@@ -1517,7 +1512,7 @@ func checkAccessFilter4IdxCol(
 			virColVals = append(virColVals, v)
 			tp = singleValueOnMVColTp
 		case ast.JSONContains: // json_contains(a, '1')
-			if !targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[0]) {
+			if !targetJSONPath.Equal(sctx.GetExprCtx().GetEvalCtx(), sf.GetArgs()[0]) {
 				return false, unspecifiedFilterTp
 			}
 			virColVals, ok = jsonArrayExpr2Exprs(
@@ -1533,9 +1528,9 @@ func checkAccessFilter4IdxCol(
 			tp = multiValuesANDOnMVColTp
 		case ast.JSONOverlaps: // json_overlaps(a, '1') or json_overlaps('1', a)
 			var jsonPathIdx int
-			if sf.GetArgs()[0].Equal(sctx.GetExprCtx(), targetJSONPath) {
+			if sf.GetArgs()[0].Equal(sctx.GetExprCtx().GetEvalCtx(), targetJSONPath) {
 				jsonPathIdx = 0 // (json_overlaps(a->'$.zip', '[1, 2, 3]')
-			} else if sf.GetArgs()[1].Equal(sctx.GetExprCtx(), targetJSONPath) {
+			} else if sf.GetArgs()[1].Equal(sctx.GetExprCtx().GetEvalCtx(), targetJSONPath) {
 				jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
 			} else {
 				return false, unspecifiedFilterTp
@@ -1587,7 +1582,7 @@ func checkAccessFilter4IdxCol(
 	if argCol == nil || argConst == nil {
 		return false, unspecifiedFilterTp
 	}
-	if argCol.Equal(sctx.GetExprCtx(), idxCol) {
+	if argCol.Equal(sctx.GetExprCtx().GetEvalCtx(), idxCol) {
 		return true, eqOnNonMVColTp
 	}
 	return false, unspecifiedFilterTp
@@ -1609,7 +1604,7 @@ func jsonArrayExpr2Exprs(
 		return nil, false
 	}
 
-	jsonArray, isNull, err := jsonArrayExpr.EvalJSON(sctx, chunk.Row{})
+	jsonArray, isNull, err := jsonArrayExpr.EvalJSON(sctx.GetEvalCtx(), chunk.Row{})
 	if isNull || err != nil {
 		return nil, false
 	}

@@ -2077,7 +2077,7 @@ func TestCloseConn(t *testing.T) {
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
 			defer wg.Done()
-			err := closeConn(cc, "", 1)
+			err := closeConn(cc)
 			require.NoError(t, err)
 		}()
 	}

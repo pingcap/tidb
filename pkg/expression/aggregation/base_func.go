@@ -92,7 +92,7 @@ func (a *baseFuncDesc) TypeInfer(ctx expression.BuildContext) error {
 	case ast.AggFuncApproxCountDistinct:
 		a.typeInfer4ApproxCountDistinct()
 	case ast.AggFuncApproxPercentile:
-		return a.typeInfer4ApproxPercentile(ctx)
+		return a.typeInfer4ApproxPercentile(ctx.GetEvalCtx())
 	case ast.AggFuncSum:
 		a.typeInfer4Sum()
 	case ast.AggFuncAvg:

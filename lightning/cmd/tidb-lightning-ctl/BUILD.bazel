@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "tidb-lightning-ctl_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/lightning/cmd/tidb-lightning-ctl",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//lightning/pkg/importer",
+        "//lightning/pkg/server",
+        "//pkg/lightning/backend",
+        "//pkg/lightning/backend/local",
+        "//pkg/lightning/checkpoints",
+        "//pkg/lightning/common",
+        "//pkg/lightning/config",
+        "//pkg/lightning/tikv",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_tikv_pd_client//http",
+    ],
+)
+
+go_binary(
+    name = "tidb-lightning-ctl",
+    embed = [":tidb-lightning-ctl_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "tidb-lightning-ctl_test",
+    timeout = "short",
+    srcs = ["main_test.go"],
+    embed = [":tidb-lightning-ctl_lib"],
+    flaky = True,
+)

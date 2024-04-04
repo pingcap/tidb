@@ -57,7 +57,8 @@ func TestVerboseExplain(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t1" || tblInfo.Name.L == "t2" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -96,7 +97,8 @@ func TestIsolationReadTiFlashNotChoosePointGet(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count:     1,
 			Available: true,
@@ -155,7 +157,8 @@ func TestMergeContinuousSelections(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "ts" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -416,4 +419,48 @@ func TestFixControl45132(t *testing.T) {
 
 	tk.MustExec(`set @@tidb_opt_fix_control = "45132:0"`)
 	tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
+}
+
+func TestIssue49438(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists tx`)
+	tk.MustExec(`create table tx (a int, b json, key k(a, (cast(b as date array))))`)
+	tk.MustExec(`select 1 from tx where a in (1)`) // no error
+}
+
+func TestIssue52023(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE t (
+			a binary(1) NOT NULL,
+			PRIMARY KEY (a)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+		PARTITION BY RANGE COLUMNS(a)
+		(PARTITION P0 VALUES LESS THAN (_binary 0x03),
+		PARTITION P4 VALUES LESS THAN (_binary 0xc0),
+		PARTITION PMX VALUES LESS THAN (MAXVALUE))`)
+	tk.MustExec(`insert into t values (0x5)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("\u0005"))
+	tk.MustQuery(`select * from t where a = 0x5`).Check(testkit.Rows("\u0005"))
+	tk.MustQuery(`select * from t where a = 5`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t where a IN (5,55)`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t where a IN (0x5,55)`).Check(testkit.Rows("\u0005"))
+	tk.MustQuery(`explain select * from t where a = 0x5`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:P4, clustered index:PRIMARY(a) "))
+	tk.MustQuery(`explain format='brief' select * from t where a = 5`).Check(testkit.Rows(""+
+		"TableReader 0.80 root partition:all data:Selection",
+		"└─Selection 0.80 cop[tikv]  eq(cast(test.t.a, double BINARY), 5)",
+		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format='brief' select * from t where a IN (5,55)`).Check(testkit.Rows(""+
+		"TableReader 0.96 root partition:all data:Selection",
+		"└─Selection 0.96 cop[tikv]  or(eq(cast(test.t.a, double BINARY), 5), eq(cast(test.t.a, double BINARY), 55))",
+		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format='brief' select * from t where a IN (0x5,55)`).Check(testkit.Rows(""+
+		"TableReader 1.00 root partition:all data:Selection",
+		"└─Selection 1.00 cop[tikv]  or(eq(test.t.a, \"0x05\"), eq(cast(test.t.a, double BINARY), 55))",
+		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 }

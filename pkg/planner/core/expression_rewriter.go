@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -61,7 +62,7 @@ func evalAstExprWithPlanCtx(sctx PlanContext, expr ast.ExprNode) (types.Datum, e
 	if err != nil {
 		return types.Datum{}, err
 	}
-	return newExpr.Eval(sctx.GetExprCtx(), chunk.Row{})
+	return newExpr.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 }
 
 // evalAstExpr evaluates ast expression directly.
@@ -73,7 +74,7 @@ func evalAstExpr(ctx expression.BuildContext, expr ast.ExprNode) (types.Datum, e
 	if err != nil {
 		return types.Datum{}, err
 	}
-	return newExpr.Eval(ctx, chunk.Row{})
+	return newExpr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 }
 
 // rewriteAstExprWithPlanCtx rewrites ast expression directly.
@@ -161,7 +162,6 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	if rewriter.schema == nil {
 		rewriter.schema = expression.NewSchema()
 	}
-	rewriter.sctx.SetValue(expression.TiDBDecodeKeyFunctionKey, decodeKeyFromString)
 
 	expr, _, err := rewriteExprNode(rewriter, node, rewriter.asScalar)
 	if err != nil {
@@ -252,7 +252,6 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 			sctx: b.ctx.GetExprCtx(), ctx: ctx,
 			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, rollExpand: b.currentBlockExpand},
 		}
-		rewriter.sctx.SetValue(expression.TiDBDecodeKeyFunctionKey, decodeKeyFromString)
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
 	}
@@ -2048,7 +2047,7 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 	isPatternExactMatch := false
 	// Treat predicate 'like' or 'ilike' the same way as predicate '=' when it is an exact match and new collation is not enabled.
 	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
-		patString, isNull, err := patExpression.EvalString(er.sctx, chunk.Row{})
+		patString, isNull, err := patExpression.EvalString(er.sctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			er.err = err
 			return
@@ -2572,11 +2571,10 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 	return strings.ToLower(x) == ast.CurrentTimestamp
 }
 
-func decodeKeyFromString(ctx expression.EvalContext, s string) string {
-	sc := ctx.GetSessionVars().StmtCtx
+func decodeKeyFromString(tc types.Context, isVer infoschemactx.MetaOnlyInfoSchema, s string) string {
 	key, err := hex.DecodeString(s)
 	if err != nil {
-		sc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
+		tc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
 		return s
 	}
 	// Auto decode byte if needed.
@@ -2585,41 +2583,41 @@ func decodeKeyFromString(ctx expression.EvalContext, s string) string {
 		key = bs
 	}
 	tableID := tablecodec.DecodeTableID(key)
-	if tableID == 0 {
-		sc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
+	if tableID <= 0 {
+		tc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
 		return s
 	}
 
-	is, ok := ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is, ok := isVer.(infoschema.InfoSchema)
 	if !ok {
-		sc.AppendWarning(errors.NewNoStackErrorf("infoschema not found when decoding key: %X", key))
+		tc.AppendWarning(errors.NewNoStackErrorf("infoschema not found when decoding key: %X", key))
 		return s
 	}
 	tbl, _ := infoschema.FindTableByTblOrPartID(is, tableID)
-	loc := ctx.GetSessionVars().Location()
+	loc := tc.Location()
 	if tablecodec.IsRecordKey(key) {
 		ret, err := decodeRecordKey(key, tableID, tbl, loc)
 		if err != nil {
-			sc.AppendWarning(err)
+			tc.AppendWarning(err)
 			return s
 		}
 		return ret
 	} else if tablecodec.IsIndexKey(key) {
 		ret, err := decodeIndexKey(key, tableID, tbl, loc)
 		if err != nil {
-			sc.AppendWarning(err)
+			tc.AppendWarning(err)
 			return s
 		}
 		return ret
 	} else if tablecodec.IsTableKey(key) {
 		ret, err := decodeTableKey(key, tableID, tbl)
 		if err != nil {
-			sc.AppendWarning(err)
+			tc.AppendWarning(err)
 			return s
 		}
 		return ret
 	}
-	sc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
+	tc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
 	return s
 }
 
