@@ -405,29 +405,24 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 
 		tbReplicaInfo := tbl.TiFlashReplica
 		if !shouldModifyTiFlashReplica(tbReplicaInfo, tiflashReplica) {
-			logutil.BgLogger().Info("skip repeated processing table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
+			logutil.BgLogger().Info("skip repeated processing table",
+				zap.Int64("tableID", tbl.ID),
+				zap.Int64("schemaID", dbInfo.ID),
+				zap.String("tableName", tbl.Name.String()),
+				zap.String("schemaName", dbInfo.Name.String()))
 			skip++
 			continue
 		}
 
-		// Ban setting replica count for tables in system database.
-		if tbl.TempTableType != model.TempTableNone {
-			logutil.BgLogger().Info("skip processing temporary table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
-			skip++
-			continue
-		}
-
-		charsetOk := true
-		// Ban setting replica count for tables which has charset not supported by TiFlash
-		for _, col := range tbl.Cols() {
-			_, ok := charset.TiFlashSupportedCharsets[col.GetCharset()]
-			if !ok {
-				charsetOk = false
-				break
-			}
-		}
-		if !charsetOk {
-			logutil.BgLogger().Info("skip processing schema table, unsupported charset", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
+		// If table is not supported, add err to warnings.
+		err = isTableTiFlashSupported(dbName, tbl)
+		if err != nil {
+			logutil.BgLogger().Info("skip processing table", zap.Int64("tableID", tbl.ID),
+				zap.Int64("schemaID", dbInfo.ID),
+				zap.String("tableName", tbl.Name.String()),
+				zap.String("schemaName", dbInfo.Name.String()),
+				zap.Error(err))
+			sctx.GetSessionVars().StmtCtx.AppendNote(err)
 			skip++
 			continue
 		}
@@ -6511,7 +6506,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		return errors.Trace(err)
 	}
 
-	err = isTableTiFlashSupported(schema, tb)
+	err = isTableTiFlashSupported(schema.Name, tb.Meta())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6640,16 +6635,18 @@ func (d *ddl) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) error
 	return nil
 }
 
-func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
+func isTableTiFlashSupported(dbName model.CIStr, tbl *model.TableInfo) error {
 	// Memory tables and system tables are not supported by TiFlash
-	if util.IsMemOrSysDB(schema.Name.L) {
+	if util.IsMemOrSysDB(dbName.L) {
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
-	} else if tb.Meta().TempTableType != model.TempTableNone {
+	} else if tbl.TempTableType != model.TempTableNone {
 		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("set on tiflash")
+	} else if tbl.IsView() || tbl.IsSequence() {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(dbName, tbl.Name, "BASE TABLE")
 	}
 
 	// Tables that has charset are not supported by TiFlash
-	for _, col := range tb.Cols() {
+	for _, col := range tbl.Cols() {
 		_, ok := charset.TiFlashSupportedCharsets[col.GetCharset()]
 		if !ok {
 			return dbterror.ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable.GenWithStackByArgs(col.GetCharset())
