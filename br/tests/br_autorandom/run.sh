@@ -20,7 +20,7 @@ DB="$TEST_NAME"
 # prepare the data
 echo "prepare the data"
 run_sql "CREATE DATABASE ${DB};"
-run_sql "CREATE TABLE ${DB}.common (a BIGINT UNSIGNED AUTO_RANDOM(1), b VARCHAR(255), uid INT, c VARCHAR(255) DEFAULT 'c', PRIMARY KEY (a, b), UNIQUE INDEX (uid));"
+run_sql "CREATE TABLE ${DB}.common (a BIGINT UNSIGNED AUTO_RANDOM(1), b VARCHAR(255), uid INT, c VARCHAR(255) DEFAULT 'c', PRIMARY KEY (a, b) clustered, UNIQUE INDEX (uid));"
 run_sql "INSERT INTO ${DB}.common (b, uid, c) values ('a', 1, 'a');"
 run_sql "INSERT INTO ${DB}.common (b, uid, c) values ('a', 2, 'a');"
 run_sql "INSERT INTO ${DB}.common (b, uid, c) values ('a', 3, 'a');"
