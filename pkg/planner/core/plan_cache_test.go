@@ -1806,7 +1806,7 @@ type partCoverStruct struct {
 	pointGetExplain []string
 }
 
-func TestPartitionFullCover(t *testing.T) {
+func TestPartitionIntFullCover(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
@@ -1814,8 +1814,6 @@ func TestPartitionFullCover(t *testing.T) {
 	seed = 1710854203824599000
 	t.Logf("seed: %d", seed)
 	seededRand := rand.New(rand.NewSource(seed))
-	// Ideas for more variations:
-	// - Use non-clustered tables
 	tableDefSQL := []partCoverStruct{
 		// Note: some partitioning functions does not work with bigint!
 		{
@@ -1847,14 +1845,17 @@ func TestPartitionFullCover(t *testing.T) {
 	/* TODO:
 	x HASH partitioning on a single column
 	x HASH partitioning on an expression (one or more columns) NOT SUPPORTED!
-	- KEY partitioning on a single column, int and varchar column types
+	x KEY partitioning on a single column, int column types
+	- KEY partitioning on a single column, varchar column types
 	- KEY partitioning on multiple columns NOT SUPPORTED!
+	(LIST needs its own tailored test, due to each value needs to be
+	defined).
 	- LIST partitioning on a single column
 	- LIST partitioning on an expression (one or more columns) NOT SUPPORTED?
 	- LIST COLUMNS partitioning on a single column, varchar
 	- LIST COLUMNS partitioning on multiple columns NOT SUPPORTED!
 	x RANGE partitioning on a single column, int
-	- RANGE partitioning on an expression, unix_timestamp(timestamp_col) Supported?
+	- RANGE partitioning on expressions NOT SUPPORTED?
 	- RANGE partitioning on other expressions or multiple columns NOT SUPPORTED?
 	- RANGE COLUMNS partitioning on a single column, datetime, varchar
 	- RANGE COLUMNS partitioning on multiple columns NOT SUPPORTED!
@@ -1868,6 +1869,10 @@ func TestPartitionFullCover(t *testing.T) {
 			true,
 		},
 		{
+			"partition by range (floor(a*0.5)*2) (partition p0 values less than (1000000), partition p1 values less than (2000000))",
+			false,
+		},
+		{
 			"partition by hash (a) partitions 7",
 			true,
 		},
@@ -1875,6 +1880,10 @@ func TestPartitionFullCover(t *testing.T) {
 			"partition by hash (floor(a*0.5)) partitions 3",
 			// This is not yet enabled, and blocked by canConvertPointGet
 			false,
+		},
+		{
+			"partition by key (a) partitions 7",
+			true,
 		},
 	}
 	rows := 1000
@@ -1918,8 +1927,8 @@ func TestPartitionFullCover(t *testing.T) {
 
 			/* TODO:
 			- Batch point get (fast plan)
-			  - Via PK/Handle
-			  - Via Index
+			  x Via PK/Handle
+			  x Via Index
 			- Table scan
 			- Table Reader (what plan is that? Is always relying on Table scan?)
 			- Index lookup
@@ -1936,7 +1945,7 @@ func TestPartitionFullCover(t *testing.T) {
 			preparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest)
 			nonPreparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest)
 			preparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet)
-			//nonpreparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet)
+			nonpreparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet)
 
 			tk.MustExec("drop table t")
 		}
@@ -1945,12 +1954,18 @@ func TestPartitionFullCover(t *testing.T) {
 }
 
 func preparedStmtPointGet(t *testing.T, ids []int, tk *testkit.TestKit, testTbl partCoverStruct, seededRand *rand.Rand, rowData map[int]string, filler, currTest string) {
+	allCols := []string{"a", "b", "c", "space(1)"}
+	seededRand.Shuffle(len(allCols), func(i, j int) {
+		allCols[i], allCols[j] = allCols[j], allCols[i]
+	})
+	cols := allCols[:seededRand.Intn(len(allCols)-1)+1]
 	// Test prepared statements
+	colStr := strings.Join(cols, ",")
 	queries := []string{"" +
-		"select a,b,c from t where a = ?",
+		"select " + colStr + " from t where a = ?",
 		// This uses an 'AccessCondition' for testing more
 		// code paths
-		"select a,b,c from t where a = ? and b is not null",
+		"select " + colStr + " from t where a = ? and b is not null",
 	}
 	for i, q := range queries {
 		comment := fmt.Sprintf("/* %s, q:%d */", currTest, i)
@@ -1958,12 +1973,14 @@ func preparedStmtPointGet(t *testing.T, ids []int, tk *testkit.TestKit, testTbl 
 		idStr := strconv.Itoa(id)
 		tk.MustExec(`prepare stmt from '` + q + `' ` + comment)
 		tk.MustExec(`set @a := ` + idStr + " " + comment)
-		tk.MustQuery(`execute stmt using @a ` + comment).Check(testkit.Rows(idStr + " " + rowData[id] + " " + filler))
+		expect := getRowData(rowData, filler, cols, id)[0]
+		tk.MustQuery(`execute stmt using @a ` + comment).Check(testkit.Rows(expect))
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		id = ids[seededRand.Intn(len(ids))]
 		idStr = strconv.Itoa(id)
 		tk.MustExec(`set @a := ` + idStr)
-		tk.MustQuery(`execute stmt using @a ` + comment).Check(testkit.Rows(idStr + " " + rowData[id] + " " + filler))
+		expect = getRowData(rowData, filler, cols, id)[0]
+		tk.MustQuery(`execute stmt using @a ` + comment).Check(testkit.Rows(expect))
 		require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		tkProcess := tk.Session().ShowProcess()
 		ps := []*util.ProcessInfo{tkProcess}
@@ -1979,15 +1996,31 @@ func preparedStmtPointGet(t *testing.T, ids []int, tk *testkit.TestKit, testTbl 
 	}
 }
 
-func getRowData(rowData map[int]string, filler string, id ...int) []string {
+func getRowData(rowData map[int]string, filler string, cols []string, id ...int) []string {
 	ret := make([]string, 0, len(id))
 	dup := make(map[int]struct{}, len(id))
 	for i := range id {
-		if _, ok := dup[i]; ok {
+		if _, ok := dup[id[i]]; ok {
 			continue
 		}
-		ret = append(ret, fmt.Sprintf("%d %s %s", id[i], rowData[id[i]], filler))
-		dup[i] = struct{}{}
+		var row string
+		for j, col := range cols {
+			if j > 0 {
+				row += " "
+			}
+			switch col {
+			case "a":
+				row += strconv.Itoa(id[i])
+			case "b":
+				row += rowData[id[i]]
+			case "c":
+				row += filler
+			case "space(1)":
+				row += " "
+			}
+		}
+		ret = append(ret, row)
+		dup[id[i]] = struct{}{}
 	}
 	sort.Strings(ret)
 	return ret
@@ -2026,11 +2059,11 @@ func preparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, poi
 		a, b, c := ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))]
 		tk.MustExec(`prepare stmt from '` + q.sql + `' ` + comment)
 		tk.MustExec(fmt.Sprintf(`set @a := %d, @b := %d, @c := %d %s`, a, b, c, comment))
-		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(getRowData(rowData, filler, a, b, c)...))
+		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(getRowData(rowData, filler, []string{"a", "b", "c"}, a, b, c)...))
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		a, b, c = ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))]
 		tk.MustExec(fmt.Sprintf(`set @a := %d, @b := %d, @c := %d %s`, a, b, c, comment))
-		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(getRowData(rowData, filler, a, b, c)...))
+		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(getRowData(rowData, filler, []string{"a", "b", "c"}, a, b, c)...))
 		if !tk.Session().GetSessionVars().FoundInPlanCache {
 			tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 			require.False(t, q.usesBatchPointGet && canUseBatchPointGet)
@@ -2112,11 +2145,11 @@ func nonpreparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, 
 		// - duplicate values
 		a, b, c := ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))]
 		query := fmt.Sprintf(q.sql+" %s", a, b, c, comment)
-		tk.MustQuery(query).Sort().Check(testkit.Rows(getRowData(rowData, filler, a, b, c)...))
+		tk.MustQuery(query).Sort().Check(testkit.Rows(getRowData(rowData, filler, []string{"a", "b", "c"}, a, b, c)...))
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		a, b, c = ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))]
 		query = fmt.Sprintf(q.sql+" %s", a, b, c, comment)
-		tk.MustQuery(query).Sort().Check(testkit.Rows(getRowData(rowData, filler, a, b, c)...))
+		tk.MustQuery(query).Sort().Check(testkit.Rows(getRowData(rowData, filler, []string{"a", "b", "c"}, a, b, c)...))
 		if usePlanCache && !tk.Session().GetSessionVars().FoundInPlanCache {
 			tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 			require.False(t, q.usesBatchPointGet)
@@ -2124,7 +2157,7 @@ func nonpreparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, 
 		res := tk.MustQuery(fmt.Sprintf("explain %s", query))
 		//if q.usesBatchPointGet && len(pointGetExplain) > 0 && canUseBatchPointGet {
 		// WASHERE: how to use q.usesBatchPointGet???
-		if len(pointGetExplain) > 0 && canUseBatchPointGet {
+		if len(pointGetExplain) > 0 && canUseBatchPointGet && q.usesBatchPointGet {
 			res.MultiCheckContain(
 				append([]string{"Batch_Point_Get"}, pointGetExplain...))
 		} else {
