@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	brlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	brlog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -558,6 +558,9 @@ func (c *pdClient) hasHealthyRegion(ctx context.Context, regionID uint64) (bool,
 func (c *pdClient) SplitWaitAndScatter(
 	ctx context.Context, region *RegionInfo, keys [][]byte,
 ) (*RegionInfo, []*RegionInfo, error) {
+	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+		failpoint.Return(nil, nil, errors.New("retryable error"))
+	})
 	if len(keys) == 0 {
 		return region, []*RegionInfo{region}, nil
 	}

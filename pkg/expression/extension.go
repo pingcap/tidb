@@ -96,7 +96,7 @@ func newExtensionFuncClass(def *extension.FunctionDef) (*extensionFuncClass, err
 }
 
 func (c *extensionFuncClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := checkPrivileges(ctx, &c.funcDef); err != nil {
+	if err := checkPrivileges(ctx.GetEvalCtx(), &c.funcDef); err != nil {
 		return nil, err
 	}
 

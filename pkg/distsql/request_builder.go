@@ -25,13 +25,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -98,35 +97,35 @@ func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.R
 
 // SetIndexRanges sets "KeyRanges" for "kv.Request" by converting index range
 // "ranges" to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range) *RequestBuilder {
+func (builder *RequestBuilder) SetIndexRanges(dctx *distsqlctx.DistSQLContext, tid, idxID int64, ranges []*ranger.Range) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = IndexRangesToKVRanges(sc, tid, idxID, ranges)
+		builder.Request.KeyRanges, builder.err = IndexRangesToKVRanges(dctx, tid, idxID, ranges)
 	}
 	return builder
 }
 
 // SetIndexRangesForTables sets "KeyRanges" for "kv.Request" by converting multiple indexes range
 // "ranges" to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetIndexRangesForTables(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range) *RequestBuilder {
+func (builder *RequestBuilder) SetIndexRangesForTables(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = IndexRangesToKVRangesForTables(sc, tids, idxID, ranges)
+		builder.Request.KeyRanges, builder.err = IndexRangesToKVRangesForTables(dctx, tids, idxID, ranges)
 	}
 	return builder
 }
 
 // SetHandleRanges sets "KeyRanges" for "kv.Request" by converting table handle range
 // "ranges" to "KeyRanges" firstly.
-func (builder *RequestBuilder) SetHandleRanges(sc *stmtctx.StatementContext, tid int64, isCommonHandle bool, ranges []*ranger.Range) *RequestBuilder {
-	builder = builder.SetHandleRangesForTables(sc, []int64{tid}, isCommonHandle, ranges)
+func (builder *RequestBuilder) SetHandleRanges(dctx *distsqlctx.DistSQLContext, tid int64, isCommonHandle bool, ranges []*ranger.Range) *RequestBuilder {
+	builder = builder.SetHandleRangesForTables(dctx, []int64{tid}, isCommonHandle, ranges)
 	builder.err = builder.Request.KeyRanges.SetToNonPartitioned()
 	return builder
 }
 
 // SetHandleRangesForTables sets "KeyRanges" for "kv.Request" by converting table handle range
 // "ranges" to "KeyRanges" firstly for multiple tables.
-func (builder *RequestBuilder) SetHandleRangesForTables(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range) *RequestBuilder {
+func (builder *RequestBuilder) SetHandleRangesForTables(dctx *distsqlctx.DistSQLContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range) *RequestBuilder {
 	if builder.err == nil {
-		builder.Request.KeyRanges, builder.err = TableHandleRangesToKVRanges(sc, tid, isCommonHandle, ranges)
+		builder.Request.KeyRanges, builder.err = TableHandleRangesToKVRanges(dctx, tid, isCommonHandle, ranges)
 	}
 	return builder
 }
@@ -264,8 +263,8 @@ func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
 	return kv.SI
 }
 
-func (*RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
-	switch sv.StmtCtx.Priority {
+func (*RequestBuilder) getKVPriority(dctx *distsqlctx.DistSQLContext) int {
+	switch dctx.Priority {
 	case mysql.NoPriority, mysql.DelayedPriority:
 		return kv.PriorityNormal
 	case mysql.LowPriority:
@@ -279,8 +278,8 @@ func (*RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
 // "Concurrency", "IsolationLevel", "NotFillCache", "TaskID", "Priority", "ReplicaRead",
 // "ResourceGroupTagger", "ResourceGroupName"
-func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
-	distsqlConcurrency := sv.DistSQLScanConcurrency()
+func (builder *RequestBuilder) SetFromSessionVars(dctx *distsqlctx.DistSQLContext) *RequestBuilder {
+	distsqlConcurrency := dctx.DistSQLConcurrency
 	if builder.Request.Concurrency == 0 {
 		// Concurrency unset.
 		builder.Request.Concurrency = distsqlConcurrency
@@ -288,33 +287,33 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 		// Concurrency is set in SetDAGRequest, check the upper limit.
 		builder.Request.Concurrency = distsqlConcurrency
 	}
-	replicaReadType := sv.GetReplicaRead()
-	if sv.StmtCtx.WeakConsistency {
+	replicaReadType := dctx.ReplicaReadType
+	if dctx.WeakConsistency {
 		builder.Request.IsolationLevel = kv.RC
-	} else if sv.StmtCtx.RCCheckTS {
+	} else if dctx.RCCheckTS {
 		builder.Request.IsolationLevel = kv.RCCheckTS
 		replicaReadType = kv.ReplicaReadLeader
 	} else {
 		builder.Request.IsolationLevel = builder.getIsolationLevel()
 	}
-	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
-	builder.Request.TaskID = sv.StmtCtx.TaskID
-	builder.Request.Priority = builder.getKVPriority(sv)
+	builder.Request.NotFillCache = dctx.NotFillCache
+	builder.Request.TaskID = dctx.TaskID
+	builder.Request.Priority = builder.getKVPriority(dctx)
 	builder.Request.ReplicaRead = replicaReadType
-	builder.SetResourceGroupTagger(sv.StmtCtx.GetResourceGroupTagger())
+	builder.SetResourceGroupTagger(dctx.ResourceGroupTagger)
 	{
-		builder.SetPaging(sv.EnablePaging)
-		builder.Request.Paging.MinPagingSize = uint64(sv.MinPagingSize)
-		builder.Request.Paging.MaxPagingSize = uint64(sv.MaxPagingSize)
+		builder.SetPaging(dctx.EnablePaging)
+		builder.Request.Paging.MinPagingSize = uint64(dctx.MinPagingSize)
+		builder.Request.Paging.MaxPagingSize = uint64(dctx.MaxPagingSize)
 	}
-	builder.RequestSource.RequestSourceInternal = sv.InRestrictedSQL
-	builder.RequestSource.RequestSourceType = sv.RequestSourceType
-	builder.RequestSource.ExplicitRequestSourceType = sv.ExplicitRequestSourceType
-	builder.StoreBatchSize = sv.StoreBatchSize
-	builder.Request.ResourceGroupName = sv.StmtCtx.ResourceGroupName
-	builder.Request.StoreBusyThreshold = sv.LoadBasedReplicaReadThreshold
-	builder.Request.RunawayChecker = sv.StmtCtx.RunawayChecker
-	builder.Request.TiKVClientReadTimeout = sv.GetTiKVClientReadTimeout()
+	builder.RequestSource.RequestSourceInternal = dctx.InRestrictedSQL
+	builder.RequestSource.RequestSourceType = dctx.RequestSourceType
+	builder.RequestSource.ExplicitRequestSourceType = dctx.ExplicitRequestSourceType
+	builder.StoreBatchSize = dctx.StoreBatchSize
+	builder.Request.ResourceGroupName = dctx.ResourceGroupName
+	builder.Request.StoreBusyThreshold = dctx.LoadBasedReplicaReadThreshold
+	builder.Request.RunawayChecker = dctx.RunawayChecker
+	builder.Request.TiKVClientReadTimeout = dctx.TiKVClientReadTimeout
 	return builder
 }
 
@@ -439,11 +438,11 @@ func (builder *RequestBuilder) SetConnIDAndConnAlias(connID uint64, connAlias st
 }
 
 // TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
-func TableHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range) (*kv.KeyRanges, error) {
+func TableHandleRangesToKVRanges(dctx *distsqlctx.DistSQLContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range) (*kv.KeyRanges, error) {
 	if !isCommonHandle {
 		return tablesRangesToKVRanges(tid, ranges), nil
 	}
-	return CommonHandleRangesToKVRanges(sc, tid, ranges)
+	return CommonHandleRangesToKVRanges(dctx, tid, ranges)
 }
 
 // TableRangesToKVRanges converts table ranges to "KeyRange".
@@ -561,7 +560,15 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle) ([]kv.KeyRange, []in
 	hints := make([]int, 0, len(handles))
 	i := 0
 	for i < len(handles) {
-		if commonHandle, ok := handles[i].(*kv.CommonHandle); ok {
+		var isCommonHandle bool
+		var commonHandle *kv.CommonHandle
+		if partitionHandle, ok := handles[i].(kv.PartitionHandle); ok {
+			tid = partitionHandle.PartitionID
+			commonHandle, isCommonHandle = partitionHandle.Handle.(*kv.CommonHandle)
+		} else {
+			commonHandle, isCommonHandle = handles[i].(*kv.CommonHandle)
+		}
+		if isCommonHandle {
 			ran := kv.KeyRange{
 				StartKey: tablecodec.EncodeRowKey(tid, commonHandle.Encoded()),
 				EndKey:   tablecodec.EncodeRowKey(tid, kv.Key(commonHandle.Encoded()).Next()),
@@ -573,6 +580,9 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle) ([]kv.KeyRange, []in
 		}
 		j := i + 1
 		for ; j < len(handles) && handles[j-1].IntValue() != math.MaxInt64; j++ {
+			if p, ok := handles[j].(kv.PartitionHandle); ok && p.PartitionID != tid {
+				break
+			}
 			if handles[j].IntValue() != handles[j-1].IntValue()+1 {
 				break
 			}
@@ -631,14 +641,14 @@ func PartitionHandlesToKVRanges(handles []kv.Handle) ([]kv.KeyRange, []int) {
 }
 
 // IndexRangesToKVRanges converts index ranges to "KeyRange".
-func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range) (*kv.KeyRanges, error) {
-	return IndexRangesToKVRangesWithInterruptSignal(sc, tid, idxID, ranges, nil, nil)
+func IndexRangesToKVRanges(dctx *distsqlctx.DistSQLContext, tid, idxID int64, ranges []*ranger.Range) (*kv.KeyRanges, error) {
+	return IndexRangesToKVRangesWithInterruptSignal(dctx, tid, idxID, ranges, nil, nil)
 }
 
 // IndexRangesToKVRangesWithInterruptSignal converts index ranges to "KeyRange".
 // The process can be interrupted by set `interruptSignal` to true.
-func IndexRangesToKVRangesWithInterruptSignal(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
-	keyRanges, err := indexRangesToKVRangesForTablesWithInterruptSignal(sc, []int64{tid}, idxID, ranges, memTracker, interruptSignal)
+func IndexRangesToKVRangesWithInterruptSignal(dctx *distsqlctx.DistSQLContext, tid, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
+	keyRanges, err := indexRangesToKVRangesForTablesWithInterruptSignal(dctx, []int64{tid}, idxID, ranges, memTracker, interruptSignal)
 	if err != nil {
 		return nil, err
 	}
@@ -647,21 +657,21 @@ func IndexRangesToKVRangesWithInterruptSignal(sc *stmtctx.StatementContext, tid,
 }
 
 // IndexRangesToKVRangesForTables converts indexes ranges to "KeyRange".
-func IndexRangesToKVRangesForTables(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range) (*kv.KeyRanges, error) {
-	return indexRangesToKVRangesForTablesWithInterruptSignal(sc, tids, idxID, ranges, nil, nil)
+func IndexRangesToKVRangesForTables(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range) (*kv.KeyRanges, error) {
+	return indexRangesToKVRangesForTablesWithInterruptSignal(dctx, tids, idxID, ranges, nil, nil)
 }
 
 // IndexRangesToKVRangesForTablesWithInterruptSignal converts indexes ranges to "KeyRange".
 // The process can be interrupted by set `interruptSignal` to true.
-func indexRangesToKVRangesForTablesWithInterruptSignal(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
-	return indexRangesToKVWithoutSplit(sc, tids, idxID, ranges, memTracker, interruptSignal)
+func indexRangesToKVRangesForTablesWithInterruptSignal(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
+	return indexRangesToKVWithoutSplit(dctx, tids, idxID, ranges, memTracker, interruptSignal)
 }
 
 // CommonHandleRangesToKVRanges converts common handle ranges to "KeyRange".
-func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ranges []*ranger.Range) (*kv.KeyRanges, error) {
+func CommonHandleRangesToKVRanges(dctx *distsqlctx.DistSQLContext, tids []int64, ranges []*ranger.Range) (*kv.KeyRanges, error) {
 	rans := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
-		low, high, err := EncodeIndexKey(sc, ran)
+		low, high, err := EncodeIndexKey(dctx, ran)
 		if err != nil {
 			return nil, err
 		}
@@ -711,7 +721,7 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSc
 	return true
 }
 
-func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
+func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
 	krs := make([][]kv.KeyRange, len(tids))
 	for i := range krs {
 		krs[i] = make([]kv.KeyRange, 0, len(ranges))
@@ -722,7 +732,7 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 	// encodeIndexKey and EncodeIndexSeekKey is time-consuming, thus we need to
 	// check the interrupt signal periodically.
 	for i, ran := range ranges {
-		low, high, err := EncodeIndexKey(sc, ran)
+		low, high, err := EncodeIndexKey(dctx, ran)
 		if err != nil {
 			return nil, err
 		}
@@ -751,12 +761,12 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 }
 
 // EncodeIndexKey gets encoded keys containing low and high
-func EncodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []byte, error) {
+func EncodeIndexKey(dctx *distsqlctx.DistSQLContext, ran *ranger.Range) ([]byte, []byte, error) {
 	tz := time.UTC
 	errCtx := errctx.StrictNoWarningContext
-	if sc != nil {
-		tz = sc.TimeZone()
-		errCtx = sc.ErrCtx()
+	if dctx != nil {
+		tz = dctx.Location
+		errCtx = dctx.ErrCtx
 	}
 
 	low, err := codec.EncodeKey(tz, nil, ran.LowVal...)

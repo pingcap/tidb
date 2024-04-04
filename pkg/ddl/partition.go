@@ -227,6 +227,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		addPartitionEvent := statsutil.NewAddPartitionEvent(
+			job.SchemaID,
 			tblInfo,
 			partInfo,
 		)
@@ -725,7 +726,7 @@ func getPartitionIntervalFromTable(ctx expression.BuildContext, tbInfo *model.Ta
 		if err != nil {
 			return nil
 		}
-		val, isNull, err := expr.EvalInt(ctx, chunk.Row{})
+		val, isNull, err := expr.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if isNull || err != nil || val < 1 {
 			// If NULL, error or interval < 1 then cannot be an INTERVAL partitioned table
 			return nil
@@ -748,7 +749,7 @@ func getPartitionIntervalFromTable(ctx expression.BuildContext, tbInfo *model.Ta
 		if err != nil {
 			return nil
 		}
-		val, isNull, err := expr.EvalInt(ctx, chunk.Row{})
+		val, isNull, err := expr.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if isNull || err != nil || val < 1 {
 			// If NULL, error or interval < 1 then cannot be an INTERVAL partitioned table
 			return nil
@@ -1763,7 +1764,7 @@ func formatListPartitionValue(ctx expression.BuildContext, tblInfo *model.TableI
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				eval, err := expr.Eval(ctx, chunk.Row{})
+				eval, err := expr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -1803,7 +1804,7 @@ func getRangeValue(ctx expression.BuildContext, str string, unsigned bool) (any,
 		if err1 != nil {
 			return 0, false, err1
 		}
-		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+		res, isNull, err2 := e.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if err2 == nil && !isNull {
 			return uint64(res), true, nil
 		}
@@ -1819,7 +1820,7 @@ func getRangeValue(ctx expression.BuildContext, str string, unsigned bool) (any,
 		if err1 != nil {
 			return 0, false, err1
 		}
-		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+		res, isNull, err2 := e.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if err2 == nil && !isNull {
 			return res, true, nil
 		}
@@ -2152,6 +2153,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		job.SchemaState = model.StateNone
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		dropPartitionEvent := statsutil.NewDropPartitionEvent(
+			job.SchemaID,
 			tblInfo,
 			&model.PartitionInfo{Definitions: droppedDefs},
 		)
@@ -2243,6 +2245,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		truncatePartitionEvent := statsutil.NewTruncatePartitionEvent(
+			job.SchemaID,
 			tblInfo,
 			&model.PartitionInfo{Definitions: newPartitions},
 			&model.PartitionInfo{Definitions: oldPartitions},
@@ -2381,6 +2384,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		truncatePartitionEvent := statsutil.NewTruncatePartitionEvent(
+			job.SchemaID,
 			tblInfo,
 			&model.PartitionInfo{Definitions: newPartitions},
 			&model.PartitionInfo{Definitions: oldPartitions},
@@ -2753,6 +2757,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, pt)
 	exchangePartitionEvent := statsutil.NewExchangePartitionEvent(
+		job.SchemaID,
 		pt,
 		&model.PartitionInfo{Definitions: []model.PartitionDefinition{originalPartitionDef}},
 		originalNt,
@@ -3114,6 +3119,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// Include the old table ID, if changed, which may contain global statistics,
 		// so it can be reused for the new (non)partitioned table.
 		event, err := newStatsDDLEventForJob(
+			job.SchemaID,
 			job.Type, oldTblID, tblInfo, statisticsPartInfo, droppedPartInfo,
 		)
 		if err != nil {
@@ -3133,6 +3139,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 // newStatsDDLEventForJob creates a statsutil.DDLEvent for a job.
 // It is used for reorganize partition, add partitioning and remove partitioning.
 func newStatsDDLEventForJob(
+	schemaID int64,
 	jobType model.ActionType,
 	oldTblID int64,
 	tblInfo *model.TableInfo,
@@ -3143,18 +3150,21 @@ func newStatsDDLEventForJob(
 	switch jobType {
 	case model.ActionReorganizePartition:
 		event = statsutil.NewReorganizePartitionEvent(
+			schemaID,
 			tblInfo,
 			addedPartInfo,
 			droppedPartInfo,
 		)
 	case model.ActionAlterTablePartitioning:
 		event = statsutil.NewAddPartitioningEvent(
+			schemaID,
 			oldTblID,
 			tblInfo,
 			addedPartInfo,
 		)
 	case model.ActionRemovePartitioning:
 		event = statsutil.NewRemovePartitioningEvent(
+			schemaID,
 			oldTblID,
 			tblInfo,
 			droppedPartInfo,

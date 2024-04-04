@@ -199,18 +199,18 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		// If one sides (a, b) is a unique key, then the unique key information is remained.
 		// But we don't consider this situation currently.
 		// Only key made by one column is considered now.
-		exprCtx := p.SCtx().GetExprCtx()
+		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 		for _, expr := range p.EqualConditions {
 			ln := expr.GetArgs()[0].(*expression.Column)
 			rn := expr.GetArgs()[1].(*expression.Column)
 			for _, key := range childSchema[0].Keys {
-				if len(key) == 1 && key[0].Equal(exprCtx, ln) {
+				if len(key) == 1 && key[0].Equal(evalCtx, ln) {
 					lOk = true
 					break
 				}
 			}
 			for _, key := range childSchema[1].Keys {
-				if len(key) == 1 && key[0].Equal(exprCtx, rn) {
+				if len(key) == 1 && key[0].Equal(evalCtx, rn) {
 					rOk = true
 					break
 				}

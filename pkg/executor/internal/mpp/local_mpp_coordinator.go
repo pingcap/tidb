@@ -601,7 +601,7 @@ func (c *localMppCoordinator) handleAllReports() error {
 					}
 				}
 			}
-			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
+			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
 		case <-time.After(receiveReportTimeout):
 			metrics.MppCoordinatorStatsReportNotReceived.Inc()
 			logutil.BgLogger().Warn(fmt.Sprintf("Mpp coordinator not received all reports within %d seconds", int(receiveReportTimeout.Seconds())),
@@ -752,9 +752,9 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 		}
 	})
 
-	ctx = distsql.WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
+	ctx = distsql.WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx.KvExecCounter)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-	ctx = distsql.SetTiFlashConfVarsInContext(ctx, sctx.GetSessionVars())
+	ctx = distsql.SetTiFlashConfVarsInContext(ctx, sctx.GetDistSQLCtx())
 	c.needTriggerFallback = allowTiFlashFallback
 	c.enableCollectExecutionInfo = config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
 

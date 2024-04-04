@@ -66,7 +66,8 @@ type EvalContext interface {
 
 // BuildContext is used to build an expression
 type BuildContext interface {
-	EvalContext
+	// GetEvalCtx returns the EvalContext.
+	GetEvalCtx() EvalContext
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
 	// Value returns the value associated with this context for key.

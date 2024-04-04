@@ -202,7 +202,14 @@ func (mgr *TaskManager) CreateTask(ctx context.Context, key string, tp proto.Tas
 }
 
 // CreateTaskWithSession adds a new task to task table with session.
-func (mgr *TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
+func (mgr *TaskManager) CreateTaskWithSession(
+	ctx context.Context,
+	se sessionctx.Context,
+	key string,
+	tp proto.TaskType,
+	concurrency int,
+	meta []byte,
+) (taskID int64, err error) {
 	cpuCount, err := mgr.getCPUCountOfManagedNode(ctx, se)
 	if err != nil {
 		return 0, err

@@ -624,7 +624,7 @@ func BuildBackupSchemas(
 			// Treat cached table as normal table.
 			tableInfo.TableCacheStatusType = model.TableCacheStatusDisable
 
-			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
+			if tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration
 				var globalAutoRandID int64
 				globalAutoRandID, err = autoIDAccess.RandomID().Get()

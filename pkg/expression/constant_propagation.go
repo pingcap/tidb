@@ -305,7 +305,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 				continue
 			}
 			visited[i] = true
-			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
+			value, _, err := EvalBool(s.ctx.GetEvalCtx(), []Expression{con}, chunk.Row{})
 			if err != nil {
 				terror.Log(err)
 				return nil
@@ -392,7 +392,7 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 		return con, true
 	}
 	if col.GetType().GetType() == mysql.TypeEnum {
-		d, err := con.Eval(s.ctx, chunk.Row{})
+		d, err := con.Eval(s.ctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return nil, false
 		}
@@ -456,7 +456,7 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 				continue
 			}
 			visited[i+condsOffset] = true
-			value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
+			value, _, err := EvalBool(s.ctx.GetEvalCtx(), []Expression{con}, chunk.Row{})
 			if err != nil {
 				terror.Log(err)
 				return nil

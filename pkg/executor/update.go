@@ -356,7 +356,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 			continue
 		}
 		con := assign.Expr.(*expression.Constant)
-		val, err := con.Eval(e.Ctx().GetExprCtx(), emptyRow)
+		val, err := con.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), emptyRow)
 		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}
@@ -383,7 +383,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
 			continue
 		}
-		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx(), e.evalBuffer.ToRow())
+		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), e.evalBuffer.ToRow())
 		if err != nil {
 			return nil, err
 		}
@@ -412,7 +412,7 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
 			continue
 		}
-		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx(), e.evalBuffer.ToRow())
+		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), e.evalBuffer.ToRow())
 		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}

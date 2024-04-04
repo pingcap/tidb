@@ -78,7 +78,7 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *u
 	// Expand need those extra redundant distinct group by columns projected from underlying projection.
 	// distinct GroupByCol must be used by aggregate above, to make sure this, append distinctGroupByCol again.
 	parentUsedCols = append(parentUsedCols, p.distinctGroupByCol...)
-	used := expression.GetUsedList(p.SCtx().GetExprCtx(), parentUsedCols, p.Schema())
+	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
@@ -100,7 +100,7 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *u
 // PruneColumns implements LogicalPlan interface.
 // If any expression has SetVar function or Sleep function, we do not prune it.
 func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, opt *util.LogicalOptimizeOp) (LogicalPlan, error) {
-	used := expression.GetUsedList(p.SCtx().GetExprCtx(), parentUsedCols, p.schema)
+	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.schema)
 	prunedColumns := make([]*expression.Column, 0)
 
 	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
@@ -137,7 +137,7 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column, opt
 // PruneColumns implements LogicalPlan interface.
 func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, opt *util.LogicalOptimizeOp) (LogicalPlan, error) {
 	child := la.children[0]
-	used := expression.GetUsedList(la.SCtx().GetExprCtx(), parentUsedCols, la.Schema())
+	used := expression.GetUsedList(la.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, la.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 	prunedFunctions := make([]*aggregation.AggFuncDesc, 0)
 	prunedGroupByItems := make([]expression.Expression, 0)
@@ -292,7 +292,7 @@ func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *ut
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt *util.LogicalOptimizeOp) (LogicalPlan, error) {
-	used := expression.GetUsedList(p.SCtx().GetExprCtx(), parentUsedCols, p.schema)
+	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.schema)
 	hasBeenUsed := false
 	for i := range used {
 		hasBeenUsed = hasBeenUsed || used[i]
@@ -367,10 +367,10 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 
 // PruneColumns implements LogicalPlan interface.
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *util.LogicalOptimizeOp) (LogicalPlan, error) {
-	used := expression.GetUsedList(ds.SCtx().GetExprCtx(), parentUsedCols, ds.schema)
+	used := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, ds.schema)
 
 	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.allConds, nil)
-	exprUsed := expression.GetUsedList(ds.SCtx().GetExprCtx(), exprCols, ds.schema)
+	exprUsed := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), exprCols, ds.schema)
 	prunedColumns := make([]*expression.Column, 0)
 
 	originSchemaColumns := ds.schema.Columns
@@ -436,7 +436,7 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 		return p, nil
 	}
 	prunedColumns := make([]*expression.Column, 0)
-	used := expression.GetUsedList(p.SCtx().GetExprCtx(), parentUsedCols, p.schema)
+	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.schema)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && p.schema.Len() > 1 {
 			prunedColumns = append(prunedColumns, p.schema.Columns[i])
@@ -451,7 +451,7 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column, opt *util.LogicalOptimizeOp) (LogicalPlan, error) {
-	used := expression.GetUsedList(p.SCtx().GetExprCtx(), parentUsedCols, p.Schema())
+	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {

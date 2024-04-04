@@ -91,7 +91,7 @@ func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 
 	// Check if filter on window function
 	windowColumns := child.GetWindowResultColumns()
-	if len(windowColumns) != 1 || !(column.Equal(p.SCtx().GetExprCtx(), windowColumns[0])) {
+	if len(windowColumns) != 1 || !(column.Equal(p.SCtx().GetExprCtx().GetEvalCtx(), windowColumns[0])) {
 		return false, 0
 	}
 

@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -1710,9 +1710,8 @@ type addIndexIngestWorker struct {
 	copReqSenderPool *copReqSenderPool
 	checkpointMgr    *ingest.CheckpointManager
 
-	resultCh   chan *backfillResult
-	jobID      int64
-	distribute bool
+	resultCh chan *backfillResult
+	jobID    int64
 }
 
 func newAddIndexIngestWorker(
@@ -1728,7 +1727,6 @@ func newAddIndexIngestWorker(
 	copReqSenderPool *copReqSenderPool,
 	sessCtx sessionctx.Context,
 	checkpointMgr *ingest.CheckpointManager,
-	distribute bool,
 ) (*addIndexIngestWorker, error) {
 	indexes := make([]table.Index, 0, len(indexIDs))
 	writers := make([]ingest.Writer, 0, len(indexIDs))
@@ -1756,7 +1754,6 @@ func newAddIndexIngestWorker(
 		resultCh:         resultCh,
 		jobID:            jobID,
 		checkpointMgr:    checkpointMgr,
-		distribute:       distribute,
 	}, nil
 }
 
@@ -2217,6 +2214,9 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 	return err
 }
 
+// EstimateTableRowSizeForTest is used for test.
+var EstimateTableRowSizeForTest = estimateTableRowSize
+
 // estimateTableRowSize estimates the row size in bytes of a table.
 // This function tries to retrieve row size in following orders:
 //  1. AVG_ROW_LENGTH column from information_schema.tables.
@@ -2269,9 +2269,6 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 		return 0, err
 	}
 	pid := tbl.Meta().ID
-	if part := tbl.GetPartitionedTable(); part != nil {
-		pid = part.Meta().ID
-	}
 	sk, ek := tablecodec.GetTableHandleKeyRange(pid)
 	sRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
 	if err != nil {

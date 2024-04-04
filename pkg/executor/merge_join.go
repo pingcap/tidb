@@ -87,7 +87,7 @@ func (t *mergeJoinTable) init(executor *MergeJoinExec) {
 		items = append(items, col)
 	}
 	vecEnabled := executor.Ctx().GetSessionVars().EnableVectorizedExpression
-	t.groupChecker = vecgroupchecker.NewVecGroupChecker(executor.Ctx().GetExprCtx(), vecEnabled, items)
+	t.groupChecker = vecgroupchecker.NewVecGroupChecker(executor.Ctx().GetExprCtx().GetEvalCtx(), vecEnabled, items)
 	t.groupRowsIter = chunk.NewIterator4Chunk(t.childChunk)
 
 	if t.isInner {
@@ -258,7 +258,7 @@ func (t *mergeJoinTable) fetchNextOuterGroup(ctx context.Context, exec *MergeJoi
 		}
 
 		t.childChunkIter.Begin()
-		t.filtersSelected, err = expression.VectorizedFilter(exec.Ctx().GetExprCtx(), exec.Ctx().GetSessionVars().EnableVectorizedExpression, t.filters, t.childChunkIter, t.filtersSelected)
+		t.filtersSelected, err = expression.VectorizedFilter(exec.Ctx().GetExprCtx().GetEvalCtx(), exec.Ctx().GetSessionVars().EnableVectorizedExpression, t.filters, t.childChunkIter, t.filtersSelected)
 		if err != nil {
 			return err
 		}
@@ -402,7 +402,7 @@ func (e *MergeJoinExec) compare(outerRow, innerRow chunk.Row) (int, error) {
 	outerJoinKeys := e.outerTable.joinKeys
 	innerJoinKeys := e.innerTable.joinKeys
 	for i := range outerJoinKeys {
-		cmp, _, err := e.compareFuncs[i](e.Ctx().GetExprCtx(), outerJoinKeys[i], innerJoinKeys[i], outerRow, innerRow)
+		cmp, _, err := e.compareFuncs[i](e.Ctx().GetExprCtx().GetEvalCtx(), outerJoinKeys[i], innerJoinKeys[i], outerRow, innerRow)
 		if err != nil {
 			return 0, err
 		}

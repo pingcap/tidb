@@ -83,7 +83,7 @@ func TestInDecimal(t *testing.T) {
 		require.NotEqual(t, input.Column(0).GetDecimal(i).GetDigitsFrac(), input.Column(1).GetDecimal(i).GetDigitsFrac())
 	}
 	result := chunk.NewColumn(ft, 1024)
-	require.Nil(t, inFunc.vecEvalInt(ctx, input, result))
+	require.NoError(t, vecEvalType(ctx, inFunc, types.ETInt, input, result))
 	for i := 0; i < 1024; i++ {
 		require.Equal(t, int64(1), result.GetInt64(0))
 	}
