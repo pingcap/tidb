@@ -1855,7 +1855,7 @@ func TestPartitionIntFullCover(t *testing.T) {
 	- LIST COLUMNS partitioning on a single column, varchar
 	- LIST COLUMNS partitioning on multiple columns NOT SUPPORTED!
 	x RANGE partitioning on a single column, int
-	- RANGE partitioning on expressions NOT SUPPORTED?
+	x RANGE partitioning on expressions NOT SUPPORTED?
 	- RANGE partitioning on other expressions or multiple columns NOT SUPPORTED?
 	- RANGE COLUMNS partitioning on a single column, datetime, varchar
 	- RANGE COLUMNS partitioning on multiple columns NOT SUPPORTED!
@@ -1930,14 +1930,10 @@ func TestPartitionIntFullCover(t *testing.T) {
 			- Batch point get (fast plan)
 			  x Via PK/Handle
 			  x Via Index
-			- Table scan
+			x Table scan
 			- Table Reader (what plan is that? Is always relying on Table scan?)
-			- Index lookup
+			x Index lookup
 			- Index Reader (what plan is that? Is it always relying on Index Lookup?)
-
-			// Possible other variants:
-			// - only a subset of the columns
-			// - columns reordered <= was several issues during development!
 			*/
 
 			// Possible variations:
@@ -2029,23 +2025,36 @@ func getRowData(rowData map[int]string, filler string, cols []string, id ...int)
 
 func preparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, pointGetExplain []string, seededRand *rand.Rand, rowData map[int]string, filler, currTest string, canUseBatchPointGet bool) {
 	// Test prepared statements
+	allCols := []string{"a", "b", "c", "space(1)"}
+	seededRand.Shuffle(len(allCols), func(i, j int) {
+		allCols[i], allCols[j] = allCols[j], allCols[i]
+	})
+	cols := allCols[:seededRand.Intn(len(allCols)-1)+1]
+	hasSpaceCol := false
+	for _, col := range cols {
+		if col == "space(1)" {
+			hasSpaceCol = true
+			break
+		}
+	}
 	queries := []struct {
 		sql               string
 		usesBatchPointGet bool
 	}{
 		{
-			"select a,b,c from t where a IN (?,?,?)",
+			"select " + strings.Join(cols, ",") + " from t where a IN (?,?,?)",
 			true,
+			// Cannot convert to [Batch]Point get, due to dynamic pruning
 		},
 		{
-			"select a,b,c from t where a = ? or a = ? or a = ?",
+			"select " + strings.Join(cols, ",") + " from t where a = ? or a = ? or a = ?",
 			// See canConvertPointGet, just needs to be enabled :)
 			false,
 		},
 		{
 			// This uses an 'AccessCondition' for testing more
 			// code paths
-			"select a,b,c from t where a IN (?,?,?) and b is not null",
+			"select " + strings.Join(cols, ",") + " from t where a IN (?,?,?) and b is not null",
 			// Currently not enabled, since not only an IN (in tryWhereIn2BatchPointGet)
 			// or have multiple values which does not yet enabled through canConvertPointGet.
 			false,
@@ -2060,11 +2069,13 @@ func preparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, poi
 		a, b, c := ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))]
 		tk.MustExec(`prepare stmt from '` + q.sql + `' ` + comment)
 		tk.MustExec(fmt.Sprintf(`set @a := %d, @b := %d, @c := %d %s`, a, b, c, comment))
-		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(getRowData(rowData, filler, []string{"a", "b", "c"}, a, b, c)...))
+		expect := getRowData(rowData, filler, cols, a, b, c)
+		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(expect...))
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		a, b, c = ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))]
 		tk.MustExec(fmt.Sprintf(`set @a := %d, @b := %d, @c := %d %s`, a, b, c, comment))
-		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(getRowData(rowData, filler, []string{"a", "b", "c"}, a, b, c)...))
+		expect = getRowData(rowData, filler, cols, a, b, c)
+		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(expect...))
 		if !tk.Session().GetSessionVars().FoundInPlanCache {
 			tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 			require.False(t, q.usesBatchPointGet && canUseBatchPointGet)
@@ -2073,7 +2084,10 @@ func preparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, poi
 		ps := []*util.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		res := tk.MustQuery(fmt.Sprintf("explain for connection %d "+comment, tkProcess.ID))
-		if q.usesBatchPointGet && len(pointGetExplain) > 0 && canUseBatchPointGet {
+		if q.usesBatchPointGet &&
+			len(pointGetExplain) > 0 &&
+			canUseBatchPointGet &&
+			!hasSpaceCol {
 			res.MultiCheckContain(
 				append([]string{"Batch_Point_Get"}, pointGetExplain...))
 		} else {
