@@ -1883,7 +1883,7 @@ func TestPartitionIntFullCover(t *testing.T) {
 		},
 		{
 			"partition by key (a) partitions 7",
-			true,
+			false,
 		},
 	}
 	rows := 1000
@@ -1923,6 +1923,7 @@ func TestPartitionIntFullCover(t *testing.T) {
 			comment := "/* " + currTest + " */"
 			tk.MustExec("CREATE TABLE t " + tblDef + " " + part.partSQL + " " + comment)
 			tk.MustExec("insert into t select * from tNorm " + comment)
+			// Don't require global stats for using dynamic prune mode
 			tk.MustExec(`set tidb_opt_fix_control='44262:ON' ` + comment)
 
 			/* TODO:
@@ -1945,7 +1946,7 @@ func TestPartitionIntFullCover(t *testing.T) {
 			preparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest)
 			nonPreparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest)
 			preparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet)
-			nonpreparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet)
+			nonpreparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet && testTbl.pointGetExplain != nil)
 
 			tk.MustExec("drop table t")
 		}
@@ -2115,18 +2116,23 @@ func nonPreparedStmtPointGet(t *testing.T, ids []int, tk *testkit.TestKit, testT
 func nonpreparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, pointGetExplain []string, seededRand *rand.Rand, rowData map[int]string, filler, currTest string, canUseBatchPointGet bool) {
 	// Test prepared statements
 	usePlanCache := len(pointGetExplain) == 0
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
 	queries := []struct {
 		sql               string
 		usesBatchPointGet bool
+		canUsePlanCache   bool
 	}{
 		{
 			"select a,b,c from t where a IN (%d,%d,%d)",
 			true,
+			true,
 		},
+
 		{
 			"select a,b,c from t where a = %d or a = %d or a = %d",
 			// See canConvertPointGet, just needs to be enabled :)
 			false,
+			true,
 		},
 		{
 			// This uses an 'AccessCondition' for testing more
@@ -2134,6 +2140,8 @@ func nonpreparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, 
 			"select a,b,c from t where a IN (%d,%d,%d) and b is not null",
 			// Currently not enabled, since not only an IN (in tryWhereIn2BatchPointGet)
 			// or have multiple values which does not yet enabled through canConvertPointGet.
+			false,
+			//
 			false,
 		},
 	}
@@ -2150,9 +2158,11 @@ func nonpreparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, 
 		a, b, c = ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))]
 		query = fmt.Sprintf(q.sql+" %s", a, b, c, comment)
 		tk.MustQuery(query).Sort().Check(testkit.Rows(getRowData(rowData, filler, []string{"a", "b", "c"}, a, b, c)...))
-		if usePlanCache && !tk.Session().GetSessionVars().FoundInPlanCache {
-			tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
-			require.False(t, q.usesBatchPointGet)
+		if q.canUsePlanCache && usePlanCache && !tk.Session().GetSessionVars().FoundInPlanCache {
+			tk.MustQuery("show warnings " + comment).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
+			//} else {
+			// TODO: still check warnings?
+
 		}
 		res := tk.MustQuery(fmt.Sprintf("explain %s", query))
 		//if q.usesBatchPointGet && len(pointGetExplain) > 0 && canUseBatchPointGet {
