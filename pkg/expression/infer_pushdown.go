@@ -205,7 +205,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
-		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONLength,
+		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONLength, ast.JSONMergePatch,
 		ast.JSONUnquote, ast.JSONContains, ast.JSONValid, ast.JSONMemberOf, ast.JSONArrayAppend,
 
 		// date functions.
