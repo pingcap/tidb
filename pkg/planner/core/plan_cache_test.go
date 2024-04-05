@@ -1811,7 +1811,7 @@ func TestPartitionIntFullCover(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	seed := time.Now().UnixNano()
-	seed = 1710854203824599000
+	//seed = 1710854203824599000
 	t.Logf("seed: %d", seed)
 	seededRand := rand.New(rand.NewSource(seed))
 	tableDefSQL := []partCoverStruct{
