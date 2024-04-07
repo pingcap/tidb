@@ -110,9 +110,9 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
 		// schema version like prepared plan cache key
-		stmt.CachedPlan = nil
-		stmt.Executor = nil
-		stmt.ColumnInfos = nil
+		stmt.PointGet.CachedPlan = nil
+		stmt.PointGet.Executor = nil
+		stmt.PointGet.ColumnInfos = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		// Example:
@@ -135,7 +135,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()
 	if stmt.StmtCacheable && expiredTimeStamp4PC.Compare(vars.LastUpdateTime4PC) > 0 {
 		sctx.GetSessionPlanCache().DeleteAll()
-		stmt.CachedPlan = nil
+		stmt.PointGet.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
 	return nil
@@ -194,7 +194,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	if stmtCtx.UseCache && stmt.CachedPlan != nil { // special code path for fast point plan
+	if stmtCtx.UseCache && stmt.PointGet.CachedPlan != nil { // special code path for fast point plan
 		if plan, names, ok, err := getCachedPointPlan(stmt, sessVars, stmtCtx); ok {
 			return plan, names, err
 		}
@@ -240,8 +240,8 @@ func getCachedPointPlan(stmt *PlanCacheStmt, sessVars *variable.SessionVars, stm
 	// type from "paramMarker" to "Constant".When Point Select queries are executed,
 	// the expression in the where condition will not be evaluated,
 	// so you don't need to consider whether prepared.useCache is enabled.
-	plan := stmt.CachedPlan.(Plan)
-	names := stmt.CachedNames.(types.NameSlice)
+	plan := stmt.PointGet.CachedPlan.(Plan)
+	names := stmt.PointGet.CachedNames.(types.NameSlice)
 	if !RebuildPlan4CachedPlan(plan) {
 		return nil, nil, false, nil
 	}
@@ -792,8 +792,8 @@ func tryCachePointPlan(_ context.Context, sctx PlanContext,
 
 	if ok {
 		// just cache point plan now
-		stmt.CachedPlan = p
-		stmt.CachedNames = names
+		stmt.PointGet.CachedPlan = p
+		stmt.PointGet.CachedNames = names
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		sctx.GetSessionVars().StmtCtx.SetPlan(p)
 		sctx.GetSessionVars().StmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
@@ -805,7 +805,7 @@ func tryCachePointPlan(_ context.Context, sctx PlanContext,
 // Be careful with the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
 func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt) (bool, error) {
-	if stmt.CachedPlan == nil || staleread.IsStmtStaleness(sctx) {
+	if stmt.PointGet.CachedPlan == nil || staleread.IsStmtStaleness(sctx) {
 		return false, nil
 	}
 	// check auto commit
@@ -813,23 +813,23 @@ func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema
 		return false, nil
 	}
 	if stmt.SchemaVersion != is.SchemaMetaVersion() {
-		stmt.CachedPlan = nil
-		stmt.ColumnInfos = nil
+		stmt.PointGet.CachedPlan = nil
+		stmt.PointGet.ColumnInfos = nil
 		return false, nil
 	}
 	// maybe we'd better check cached plan type here, current
 	// only point select/update will be cached, see "getPhysicalPlan" func
 	var ok bool
 	var err error
-	switch stmt.CachedPlan.(type) {
+	switch stmt.PointGet.CachedPlan.(type) {
 	case *PointGetPlan:
 		ok = true
 	case *Update:
-		pointUpdate := stmt.CachedPlan.(*Update)
+		pointUpdate := stmt.PointGet.CachedPlan.(*Update)
 		_, ok = pointUpdate.SelectPlan.(*PointGetPlan)
 		if !ok {
 			err = errors.Errorf("cached update plan not point update")
-			stmt.CachedPlan = nil
+			stmt.PointGet.CachedPlan = nil
 			return false, err
 		}
 	default:

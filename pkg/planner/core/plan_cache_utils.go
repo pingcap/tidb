@@ -443,20 +443,21 @@ func (*PlanCacheQueryFeatures) Leave(in ast.Node) (out ast.Node, ok bool) {
 
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
-	PreparedAst *ast.Prepared
-	StmtDB      string // which DB the statement will be processed over
-	VisitInfos  []visitInfo
-	ColumnInfos any
-	Params      []ast.ParamMarkerExpr
-	// Executor is only used for point get scene.
-	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
-	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
-	Executor any
-
-	// below fields are for PointGet short path
+	PreparedAst   *ast.Prepared
+	StmtDB        string // which DB the statement will be processed over
+	VisitInfos    []visitInfo
+	Params        []ast.ParamMarkerExpr
 	SchemaVersion int64
-	CachedPlan    any
-	CachedNames   any
+
+	PointGet struct {
+		ColumnInfos any
+		// Executor is only used for point get scene.
+		// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
+		// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
+		Executor    any
+		CachedPlan  any
+		CachedNames any
+	}
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
