@@ -30,6 +30,23 @@ import (
 	"go.uber.org/zap"
 )
 
+// getConcurrency gets the concurrency of loading stats.
+// the concurrency is from 2 to 16.
+// when Performance.ForceInitStats is true, the concurrency is from 2 to GOMAXPROCS(0)-2.
+// -2 is to ensure that the system has enough resources to handle other tasks. such as GC and stats cache internal.
+// when Performance.ForceInitStats is false, the concurrency is from 2 to GOMAXPROCS(0)/2.
+// it is to ensure that concurrency doesn't affect the performance of customer's business.
+func getConcurrency() int {
+	var concurrency int
+	if config.GetGlobalConfig().Performance.ForceInitStats {
+		concurrency = min(max(2, runtime.GOMAXPROCS(0)-2), 16)
+	} else {
+		concurrency = min(max(2, runtime.GOMAXPROCS(0)/2), 16)
+	}
+	return concurrency
+
+}
+
 // Worker is used to load stats concurrently.
 type Worker struct {
 	taskFunc func(ctx context.Context, req *chunk.Chunk) error
@@ -50,12 +67,7 @@ func NewWorker(
 
 // LoadStats loads stats concurrently when to init stats
 func (ls *Worker) LoadStats(is infoschema.InfoSchema, cache statstypes.StatsCache, rc sqlexec.RecordSet) {
-	var concurrency int
-	if config.GetGlobalConfig().Performance.ForceInitStats {
-		concurrency = min(max(2, runtime.GOMAXPROCS(0)-2), 16)
-	} else {
-		concurrency = min(max(2, runtime.GOMAXPROCS(0)/2), 16)
-	}
+	concurrency := getConcurrency()
 	for n := 0; n < concurrency; n++ {
 		ls.wg.Run(func() {
 			req := rc.NewChunk(nil)
