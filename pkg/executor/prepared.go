@@ -204,11 +204,10 @@ func (e *DeallocateExec) Next(context.Context, *chunk.Chunk) error {
 	if !ok {
 		return errors.Errorf("invalid PlanCacheStmt type")
 	}
-	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if e.Ctx().GetSessionVars().EnablePreparedPlanCache {
 		bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(e.Ctx(), preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
-		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion,
+		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, preparedObj.SchemaVersion,
 			0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 		if err != nil {
 			return err

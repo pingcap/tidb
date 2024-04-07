@@ -291,7 +291,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 			a.PsStmt.Executor = nil
 		} else {
 			// CachedPlan type is already checked in last step
-			pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
+			pointGetPlan := a.PsStmt.CachedPlan.(*plannercore.PointGetPlan)
 			exec.Init(pointGetPlan)
 			a.PsStmt.Executor = exec
 			executor = exec
