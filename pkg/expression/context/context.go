@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 // EvalContext is used to evaluate an expression
@@ -68,10 +69,43 @@ type EvalContext interface {
 type BuildContext interface {
 	// GetEvalCtx returns the EvalContext.
 	GetEvalCtx() EvalContext
+	// GetCharsetInfo gets charset and collation for current context.
+	GetCharsetInfo() (string, string)
+	// GetDefaultCollationForUTF8MB4 returns the default collation of UTF8MB4.
+	GetDefaultCollationForUTF8MB4() string
+	// GetBlockEncryptionMode returns the variable `block_encryption_mode`.
+	GetBlockEncryptionMode() string
+	// GetSysdateIsNow returns a bool to determine whether Sysdate is an alias of Now function.
+	// It is the value of variable `tidb_sysdate_is_now`.
+	GetSysdateIsNow() bool
+	// GetNoopFuncsMode returns the noop function mode: OFF/ON/WARN values as 0/1/2.
+	GetNoopFuncsMode() int
+	// Rng is used to generate random values.
+	Rng() *mathutil.MysqlRng
+	// IsUseCache indicates whether to cache the build expression in plan cache.
+	IsUseCache() bool
+	// SetSkipPlanCache sets to skip the plan cache and records the reason.
+	SetSkipPlanCache(reason error)
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
 	// Value returns the value associated with this context for key.
 	Value(key fmt.Stringer) any
 	// SetValue saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value any)
+}
+
+// AggFuncBuildContext is used to build an aggregate function
+type AggFuncBuildContext interface {
+	BuildContext
+	// GetWindowingUseHighPrecision determines whether to compute window operations without loss of precision.
+	// see https://dev.mysql.com/doc/refman/8.0/en/window-function-optimization.html for more details.
+	GetWindowingUseHighPrecision() bool
+	// GetGroupConcatMaxLen returns the value of the 'group_concat_max_len' system variable.
+	GetGroupConcatMaxLen() uint64
+}
+
+// ExprContext contains full context for expression building and evaluating.
+type ExprContext interface {
+	BuildContext
+	AggFuncBuildContext
 }

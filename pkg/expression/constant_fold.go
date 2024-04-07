@@ -220,7 +220,8 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 				// of Constant to nil is ok.
 				return &Constant{Value: value, RetType: x.RetType}, false
 			}
-			if isTrue, err := value.ToBool(sc.TypeCtx()); err == nil && isTrue == 0 {
+			evalCtx := ctx.GetEvalCtx()
+			if isTrue, err := value.ToBool(evalCtx.TypeCtx()); err == nil && isTrue == 0 {
 				// This Constant is created to compose the result expression of EvaluateExprWithNull when InNullRejectCheck
 				// is true. We just check whether the result expression is null or false and then let it die. Basically,
 				// the constant is used once briefly and will not be retained for a long time. Hence setting DeferredExpr

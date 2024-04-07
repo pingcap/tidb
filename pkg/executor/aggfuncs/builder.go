@@ -15,16 +15,13 @@
 package aggfuncs
 
 import (
-	"context"
 	"fmt"
-	"strconv"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -33,7 +30,7 @@ import (
 )
 
 // AggFuncBuildContext is used to build aggregation functions.
-type AggFuncBuildContext = exprctx.BuildContext
+type AggFuncBuildContext = exprctx.AggFuncBuildContext
 
 // Build is used to build a specific AggFunc implementation according to the
 // input aggFuncDesc.
@@ -287,7 +284,7 @@ func buildSum(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ord
 			if aggFuncDesc.HasDistinct {
 				return &sum4DistinctFloat64{base}
 			}
-			if ctx.GetSessionVars().WindowingUseHighPrecision {
+			if ctx.GetWindowingUseHighPrecision() {
 				return &sum4Float64HighPrecision{baseSum4Float64{base}}
 			}
 			return &sum4Float64{baseSum4Float64{base}}
@@ -321,7 +318,7 @@ func buildAvg(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ord
 			if aggFuncDesc.HasDistinct {
 				return &avgOriginal4DistinctFloat64{base}
 			}
-			if ctx.GetSessionVars().WindowingUseHighPrecision {
+			if ctx.GetWindowingUseHighPrecision() {
 				return &avgOriginal4Float64HighPrecision{baseAvgFloat64{base}}
 			}
 			return &avgOriginal4Float64{avgOriginal4Float64HighPrecision{baseAvgFloat64{base}}}
@@ -477,16 +474,7 @@ func buildGroupConcat(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncD
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", err.Error()))
 		}
-		var s string
-		s, err = ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.GroupConcatMaxLen)
-		if err != nil {
-			panic(fmt.Sprintf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
-		}
-		maxLen, err := strconv.ParseUint(s, 10, 64)
-		// Should never happen
-		if err != nil {
-			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", err.Error()))
-		}
+		maxLen := ctx.GetGroupConcatMaxLen()
 		var truncated int32
 		base := baseGroupConcat4String{
 			baseAggFunc: baseAggFunc{
@@ -719,7 +707,8 @@ func buildLeadLag(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc,
 	if len(aggFuncDesc.Args) == 3 {
 		defaultExpr = aggFuncDesc.Args[2]
 		if et, ok := defaultExpr.(*expression.Constant); ok {
-			res, err1 := et.Value.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), aggFuncDesc.RetTp)
+			evalCtx := ctx.GetEvalCtx()
+			res, err1 := et.Value.ConvertTo(evalCtx.TypeCtx(), aggFuncDesc.RetTp)
 			if err1 == nil {
 				defaultExpr = &expression.Constant{Value: res, RetType: aggFuncDesc.RetTp}
 			}

@@ -35,7 +35,7 @@ type PlanContext interface {
 	// GetRestrictedSQLExecutor gets the RestrictedSQLExecutor.
 	GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor
 	// GetExprCtx gets the expression context.
-	GetExprCtx() exprctx.BuildContext
+	GetExprCtx() exprctx.ExprContext
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 	// GetSessionVars gets the session variables.
