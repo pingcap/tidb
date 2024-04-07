@@ -2198,13 +2198,11 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		}
 	}
 
-	// global index not tested, could delete '!is.Index.Global' after test
-	if !is.Index.Global && FindColumnInfoByID(is.Columns, model.ExtraPhysTblID) != nil {
-		for _, col := range is.dataSourceSchema.Columns {
-			if col.ID == model.ExtraPhysTblID {
-				indexCols = append(indexCols, col.Clone().(*expression.Column))
-				break
-			}
+	// If `dataSouceSchema` contains `model.ExtraPhysTblID`, we should add it into `indexPlan.schema`
+	for _, col := range is.dataSourceSchema.Columns {
+		if col.ID == model.ExtraPhysTblID {
+			indexCols = append(indexCols, col.Clone().(*expression.Column))
+			break
 		}
 	}
 
