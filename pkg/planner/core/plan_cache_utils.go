@@ -449,6 +449,9 @@ type PlanCacheStmt struct {
 	Params        []ast.ParamMarkerExpr
 	SchemaVersion int64
 
+	// To improve the performance of PointGet further, directly cache PointGet execution info here like Executor, ColumnNames and etc.
+	// Use any to avoid cycle import.
+	// TODO: this implementation is risky and tricky to the optimizer, refactor it.
 	PointGet struct {
 		ColumnInfos any
 		ColumnNames any
@@ -456,7 +459,7 @@ type PlanCacheStmt struct {
 		// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
 		// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
 		Executor any
-		Plan     any
+		Plan     any // the cached PointGetPlan
 	}
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
