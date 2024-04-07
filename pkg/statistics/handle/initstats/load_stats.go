@@ -39,12 +39,12 @@ import (
 func getConcurrency() int {
 	var concurrency int
 	if config.GetGlobalConfig().Performance.ForceInitStats {
-		concurrency = min(max(2, runtime.GOMAXPROCS(0)-2), 16)
+		concurrency = runtime.GOMAXPROCS(0) - 2
 	} else {
-		concurrency = min(max(2, runtime.GOMAXPROCS(0)/2), 16)
+		concurrency = runtime.GOMAXPROCS(0) / 2
 	}
+	concurrency = min(max(2, concurrency), 16)
 	return concurrency
-
 }
 
 // Worker is used to load stats concurrently.
