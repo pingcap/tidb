@@ -15,19 +15,9 @@
 package initstats
 
 import (
-	"context"
 	"runtime"
-	"sync"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
-	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"go.uber.org/zap"
 )
 
 // getConcurrency gets the concurrency of loading stats.
@@ -45,60 +35,4 @@ func getConcurrency() int {
 	}
 	concurrency = min(max(2, concurrency), 16)
 	return concurrency
-}
-
-// Worker is used to load stats concurrently.
-type Worker struct {
-	taskFunc func(ctx context.Context, req *chunk.Chunk) error
-	dealFunc func(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk)
-	mu       sync.Mutex
-	wg       util.WaitGroupWrapper
-}
-
-// NewWorker creates a new Worker.
-func NewWorker(
-	taskFunc func(ctx context.Context, req *chunk.Chunk) error,
-	dealFunc func(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk)) *Worker {
-	return &Worker{
-		taskFunc: taskFunc,
-		dealFunc: dealFunc,
-	}
-}
-
-// LoadStats loads stats concurrently when to init stats
-func (ls *Worker) LoadStats(is infoschema.InfoSchema, cache statstypes.StatsCache, rc sqlexec.RecordSet) {
-	concurrency := getConcurrency()
-	for n := 0; n < concurrency; n++ {
-		ls.wg.Run(func() {
-			req := rc.NewChunk(nil)
-			ls.loadStats(is, cache, req)
-		})
-	}
-}
-
-func (ls *Worker) loadStats(is infoschema.InfoSchema, cache statstypes.StatsCache, req *chunk.Chunk) {
-	iter := chunk.NewIterator4Chunk(req)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	for {
-		err := ls.getTask(ctx, req)
-		if err != nil {
-			logutil.StatsLogger().Error("load stats failed", zap.Error(err))
-			return
-		}
-		if req.NumRows() == 0 {
-			return
-		}
-		ls.dealFunc(is, cache, iter)
-	}
-}
-
-func (ls *Worker) getTask(ctx context.Context, req *chunk.Chunk) error {
-	ls.mu.Lock()
-	defer ls.mu.Unlock()
-	return ls.taskFunc(ctx, req)
-}
-
-// Wait closes the load stats worker.
-func (ls *Worker) Wait() {
-	ls.wg.Wait()
 }

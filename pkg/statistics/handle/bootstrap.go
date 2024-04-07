@@ -98,12 +98,6 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache,
 	if err != nil {
 		return nil, err
 	}
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		ls := initstats.NewWorker(rc.Next, h.initStatsMeta4Chunk)
-		ls.LoadStats(is, tables, rc)
-		ls.Wait()
-		return tables, nil
-	}
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
