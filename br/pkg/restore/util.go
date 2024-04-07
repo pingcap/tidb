@@ -515,6 +515,7 @@ func SplitRanges(
 		client.pdHTTPClient,
 		client.GetTLSConfig(),
 		isRawKv,
+		maxSplitKeysOnce,
 	))
 
 	return splitter.ExecuteSplit(ctx, ranges, client.GetStoreCount(), isRawKv, func(keys [][]byte) {

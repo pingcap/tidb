@@ -24,6 +24,7 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/intest",
         "//pkg/util/redact",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_google_btree//:btree",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -49,12 +50,13 @@ go_test(
     name = "split_test",
     timeout = "short",
     srcs = [
+        "client_test.go",
         "split_test.go",
         "sum_sorted_test.go",
     ],
     embed = [":split"],
     flaky = True,
-    shard_count = 12,
+    shard_count = 13,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/utils",
