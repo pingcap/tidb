@@ -122,6 +122,11 @@ aliases:
     - gmhdbjd
     - lichunzhu
   sig-approvers-planner: # approvers for planner module
+    - Arenatlx
+    - elsa0520
     - fixdb
-    - winoros
+    - hawkingrei
+    - hi-rustin
     - qw4990
+    - time-and-fate
+    - winoros
