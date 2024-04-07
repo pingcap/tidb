@@ -109,12 +109,8 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (util.StatsCache, error
 	return tables, nil
 }
 
-<<<<<<< HEAD
 func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
-=======
-func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
->>>>>>> 035f5a3cc0c (statistics: batch write into stats cache when to init stats (#52347))
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID := row.GetInt64(0)
 		if table == nil || table.PhysicalID != tblID {
@@ -194,12 +190,8 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 	}
 }
 
-<<<<<<< HEAD
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
-=======
-func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
->>>>>>> 035f5a3cc0c (statistics: batch write into stats cache when to init stats (#52347))
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
 		if table == nil || table.PhysicalID != tblID {
@@ -213,14 +205,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			table = table.Copy()
 		}
-<<<<<<< HEAD
-		table = table.Copy()
-=======
-		// All the objects in the table share the same stats version.
-		if statsVer != statistics.Version0 {
-			table.StatsVer = int(statsVer)
-		}
->>>>>>> 035f5a3cc0c (statistics: batch write into stats cache when to init stats (#52347))
 		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
 		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))
 		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
@@ -285,13 +269,8 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 	}
 }
 
-<<<<<<< HEAD
 func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache util.StatsCache) error {
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
-=======
-func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms order by table_id"
->>>>>>> 035f5a3cc0c (statistics: batch write into stats cache when to init stats (#52347))
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -313,13 +292,8 @@ func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statsty
 	return nil
 }
 
-<<<<<<< HEAD
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache util.StatsCache) error {
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
-=======
-func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms order by table_id"
->>>>>>> 035f5a3cc0c (statistics: batch write into stats cache when to init stats (#52347))
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -428,13 +402,8 @@ func (*Handle) initStatsTopN4Chunk(cache util.StatsCache, iter *chunk.Iterator4C
 	}
 }
 
-<<<<<<< HEAD
 func (h *Handle) initStatsTopN(cache util.StatsCache) error {
-	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
-=======
-func (h *Handle) initStatsTopN(cache statstypes.StatsCache) error {
 	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1 order by table_id"
->>>>>>> 035f5a3cc0c (statistics: batch write into stats cache when to init stats (#52347))
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -565,12 +534,8 @@ func (h *Handle) initStatsFMSketch(cache util.StatsCache) error {
 	return nil
 }
 
-<<<<<<< HEAD
 func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterator4Chunk) {
-=======
-func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
->>>>>>> 035f5a3cc0c (statistics: batch write into stats cache when to init stats (#52347))
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		if table == nil || table.PhysicalID != tableID {
