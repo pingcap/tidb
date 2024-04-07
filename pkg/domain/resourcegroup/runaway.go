@@ -185,6 +185,7 @@ func (r *QuarantineRecord) GenDeletionStmt() (string, []any) {
 // RunawayManager is used to detect and record runaway queries.
 type RunawayManager struct {
 	syncerInitialized atomic.Bool
+	logOnce           sync.Once
 
 	// queryLock is used to avoid repeated additions. Since we will add new items to the system table,
 	// in order to avoid repeated additions, we need a lock to ensure that
@@ -291,10 +292,9 @@ func (rm *RunawayManager) markQuarantine(resourceGroupName, convict string, watc
 	// Add record without ID into watch list in this TiDB right now.
 	rm.addWatchList(record, ttl, false)
 	if !rm.syncerInitialized.Load() {
-		logutil.BgLogger().Warn("runaway syncer is not initialized, so can't record runaway watch",
-			zap.String("resource group", resourceGroupName),
-			zap.String("watch-text", convict),
-			zap.String("watch type", watchType.String()))
+		rm.logOnce.Do(func() {
+			logutil.BgLogger().Warn("runaway syncer is not initialized, so can't records about runaway")
+		})
 		return
 	}
 	select {
@@ -396,9 +396,9 @@ func (rm *RunawayManager) getWatchFromWatchList(key string) *QuarantineRecord {
 func (rm *RunawayManager) markRunaway(resourceGroupName, originalSQL, planDigest string, action string, matchType RunawayMatchType, now *time.Time) {
 	source := rm.serverID
 	if !rm.syncerInitialized.Load() {
-		logutil.BgLogger().Warn("runaway syncer is not initialized, so can't record runaway queries",
-			zap.String("resource group", resourceGroupName),
-			zap.String("sql", originalSQL))
+		rm.logOnce.Do(func() {
+			logutil.BgLogger().Warn("runaway syncer is not initialized, so can't records about runaway")
+		})
 		return
 	}
 	select {
