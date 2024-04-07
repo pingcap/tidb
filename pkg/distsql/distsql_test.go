@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -205,7 +206,7 @@ type mockResponse struct {
 	count int
 	total int
 	batch int
-	ctx   sessionctx.Context
+	ctx   *distsqlctx.DistSQLContext
 	sync.Mutex
 }
 
@@ -230,7 +231,7 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 	resp.count += numRows
 
 	var chunks []tipb.Chunk
-	if !canUseChunkRPC(resp.ctx.GetDistSQLCtx()) {
+	if !canUseChunkRPC(resp.ctx) {
 		datum := types.NewIntDatum(1)
 		bytes := make([]byte, 0, 100)
 		bytes, _ = codec.EncodeValue(time.UTC, bytes, datum, datum, datum, datum)
@@ -268,7 +269,7 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 		Chunks:       chunks,
 		OutputCounts: []int64{1},
 	}
-	if canUseChunkRPC(resp.ctx.GetDistSQLCtx()) {
+	if canUseChunkRPC(resp.ctx) {
 		respPB.EncodeType = tipb.EncodeType_TypeChunk
 	} else {
 		respPB.EncodeType = tipb.EncodeType_TypeDefault
@@ -305,7 +306,7 @@ func newMockSessionContext() sessionctx.Context {
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{
 			MockResponse: &mockResponse{
-				ctx:   ctx,
+				ctx:   ctx.GetDistSQLCtx(),
 				batch: 1,
 				total: 2,
 			},
