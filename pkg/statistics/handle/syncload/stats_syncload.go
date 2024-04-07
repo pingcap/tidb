@@ -45,7 +45,6 @@ type statsSyncLoad struct {
 func NewStatsSyncLoad(statsHandle statstypes.StatsHandle) statstypes.StatsSyncLoad {
 	s := &statsSyncLoad{statsHandle: statsHandle}
 	cfg := config.GetGlobalConfig()
-	s.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	s.StatsLoad.NeededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	s.StatsLoad.TimeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	return s
@@ -56,12 +55,6 @@ type statsWrapper struct {
 	idxInfo *model.IndexInfo
 	col     *statistics.Column
 	idx     *statistics.Index
-}
-
-// SetSubCtxs sets the sessionctx which is used to run queries background.
-// TODO: use SessionPool instead.
-func (s *statsSyncLoad) SetSubCtxs(idx int, sctx sessionctx.Context) {
-	s.StatsLoad.SubCtxs[idx] = sctx
 }
 
 // SendLoadRequests send neededColumns requests
