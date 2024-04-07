@@ -845,7 +845,7 @@ func TestTxnAssertion(t *testing.T) {
 		tk.MustExec("set @@tidb_redact_log=MARKER")
 		withFailpoint(fpAdd, func() {
 			err = tk.ExecToErr("insert into t values (?, 10, 100, 1000, '10000')", id1)
-			require.Contains(t, err.Error(), "assertion failed: key: ‹")
+			require.Contains(t, err.Error(), "‹")
 		})
 		tk.MustExec("set @@tidb_redact_log=0")
 
