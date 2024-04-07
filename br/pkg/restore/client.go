@@ -2966,7 +2966,7 @@ func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
 		if c := cmp.Compare(i.GetMaxTs(), j.GetMaxTs()); c != 0 {
 			return c
 		}
-		return cmp.Compare(i.GetResolvedTs(), j.GetResolvedTs())
+		return cmp.Compare(i.GetWatermark(), j.GetWatermark())
 	})
 	return files
 }

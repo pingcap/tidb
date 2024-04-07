@@ -2131,7 +2131,7 @@ func getTsFromFiles(files []*backuppb.DataFileInfo) (uint64, uint64, uint64) {
 		return 0, 0, 0
 	}
 	f := files[0]
-	minTs, maxTs, resolvedTs := f.MinTs, f.MaxTs, f.ResolvedTs
+	minTs, maxTs, watermark := f.MinTs, f.MaxTs, f.Watermark
 	for _, file := range files {
 		if file.MinTs < minTs {
 			minTs = file.MinTs
@@ -2139,22 +2139,22 @@ func getTsFromFiles(files []*backuppb.DataFileInfo) (uint64, uint64, uint64) {
 		if file.MaxTs > maxTs {
 			maxTs = file.MaxTs
 		}
-		if file.ResolvedTs < resolvedTs {
-			resolvedTs = file.ResolvedTs
+		if file.Watermark < watermark {
+			watermark = file.Watermark
 		}
 	}
-	return minTs, maxTs, resolvedTs
+	return minTs, maxTs, watermark
 }
 
 func mf(id int64, filess [][]*backuppb.DataFileInfo) *backuppb.Metadata {
 	filegroups := make([]*backuppb.DataFileGroup, 0)
 	for _, files := range filess {
-		minTs, maxTs, resolvedTs := getTsFromFiles(files)
+		minTs, maxTs, watermark := getTsFromFiles(files)
 		filegroups = append(filegroups, &backuppb.DataFileGroup{
 			DataFilesInfo: files,
 			MinTs:         minTs,
 			MaxTs:         maxTs,
-			MinResolvedTs: resolvedTs,
+			MinWatermark: watermark,
 		})
 	}
 

@@ -76,10 +76,10 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 
 	var finished bool
 	var totalSize int64
-	var resolvedTs, backupStartTs uint64
+	var watermark, backupStartTs uint64
 	defer func() {
 		if finished {
-			summary.Log("EBS backup success", zap.Int64("size", totalSize), zap.Uint64("resolved_ts", resolvedTs), zap.Uint64("backup_start_ts", backupStartTs))
+			summary.Log("EBS backup success", zap.Int64("size", totalSize), zap.Uint64("resolved_ts", watermark), zap.Uint64("backup_start_ts", backupStartTs))
 		} else {
 			summary.Log("EBS backup failed, please check the log for details.")
 		}
@@ -178,13 +178,13 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	}
 
 	// Step.1.2 get global resolved ts and stop gc until all volumes ebs snapshot starts.
-	resolvedTs, err = mgr.GetMinResolvedTS(ctx)
+	watermark, err = mgr.GetMinWatermark(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if !cfg.SkipPauseGCAndScheduler {
 		sp := utils.BRServiceSafePoint{
-			BackupTS: resolvedTs,
+			BackupTS: watermark,
 			TTL:      utils.DefaultBRGCSafePointTTL,
 			ID:       utils.MakeSafePointID(),
 		}
@@ -236,7 +236,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		// but for now json is enough.
 		backupInfo.SetClusterVersion(normalizedVer.String())
 		backupInfo.SetFullBackupType(string(cfg.FullBackupType))
-		backupInfo.SetResolvedTS(resolvedTs)
+		backupInfo.SetWatermark(watermark)
 		backupInfo.SetSnapshotIDs(snapIDMap)
 		backupInfo.SetVolumeAZs(volAZs)
 		err = saveMetaFile(c, backupInfo, client.GetStorage())

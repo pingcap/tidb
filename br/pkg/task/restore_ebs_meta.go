@@ -153,12 +153,12 @@ func (h *restoreEBSMetaHelper) restore() error {
 	var (
 		finished   bool
 		totalSize  int64
-		resolvedTs uint64
+		watermark uint64
 		err        error
 	)
 	defer func() {
 		if finished {
-			summary.Log("EBS restore success", zap.Int64("size", totalSize), zap.Uint64("resolved_ts", resolvedTs))
+			summary.Log("EBS restore success", zap.Int64("size", totalSize), zap.Uint64("resolved_ts", watermark))
 		} else {
 			summary.Log("EBS restore failed, please check the log for details.")
 		}
@@ -181,7 +181,7 @@ func (h *restoreEBSMetaHelper) restore() error {
 	defer progress.Close()
 	go progressFileWriterRoutine(ctx, progress, int64(volumeCount), h.cfg.ProgressFile)
 
-	resolvedTs = h.metaInfo.ClusterInfo.ResolvedTS
+	watermark = h.metaInfo.ClusterInfo.Watermark
 	if totalSize, err = h.doRestore(ctx, progress); err != nil {
 		return errors.Trace(err)
 	}
@@ -197,8 +197,8 @@ func (h *restoreEBSMetaHelper) doRestore(ctx context.Context, progress glue.Prog
 	if err := h.pdc.MarkRecovering(ctx); err != nil {
 		return 0, errors.Trace(err)
 	}
-	log.Info("set pd ts = max(resolved_ts, current pd ts)", zap.Uint64("resolved ts", h.metaInfo.ClusterInfo.ResolvedTS))
-	if err := h.pdc.ResetTS(ctx, h.metaInfo.ClusterInfo.ResolvedTS); err != nil {
+	log.Info("set pd ts = max(resolved_ts, current pd ts)", zap.Uint64("resolved ts", h.metaInfo.ClusterInfo.Watermark))
+	if err := h.pdc.ResetTS(ctx, h.metaInfo.ClusterInfo.Watermark); err != nil {
 		return 0, errors.Trace(err)
 	}
 

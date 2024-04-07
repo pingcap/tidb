@@ -112,7 +112,7 @@ func TestCheckLogRange(t *testing.T) {
 
 type fakeResolvedInfo struct {
 	storeID    int64
-	resolvedTS uint64
+	watermark uint64
 }
 
 func fakeMetaFiles(ctx context.Context, tempDir string, infos []fakeResolvedInfo) error {
@@ -125,13 +125,13 @@ func fakeMetaFiles(ctx context.Context, tempDir string, infos []fakeResolvedInfo
 	for _, info := range infos {
 		meta := &backuppb.Metadata{
 			StoreId:    info.storeID,
-			ResolvedTs: info.resolvedTS,
+			Watermark: info.watermark,
 		}
 		buff, err := meta.Marshal()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		filename := fmt.Sprintf("%d_%d.meta", info.storeID, info.resolvedTS)
+		filename := fmt.Sprintf("%d_%d.meta", info.storeID, info.watermark)
 		if err = s.WriteFile(ctx, filename, buff); err != nil {
 			return errors.Trace(err)
 		}

@@ -1402,31 +1402,31 @@ func TestSortMetaKVFiles(t *testing.T) {
 			Path:       "f5",
 			MinTs:      110,
 			MaxTs:      150,
-			ResolvedTs: 120,
+			Watermark: 120,
 		},
 		{
 			Path:       "f1",
 			MinTs:      100,
 			MaxTs:      100,
-			ResolvedTs: 80,
+			Watermark: 80,
 		},
 		{
 			Path:       "f2",
 			MinTs:      100,
 			MaxTs:      100,
-			ResolvedTs: 90,
+			Watermark: 90,
 		},
 		{
 			Path:       "f4",
 			MinTs:      110,
 			MaxTs:      130,
-			ResolvedTs: 120,
+			Watermark: 120,
 		},
 		{
 			Path:       "f3",
 			MinTs:      105,
 			MaxTs:      130,
-			ResolvedTs: 100,
+			Watermark: 100,
 		},
 	}
 

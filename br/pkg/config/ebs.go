@@ -59,7 +59,7 @@ type EBSStore struct {
 type ClusterInfo struct {
 	Version        string            `json:"cluster_version" toml:"cluster_version"`
 	FullBackupType string            `json:"full_backup_type" toml:"full_backup_type"`
-	ResolvedTS     uint64            `json:"resolved_ts" toml:"resolved_ts"`
+	Watermark     uint64            `json:"resolved_ts" toml:"resolved_ts"`
 	Replicas       map[string]uint64 `json:"replicas" toml:"replicas"`
 }
 
@@ -159,7 +159,7 @@ func (c *EBSBasedBRMeta) checkEBSBRMeta() error {
 	if _, err := semver.NewVersion(c.ClusterInfo.Version); err != nil {
 		return errors.Annotatef(err, "invalid cluster version")
 	}
-	if c.ClusterInfo.ResolvedTS == 0 {
+	if c.ClusterInfo.Watermark == 0 {
 		return errors.New("invalid resolved ts")
 	}
 	if c.GetStoreCount() == 0 {
@@ -168,13 +168,13 @@ func (c *EBSBasedBRMeta) checkEBSBRMeta() error {
 	return nil
 }
 
-func (c *EBSBasedBRMeta) SetResolvedTS(id uint64) {
+func (c *EBSBasedBRMeta) SetWatermark(id uint64) {
 	c.CheckClusterInfo()
-	c.ClusterInfo.ResolvedTS = id
+	c.ClusterInfo.Watermark = id
 }
 
-func (c *EBSBasedBRMeta) GetResolvedTS() uint64 {
-	return c.ClusterInfo.ResolvedTS
+func (c *EBSBasedBRMeta) GetWatermark() uint64 {
+	return c.ClusterInfo.Watermark
 }
 
 func (c *EBSBasedBRMeta) SetFullBackupType(t string) {

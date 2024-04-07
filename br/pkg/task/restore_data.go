@@ -31,7 +31,7 @@ func ReadBackupMetaData(ctx context.Context, s storage.ExternalStorage) (uint64,
 		log.Error("invalid meta file", zap.Reflect("meta", metaInfo))
 		return 0, 0, errors.New("invalid meta file, only support aws-ebs now")
 	}
-	return metaInfo.GetResolvedTS(), metaInfo.TiKVComponent.Replicas, nil
+	return metaInfo.GetWatermark(), metaInfo.TiKVComponent.Replicas, nil
 }
 
 // RunResolveKvData starts a restore task inside the current goroutine.
