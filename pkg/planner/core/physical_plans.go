@@ -299,6 +299,7 @@ func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
 	return rp
 }
 
+// AppendChildCandidate implements PhysicalPlan interface.
 func (p *PhysicalTableReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
 	p.basePhysicalPlan.AppendChildCandidate(op)
 	appendChildCandidate(p, p.tablePlan, op)
@@ -375,6 +376,7 @@ func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
 	return rp
 }
 
+// AppendChildCandidate implements PhysicalPlan interface.
 func (p *PhysicalIndexReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
 	p.basePhysicalPlan.AppendChildCandidate(op)
 	if p.indexPlan != nil {

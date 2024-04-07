@@ -648,10 +648,12 @@ func (p *PhysicalIndexJoin) GetPlanCostVer2(taskType property.TaskType, option *
 	return p.getIndexJoinCostVer2(taskType, option, 0)
 }
 
+// GetPlanCostVer2 implements PhysicalPlan interface.
 func (p *PhysicalIndexHashJoin) GetPlanCostVer2(taskType property.TaskType, option *coreusage.PlanCostOption) (coreusage.CostVer2, error) {
 	return p.getIndexJoinCostVer2(taskType, option, 1)
 }
 
+// GetPlanCostVer2 implements PhysicalPlan interface.
 func (p *PhysicalIndexMergeJoin) GetPlanCostVer2(taskType property.TaskType, option *coreusage.PlanCostOption) (coreusage.CostVer2, error) {
 	return p.getIndexJoinCostVer2(taskType, option, 2)
 }
@@ -777,6 +779,7 @@ func (p *BatchPointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *
 	return p.planCostVer2, nil
 }
 
+// GetPlanCostVer2 implements PhysicalPlan interface.
 func (p *PhysicalCTE) GetPlanCostVer2(taskType property.TaskType, option *coreusage.PlanCostOption) (coreusage.CostVer2, error) {
 	if p.planCostInit && !hasCostFlag(option.CostFlag, coreusage.CostFlagRecalculate) {
 		return p.planCostVer2, nil
