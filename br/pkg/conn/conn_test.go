@@ -406,7 +406,7 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/stop-retry-on-get-config-from-tikv", "return(true)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/stop-retry-on-get-config-from-tikv", "return(true)"))
 	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/stop-retry-on-get-config-from-tikv")
 	for _, ca := range cases {
 		pdCli := utils.FakePDClient{Stores: ca.stores}
