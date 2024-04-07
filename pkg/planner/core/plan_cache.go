@@ -16,7 +16,7 @@ package core
 
 import (
 	"context"
-	
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
