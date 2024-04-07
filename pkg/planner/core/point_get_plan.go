@@ -15,7 +15,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	math2 "math"
 	"strconv"
 	"strings"
@@ -36,6 +35,7 @@ import (
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -109,6 +109,7 @@ type PointGetPlan struct {
 	PartitionNames []model.CIStr
 }
 
+// GetEstRowCountForDisplay implements PhysicalPlan interface.
 func (p *PointGetPlan) GetEstRowCountForDisplay() float64 {
 	if p == nil {
 		return 0
@@ -116,6 +117,7 @@ func (p *PointGetPlan) GetEstRowCountForDisplay() float64 {
 	return p.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
 }
 
+// GetActualProbeCnt implements PhysicalPlan interface.
 func (p *PointGetPlan) GetActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
 	if p == nil {
 		return 1
@@ -123,6 +125,7 @@ func (p *PointGetPlan) GetActualProbeCnt(statsColl *execdetails.RuntimeStatsColl
 	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
 }
 
+// SetProbeParents implements PhysicalPlan interface.
 func (p *PointGetPlan) SetProbeParents(probeParents []PhysicalPlan) {
 	p.probeParents = probeParents
 }
@@ -261,6 +264,7 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.outputNames = names
 }
 
+// AppendChildCandidate implements PhysicalPlan interface.
 func (*PointGetPlan) AppendChildCandidate(_ *coreusage.PhysicalOptimizeOp) {}
 
 const emptyPointGetPlanSize = int64(unsafe.Sizeof(PointGetPlan{}))
@@ -446,6 +450,7 @@ type BatchPointGetPlan struct {
 	PartitionNames []model.CIStr
 }
 
+// GetEstRowCountForDisplay implements PhysicalPlan interface.
 func (p *BatchPointGetPlan) GetEstRowCountForDisplay() float64 {
 	if p == nil {
 		return 0
@@ -453,12 +458,15 @@ func (p *BatchPointGetPlan) GetEstRowCountForDisplay() float64 {
 	return p.StatsInfo().RowCount * getEstimatedProbeCntFromProbeParents(p.probeParents)
 }
 
+// GetActualProbeCnt implements PhysicalPlan interface.
 func (p *BatchPointGetPlan) GetActualProbeCnt(statsColl *execdetails.RuntimeStatsColl) int64 {
 	if p == nil {
 		return 1
 	}
 	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
 }
+
+// SetProbeParents implements PhysicalPlan interface.
 func (p *BatchPointGetPlan) SetProbeParents(probeParents []PhysicalPlan) {
 	p.probeParents = probeParents
 }
@@ -572,6 +580,7 @@ func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.names = names
 }
 
+// AppendChildCandidate implements PhysicalPlan interface.
 func (*BatchPointGetPlan) AppendChildCandidate(_ *coreusage.PhysicalOptimizeOp) {}
 
 const emptyBatchPointGetPlanSize = int64(unsafe.Sizeof(BatchPointGetPlan{}))

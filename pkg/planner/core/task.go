@@ -84,10 +84,12 @@ type copTask struct {
 	expectCnt uint64
 }
 
+// Invalid implements Task interface.
 func (t *copTask) Invalid() bool {
 	return t.tablePlan == nil && t.indexPlan == nil && len(t.idxMergePartPlans) == 0
 }
 
+// Count implements Task interface.
 func (t *copTask) Count() float64 {
 	if t.indexPlanFinished {
 		return t.tablePlan.StatsInfo().RowCount
@@ -95,11 +97,13 @@ func (t *copTask) Count() float64 {
 	return t.indexPlan.StatsInfo().RowCount
 }
 
+// Copy implements Task interface.
 func (t *copTask) Copy() Task {
 	nt := *t
 	return &nt
 }
 
+// Plan implements Task interface.
 // copTask plan should be careful with indexMergeReader, whose real plan is stored in
 // idxMergePartPlans, when its indexPlanFinished is marked with false.
 func (t *copTask) Plan() PhysicalPlan {
@@ -201,11 +205,13 @@ func (t *copTask) MemoryUsage() (sum int64) {
 	return
 }
 
+// Attach2Task implements PhysicalPlan interface.
 func (p *basePhysicalPlan) Attach2Task(tasks ...Task) Task {
 	t := tasks[0].ConvertToRootTask(p.SCtx())
 	return attachPlan2Task(p.self, t)
 }
 
+// Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalUnionScan) Attach2Task(tasks ...Task) Task {
 	// We need to pull the projection under unionScan upon unionScan.
 	// Since the projection only prunes columns, it's ok the put it upon unionScan.
@@ -234,6 +240,7 @@ func (p *PhysicalUnionScan) Attach2Task(tasks ...Task) Task {
 	return p.basePhysicalPlan.Attach2Task(tasks...)
 }
 
+// Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalApply) Attach2Task(tasks ...Task) Task {
 	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	rTask := tasks[1].ConvertToRootTask(p.SCtx())
@@ -244,6 +251,7 @@ func (p *PhysicalApply) Attach2Task(tasks ...Task) Task {
 	return t
 }
 
+// Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...Task) Task {
 	innerTask := p.innerTask
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
@@ -270,6 +278,7 @@ func (p *PhysicalIndexHashJoin) attach2Task(tasks ...Task) Task {
 	return t
 }
 
+// Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexJoin) Attach2Task(tasks ...Task) Task {
 	innerTask := p.innerTask
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
@@ -654,6 +663,7 @@ func calcPagingCost(ctx PlanContext, indexPlan PhysicalPlan, expectCnt uint64) f
 	return math.Max(pagingCst-sessVars.GetSeekFactor(nil), 0)
 }
 
+// ConvertToRootTask implements Task interface.
 func (t *copTask) ConvertToRootTask(ctx PlanContext) *RootTask {
 	// copy one to avoid changing itself.
 	return t.Copy().(*copTask).convertToRootTaskImpl(ctx)
@@ -2534,23 +2544,28 @@ type mppTask struct {
 	tblColHists   *statistics.HistColl
 }
 
+// Count implements Task interface.
 func (t *mppTask) Count() float64 {
 	return t.p.StatsInfo().RowCount
 }
 
+// Copy implements Task interface.
 func (t *mppTask) Copy() Task {
 	nt := *t
 	return &nt
 }
 
+// Plan implements Task interface.
 func (t *mppTask) Plan() PhysicalPlan {
 	return t.p
 }
 
+// Invalid implements Task interface.
 func (t *mppTask) Invalid() bool {
 	return t.p == nil
 }
 
+// ConvertToRootTask implements Task interface.
 func (t *mppTask) ConvertToRootTask(ctx PlanContext) *RootTask {
 	return t.Copy().(*mppTask).ConvertToRootTaskImpl(ctx)
 }
