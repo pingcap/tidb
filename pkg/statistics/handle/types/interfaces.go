@@ -418,10 +418,6 @@ type StatsSyncLoad interface {
 
 	// HandleOneTask will handle one task.
 	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
-
-	// SetSubCtxs sets the sessionctx which is used to run queries background.
-	// TODO: use SessionPool instead.
-	SetSubCtxs(idx int, sctx sessionctx.Context)
 }
 
 // StatsGlobal is used to manage partition table global stats.

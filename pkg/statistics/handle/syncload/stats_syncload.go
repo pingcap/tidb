@@ -58,12 +58,6 @@ type statsWrapper struct {
 	idx     *statistics.Index
 }
 
-// SetSubCtxs sets the sessionctx which is used to run queries background.
-// TODO: use SessionPool instead.
-func (s *statsSyncLoad) SetSubCtxs(idx int, sctx sessionctx.Context) {
-	s.StatsLoad.SubCtxs[idx] = sctx
-}
-
 // SendLoadRequests send neededColumns requests
 func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.StatsLoadItem, timeout time.Duration) error {
 	remainedItems := s.removeHistLoadedColumns(neededHistItems)
