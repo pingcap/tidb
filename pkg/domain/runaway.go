@@ -54,8 +54,8 @@ const (
 	runawayRecordGCBatchSize       = 100
 	runawayRecordGCSelectBatchSize = runawayRecordGCBatchSize * 5
 
-	maxIDRetries                = 3
-	runawayLoopLogErrorInterval = 5 * time.Minute
+	maxIDRetries                     = 3
+	runawayLoopLogErrorIntervalCount = 1800
 )
 
 var systemSchemaCIStr = model.NewCIStr("mysql")
@@ -146,9 +146,7 @@ func (do *Domain) runawayStartLoop() {
 	runawayWatchSyncTicker := time.NewTicker(runawayWatchSyncInterval)
 	count := 0
 	var err error
-	logutil.BgLogger().Info(
-		"try to start runaway manager loop",
-		zap.Error(err))
+	logutil.BgLogger().Info("try to start runaway manager loop")
 	for {
 		select {
 		case <-do.exit:
@@ -157,6 +155,7 @@ func (do *Domain) runawayStartLoop() {
 			// Due to the watch and watch done tables is created later than runaway queries table
 			err = do.updateNewAndDoneWatch()
 			if err == nil {
+				logutil.BgLogger().Info("preparations for the runaway manager are finished and start runaway manager loop")
 				do.wg.Run(do.runawayRecordFlushLoop, "runawayRecordFlushLoop")
 				do.wg.Run(do.runawayWatchSyncLoop, "runawayWatchSyncLoop")
 				do.runawayManager.MarkSyncerInitialized()
@@ -164,7 +163,7 @@ func (do *Domain) runawayStartLoop() {
 			}
 		}
 		count++
-		if count == 1800 {
+		if count %= runawayLoopLogErrorIntervalCount; count == 0 {
 			logutil.BgLogger().Warn(
 				"failed to start runaway manager loop, please check whether the bootstrap or update is finished",
 				zap.Error(err))
@@ -195,7 +194,7 @@ func (do *Domain) updateNewAndDoneWatch() error {
 func (do *Domain) runawayWatchSyncLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayWatchSyncLoop", nil, false)
 	runawayWatchSyncTicker := time.NewTicker(runawayWatchSyncInterval)
-	lastLogErrorTime := time.Now()
+	count := 0
 	for {
 		select {
 		case <-do.exit:
@@ -203,9 +202,9 @@ func (do *Domain) runawayWatchSyncLoop() {
 		case <-runawayWatchSyncTicker.C:
 			err := do.updateNewAndDoneWatch()
 			if err != nil {
-				if now := time.Now(); now.Sub(lastLogErrorTime) > runawayLoopLogErrorInterval {
+				count++
+				if count %= runawayLoopLogErrorIntervalCount; count == 0 {
 					logutil.BgLogger().Warn("get runaway watch record failed", zap.Error(err))
-					lastLogErrorTime = now
 				}
 			}
 		}
