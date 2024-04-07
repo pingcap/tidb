@@ -797,6 +797,7 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		columns:                    e.columns,
 		plans:                      e.tblPlans,
 		netDataSize:                e.dataAvgRowSize * float64(len(handles)),
+		paging:                     e.paging,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	// Reorder handles because SplitKeyRangesByLocationsWith/WithoutBuckets() requires startKey of kvRanges is ordered.
