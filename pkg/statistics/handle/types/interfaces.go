@@ -398,7 +398,6 @@ type StatsLoad struct {
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
 	Singleflight   singleflight.Group
-	SubCtxs        []sessionctx.Context
 	sync.Mutex
 }
 
