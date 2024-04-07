@@ -246,7 +246,7 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 				utils.EncloseName(table.DB.Name.O),
 				utils.EncloseName(table.Info.Name.O),
 				table.Info.AutoIncID)
-		} else if table.Info.PKIsHandle && table.Info.ContainsAutoRandomBits() {
+		} else if table.Info.ContainsAutoRandomBits() {
 			restoreMetaSQL = fmt.Sprintf(
 				"alter table %s.%s auto_random_base = %d",
 				utils.EncloseName(table.DB.Name.O),
