@@ -2200,21 +2200,12 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 
 	// global index not tested, could delete '!is.Index.Global' after test
 	if !is.Index.Global && FindColumnInfoByID(is.Columns, model.ExtraPhysTblID) != nil {
-		var idxCol *expression.Column
 		for _, col := range is.dataSourceSchema.Columns {
 			if col.ID == model.ExtraPhysTblID {
-				idxCol = col.Clone().(*expression.Column)
+				indexCols = append(indexCols, col.Clone().(*expression.Column))
 				break
 			}
 		}
-		if idxCol == nil {
-			idxCol = &expression.Column{
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				ID:       model.ExtraPhysTblID,
-				UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
-			}
-		}
-		indexCols = append(indexCols, idxCol)
 	}
 
 	is.SetSchema(expression.NewSchema(indexCols...))
