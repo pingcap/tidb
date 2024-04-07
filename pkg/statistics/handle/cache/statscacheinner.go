@@ -100,16 +100,24 @@ func (sc *StatsCache) putCache(id int64, t *statistics.Table) bool {
 
 // Put puts the table statistics to the cache.
 func (sc *StatsCache) put(id int64, t *statistics.Table) {
-	ok := sc.putCache(id, t)
-	if !ok {
-		logutil.BgLogger().Warn("fail to put the stats cache", zap.Int64("id", id))
-		return
-	}
-	// update the maxTblStatsVer
-	for v := sc.maxTblStatsVer.Load(); v < t.Version; v = sc.maxTblStatsVer.Load() {
-		if sc.maxTblStatsVer.CompareAndSwap(v, t.Version) {
-			break
-		} // other goroutines have updated the sc.maxTblStatsVer, so we need to check again.
+	i := 1
+	for {
+		// retry if the cache is full
+		ok := sc.putCache(id, t)
+		if ok {
+			// update the maxTblStatsVer
+			for v := sc.maxTblStatsVer.Load(); v < t.Version; v = sc.maxTblStatsVer.Load() {
+				if sc.maxTblStatsVer.CompareAndSwap(v, t.Version) {
+					break
+				} // other goroutines have updated the sc.maxTblStatsVer, so we need to check again.
+			}
+			return
+		}
+		if i%10 == 0 {
+			logutil.BgLogger().Warn("fail to put the stats cache", zap.Int64("id", id))
+		}
+		time.Sleep(5 * time.Millisecond)
+		i++
 	}
 }
 

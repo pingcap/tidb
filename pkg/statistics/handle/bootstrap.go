@@ -94,12 +94,6 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (util.StatsCache, error
 	if err != nil {
 		return nil, err
 	}
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		ls := initstats.NewWorker(rc.Next, h.initStatsMeta4Chunk)
-		ls.LoadStats(is, tables, rc)
-		ls.Wait()
-		return tables, nil
-	}
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -116,11 +110,19 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (util.StatsCache, error
 }
 
 func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
+	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID := row.GetInt64(0)
-		table, ok := cache.Get(tblID)
-		if !ok {
-			continue
+		if table == nil || table.PhysicalID != tblID {
+			if table != nil {
+				cache.Put(tblID, table) // put this table in the cache because all statstics of the table have been read.
+			}
+			var ok bool
+			table, ok = cache.Get(tblID)
+			if !ok {
+				continue
+			}
+			table = table.Copy()
 		}
 		isIndex := row.GetInt64(1)
 		id := row.GetInt64(2)
@@ -182,18 +184,27 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache u
 			}
 			table.Columns[hist.ID] = col
 		}
-		cache.Put(tblID, table) // put this table again since it is updated
+	}
+	if table != nil {
+		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
 }
 
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
+	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
-		table, ok := cache.Get(tblID)
-		if !ok {
-			continue
+		if table == nil || table.PhysicalID != tblID {
+			if table != nil {
+				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
+			}
+			var ok bool
+			table, ok = cache.Get(tblID)
+			if !ok {
+				continue
+			}
+			table = table.Copy()
 		}
-		table = table.Copy()
 		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
 		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))
 		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
@@ -252,12 +263,14 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache util.
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
 		}
-		cache.Put(tblID, table) // put this table again since it is updated
+	}
+	if table != nil {
+		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
 }
 
 func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache util.StatsCache) error {
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms order by table_id"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -280,7 +293,7 @@ func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache util.St
 }
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache util.StatsCache) error {
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms order by table_id"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -355,12 +368,20 @@ func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache 
 
 func (*Handle) initStatsTopN4Chunk(cache util.StatsCache, iter *chunk.Iterator4Chunk) {
 	affectedIndexes := make(map[*statistics.Index]struct{})
+	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.Get(row.GetInt64(0))
-		if !ok {
-			continue
+		tblID := row.GetInt64(0)
+		if table == nil || table.PhysicalID != tblID {
+			if table != nil {
+				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
+			}
+			var ok bool
+			table, ok = cache.Get(tblID)
+			if !ok {
+				continue
+			}
+			table = table.Copy()
 		}
-		table = table.Copy()
 		idx, ok := table.Indices[row.GetInt64(1)]
 		if !ok || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
 			continue
@@ -372,7 +393,9 @@ func (*Handle) initStatsTopN4Chunk(cache util.StatsCache, iter *chunk.Iterator4C
 		data := make([]byte, len(row.GetBytes(2)))
 		copy(data, row.GetBytes(2))
 		idx.TopN.AppendTopN(data, row.GetUint64(3))
-		cache.Put(table.PhysicalID, table) // put this table again since it is updated
+	}
+	if table != nil {
+		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
 	for idx := range affectedIndexes {
 		idx.TopN.Sort()
@@ -380,20 +403,12 @@ func (*Handle) initStatsTopN4Chunk(cache util.StatsCache, iter *chunk.Iterator4C
 }
 
 func (h *Handle) initStatsTopN(cache util.StatsCache) error {
-	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
+	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1 order by table_id"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		ls := initstats.NewWorker(rc.Next, func(_ infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
-			h.initStatsTopN4Chunk(cache, iter)
-		})
-		ls.LoadStats(nil, cache, rc)
-		ls.Wait()
-		return nil
-	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
@@ -421,7 +436,7 @@ func (h *Handle) initStatsTopNByPaging(cache util.StatsCache, task initstats.Tas
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1 and table_id >= %? and table_id < %?"
+	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1 and table_id >= %? and table_id < %? order by table_id"
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
@@ -484,7 +499,7 @@ func (*Handle) initStatsFMSketch4Chunk(cache util.StatsCache, iter *chunk.Iterat
 				colStats.FMSketch = fms
 			}
 		}
-		cache.Put(table.PhysicalID, table) // put this table again since it is updated
+		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
 }
 
@@ -512,13 +527,20 @@ func (h *Handle) initStatsFMSketch(cache util.StatsCache) error {
 }
 
 func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterator4Chunk) {
+	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-		table, ok := cache.Get(tableID)
-		if !ok {
-			continue
+		if table == nil || table.PhysicalID != tableID {
+			if table != nil {
+				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
+			}
+			var ok bool
+			table, ok = cache.Get(tableID)
+			if !ok {
+				continue
+			}
+			table = table.Copy()
 		}
-		table = table.Copy()
 		var lower, upper types.Datum
 		var hist *statistics.Histogram
 		if isIndex > 0 {
@@ -559,7 +581,9 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 			}
 		}
 		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(3), row.GetInt64(4), row.GetInt64(7))
-		cache.Put(tableID, table) // put this table again since it is updated
+	}
+	if table != nil {
+		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
 }
 
@@ -604,7 +628,7 @@ func (h *Handle) initStatsBuckets(cache util.StatsCache) error {
 			}
 			col.PreCalculateScalar()
 		}
-		cache.Put(table.PhysicalID, table) // put this table again since it is updated
+		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
 	return nil
 }
@@ -620,7 +644,7 @@ func (h *Handle) initStatsBucketsByPaging(cache util.StatsCache, task initstats.
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id >= %? and table_id < %?"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id >= %? and table_id < %? order by table_id, is_index, hist_id, bucket_id"
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
