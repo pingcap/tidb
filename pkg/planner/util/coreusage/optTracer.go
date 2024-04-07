@@ -20,7 +20,7 @@ import "github.com/pingcap/tidb/pkg/util/tracing"
 // logicalOptRule inside the accommodated pkg `util` should only be depended on by logical `rule` pkg.
 //
 //  rule related -----> core/util
-//**************************************** below logical optimize trace related ******************************************
+//********************** below logical optimize trace related *************************
 
 // LogicalOptimizeOp  is logical optimizing option for tracing.
 type LogicalOptimizeOp struct {
@@ -68,7 +68,7 @@ func (op *LogicalOptimizeOp) RecordFinalLogicalPlan(build func() *tracing.PlanTr
 	op.tracer.RecordFinalLogicalPlan(build())
 }
 
-//**************************************** below physical optimize trace related ******************************************
+//********************** below physical optimize trace related *************************
 
 // PhysicalOptimizeOp  is logical optimizing option for tracing.
 type PhysicalOptimizeOp struct {
@@ -76,19 +76,23 @@ type PhysicalOptimizeOp struct {
 	tracer *tracing.PhysicalOptimizeTracer
 }
 
+// DefaultPhysicalOptimizeOption is default physical optimizing option.
 func DefaultPhysicalOptimizeOption() *PhysicalOptimizeOp {
 	return &PhysicalOptimizeOp{}
 }
 
+// WithEnableOptimizeTracer is utility func to append the PhysicalOptimizeTracer into current PhysicalOptimizeOp.
 func (op *PhysicalOptimizeOp) WithEnableOptimizeTracer(tracer *tracing.PhysicalOptimizeTracer) *PhysicalOptimizeOp {
 	op.tracer = tracer
 	return op
 }
 
+// AppendCandidate is utility func to append the CandidatePlanTrace into current PhysicalOptimizeOp.
 func (op *PhysicalOptimizeOp) AppendCandidate(c *tracing.CandidatePlanTrace) {
 	op.tracer.AppendCandidate(c)
 }
 
+// GetTracer returns the current op's PhysicalOptimizeTracer.
 func (op *PhysicalOptimizeOp) GetTracer() *tracing.PhysicalOptimizeTracer {
 	return op.tracer
 }
@@ -104,6 +108,7 @@ type PlanCostOption struct {
 	tracer   *PhysicalOptimizeOp
 }
 
+// GetTracer returns the current op's PhysicalOptimizeOp.
 func (op *PlanCostOption) GetTracer() *PhysicalOptimizeOp {
 	return op.tracer
 }
