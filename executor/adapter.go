@@ -303,17 +303,24 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 
 	// try to reuse point get executor
 	// We should only use the cached the executor when the startTS is MaxUint64
-	if a.PsStmt.Executor != nil && useMaxTS {
-		exec, ok := a.PsStmt.Executor.(*PointGetExecutor)
+	if a.PsStmt.PointGet.Executor != nil && useMaxTS {
+		exec, ok := a.PsStmt.PointGet.Executor.(*PointGetExecutor)
 		if !ok {
 			logutil.Logger(ctx).Error("invalid executor type, not PointGetExecutor for point get path")
-			a.PsStmt.Executor = nil
+			a.PsStmt.PointGet.Executor = nil
 		} else {
 			// CachedPlan type is already checked in last step
+<<<<<<< HEAD:executor/adapter.go
 			pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
 			exec.Init(pointGetPlan)
 			a.PsStmt.Executor = exec
 			pointExecutor = exec
+=======
+			pointGetPlan := a.PsStmt.PointGet.Plan.(*plannercore.PointGetPlan)
+			exec.Init(pointGetPlan)
+			a.PsStmt.PointGet.Executor = exec
+			executor = exec
+>>>>>>> 060ff39ab78 (planner: simplify plan cache code (#52384)):pkg/executor/adapter.go
 		}
 	}
 
@@ -324,8 +331,14 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 			return nil, b.err
 		}
 
+<<<<<<< HEAD:executor/adapter.go
 		if useMaxTS {
 			a.PsStmt.Executor = pointExecutor
+=======
+		// Don't cache the executor for non point-get (table dual) or partitioned tables
+		if ok && useMaxTS && pointExecutor.partitionDefIdx == nil {
+			a.PsStmt.PointGet.Executor = pointExecutor
+>>>>>>> 060ff39ab78 (planner: simplify plan cache code (#52384)):pkg/executor/adapter.go
 		}
 	}
 

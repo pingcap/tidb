@@ -134,7 +134,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 				stmt.PsStmt = preparedObj
 			} else {
 				// invalid the previous cached point plan
+<<<<<<< HEAD:executor/compiler.go
 				preparedObj.PreparedAst.CachedPlan = nil
+=======
+				preparedObj.PointGet.Plan = nil
+>>>>>>> 060ff39ab78 (planner: simplify plan cache code (#52384)):pkg/executor/compiler.go
 			}
 		}
 	}
