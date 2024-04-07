@@ -1178,7 +1178,7 @@ func errStrForLog(err error, redactMode string) string {
 	} else {
 		ret = errors.ErrorStack(err)
 	}
-	return redact.String(redactMode, ret)
+	return ret
 }
 
 func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
