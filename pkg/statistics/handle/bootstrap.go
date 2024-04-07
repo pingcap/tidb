@@ -409,14 +409,6 @@ func (h *Handle) initStatsTopN(cache util.StatsCache) error {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		ls := initstats.NewWorker(rc.Next, func(_ infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
-			h.initStatsTopN4Chunk(cache, iter)
-		})
-		ls.LoadStats(nil, cache, rc)
-		ls.Wait()
-		return nil
-	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
