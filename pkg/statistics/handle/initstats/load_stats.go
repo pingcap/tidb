@@ -15,10 +15,9 @@
 package initstats
 
 import (
-	"context"
 	"runtime"
-	"sync"
 
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -83,4 +82,24 @@ func (ls *Worker) getTask(ctx context.Context, req *chunk.Chunk) error {
 // Wait closes the load stats worker.
 func (ls *Worker) Wait() {
 	ls.wg.Wait()
+=======
+	"github.com/pingcap/tidb/pkg/config"
+)
+
+// getConcurrency gets the concurrency of loading stats.
+// the concurrency is from 2 to 16.
+// when Performance.ForceInitStats is true, the concurrency is from 2 to GOMAXPROCS(0)-2.
+// -2 is to ensure that the system has enough resources to handle other tasks. such as GC and stats cache internal.
+// when Performance.ForceInitStats is false, the concurrency is from 2 to GOMAXPROCS(0)/2.
+// it is to ensure that concurrency doesn't affect the performance of customer's business.
+func getConcurrency() int {
+	var concurrency int
+	if config.GetGlobalConfig().Performance.ForceInitStats {
+		concurrency = runtime.GOMAXPROCS(0) - 2
+	} else {
+		concurrency = runtime.GOMAXPROCS(0) / 2
+	}
+	concurrency = min(max(2, concurrency), 16)
+	return concurrency
+>>>>>>> 035f5a3cc0c (statistics: batch write into stats cache when to init stats (#52347))
 }
