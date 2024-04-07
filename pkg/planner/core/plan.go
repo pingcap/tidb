@@ -38,6 +38,9 @@ import (
 // PlanContext is the context for building plan.
 type PlanContext = context.PlanContext
 
+// BuildPBContext is the context for building `*tipb.Executor`.
+type BuildPBContext = context.BuildPBContext
+
 // AsSctx converts PlanContext to sessionctx.Context.
 func AsSctx(pctx PlanContext) (sessionctx.Context, error) {
 	sctx, ok := pctx.(sessionctx.Context)
@@ -371,7 +374,7 @@ type PhysicalPlan interface {
 	attach2Task(...task) task
 
 	// ToPB converts physical plan to tipb executor.
-	ToPB(ctx PlanContext, storeType kv.StoreType) (*tipb.Executor, error)
+	ToPB(ctx *BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error)
 
 	// GetChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty

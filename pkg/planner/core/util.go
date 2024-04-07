@@ -472,6 +472,30 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 }
 
 // GetPushDownCtx creates a PushDownContext from PlanContext
-func GetPushDownCtx(sctx PlanContext) expression.PushDownContext {
-	return expression.NewPushDownContextFromSessionVars(sctx.GetExprCtx().GetEvalCtx(), sctx.GetSessionVars(), sctx.GetClient())
+func GetPushDownCtx(pctx PlanContext) expression.PushDownContext {
+	return GetPushDownCtxFromBuildPBContext(GetBuildPBCtx(pctx))
+}
+
+// GetBuildPBCtx returns the BuildPBContext from PlanContext
+func GetBuildPBCtx(pctx PlanContext) *BuildPBContext {
+	return &BuildPBContext{
+		ExprCtx: pctx.GetExprCtx(),
+		Client:  pctx.GetClient(),
+
+		TiFlashFastScan:                    pctx.GetSessionVars().TiFlashFastScan,
+		TiFlashFineGrainedShuffleBatchSize: pctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
+
+		// the following fields are used to build `expression.PushDownContext`.
+		// TODO: it'd be better to embed `expression.PushDownContext` in `BuildPBContext`. But `expression` already
+		// depends on this package, so we need to move `expression.PushDownContext` to a standalone package first.
+		GroupConcatMaxLen:  pctx.GetSessionVars().GroupConcatMaxLen,
+		InExplainStmt:      pctx.GetSessionVars().StmtCtx.InExplainStmt,
+		AppendWarning:      pctx.GetSessionVars().StmtCtx.AppendWarning,
+		AppendExtraWarning: pctx.GetSessionVars().StmtCtx.AppendExtraWarning,
+	}
+}
+
+// GetPushDownCtxFromBuildPBContext creates a PushDownContext from BuildPBContext
+func GetPushDownCtxFromBuildPBContext(bctx *BuildPBContext) expression.PushDownContext {
+	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(), bctx.InExplainStmt, bctx.AppendWarning, bctx.AppendExtraWarning, bctx.GroupConcatMaxLen)
 }

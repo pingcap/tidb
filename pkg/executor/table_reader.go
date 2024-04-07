@@ -79,6 +79,7 @@ type kvRangeBuilder interface {
 type tableReaderExecutorContext struct {
 	dctx *distsqlctx.DistSQLContext
 	rctx *rangerctx.RangerContext
+	buildPBCtx *planctx.BuildPBContext
 	pctx planctx.PlanContext
 	ectx exprctx.BuildContext
 
@@ -118,12 +119,20 @@ func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorC
 
 	pctx := sctx.GetPlanCtx()
 	return tableReaderExecutorContext{
+<<<<<<< HEAD
 		dctx:           sctx.GetDistSQLCtx(),
 		rctx:           pctx.GetRangerCtx(),
 		pctx:           pctx,
 		ectx:           sctx.GetExprCtx(),
 		stmtMemTracker: sctx.GetSessionVars().StmtCtx.MemTracker,
 		getDDLOwner:    getDDLOwner,
+=======
+		dctx:        sctx.GetDistSQLCtx(),
+		buildPBCtx:  plannercore.GetBuildPBCtx(pctx),
+		pctx:        pctx,
+		ectx:        sctx.GetExprCtx(),
+		getDDLOwner: getDDLOwner,
+>>>>>>> 4a53fa89c0 (add a smaller context for ToPB)
 	}
 }
 
@@ -232,13 +241,13 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if e.corColInFilter {
 		// If there's correlated column in filter, need to rewrite dagPB
 		if e.storeType == kv.TiFlash {
-			execs, err := builder.ConstructTreeBasedDistExec(e.pctx, e.tablePlan)
+			execs, err := builder.ConstructTreeBasedDistExec(e.buildPBCtx, e.tablePlan)
 			if err != nil {
 				return err
 			}
 			e.dagPB.RootExecutor = execs[0]
 		} else {
-			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.pctx, e.plans)
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans)
 			if err != nil {
 				return err
 			}
