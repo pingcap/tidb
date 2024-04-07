@@ -2198,7 +2198,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		}
 	}
 
-	// If `dataSouceSchema` contains `model.ExtraPhysTblID`, we should add it into `indexPlan.schema`
+	// If `dataSouceSchema` contains `model.ExtraPhysTblID`, we should add it into `indexScan.schema`
 	for _, col := range is.dataSourceSchema.Columns {
 		if col.ID == model.ExtraPhysTblID {
 			indexCols = append(indexCols, col.Clone().(*expression.Column))
