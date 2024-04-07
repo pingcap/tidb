@@ -134,7 +134,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 				stmt.PsStmt = preparedObj
 			} else {
 				// invalid the previous cached point plan
-				preparedObj.PreparedAst.CachedPlan = nil
+				preparedObj.CachedPlan = nil
 			}
 		}
 	}
