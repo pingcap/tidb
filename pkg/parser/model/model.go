@@ -1766,6 +1766,11 @@ type TableItemID struct {
 	IsIndex bool
 }
 
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (t TableItemID) Key() string {
+	return fmt.Sprintf("%d#%d#%t", t.ID, t.TableID, t.IsIndex)
+}
+
 // PolicyRefInfo is the struct to refer the placement policy.
 type PolicyRefInfo struct {
 	ID   int64 `json:"id"`
