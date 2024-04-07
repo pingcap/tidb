@@ -985,7 +985,7 @@ func (adder *exprPrefixAdder) addExprPrefix4ShardIndex() ([]expression.Expressio
 //
 // @return  -     the new condition after adding expression prefix
 func (adder *exprPrefixAdder) addExprPrefix4CNFCond(conds []expression.Expression) ([]expression.Expression, error) {
-	newCondtionds, err := ranger.AddExpr4EqAndInCondition(adder.sctx,
+	newCondtionds, err := ranger.AddExpr4EqAndInCondition(GetRangerCtx(adder.sctx),
 		conds, adder.cols)
 
 	return newCondtionds, err

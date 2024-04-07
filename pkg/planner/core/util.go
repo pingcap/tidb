@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -475,3 +476,6 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 func GetPushDownCtx(sctx PlanContext) expression.PushDownContext {
 	return expression.NewPushDownContextFromSessionVars(sctx.GetExprCtx().GetEvalCtx(), sctx.GetSessionVars(), sctx.GetClient())
 }
+
+// GetRangerCtx creates a RangerContext from PlanContext
+var GetRangerCtx = context.GetRangerCtx

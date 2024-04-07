@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
@@ -72,3 +73,20 @@ type EmptyPlanContextExtended struct{}
 
 // AdviseTxnWarmup advises the txn to warm up.
 func (EmptyPlanContextExtended) AdviseTxnWarmup() error { return nil }
+
+// GetRangerCtx creates a RangerContext from PlanContext
+func GetRangerCtx(sctx PlanContext) *rangerctx.RangerContext {
+	return &rangerctx.RangerContext{
+		ExprCtx: sctx.GetExprCtx(),
+		TypeCtx: sctx.GetSessionVars().StmtCtx.TypeCtx(),
+		ErrCtx:  sctx.GetSessionVars().StmtCtx.ErrCtx(),
+
+		InPreparedPlanBuilding:   sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding,
+		RegardNULLAsPoint:        sctx.GetSessionVars().RegardNULLAsPoint,
+		OptPrefixIndexSingleScan: sctx.GetSessionVars().OptPrefixIndexSingleScan,
+		OptimizerFixControl:      sctx.GetSessionVars().OptimizerFixControl,
+
+		// TODO: avoid using the whole `StmtCtx` here.
+		RangeFallbackHandler: sctx.GetSessionVars().StmtCtx,
+	}
+}
