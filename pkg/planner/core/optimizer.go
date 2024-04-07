@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -286,6 +287,9 @@ func doOptimize(
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, nil, 0, err
+	}
+	if strings.Contains(ToString(logic), "temperature_data") {
+		logutil.Logger(ctx).Info("doOptimize", zap.String("logic", ToString(logic)))
 	}
 
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
