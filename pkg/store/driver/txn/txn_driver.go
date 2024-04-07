@@ -283,6 +283,8 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 	case kv.SizeLimits:
 		limits := val.(kv.TxnSizeLimits)
 		txn.KVTxn.GetUnionStore().SetEntrySizeLimit(limits.Entry, limits.Total)
+	case kv.SessionID:
+		txn.KVTxn.SetSessionID(val.(uint64))
 	}
 }
 
