@@ -206,22 +206,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		task1, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
-		list, ok := h.StatsLoad.WorkingColMap[neededColumns[0]]
-		require.True(t, ok)
-		require.Len(t, list, 1)
-		require.Equal(t, stmtCtx1.StatsLoad.ResultCh, list[0])
 
-<<<<<<< HEAD:pkg/statistics/handle/handle_hist_test.go
-		task2, err2 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, exitCh)
-		require.Nil(t, err2)
-		require.Nil(t, task2)
-		list, ok = h.StatsLoad.WorkingColMap[neededColumns[0]]
-		require.True(t, ok)
-		require.Len(t, list, 2)
-		require.Equal(t, stmtCtx2.StatsLoad.ResultCh, list[1])
-
-=======
->>>>>>> 3ba874c77f5 (statistics: fix wrong singleflight implementation for stats' syncload (#52301)):pkg/statistics/handle/syncload/stats_syncload_test.go
 		require.NoError(t, failpoint.Disable(fp.failPath))
 		task3, err3 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
 		require.NoError(t, err3)
