@@ -516,6 +516,7 @@ func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
 
 // Prepared represents a prepared statement.
 type Prepared struct {
+<<<<<<< HEAD:parser/ast/misc.go
 	Stmt          StmtNode
 	StmtType      string
 	Params        []ParamMarkerExpr
@@ -523,6 +524,10 @@ type Prepared struct {
 	UseCache      bool
 	CachedPlan    interface{}
 	CachedNames   interface{}
+=======
+	Stmt     StmtNode
+	StmtType string
+>>>>>>> 62d6f4737bf (planner: move fields from ast.Prepared to planner.PlanCacheStmt (#52373)):pkg/parser/ast/misc.go
 }
 
 // ExecuteStmt is a statement to execute PreparedStmt.

@@ -204,7 +204,11 @@ func (ts *TiDBStatement) Close() error {
 			}
 			bindSQL, _ := core.GetBindSQL4PlanCache(ts.ctx, preparedObj)
 			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB,
+<<<<<<< HEAD:server/driver_tidb.go
 				preparedObj.PreparedAst.SchemaVersion, 0, bindSQL)
+=======
+				preparedObj.SchemaVersion, 0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
+>>>>>>> 62d6f4737bf (planner: move fields from ast.Prepared to planner.PlanCacheStmt (#52373)):pkg/server/driver_tidb.go
 			if err != nil {
 				return err
 			}
