@@ -288,6 +288,51 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 	return errors.Trace(err)
 }
 
+// PutKVToEtcdMono puts key value to etcd monotonously.
+// etcdCli is client of etcd.
+// retryCnt is retry time when an error occurs.
+// opts are configures of etcd Operations.
+func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
+	opts ...clientv3.OpOption) error {
+	var err error
+	for i := 0; i < retryCnt; i++ {
+		if err = ctx.Err(); err != nil {
+			return errors.Trace(err)
+		}
+
+		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
+		resp, err := etcdCli.Get(childCtx, key)
+		if err != nil {
+			cancel()
+			logutil.BgLogger().Warn("error getting key revision", zap.Error(err))
+			return errors.Trace(err)
+		}
+		prevRevision := int64(0)
+		if len(resp.Kvs) > 0 {
+			prevRevision = resp.Kvs[0].ModRevision
+		}
+
+		txnResp, err := etcdCli.Txn(childCtx).
+			If(clientv3.Compare(clientv3.ModRevision(key), "=", prevRevision)).
+			Then(clientv3.OpPut(key, val, opts...)).
+			Commit()
+
+		cancel()
+
+		if err != nil {
+			logutil.BgLogger().Warn("error performing compare-and-swap", zap.Error(err))
+			return errors.Trace(err)
+		}
+
+		if txnResp.Succeeded {
+			return nil
+		}
+		logutil.BgLogger().Warn("etcd-cli put kv failed", zap.String("category", "ddl"), zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
+		time.Sleep(KeyOpRetryInterval)
+	}
+	return errors.Trace(err)
+}
+
 // PutKVToEtcd puts key value to etcd.
 // etcdCli is client of etcd.
 // retryCnt is retry time when an error occurs.
