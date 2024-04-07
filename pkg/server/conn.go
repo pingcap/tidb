@@ -1164,11 +1164,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 }
 
 func errStrForLog(err error, redactMode string) string {
-	if redactMode == errors.RedactLogEnable {
+	if redactMode != errors.RedactLogDisable {
 		// currently, only ErrParse is considered when enableRedactLog because it may contain sensitive information like
 		// password or accesskey
 		if parser.ErrParse.Equal(err) {
-			return "fail to parse SQL and can't redact when enable log redaction"
+			return "fail to parse SQL, and must redact the whole error when enable log redaction"
 		}
 	}
 	var ret string
