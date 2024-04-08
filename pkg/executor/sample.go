@@ -75,10 +75,11 @@ type rowSampler interface {
 }
 
 type tableRegionSampler struct {
-	ctx        sessionctx.Context
-	table      table.Table
-	startTS    uint64
-	partTables []table.PartitionedTable
+	ctx             sessionctx.Context
+	table           table.Table
+	startTS         uint64
+	physicalTableID int64
+
 	schema     *expression.Schema
 	fullSchema *expression.Schema
 	isDesc     bool
@@ -89,18 +90,18 @@ type tableRegionSampler struct {
 	isFinished   bool
 }
 
-func newTableRegionSampler(ctx sessionctx.Context, t table.Table, startTs uint64, partTables []table.PartitionedTable,
+func newTableRegionSampler(ctx sessionctx.Context, t table.Table, startTs uint64, pyhsicalTableID int64,
 	schema *expression.Schema, fullSchema *expression.Schema, retTypes []*types.FieldType, desc bool) *tableRegionSampler {
 	return &tableRegionSampler{
-		ctx:        ctx,
-		table:      t,
-		startTS:    startTs,
-		partTables: partTables,
-		schema:     schema,
-		fullSchema: fullSchema,
-		isDesc:     desc,
-		retTypes:   retTypes,
-		rowMap:     make(map[int64]types.Datum),
+		ctx:             ctx,
+		table:           t,
+		startTS:         startTs,
+		physicalTableID: pyhsicalTableID,
+		schema:          schema,
+		fullSchema:      fullSchema,
+		isDesc:          desc,
+		retTypes:        retTypes,
+		rowMap:          make(map[int64]types.Datum),
 	}
 }
 
@@ -176,23 +177,29 @@ func (s *tableRegionSampler) writeChunkFromRanges(ranges []kv.KeyRange, req *chu
 }
 
 func (s *tableRegionSampler) splitTableRanges() ([]kv.KeyRange, error) {
-	if len(s.partTables) != 0 {
-		var ranges []kv.KeyRange
-		for _, t := range s.partTables {
-			for _, pid := range t.GetAllPartitionIDs() {
-				start := tablecodec.GenTableRecordPrefix(pid)
-				end := start.PrefixNext()
-				rs, err := splitIntoMultiRanges(s.ctx.GetStore(), start, end)
-				if err != nil {
-					return nil, err
-				}
-				ranges = append(ranges, rs...)
-			}
-		}
-		return ranges, nil
+	partitionTable := s.table.GetPartitionedTable()
+	if partitionTable == nil {
+		startKey, endKey := s.table.RecordPrefix(), s.table.RecordPrefix().PrefixNext()
+		return splitIntoMultiRanges(s.ctx.GetStore(), startKey, endKey)
 	}
-	startKey, endKey := s.table.RecordPrefix(), s.table.RecordPrefix().PrefixNext()
-	return splitIntoMultiRanges(s.ctx.GetStore(), startKey, endKey)
+
+	var partIDs []int64
+	if partitionTable.Meta().ID == s.physicalTableID {
+		partIDs = partitionTable.GetAllPartitionIDs()
+	} else {
+		partIDs = []int64{s.physicalTableID}
+	}
+	var ranges []kv.KeyRange
+	for _, pid := range partIDs {
+		start := tablecodec.GenTableRecordPrefix(pid)
+		end := start.PrefixNext()
+		rs, err := splitIntoMultiRanges(s.ctx.GetStore(), start, end)
+		if err != nil {
+			return nil, err
+		}
+		ranges = append(ranges, rs...)
+	}
+	return ranges, nil
 }
 
 func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRange, error) {
