@@ -189,7 +189,7 @@ func (s *tableRegionSampler) splitTableRanges() ([]kv.KeyRange, error) {
 	} else {
 		partIDs = []int64{s.physicalTableID}
 	}
-	var ranges []kv.KeyRange
+	ranges := make([]kv.KeyRange, 0, len(partIDs))
 	for _, pid := range partIDs {
 		start := tablecodec.GenTableRecordPrefix(pid)
 		end := start.PrefixNext()
