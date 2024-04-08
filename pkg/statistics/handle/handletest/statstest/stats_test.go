@@ -183,10 +183,10 @@ func testInitStatsMemTrace(t *testing.T) {
 		memCostTot += tStats.MemoryUsage().TotalMemUsage
 	}
 	tables := h.StatsCache.Values()
-	for _, t := range tables {
-		tbl, ok := h.StatsCache.Get(t.PhysicalID)
+	for _, tt := range tables {
+		tbl, ok := h.StatsCache.Get(tt.PhysicalID)
 		require.True(t, ok)
-		require.Equal(t, tbl.PhysicalID, t.PhysicalID)
+		require.Equal(t, tbl.PhysicalID, tt.PhysicalID)
 	}
 
 	require.Equal(t, h.MemConsumed(), memCostTot)
