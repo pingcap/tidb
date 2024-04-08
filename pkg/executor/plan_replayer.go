@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/replayer"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -121,7 +120,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("delete from mysql.plan_replayer_task where sql_digest = '%s' and plan_digest = '%s'",
 		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
 	if err != nil {
@@ -147,7 +146,7 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 	if exists {
 		return errors.New("plan replayer capture task already exists")
 	}
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 	_, _, err = exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%s','%s')",
 		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
 	if err != nil {
@@ -213,7 +212,7 @@ func (e *PlanReplayerDumpInfo) DumpSQLsFromFile(ctx context.Context, b []byte) e
 		if len(s) < 1 {
 			continue
 		}
-		node, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(ctx, s)
+		node, err := e.ctx.GetRestrictedSQLExecutor().ParseWithParams(ctx, s)
 		if err != nil {
 			return fmt.Errorf("parse sql error, sql:%v, err:%v", s, err)
 		}
@@ -297,7 +296,7 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 				c := context.Background()
 				// Though we record tiflash replica in txt, we only set 1 tiflash replica as it's enough for reproduce the plan
 				sql := fmt.Sprintf("alter table %s.%s set tiflash replica 1", dbName, tableName)
-				_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sql)
+				_, err = ctx.GetSQLExecutor().Execute(c, sql)
 				logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
 			}
 		}
@@ -355,7 +354,7 @@ func loadBindings(ctx sessionctx.Context, f *zip.File, isSession bool) error {
 				return "GLOBAL"
 			}(), newNormalizedSQL, bindingSQL)
 			c := context.Background()
-			_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sql)
+			_, err = ctx.GetSQLExecutor().Execute(c, sql)
 			if err != nil {
 				return err
 			}
@@ -429,15 +428,15 @@ func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 	createTableSQL := originText[index1+1:][index2+1:]
 	c := context.Background()
 	// create database if not exists
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, createDatabaseSQL)
+	_, err = ctx.GetSQLExecutor().Execute(c, createDatabaseSQL)
 	logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
 	// use database
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, useDatabaseSQL)
+	_, err = ctx.GetSQLExecutor().Execute(c, useDatabaseSQL)
 	if err != nil {
 		return err
 	}
 	// create table or view
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, createTableSQL)
+	_, err = ctx.GetSQLExecutor().Execute(c, createTableSQL)
 	if err != nil {
 		return err
 	}

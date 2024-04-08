@@ -895,10 +895,9 @@ explain format = 'brief' select a,b,c from t where a = 1 AND c = "Wow";
 id	estRows	task	access object	operator info
 Projection	0.01	root		rcolumnsmulti.t.a, rcolumnsmulti.t.b, rcolumnsmulti.t.c
 └─UnionScan	0.01	root		eq(rcolumnsmulti.t.a, 1), eq(rcolumnsmulti.t.c, "Wow")
-  └─IndexLookUp	0.01	root	partition:p8	
-    ├─Selection(Build)	0.01	cop[tikv]		eq(rcolumnsmulti.t.c, "Wow")
-    │ └─IndexRangeScan	10.00	cop[tikv]	table:t, index:a(a, b, c)	range:[1,1], keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	0.01	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexReader	0.01	root	partition:p8	index:Selection
+    └─Selection	0.01	cop[tikv]		eq(rcolumnsmulti.t.c, "Wow")
+      └─IndexRangeScan	10.00	cop[tikv]	table:t, index:a(a, b, c)	range:[1,1], keep order:false, stats:pseudo
 select a,b,c from t where a = 0 AND c = "Wow";
 a	b	c
 0	2020-01-01 00:00:00	Wow
@@ -906,10 +905,9 @@ explain format = 'brief' select a,b,c from t where a = 0 AND c = "Wow";
 id	estRows	task	access object	operator info
 Projection	0.01	root		rcolumnsmulti.t.a, rcolumnsmulti.t.b, rcolumnsmulti.t.c
 └─UnionScan	0.01	root		eq(rcolumnsmulti.t.a, 0), eq(rcolumnsmulti.t.c, "Wow")
-  └─IndexLookUp	0.01	root	partition:p3,p4,p5,p6,p7	
-    ├─Selection(Build)	0.01	cop[tikv]		eq(rcolumnsmulti.t.c, "Wow")
-    │ └─IndexRangeScan	10.00	cop[tikv]	table:t, index:a(a, b, c)	range:[0,0], keep order:false, stats:pseudo
-    └─TableRowIDScan(Probe)	0.01	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexReader	0.01	root	partition:p3,p4,p5,p6,p7	index:Selection
+    └─Selection	0.01	cop[tikv]		eq(rcolumnsmulti.t.c, "Wow")
+      └─IndexRangeScan	10.00	cop[tikv]	table:t, index:a(a, b, c)	range:[0,0], keep order:false, stats:pseudo
 create database rce;
 use rce;
 create table tref (a int unsigned, b int, c int);

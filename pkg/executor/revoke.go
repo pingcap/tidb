@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -96,7 +95,7 @@ func (e *RevokeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	defer func() {
 		if !isCommit {
-			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(internalCtx, "rollback")
+			_, err := internalSession.GetSQLExecutor().ExecuteInternal(internalCtx, "rollback")
 			if err != nil {
 				logutil.BgLogger().Error("rollback error occur at grant privilege", zap.Error(err))
 			}
@@ -104,7 +103,7 @@ func (e *RevokeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		e.ReleaseSysSession(internalCtx, internalSession)
 	}()
 
-	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(internalCtx, "begin")
+	_, err = internalSession.GetSQLExecutor().ExecuteInternal(internalCtx, "begin")
 	if err != nil {
 		return err
 	}
@@ -135,7 +134,7 @@ func (e *RevokeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		}
 	}
 
-	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(internalCtx, "commit")
+	_, err = internalSession.GetSQLExecutor().ExecuteInternal(internalCtx, "commit")
 	if err != nil {
 		return err
 	}
@@ -220,7 +219,7 @@ func (e *RevokeExec) revokeDynamicPriv(internalSession sessionctx.Context, privN
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(exeerrors.ErrDynamicPrivilegeNotRegistered.FastGenByArgs(privName))
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "DELETE FROM mysql.global_grants WHERE user = %? AND host = %? AND priv = %?", user, host, privName)
+	_, err := internalSession.GetSQLExecutor().ExecuteInternal(ctx, "DELETE FROM mysql.global_grants WHERE user = %? AND host = %? AND priv = %?", user, host, privName)
 	return err
 }
 
@@ -230,7 +229,7 @@ func (e *RevokeExec) revokeGlobalPriv(internalSession sessionctx.Context, priv *
 		return e.revokeDynamicPriv(internalSession, priv.Name, user, host)
 	}
 	if priv.Priv == mysql.AllPriv { // If ALL, also revoke dynamic privileges
-		_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "DELETE FROM mysql.global_grants WHERE user = %? AND host = %?", user, host)
+		_, err := internalSession.GetSQLExecutor().ExecuteInternal(ctx, "DELETE FROM mysql.global_grants WHERE user = %? AND host = %?", user, host)
 		if err != nil {
 			return err
 		}
@@ -243,7 +242,7 @@ func (e *RevokeExec) revokeGlobalPriv(internalSession sessionctx.Context, priv *
 	}
 	sqlescape.MustFormatSQL(sql, " WHERE User=%? AND Host=%?", user, strings.ToLower(host))
 
-	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
+	_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
 	return err
 }
 
@@ -262,7 +261,7 @@ func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.
 	}
 	sqlescape.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%?", userName, host, dbName)
 
-	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
+	_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return err
 	}
@@ -273,7 +272,7 @@ func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.
 	for _, v := range append(mysql.AllDBPrivs, mysql.GrantPriv) {
 		sqlescape.MustFormatSQL(sql, " AND %n='N'", v.ColumnString())
 	}
-	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
+	_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
 	return err
 }
 
@@ -297,7 +296,7 @@ func (e *RevokeExec) revokeTablePriv(internalSession sessionctx.Context, priv *a
 	}
 
 	sqlescape.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", user, host, dbName, tblName)
-	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
+	_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return err
 	}
@@ -305,7 +304,7 @@ func (e *RevokeExec) revokeTablePriv(internalSession sessionctx.Context, priv *a
 	if isDelRow {
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", mysql.SystemDB, mysql.TablePrivTable, user, host, dbName, tblName)
-		_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
+		_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
 	}
 	return err
 }
@@ -331,7 +330,7 @@ func (e *RevokeExec) revokeColumnPriv(internalSession sessionctx.Context, priv *
 		}
 		sqlescape.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_name=%?", user, host, dbName, tbl.Meta().Name.O, col.Name.O)
 
-		_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
+		_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
 		if err != nil {
 			return err
 		}
@@ -339,7 +338,7 @@ func (e *RevokeExec) revokeColumnPriv(internalSession sessionctx.Context, priv *
 		if isDelRow {
 			sql.Reset()
 			sqlescape.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%? AND Column_name=%?", mysql.SystemDB, mysql.ColumnPrivTable, user, host, dbName, tbl.Meta().Name.O, col.Name.O)
-			_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
+			_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
 			if err != nil {
 				return err
 			}

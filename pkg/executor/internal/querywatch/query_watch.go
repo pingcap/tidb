@@ -31,7 +31,6 @@ import (
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
@@ -48,7 +47,7 @@ func setWatchOption(ctx context.Context,
 			if err != nil {
 				return err
 			}
-			name, isNull, err := expr.EvalString(sctx.GetExprCtx(), chunk.Row{})
+			name, isNull, err := expr.EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -66,7 +65,7 @@ func setWatchOption(ctx context.Context,
 		if err != nil {
 			return err
 		}
-		strval, isNull, err := expr.EvalString(sctx.GetExprCtx(), chunk.Row{})
+		strval, isNull, err := expr.EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return err
 		}
@@ -93,7 +92,7 @@ func setWatchOption(ctx context.Context,
 				_, digest := parser.NormalizeDigest(sql)
 				record.WatchText = digest.String()
 			case model.WatchPlan:
-				sqlExecutor := newSctx.(sqlexec.SQLExecutor)
+				sqlExecutor := newSctx.GetSQLExecutor()
 				if _, err := sqlExecutor.ExecuteInternal(ctx, fmt.Sprintf("explain %s", stmts[0].Text())); err != nil {
 					return err
 				}

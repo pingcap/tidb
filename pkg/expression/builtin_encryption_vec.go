@@ -875,6 +875,16 @@ func (b *builtinValidatePasswordStrengthSig) vectorized() bool {
 }
 
 func (b *builtinValidatePasswordStrengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	user, err := b.CurrentUser(ctx)
+	if err != nil {
+		return err
+	}
+
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
+
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -888,7 +898,7 @@ func (b *builtinValidatePasswordStrengthSig) vecEvalInt(ctx EvalContext, input *
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	globalVars := ctx.GetSessionVars().GlobalVarsAccessor
+	globalVars := vars.GlobalVarsAccessor
 	enableValidation := false
 	validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable)
 	if err != nil {
@@ -901,7 +911,7 @@ func (b *builtinValidatePasswordStrengthSig) vecEvalInt(ctx EvalContext, input *
 		}
 		if !enableValidation {
 			i64s[i] = 0
-		} else if score, isNull, err := b.validateStr(ctx, buf.GetString(i), &globalVars); err != nil {
+		} else if score, isNull, err := b.validateStr(buf.GetString(i), user, &globalVars); err != nil {
 			return err
 		} else if !isNull {
 			i64s[i] = score

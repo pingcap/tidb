@@ -3077,3 +3077,8 @@ func TestSQLModeIsLoadedBeforeQuery(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 	ts.RunTestSQLModeIsLoadedBeforeQuery(t)
 }
+
+func TestConnectionCount(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTestConnectionCount(t)
+}

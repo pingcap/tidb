@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -222,7 +223,7 @@ type joinTypeWithExtMsg struct {
 	outerBindCondition []expression.Expression
 }
 
-func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	tracer := &joinReorderTrace{cost: map[string]float64{}, opt: opt}
 	tracer.traceJoinReorder(p)
@@ -662,7 +663,7 @@ func (*joinReOrderSolver) name() string {
 	return "join_reorder"
 }
 
-func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt *logicalOptimizeOp) {
+func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt *util.LogicalOptimizeOp) {
 	if len(tracer.initial) < 1 || len(tracer.final) < 1 {
 		return
 	}
@@ -685,7 +686,7 @@ func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt 
 		buffer.WriteString("]")
 		return buffer.String()
 	}
-	opt.appendStepToCurrent(plan.ID(), plan.TP(), reason, action)
+	opt.AppendStepToCurrent(plan.ID(), plan.TP(), reason, action)
 }
 
 func allJoinOrderToString(tt []*tracing.PlanTrace) string {
@@ -772,14 +773,14 @@ func findRoots(t *tracing.PlanTrace) []*tracing.PlanTrace {
 }
 
 type joinReorderTrace struct {
-	opt     *logicalOptimizeOp
+	opt     *util.LogicalOptimizeOp
 	initial string
 	final   string
 	cost    map[string]float64
 }
 
 func (t *joinReorderTrace) traceJoinReorder(p LogicalPlan) {
-	if t == nil || t.opt == nil || t.opt.tracer == nil {
+	if t == nil || t.opt == nil || t.opt.TracerIsNil() {
 		return
 	}
 	if len(t.initial) > 0 {
@@ -790,7 +791,7 @@ func (t *joinReorderTrace) traceJoinReorder(p LogicalPlan) {
 }
 
 func (t *joinReorderTrace) appendLogicalJoinCost(join LogicalPlan, cost float64) {
-	if t == nil || t.opt == nil || t.opt.tracer == nil {
+	if t == nil || t.opt == nil || t.opt.TracerIsNil() {
 		return
 	}
 	joinMapKey := allJoinOrderToString(extractJoinAndDataSource(join.BuildPlanTrace()))

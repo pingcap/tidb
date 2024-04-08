@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -304,15 +303,16 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 	if !all {
 		return nil
 	}
+	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	for _, item := range prop.SortItems {
 		isExist, hasLeftColInProp, hasRightColInProp := false, false, false
 		for joinKeyPos := 0; joinKeyPos < len(leftJoinKeys); joinKeyPos++ {
 			var key *expression.Column
-			if item.Col.Equal(p.SCtx().GetExprCtx(), leftJoinKeys[joinKeyPos]) {
+			if item.Col.Equal(evalCtx, leftJoinKeys[joinKeyPos]) {
 				key = leftJoinKeys[joinKeyPos]
 				hasLeftColInProp = true
 			}
-			if item.Col.Equal(p.SCtx().GetExprCtx(), rightJoinKeys[joinKeyPos]) {
+			if item.Col.Equal(evalCtx, rightJoinKeys[joinKeyPos]) {
 				key = rightJoinKeys[joinKeyPos]
 				hasRightColInProp = true
 			}
@@ -382,14 +382,6 @@ func (p *PhysicalMergeJoin) initCompareFuncs() {
 	}
 }
 
-// ForceUseOuterBuild4Test is a test option to control forcing use outer input as build.
-// TODO: use hint and remove this variable
-var ForceUseOuterBuild4Test = atomic.NewBool(false)
-
-// ForcedHashLeftJoin4Test is a test option to force using HashLeftJoin
-// TODO: use hint and remove this variable
-var ForcedHashLeftJoin4Test = atomic.NewBool(false)
-
 func (p *LogicalJoin) shouldSkipHashJoin() bool {
 	return (p.preferJoinType&h.PreferNoHashJoin) > 0 || (p.SCtx().GetSessionVars().DisableHashJoin)
 }
@@ -398,6 +390,7 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return
 	}
+
 	forceLeftToBuild := ((p.preferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.preferJoinType & h.PreferRightAsHJProbe) > 0)
 	forceRightToBuild := ((p.preferJoinType & h.PreferRightAsHJBuild) > 0) || ((p.preferJoinType & h.PreferLeftAsHJProbe) > 0)
 	if forceLeftToBuild && forceRightToBuild {
@@ -411,45 +404,33 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
 		if forceLeftToBuild || forceRightToBuild {
-			// Do not support specifying the build side.
+			// Do not support specifying the build and probe side for semi join.
 			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for %s, please check the hint", p.JoinType))
 			forceLeftToBuild = false
 			forceRightToBuild = false
 		}
 	case LeftOuterJoin:
-		if ForceUseOuterBuild4Test.Load() {
+		if !forceLeftToBuild {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+		}
+		if !forceRightToBuild {
 			joins = append(joins, p.getHashJoin(prop, 1, true))
-		} else {
-			if !forceLeftToBuild {
-				joins = append(joins, p.getHashJoin(prop, 1, false))
-			}
-			if !forceRightToBuild {
-				joins = append(joins, p.getHashJoin(prop, 1, true))
-			}
 		}
 	case RightOuterJoin:
-		if ForceUseOuterBuild4Test.Load() {
+		if !forceLeftToBuild {
 			joins = append(joins, p.getHashJoin(prop, 0, true))
-		} else {
-			if !forceLeftToBuild {
-				joins = append(joins, p.getHashJoin(prop, 0, true))
-			}
-			if !forceRightToBuild {
-				joins = append(joins, p.getHashJoin(prop, 0, false))
-			}
+		}
+		if !forceRightToBuild {
+			joins = append(joins, p.getHashJoin(prop, 0, false))
 		}
 	case InnerJoin:
-		if ForcedHashLeftJoin4Test.Load() {
+		if forceLeftToBuild {
+			joins = append(joins, p.getHashJoin(prop, 0, false))
+		} else if forceRightToBuild {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
 		} else {
-			if forceLeftToBuild {
-				joins = append(joins, p.getHashJoin(prop, 0, false))
-			} else if forceRightToBuild {
-				joins = append(joins, p.getHashJoin(prop, 1, false))
-			} else {
-				joins = append(joins, p.getHashJoin(prop, 1, false))
-				joins = append(joins, p.getHashJoin(prop, 0, false))
-			}
+			joins = append(joins, p.getHashJoin(prop, 1, false))
+			joins = append(joins, p.getHashJoin(prop, 0, false))
 		}
 	}
 
@@ -1186,7 +1167,7 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 	// 2. Try to get NDV from index stats.
 	// Note that we don't need to specially handle prefix index here, because the NDV of a prefix index is
 	// equal or less than the corresponding normal index, and that's safe here since we want a lower bound.
-	for idxID, idxCols := range histColl.Idx2ColumnIDs {
+	for idxID, idxCols := range histColl.Idx2ColUniqueIDs {
 		if len(idxCols) != len(colUIDs) {
 			continue
 		}
@@ -1450,7 +1431,7 @@ func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx PlanContext, row chunk.Ro
 	exprs := make([]expression.Expression, len(cwc.OpType))
 	exprCtx := ctx.GetExprCtx()
 	for i, opType := range cwc.OpType {
-		constantArg, err := cwc.opArg[i].Eval(exprCtx, row)
+		constantArg, err := cwc.opArg[i].Eval(exprCtx.GetEvalCtx(), row)
 		if err != nil {
 			return nil, err
 		}
@@ -2863,12 +2844,12 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 
 		if lw.Frame != nil && lw.Frame.Type == ast.Ranges {
 			ctx := lw.SCtx().GetExprCtx()
-			if _, err := expression.ExpressionsToPBList(ctx, lw.Frame.Start.CalcFuncs, lw.SCtx().GetClient()); err != nil {
+			if _, err := expression.ExpressionsToPBList(ctx.GetEvalCtx(), lw.Frame.Start.CalcFuncs, lw.SCtx().GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
 			}
-			if _, err := expression.ExpressionsToPBList(ctx, lw.Frame.End.CalcFuncs, lw.SCtx().GetClient()); err != nil {
+			if _, err := expression.ExpressionsToPBList(ctx.GetEvalCtx(), lw.Frame.End.CalcFuncs, lw.SCtx().GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil

@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/set"
 )
 
@@ -34,7 +35,7 @@ type outerJoinEliminator struct {
 //  2. outer join elimination with duplicate agnostic aggregate functions: For example left outer join.
 //     If the parent only use the columns from left table with 'distinct' label. The left outer join can
 //     be eliminated.
-func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []*expression.Column, parentCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []*expression.Column, parentCols []*expression.Column, opt *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	var innerChildIdx int
 	switch p.JoinType {
 	case LeftOuterJoin:
@@ -191,7 +192,7 @@ func GetDupAgnosticAggCols(
 	return true, newAggCols
 }
 
-func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Column, parentCols []*expression.Column, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Column, parentCols []*expression.Column, opt *util.LogicalOptimizeOp) (LogicalPlan, error) {
 	// CTE's logical optimization is independent.
 	if _, ok := p.(*LogicalCTE); ok {
 		return p, nil
@@ -245,7 +246,7 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 	return p, nil
 }
 
-func (o *outerJoinEliminator) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (o *outerJoinEliminator) optimize(_ context.Context, p LogicalPlan, opt *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	p, err := o.doOptimize(p, nil, nil, opt)
 	return p, planChanged, err
@@ -256,7 +257,7 @@ func (*outerJoinEliminator) name() string {
 }
 
 func appendOuterJoinEliminateTraceStep(join *LogicalJoin, outerPlan LogicalPlan, parentCols []*expression.Column,
-	innerJoinKeys *expression.Schema, opt *logicalOptimizeOp) {
+	innerJoinKeys *expression.Schema, opt *util.LogicalOptimizeOp) {
 	reason := func() string {
 		buffer := bytes.NewBufferString("The columns[")
 		for i, col := range parentCols {
@@ -278,10 +279,10 @@ func appendOuterJoinEliminateTraceStep(join *LogicalJoin, outerPlan LogicalPlan,
 	action := func() string {
 		return fmt.Sprintf("Outer %v_%v is eliminated and become %v_%v", join.TP(), join.ID(), outerPlan.TP(), outerPlan.ID())
 	}
-	opt.appendStepToCurrent(join.ID(), join.TP(), reason, action)
+	opt.AppendStepToCurrent(join.ID(), join.TP(), reason, action)
 }
 
-func appendOuterJoinEliminateAggregationTraceStep(join *LogicalJoin, outerPlan LogicalPlan, aggCols []*expression.Column, opt *logicalOptimizeOp) {
+func appendOuterJoinEliminateAggregationTraceStep(join *LogicalJoin, outerPlan LogicalPlan, aggCols []*expression.Column, opt *util.LogicalOptimizeOp) {
 	reason := func() string {
 		buffer := bytes.NewBufferString("The columns[")
 		for i, col := range aggCols {
@@ -296,5 +297,5 @@ func appendOuterJoinEliminateAggregationTraceStep(join *LogicalJoin, outerPlan L
 	action := func() string {
 		return fmt.Sprintf("Outer %v_%v is eliminated and become %v_%v", join.TP(), join.ID(), outerPlan.TP(), outerPlan.ID())
 	}
-	opt.appendStepToCurrent(join.ID(), join.TP(), reason, action)
+	opt.AppendStepToCurrent(join.ID(), join.TP(), reason, action)
 }

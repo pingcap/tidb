@@ -406,7 +406,7 @@ func TestGetExistedUserDBs(t *testing.T) {
 			{Name: model.NewCIStr("d1")},
 			{
 				Name:   model.NewCIStr("test"),
-				Tables: []*model.TableInfo{{Name: model.NewCIStr("t1"), State: model.StatePublic}},
+				Tables: []*model.TableInfo{{ID: 1, Name: model.NewCIStr("t1"), State: model.StatePublic}},
 				State:  model.StatePublic,
 			},
 		},

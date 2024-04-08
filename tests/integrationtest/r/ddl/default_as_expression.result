@@ -100,7 +100,7 @@ t1	CREATE TABLE `t1` (
   KEY `idx` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t0 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
-Error 1292 (22007): Incorrect datetime value: '2024-03'
+Error 1292 (22007): Incorrect datetime value:<time>
 alter table t0 alter column c1 SET DEFAULT (date_format(now(), '%Y-%m-%d'));
 insert into t0 values (5, default);
 alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
@@ -936,6 +936,6 @@ child	CREATE TABLE `child` (
   `id` int(11) DEFAULT NULL,
   `cc` date DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d'),
   KEY `idx` (`cc`),
-  CONSTRAINT `fk_1` FOREIGN KEY (`cc`) REFERENCES `test`.`parent` (`c`) ON DELETE CASCADE
+  CONSTRAINT `fk_1` FOREIGN KEY (`cc`) REFERENCES `parent` (`c`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table parent, child;

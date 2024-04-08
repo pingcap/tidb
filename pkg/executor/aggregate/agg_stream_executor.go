@@ -169,7 +169,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 	allMemDelta := int64(0)
 	exprCtx := e.Ctx().GetExprCtx()
 	for i, aggFunc := range e.AggFuncs {
-		memDelta, err := aggFunc.UpdatePartialResult(exprCtx, e.groupRows, e.partialResults[i])
+		memDelta, err := aggFunc.UpdatePartialResult(exprCtx.GetEvalCtx(), e.groupRows, e.partialResults[i])
 		if err != nil {
 			return err
 		}
@@ -217,7 +217,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	exprCtx := e.Ctx().GetExprCtx()
 	for i, aggFunc := range e.AggFuncs {
-		err := aggFunc.AppendFinalResult2Chunk(exprCtx, e.partialResults[i], chk)
+		err := aggFunc.AppendFinalResult2Chunk(exprCtx.GetEvalCtx(), e.partialResults[i], chk)
 		if err != nil {
 			return err
 		}

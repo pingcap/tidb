@@ -5,7 +5,7 @@ package iter
 import (
 	"context"
 
-	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util"
 )
 
 // TransformConfig is the config for the combinator "transform".
@@ -13,7 +13,7 @@ type TransformConfig func(*chunkMappingCfg)
 
 func WithConcurrency(n uint) TransformConfig {
 	return func(c *chunkMappingCfg) {
-		c.quota = utils.NewWorkerPool(n, "transforming")
+		c.quota = util.NewWorkerPool(n, "transforming")
 	}
 }
 
@@ -39,7 +39,7 @@ func Transform[T, R any](it TryNextor[T], with func(context.Context, T) (R, erro
 		c(&r.chunkMappingCfg)
 	}
 	if r.quota == nil {
-		r.quota = utils.NewWorkerPool(r.chunkSize, "max-concurrency")
+		r.quota = util.NewWorkerPool(r.chunkSize, "max-concurrency")
 	}
 	if r.quota.Limit() > int(r.chunkSize) {
 		r.chunkSize = uint(r.quota.Limit())

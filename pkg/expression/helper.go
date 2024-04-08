@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"context"
 	"math"
 	"strings"
 	"time"
@@ -26,9 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap"
 )
 
 func boolToInt64(v bool) int64 {
@@ -71,7 +67,7 @@ func GetTimeCurrentTimestamp(ctx BuildContext, tp byte, fsp int) (d types.Datum,
 
 func getTimeCurrentTimeStamp(ctx BuildContext, tp byte, fsp int) (t types.Time, err error) {
 	value := types.NewTime(types.ZeroCoreTime, tp, fsp)
-	defaultTime, err := getStmtTimestamp(ctx)
+	defaultTime, err := getStmtTimestamp(ctx.GetEvalCtx())
 	if err != nil {
 		return value, err
 	}
@@ -162,32 +158,5 @@ func getStmtTimestamp(ctx EvalContext) (time.Time, error) {
 		v := time.Unix(int64(val.(int)), 0)
 		failpoint.Return(v, nil)
 	})
-
-	if ctx != nil {
-		staleTSO, err := ctx.GetSessionVars().StmtCtx.GetStaleTSO()
-		if staleTSO != 0 && err == nil {
-			return oracle.GetTimeFromTS(staleTSO), nil
-		} else if err != nil {
-			logutil.BgLogger().Error("get stale tso failed", zap.Error(err))
-		}
-	}
-
-	now := time.Now()
-
-	if ctx == nil {
-		return now, nil
-	}
-
-	sessionVars := ctx.GetSessionVars()
-	timestampStr, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), "timestamp")
-	if err != nil {
-		return now, err
-	}
-
-	timestamp, err := types.StrToFloat(sessionVars.StmtCtx.TypeCtx(), timestampStr, false)
-	if err != nil {
-		return time.Time{}, err
-	}
-	seconds, fractionalSeconds := math.Modf(timestamp)
-	return time.Unix(int64(seconds), int64(fractionalSeconds*float64(time.Second))), nil
+	return ctx.CurrentTime()
 }

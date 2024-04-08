@@ -68,12 +68,13 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx pctx.PlanContext, tsExpr ast.
 
 // CalculateTsWithReadStaleness calculates the TsExpr for readStaleness duration
 func CalculateTsWithReadStaleness(sctx sessionctx.Context, readStaleness time.Duration) (uint64, error) {
-	nowVal, err := expression.GetStmtTimestamp(sctx.GetExprCtx())
+	nowVal, err := expression.GetStmtTimestamp(sctx.GetExprCtx().GetEvalCtx())
 	if err != nil {
 		return 0, err
 	}
 	tsVal := nowVal.Add(readStaleness)
-	minTsVal := expression.GetMinSafeTime(sctx.GetExprCtx())
+	sc := sctx.GetSessionVars().StmtCtx
+	minTsVal := expression.GetStmtMinSafeTime(sc, sctx.GetStore(), sc.TimeZone())
 	return oracle.GoTimeToTS(expression.CalAppropriateTime(tsVal, nowVal, minTsVal)), nil
 }
 
