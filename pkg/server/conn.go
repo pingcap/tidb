@@ -95,8 +95,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	util3 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/arena"
-	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -206,6 +206,7 @@ type clientConn struct {
 
 	writeChunksOnce sync.Once
 	writeChunksCh   chan chunkErrorChan
+	errCh           chan error
 	tickerCheckExit *time.Ticker
 }
 
@@ -214,8 +215,7 @@ type chunkErrorChan struct {
 	rs         resultset.ResultSet
 	binary     bool
 	stmtDetail *execdetails.StmtExecDetails
-	chkCh      <-chan *chunk.Chunk
-	errCh      chan<- error
+	chk        *chunk.Chunk
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -2327,22 +2327,21 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 		req            = rs.NewChunk(cc.chunkAlloc)
 		gotColumnInfo  = false
 		validNextCount = 0
-		chkCh          = make(chan *chunk.Chunk, 1)
-		errCh          = make(chan error, 1)
+		needWait       = false
 	)
-	cc.writeChunksCh <- chunkErrorChan{ctx, rs, binary, stmtDetail, chkCh, errCh}
 	firstNext = true
 	var start time.Time
 
 	defer func() {
-		channel.Clear(errCh)
-		cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusWaitQueryFinished, false)
-	}()
-	defer close(chkCh)
-	defer func() {
 		if finErr := rs.Finish(); err == nil {
 			err = finErr
 		}
+		if needWait {
+			if returnErr := <-cc.errCh; err == nil {
+				err = returnErr
+			}
+		}
+		cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusWaitQueryFinished, false)
 	}()
 
 	for {
@@ -2394,11 +2393,11 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 		}
 		validNextCount++
 		firstNext = false
-		chkCh <- req
+		cc.writeChunksCh <- chunkErrorChan{ctx, rs, binary, stmtDetail, req}
 	InnerFor:
 		for {
 			select {
-			case err = <-errCh:
+			case err = <-cc.errCh:
 				if err != nil {
 					return false, err
 				}
@@ -2407,6 +2406,7 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 				if err = cc.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 					cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusWaitQueryFinished, true)
 					cc.ctx.UpdateProcessInfo()
+					needWait = true
 					return false, err
 				}
 			}
@@ -2419,15 +2419,16 @@ func (cc *clientConn) createWriteChunksGoroutine() {
 	cc.writeChunksOnce.Do(func() {
 		cc.writeChunksCh = make(chan chunkErrorChan, 1)
 		cc.tickerCheckExit = time.NewTicker(3 * time.Second)
+		cc.errCh = make(chan error, 1)
 		go func() {
+			defer close(cc.errCh)
 			var (
 				err        error
 				ctx        context.Context
 				start      time.Time
 				data       = cc.alloc.AllocWithLen(4, 1024)
 				rs         resultset.ResultSet
-				chkCh      <-chan *chunk.Chunk
-				errCh      chan<- error
+				req        *chunk.Chunk
 				stmtDetail *execdetails.StmtExecDetails
 				binary     bool
 			)
@@ -2438,47 +2439,45 @@ func (cc *clientConn) createWriteChunksGoroutine() {
 				}
 				ctx = chkerror.ctx
 				rs = chkerror.rs
-				chkCh = chkerror.chkCh
-				errCh = chkerror.errCh
 				stmtDetail = chkerror.stmtDetail
 				binary = chkerror.binary
+				req = chkerror.chk
 
 				func() {
-					defer close(errCh)
-					for {
-						req, ok := <-chkCh
-						if !ok {
+					defer func() {
+						if r := recover(); r != nil {
+							err = util3.GetRecoverError(r)
+							cc.errCh <- err
+						}
+					}()
+					reg := trace.StartRegion(ctx, "WriteClientConn")
+					if stmtDetail != nil {
+						start = time.Now()
+					}
+					rowCount := req.NumRows()
+					for i := 0; i < rowCount; i++ {
+						data = data[0:4]
+						if binary {
+							data, err = column.DumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+						} else {
+							data, err = column.DumpTextRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+						}
+						if err != nil {
+							reg.End()
+							cc.errCh <- err
 							break
 						}
-						reg := trace.StartRegion(ctx, "WriteClientConn")
-						if stmtDetail != nil {
-							start = time.Now()
+						if err = cc.writePacket(data); err != nil {
+							reg.End()
+							cc.errCh <- err
+							break
 						}
-						rowCount := req.NumRows()
-						for i := 0; i < rowCount; i++ {
-							data = data[0:4]
-							if binary {
-								data, err = column.DumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
-							} else {
-								data, err = column.DumpTextRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
-							}
-							if err != nil {
-								reg.End()
-								errCh <- err
-								break
-							}
-							if err = cc.writePacket(data); err != nil {
-								reg.End()
-								errCh <- err
-								break
-							}
-						}
-						reg.End()
-						if stmtDetail != nil {
-							stmtDetail.WriteSQLRespDuration += time.Since(start)
-						}
-						errCh <- err
 					}
+					reg.End()
+					if stmtDetail != nil {
+						stmtDetail.WriteSQLRespDuration += time.Since(start)
+					}
+					cc.errCh <- err
 				}()
 			}
 		}()

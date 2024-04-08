@@ -79,7 +79,6 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/arena",
-        "//pkg/util/channel",
         "//pkg/util/chunk",
         "//pkg/util/context",
         "//pkg/util/cpuprofile",
