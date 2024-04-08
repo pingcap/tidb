@@ -40,11 +40,6 @@ import (
 	"go.uber.org/atomic"
 )
 
-func init() {
-	// Reduce the time cost for test cases.
-	splitRetryTimes = 2
-}
-
 type testSplitClient struct {
 	split.SplitClient
 	mu           sync.RWMutex
@@ -496,29 +491,6 @@ func TestMissingScatter(t *testing.T) {
 
 	// the old regions will not be scattered. They are [..., bba), [bba, bbh), [..., cca)
 	require.Equal(t, len(result)-3, int(checkClient.scatterCounter.Load()))
-}
-
-type scanRegionEmptyHook struct {
-	noopHook
-	cnt int
-}
-
-func (h *scanRegionEmptyHook) AfterScanRegions(res []*split.RegionInfo, err error) ([]*split.RegionInfo, error) {
-	h.cnt++
-	// skip the first call
-	if h.cnt == 1 {
-		return res, err
-	}
-	return nil, err
-}
-
-func TestBatchSplitRegionByRangesScanFailed(t *testing.T) {
-	backup := split.WaitRegionOnlineAttemptTimes
-	split.WaitRegionOnlineAttemptTimes = 3
-	defer func() {
-		split.WaitRegionOnlineAttemptTimes = backup
-	}()
-	doTestBatchSplitRegionByRanges(context.Background(), t, &scanRegionEmptyHook{}, "scan region return empty result", defaultHook{})
 }
 
 type splitRegionEpochNotMatchHook struct {

@@ -22,29 +22,18 @@ import (
 
 var (
 	WaitRegionOnlineAttemptTimes = config.DefaultRegionCheckBackoffLimit
+	SplitRetryTimes              = 32
 )
 
 // Constants for split retry machinery.
 const (
-	SplitRetryTimes       = 32
 	SplitRetryInterval    = 50 * time.Millisecond
 	SplitMaxRetryInterval = 4 * time.Second
 
-	SplitCheckMaxRetryTimes = 64
-	SplitCheckInterval      = 8 * time.Millisecond
-	SplitMaxCheckInterval   = time.Second
-
-	ScatterWaitMaxRetryTimes = 64
-	ScatterWaitInterval      = 50 * time.Millisecond
-	ScatterMaxWaitInterval   = time.Second
 	// it takes 30 minutes to scatter regions when each TiKV has 400k regions
 	ScatterWaitUpperInterval = 30 * time.Minute
 
 	ScanRegionPaginationLimit = 128
-
-	RejectStoreCheckRetryTimes  = 64
-	RejectStoreCheckInterval    = 100 * time.Millisecond
-	RejectStoreMaxCheckInterval = 2 * time.Second
 )
 
 func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {

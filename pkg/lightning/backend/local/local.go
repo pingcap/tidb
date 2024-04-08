@@ -554,7 +554,7 @@ func NewBackend(
 		pdCli.GetServiceDiscovery(),
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
-	splitCli := split.NewSplitClient(pdCli, pdHTTPCli, tls.TLSConfig(), false, config.RegionSplitBatchSize)
+	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), false, config.RegionSplitBatchSize, config.RegionSplitConcurrency)
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 	var writeLimiter StoreWriteLimiter
 	if config.StoreWriteBWLimit > 0 {
