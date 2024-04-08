@@ -127,7 +127,7 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 		totalCount += count
 		hg.AppendBucketWithNDV(&lowerBound, &upperBound, totalCount, repeats, rows[i].GetInt64(4))
 	}
-	hg.PreCalculateScalar()
+	hg.PreCalculateScalar(sctx.GetSessionVars().StmtCtx.TypeCtx())
 	return hg, nil
 }
 

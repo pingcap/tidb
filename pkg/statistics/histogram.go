@@ -16,7 +16,6 @@ package statistics
 
 import (
 	"bytes"
-	"cmp"
 	"fmt"
 	"math"
 	"slices"
@@ -43,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 )
 
@@ -578,7 +576,7 @@ func (hg *Histogram) LessRowCountWithBktIdx(sctx context.PlanContext, value type
 	if match {
 		return curCount - curRepeat, bucketIdx
 	}
-	return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount), bucketIdx
+	return preCount + hg.calcFraction(sctx.GetSessionVars().StmtCtx.TypeCtx(), bucketIdx, &value)*(curCount-curRepeat-preCount), bucketIdx
 }
 
 // LessRowCount estimates the row count where the column less than value.
@@ -968,8 +966,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	// Convert the range we want to estimate to scalar value(float64)
-	l := convertDatumToScalar(lDatum, commonPrefix)
-	r := convertDatumToScalar(rDatum, commonPrefix)
+	l := convertDatumToScalar(sctx.GetSessionVars().StmtCtx.TypeCtx(), lDatum, commonPrefix)
+	r := convertDatumToScalar(sctx.GetSessionVars().StmtCtx.TypeCtx(), rDatum, commonPrefix)
 	unsigned := mysql.HasUnsignedFlag(hg.Tp.GetFlag())
 	// If this is an unsigned column, we need to make sure values are not negative.
 	// Normal negative value should have become 0. But this still might happen when met MinNotNull here.
@@ -997,8 +995,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return 0
 	}
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
-	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
-	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
+	histL := convertDatumToScalar(sctx.GetSessionVars().StmtCtx.TypeCtx(), hg.GetLower(0), commonPrefix)
+	histR := convertDatumToScalar(sctx.GetSessionVars().StmtCtx.TypeCtx(), hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
 	if histWidth <= 0 {
 		return 0
@@ -1124,51 +1122,6 @@ func GetIndexPrefixLens(data []byte, numCols int) (prefixLens []int, err error) 
 		prefixLens = append(prefixLens, prefixLen)
 	}
 	return prefixLens, nil
-}
-
-// ExtractTopN extracts topn from histogram.
-func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN uint32) error {
-	if hg.Len() == 0 || cms == nil || numTopN == 0 {
-		return nil
-	}
-	dataSet := make(map[string]struct{}, hg.Bounds.NumRows())
-	dataCnts := make([]dataCnt, 0, hg.Bounds.NumRows())
-	hg.PreCalculateScalar()
-	// Set a limit on the frequency of boundary values to avoid extract values with low frequency.
-	limit := hg.NotNullCount() / float64(hg.Len())
-	// Since our histogram are equal depth, they must occurs on the boundaries of buckets.
-	for i := 0; i < hg.Bounds.NumRows(); i++ {
-		data := hg.Bounds.GetRow(i).GetBytes(0)
-		prefixLens, err := GetIndexPrefixLens(data, numCols)
-		if err != nil {
-			return err
-		}
-		for _, prefixLen := range prefixLens {
-			prefixColData := data[:prefixLen]
-			_, ok := dataSet[string(prefixColData)]
-			if ok {
-				continue
-			}
-			dataSet[string(prefixColData)] = struct{}{}
-			res := hg.BetweenRowCount(nil, types.NewBytesDatum(prefixColData), types.NewBytesDatum(kv.Key(prefixColData).PrefixNext()))
-			if res >= limit {
-				dataCnts = append(dataCnts, dataCnt{prefixColData, uint64(res)})
-			}
-		}
-	}
-	slices.SortStableFunc(dataCnts, func(a, b dataCnt) int { return -cmp.Compare(a.cnt, b.cnt) })
-	if len(dataCnts) > int(numTopN) {
-		dataCnts = dataCnts[:numTopN]
-	}
-	topN.TopN = make([]TopNMeta, 0, len(dataCnts))
-	for _, dataCnt := range dataCnts {
-		h1, h2 := murmur3.Sum128(dataCnt.data)
-		realCnt := cms.queryHashValue(nil, h1, h2)
-		cms.SubValue(h1, h2, realCnt)
-		topN.AppendTopN(dataCnt.data, realCnt)
-	}
-	topN.Sort()
-	return nil
 }
 
 var bucket4MergingPool = sync.Pool{
@@ -1297,7 +1250,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		// |_____left______|
 		// |-ratio-|
 		// ndv = ratio * left.ndv + max((1-ratio) * left.ndv, right.ndv)
-		ratio := calcFraction4Datums(left.lower, left.upper, right.lower)
+		ratio := calcFraction4Datums(sc.TypeCtx(), left.lower, left.upper, right.lower)
 		res.NDV = int64(ratio*float64(left.NDV) + math.Max((1-ratio)*float64(left.NDV), float64(right.NDV)))
 		res.lower = left.lower.Clone()
 		return &res, nil
@@ -1321,7 +1274,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		res.NDV = left.NDV
 		return &res, nil
 	}
-	upperRatio := calcFraction4Datums(right.lower, right.upper, left.upper)
+	upperRatio := calcFraction4Datums(sc.TypeCtx(), right.lower, right.upper, left.upper)
 	lowerCompare, err := right.lower.Compare(sc.TypeCtx(), left.lower, collate.GetBinaryCollator())
 	if err != nil {
 		return nil, err
@@ -1334,7 +1287,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	//		+ max((1-lowerRatio) * left.ndv, upperRatio * right.ndv)
 	//		+ (1-upperRatio) * right.ndv
 	if lowerCompare >= 0 {
-		lowerRatio := calcFraction4Datums(left.lower, left.upper, right.lower)
+		lowerRatio := calcFraction4Datums(sc.TypeCtx(), left.lower, left.upper, right.lower)
 		res.NDV = int64(lowerRatio*float64(left.NDV) +
 			math.Max((1-lowerRatio)*float64(left.NDV), upperRatio*float64(right.NDV)) +
 			(1-upperRatio)*float64(right.NDV))
@@ -1348,7 +1301,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// ndv = lowerRatio * right.ndv
 	//		+ max(left.ndv + (upperRatio - lowerRatio) * right.ndv)
 	//		+ (1-upperRatio) * right.ndv
-	lowerRatio := calcFraction4Datums(right.lower, right.upper, left.lower)
+	lowerRatio := calcFraction4Datums(sc.TypeCtx(), right.lower, right.upper, left.lower)
 	res.NDV = int64(lowerRatio*float64(right.NDV) +
 		math.Max(float64(left.NDV), (upperRatio-lowerRatio)*float64(right.NDV)) +
 		(1-upperRatio)*float64(right.NDV))

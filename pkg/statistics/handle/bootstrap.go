@@ -18,7 +18,6 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
@@ -524,7 +522,7 @@ func (h *Handle) initStatsFMSketch(cache statstypes.StatsCache) error {
 	return nil
 }
 
-func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsBuckets4Chunk(sctx sessionctx.Context, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
@@ -560,17 +558,15 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			d := types.NewBytesDatum(row.GetBytes(5))
 			// Setting TimeZone to time.UTC aligns with HistogramFromStorage and can fix #41938. However, #41985 still exist.
 			// TODO: do the correct time zone conversion for timestamp-type columns' upper/lower bounds.
-			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 			var err error
-			lower, err = d.ConvertTo(sc.TypeCtx(), &column.Info.FieldType)
+			lower, err = d.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
-			upper, err = d.ConvertTo(sc.TypeCtx(), &column.Info.FieldType)
+			upper, err = d.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &column.Info.FieldType)
 			if err != nil {
 				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
 				delete(table.Columns, histID)
@@ -608,7 +604,7 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 			if req.NumRows() == 0 {
 				break
 			}
-			h.initStatsBuckets4Chunk(cache, iter)
+			h.initStatsBuckets4Chunk(h.initStatsCtx, cache, iter)
 		}
 	}
 	tables := cache.Values()
@@ -617,13 +613,13 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 			for i := 1; i < idx.Len(); i++ {
 				idx.Buckets[i].Count += idx.Buckets[i-1].Count
 			}
-			idx.PreCalculateScalar()
+			idx.PreCalculateScalar(h.initStatsCtx.GetSessionVars().StmtCtx.TypeCtx())
 		}
 		for _, col := range table.Columns {
 			for i := 1; i < col.Len(); i++ {
 				col.Buckets[i].Count += col.Buckets[i-1].Count
 			}
-			col.PreCalculateScalar()
+			col.PreCalculateScalar(h.initStatsCtx.GetSessionVars().StmtCtx.TypeCtx())
 		}
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 	}
@@ -658,7 +654,7 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsBuckets4Chunk(cache, iter)
+		h.initStatsBuckets4Chunk(sctx, cache, iter)
 	}
 	return nil
 }
