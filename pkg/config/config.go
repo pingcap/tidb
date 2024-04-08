@@ -622,7 +622,7 @@ type Security struct {
 
 // SEM is the Security Enhanced Mode configuration.
 type SEM struct {
-	RestrictedStatus              []RestrictedState                `toml:"restricted_status" json:"restricted_status"`
+	RestrictedStatus              []RestrictedStatus                `toml:"restricted_status" json:"restricted_status"`
 	RestrictedStaticPrivilegesCol []string                         `toml:"restricted_static_privileges_col" json:"restricted_static_privileges_col"`
 	RestrictedStaticPrivileges    map[mysql.PrivilegeType]struct{} `toml:"restricted_static_privileges" json:"restricted_static_privileges"`
 	RestrictedVariables           []RestrictedVariable             `toml:"restricted_variables" json:"restricted_variables"`
