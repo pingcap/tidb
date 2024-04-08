@@ -31,6 +31,7 @@ import (
 	"sync/atomic"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/objstorage/objstorageprovider"
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/pingcap/errors"
@@ -161,11 +162,12 @@ func newSSTWriter(
 ) (*sstWriter, error) {
 	destPath := makeFilename(fs, dirname, fileNum)
 	tmpPath := destPath + tmpFileSuffix
-	f, err := fs.Create(tmpPath)
+	f, err := vfs.Default.Create(tmpPath)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	w := sstable.NewWriter(f, sstable.WriterOptions{
+	writable := objstorageprovider.NewFileWritable(f)
+	w := sstable.NewWriter(writable, sstable.WriterOptions{
 		TablePropertyCollectors: []func() sstable.TablePropertyCollector{
 			func() sstable.TablePropertyCollector {
 				return newKVStatsCollector(kvStatsBucketSize)
@@ -272,7 +274,11 @@ func (p *sstReaderPool) get(fileNum int) (*sstable.Reader, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	reader, err = sstable.NewReader(f, sstable.ReaderOptions{
+	readable, err := sstable.NewSimpleReadable(f)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	reader, err = sstable.NewReader(readable, sstable.ReaderOptions{
 		Cache: p.cache,
 	})
 	if err != nil {
@@ -337,22 +343,30 @@ type sstIter struct {
 }
 
 func (si *sstIter) Seek(key []byte) bool {
-	si.key, si.value = si.iter.SeekGE(key, false)
+	k, v := si.iter.SeekGE(key, 0)
+	si.key = k
+	si.value, _, _ = v.Value(nil)
 	return si.key != nil
 }
 
 func (si *sstIter) First() bool {
-	si.key, si.value = si.iter.SeekGE(nil, false)
+	k, v := si.iter.SeekGE(nil, 0)
+	si.key = k
+	si.value, _, _ = v.Value(nil)
 	return si.key != nil
 }
 
 func (si *sstIter) Next() bool {
-	si.key, si.value = si.iter.Next()
+	k, v := si.iter.Next()
+	si.key = k
+	si.value, _, _ = v.Value(nil)
 	return si.key != nil
 }
 
 func (si *sstIter) Last() bool {
-	si.key, si.value = si.iter.Last()
+	k, v := si.iter.Last()
+	si.key = k
+	si.value, _, _ = v.Value(nil)
 	return si.key != nil
 }
 
