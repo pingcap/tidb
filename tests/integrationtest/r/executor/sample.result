@@ -83,7 +83,7 @@ delete from t;
 insert into t values (1, '1');
 select count(*) from t partition (p0) tablesample regions();
 count(*)
-1
+0
 select count(*) from t partition (p1) tablesample regions();
 count(*)
 1

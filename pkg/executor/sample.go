@@ -79,6 +79,7 @@ type tableRegionSampler struct {
 	table           table.Table
 	startTS         uint64
 	physicalTableID int64
+	partTables      []table.PartitionedTable
 
 	schema     *expression.Schema
 	fullSchema *expression.Schema
@@ -90,12 +91,22 @@ type tableRegionSampler struct {
 	isFinished   bool
 }
 
-func newTableRegionSampler(ctx sessionctx.Context, t table.Table, startTs uint64, pyhsicalTableID int64,
-	schema *expression.Schema, fullSchema *expression.Schema, retTypes []*types.FieldType, desc bool) *tableRegionSampler {
+func newTableRegionSampler(
+	ctx sessionctx.Context,
+	t table.Table,
+	startTs uint64,
+	pyhsicalTableID int64,
+	partTables []table.PartitionedTable,
+	schema *expression.Schema,
+	fullSchema *expression.Schema,
+	retTypes []*types.FieldType,
+	desc bool,
+) *tableRegionSampler {
 	return &tableRegionSampler{
 		ctx:             ctx,
 		table:           t,
 		startTS:         startTs,
+		partTables:      partTables,
 		physicalTableID: pyhsicalTableID,
 		schema:          schema,
 		fullSchema:      fullSchema,
@@ -185,7 +196,9 @@ func (s *tableRegionSampler) splitTableRanges() ([]kv.KeyRange, error) {
 
 	var partIDs []int64
 	if partitionTable.Meta().ID == s.physicalTableID {
-		partIDs = partitionTable.GetAllPartitionIDs()
+		for _, p := range s.partTables {
+			partIDs = append(partIDs, p.GetAllPartitionIDs()...)
+		}
 	} else {
 		partIDs = []int64{s.physicalTableID}
 	}
