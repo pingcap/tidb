@@ -1812,6 +1812,8 @@ func TestPartitionIntFullCover(t *testing.T) {
 	tk.MustExec(`use test`)
 	seed := time.Now().UnixNano()
 	//seed = 1710854203824599000
+	//seed = 1712349497788283000
+	//seed = 1712320419599937000
 	t.Logf("seed: %d", seed)
 	seededRand := rand.New(rand.NewSource(seed))
 	tableDefSQL := []partCoverStruct{
@@ -2072,14 +2074,6 @@ func preparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, poi
 		expect := getRowData(rowData, filler, cols, a, b, c)
 		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(expect...))
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-		a, b, c = ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))]
-		tk.MustExec(fmt.Sprintf(`set @a := %d, @b := %d, @c := %d %s`, a, b, c, comment))
-		expect = getRowData(rowData, filler, cols, a, b, c)
-		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(expect...))
-		if !tk.Session().GetSessionVars().FoundInPlanCache {
-			tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
-			require.False(t, q.usesBatchPointGet && canUseBatchPointGet)
-		}
 		tkProcess := tk.Session().ShowProcess()
 		ps := []*util.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
@@ -2092,6 +2086,26 @@ func preparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, poi
 				append([]string{"Batch_Point_Get"}, pointGetExplain...))
 		} else {
 			res.CheckNotContain("Batch_Point_Get")
+		}
+		a2, b2, c2 := ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))]
+		tk.MustExec(fmt.Sprintf(`set @a := %d, @b := %d, @c := %d %s`, a2, b2, c2, comment))
+		expect = getRowData(rowData, filler, cols, a2, b2, c2)
+		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(expect...))
+		if !tk.Session().GetSessionVars().FoundInPlanCache {
+			// Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized
+			// Warning 1105 skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, Handles length diff
+			warn := tk.MustQuery("show warnings " + comment)
+			if a == b || a == c || b == c {
+				// previous plan removed at least one of the duplicate
+				// argument.
+				require.Equal(t, "Warning", warn.Rows()[0][0])
+				require.Equal(t, "1105", warn.Rows()[0][1])
+				require.Equal(t, "skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, Handles length diff", warn.Rows()[0][2])
+			} else {
+				warn.CheckContain("Warning 1105 skip ")
+				require.False(t, q.usesBatchPointGet && canUseBatchPointGet,
+					fmt.Sprintf("Not found in cache, should mean that one of these is false, q.usesBatchPointGet (%v) canUseBatchPointGet (%v)", q.usesBatchPointGet, canUseBatchPointGet))
+			}
 		}
 		tk.MustExec(`deallocate prepare stmt`)
 	}
