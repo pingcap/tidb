@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -22,11 +23,11 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	brlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	brlog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -41,6 +42,12 @@ import (
 
 const (
 	splitRegionMaxRetryTime = 4
+)
+
+var (
+	// the max total key size in a split region batch.
+	// our threshold should be smaller than TiKV's raft max entry size(default is 8MB).
+	maxBatchSplitSize = 6 * units.MiB
 )
 
 // SplitClient is an external client used by RegionSplitter.
@@ -64,7 +71,7 @@ type SplitClient interface {
 	//
 	// The scatter step has a few retry times. If it meets error, it will log a
 	// warning and continue.
-	SplitWaitAndScatter(ctx context.Context, region *RegionInfo, keys [][]byte) (*RegionInfo, []*RegionInfo, error)
+	SplitWaitAndScatter(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error)
 	// GetOperator gets the status of operator of the specified region.
 	GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
 	// ScanRegions gets a list of regions, starts from the region that contains key.
@@ -103,7 +110,8 @@ type pdClient struct {
 	needScatterVal  bool
 	needScatterInit sync.Once
 
-	isRawKv bool
+	isRawKv          bool
+	splitBatchKeyCnt int
 }
 
 // NewSplitClient returns a client used by RegionSplitter.
@@ -112,13 +120,15 @@ func NewSplitClient(
 	httpCli pdhttp.Client,
 	tlsConf *tls.Config,
 	isRawKv bool,
+	splitBatchKeyCnt int,
 ) SplitClient {
 	cli := &pdClient{
-		client:     client,
-		httpCli:    httpCli,
-		tlsConf:    tlsConf,
-		storeCache: make(map[uint64]*metapb.Store),
-		isRawKv:    isRawKv,
+		client:           client,
+		httpCli:          httpCli,
+		tlsConf:          tlsConf,
+		storeCache:       make(map[uint64]*metapb.Store),
+		isRawKv:          isRawKv,
+		splitBatchKeyCnt: splitBatchKeyCnt,
 	}
 	return cli
 }
@@ -368,9 +378,9 @@ func sendSplitRegionRequest(
 	retry int,
 ) (bool, *kvrpcpb.SplitRegionResponse, error) {
 	if intest.InTest {
-		mockCli, ok := c.client.(*mockPDClientForSplit)
+		mockCli, ok := c.client.(*MockPDClientForSplit)
 		if ok {
-			return mockCli.splitRegions.fn()
+			return mockCli.SplitRegion(regionInfo, keys, c.isRawKv)
 		}
 	}
 	var peer *metapb.Peer
@@ -452,6 +462,13 @@ func sendSplitRegionRequest(
 	return false, resp, nil
 }
 
+// batchSplitRegionsWithOrigin calls the batch split region API and groups the
+// returned regions into two groups: the region with the same ID as the origin,
+// and the other regions. The former does not need to be scattered while the
+// latter need to be scattered.
+//
+// Depending on the TiKV configuration right-derive-when-split, the origin region
+// can be the first return region or the last return region.
 func (c *pdClient) batchSplitRegionsWithOrigin(
 	ctx context.Context, regionInfo *RegionInfo, keys [][]byte,
 ) (*RegionInfo, []*RegionInfo, error) {
@@ -555,36 +572,68 @@ func (c *pdClient) hasHealthyRegion(ctx context.Context, regionID uint64) (bool,
 	return len(regionInfo.PendingPeers) == 0, nil
 }
 
-func (c *pdClient) SplitWaitAndScatter(
-	ctx context.Context, region *RegionInfo, keys [][]byte,
-) (*RegionInfo, []*RegionInfo, error) {
+func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error) {
+	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+		failpoint.Return(nil, errors.New("retryable error"))
+	})
 	if len(keys) == 0 {
-		return region, []*RegionInfo{region}, nil
+		return []*RegionInfo{region}, nil
 	}
 
-	origin, newRegions, err := c.batchSplitRegionsWithOrigin(ctx, region, keys)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	err = c.waitRegionsSplit(ctx, newRegions)
-	if err != nil {
-		brlog.FromContext(ctx).Warn(
-			"wait regions split failed, will continue anyway",
-			zap.Error(err),
-		)
-	}
-	if err = ctx.Err(); err != nil {
-		return nil, nil, errors.Trace(err)
+	var (
+		start, end = 0, 0
+		batchSize  = 0
+		newRegions = make([]*RegionInfo, 0, len(keys))
+	)
+
+	for end <= len(keys) {
+		if end == len(keys) ||
+			batchSize+len(keys[end]) > maxBatchSplitSize ||
+			end-start >= c.splitBatchKeyCnt {
+			// split, wait and scatter for this batch
+			originRegion, newRegionsOfBatch, err := c.batchSplitRegionsWithOrigin(ctx, region, keys[start:end])
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			err = c.waitRegionsSplit(ctx, newRegionsOfBatch)
+			if err != nil {
+				brlog.FromContext(ctx).Warn(
+					"wait regions split failed, will continue anyway",
+					zap.Error(err),
+				)
+			}
+			if err = ctx.Err(); err != nil {
+				return nil, errors.Trace(err)
+			}
+			err = c.scatterRegions(ctx, newRegionsOfBatch)
+			if err != nil {
+				brlog.FromContext(ctx).Warn(
+					"scatter regions failed, will continue anyway",
+					zap.Error(err),
+				)
+			}
+
+			// the region with the max start key is the region need to be further split,
+			// depending on the origin region is the first region or last region, we need to
+			// compare the origin region and the last one of new regions.
+			lastNewRegion := newRegionsOfBatch[len(newRegionsOfBatch)-1]
+			if bytes.Compare(originRegion.Region.StartKey, lastNewRegion.Region.StartKey) < 0 {
+				region = lastNewRegion
+			} else {
+				region = originRegion
+			}
+			newRegions = append(newRegions, newRegionsOfBatch...)
+			batchSize = 0
+			start = end
+		}
+
+		if end < len(keys) {
+			batchSize += len(keys[end])
+		}
+		end++
 	}
 
-	err = c.scatterRegions(ctx, newRegions)
-	if err != nil {
-		brlog.FromContext(ctx).Warn(
-			"scatter regions failed, will continue anyway",
-			zap.Error(err),
-		)
-	}
-	return origin, newRegions, errors.Trace(ctx.Err())
+	return newRegions, errors.Trace(ctx.Err())
 }
 
 func (c *pdClient) getStoreCount(ctx context.Context) (int, error) {

@@ -2,17 +2,16 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "initstats",
-    srcs = ["load_stats.go"],
+    srcs = [
+        "load_stats.go",
+        "load_stats_page.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/initstats",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/infoschema",
-        "//pkg/kv",
-        "//pkg/statistics/handle/logutil",
-        "//pkg/statistics/handle/types",
+        "//pkg/config",
         "//pkg/util",
-        "//pkg/util/chunk",
-        "//pkg/util/sqlexec",
+        "//pkg/util/logutil",
         "@org_uber_go_zap//:zap",
     ],
 )
