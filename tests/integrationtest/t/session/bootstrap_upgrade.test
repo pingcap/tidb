@@ -24,7 +24,6 @@ truncate table tidb_background_subtask;
 
 # TestDDLBackgroundSubtaskHistoryTable
 use mysql;
-show create table mysql.tidb_background_subtask_history;
 insert into tidb_background_subtask(id, state, checkpoint) values (1, 0, "");
 insert into tidb_background_subtask_history select * from tidb_background_subtask;
 select * from tidb_background_subtask_history;
