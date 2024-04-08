@@ -528,7 +528,8 @@ func (p *PhysicalIndexLookUpReader) BuildPlanTrace() *tracing.PlanTrace {
 	return rp
 }
 
-func (p *PhysicalIndexLookUpReader) appendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+// AppendChildCandidate implements PhysicalPlan interface.
+func (p *PhysicalIndexLookUpReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
 	p.basePhysicalPlan.AppendChildCandidate(op)
 	if p.indexPlan != nil {
 		appendChildCandidate(p, p.indexPlan, op)
@@ -637,7 +638,8 @@ func (p *PhysicalIndexMergeReader) BuildPlanTrace() *tracing.PlanTrace {
 	return rp
 }
 
-func (p *PhysicalIndexMergeReader) appendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+// AppendChildCandidate implements PhysicalPlan interface.
+func (p *PhysicalIndexMergeReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
 	p.basePhysicalPlan.AppendChildCandidate(op)
 	if p.tablePlan != nil {
 		appendChildCandidate(p, p.tablePlan, op)
