@@ -69,7 +69,6 @@ func BenchmarkInfoschemaOverhead(b *testing.B) {
 	}
 	startTime := time.Now()
 	for j := 0; j < *tableCnt; j++ {
-		logutil.BgLogger().Info("create one", zap.Int("table-idx", j))
 		tc.runCreateTable("test" + strconv.Itoa(j))
 	}
 	logutil.BgLogger().Info("all table created", zap.Duration("cost time", time.Since(startTime)))
