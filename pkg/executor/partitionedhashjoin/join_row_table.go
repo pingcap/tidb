@@ -405,20 +405,37 @@ func (b *rowTableBuilder) initBuffer() {
 	}
 }
 
+func resizeSlice[T int | uint64 | bool](s []T, newSize int) []T {
+	if cap(s) >= newSize {
+		s = s[:newSize]
+	} else {
+		s = make([]T, newSize)
+	}
+	return s
+}
+
 func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) {
 	b.usedRows = chk.Sel()
 	logicalRows := chk.NumRows()
 	physicalRows := chk.Column(0).Rows()
+
 	if b.usedRows == nil {
-		if cap(b.selRows) >= logicalRows {
-			b.selRows = b.selRows[:logicalRows]
-		} else {
-			b.selRows = make([]int, 0, logicalRows)
-			for i := 0; i < logicalRows; i++ {
-				b.selRows = append(b.selRows, i)
-			}
+		b.selRows = resizeSlice(b.selRows, logicalRows)
+		for i := 0; i < logicalRows; i++ {
+			b.selRows = append(b.selRows, i)
 		}
 		b.usedRows = b.selRows
+	}
+	b.partIdxVector = resizeSlice(b.partIdxVector, logicalRows)
+	b.hashValue = resizeSlice(b.hashValue, logicalRows)
+	if b.hasFilter {
+		b.filterVector = resizeSlice(b.filterVector, physicalRows)
+	}
+	if b.hasNullableKey {
+		b.nullKeyVector = resizeSlice(b.nullKeyVector, physicalRows)
+		for i := 0; i < physicalRows; i++ {
+			b.nullKeyVector = append(b.nullKeyVector, false)
+		}
 	}
 	if cap(b.serializedKeyVectorBuffer) >= logicalRows {
 		b.serializedKeyVectorBuffer = b.serializedKeyVectorBuffer[:logicalRows]
@@ -427,33 +444,6 @@ func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) {
 		}
 	} else {
 		b.serializedKeyVectorBuffer = make([][]byte, logicalRows)
-	}
-	if cap(b.partIdxVector) >= logicalRows {
-		b.partIdxVector = b.partIdxVector[:logicalRows]
-	} else {
-		b.partIdxVector = make([]int, logicalRows)
-	}
-	if cap(b.hashValue) >= logicalRows {
-		b.hashValue = b.hashValue[:logicalRows]
-	} else {
-		b.hashValue = make([]uint64, logicalRows)
-	}
-	if b.hasFilter {
-		if cap(b.filterVector) >= physicalRows {
-			b.filterVector = b.filterVector[:physicalRows]
-		} else {
-			b.filterVector = make([]bool, physicalRows)
-		}
-	}
-	if b.hasNullableKey {
-		if cap(b.nullKeyVector) >= physicalRows {
-			b.nullKeyVector = b.nullKeyVector[:0]
-		} else {
-			b.nullKeyVector = make([]bool, 0, physicalRows)
-		}
-		for i := 0; i < physicalRows; i++ {
-			b.nullKeyVector = append(b.nullKeyVector, false)
-		}
 	}
 }
 
