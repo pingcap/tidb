@@ -641,7 +641,10 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if !hasAnalyzed {
 		// If we don't have it in memory, we create a fake hist for pseudo estimation.
 		if !ok {
-			return nil, true, false
+			// If we don't have this column. We skip it.
+			// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
+			// We need to find a way to maintain it more correctly.
+			return nil, t.ColAndIdxExistenceMap.Has(id, false), false
 		}
 		// Otherwise we don't need to load it.
 		return nil, false, false
