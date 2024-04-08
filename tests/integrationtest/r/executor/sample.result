@@ -83,7 +83,7 @@ delete from t;
 insert into t values (1, '1');
 select count(*) from t partition (p0) tablesample regions();
 count(*)
-0
+1
 select count(*) from t partition (p1) tablesample regions();
 count(*)
 1
@@ -207,3 +207,17 @@ pk	v
 500	a
 9223372036854775809	b
 set @@global.tidb_scatter_region=default;
+drop table if exists t;
+create table t (a int, b varchar(255), primary key (a)) partition by hash(a) partitions 2;
+insert into t values (1, '1'), (2, '2'), (3, '3');
+set @@tidb_partition_prune_mode='static';
+select * from t tablesample regions() order by a;
+a	b
+1	1
+2	2
+set @@tidb_partition_prune_mode='dynamic';
+select * from t tablesample regions() order by a;
+a	b
+1	1
+2	2
+set @@tidb_partition_prune_mode=default;
