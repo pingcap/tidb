@@ -119,7 +119,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 		tblID := row.GetInt64(0)
 		if table == nil || table.PhysicalID != tblID {
 			if table != nil {
-				cache.Put(tblID, table) // put this table in the cache because all statstics of the table have been read.
+				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
 			}
 			var ok bool
 			table, ok = cache.Get(tblID)
