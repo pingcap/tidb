@@ -99,7 +99,6 @@ const (
 	DefAuthTokenRefreshInterval = time.Hour
 	// EnvVarKeyspaceName is the system env name for keyspace name.
 	EnvVarKeyspaceName = "KEYSPACE_NAME"
-	RestrictedPriv     = "RESTRICTED_"
 )
 
 // Valid config maps
