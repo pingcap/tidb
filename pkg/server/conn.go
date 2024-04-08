@@ -103,6 +103,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -1181,11 +1182,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 }
 
 func errStrForLog(err error, redactMode string) string {
-	if redactMode != errors.RedactLogDisable {
+	if redactMode == errors.RedactLogEnable {
 		// currently, only ErrParse is considered when enableRedactLog because it may contain sensitive information like
 		// password or accesskey
 		if parser.ErrParse.Equal(err) {
-			return "fail to parse SQL, and must redact the whole error when enable log redaction"
+			return "fail to parse SQL and can't redact when enable log redaction"
 		}
 	}
 	var ret string
@@ -1195,7 +1196,7 @@ func errStrForLog(err error, redactMode string) string {
 	} else {
 		ret = errors.ErrorStack(err)
 	}
-	return ret
+	return redact.String(redactMode, ret)
 }
 
 func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
@@ -2464,12 +2465,12 @@ func (cc *clientConn) createWriteChunksGoroutine() {
 						if err != nil {
 							reg.End()
 							cc.errCh <- err
-							break
+							return
 						}
 						if err = cc.writePacket(data); err != nil {
 							reg.End()
 							cc.errCh <- err
-							break
+							return
 						}
 					}
 					reg.End()
