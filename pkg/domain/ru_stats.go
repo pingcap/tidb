@@ -123,7 +123,9 @@ func GetLastExpectedTime(now time.Time, interval time.Duration) time.Time {
 func GetLastExpectedTimeTZ(now time.Time, interval time.Duration, tz *time.Location) time.Time {
 	year, month, day := now.Date()
 	start := time.Date(year, month, day, 0, 0, 0, 0, tz)
-	targetDur := now.Sub(start) / interval * interval
+	// cast to int64 to bypass the durationcheck lint.
+	count := int64(now.Sub(start) / interval)
+	targetDur := time.Duration(count) * interval
 	// use UTC timezone to calculate target time so it can be compatible with DST.
 	return start.In(time.UTC).Add(targetDur).In(tz)
 }
