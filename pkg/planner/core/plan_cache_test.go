@@ -2190,7 +2190,6 @@ func nonpreparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, 
 			tk.MustQuery("show warnings " + comment).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 			//} else {
 			// TODO: still check warnings?
-
 		}
 		res := tk.MustQuery(fmt.Sprintf("explain %s", query))
 		//if q.usesBatchPointGet && len(pointGetExplain) > 0 && canUseBatchPointGet {
