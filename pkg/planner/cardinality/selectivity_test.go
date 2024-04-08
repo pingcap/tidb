@@ -1337,4 +1337,12 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 		"└─Selection 0.08 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
 		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
+
+	h.Clear()
+	require.NoError(t, h.InitStats(is))
+	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(testkit.Rows(
+		"TableReader 0.08 root  data:Selection",
+		"└─Selection 0.08 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
+		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
 }
