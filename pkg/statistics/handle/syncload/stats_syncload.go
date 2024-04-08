@@ -155,7 +155,7 @@ func (s *statsSyncLoad) removeHistLoadedColumns(neededItems []model.StatsLoadIte
 			}
 			continue
 		}
-		_, loadNeeded := tbl.ColumnIsLoadNeeded(item.ID, item.FullLoad)
+		_, loadNeeded, _ := tbl.ColumnIsLoadNeeded(item.ID, item.FullLoad)
 		if loadNeeded {
 			remainedItems = append(remainedItems, item)
 		}
@@ -269,7 +269,7 @@ func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statsty
 			wrapper.idxInfo = tbl.ColAndIdxExistenceMap.GetIndex(item.ID)
 		}
 	} else {
-		col, loadNeeded := tbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
+		col, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
 		if !loadNeeded {
 			return result, nil
 		}
@@ -277,6 +277,20 @@ func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statsty
 			wrapper.colInfo = col.Info
 		} else {
 			wrapper.colInfo = tbl.ColAndIdxExistenceMap.GetCol(item.ID)
+		}
+		// If this column is not analyzed yet and we don't have it in memory.
+		// We create a fake one for the pseudo estimation.
+		if loadNeeded && !analyzed {
+			wrapper.col = &statistics.Column{
+				PhysicalID: item.TableID,
+				Info:       wrapper.colInfo,
+				Histogram:  *statistics.NewHistogram(item.ID, 0, 0, 0, &wrapper.colInfo.FieldType, 0, 0),
+				IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
+			}
+			if s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad) {
+				return result, nil
+			}
+			return nil, nil
 		}
 	}
 	t := time.Now()
