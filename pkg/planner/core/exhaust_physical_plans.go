@@ -2567,7 +2567,7 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 	return newProp, true
 }
 
-// exhaustop.PhysicalPlans enumerate all the possible physical plan for expand operator (currently only mpp case is supported)
+// exhaustPhysicalPlans enumerate all the possible physical plan for expand operator (currently only mpp case is supported)
 func (p *LogicalExpand) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	// under the mpp task type, if the sort item is not empty, refuse it, cause expanded data doesn't support any sort items.
 	if !prop.IsSortItemEmpty() {
@@ -2944,9 +2944,9 @@ func (lw *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) (
 	return windows, true, nil
 }
 
-// exhaustop.PhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
+// exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
 func (*baseLogicalPlan) exhaustPhysicalPlans(*property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	panic("baseLogicalPlan.exhaustop.PhysicalPlans() should never be called.")
+	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 
 // canPushToCop checks if it can be pushed to some stores. For TiKV, it only checks datasource.
