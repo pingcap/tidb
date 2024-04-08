@@ -710,6 +710,7 @@ func (p *baseLogicalPlan) BuildPlanTrace() *tracing.PlanTrace {
 	return planTrace
 }
 
+// AppendChildCandidate implements PhysicalPlan interface.
 func (p *basePhysicalPlan) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
 	if len(p.Children()) < 1 {
 		return
