@@ -126,6 +126,14 @@ func CreateAutoIDRequirement(t testing.TB, opts ...mockstore.MockTiKVStoreOption
 	}
 }
 
+// CreateAutoIDRequirementWithStore create autoid requirement with storage for testing.
+func CreateAutoIDRequirementWithStore(t testing.TB, store kv.Storage) autoid.Requirement {
+	return &mockAutoIDRequirement{
+		store:  store,
+		client: nil,
+	}
+}
+
 // GenGlobalID generates next id globally for testing.
 func GenGlobalID(store kv.Storage) (int64, error) {
 	var globalID int64
@@ -139,7 +147,7 @@ func GenGlobalID(store kv.Storage) (int64, error) {
 }
 
 // MockDBInfo mock DBInfo for testing.
-func MockDBInfo(t *testing.T, store kv.Storage, DBName string) *model.DBInfo {
+func MockDBInfo(t testing.TB, store kv.Storage, DBName string) *model.DBInfo {
 	id, err := GenGlobalID(store)
 	require.NoError(t, err)
 	return &model.DBInfo{
@@ -151,7 +159,7 @@ func MockDBInfo(t *testing.T, store kv.Storage, DBName string) *model.DBInfo {
 }
 
 // MockTableInfo mock TableInfo for testing.
-func MockTableInfo(t *testing.T, store kv.Storage, tblName string) *model.TableInfo {
+func MockTableInfo(t testing.TB, store kv.Storage, tblName string) *model.TableInfo {
 	colID, err := GenGlobalID(store)
 	require.NoError(t, err)
 	colInfo := &model.ColumnInfo{
@@ -211,7 +219,7 @@ func MockPolicyRefInfo(t *testing.T, store kv.Storage, policyName string) *model
 }
 
 // AddTable add mock table for testing.
-func AddTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
+func AddTable(t testing.TB, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).CreateTableOrView(dbInfo.ID, dbInfo.Name.O, tblInfo)
@@ -233,7 +241,7 @@ func UpdateTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *
 }
 
 // DropTable drop mock table for testing.
-func DropTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblID int64, tblName string) {
+func DropTable(t testing.TB, store kv.Storage, dbInfo *model.DBInfo, tblID int64, tblName string) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).DropTableOrView(dbInfo.ID, dbInfo.Name.O, tblID, tblName)
@@ -244,7 +252,7 @@ func DropTable(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblID int64
 }
 
 // AddDB add mock db for testing.
-func AddDB(t *testing.T, store kv.Storage, dbInfo *model.DBInfo) {
+func AddDB(t testing.TB, store kv.Storage, dbInfo *model.DBInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
@@ -255,7 +263,7 @@ func AddDB(t *testing.T, store kv.Storage, dbInfo *model.DBInfo) {
 }
 
 // DropDB drop mock db for testing.
-func DropDB(t *testing.T, store kv.Storage, dbInfo *model.DBInfo) {
+func DropDB(t testing.TB, store kv.Storage, dbInfo *model.DBInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
@@ -267,7 +275,7 @@ func DropDB(t *testing.T, store kv.Storage, dbInfo *model.DBInfo) {
 }
 
 // UpdateDB update mock db for testing.
-func UpdateDB(t *testing.T, store kv.Storage, dbInfo *model.DBInfo) {
+func UpdateDB(t testing.TB, store kv.Storage, dbInfo *model.DBInfo) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).UpdateDatabase(dbInfo)
