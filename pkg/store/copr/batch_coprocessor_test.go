@@ -106,11 +106,7 @@ func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
 		regionCount := 100000
 		storeTasks := buildStoreTaskMap(storeCount)
 		regionInfos := buildRegionInfos(storeCount, regionCount, replicaNum)
-		storeCandidateRegionMap := make(map[uint64]map[string]RegionInfo)
-		for storeID := range storeTasks {
-			storeCandidateRegionMap[storeID] = make(map[string]RegionInfo)
-		}
-		tasks, score := balanceBatchCopTaskWithContinuity(storeTasks, storeCandidateRegionMap, regionInfos, 20)
+		tasks, score := balanceBatchCopTaskWithContinuity(storeTasks, regionInfos, 20)
 		require.True(t, isBalance(score))
 		require.Equal(t, regionCount, calcReginCount(tasks))
 	}
@@ -121,11 +117,7 @@ func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
 		replicaNum := 2
 		storeTasks := buildStoreTaskMap(storeCount)
 		regionInfos := buildRegionInfos(storeCount, regionCount, replicaNum)
-		storeCandidateRegionMap := make(map[uint64]map[string]RegionInfo)
-		for storeID := range storeTasks {
-			storeCandidateRegionMap[storeID] = make(map[string]RegionInfo)
-		}
-		tasks, _ := balanceBatchCopTaskWithContinuity(storeTasks, storeCandidateRegionMap, regionInfos, 20)
+		tasks, _ := balanceBatchCopTaskWithContinuity(storeTasks, regionInfos, 20)
 		require.True(t, tasks == nil)
 	}
 }
@@ -289,39 +281,4 @@ func TestTopoFetcherBackoff(t *testing.T) {
 	require.GreaterOrEqual(t, dura, time.Duration(fetchTopoMaxBackoff*1000))
 	require.GreaterOrEqual(t, dura, 30*time.Second)
 	require.LessOrEqual(t, dura, 50*time.Second)
-}
-
-// Some stores that have no regions may take part in the balance, we need to remove them.
-func TestRemoveEmptyStoreBeforeBalance(t *testing.T) {
-	storeTaskMap := make(map[uint64]*batchCopTask)
-	storeTaskMap[0] = &batchCopTask{}
-	storeTaskMap[1] = &batchCopTask{}
-	storeTaskMap[2] = &batchCopTask{}
-	storeTaskMap[3] = &batchCopTask{}
-	storeTaskMap[4] = &batchCopTask{}
-
-	maxStoreID := 2
-	storeCandidateRegionMap := make(map[uint64]map[string]RegionInfo)
-	storeCandidateRegionMap[uint64(maxStoreID)-2] = make(map[string]RegionInfo)
-	storeCandidateRegionMap[uint64(maxStoreID)-1] = make(map[string]RegionInfo)
-	storeCandidateRegionMap[uint64(maxStoreID)] = make(map[string]RegionInfo)
-
-	candidateRegionInfos := make([]RegionInfo, 0)
-	regionInfoNum := 500
-	for i := 0; i < regionInfoNum; i++ {
-		regionInfo := RegionInfo{}
-		ranges := make([]kv.KeyRange, 0)
-		ranges = append(ranges, kv.KeyRange{})
-		regionInfo.Ranges = NewKeyRanges(ranges)
-		storeNum := i%5 + 1
-		for j := 0; j < storeNum; j++ {
-			regionInfo.AllStores = append(regionInfo.AllStores, uint64(j%(maxStoreID+1)))
-		}
-		candidateRegionInfos = append(candidateRegionInfos, regionInfo)
-	}
-
-	regionNotFoundFlagForTest = false
-	tasks, _ := balanceBatchCopTaskWithContinuity(storeTaskMap, storeCandidateRegionMap, candidateRegionInfos, int64(regionInfoNum/maxStoreID+1))
-	require.NotEqual(t, 0, len(tasks))
-	require.False(t, regionNotFoundFlagForTest)
 }
