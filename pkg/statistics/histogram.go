@@ -1489,7 +1489,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	gBucketCountThreshold := (totCount / expBucketNumber) * 80 / 100 // expectedBucketSize * 0.8
 	var bucketNDV int64
 	mergeBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber)-1)/int(expBucketNumber))
-	fullyInsideBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber))/int(expBucketNumber))
 	cutAndFixBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber))/int(expBucketNumber))
 	var currentLeftMost *types.Datum
 	for i := len(buckets) - 1; i >= 0; i-- {
@@ -1533,7 +1532,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			// Iterate possible overlapped ones.
 			// We need to re-sort this part.
 			mergeBuffer = mergeBuffer[:0]
-			fullyInsideBuffer = fullyInsideBuffer[:0]
 			cutAndFixBuffer = cutAndFixBuffer[:0]
 			origI := i
 			for ; i > 0; i-- {
@@ -1541,8 +1539,8 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				if err != nil {
 					return nil, err
 				}
-				// If buckets[i-1].upper <= currentLeftMost, this bucket has no overlap with current merging one. Break it.
-				if res <= 0 {
+				// If buckets[i-1].upper < currentLeftMost, this bucket has no overlap with current merging one. Break it.
+				if res < 0 {
 					break
 				}
 				// Now the bucket[i-1].upper > currentLeftMost, they are overlapped.
@@ -1554,8 +1552,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				if res >= 0 {
 					sum += buckets[i-1].Count
 					bucketNDV += buckets[i-1].NDV
-					fullyInsideBuffer = append(fullyInsideBuffer, buckets[i-1])
-					mergeBuffer = append(mergeBuffer, buckets[i])
+					mergeBuffer = append(mergeBuffer, buckets[i-1])
 					continue
 				}
 				// Now buckets[i-1].lower < currentLeftMost < buckets[i-1].upper
@@ -1568,7 +1565,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				buckets[i-1].NDV -= overlappedNDV
 
 				// Cut it.
-				cutBkt := newBucket4Meging()
+				cutBkt := newbucket4MergingForRecycle()
 				buckets[i-1].upper.Copy(cutBkt.upper)
 				currentLeftMost.Copy(cutBkt.lower)
 				cutBkt.Count = overlappedCount
