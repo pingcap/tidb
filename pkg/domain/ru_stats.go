@@ -121,6 +121,9 @@ func GetLastExpectedTime(now time.Time, interval time.Duration) time.Time {
 // GetLastExpectedTimeTZ return the last written ru time under specifical timezone.
 // make it public only for test.
 func GetLastExpectedTimeTZ(now time.Time, interval time.Duration, tz *time.Location) time.Time {
+	if tz == nil {
+		tz = time.Local
+	}
 	year, month, day := now.Date()
 	start := time.Date(year, month, day, 0, 0, 0, 0, tz)
 	// cast to int64 to bypass the durationcheck lint.
