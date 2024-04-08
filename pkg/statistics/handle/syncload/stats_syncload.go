@@ -17,6 +17,7 @@ package syncload
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -73,28 +74,40 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 	if len(remainedItems) <= 0 {
 		return nil
 	}
+	keys := make([]string, len(remainedItems))
+	for _, k := range remainedItems {
+		keys = append(keys, k.Key())
+	}
+	k := strings.Join(keys, "|")
+
 	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededItems = remainedItems
-	sc.StatsLoad.ResultCh = make(chan stmtctx.StatsLoadResult, len(remainedItems))
-	tasks := make([]*statstypes.NeededItemTask, 0)
-	for _, item := range remainedItems {
-		task := &statstypes.NeededItemTask{
-			Item:      item,
-			ToTimeout: time.Now().Local().Add(timeout),
-			ResultCh:  sc.StatsLoad.ResultCh,
+
+	result := s.StatsLoad.GlobalSingleflight.DoChan(k, func() (any, error) {
+		resultChan := make(chan stmtctx.StatsLoadResult, len(remainedItems))
+		tasks := make([]*statstypes.NeededItemTask, 0)
+		for _, item := range remainedItems {
+			task := &statstypes.NeededItemTask{
+				Item:      item,
+				ToTimeout: time.Now().Local().Add(timeout),
+				ResultCh:  resultChan,
+			}
+			tasks = append(tasks, task)
 		}
-		tasks = append(tasks, task)
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	for _, task := range tasks {
-		select {
-		case s.StatsLoad.NeededItemsCh <- task:
-			continue
-		case <-timer.C:
-			return errors.New("sync load stats channel is full and timeout sending task to channel")
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		for _, task := range tasks {
+			select {
+			case s.StatsLoad.NeededItemsCh <- task:
+				continue
+			case <-timer.C:
+				return nil, errors.New("sync load stats channel is full and timeout sending task to channel")
+			}
 		}
-	}
+		return resultChan, nil
+	})
+
+	sc.StatsLoad.ResultCh = result
 	sc.StatsLoad.LoadStartTime = time.Now()
 	return nil
 }
@@ -121,17 +134,26 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	defer timer.Stop()
 	for {
 		select {
-		case result, ok := <-sc.StatsLoad.ResultCh:
+		case r, ok := <-sc.StatsLoad.ResultCh:
 			if !ok {
 				return errors.New("sync load stats channel closed unexpectedly")
 			}
-			if result.HasError() {
-				errorMsgs = append(errorMsgs, result.ErrorMsg())
+			if r.Err != nil {
+				return r.Err
 			}
-			delete(resultCheckMap, result.Item)
-			if len(resultCheckMap) == 0 {
-				metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
-				return nil
+			select {
+			case result := <-r.Val.(chan stmtctx.StatsLoadResult):
+				if result.HasError() {
+					errorMsgs = append(errorMsgs, result.ErrorMsg())
+				}
+				delete(resultCheckMap, result.Item)
+				if len(resultCheckMap) == 0 {
+					metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
+					return nil
+				}
+			case <-timer.C:
+				metrics.SyncLoadTimeoutCounter.Inc()
+				return errors.New("sync load stats timeout")
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()

@@ -397,7 +397,11 @@ type NeededItemTask struct {
 type StatsLoad struct {
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
-	Singleflight   singleflight.Group
+
+	//
+	GlobalSingleflight singleflight.Group
+	//
+	Singleflight singleflight.Group
 	sync.Mutex
 }
 
