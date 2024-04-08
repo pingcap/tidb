@@ -77,7 +77,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk Task, ctx PlanContext) Ta
 	for _, col := range p.SortItems {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}
-	return sort.attach2Task(tsk)
+	return sort.Attach2Task(tsk)
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.

@@ -15,6 +15,7 @@
 package core
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -942,6 +943,9 @@ func (p *PhysicalHashJoin) GetPlanCostVer1(taskType property.TaskType, option *c
 			return 0, err
 		}
 		p.planCost += childCost
+	}
+	if len(p.children) < 2 {
+		fmt.Print(1)
 	}
 	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), getCardinality(p.children[1], costFlag),
 		taskType == property.MppTaskType, costFlag, option.GetTracer())

@@ -224,7 +224,7 @@ func (p *PhysicalUnionScan) Attach2Task(tasks ...Task) Task {
 			rt, _ := tasks[0].(*RootTask)
 			rt.SetPlan(p)
 			pj.SetChildren(p)
-			return pj.attach2Task(tasks...)
+			return pj.Attach2Task(tasks...)
 		}
 	}
 	if pj, ok := tasks[0].Plan().(*PhysicalProjection); ok {
@@ -234,7 +234,7 @@ func (p *PhysicalUnionScan) Attach2Task(tasks ...Task) Task {
 		rt, _ := tasks[0].(*RootTask)
 		rt.SetPlan(pj.children[0])
 		pj.SetChildren(p)
-		return pj.attach2Task(p.basePhysicalPlan.Attach2Task(tasks...))
+		return pj.Attach2Task(p.basePhysicalPlan.Attach2Task(tasks...))
 	}
 	p.SetStats(tasks[0].Plan().StatsInfo())
 	return p.basePhysicalPlan.Attach2Task(tasks...)
@@ -265,7 +265,8 @@ func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...Task) Task {
 	return t
 }
 
-func (p *PhysicalIndexHashJoin) attach2Task(tasks ...Task) Task {
+// Attach2Task implements PhysicalPlan interface.
+func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...Task) Task {
 	innerTask := p.innerTask
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
@@ -305,7 +306,8 @@ func getAvgRowSize(stats *property.StatsInfo, cols []*expression.Column) (size f
 	return
 }
 
-func (p *PhysicalHashJoin) attach2Task(tasks ...Task) Task {
+// Attach2Task implements PhysicalPlan interface.
+func (p *PhysicalHashJoin) Attach2Task(tasks ...Task) Task {
 	if p.storeTp == kv.TiFlash {
 		return p.attach2TaskForTiFlash(tasks...)
 	}
@@ -585,7 +587,8 @@ func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...Task) Task {
 	return task
 }
 
-func (p *PhysicalMergeJoin) attach2Task(tasks ...Task) Task {
+// Attach2Task implements PhysicalPlan interface.
+func (p *PhysicalMergeJoin) Attach2Task(tasks ...Task) Task {
 	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	rTask := tasks[1].ConvertToRootTask(p.SCtx())
 	p.SetChildren(lTask.Plan(), rTask.Plan())
@@ -744,7 +747,7 @@ func (t *copTask) convertToRootTaskImpl(ctx PlanContext) *RootTask {
 		p.PlanPartInfo = t.physPlanPartInfo
 		p.SetStats(t.tablePlan.StatsInfo())
 
-		// If agg was pushed down in attach2Task(), the partial agg was placed on the top of tablePlan, the final agg was
+		// If agg was pushed down in Attach2Task(), the partial agg was placed on the top of tablePlan, the final agg was
 		// placed above the PhysicalTableReader, and the schema should have been set correctly for them, the schema of
 		// partial agg contains the columns needed by the final agg.
 		// If we add the projection here, the projection will be between the final agg and the partial agg, then the
@@ -795,7 +798,7 @@ func setTableScanToTableRowIDScan(p PhysicalPlan) {
 	}
 }
 
-// attach2Task attach limit to different cases.
+// Attach2Task attach limit to different cases.
 // For Normal Index Lookup
 // 1: attach the limit to table side or index side of normal index lookup cop task. (normal case, old code, no more
 // explanation here)
@@ -811,7 +814,7 @@ func setTableScanToTableRowIDScan(p PhysicalPlan) {
 //
 // 4: attach the limit to the TOP of root index merge operator if there is some root condition exists for index merge
 // intersection/union case.
-func (p *PhysicalLimit) attach2Task(tasks ...Task) Task {
+func (p *PhysicalLimit) Attach2Task(tasks ...Task) Task {
 	t := tasks[0].Copy()
 	newPartitionBy := make([]property.SortItem, 0, len(p.GetPartitionBy()))
 	for _, expr := range p.GetPartitionBy() {
@@ -1023,13 +1026,15 @@ func (p *PhysicalLimit) sinkIntoIndexMerge(t Task) bool {
 	return true
 }
 
-func (p *PhysicalSort) attach2Task(tasks ...Task) Task {
+// Attach2Task implements PhysicalPlan interface.
+func (p *PhysicalSort) Attach2Task(tasks ...Task) Task {
 	t := tasks[0].Copy()
 	t = attachPlan2Task(p, t)
 	return t
 }
 
-func (p *NominalSort) attach2Task(tasks ...Task) Task {
+// Attach2Task implements PhysicalPlan interface.
+func (p *NominalSort) Attach2Task(tasks ...Task) Task {
 	if p.OnlyColumn {
 		return tasks[0]
 	}
@@ -1143,7 +1148,8 @@ func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *mppTask) bool {
 	return true
 }
 
-func (p *PhysicalTopN) attach2Task(tasks ...Task) Task {
+// Attach2Task implements physical plan
+func (p *PhysicalTopN) Attach2Task(tasks ...Task) Task {
 	t := tasks[0].Copy()
 	cols := make([]*expression.Column, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
@@ -1176,7 +1182,8 @@ func (p *PhysicalTopN) attach2Task(tasks ...Task) Task {
 	return attachPlan2Task(p, rootTask)
 }
 
-func (p *PhysicalExpand) attach2Task(tasks ...Task) Task {
+// Attach2Task implements the PhysicalPlan interface.
+func (p *PhysicalExpand) Attach2Task(tasks ...Task) Task {
 	t := tasks[0].Copy()
 	// current expand can only be run in MPP TiFlash mode.
 	if mpp, ok := t.(*mppTask); ok {
@@ -1187,7 +1194,8 @@ func (p *PhysicalExpand) attach2Task(tasks ...Task) Task {
 	return invalidTask
 }
 
-func (p *PhysicalProjection) attach2Task(tasks ...Task) Task {
+// Attach2Task implements PhysicalPlan interface.
+func (p *PhysicalProjection) Attach2Task(tasks ...Task) Task {
 	t := tasks[0].Copy()
 	if cop, ok := t.(*copTask); ok {
 		if (len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0) && expression.CanExprsPushDown(GetPushDownCtx(p.SCtx()), p.Exprs, cop.getStoreType()) {
@@ -1228,7 +1236,8 @@ func (p *PhysicalUnionAll) attach2MppTasks(tasks ...Task) Task {
 	return t
 }
 
-func (p *PhysicalUnionAll) attach2Task(tasks ...Task) Task {
+// Attach2Task implements PhysicalPlan interface.
+func (p *PhysicalUnionAll) Attach2Task(tasks ...Task) Task {
 	for _, t := range tasks {
 		if _, ok := t.(*mppTask); ok {
 			if p.TP() == plancodec.TypePartitionUnion {
@@ -1251,7 +1260,8 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...Task) Task {
 	return t
 }
 
-func (sel *PhysicalSelection) attach2Task(tasks ...Task) Task {
+// Attach2Task implements PhysicalPlan interface.
+func (sel *PhysicalSelection) Attach2Task(tasks ...Task) Task {
 	if mppTask, _ := tasks[0].(*mppTask); mppTask != nil { // always push to mpp task.
 		if expression.CanExprsPushDown(GetPushDownCtx(sel.SCtx()), sel.Conditions, kv.TiFlash) {
 			return attachPlan2Task(sel, mppTask.Copy())
@@ -1905,7 +1915,8 @@ func computePartialCursorOffset(name string) int {
 	return offset
 }
 
-func (p *PhysicalStreamAgg) attach2Task(tasks ...Task) Task {
+// Attach2Task implements PhysicalPlan interface.
+func (p *PhysicalStreamAgg) Attach2Task(tasks ...Task) Task {
 	t := tasks[0].Copy()
 	if cop, ok := t.(*copTask); ok {
 		// We should not push agg down across
@@ -2408,7 +2419,8 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...Task) Task {
 	}
 }
 
-func (p *PhysicalHashAgg) attach2Task(tasks ...Task) Task {
+// Attach2Task implements the PhysicalPlan interface.
+func (p *PhysicalHashAgg) Attach2Task(tasks ...Task) Task {
 	t := tasks[0].Copy()
 	if cop, ok := t.(*copTask); ok {
 		if len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0 {
@@ -2467,7 +2479,8 @@ func (p *PhysicalWindow) attach2TaskForMPP(mpp *mppTask) Task {
 	return attachPlan2Task(p, mpp)
 }
 
-func (p *PhysicalWindow) attach2Task(tasks ...Task) Task {
+// Attach2Task implements the PhysicalPlan interface.
+func (p *PhysicalWindow) Attach2Task(tasks ...Task) Task {
 	if mpp, ok := tasks[0].Copy().(*mppTask); ok && p.storeTp == kv.TiFlash {
 		return p.attach2TaskForMPP(mpp)
 	}
@@ -2475,7 +2488,8 @@ func (p *PhysicalWindow) attach2Task(tasks ...Task) Task {
 	return attachPlan2Task(p.self, t)
 }
 
-func (p *PhysicalCTEStorage) attach2Task(tasks ...Task) Task {
+// Attach2Task implements the PhysicalPlan interface.
+func (p *PhysicalCTEStorage) Attach2Task(tasks ...Task) Task {
 	t := tasks[0].Copy()
 	if mpp, ok := t.(*mppTask); ok {
 		p.SetChildren(t.Plan())
@@ -2493,7 +2507,8 @@ func (p *PhysicalCTEStorage) attach2Task(tasks ...Task) Task {
 	return ta
 }
 
-func (p *PhysicalSequence) attach2Task(tasks ...Task) Task {
+// Attach2Task implements the PhysicalPlan interface.
+func (p *PhysicalSequence) Attach2Task(tasks ...Task) Task {
 	for _, t := range tasks {
 		_, isMpp := t.(*mppTask)
 		if !isMpp {

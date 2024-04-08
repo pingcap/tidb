@@ -123,7 +123,7 @@ func (p mockPhysicalPlan4Test) Init(ctx PlanContext) *mockPhysicalPlan4Test {
 	return &p
 }
 
-func (p *mockPhysicalPlan4Test) attach2Task(tasks ...Task) Task {
+func (p *mockPhysicalPlan4Test) Attach2Task(tasks ...Task) Task {
 	t := tasks[0].Copy()
 	attachPlan2Task(p, t)
 	return t
