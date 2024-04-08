@@ -2164,6 +2164,7 @@ func TestTiDBUpgradeToVer179(t *testing.T) {
 	err = m.FinishBootstrap(int64(ver178))
 	require.NoError(t, err)
 	MustExec(t, seV178, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver178))
+	MustExec(t, seV178, fmt.Sprintf("update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'"))
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
