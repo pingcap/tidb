@@ -473,6 +473,7 @@
   },
   "nilness": {
     "exclude_files": {
+      "br/pkg/streamhelper/advancer_test.go": "please fix it",
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
