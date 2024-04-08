@@ -1917,7 +1917,7 @@ func (ds *DataSource) indexCoveringColumn(column *expression.Column, indexColumn
 	if ds.tableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
 		return true
 	}
-	if column.ID == model.ExtraHandleID {
+	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
 		return true
 	}
 	coveredByPlainIndex := isIndexColsCoveringCol(ds.SCtx().GetExprCtx().GetEvalCtx(), column, indexColumns, idxColLens, ignoreLen)
@@ -2198,13 +2198,12 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		}
 	}
 
-	// global index not tested, could delete '!is.Index.Global' after test
-	if !is.Index.Global && FindColumnInfoByID(is.Columns, model.ExtraPhysTblID) != nil {
-		indexCols = append(indexCols, &expression.Column{
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			ID:       model.ExtraPhysTblID,
-			UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
-		})
+	// If `dataSouceSchema` contains `model.ExtraPhysTblID`, we should add it into `indexScan.schema`
+	for _, col := range is.dataSourceSchema.Columns {
+		if col.ID == model.ExtraPhysTblID {
+			indexCols = append(indexCols, col.Clone().(*expression.Column))
+			break
+		}
 	}
 
 	is.SetSchema(expression.NewSchema(indexCols...))
