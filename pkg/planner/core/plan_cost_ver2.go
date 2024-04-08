@@ -917,21 +917,21 @@ func (c costVer2Factors) tolist() (l []coreusage.CostVer2Factor) {
 }
 
 var defaultVer2Factors = costVer2Factors{
-	TiDBTemp:      coreusage.CostVer2Factor{"tidb_temp_table_factor", 0.00},
-	TiKVScan:      coreusage.CostVer2Factor{"tikv_scan_factor", 40.70},
-	TiKVDescScan:  coreusage.CostVer2Factor{"tikv_desc_scan_factor", 61.05},
-	TiFlashScan:   coreusage.CostVer2Factor{"tiflash_scan_factor", 11.60},
-	TiDBCPU:       coreusage.CostVer2Factor{"tidb_cpu_factor", 49.90},
-	TiKVCPU:       coreusage.CostVer2Factor{"tikv_cpu_factor", 49.90},
-	TiFlashCPU:    coreusage.CostVer2Factor{"tiflash_cpu_factor", 2.40},
-	TiDB2KVNet:    coreusage.CostVer2Factor{"tidb_kv_net_factor", 3.96},
-	TiDB2FlashNet: coreusage.CostVer2Factor{"tidb_flash_net_factor", 2.20},
-	TiFlashMPPNet: coreusage.CostVer2Factor{"tiflash_mpp_net_factor", 1.00},
-	TiDBMem:       coreusage.CostVer2Factor{"tidb_mem_factor", 0.20},
-	TiKVMem:       coreusage.CostVer2Factor{"tikv_mem_factor", 0.20},
-	TiFlashMem:    coreusage.CostVer2Factor{"tiflash_mem_factor", 0.05},
-	TiDBDisk:      coreusage.CostVer2Factor{"tidb_disk_factor", 200.00},
-	TiDBRequest:   coreusage.CostVer2Factor{"tidb_request_factor", 6000000.00},
+	TiDBTemp:      coreusage.CostVer2Factor{Name: "tidb_temp_table_factor", Value: 0.00},
+	TiKVScan:      coreusage.CostVer2Factor{Name: "tikv_scan_factor", Value: 40.70},
+	TiKVDescScan:  coreusage.CostVer2Factor{Name: "tikv_desc_scan_factor", Value: 61.05},
+	TiFlashScan:   coreusage.CostVer2Factor{Name: "tiflash_scan_factor", Value: 11.60},
+	TiDBCPU:       coreusage.CostVer2Factor{Name: "tidb_cpu_factor", Value: 49.90},
+	TiKVCPU:       coreusage.CostVer2Factor{Name: "tikv_cpu_factor", Value: 49.90},
+	TiFlashCPU:    coreusage.CostVer2Factor{Name: "tiflash_cpu_factor", Value: 2.40},
+	TiDB2KVNet:    coreusage.CostVer2Factor{Name: "tidb_kv_net_factor", Value: 3.96},
+	TiDB2FlashNet: coreusage.CostVer2Factor{Name: "tidb_flash_net_factor", Value: 2.20},
+	TiFlashMPPNet: coreusage.CostVer2Factor{Name: "tiflash_mpp_net_factor", Value: 1.00},
+	TiDBMem:       coreusage.CostVer2Factor{Name: "tidb_mem_factor", Value: 0.20},
+	TiKVMem:       coreusage.CostVer2Factor{Name: "tikv_mem_factor", Value: 0.20},
+	TiFlashMem:    coreusage.CostVer2Factor{Name: "tiflash_mem_factor", Value: 0.05},
+	TiDBDisk:      coreusage.CostVer2Factor{Name: "tidb_disk_factor", Value: 200.00},
+	TiDBRequest:   coreusage.CostVer2Factor{Name: "tidb_request_factor", Value: 6000000.00},
 }
 
 func getTaskCPUFactorVer2(_ PhysicalPlan, taskType property.TaskType) coreusage.CostVer2Factor {
