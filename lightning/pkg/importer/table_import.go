@@ -1747,7 +1747,7 @@ func (tr *TableImporter) preDeduplicate(
 		err := errors.Errorf("duplicate key in table %s caused by index `%s`, but because checkpoint is off we can't have more details",
 			tr.tableName, idxName)
 		rc.errorMgr.RecordDuplicateOnce(
-			ctx, tr.logger, tr.tableName, "<unknown-path>", -1, err.Error(), -1, "<unknown-data>",
+			ctx, tr.logger, tr.tableName, idxName, "<unknown-key>", "<unknown-data>", "<unknown-path>", -1, err.Error(), -1,
 		)
 		return err
 	}
@@ -1809,7 +1809,10 @@ func (tr *TableImporter) preDeduplicate(
 	err = errors.Errorf("duplicate entry for key '%s', a pair of conflicting rows are (%s, %s)",
 		idxName, oneConflictMsg, otherConflictMsg)
 	rc.errorMgr.RecordDuplicateOnce(
-		ctx, tr.logger, tr.tableName, secondConflictPath, -1, err.Error(), rowID[1], "<unknown-data>",
+		ctx, tr.logger, tr.tableName, idxName, oneConflictMsg, "<unknown-data>", secondConflictPath, -1, err.Error(), rowID[1],
+	)
+	rc.errorMgr.RecordDuplicateOnce(
+		ctx, tr.logger, tr.tableName, idxName, otherConflictMsg, "<unknown-data>", secondConflictPath, -1, err.Error(), rowID[1],
 	)
 	return err
 }
