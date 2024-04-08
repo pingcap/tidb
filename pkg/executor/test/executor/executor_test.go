@@ -2966,4 +2966,22 @@ func TestIssue42734(t *testing.T) {
  `)
 
 	result.Check(testkit.Rows("1"))
+
+	result = tk.MustQuery(`
+   SELECT
+     EXISTS (
+       SELECT
+         FIRST_VALUE(temp_data.temperature) OVER weather_window AS first_temperature,
+         MIN(report_data.report_id) OVER weather_window AS min_report_id
+       FROM
+         temperature_data AS temp_data
+       WINDOW weather_window AS (
+         PARTITION BY temp_data.temperature 
+       )
+     ) AS is_exist
+   FROM
+     weather_report AS report_data;
+ `)
+
+	result.Check(testkit.Rows("1"))
 }
