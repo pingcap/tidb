@@ -6502,6 +6502,9 @@ func (b *PlanBuilder) buildByItemsForWindow(
 		}
 		if col, ok := it.(*expression.Column); ok {
 			retItems = append(retItems, property.SortItem{Col: col, Desc: item.Desc})
+			proj.Exprs = append(proj.Exprs, col)
+			proj.schema.Append(col)
+			proj.names = append(proj.names, types.EmptyName)
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, it)
