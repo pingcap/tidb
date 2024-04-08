@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	brlog "github.com/pingcap/tidb/pkg/lightning/log"
-	util2 "github.com/pingcap/tidb/pkg/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	pd "github.com/tikv/pd/client"
@@ -576,7 +576,7 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 			retrySplitKeys = retrySplitKeys[:0]
 		}
 		splitKeyMap := GetSplitKeysOfRegions(allSplitKeys, regions, c.isRawKv)
-		workerPool := util2.NewWorkerPool(uint(c.splitConcurrency), "split keys")
+		workerPool := tidbutil.NewWorkerPool(uint(c.splitConcurrency), "split keys")
 		eg, eCtx := errgroup.WithContext(ctx)
 		for region, splitKeys := range splitKeyMap {
 			region := region

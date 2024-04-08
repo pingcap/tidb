@@ -22,7 +22,7 @@ import (
 
 var (
 	WaitRegionOnlineAttemptTimes = config.DefaultRegionCheckBackoffLimit
-	SplitRetryTimes              = 32
+	SplitRetryTimes              = 150
 )
 
 // Constants for split retry machinery.
