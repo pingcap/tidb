@@ -29,7 +29,9 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/objstorage/objstorageprovider"
 	"github.com/cockroachdb/pebble/sstable"
+	"github.com/cockroachdb/pebble/vfs"
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -982,7 +984,12 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions, buf *m
 		opts = &newOpts
 	}
 	if !e.duplicateDetection {
-		return &pebbleIter{Iterator: e.getDB().NewIter(opts), buf: buf}
+		iter, err := e.getDB().NewIter(opts)
+		if err != nil {
+			e.logger.Panic("fail to create iterator")
+			return nil
+		}
+		return &pebbleIter{Iterator: iter, buf: buf}
 	}
 	logger := log.FromContext(ctx).With(
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
@@ -1366,11 +1373,12 @@ type sstWriter struct {
 }
 
 func newSSTWriter(path string, blockSize int) (*sstable.Writer, error) {
-	f, err := os.Create(path)
+	f, err := vfs.Default.Create(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	writer := sstable.NewWriter(f, sstable.WriterOptions{
+	writable := objstorageprovider.NewFileWritable(f)
+	writer := sstable.NewWriter(writable, sstable.WriterOptions{
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			newRangePropertiesCollector,
 		},
@@ -1486,9 +1494,16 @@ func (h *sstIterHeap) Next() ([]byte, []byte, error) {
 		}
 
 		var k *pebble.InternalKey
-		k, iter.val = iter.iter.Next()
+		var v pebble.LazyValue
+		k, v = iter.iter.Next()
+
 		if k != nil {
+			vBytes, _, err := v.Value(nil)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
 			iter.key = k.UserKey
+			iter.val = vBytes
 			iter.valid = true
 			heap.Fix(h, 0)
 		} else {
@@ -1528,11 +1543,15 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*
 	}
 
 	for _, p := range metas {
-		f, err := os.Open(p.path)
+		f, err := vfs.Default.Open(p.path)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		reader, err := sstable.NewReader(f, sstable.ReaderOptions{})
+		readable, err := sstable.NewSimpleReadable(f)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		reader, err := sstable.NewReader(readable, sstable.ReaderOptions{})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1544,6 +1563,10 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*
 		if key == nil {
 			continue
 		}
+		valBytes, _, err := val.Value(nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		if iter.Error() != nil {
 			return nil, errors.Trace(iter.Error())
 		}
@@ -1551,7 +1574,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*
 			name:   p.path,
 			iter:   iter,
 			key:    key.UserKey,
-			val:    val,
+			val:    valBytes,
 			reader: reader,
 			valid:  true,
 		})
