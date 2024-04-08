@@ -593,7 +593,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if opt.Value.GetType().GetType() != mysql.TypeVarString {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		val, isNull, err2 := opt.Value.EvalString(seCtx.GetExprCtx(), chunk.Row{})
+		val, isNull, err2 := opt.Value.EvalString(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err2 != nil || isNull {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -604,7 +604,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if opt.Value.GetType().GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		val, isNull, err2 := opt.Value.EvalInt(seCtx.GetExprCtx(), chunk.Row{})
+		val, isNull, err2 := opt.Value.EvalInt(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err2 != nil || isNull {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -1303,16 +1303,10 @@ func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]ex
 }
 
 func (e *LoadDataController) getBackendWorkerConcurrency() int {
-	// when using global sort, write&ingest step buffers KV data in memory,
 	// suppose cpu:mem ratio 1:2(true in most case), and we assign 1G per concurrency,
 	// so we can use 2 * threadCnt as concurrency. write&ingest step is mostly
 	// IO intensive, so CPU usage is below ThreadCnt in our tests.
-	// The real concurrency used is adjusted in external engine later.
-	// when using local sort, use the default value as lightning.
-	if e.IsGlobalSort() {
-		return e.ThreadCnt * 2
-	}
-	return config.DefaultRangeConcurrency * 2
+	return e.ThreadCnt * 2
 }
 
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {

@@ -298,17 +298,16 @@ func (s *session) cleanRetryInfo() {
 	planCacheEnabled := s.GetSessionVars().EnablePreparedPlanCache
 	var cacheKey kvcache.Key
 	var err error
-	var preparedAst *ast.Prepared
+	var preparedObj *plannercore.PlanCacheStmt
 	var stmtText, stmtDB string
 	if planCacheEnabled {
 		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
 		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
-			preparedObj, ok := preparedPointer.(*plannercore.PlanCacheStmt)
+			preparedObj, ok = preparedPointer.(*plannercore.PlanCacheStmt)
 			if ok {
-				preparedAst = preparedObj.PreparedAst
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
 				bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(s.pctx, preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
-				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion,
+				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedObj.SchemaVersion,
 					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
@@ -319,8 +318,8 @@ func (s *session) cleanRetryInfo() {
 	}
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
-			if i > 0 && preparedAst != nil {
-				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtText, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
+			if i > 0 && preparedObj != nil {
+				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtText, preparedObj.SchemaVersion, s.sessionVars.IsolationReadEngines)
 			}
 			if !s.sessionVars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
 				s.GetSessionPlanCache().Delete(cacheKey)
@@ -735,7 +734,7 @@ func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
 	}
 	if store, ok := s.store.(helper.Storage); ok {
 		content := consistency.GetMvccByKey(store, key, decodeFunc)
-		logutil.Logger(ctx).Error("assertion failed", zap.String("message", redact.String(rmode, newErr.Error())), zap.String("mvcc history", redact.String(rmode, content)))
+		logutil.Logger(ctx).Error("assertion failed", zap.String("message", newErr.Error()), zap.String("mvcc history", redact.String(rmode, content)))
 	}
 	return newErr
 }
@@ -4413,6 +4412,12 @@ func (s *session) usePipelinedDmlOrWarn() bool {
 	}
 	if s.GetSessionVars().ConstraintCheckInPlace {
 		// we enforce that pipelined DML must lazily check key.
+		stmtCtx.AppendWarning(
+			errors.New(
+				"Pipelined DML can not be used when tidb_constraint_check_in_place=ON. " +
+					"Fallback to standard mode",
+			),
+		)
 		return false
 	}
 	is, ok := s.GetDomainInfoSchema().(infoschema.InfoSchema)

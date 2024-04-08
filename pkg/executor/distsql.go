@@ -344,7 +344,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		if err != nil {
 			return err
 		}
-		pbConditions, err := expression.ExpressionsToPBList(e.Ctx().GetExprCtx(), []expression.Expression{inCondition}, e.Ctx().GetClient())
+		pbConditions, err := expression.ExpressionsToPBList(e.Ctx().GetExprCtx().GetEvalCtx(), []expression.Expression{inCondition}, e.Ctx().GetClient())
 		if err != nil {
 			return err
 		}
@@ -437,7 +437,7 @@ type IndexLookUpExecutor struct {
 	avgRowSize     float64
 
 	// fields about accessing partition tables
-	partitionTableMode bool                  // if this executor is accessing a partition table
+	partitionTableMode bool                  // if this executor is accessing a local index with partition table
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
 	partitionIDMap     map[int64]struct{}    // partitionIDs that global index access
 	partitionRangeMap  map[int64][]*ranger.Range

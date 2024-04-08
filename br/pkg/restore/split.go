@@ -31,8 +31,9 @@ import (
 type Granularity string
 
 const (
-	FineGrained   Granularity = "fine-grained"
-	CoarseGrained Granularity = "coarse-grained"
+	FineGrained      Granularity = "fine-grained"
+	CoarseGrained    Granularity = "coarse-grained"
+	maxSplitKeysOnce             = 10240
 )
 
 type SplitContext struct {
@@ -118,26 +119,15 @@ func (rs *RegionSplitter) executeSplitByRanges(
 	// Choose the rough region split keys,
 	// each splited region contains 128 regions to be splitted.
 	const regionIndexStep = 128
-	const maxSplitKeysOnce = 10240
-	curRegionIndex := regionIndexStep
-	roughScanStartKey := scanStartKey
-	for {
-		roughSortedSplitKeys := make([][]byte, 0, maxSplitKeysOnce)
-		for i := 0; i < maxSplitKeysOnce && curRegionIndex < len(sortedKeys); i += 1 {
-			roughSortedSplitKeys = append(roughSortedSplitKeys, sortedKeys[curRegionIndex])
-			curRegionIndex += regionIndexStep
-		}
-		if len(roughSortedSplitKeys) == 0 {
-			break
-		}
-		if err := rs.executeSplitByKeys(ctx, splitContext, roughScanStartKey, roughSortedSplitKeys); err != nil {
+
+	roughSortedSplitKeys := make([][]byte, 0, len(sortedKeys)/regionIndexStep+1)
+	for curRegionIndex := regionIndexStep; curRegionIndex < len(sortedKeys); curRegionIndex += regionIndexStep {
+		roughSortedSplitKeys = append(roughSortedSplitKeys, sortedKeys[curRegionIndex])
+	}
+	if len(roughSortedSplitKeys) > 0 {
+		if err := rs.executeSplitByKeys(ctx, splitContext, scanStartKey, roughSortedSplitKeys); err != nil {
 			return errors.Trace(err)
 		}
-		if curRegionIndex >= len(sortedKeys) {
-			break
-		}
-		// update the roughScanStartKey to the last key of roughSortedSplitKeys
-		roughScanStartKey = roughSortedSplitKeys[len(roughSortedSplitKeys)-1]
 	}
 	log.Info("finish spliting regions roughly", zap.Duration("take", time.Since(startTime)))
 
@@ -174,14 +164,10 @@ func (rs *RegionSplitter) executeSplitByKeys(
 			return err
 		}
 		splitKeyMap := split.GetSplitKeysOfRegions(sortedKeys, regions, splitContext.isRawKv)
-		regionMap := make(map[uint64]*split.RegionInfo)
-		for _, region := range regions {
-			regionMap[region.Region.GetId()] = region
-		}
 		workerPool := util.NewWorkerPool(uint(splitContext.storeCount)+1, "split keys")
 		eg, ectx := errgroup.WithContext(ctx)
-		for regionID, splitKeys := range splitKeyMap {
-			region := regionMap[regionID]
+		for region, splitKeys := range splitKeyMap {
+			region := region
 			keys := splitKeys
 			sctx := splitContext
 			workerPool.ApplyOnErrorGroup(eg, func() error {
@@ -232,7 +218,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 func (rs *RegionSplitter) splitAndScatterRegions(
 	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte, _ bool,
 ) ([]*split.RegionInfo, error) {
-	_, newRegions, err := rs.client.SplitWaitAndScatter(ctx, regionInfo, keys)
+	newRegions, err := rs.client.SplitWaitAndScatter(ctx, regionInfo, keys)
 	return newRegions, err
 }
 

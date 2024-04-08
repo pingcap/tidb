@@ -1581,6 +1581,9 @@ type SessionVars struct {
 	// DivPrecisionIncrement indicates the number of digits by which to increase the scale of the result
 	// of division operations performed with the / operator.
 	DivPrecisionIncrement int
+
+	// GroupConcatMaxLen represents the maximum length of the result of GROUP_CONCAT.
+	GroupConcatMaxLen uint64
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -2038,6 +2041,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
+		GroupConcatMaxLen:             DefGroupConcatMaxLen,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName

@@ -2220,7 +2220,7 @@ func WrapWithCastAsDecimal(ctx BuildContext, expr Expression) Expression {
 	castExpr := BuildCastFunction(ctx, expr, tp)
 	// For const item, we can use find-grained precision and scale by the result.
 	if castExpr.ConstLevel() == ConstStrict {
-		val, isnull, err := castExpr.EvalDecimal(ctx, chunk.Row{})
+		val, isnull, err := castExpr.EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 		if !isnull && err == nil {
 			precision, frac := val.PrecisionAndFrac()
 			castTp := castExpr.GetType()
