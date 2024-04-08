@@ -32,9 +32,13 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
+	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table/temptable"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-binlog"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -588,7 +592,7 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 			}
 			info := &binloginfo.BinlogInfo{
 				Data: &binlog.Binlog{
-					Tp: binlog.BinlogType_Prewrite,
+					Tp:            binlog.BinlogType_Prewrite,
 					PrewriteValue: prewriteData,
 				},
 				Client: sessVars.BinlogClient,
@@ -721,4 +725,19 @@ func (p *basePessimisticTxnContextProvider) cancelFairLockingIfNeeded(ctx contex
 		}
 	}
 	return nil
+}
+
+type temporaryTableKVFilter map[int64]tableutil.TempTable
+
+func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(
+	key, value []byte, flags tikvstore.KeyFlags,
+) (bool, error) {
+	tid := tablecodec.DecodeTableID(key)
+	if _, ok := m[tid]; ok {
+		return true, nil
+	}
+
+	// This is the default filter for all tables.
+	defaultFilter := txn.TiDBKVFilter{}
+	return defaultFilter.IsUnnecessaryKeyValue(key, value, flags)
 }
