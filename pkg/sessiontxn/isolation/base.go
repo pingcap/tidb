@@ -312,6 +312,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.onTxnActiveFunc != nil {
 		p.onTxnActiveFunc(txn, p.enterNewTxnType)
 	}
+
 	p.txn = txn
 	return txn, nil
 }
@@ -454,7 +455,10 @@ func (p *baseTxnContextProvider) SetOptionsOnTxnActive(txn kv.Transaction) {
 		txn.SetOption(kv.ReplicaRead, readReplicaType)
 	}
 
-	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema); interceptor != nil {
+	if interceptor := temptable.SessionSnapshotInterceptor(
+		p.sctx,
+		p.infoSchema,
+	); interceptor != nil {
 		txn.SetOption(kv.SnapInterceptor, interceptor)
 	}
 
@@ -499,15 +503,21 @@ func (p *baseTxnContextProvider) SetOptionsOnTxnActive(txn kv.Transaction) {
 		// of any previously committed transactions.
 		// Additionally, it's required to guarantee linearizability for snapshot read-only transactions though
 		// it does take effects on read-only transactions now.
-		txn.SetOption(kv.GuaranteeLinearizability,
+		txn.SetOption(
+			kv.GuaranteeLinearizability,
 			!sessVars.IsAutocommit() ||
 				sessVars.SnapshotTS > 0 ||
 				p.enterNewTxnType == sessiontxn.EnterNewTxnDefault ||
-				p.enterNewTxnType == sessiontxn.EnterNewTxnWithBeginStmt)
+				p.enterNewTxnType == sessiontxn.EnterNewTxnWithBeginStmt,
+		)
 	}
+
+	txn.SetOption(kv.SessionID, p.sctx.GetSessionVars().ConnectionID)
 }
 
-func (p *baseTxnContextProvider) SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error {
+func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
+	txn kv.Transaction, commitTSChecker func(uint64) bool,
+) error {
 	sessVars := p.sctx.GetSessionVars()
 	// Pipelined dml txn already flushed mutations into stores, so we don't need to set options for them.
 	// Instead, some invariants must be checked to avoid anomalies though are unreachable in designed usages.
@@ -554,7 +564,15 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(txn kv.Transaction, comm
 	// TODO: refactor SetOption usage to avoid race risk, should detect it in test.
 	// The pipelined txn will may be flushed in background, not touch the options to avoid races.
 	// to avoid session set overlap the txn set.
-	txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(p.sctx), p.GetTxnInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
+	txn.SetOption(
+		kv.SchemaChecker,
+		domain.NewSchemaChecker(
+			domain.GetDomain(p.sctx),
+			p.GetTxnInfoSchema().SchemaMetaVersion(),
+			physicalTableIDs,
+			needCheckSchema,
+		),
+	)
 
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
@@ -711,7 +729,9 @@ func (p *basePessimisticTxnContextProvider) cancelFairLockingIfNeeded(ctx contex
 
 type temporaryTableKVFilter map[int64]tableutil.TempTable
 
-func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) (bool, error) {
+func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(
+	key, value []byte, flags tikvstore.KeyFlags,
+) (bool, error) {
 	tid := tablecodec.DecodeTableID(key)
 	if _, ok := m[tid]; ok {
 		return true, nil
