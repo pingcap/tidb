@@ -207,7 +207,7 @@ func TestGetRestrictedStatusOfStateVariable(t *testing.T) {
 
 	tidbCfg := config.NewConfig()
 
-	tidbCfg.Security.SEM.RestrictedStatus = []config.RestrictedState{
+	tidbCfg.Security.SEM.RestrictedStatus = []config.RestrictedStatus{
 		{
 			Name:            "tidb_gc_leader_desc",
 			RestrictionType: "hidden",
@@ -223,7 +223,7 @@ func TestGetRestrictedStatusOfStateVariable(t *testing.T) {
 	config.StoreGlobalConfig(tidbCfg)
 
 	var restricted bool
-	var info *config.RestrictedState
+	var info *config.RestrictedStatus
 
 	restricted, info = GetRestrictedStatusOfStateVariable(tidbGCLeaderDesc)
 	assert.True(restricted)

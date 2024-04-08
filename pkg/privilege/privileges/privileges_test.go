@@ -1547,7 +1547,7 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 
 func TestSecurityEnhancedModeStatus(t *testing.T) {
 	tidbCfg := config.NewConfig()
-	tidbCfg.Security.SEM.RestrictedStatus = []config.RestrictedState{
+	tidbCfg.Security.SEM.RestrictedStatus = []config.RestrictedStatus{
 		{
 			Name:            "ddl_schema_version",
 			RestrictionType: "hidden",

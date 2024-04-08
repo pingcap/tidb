@@ -246,7 +246,7 @@ func IsStaticPermissionRestricted(privType mysql.PrivilegeType) bool {
 
 // GetRestrictedStatusOfStateVariable Return the actual restricted status of the status variable.
 // false indicates no restriction.
-func GetRestrictedStatusOfStateVariable(varName string) (bool, *config.RestrictedState) {
+func GetRestrictedStatusOfStateVariable(varName string) (bool, *config.RestrictedStatus) {
 	cfg := config.GetGlobalConfig()
 	status := cfg.Security.SEM.RestrictedStatus
 	for _, state := range status {
@@ -254,5 +254,5 @@ func GetRestrictedStatusOfStateVariable(varName string) (bool, *config.Restricte
 			return true, &state
 		}
 	}
-	return false, &config.RestrictedState{}
+	return false, &config.RestrictedStatus{}
 }
