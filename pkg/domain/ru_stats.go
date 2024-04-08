@@ -108,12 +108,21 @@ func (do *Domain) requestUnitsWriterLoop() {
 }
 
 // GetLastExpectedTime return the last written ru time.
+// NOTE: due to DST(daylight saving time), the actual duration for a specific
+// time may be shorter or longer than the interval when DST happens.
+// The interval must not be longer than 24h.
 func GetLastExpectedTime(now time.Time, interval time.Duration) time.Time {
-	nowTs := now.Unix()
-	intervalSecs := int64(interval / time.Second)
-	tzOffset := time.Date(1971, 1, 1, 0, 0, 0, 0, time.Local).Unix()
-	targetTs := nowTs - (nowTs+intervalSecs-tzOffset)%intervalSecs
-	return time.Unix(targetTs, 0)
+	return GetLastExpectedTimeTZ(now, interval, time.Local)
+}
+
+// GetLastExpectedTimeTZ return the last written ru time under specifical timezone.
+// make it public only for test.
+func GetLastExpectedTimeTZ(now time.Time, interval time.Duration, tz *time.Location) time.Time {
+	year, month, day := now.Date()
+	start := time.Date(year, month, day, 0, 0, 0, 0, tz)
+	targetDur := now.Sub(start) / interval * interval
+	// use UTC timezone to calculate target time so it can be compatible with DST.
+	return start.In(time.UTC).Add(targetDur).In(tz)
 }
 
 // DoWriteRUStatistics write ru historical data into mysql.request_unit_by_group.
