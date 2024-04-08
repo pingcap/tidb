@@ -30,7 +30,7 @@ import (
 )
 
 // AggFuncBuildContext is used to build aggregation functions.
-type AggFuncBuildContext = exprctx.AggFuncBuildContext
+type AggFuncBuildContext = exprctx.ExprContext
 
 // Build is used to build a specific AggFunc implementation according to the
 // input aggFuncDesc.

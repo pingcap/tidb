@@ -33,7 +33,7 @@ type EvalContext = context.EvalContext
 type BuildContext = context.BuildContext
 
 // AggFuncBuildContext is used to build an aggregation expression
-type AggFuncBuildContext = context.AggFuncBuildContext
+type AggFuncBuildContext = context.ExprContext
 
 // OptionalEvalPropKey is an alias of context.OptionalEvalPropKey
 type OptionalEvalPropKey = context.OptionalEvalPropKey

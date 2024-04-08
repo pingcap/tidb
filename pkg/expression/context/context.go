@@ -94,18 +94,13 @@ type BuildContext interface {
 	SetValue(key fmt.Stringer, value any)
 }
 
-// AggFuncBuildContext is used to build an aggregate function
-type AggFuncBuildContext interface {
+// ExprContext contains full context for expression building and evaluating.
+// It also provides some additional information for to build aggregate functions.
+type ExprContext interface {
 	BuildContext
 	// GetWindowingUseHighPrecision determines whether to compute window operations without loss of precision.
 	// see https://dev.mysql.com/doc/refman/8.0/en/window-function-optimization.html for more details.
 	GetWindowingUseHighPrecision() bool
 	// GetGroupConcatMaxLen returns the value of the 'group_concat_max_len' system variable.
 	GetGroupConcatMaxLen() uint64
-}
-
-// ExprContext contains full context for expression building and evaluating.
-type ExprContext interface {
-	BuildContext
-	AggFuncBuildContext
 }
