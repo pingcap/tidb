@@ -253,6 +253,7 @@ func TestSessionBuildContext(t *testing.T) {
 	require.True(t, evalCtx.GetOptionalPropSet().IsFull())
 	require.Same(t, ctx, evalCtx.Sctx())
 
+	// charset and collation
 	vars := ctx.GetSessionVars()
 	err := vars.SetSystemVar("character_set_connection", "gbk")
 	require.NoError(t, err)
@@ -265,17 +266,45 @@ func TestSessionBuildContext(t *testing.T) {
 	require.Equal(t, "gbk_chinese_ci", collate)
 	require.Equal(t, "utf8mb4_0900_ai_ci", impl.GetDefaultCollationForUTF8MB4())
 
+	// SysdateIsNow
 	vars.SysdateIsNow = true
 	require.True(t, impl.GetSysdateIsNow())
 
+	// NoopFuncsMode
 	vars.NoopFuncsMode = 2
 	require.Equal(t, 2, impl.GetNoopFuncsMode())
 
+	// Rng
 	vars.Rng = mathutil.NewWithSeed(123)
 	require.Same(t, vars.Rng, impl.Rng())
 
+	// PlanCache
 	vars.StmtCtx.UseCache = true
 	require.True(t, impl.IsUseCache())
 	impl.SetSkipPlanCache(errors.New("mockReason"))
 	require.False(t, impl.IsUseCache())
+
+	// Alloc column id
+	prevID := vars.PlanColumnID.Load()
+	colID := impl.AllocPlanColumnID()
+	require.Equal(t, colID, prevID+1)
+	colID = impl.AllocPlanColumnID()
+	require.Equal(t, colID, prevID+2)
+	vars.AllocPlanColumnID()
+	colID = impl.AllocPlanColumnID()
+	require.Equal(t, colID, prevID+4)
+
+	// InNullRejectCheck
+	require.False(t, impl.IsInNullRejectCheck())
+	impl.SetInNullRejectCheck(true)
+	require.True(t, impl.IsInNullRejectCheck())
+	impl.SetInNullRejectCheck(false)
+	require.False(t, impl.IsInNullRejectCheck())
+
+	// InUnionCast
+	require.False(t, impl.IsInUnionCast())
+	impl.SetInUnionCast(true)
+	require.True(t, impl.IsInUnionCast())
+	impl.SetInUnionCast(false)
+	require.False(t, impl.IsInUnionCast())
 }
