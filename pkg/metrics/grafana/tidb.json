@@ -18930,7 +18930,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(tidb_tikvclient_range_task_stats{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (type, result)",
+              "expr": "sum(tidb_tikvclient_range_task_stats{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=~\"resolve-locks.*\"}) by (type, result)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{type}}-{{result}}",
@@ -19023,7 +19023,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_tikvclient_range_task_push_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, instance))",
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_tikvclient_range_task_push_duration_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=~\"resolve-locks.*\"}[1m])) by (le, instance))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{instance}}",
