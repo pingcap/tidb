@@ -1469,7 +1469,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 						canConvertPointGet = false
 					}
 				}
-
 			}
 			if canConvertPointGet {
 				// If the schema contains ExtraPidColID, do not convert to point get.

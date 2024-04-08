@@ -16,8 +16,6 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -43,8 +41,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"go.uber.org/zap"
 )
 
 // PlanCacheKeyTestIssue43667 is only for test.
