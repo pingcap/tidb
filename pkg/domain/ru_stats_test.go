@@ -145,7 +145,7 @@ func TestGetLastExpectedTime(t *testing.T) {
 	tz, _ := time.LoadLocation("Asia/Shanghai")
 	testGetLastExpectedTimeTz(t, tz)
 
-	// first test with DST affected timezone.
+	// test with DST affected timezone.
 	tz, _ = time.LoadLocation("Australia/Lord_Howe")
 	testGetLastExpectedTimeTz(t, tz)
 	testGetLastExpectedTimeTz(t, time.Local)

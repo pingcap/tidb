@@ -108,9 +108,12 @@ func (do *Domain) requestUnitsWriterLoop() {
 }
 
 // GetLastExpectedTime return the last written ru time.
-// NOTE: due to DST(daylight saving time), the actual duration for a specific
-// time may be shorter or longer than the interval when DST happens.
-// The interval must not be longer than 24h.
+// NOTE:
+//   - due to DST(daylight saving time), the actual duration for a specific
+//     time may be shorter or longer than the interval when DST happens.
+//   - All the tidb-server should be deployed in the same timezone to ensure
+//     the duration is calculated correctly.
+//   - The interval must not be longer than 24h.
 func GetLastExpectedTime(now time.Time, interval time.Duration) time.Time {
 	return GetLastExpectedTimeTZ(now, interval, time.Local)
 }
