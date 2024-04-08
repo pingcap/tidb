@@ -3391,7 +3391,7 @@ func parseAndEvalBoolExpr(ctx expression.BuildContext, l, r string, colInfo *mod
 		return false, err
 	}
 	e.SetCharsetAndCollation(colInfo.GetCharset(), colInfo.GetCollate())
-	res, _, err1 := e.EvalInt(ctx, chunk.Row{})
+	res, _, err1 := e.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 	if err1 != nil {
 		return false, err1
 	}

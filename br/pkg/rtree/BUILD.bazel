@@ -10,9 +10,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/logutil",
-        "//br/pkg/redact",
         "//pkg/kv",
         "//pkg/tablecodec",
+        "//pkg/util/redact",
         "@com_github_google_btree//:btree",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",

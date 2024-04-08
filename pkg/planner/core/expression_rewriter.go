@@ -62,7 +62,7 @@ func evalAstExprWithPlanCtx(sctx PlanContext, expr ast.ExprNode) (types.Datum, e
 	if err != nil {
 		return types.Datum{}, err
 	}
-	return newExpr.Eval(sctx.GetExprCtx(), chunk.Row{})
+	return newExpr.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 }
 
 // evalAstExpr evaluates ast expression directly.
@@ -74,7 +74,7 @@ func evalAstExpr(ctx expression.BuildContext, expr ast.ExprNode) (types.Datum, e
 	if err != nil {
 		return types.Datum{}, err
 	}
-	return newExpr.Eval(ctx, chunk.Row{})
+	return newExpr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 }
 
 // rewriteAstExprWithPlanCtx rewrites ast expression directly.
@@ -2047,7 +2047,7 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 	isPatternExactMatch := false
 	// Treat predicate 'like' or 'ilike' the same way as predicate '=' when it is an exact match and new collation is not enabled.
 	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
-		patString, isNull, err := patExpression.EvalString(er.sctx, chunk.Row{})
+		patString, isNull, err := patExpression.EvalString(er.sctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			er.err = err
 			return
@@ -2571,7 +2571,7 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 	return strings.ToLower(x) == ast.CurrentTimestamp
 }
 
-func decodeKeyFromString(tc types.Context, isVer infoschemactx.InfoSchemaMetaVersion, s string) string {
+func decodeKeyFromString(tc types.Context, isVer infoschemactx.MetaOnlyInfoSchema, s string) string {
 	key, err := hex.DecodeString(s)
 	if err != nil {
 		tc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))

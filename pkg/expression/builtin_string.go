@@ -296,7 +296,7 @@ func (c *concatFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		bf.tp.SetFlen(mysql.MaxBlobWidth)
 	}
 
-	maxAllowedPacket := ctx.GetMaxAllowedPacket()
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinConcatSig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_Concat)
 	return sig, nil
@@ -373,7 +373,7 @@ func (c *concatWSFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		bf.tp.SetFlen(mysql.MaxBlobWidth)
 	}
 
-	maxAllowedPacket := ctx.GetMaxAllowedPacket()
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinConcatWSSig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_ConcatWS)
 	return sig, nil
@@ -622,7 +622,7 @@ func (c *repeatFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	}
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	maxAllowedPacket := ctx.GetMaxAllowedPacket()
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinRepeatSig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_Repeat)
 	return sig, nil
@@ -820,7 +820,7 @@ func (c *spaceFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
-	maxAllowedPacket := ctx.GetMaxAllowedPacket()
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinSpaceSig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_Space)
 	return sig, nil
@@ -1992,7 +1992,7 @@ func trimRight(str, remstr string) string {
 
 func getFlen4LpadAndRpad(ctx BuildContext, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
-		length, isNull, err := constant.EvalInt(ctx, chunk.Row{})
+		length, isNull, err := constant.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			logutil.BgLogger().Error("eval `Flen` for LPAD/RPAD", zap.Error(err))
 		}
@@ -2019,7 +2019,7 @@ func (c *lpadFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	bf.tp.SetFlen(getFlen4LpadAndRpad(ctx, args[1]))
 	addBinFlag(bf.tp)
 
-	maxAllowedPacket := ctx.GetMaxAllowedPacket()
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
 		sig := &builtinLpadSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Lpad)
@@ -2144,7 +2144,7 @@ func (c *rpadFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	bf.tp.SetFlen(getFlen4LpadAndRpad(ctx, args[1]))
 	addBinFlag(bf.tp)
 
-	maxAllowedPacket := ctx.GetMaxAllowedPacket()
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
 		sig := &builtinRpadSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Rpad)
@@ -2314,7 +2314,7 @@ func (c *charFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 		logutil.BgLogger().Warn(fmt.Sprintf("The last argument in char function must be constant, but got %T", args[len(args)-1]))
 		return nil, errIncorrectArgs
 	}
-	charsetName, isNull, err := args[len(args)-1].EvalString(ctx, chunk.Row{})
+	charsetName, isNull, err := args[len(args)-1].EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -2646,7 +2646,7 @@ type makeSetFunctionClass struct {
 func (c *makeSetFunctionClass) getFlen(ctx BuildContext, args []Expression) int {
 	flen, count := 0, 0
 	if constant, ok := args[0].(*Constant); ok {
-		bits, isNull, err := constant.EvalInt(ctx, chunk.Row{})
+		bits, isNull, err := constant.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if err == nil && !isNull {
 			for i, length := 1, len(args); i < length; i++ {
 				if (bits & (1 << uint(i-1))) != 0 {
@@ -3428,7 +3428,7 @@ func (c *fromBase64FunctionClass) getFunction(ctx BuildContext, args []Expressio
 		}
 	}
 
-	maxAllowedPacket := ctx.GetMaxAllowedPacket()
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinFromBase64Sig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_FromBase64)
@@ -3507,7 +3507,7 @@ func (c *toBase64FunctionClass) getFunction(ctx BuildContext, args []Expression)
 		bf.tp.SetFlen(base64NeededEncodedLength(bf.args[0].GetType().GetFlen()))
 	}
 
-	maxAllowedPacket := ctx.GetMaxAllowedPacket()
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinToBase64Sig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_ToBase64)
 	return sig, nil
@@ -3605,7 +3605,7 @@ func (c *insertFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
 	addBinFlag(bf.tp)
 
-	maxAllowedPacket := ctx.GetMaxAllowedPacket()
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	if types.IsBinaryStr(bf.tp) {
 		sig = &builtinInsertSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Insert)
@@ -3920,7 +3920,7 @@ func (c *weightStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	if padding == weightStringPaddingNull {
 		sig = &builtinWeightStringNullSig{bf}
 	} else {
-		maxAllowedPacket := ctx.GetMaxAllowedPacket()
+		maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 		sig = &builtinWeightStringSig{bf, padding, length, maxAllowedPacket}
 	}
 	return sig, nil

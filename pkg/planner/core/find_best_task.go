@@ -701,7 +701,7 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, planCoun
 func (ds *DataSource) tryToGetDualTask() (task, error) {
 	for _, cond := range ds.pushedDownConds {
 		if con, ok := cond.(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
-			result, _, err := expression.EvalBool(ds.SCtx().GetExprCtx(), []expression.Expression{cond}, chunk.Row{})
+			result, _, err := expression.EvalBool(ds.SCtx().GetExprCtx().GetEvalCtx(), []expression.Expression{cond}, chunk.Row{})
 			if err != nil {
 				return nil, err
 			}
@@ -1096,15 +1096,15 @@ func (ds *DataSource) isMatchPropForIndexMerge(path *util.AccessPath, prop *prop
 func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
-	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx(), path.AccessConds, nil, nil)
+	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	return candidate
 }
 
 func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
-	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
-	candidate.indexCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
+	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+	candidate.indexCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
 	return candidate
 }
 
@@ -1917,11 +1917,11 @@ func (ds *DataSource) indexCoveringColumn(column *expression.Column, indexColumn
 	if ds.tableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
 		return true
 	}
-	if column.ID == model.ExtraHandleID {
+	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
 		return true
 	}
-	coveredByPlainIndex := isIndexColsCoveringCol(ds.SCtx().GetExprCtx(), column, indexColumns, idxColLens, ignoreLen)
-	coveredByClusteredIndex := isIndexColsCoveringCol(ds.SCtx().GetExprCtx(), column, ds.commonHandleCols, ds.commonHandleLens, ignoreLen)
+	coveredByPlainIndex := isIndexColsCoveringCol(ds.SCtx().GetExprCtx().GetEvalCtx(), column, indexColumns, idxColLens, ignoreLen)
+	coveredByClusteredIndex := isIndexColsCoveringCol(ds.SCtx().GetExprCtx().GetEvalCtx(), column, ds.commonHandleCols, ds.commonHandleLens, ignoreLen)
 	if !coveredByPlainIndex && !coveredByClusteredIndex {
 		return false
 	}
@@ -2198,13 +2198,12 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		}
 	}
 
-	// global index not tested, could delete '!is.Index.Global' after test
-	if !is.Index.Global && FindColumnInfoByID(is.Columns, model.ExtraPhysTblID) != nil {
-		indexCols = append(indexCols, &expression.Column{
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			ID:       model.ExtraPhysTblID,
-			UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
-		})
+	// If `dataSouceSchema` contains `model.ExtraPhysTblID`, we should add it into `indexScan.schema`
+	for _, col := range is.dataSourceSchema.Columns {
+		if col.ID == model.ExtraPhysTblID {
+			indexCols = append(indexCols, col.Clone().(*expression.Column))
+			break
+		}
 	}
 
 	is.SetSchema(expression.NewSchema(indexCols...))
@@ -2284,7 +2283,7 @@ func matchIndicesProp(sctx PlanContext, idxCols []*expression.Column, colLens []
 		return false
 	}
 	for i, item := range propItems {
-		if colLens[i] != types.UnspecifiedLength || !item.Col.EqualByExprAndID(sctx.GetExprCtx(), idxCols[i]) {
+		if colLens[i] != types.UnspecifiedLength || !item.Col.EqualByExprAndID(sctx.GetExprCtx().GetEvalCtx(), idxCols[i]) {
 			return false
 		}
 	}
@@ -2582,11 +2581,17 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.GetFlag())
 		pointGetPlan.accessCols = ds.TblCols
-		hc, err := ds.handleCols.ResolveIndices(ds.schema)
-		if err != nil {
+		found := false
+		for i := range ds.Columns {
+			if ds.Columns[i].ID == ds.handleCols.GetCol(0).ID {
+				pointGetPlan.HandleColOffset = ds.Columns[i].Offset
+				found = true
+				break
+			}
+		}
+		if !found {
 			return invalidTask
 		}
-		pointGetPlan.HandleColOffset = hc.GetCol(0).Index
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sel := PhysicalSelection{

@@ -634,7 +634,7 @@ func (c *benchmarkFunctionClass) getFunction(ctx BuildContext, args []Expression
 	var constLoopCount int64
 	con, ok := args[0].(*Constant)
 	if ok && con.Value.Kind() == types.KindInt64 {
-		if lc, isNull, err := con.EvalInt(ctx, chunk.Row{}); err == nil && !isNull {
+		if lc, isNull, err := con.EvalInt(ctx.GetEvalCtx(), chunk.Row{}); err == nil && !isNull {
 			constLoopCount = lc
 		}
 	}
@@ -909,7 +909,7 @@ func (c *tidbDecodeKeyFunctionClass) getFunction(ctx BuildContext, args []Expres
 }
 
 // DecodeKeyFromString is used to decode key by expressions
-var DecodeKeyFromString func(types.Context, infoschema.InfoSchemaMetaVersion, string) string
+var DecodeKeyFromString func(types.Context, infoschema.MetaOnlyInfoSchema, string) string
 
 type builtinTiDBDecodeKeySig struct {
 	baseBuiltinFunc
@@ -944,14 +944,6 @@ func (b *builtinTiDBDecodeKeySig) evalString(ctx EvalContext, row chunk.Row) (st
 	return s, false, nil
 }
 
-// TiDBDecodeKeyFunctionKeyType is used to identify the decoder function in context.
-type TiDBDecodeKeyFunctionKeyType int
-
-// String() implements Stringer.
-func (k TiDBDecodeKeyFunctionKeyType) String() string {
-	return "tidb_decode_key"
-}
-
 type tidbDecodeSQLDigestsFunctionClass struct {
 	baseFunctionClass
 }
@@ -961,7 +953,7 @@ func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx BuildContext, args [
 		return nil, err
 	}
 
-	if !ctx.RequestVerification("", "", "", mysql.ProcessPriv) {
+	if !ctx.GetEvalCtx().RequestVerification("", "", "", mysql.ProcessPriv) {
 		return nil, errSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 
@@ -1356,7 +1348,7 @@ type builtinSetValSig struct {
 
 func (b *builtinSetValSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
 	return b.SequenceOperatorPropReader.RequiredOptionalEvalProps() |
-		b.SequenceOperatorPropReader.RequiredOptionalEvalProps()
+		b.SessionVarsPropReader.RequiredOptionalEvalProps()
 }
 
 func (b *builtinSetValSig) Clone() builtinFunc {

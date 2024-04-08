@@ -196,6 +196,8 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 		totalRowCount,
 		nil,
 		ddl.NewDDLReorgMeta(tk.Session()),
+		0,
+		2,
 	)
 	require.NoError(t, err)
 	err = pipeline.Execute()
@@ -271,6 +273,8 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 			&atomic.Int64{},
 			nil,
 			ddl.NewDDLReorgMeta(tk.Session()),
+			0,
+			2,
 		)
 		require.NoError(t, err)
 		err = pipeline.Execute()

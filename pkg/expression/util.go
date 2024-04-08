@@ -344,7 +344,7 @@ func extractConstantEqColumnsOrScalar(ctx BuildContext, result []Expression, exp
 				if i == 0 {
 					continue
 				}
-				if !guard.Equal(ctx, v) {
+				if !guard.Equal(ctx.GetEvalCtx(), v) {
 					allArgsIsConst = false
 					break
 				}
@@ -601,7 +601,7 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			allConstant = allConstant && ok
 		}
 		if allConstant {
-			val, err := x.Eval(ctx, chunk.Row{})
+			val, err := x.Eval(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return nil, err
 			}
@@ -1243,7 +1243,7 @@ func GetStringFromConstant(ctx BuildContext, value Expression) (string, bool, er
 		err := errors.Errorf("Not a Constant expression %+v", value)
 		return "", true, err
 	}
-	str, isNull, err := con.EvalString(ctx, chunk.Row{})
+	str, isNull, err := con.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil || isNull {
 		return "", true, err
 	}
@@ -1468,7 +1468,7 @@ func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs []Expression) bool {
 	if !ctx.GetSessionVars().StmtCtx.UseCache {
 		return false
 	}
-	return containMutableConst(ctx, exprs)
+	return containMutableConst(ctx.GetEvalCtx(), exprs)
 }
 
 // containMutableConst checks if the expressions contain a lazy constant.
@@ -1496,7 +1496,7 @@ func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
 			v.ParamMarker = nil
 			if v.DeferredExpr != nil { // evaluate and update v.Value to convert v to a complete immutable constant.
 				// TODO: remove or hide DefferedExpr since it's too dangerous (hard to be consistent with v.Value all the time).
-				v.Value, err = v.DeferredExpr.Eval(ctx, chunk.Row{})
+				v.Value, err = v.DeferredExpr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return err
 				}
@@ -1672,7 +1672,7 @@ func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, exec c
 		stmt += " where digest in (" + strings.Repeat("%?,", len(inValues)-1) + "%?)"
 	}
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, stmt, inValues...)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, stmt, inValues...)
 	if err != nil {
 		return nil, err
 	}

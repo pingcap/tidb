@@ -337,7 +337,7 @@ func safeConvert(ctx BuildContext, ec *ExprCollation, args ...Expression) bool {
 		}
 
 		if c, ok := arg.(*Constant); ok {
-			str, isNull, err := c.EvalString(ctx, chunk.Row{})
+			str, isNull, err := c.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return false
 			}

@@ -367,7 +367,7 @@ func (t *TableCommon) WritableConstraint() []*table.Constraint {
 func (t *TableCommon) CheckRowConstraint(ctx table.MutateContext, rowToCheck []types.Datum) error {
 	ectx := ctx.GetExprCtx()
 	for _, constraint := range t.WritableConstraint() {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ectx, chunk.MutRowFromDatums(rowToCheck).ToRow())
+		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ectx.GetEvalCtx(), chunk.MutRowFromDatums(rowToCheck).ToRow())
 		if err != nil {
 			return err
 		}

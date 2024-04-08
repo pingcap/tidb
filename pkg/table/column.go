@@ -753,9 +753,10 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 
 	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
 	iter := chunk.NewIterator4Chunk(req)
+	evalCtx := ectx.GetEvalCtx()
 	for i, idx := range virtualColumnIndex {
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			datum, err := expCols[idx].EvalVirtualColumn(ectx, row)
+			datum, err := expCols[idx].EvalVirtualColumn(evalCtx, row)
 			if err != nil {
 				return err
 			}
