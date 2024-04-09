@@ -36,7 +36,7 @@ const (
 	ScanRegionPaginationLimit = 128
 )
 
-func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
+func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
 	// current pd can't guarantee the consistency of returned regions
 	if len(regions) == 0 {
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endKey: %s",
@@ -119,7 +119,7 @@ func PaginateScanRegion(
 		}
 		lastRegions = regions
 
-		if err = CheckRegionConsistency(startKey, endKey, regions); err != nil {
+		if err = checkRegionConsistency(startKey, endKey, regions); err != nil {
 			log.Warn("failed to scan region, retrying",
 				logutil.ShortError(err),
 				zap.Int("regionLength", len(regions)))
