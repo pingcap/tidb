@@ -539,12 +539,15 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 	}
 	// we need to find the regions that contain the split keys. However, the scan
 	// region API accepts a key range [start, end) where end key is exclusive, and if
-	// sortedSplitKeys length is 1, we scan region may return empty result. So we
+	// sortedSplitKeys length is 1, scan region may return empty result. So we
 	// increase the end key a bit. If the end key is on the region boundaries, it
 	// will be skipped by getSplitKeysOfRegions.
 	scanStart := codec.EncodeBytesExt(nil, sortedSplitKeys[0], c.isRawKv)
 	lastKey := kv.Key(sortedSplitKeys[len(sortedSplitKeys)-1])
-	scanEnd := codec.EncodeBytesExt(nil, lastKey.Next(), c.isRawKv)
+	if len(lastKey) > 0 {
+		lastKey = lastKey.Next()
+	}
+	scanEnd := codec.EncodeBytesExt(nil, lastKey, c.isRawKv)
 
 	// mu protects ret, retrySplitKeys, lastSplitErr
 	mu := sync.Mutex{}

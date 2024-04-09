@@ -285,40 +285,6 @@ func initRewriteRules() *RewriteRules {
 	}
 }
 
-// expected regions after split:
-//
-//	[, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
-//	[bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
-func validateRegions(regions map[uint64]*split.RegionInfo) bool {
-	keys := [...]string{"", "aay", "bba", "bbf", "bbh", "bbj", "cca", "xxe", "xxz", ""}
-	return validateRegionsExt(regions, keys[:], false)
-}
-
-func validateRegionsExt(regions map[uint64]*split.RegionInfo, expectedKeys []string, isRawKv bool) bool {
-	if len(regions) != len(expectedKeys)-1 {
-		return false
-	}
-FindRegion:
-	for i := 1; i < len(expectedKeys); i++ {
-		for _, region := range regions {
-			startKey := []byte(expectedKeys[i-1])
-			if len(startKey) != 0 {
-				startKey = codec.EncodeBytesExt([]byte{}, startKey, isRawKv)
-			}
-			endKey := []byte(expectedKeys[i])
-			if len(endKey) != 0 {
-				endKey = codec.EncodeBytesExt([]byte{}, endKey, isRawKv)
-			}
-			if bytes.Equal(region.Region.GetStartKey(), startKey) &&
-				bytes.Equal(region.Region.GetEndKey(), endKey) {
-				continue FindRegion
-			}
-		}
-		return false
-	}
-	return true
-}
-
 type fakeRestorer struct {
 	mu sync.Mutex
 

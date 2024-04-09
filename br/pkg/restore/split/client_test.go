@@ -181,6 +181,47 @@ func TestSplitScatterRawKV(t *testing.T) {
 	require.Equal(t, len(result)-3, mockPDClient.scatterRegions.regionCount)
 }
 
+func TestSplitScatterEmptyEndKey(t *testing.T) {
+	backup := maxBatchSplitSize
+	maxBatchSplitSize = 7
+	t.Cleanup(func() {
+		maxBatchSplitSize = backup
+	})
+
+	mockPDClient := NewMockPDClientForSplit()
+	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
+	mockPDClient.SetRegions(keys)
+	mockClient := &pdClient{
+		client:           mockPDClient,
+		splitConcurrency: 10,
+		splitBatchKeyCnt: 100,
+		isRawKv:          true, // make tests more readable
+	}
+	ctx := context.Background()
+
+	splitKeys := [][]byte{{'b'}, {'c'}, {}}
+
+	_, err := mockClient.SplitKeysAndScatter(ctx, splitKeys)
+	require.NoError(t, err)
+
+	// check split ranges
+	regions, err := PaginateScanRegion(ctx, mockClient, []byte{}, []byte{}, 5)
+	require.NoError(t, err)
+	result := [][]byte{
+		[]byte(""), []byte("aay"),
+		[]byte("b"), []byte("bba"), []byte("bbh"),
+		[]byte("c"), []byte("cca"), []byte(""),
+	}
+	checkRegionsBoundaries(t, regions, result)
+
+	// test only one split key which is empty
+	_, err = mockClient.SplitKeysAndScatter(ctx, [][]byte{{}})
+	require.NoError(t, err)
+	regions, err = PaginateScanRegion(ctx, mockClient, []byte{}, []byte{}, 5)
+	require.NoError(t, err)
+	checkRegionsBoundaries(t, regions, result)
+}
+
 func TestScanRegionEmptyResult(t *testing.T) {
 	backup := WaitRegionOnlineAttemptTimes
 	WaitRegionOnlineAttemptTimes = 2
