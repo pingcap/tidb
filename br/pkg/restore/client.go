@@ -214,12 +214,14 @@ func NewRestoreClient(
 	pdHTTPCli pdhttp.Client,
 	tlsConf *tls.Config,
 	keepaliveConf keepalive.ClientParameters,
-	isRawKv bool,
+	_ bool,
 ) *Client {
 	return &Client{
-		pdClient:           pdClient,
-		pdHTTPClient:       pdHTTPCli,
-		toolClient:         split.NewSplitClient(pdClient, pdHTTPCli, tlsConf, isRawKv, maxSplitKeysOnce),
+		pdClient:     pdClient,
+		pdHTTPClient: pdHTTPCli,
+		// toolClient reuse the split.SplitClient to do miscellaneous things. It doesn't
+		// call split related functions so set the arguments to arbitrary values.
+		toolClient:         split.NewClient(pdClient, pdHTTPCli, tlsConf, maxSplitKeysOnce, 3),
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
 		switchCh:           make(chan struct{}),
@@ -555,7 +557,11 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 		useTokenBucket = true
 	}
 
-	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode, maxSplitKeysOnce)
+	var splitClientOpts []split.ClientOptionalParameter
+	if isRawKvMode {
+		splitClientOpts = append(splitClientOpts, split.WithRawKV())
+	}
+	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.GetStoreCount()+1, splitClientOpts...)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
 }
@@ -1423,7 +1429,7 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int
 	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
-	client := split.NewSplitClient(rc.GetPDClient(), rc.pdHTTPClient, rc.GetTLSConfig(), false, maxSplitKeysOnce)
+	client := split.NewClient(rc.GetPDClient(), rc.pdHTTPClient, rc.GetTLSConfig(), maxSplitKeysOnce, 3)
 	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
 }
 

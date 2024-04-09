@@ -121,28 +121,25 @@ type pdClient struct {
 	needScatterInit sync.Once
 
 	isRawKv          bool
+	onSplit          func(key [][]byte)
 	splitConcurrency int
 	splitBatchKeyCnt int
 }
 
-// NewSplitClient returns a client used by RegionSplitter.
-// TODO(lance6716): replace this function with NewClient.
-func NewSplitClient(
-	client pd.Client,
-	httpCli pdhttp.Client,
-	tlsConf *tls.Config,
-	isRawKv bool,
-	splitBatchKeyCnt int,
-) SplitClient {
-	cli := &pdClient{
-		client:           client,
-		httpCli:          httpCli,
-		tlsConf:          tlsConf,
-		storeCache:       make(map[uint64]*metapb.Store),
-		isRawKv:          isRawKv,
-		splitBatchKeyCnt: splitBatchKeyCnt,
+type ClientOptionalParameter func(*pdClient)
+
+// WithRawKV sets the client to use raw kv mode.
+func WithRawKV() ClientOptionalParameter {
+	return func(c *pdClient) {
+		c.isRawKv = true
 	}
-	return cli
+}
+
+// WithOnSplit sets a callback function to be called after each split.
+func WithOnSplit(onSplit func(key [][]byte)) ClientOptionalParameter {
+	return func(c *pdClient) {
+		c.onSplit = onSplit
+	}
 }
 
 // NewClient creates a SplitClient.
@@ -153,18 +150,20 @@ func NewClient(
 	client pd.Client,
 	httpCli pdhttp.Client,
 	tlsConf *tls.Config,
-	isRawKv bool,
 	splitBatchKeyCnt int,
 	splitConcurrency int,
+	opts ...ClientOptionalParameter,
 ) SplitClient {
 	cli := &pdClient{
 		client:           client,
 		httpCli:          httpCli,
 		tlsConf:          tlsConf,
 		storeCache:       make(map[uint64]*metapb.Store),
-		isRawKv:          isRawKv,
 		splitBatchKeyCnt: splitBatchKeyCnt,
 		splitConcurrency: splitConcurrency,
+	}
+	for _, opt := range opts {
+		opt(cli)
 	}
 	return cli
 }
@@ -575,7 +574,7 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 			allSplitKeys = retrySplitKeys
 			retrySplitKeys = retrySplitKeys[:0]
 		}
-		splitKeyMap := GetSplitKeysOfRegions(allSplitKeys, regions, c.isRawKv)
+		splitKeyMap := getSplitKeysOfRegions(allSplitKeys, regions, c.isRawKv)
 		workerPool := tidbutil.NewWorkerPool(uint(c.splitConcurrency), "split keys")
 		eg, eCtx := errgroup.WithContext(ctx)
 		for region, splitKeys := range splitKeyMap {
@@ -665,6 +664,9 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, 
 			originRegion, newRegionsOfBatch, err := c.batchSplitRegionsWithOrigin(ctx, region, keys[start:end])
 			if err != nil {
 				return nil, errors.Trace(err)
+			}
+			if c.onSplit != nil {
+				c.onSplit(keys[start:end])
 			}
 			err = c.waitRegionsSplit(ctx, newRegionsOfBatch)
 			if err != nil {
