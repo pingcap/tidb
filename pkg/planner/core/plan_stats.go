@@ -39,7 +39,11 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 		return plan, planChanged, nil
 	}
 	predicateNeeded := variable.EnableColumnTracking.Load()
+<<<<<<< HEAD:pkg/planner/core/plan_stats.go
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait * time.Millisecond.Nanoseconds()
+=======
+	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
+>>>>>>> 9bb3697349b (statistics: upgrade stats timeout checkpoint after it timeouts (#52424)):pkg/planner/core/rule_collect_plan_stats.go
 	histNeeded := syncWait > 0
 	predicateColumns, histNeededColumns := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
 	if len(predicateColumns) > 0 {

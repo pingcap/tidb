@@ -212,7 +212,11 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 		}
 	}()
 	if lastTask == nil {
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 		task, err = h.drainColTask(exit)
+=======
+		task, err = s.drainColTask(sctx, exit)
+>>>>>>> 9bb3697349b (statistics: upgrade stats timeout checkpoint after it timeouts (#52424)):pkg/statistics/handle/syncload/stats_syncload.go
 		if err != nil {
 			if err != errExit {
 				logutil.BgLogger().Error("Fail to drain task for stats loading.", zap.Error(err))
@@ -238,6 +242,7 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 		}
 		return task, result.Err
 	case <-time.After(timeout):
+		task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 		return task, nil
 	}
 }
@@ -380,7 +385,11 @@ func (*Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItem
 }
 
 // drainColTask will hang until a column task can return, and either task or error will be returned.
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 func (h *Handle) drainColTask(exit chan struct{}) (*NeededItemTask, error) {
+=======
+func (s *statsSyncLoad) drainColTask(sctx sessionctx.Context, exit chan struct{}) (*statstypes.NeededItemTask, error) {
+>>>>>>> 9bb3697349b (statistics: upgrade stats timeout checkpoint after it timeouts (#52424)):pkg/statistics/handle/syncload/stats_syncload.go
 	// select NeededColumnsCh firstly, if no task, then select TimeoutColumnsCh
 	for {
 		select {
@@ -393,7 +402,12 @@ func (h *Handle) drainColTask(exit chan struct{}) (*NeededItemTask, error) {
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 				h.writeToTimeoutChan(h.StatsLoad.TimeoutItemsCh, task)
+=======
+				task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
+				s.writeToTimeoutChan(s.StatsLoad.TimeoutItemsCh, task)
+>>>>>>> 9bb3697349b (statistics: upgrade stats timeout checkpoint after it timeouts (#52424)):pkg/statistics/handle/syncload/stats_syncload.go
 				continue
 			}
 			return task, nil
