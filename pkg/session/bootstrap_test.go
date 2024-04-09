@@ -298,6 +298,7 @@ func TestUpgrade(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	MustExec(t, se1, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
+	MustExec(t, se1, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
 	MustExec(t, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s"`, variable.TiDBDistSQLScanConcurrency))
 	MustExec(t, se1, `commit`)
 	unsetStoreBootstrapped(store.UUID())
@@ -2122,6 +2123,7 @@ func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 	err = m.FinishBootstrap(int64(ver177))
 	require.NoError(t, err)
 	MustExec(t, seV177, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver177))
+	MustExec(t, seV177, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
 	// remove the ddl_table_version entry from mysql.tidb table
 	MustExec(t, seV177, fmt.Sprintf("delete from mysql.tidb where VARIABLE_NAME='%s'", tidbDDLTableVersion))
 	err = txn.Commit(ctx)
