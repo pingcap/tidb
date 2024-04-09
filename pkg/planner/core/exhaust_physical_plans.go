@@ -3287,16 +3287,26 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		}
 	} else if !hasFinalAgg {
 		// TODO: support scalar agg in MPP, merge the final result to one node
-		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
-		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
-		agg.SetSchema(la.schema.Clone())
+		childProp1 := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+		agg1 := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp1)
+		agg1.SetSchema(la.schema.Clone())
+
+		childProp2 := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+		agg2 := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp2)
+		agg2.SetSchema(la.schema.Clone())
+
+		// MPPScalar current admission
 		if la.HasDistinct() || la.HasOrderBy() {
 			// mpp scalar mode means the data will be pass through to only one tiFlash node at last.
-			agg.MppRunMode = MppScalar
+			agg1.MppRunMode = MppScalar
+			hashAggs = append(hashAggs, agg1)
 		} else {
-			agg.MppRunMode = MppTiDB
+			// since there is always a change to let all the aggs executed on TiDB, so MPPTiDB is default.
+			agg1.MppRunMode = MppTiDB
+			// since there is no group items, so agg results should be collected in one tiFlash node, like said MPPScalar.
+			agg1.MppRunMode = MppScalar
+			hashAggs = append(hashAggs, agg1, agg2)
 		}
-		hashAggs = append(hashAggs, agg)
 	}
 
 	// handle MPP Agg hints

@@ -1862,43 +1862,55 @@
       {
         "SQL": "desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#8)->Column#5",
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(Column#10)->Column#8",
-          "      └─Projection 10000.00 mpp[tiflash]  plus(test.t.id, 1)->Column#10",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#5",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#9)->Column#5",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(Column#10)->Column#9",
+          "            └─Projection 10000.00 mpp[tiflash]  plus(test.t.id, 1)->Column#10",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ hash_agg()*/ count(*) from  (select id+1 from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t._tidb_rowid)->Column#7",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#5",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#8)->Column#5",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t._tidb_rowid)->Column#8",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#8)->Column#5",
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#10)->Column#8",
-          "      └─Projection 10000.00 mpp[tiflash]  cast(plus(test.t.id, 1), decimal(20,0) BINARY)->Column#10",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#5",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#9)->Column#5",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#10)->Column#9",
+          "            └─Projection 10000.00 mpp[tiflash]  cast(plus(test.t.id, 1), decimal(20,0) BINARY)->Column#10",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select count(*) from t",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t._tidb_rowid)->Column#6",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#4",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#8)->Column#4",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t._tidb_rowid)->Column#8",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1952,11 +1964,14 @@
         "SQL": "desc format = 'brief' select * from t join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = t.id",
         "Plan": [
           "HashJoin 1.25 root  inner join, equal:[eq(test.t.id, Column#7)]",
-          "├─HashAgg(Build) 1.00 root  funcs:count(Column#11)->Column#7",
-          "│ └─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
-          "│   └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│     └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t._tidb_rowid)->Column#11",
-          "│       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "├─TableReader(Build) 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "│ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─Projection 1.00 mpp[tiflash]  Column#7",
+          "│     └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#11)->Column#7",
+          "│       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "│         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "│           └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t._tidb_rowid)->Column#11",
+          "│             └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "└─TableReader(Probe) 9990.00 root  MppVersion: 2, data:ExchangeSender",
           "  └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
@@ -1979,16 +1994,19 @@
       {
         "SQL": "desc format = 'brief' select /*+hash_agg()*/ sum(b) from (select avg(value) as b, id from t group by id)A",
         "Plan": [
-          "HashAgg 1.00 root  funcs:sum(Column#18)->Column#5",
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#4)->Column#18",
-          "      └─Projection 8000.00 mpp[tiflash]  div(Column#4, cast(case(eq(Column#15, 0), 1, Column#15), decimal(20,0) BINARY))->Column#4",
-          "        └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:sum(Column#16)->Column#15, funcs:sum(Column#17)->Column#4",
-          "          └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
-          "            └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
-          "              └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#16, funcs:sum(test.t.value)->Column#17",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#5",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#19)->Column#5",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#4)->Column#19",
+          "            └─Projection 8000.00 mpp[tiflash]  div(Column#4, cast(case(eq(Column#15, 0), 1, Column#15), decimal(20,0) BINARY))->Column#4",
+          "              └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:sum(Column#16)->Column#15, funcs:sum(Column#17)->Column#4",
+          "                └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.id, collate: binary]",
+          "                    └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#16, funcs:sum(test.t.value)->Column#17",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
