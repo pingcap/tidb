@@ -34,7 +34,7 @@ func row2TaskBasic(r chunk.Row) *proto.TaskBase {
 		Step:        proto.Step(r.GetInt64(4)),
 		Priority:    int(r.GetInt64(5)),
 		Concurrency: int(r.GetInt64(6)),
-		TargetScope: r.GetString(7),
+		TargetScope: r.GetString(8),
 	}
 	task.CreateTime, _ = r.GetTime(7).GoTime(time.Local)
 	return task
