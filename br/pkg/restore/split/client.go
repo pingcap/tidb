@@ -665,9 +665,6 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, 
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if c.onSplit != nil {
-				c.onSplit(keys[start:end])
-			}
 			err = c.waitRegionsSplit(ctx, newRegionsOfBatch)
 			if err != nil {
 				brlog.FromContext(ctx).Warn(
@@ -684,6 +681,9 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, 
 					"scatter regions failed, will continue anyway",
 					zap.Error(err),
 				)
+			}
+			if c.onSplit != nil {
+				c.onSplit(keys[start:end])
 			}
 
 			// the region with the max start key is the region need to be further split,

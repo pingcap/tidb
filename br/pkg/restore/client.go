@@ -214,7 +214,6 @@ func NewRestoreClient(
 	pdHTTPCli pdhttp.Client,
 	tlsConf *tls.Config,
 	keepaliveConf keepalive.ClientParameters,
-	_ bool,
 ) *Client {
 	return &Client{
 		pdClient:     pdClient,
