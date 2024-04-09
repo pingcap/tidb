@@ -317,7 +317,7 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 		cancel()
 
 		if err != nil {
-			logutil.BgLogger().Warn("error performing compare-and-swap", zap.Error(err))
+			logutil.BgLogger().Warn("error when performing compare-and-swap", zap.String("category", "ddl"), zap.Error(err))
 			return errors.Trace(err)
 		}
 
