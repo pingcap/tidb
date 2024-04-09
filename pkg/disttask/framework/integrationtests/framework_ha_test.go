@@ -29,7 +29,7 @@ import (
 )
 
 func submitTaskAndCheckSuccessForHA(ctx context.Context, t *testing.T, taskKey string, testContext *testutil.TestContext) {
-	submitTaskAndCheckSuccess(ctx, t, taskKey, testContext, map[proto.Step]int{
+	submitTaskAndCheckSuccess(ctx, t, taskKey, "", testContext, map[proto.Step]int{
 		proto.StepOne: 10,
 		proto.StepTwo: 5,
 	})

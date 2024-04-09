@@ -38,14 +38,14 @@ func checkSubtaskOnNodes(ctx context.Context, t *testing.T, taskID int64, expect
 	require.EqualValues(t, expectedNodes, nodes)
 }
 
-func TestRoleBasic(t *testing.T) {
+func TestScopeBasic(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 3, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	tk := testkit.NewTestKit(t, c.Store)
 
 	// 1. all "" role.
-	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😁", c.TestContext)
+	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😁", "", c.TestContext)
 
 	checkSubtaskOnNodes(c.Ctx, t, 1, []string{":4000", ":4001", ":4002"})
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4000"`).Check(testkit.Rows(""))
@@ -59,7 +59,7 @@ func TestRoleBasic(t *testing.T) {
 
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "1*return()")
 	<-scheduler.TestRefreshedChan
-	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😊", c.TestContext)
+	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😊", "", c.TestContext)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh"))
 
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4000"`).Check(testkit.Rows("background"))
@@ -68,21 +68,27 @@ func TestRoleBasic(t *testing.T) {
 	// task with target_scope="", so run subtasks on nodes with "" role
 	checkSubtaskOnNodes(c.Ctx, t, 2, []string{":4001", ":4002"})
 
+	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "b1", "background", c.TestContext)
+	checkSubtaskOnNodes(c.Ctx, t, 3, []string{":4000"})
+
 	// 3. 2 "background" role.
 	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
 	time.Sleep(5 * time.Second)
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "1*return()")
 	<-scheduler.TestRefreshedChan
-	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😆", c.TestContext)
+	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😆", "", c.TestContext)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh"))
 	// task with target_scope="", so run subtasks on nodes with "" role
-	checkSubtaskOnNodes(c.Ctx, t, 3, []string{":4002"})
+	checkSubtaskOnNodes(c.Ctx, t, 4, []string{":4002"})
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4000"`).Check(testkit.Rows("background"))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4001"`).Check(testkit.Rows("background"))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4002"`).Check(testkit.Rows(""))
+
+	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "b2", "background", c.TestContext)
+	checkSubtaskOnNodes(c.Ctx, t, 5, []string{":4000", ":4001"})
 }
 
-func TestSetRole(t *testing.T) {
+func TestSetScope(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
