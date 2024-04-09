@@ -301,7 +301,7 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 		resp, err := etcdCli.Get(childCtx, key)
 		if err != nil {
 			cancel()
-			logutil.BgLogger().Warn("error getting key revision", zap.Error(err))
+			logutil.BgLogger().Warn("error when getting key revision", zap.String("category", "ddl"), zap.Error(err))
 			return errors.Trace(err)
 		}
 		prevRevision := int64(0)
