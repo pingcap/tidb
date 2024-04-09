@@ -74,7 +74,7 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 	if len(remainedItems) <= 0 {
 		return nil
 	}
-	keys := make([]string, len(remainedItems))
+	keys := make([]string, 0, len(remainedItems))
 	for _, k := range remainedItems {
 		keys = append(keys, k.Key())
 	}
