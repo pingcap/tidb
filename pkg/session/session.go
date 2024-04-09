@@ -2997,6 +2997,7 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (types.Session, error
 		s.GetSessionVars().MaxChunkSize = 32
 		s.GetSessionVars().MinPagingSize = variable.DefMinPagingSize
 		s.GetSessionVars().EnablePaging = variable.DefTiDBEnablePaging
+		s.GetSessionVars().StmtCtx.SetTimeZone(s.GetSessionVars().Location())
 		err = s.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, "utf8mb4")
 	}
 	return s, err

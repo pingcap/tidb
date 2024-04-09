@@ -635,7 +635,7 @@ func getColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo, defa
 	// If the column's default value is not ZeroDatetimeStr or CurrentTimestamp, convert the default value to the current session time zone.
 	if needChangeTimeZone {
 		t := value.GetMysqlTime()
-		err = t.ConvertTimeZone(explicitTz, ctx.GetSessionVars().Location())
+		err = t.ConvertTimeZone(explicitTz, ctx.GetEvalCtx().Location())
 		if err != nil {
 			return value, err
 		}
