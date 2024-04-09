@@ -436,10 +436,14 @@ func (s *BaseScheduler) switch2NextStep() error {
 		return nil
 	}
 
-	eligibleNodes, err := getEligibleNodes(s.ctx, s, s.nodeMgr.getManagedNodes())
+	nodes := s.nodeMgr.getNodes()
+	nodeIDs := filterByScope(nodes, task.TargetScope)
+
+	eligibleNodes, err := getEligibleNodes(s.ctx, s, nodeIDs)
 	if err != nil {
 		return err
 	}
+
 	s.logger.Info("eligible instances", zap.Int("num", len(eligibleNodes)))
 	if len(eligibleNodes) == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
@@ -629,5 +633,6 @@ func getEligibleNodes(ctx context.Context, sch Scheduler, managedNodes []string)
 	if len(serverNodes) == 0 {
 		serverNodes = managedNodes
 	}
+
 	return serverNodes, nil
 }

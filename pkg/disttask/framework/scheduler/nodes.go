@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
@@ -37,9 +38,9 @@ type NodeManager struct {
 	logger *zap.Logger
 	// prevLiveNodes is used to record the live nodes in last checking.
 	prevLiveNodes map[string]struct{}
-	// managedNodes is the cached nodes managed by the framework.
-	// see TaskManager.GetManagedNodes for more details.
-	managedNodes atomic.Pointer[[]string]
+	// nodes is the cached nodes managed by the framework.
+	// see TaskManager.GetNodes for more details.
+	nodes atomic.Pointer[[]proto.ManagedNode]
 }
 
 func newNodeManager(serverID string) *NodeManager {
@@ -51,8 +52,8 @@ func newNodeManager(serverID string) *NodeManager {
 		logger:        logger,
 		prevLiveNodes: make(map[string]struct{}),
 	}
-	managedNodes := make([]string, 0, 10)
-	nm.managedNodes.Store(&managedNodes)
+	nodes := make([]proto.ManagedNode, 0, 10)
+	nm.nodes.Store(&nodes)
 	return nm
 }
 
@@ -116,7 +117,7 @@ func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManage
 	nm.prevLiveNodes = currLiveNodes
 }
 
-func (nm *NodeManager) refreshManagedNodesLoop(ctx context.Context, taskMgr TaskManager, slotMgr *SlotManager) {
+func (nm *NodeManager) refreshNodesLoop(ctx context.Context, taskMgr TaskManager, slotMgr *SlotManager) {
 	ticker := time.NewTicker(nodesCheckInterval)
 	defer ticker.Stop()
 	for {
@@ -124,7 +125,7 @@ func (nm *NodeManager) refreshManagedNodesLoop(ctx context.Context, taskMgr Task
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			nm.refreshManagedNodes(ctx, taskMgr, slotMgr)
+			nm.refreshNodes(ctx, taskMgr, slotMgr)
 		}
 	}
 }
@@ -132,34 +133,44 @@ func (nm *NodeManager) refreshManagedNodesLoop(ctx context.Context, taskMgr Task
 // TestRefreshedChan is used to sync the test.
 var TestRefreshedChan = make(chan struct{})
 
-// refreshManagedNodes maintains the nodes managed by the framework.
-func (nm *NodeManager) refreshManagedNodes(ctx context.Context, taskMgr TaskManager, slotMgr *SlotManager) {
-	newNodes, err := taskMgr.GetManagedNodes(ctx)
+// refreshNodes maintains the nodes managed by the framework.
+func (nm *NodeManager) refreshNodes(ctx context.Context, taskMgr TaskManager, slotMgr *SlotManager) {
+	newNodes, err := taskMgr.GetAllNodes(ctx)
 	if err != nil {
 		nm.logger.Warn("get managed nodes met error", llog.ShortError(err))
 		return
 	}
-	nodeIDs := make([]string, 0, len(newNodes))
+
 	var cpuCount int
 	for _, node := range newNodes {
-		nodeIDs = append(nodeIDs, node.ID)
 		if node.CPUCount > 0 {
 			cpuCount = node.CPUCount
 		}
 	}
 	slotMgr.updateCapacity(cpuCount)
-	nm.managedNodes.Store(&nodeIDs)
+	nm.nodes.Store(&newNodes)
 
 	failpoint.Inject("syncRefresh", func() {
 		TestRefreshedChan <- struct{}{}
 	})
 }
 
-// GetManagedNodes returns the nodes managed by the framework.
-// return a copy of the managed nodes.
-func (nm *NodeManager) getManagedNodes() []string {
-	nodes := *nm.managedNodes.Load()
-	res := make([]string, len(nodes))
+// GetNodes returns the nodes managed by the framework.
+// return a copy of the nodes.
+func (nm *NodeManager) getNodes() []proto.ManagedNode {
+	nodes := *nm.nodes.Load()
+	res := make([]proto.ManagedNode, len(nodes))
 	copy(res, nodes)
 	return res
+}
+
+func filterByScope(nodes []proto.ManagedNode, targetScope string) []string {
+	var nodeIDs []string
+
+	for _, node := range nodes {
+		if node.Role == targetScope {
+			nodeIDs = append(nodeIDs, node.ID)
+		}
+	}
+	return nodeIDs
 }

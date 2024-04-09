@@ -183,7 +183,7 @@ func TestSlotManagerUpdate(t *testing.T) {
 
 	nodeMgr := newNodeManager("")
 	taskMgr := mock.NewMockTaskManager(ctrl)
-	nodeMgr.managedNodes.Store(&[]string{"tidb-1", "tidb-2", "tidb-3"})
+	nodeMgr.nodes.Store(&[]string{"tidb-1", "tidb-2", "tidb-3"})
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{
 		"tidb-1": 12,
 		"tidb-2": 8,
@@ -202,7 +202,7 @@ func TestSlotManagerUpdate(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	// some node scaled in, should be reflected
-	nodeMgr.managedNodes.Store(&[]string{"tidb-1"})
+	nodeMgr.nodes.Store(&[]string{"tidb-1"})
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{
 		"tidb-1": 12,
 		"tidb-2": 8,

@@ -45,11 +45,11 @@ func TestTaskTable(t *testing.T) {
 
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 
-	_, err := gm.CreateTask(ctx, "key1", "test", 999, []byte("test"))
+	_, err := gm.CreateTask(ctx, "key1", "test", 999, "", []byte("test"))
 	require.ErrorContains(t, err, "task concurrency(999) larger than cpu count")
 
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
-	id, err := gm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
+	id, err := gm.CreateTask(ctx, "key1", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 
@@ -98,11 +98,11 @@ func TestTaskTable(t *testing.T) {
 	require.Equal(t, task.State, task6.State)
 
 	// test cannot insert task with dup key
-	_, err = gm.CreateTask(ctx, "key1", "test2", 4, []byte("test2"))
+	_, err = gm.CreateTask(ctx, "key1", "test2", 4, "", []byte("test2"))
 	require.EqualError(t, err, "[kv:1062]Duplicate entry 'key1' for key 'tidb_global_task.task_key'")
 
 	// test cancel task
-	id, err = gm.CreateTask(ctx, "key2", "test", 4, []byte("test"))
+	id, err = gm.CreateTask(ctx, "key2", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 
 	cancelling, err := testutil.IsTaskCancelling(ctx, gm, id)
@@ -114,7 +114,7 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, cancelling)
 
-	id, err = gm.CreateTask(ctx, "key-fail", "test2", 4, []byte("test2"))
+	id, err = gm.CreateTask(ctx, "key-fail", "test2", 4, "", []byte("test2"))
 	require.NoError(t, err)
 	// state not right, update nothing
 	require.NoError(t, gm.FailTask(ctx, id, proto.TaskStateRunning, errors.New("test error")))
@@ -134,7 +134,7 @@ func TestTaskTable(t *testing.T) {
 	require.GreaterOrEqual(t, endTime, curTime)
 
 	// succeed a pending task, no effect
-	id, err = gm.CreateTask(ctx, "key-success", "test", 4, []byte("test"))
+	id, err = gm.CreateTask(ctx, "key-success", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	require.NoError(t, gm.SucceedTask(ctx, id))
 	task, err = gm.GetTaskByID(ctx, id)
@@ -153,7 +153,7 @@ func TestTaskTable(t *testing.T) {
 	require.GreaterOrEqual(t, task.StateUpdateTime, startTime)
 
 	// reverted a pending task, no effect
-	id, err = gm.CreateTask(ctx, "key-reverted", "test", 4, []byte("test"))
+	id, err = gm.CreateTask(ctx, "key-reverted", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	require.NoError(t, gm.RevertedTask(ctx, id))
 	task, err = gm.GetTaskByID(ctx, id)
@@ -177,7 +177,7 @@ func TestTaskTable(t *testing.T) {
 	require.Equal(t, proto.TaskStateReverted, task.State)
 
 	// paused
-	id, err = gm.CreateTask(ctx, "key-paused", "test", 4, []byte("test"))
+	id, err = gm.CreateTask(ctx, "key-paused", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	require.NoError(t, gm.PausedTask(ctx, id))
 	task, err = gm.GetTaskByID(ctx, id)
@@ -228,7 +228,7 @@ func TestSwitchTaskStep(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
-	taskID, err := tm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
+	taskID, err := tm.CreateTask(ctx, "key1", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	task, err := tm.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
@@ -280,7 +280,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
 	// normal flow
 	prepare := func(taskKey string) (*proto.Task, []*proto.Subtask) {
-		taskID, err := tm.CreateTask(ctx, taskKey, "test", 4, []byte("test"))
+		taskID, err := tm.CreateTask(ctx, taskKey, "test", 4, "", []byte("test"))
 		require.NoError(t, err)
 		task, err := tm.GetTaskByID(ctx, taskID)
 		require.NoError(t, err)
@@ -371,7 +371,7 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 	}
 	for i, state := range taskStates {
 		taskKey := fmt.Sprintf("key/%d", i)
-		_, err := gm.CreateTask(ctx, taskKey, "test", 4, []byte("test"))
+		_, err := gm.CreateTask(ctx, taskKey, "test", 4, "", []byte("test"))
 		require.NoError(t, err)
 		require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
 			_, err := se.GetSQLExecutor().ExecuteInternal(ctx, `
@@ -435,7 +435,7 @@ func TestGetUsedSlotsOnNodes(t *testing.T) {
 func TestGetActiveSubtasks(t *testing.T) {
 	_, tm, ctx := testutil.InitTableTest(t)
 	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
-	id, err := tm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
+	id, err := tm.CreateTask(ctx, "key1", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 	task, err := tm.GetTaskByID(ctx, id)
@@ -467,7 +467,7 @@ func TestSubTaskTable(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
 	require.NoError(t, sm.InitMeta(ctx, ":4000", ""))
-	id, err := sm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
+	id, err := sm.CreateTask(ctx, "key1", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 	err = sm.SwitchTaskStep(
@@ -631,7 +631,7 @@ func TestSubTaskTable(t *testing.T) {
 func TestBothTaskAndSubTaskTable(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 	require.NoError(t, sm.InitMeta(ctx, ":4000", ""))
-	id, err := sm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
+	id, err := sm.CreateTask(ctx, "key1", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 
@@ -690,15 +690,16 @@ func TestGetSubtaskCntByStates(t *testing.T) {
 	require.Equal(t, int64(1), cntByStates[proto.SubtaskStateFailed])
 }
 
+// ywq todo test refine
 func TestDistFrameworkMeta(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 
 	// when no node
-	_, err := sm.GetCPUCountOfManagedNode(ctx)
+	_, err := sm.GetCPUCountOfNode(ctx)
 	require.ErrorContains(t, err, "no managed nodes")
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)")
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
-	_, err = sm.GetCPUCountOfManagedNode(ctx)
+	_, err = sm.GetCPUCountOfNode(ctx)
 	require.ErrorContains(t, err, "no managed node have enough resource")
 
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)")
@@ -726,14 +727,14 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4002", Role: "", CPUCount: 100},
 		{ID: ":4003", Role: "background", CPUCount: 100},
 	}, nodes)
-	cpuCount, err := sm.GetCPUCountOfManagedNode(ctx)
+	cpuCount, err := sm.GetCPUCountOfNode(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 100, cpuCount)
 
 	require.NoError(t, sm.InitMeta(ctx, ":4002", "background"))
 
 	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4000"}))
-	nodes, err = sm.GetManagedNodes(ctx)
+	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
 		{ID: ":4002", Role: "background", CPUCount: 100},
@@ -741,31 +742,31 @@ func TestDistFrameworkMeta(t *testing.T) {
 	}, nodes)
 
 	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4003"}))
-	nodes, err = sm.GetManagedNodes(ctx)
+	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
 		{ID: ":4002", Role: "background", CPUCount: 100},
 	}, nodes)
 
 	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4002"}))
-	nodes, err = sm.GetManagedNodes(ctx)
+	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
 		{ID: ":4001", Role: "", CPUCount: 8},
 	}, nodes)
-	cpuCount, err = sm.GetCPUCountOfManagedNode(ctx)
+	cpuCount, err = sm.GetCPUCountOfNode(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 8, cpuCount)
 
 	require.NoError(t, sm.RecoverMeta(ctx, ":4002", "background"))
-	nodes, err = sm.GetManagedNodes(ctx)
+	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
 		{ID: ":4002", Role: "background", CPUCount: 100},
 	}, nodes)
 	// should not reset role
 	require.NoError(t, sm.RecoverMeta(ctx, ":4002", ""))
-	nodes, err = sm.GetManagedNodes(ctx)
+	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
 		{ID: ":4002", Role: "background", CPUCount: 100},
@@ -838,9 +839,9 @@ func TestTaskHistoryTable(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
-	_, err := gm.CreateTask(ctx, "1", proto.TaskTypeExample, 1, nil)
+	_, err := gm.CreateTask(ctx, "1", proto.TaskTypeExample, 1, "", nil)
 	require.NoError(t, err)
-	taskID, err := gm.CreateTask(ctx, "2", proto.TaskTypeExample, 1, nil)
+	taskID, err := gm.CreateTask(ctx, "2", proto.TaskTypeExample, 1, "", nil)
 	require.NoError(t, err)
 
 	tasks, err := gm.GetTasksInStates(ctx, proto.TaskStatePending)
@@ -873,7 +874,7 @@ func TestTaskHistoryTable(t *testing.T) {
 	require.NotNil(t, task)
 
 	// task with fail transfer
-	_, err = gm.CreateTask(ctx, "3", proto.TaskTypeExample, 1, nil)
+	_, err = gm.CreateTask(ctx, "3", proto.TaskTypeExample, 1, "", nil)
 	require.NoError(t, err)
 	tasks, err = gm.GetTasksInStates(ctx, proto.TaskStatePending)
 	require.NoError(t, err)
@@ -1130,7 +1131,7 @@ func TestGetActiveTaskExecInfo(t *testing.T) {
 	taskStates := []proto.TaskState{proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStateReverting, proto.TaskStatePausing}
 	tasks := make([]*proto.Task, 0, len(taskStates))
 	for i, expectedState := range taskStates {
-		taskID, err := tm.CreateTask(ctx, fmt.Sprintf("key-%d", i), proto.TaskTypeExample, 8, []byte(""))
+		taskID, err := tm.CreateTask(ctx, fmt.Sprintf("key-%d", i), proto.TaskTypeExample, 8, "", []byte(""))
 		require.NoError(t, err)
 		task, err := tm.GetTaskByID(ctx, taskID)
 		require.NoError(t, err)

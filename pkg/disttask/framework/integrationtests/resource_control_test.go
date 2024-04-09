@@ -96,7 +96,7 @@ func (c *resourceCtrlCaseContext) init(subtaskCntMap map[int64]map[proto.Step]in
 func (c *resourceCtrlCaseContext) runTaskAsync(prefix string, concurrencies []int) {
 	for i, concurrency := range concurrencies {
 		taskKey := fmt.Sprintf("%s-%d", prefix, i)
-		_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, concurrency, nil)
+		_, err := handle.SubmitTask(c.Ctx, taskKey, proto.TaskTypeExample, concurrency, "", nil)
 		require.NoError(c.T, err)
 		c.taskWG.RunWithLog(func() {
 			task := testutil.WaitTaskDoneOrPaused(c.Ctx, c.T, taskKey)

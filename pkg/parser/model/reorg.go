@@ -33,6 +33,7 @@ type DDLReorgMeta struct {
 	UseCloudStorage   bool                             `json:"use_cloud_storage"`
 	ResourceGroupName string                           `json:"resource_group_name"`
 	Version           int64                            `json:"version"`
+	TargetScope       string                           `json:"target_scope"`
 }
 
 const (
