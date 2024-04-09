@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
@@ -265,6 +266,23 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
 		TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
 		ExecDetails:                          &sc.SyncExecDetails,
+	}
+}
+
+// GetRangerCtx returns the context used in `ranger` related functions
+func (c *Context) GetRangerCtx() *rangerctx.RangerContext {
+	return &rangerctx.RangerContext{
+		ExprCtx: c.GetExprCtx(),
+		TypeCtx: c.GetSessionVars().StmtCtx.TypeCtx(),
+		ErrCtx:  c.GetSessionVars().StmtCtx.ErrCtx(),
+
+		InPreparedPlanBuilding:   c.GetSessionVars().StmtCtx.InPreparedPlanBuilding,
+		RegardNULLAsPoint:        c.GetSessionVars().RegardNULLAsPoint,
+		OptPrefixIndexSingleScan: c.GetSessionVars().OptPrefixIndexSingleScan,
+		OptimizerFixControl:      c.GetSessionVars().OptimizerFixControl,
+
+		// TODO: avoid using the whole `StmtCtx` here.
+		RangeFallbackHandler: c.GetSessionVars().StmtCtx,
 	}
 }
 
