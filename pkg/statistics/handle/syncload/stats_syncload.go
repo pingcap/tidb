@@ -239,7 +239,7 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 		}
 		return task, result.Err
 	case <-time.After(timeout):
-		task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait) * time.Microsecond)
+		task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 		return task, nil
 	}
 }
@@ -410,7 +410,7 @@ func (s *statsSyncLoad) drainColTask(sctx sessionctx.Context, exit chan struct{}
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
-				task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait) * time.Microsecond)
+				task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 				s.writeToTimeoutChan(s.StatsLoad.TimeoutItemsCh, task)
 				continue
 			}
