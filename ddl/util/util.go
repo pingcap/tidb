@@ -300,7 +300,8 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 		resp, err = etcdCli.Get(childCtx, key)
 		if err != nil {
 			cancel()
-			logutil.BgLogger().Warn("error when getting key revision", zap.String("category", "ddl"), zap.Error(err))
+			logutil.BgLogger().Warn("etcd-cli put kv failed", zap.String("category", "ddl"), zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
+			time.Sleep(KeyOpRetryInterval)
 			continue
 		}
 		prevRevision := int64(0)
@@ -316,16 +317,14 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 
 		cancel()
 
-		if err != nil {
-			logutil.BgLogger().Warn("error when performing compare-and-swap", zap.String("category", "ddl"), zap.Error(err))
-			continue
+		if err != nil && txnResp.Succeeded {
+			return nil
 		}
 
-		if txnResp.Succeeded {
-			return nil
-		} else {
+		if err == nil {
 			err = errors.New("performing compare-and-swap during PutKVToEtcd failed")
 		}
+
 		logutil.BgLogger().Warn("etcd-cli put kv failed", zap.String("category", "ddl"), zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 		time.Sleep(KeyOpRetryInterval)
 	}
