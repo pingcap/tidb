@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 	"golang.org/x/tools/container/intsets"
 )
@@ -344,7 +344,7 @@ func extractConstantEqColumnsOrScalar(ctx BuildContext, result []Expression, exp
 				if i == 0 {
 					continue
 				}
-				if !guard.Equal(ctx, v) {
+				if !guard.Equal(ctx.GetEvalCtx(), v) {
 					allArgsIsConst = false
 					break
 				}
@@ -601,7 +601,7 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			allConstant = allConstant && ok
 		}
 		if allConstant {
-			val, err := x.Eval(ctx, chunk.Row{})
+			val, err := x.Eval(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return nil, err
 			}
@@ -1243,7 +1243,7 @@ func GetStringFromConstant(ctx BuildContext, value Expression) (string, bool, er
 		err := errors.Errorf("Not a Constant expression %+v", value)
 		return "", true, err
 	}
-	str, isNull, err := con.EvalString(ctx, chunk.Row{})
+	str, isNull, err := con.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil || isNull {
 		return "", true, err
 	}
@@ -1465,10 +1465,10 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // TODO: Do more careful check here.
 func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs []Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
-	if !ctx.GetSessionVars().StmtCtx.UseCache {
+	if !ctx.IsUseCache() {
 		return false
 	}
-	return containMutableConst(ctx, exprs)
+	return containMutableConst(ctx.GetEvalCtx(), exprs)
 }
 
 // containMutableConst checks if the expressions contain a lazy constant.
@@ -1496,7 +1496,7 @@ func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
 			v.ParamMarker = nil
 			if v.DeferredExpr != nil { // evaluate and update v.Value to convert v to a complete immutable constant.
 				// TODO: remove or hide DefferedExpr since it's too dangerous (hard to be consistent with v.Value all the time).
-				v.Value, err = v.DeferredExpr.Eval(ctx, chunk.Row{})
+				v.Value, err = v.DeferredExpr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return err
 				}
@@ -1650,18 +1650,13 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 // of the given SQL digests, if `inValues` is given, or all these mappings otherwise. If `queryGlobal` is false, it
 // queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
 // queries the cluster version of these two tables.
-func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx EvalContext, queryGlobal bool, inValues []any) (map[string]string, error) {
+func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, exec contextopt.SQLExecutor, queryGlobal bool, inValues []any) (map[string]string, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	// If mock data is set, query the mock data instead of the real statements_summary tables.
 	if !queryGlobal && r.mockLocalData != nil {
 		return r.runMockQuery(r.mockLocalData, inValues)
 	} else if queryGlobal && r.mockGlobalData != nil {
 		return r.runMockQuery(r.mockGlobalData, inValues)
-	}
-
-	exec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		return nil, errors.New("restricted sql can't be executed in this context")
 	}
 
 	// Information in statements_summary will be periodically moved to statements_summary_history. Union them together
@@ -1703,7 +1698,7 @@ func (r *SQLDigestTextRetriever) updateDigestInfo(queryResult map[string]string)
 }
 
 // RetrieveLocal tries to retrieve the SQL text of the SQL digests from local information.
-func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx EvalContext) error {
+func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, exec contextopt.SQLExecutor) error {
 	if len(r.SQLDigestsMap) == 0 {
 		return nil
 	}
@@ -1715,7 +1710,7 @@ func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx EvalCon
 			inValues = append(inValues, key)
 		}
 		var err error
-		queryResult, err = r.runFetchDigestQuery(ctx, sctx, false, inValues)
+		queryResult, err = r.runFetchDigestQuery(ctx, exec, false, inValues)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1726,7 +1721,7 @@ func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx EvalCon
 		}
 	} else {
 		var err error
-		queryResult, err = r.runFetchDigestQuery(ctx, sctx, false, nil)
+		queryResult, err = r.runFetchDigestQuery(ctx, exec, false, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1737,8 +1732,8 @@ func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx EvalCon
 }
 
 // RetrieveGlobal tries to retrieve the SQL text of the SQL digests from the information of the whole cluster.
-func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx EvalContext) error {
-	err := r.RetrieveLocal(ctx, sctx)
+func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, exec contextopt.SQLExecutor) error {
+	err := r.RetrieveLocal(ctx, exec)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1763,12 +1758,12 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx EvalCo
 
 	var queryResult map[string]string
 	if len(r.SQLDigestsMap) <= r.fetchAllLimit {
-		queryResult, err = r.runFetchDigestQuery(ctx, sctx, true, unknownDigests)
+		queryResult, err = r.runFetchDigestQuery(ctx, exec, true, unknownDigests)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	} else {
-		queryResult, err = r.runFetchDigestQuery(ctx, sctx, true, nil)
+		queryResult, err = r.runFetchDigestQuery(ctx, exec, true, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}

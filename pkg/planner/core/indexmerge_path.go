@@ -1171,9 +1171,9 @@ func buildPartialPaths4MVIndex(
 		}
 	case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
 		var jsonPathIdx int
-		if sf.GetArgs()[0].Equal(sctx.GetExprCtx(), targetJSONPath) {
+		if sf.GetArgs()[0].Equal(sctx.GetExprCtx().GetEvalCtx(), targetJSONPath) {
 			jsonPathIdx = 0 // (json_overlaps(a->'$.zip', '[1, 2, 3]')
-		} else if sf.GetArgs()[1].Equal(sctx.GetExprCtx(), targetJSONPath) {
+		} else if sf.GetArgs()[1].Equal(sctx.GetExprCtx().GetEvalCtx(), targetJSONPath) {
 			jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
 		} else {
 			return nil, false, false, nil
@@ -1502,7 +1502,7 @@ func checkAccessFilter4IdxCol(
 		var tp int
 		switch sf.FuncName.L {
 		case ast.JSONMemberOf: // (1 member of a)
-			if !targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[1]) {
+			if !targetJSONPath.Equal(sctx.GetExprCtx().GetEvalCtx(), sf.GetArgs()[1]) {
 				return false, unspecifiedFilterTp
 			}
 			v, ok := unwrapJSONCast(sf.GetArgs()[0]) // cast(1 as json) --> 1
@@ -1512,7 +1512,7 @@ func checkAccessFilter4IdxCol(
 			virColVals = append(virColVals, v)
 			tp = singleValueOnMVColTp
 		case ast.JSONContains: // json_contains(a, '1')
-			if !targetJSONPath.Equal(sctx.GetExprCtx(), sf.GetArgs()[0]) {
+			if !targetJSONPath.Equal(sctx.GetExprCtx().GetEvalCtx(), sf.GetArgs()[0]) {
 				return false, unspecifiedFilterTp
 			}
 			virColVals, ok = jsonArrayExpr2Exprs(
@@ -1528,9 +1528,9 @@ func checkAccessFilter4IdxCol(
 			tp = multiValuesANDOnMVColTp
 		case ast.JSONOverlaps: // json_overlaps(a, '1') or json_overlaps('1', a)
 			var jsonPathIdx int
-			if sf.GetArgs()[0].Equal(sctx.GetExprCtx(), targetJSONPath) {
+			if sf.GetArgs()[0].Equal(sctx.GetExprCtx().GetEvalCtx(), targetJSONPath) {
 				jsonPathIdx = 0 // (json_overlaps(a->'$.zip', '[1, 2, 3]')
-			} else if sf.GetArgs()[1].Equal(sctx.GetExprCtx(), targetJSONPath) {
+			} else if sf.GetArgs()[1].Equal(sctx.GetExprCtx().GetEvalCtx(), targetJSONPath) {
 				jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
 			} else {
 				return false, unspecifiedFilterTp
@@ -1582,7 +1582,7 @@ func checkAccessFilter4IdxCol(
 	if argCol == nil || argConst == nil {
 		return false, unspecifiedFilterTp
 	}
-	if argCol.Equal(sctx.GetExprCtx(), idxCol) {
+	if argCol.Equal(sctx.GetExprCtx().GetEvalCtx(), idxCol) {
 		return true, eqOnNonMVColTp
 	}
 	return false, unspecifiedFilterTp
@@ -1598,13 +1598,13 @@ func jsonArrayExpr2Exprs(
 ) ([]expression.Expression, bool) {
 	if checkForSkipPlanCache && expression.MaybeOverOptimized4PlanCache(sctx, []expression.Expression{jsonArrayExpr}) {
 		// skip plan cache and try to generate the best plan in this case.
-		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError(jsonFuncName + " function with immutable parameters can affect index selection"))
+		sctx.SetSkipPlanCache(errors.NewNoStackError(jsonFuncName + " function with immutable parameters can affect index selection"))
 	}
 	if !expression.IsImmutableFunc(jsonArrayExpr) || jsonArrayExpr.GetType().EvalType() != types.ETJson {
 		return nil, false
 	}
 
-	jsonArray, isNull, err := jsonArrayExpr.EvalJSON(sctx, chunk.Row{})
+	jsonArray, isNull, err := jsonArrayExpr.EvalJSON(sctx.GetEvalCtx(), chunk.Row{})
 	if isNull || err != nil {
 		return nil, false
 	}

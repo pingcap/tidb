@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -156,7 +155,7 @@ func (w *extractWorker) extractPlanTask(ctx context.Context, task *ExtractTask) 
 func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (map[stmtSummaryHistoryKey]*stmtSummaryHistoryRecord, error) {
 	w.Lock()
 	defer w.Unlock()
-	exec := w.sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := w.sctx.GetRestrictedSQLExecutor()
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	sourceTable := "STATEMENTS_SUMMARY_HISTORY"
 	if !task.UseHistoryView {
@@ -263,7 +262,7 @@ func (w *extractWorker) handleIsView(ctx context.Context, p *extractPlanPackage)
 	is := GetDomain(w.sctx).InfoSchema()
 	tne := &tableNameExtractor{
 		ctx:      ctx,
-		executor: w.sctx.(sqlexec.RestrictedSQLExecutor),
+		executor: w.sctx.GetRestrictedSQLExecutor(),
 		is:       is,
 		curDB:    model.NewCIStr(""),
 		names:    make(map[tableNamePair]struct{}),
@@ -294,7 +293,7 @@ func (w *extractWorker) handleIsView(ctx context.Context, p *extractPlanPackage)
 }
 
 func (w *extractWorker) decodeBinaryPlan(ctx context.Context, bPlan string) (string, error) {
-	exec := w.sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := w.sctx.GetRestrictedSQLExecutor()
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	rows, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("SELECT tidb_decode_binary_plan('%s')", bPlan))
 	if err != nil {

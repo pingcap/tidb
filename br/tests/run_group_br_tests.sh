@@ -28,7 +28,7 @@ groups=(
 	["G05"]='br_range br_rawkv br_replica_read br_restore_TDE_enable br_restore_log_task_enable br_s3 br_shuffle_leader br_shuffle_region br_single_table'
 	["G06"]='br_skip_checksum br_small_batch_size br_split_region_fail br_systables br_table_filter br_txn br_stats br_clustered_index br_crypter'
 	["G07"]='br_tikv_outage'
-	["G08"]='br_tikv_outage2 br_ttl br_views_and_sequences br_z_gc_safepoint'
+	["G08"]='br_tikv_outage2 br_ttl br_views_and_sequences br_z_gc_safepoint br_autorandom'
 )
 
 # Get other cases not in groups, to avoid missing any case

@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/sli"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
@@ -68,8 +68,6 @@ type Context interface {
 	SessionStatesHandler
 	contextutil.ValueStoreContext
 	tablelock.TableLockContext
-	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// RollbackTxn rolls back the current transaction.
 	RollbackTxn(ctx context.Context)
 	// CommitTxn commits the current transaction.
@@ -89,17 +87,23 @@ type Context interface {
 	// Deprecated: the semantics of session.GetInfoSchema() is ambiguous
 	// If you want to get the infoschema of the current transaction in SQL layer, use sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	// If you want to get the latest infoschema use `GetDomainInfoSchema`
-	GetInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetInfoSchema() infoschema.MetaOnlyInfoSchema
 
 	// GetDomainInfoSchema returns the latest information schema in domain
 	// Different with `domain.InfoSchema()`, the information schema returned by this method
 	// includes the temporary table definitions stored in session
-	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
 
 	GetSessionVars() *variable.SessionVars
 
+	// GetSQLExecutor returns the sqlexec.SQLExecutor.
+	GetSQLExecutor() sqlexec.SQLExecutor
+
+	// GetRestrictedSQLExecutor returns the sqlexec.RestrictedSQLExecutor.
+	GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor
+
 	// GetExprCtx returns the expression context of the session.
-	GetExprCtx() exprctx.BuildContext
+	GetExprCtx() exprctx.ExprContext
 
 	// GetTableCtx returns the table.MutateContext
 	GetTableCtx() tbctx.MutateContext
@@ -108,7 +112,7 @@ type Context interface {
 	GetPlanCtx() planctx.PlanContext
 
 	// GetDistSQLCtx gets the distsql ctx of the current session
-	GetDistSQLCtx() distsqlctx.DistSQLContext
+	GetDistSQLCtx() *distsqlctx.DistSQLContext
 
 	GetSessionManager() util.SessionManager
 
@@ -242,12 +246,4 @@ func ValidateStaleReadTS(ctx context.Context, sc *stmtctx.StatementContext, stor
 		return errors.Errorf("cannot set read timestamp to a future time")
 	}
 	return nil
-}
-
-// SysProcTracker is used to track background sys processes
-type SysProcTracker interface {
-	Track(id uint64, proc Context) error
-	UnTrack(id uint64)
-	GetSysProcessList() map[uint64]*util.ProcessInfo
-	KillSysProcess(id uint64)
 }

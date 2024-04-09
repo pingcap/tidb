@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -57,7 +57,7 @@ type AnalysisJob interface {
 	// Analyze executes the analyze statement within a transaction.
 	Analyze(
 		statsHandle statstypes.StatsHandle,
-		sysProcTracker sessionctx.SysProcTracker,
+		sysProcTracker sysproctrack.Tracker,
 	) error
 
 	// SetWeight sets the weight of the job.
@@ -73,18 +73,6 @@ type AnalysisJob interface {
 	GetIndicators() Indicators
 
 	fmt.Stringer
-}
-
-// Usually, we should not put this kind of table into the queue.
-// This is just a double check.
-func isValidWeight(weight float64) (bool, string) {
-	// No need to analyze this table.
-	intest.Assert(weight > 0, "weight is less than or equal to 0")
-	if weight <= 0 {
-		return false, fmt.Sprintf("weight is less than or equal to 0: %.4f", weight)
-	}
-
-	return true, ""
 }
 
 // isValidToAnalyze checks whether the table is valid to analyze.

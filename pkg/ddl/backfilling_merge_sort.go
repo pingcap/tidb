@@ -22,21 +22,22 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
 type mergeSortExecutor struct {
 	taskexecutor.EmptyStepExecutor
-	jobID               int64
-	idxNum              int
-	ptbl                table.PhysicalTable
-	cloudStoreURI       string
+	jobID         int64
+	idxNum        int
+	ptbl          table.PhysicalTable
+	avgRowSize    int
+	cloudStoreURI string
+
 	mu                  sync.Mutex
 	subtaskSortedKVMeta *external.SortedKVMeta
 }
@@ -46,12 +47,14 @@ func newMergeSortExecutor(
 	idxNum int,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
+	avgRowSize int,
 ) (*mergeSortExecutor, error) {
 	return &mergeSortExecutor{
 		jobID:         jobID,
 		idxNum:        idxNum,
 		ptbl:          ptbl,
 		cloudStoreURI: cloudStoreURI,
+		avgRowSize:    avgRowSize,
 	}, nil
 }
 
@@ -85,8 +88,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	prefix := path.Join(strconv.Itoa(int(m.jobID)), strconv.Itoa(int(subtask.ID)))
-
-	partSize, err := getMergeSortPartSize(int(variable.GetDDLReorgWorkerCounter()), m.idxNum)
+	partSize, err := getMergeSortPartSize(m.avgRowSize, subtask.Concurrency, m.idxNum)
 	if err != nil {
 		return err
 	}
@@ -96,13 +98,12 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		sm.DataFiles,
 		store,
 		int64(partSize),
-		64*1024,
 		prefix,
 		external.DefaultBlockSize,
-		external.DefaultMemSizeLimit,
-		8*1024,
 		onClose,
-		int(variable.GetDDLReorgWorkerCounter()), true)
+		subtask.Concurrency,
+		true,
+	)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {

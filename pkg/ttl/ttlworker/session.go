@@ -77,12 +77,7 @@ func getSession(pool sessionPool) (session.Session, error) {
 		return nil, errors.Errorf("%T cannot be casted to sessionctx.Context", sctx)
 	}
 
-	exec, ok := resource.(sqlexec.SQLExecutor)
-	if !ok {
-		pool.Put(resource)
-		return nil, errors.Errorf("%T cannot be casted to sqlexec.SQLExecutor", sctx)
-	}
-
+	exec := sctx.GetSQLExecutor()
 	originalRetryLimit := sctx.GetSessionVars().RetryLimit
 	originalEnable1PC := sctx.GetSessionVars().Enable1PC
 	originalEnableAsyncCommit := sctx.GetSessionVars().EnableAsyncCommit

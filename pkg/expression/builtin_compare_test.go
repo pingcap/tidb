@@ -139,10 +139,11 @@ func TestCompare(t *testing.T) {
 		args := bf.getArgs()
 		require.Equal(t, test.tp, args[0].GetType().GetType())
 		require.Equal(t, test.tp, args[1].GetType().GetType())
-		res, isNil, err := bf.evalInt(ctx, chunk.Row{})
+		res, err := evalBuiltinFunc(bf, ctx, chunk.Row{})
 		require.NoError(t, err)
-		require.False(t, isNil)
-		require.Equal(t, test.expected, res)
+		require.False(t, res.IsNull())
+		require.Equal(t, types.KindInt64, res.Kind())
+		require.Equal(t, test.expected, res.GetInt64())
 	}
 
 	// test <non-const decimal expression> <cmp> <const string expression>
