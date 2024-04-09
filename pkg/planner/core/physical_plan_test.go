@@ -506,7 +506,7 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 		core.PushedDown(sel, ts, []expression.Expression{selected}, 0.1)
 	}
 
-	pb, err := ts.ToPB(core.GetBuildPBCtx(tk.Session().GetPlanCtx()), kv.TiFlash)
+	pb, err := ts.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
 	require.NoError(t, err)
 	// make sure the pushed down filter condition is correct
 	require.Equal(t, 1, len(pb.TblScan.PushedDownFilterConditions))

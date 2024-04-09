@@ -60,10 +60,10 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 	}
 	if storeType == kv.TiFlash {
 		var executors []*tipb.Executor
-		executors, err = ConstructTreeBasedDistExec(plannercore.GetBuildPBCtx(ctx.GetPlanCtx()), plans[0])
+		executors, err = ConstructTreeBasedDistExec(ctx.GetBuildPBCtx(), plans[0])
 		dagReq.RootExecutor = executors[0]
 	} else {
-		dagReq.Executors, err = ConstructListBasedDistExec(plannercore.GetBuildPBCtx(ctx.GetPlanCtx()), plans)
+		dagReq.Executors, err = ConstructListBasedDistExec(ctx.GetBuildPBCtx(), plans)
 	}
 
 	distsql.SetEncodeType(ctx.GetDistSQLCtx(), dagReq)

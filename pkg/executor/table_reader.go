@@ -77,11 +77,11 @@ type kvRangeBuilder interface {
 
 // tableReaderExecutorContext is the execution context for the `TableReaderExecutor`
 type tableReaderExecutorContext struct {
-	dctx *distsqlctx.DistSQLContext
-	rctx *rangerctx.RangerContext
+	dctx       *distsqlctx.DistSQLContext
+	rctx       *rangerctx.RangerContext
 	buildPBCtx *planctx.BuildPBContext
-	pctx planctx.PlanContext
-	ectx exprctx.BuildContext
+	pctx       planctx.PlanContext
+	ectx       exprctx.BuildContext
 
 	stmtMemTracker *memory.Tracker
 
@@ -119,20 +119,13 @@ func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorC
 
 	pctx := sctx.GetPlanCtx()
 	return tableReaderExecutorContext{
-<<<<<<< HEAD
 		dctx:           sctx.GetDistSQLCtx(),
 		rctx:           pctx.GetRangerCtx(),
+		buildPBCtx:     pctx.GetBuildPBCtx(),
 		pctx:           pctx,
 		ectx:           sctx.GetExprCtx(),
 		stmtMemTracker: sctx.GetSessionVars().StmtCtx.MemTracker,
 		getDDLOwner:    getDDLOwner,
-=======
-		dctx:        sctx.GetDistSQLCtx(),
-		buildPBCtx:  plannercore.GetBuildPBCtx(pctx),
-		pctx:        pctx,
-		ectx:        sctx.GetExprCtx(),
-		getDDLOwner: getDDLOwner,
->>>>>>> 4a53fa89c0 (add a smaller context for ToPB)
 	}
 }
 

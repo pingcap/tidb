@@ -66,6 +66,8 @@ type PlanContext interface {
 	AdviseTxnWarmup() error
 	// GetRangerCtx returns the context used in `ranger` functions
 	GetRangerCtx() *rangerctx.RangerContext
+	// GetBuildPBCtx returns the context used in `ToPB` method.
+	GetBuildPBCtx() *BuildPBContext
 }
 
 // EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.
