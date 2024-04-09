@@ -15,11 +15,14 @@
 package rowcodec
 
 import (
+	"encoding/binary"
+	"hash/crc32"
 	"math"
 	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -39,13 +42,27 @@ type Encoder struct {
 // `buf` is not truncated before encoding.
 // This function may return both a valid encoded bytes and an error (actually `"pingcap/errors".ErrorGroup`). If the caller
 // expects to handle these errors according to `SQL_MODE` or other configuration, please refer to `pkg/errctx`.
-func (encoder *Encoder) Encode(loc *time.Location, colIDs []int64, values []types.Datum, buf []byte, checksums ...uint32) ([]byte, error) {
+// the caller should make sure the key is not nil if require checksum.
+func (encoder *Encoder) Encode(loc *time.Location, colIDs []int64, values []types.Datum, buf []byte, key kv.Key, checksums ...uint32) ([]byte, error) {
 	encoder.reset()
 	encoder.appendColVals(colIDs, values)
 	numCols, notNullIdx := encoder.reformatCols()
 	err := encoder.encodeRowCols(loc, numCols, notNullIdx)
-	encoder.setChecksums(checksums...)
-	return encoder.row.toBytes(buf), err
+	if err != nil {
+		return nil, err
+	}
+	if key != nil {
+		encoder.flags |= rowFlagChecksum
+	}
+	valueBytes := encoder.toBytes(buf)
+	if encoder.hasChecksum() {
+		// set the checksumHeader to 1 to specify using the bytes-level checksum.
+		encoder.checksumHeader = 1
+		valueBytes = append(valueBytes, encoder.checksumHeader)
+		rawChecksum := crc32.Checksum(append(valueBytes, key...), crc32.IEEETable)
+		valueBytes = binary.LittleEndian.AppendUint32(valueBytes, rawChecksum)
+	}
+	return valueBytes, nil
 }
 
 func (encoder *Encoder) reset() {

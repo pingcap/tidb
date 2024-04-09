@@ -57,7 +57,7 @@ func BenchmarkEncode(b *testing.B) {
 	var err error
 	for i := 0; i < b.N; i++ {
 		buf = buf[:0]
-		buf, err = xb.Encode(nil, colIDs, oldRow, buf)
+		buf, err = xb.Encode(nil, colIDs, oldRow, buf, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -91,7 +91,7 @@ func BenchmarkDecode(b *testing.B) {
 		types.NewFieldType(mysql.TypeDouble),
 	}
 	var xb rowcodec.Encoder
-	xRowData, err := xb.Encode(nil, colIDs, oldRow, nil)
+	xRowData, err := xb.Encode(nil, colIDs, oldRow, nil, nil)
 	if err != nil {
 		b.Fatal(err)
 	}
