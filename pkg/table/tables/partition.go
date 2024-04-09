@@ -1766,21 +1766,31 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
 	if from != to {
+		txn, err := ctx.Txn(true)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		memBuffer := txn.GetMemBuffer()
+		sh := memBuffer.Staging()
+		defer func() {
+			// NOTICE: Don't create a new `err` in this branch.
+			if err == nil {
+				memBuffer.Release(sh)
+			} else {
+				memBuffer.Cleanup(sh)
+			}
+		}()
+
+		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		_, err = t.GetPartition(to).AddRecord(ctx, newData)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// UpdateRecord should be side effect free, but there're two steps here.
-		// What would happen if step1 succeed but step2 meets error? It's hard
-		// to rollback.
-		// So this special order is chosen: add record first, errors such as
-		// 'Key Already Exists' will generally happen during step1, errors are
-		// unlikely to happen in step2.
-		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
-		if err != nil {
-			logutil.BgLogger().Error("update partition record fails", zap.String("message", "new record inserted while old record is not removed"), zap.Error(err))
-			return errors.Trace(err)
-		}
+
 		newTo, newFrom := int64(0), int64(0)
 		if _, ok := t.reorganizePartitions[to]; ok {
 			newTo, err = t.locateReorgPartition(ectx, newData)
@@ -1801,17 +1811,16 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 			tbl := t.GetPartition(newTo)
 			return tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
 		}
-		if newTo != 0 && t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
-			tbl := t.GetPartition(newTo)
-			_, err = tbl.AddRecord(ctx, newData)
+
+		if newFrom != 0 {
+			err = t.GetPartition(newFrom).RemoveRecord(ctx, h, currData)
+			// TODO: Can this happen? When the data is not yet backfilled?
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
-		if newFrom != 0 {
-			tbl := t.GetPartition(newFrom)
-			err = tbl.RemoveRecord(ctx, h, currData)
-			// TODO: Can this happen? When the data is not yet backfilled?
+		if newTo != 0 && t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
+			_, err = t.GetPartition(newTo).AddRecord(ctx, newData)
 			if err != nil {
 				return errors.Trace(err)
 			}
