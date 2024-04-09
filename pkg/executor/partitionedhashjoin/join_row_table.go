@@ -30,6 +30,7 @@ const SizeOfNextPtr = int(unsafe.Sizeof(uintptr(0)))
 const SizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
 const sizeOfUInt64 = int(unsafe.Sizeof(uint64(1)))
 const sizeOfFloat64 = int(unsafe.Sizeof(float64(1)))
+const usedFlagMask = uint32(1) << 31
 
 type rowTableSegment struct {
 	/*
@@ -118,14 +119,14 @@ type JoinTableMeta struct {
 	columnCountNeededForOtherCondition int
 	// total column numbers for build side chunk, this is used to construct the chunk if there is join other condition
 	totalColumnNumber int
-	// a mask to set used flag
-	setUsedFlagMask uint32
 	// column index offset in null map, will be 1 when if there is usedFlag and 0 if there is no usedFlag
 	colOffsetInNullMap int
 	// keyMode is the key mode, it can be OneInt/FixedSerializedKey/VariableSerializedKey
 	keyMode keyMode
 	// offset to rowData, -1 for variable length, non-inlined key
 	rowDataOffset int
+
+	nullMapColumnStartOffset int
 }
 
 func (meta *JoinTableMeta) getSerializedKeyLength(rowStart uintptr) uint64 {
@@ -142,20 +143,20 @@ func (meta *JoinTableMeta) advanceToRowData(rowStart uintptr) uintptr {
 }
 
 func (meta *JoinTableMeta) isColumnNull(rowStart uintptr, columnIndex int) bool {
-	byteIndex := (columnIndex + 1) / 8
-	bitIndex := (columnIndex + 1) % 8
+	byteIndex := (columnIndex + meta.nullMapColumnStartOffset) / 8
+	bitIndex := (columnIndex + meta.nullMapColumnStartOffset) % 8
 	return *(*uint8)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr+byteIndex))&(uint8(1)<<(7-bitIndex)) != uint8(0)
 }
 
 func (meta *JoinTableMeta) setUsedFlag(rowStart uintptr) {
 	addr := (*uint32)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr))
 	value := atomic.LoadUint32(addr)
-	value |= meta.setUsedFlagMask
+	value |= usedFlagMask
 	atomic.StoreUint32(addr, value)
 }
 
 func (meta *JoinTableMeta) isCurrentRowUsed(rowStart uintptr) bool {
-	return (*(*uint32)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr)) & meta.setUsedFlagMask) == meta.setUsedFlagMask
+	return (*(*uint32)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr)) & usedFlagMask) == usedFlagMask
 }
 
 type rowTable struct {
@@ -244,11 +245,13 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	keyIndexMap := make(map[int]struct{})
 	meta.serializeModes = make([]codec.SerializeMode, 0, len(buildKeyIndex))
 	isAllKeyInteger := true
+	hasFixedSizeKeyColumn := false
 	for index, keyIndex := range buildKeyIndex {
 		keyType := buildKeyTypes[index]
 		prop := getKeyProp(keyType)
 		if prop.keyLength != chunk.VarElemLen {
 			meta.joinKeysLength += prop.keyLength
+			hasFixedSizeKeyColumn = true
 		} else {
 			meta.isJoinKeysFixedLength = false
 		}
@@ -301,13 +304,6 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	if !meta.isFixedLength {
 		meta.rowLength = 0
 	}
-	// nullmap is 4 byte alignment
-	if needUsedFlag {
-		meta.nullMapLength = ((len(columnsNeedToBeSaved) + 1 + 31) / 32) * 4
-		meta.setUsedFlagMask = uint32(1) << 31
-	} else {
-		meta.nullMapLength = ((len(columnsNeedToBeSaved) + 31) / 32) * 4
-	}
 	// construct the column order
 	meta.rowColumnsOrder = make([]int, 0, len(columnsNeedToBeSaved))
 	meta.columnsSize = make([]int, 0, len(columnsNeedToBeSaved))
@@ -334,8 +330,15 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		}
 		meta.columnCountNeededForOtherCondition = len(usedColumnMap)
 	}
-	for _, index := range outputColumns {
-		updateColumnOrder(index)
+	if outputColumns == nil {
+		// outputColumns = nil means all the column is needed
+		for index := range buildTypes {
+			updateColumnOrder(index)
+		}
+	} else {
+		for _, index := range outputColumns {
+			updateColumnOrder(index)
+		}
 	}
 	if isAllKeyInteger && len(buildKeyIndex) == 1 && meta.serializeModes[0] != codec.NeedSignFlag {
 		meta.keyMode = OneInt64
@@ -345,6 +348,26 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		} else {
 			meta.keyMode = VariableSerializedKey
 		}
+	}
+	if needUsedFlag {
+		meta.nullMapColumnStartOffset = 1
+		// the total row length should be larger than 4 byte since the smallest unit of atomic.LoadXXX is UInt32
+		if len(columnsNeedToBeSaved) > 0 {
+			// the smallest length of a column is 4 byte, so the total row length is enough
+			meta.nullMapLength = (len(columnsNeedToBeSaved) + 1 + 7) / 8
+		} else {
+			// if no columns need to be converted to row format, then the key is not inlined
+			// 1. if any of the key columns is fixed length, then the row length is larger than 4 bytes(since the smallest length of a fixed length column is 4 bytes)
+			// 2. if all the key columns are variable length, there is no guarantee that the row length is larger than 4 byte, the nullmap should be 4 bytes alignment
+			if hasFixedSizeKeyColumn {
+				meta.nullMapLength = (len(columnsNeedToBeSaved) + 1 + 7) / 8
+			} else {
+				meta.nullMapLength = ((len(columnsNeedToBeSaved) + 1 + 31) / 32) * 4
+			}
+		}
+	} else {
+		meta.nullMapColumnStartOffset = 0
+		meta.nullMapLength = (len(columnsNeedToBeSaved) + 7) / 8
 	}
 	meta.rowDataOffset = -1
 	if meta.isJoinKeysInlined {
