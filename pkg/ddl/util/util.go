@@ -298,18 +298,20 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 		}
 
 		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
-		resp, err := etcdCli.Get(childCtx, key)
+		var resp *clientv3.GetResponse
+		resp, err = etcdCli.Get(childCtx, key)
 		if err != nil {
 			cancel()
 			logutil.BgLogger().Warn("error when getting key revision", zap.String("category", "ddl"), zap.Error(err))
-			return errors.Trace(err)
+			continue
 		}
 		prevRevision := int64(0)
 		if len(resp.Kvs) > 0 {
 			prevRevision = resp.Kvs[0].ModRevision
 		}
 
-		txnResp, err := etcdCli.Txn(childCtx).
+		var txnResp *clientv3.TxnResponse
+		txnResp, err = etcdCli.Txn(childCtx).
 			If(clientv3.Compare(clientv3.ModRevision(key), "=", prevRevision)).
 			Then(clientv3.OpPut(key, val, opts...)).
 			Commit()
@@ -318,11 +320,13 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 
 		if err != nil {
 			logutil.BgLogger().Warn("error when performing compare-and-swap", zap.String("category", "ddl"), zap.Error(err))
-			return errors.Trace(err)
+			continue
 		}
 
 		if txnResp.Succeeded {
 			return nil
+		} else {
+			err = errors.New("performing compare-and-swap during PutKVToEtcd failed")
 		}
 		logutil.BgLogger().Warn("etcd-cli put kv failed", zap.String("category", "ddl"), zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 		time.Sleep(KeyOpRetryInterval)
