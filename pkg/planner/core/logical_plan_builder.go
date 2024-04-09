@@ -6507,8 +6507,8 @@ func (b *PlanBuilder) buildByItemsForWindow(
 			// If the column is already in the schema, we don't need to add it again.
 			if !proj.schema.Contains(col) {
 				proj.Exprs = append(proj.Exprs, col)
-				proj.schema.Append(col)
 				proj.names = append(proj.names, types.EmptyName)
+				proj.schema.Append(col)
 			}
 			continue
 		}
