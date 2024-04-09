@@ -182,12 +182,6 @@ func TestSplitScatterRawKV(t *testing.T) {
 }
 
 func TestSplitScatterEmptyEndKey(t *testing.T) {
-	backup := maxBatchSplitSize
-	maxBatchSplitSize = 7
-	t.Cleanup(func() {
-		maxBatchSplitSize = backup
-	})
-
 	mockPDClient := NewMockPDClientForSplit()
 	keys := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
 	mockPDClient.SetRegions(keys)
