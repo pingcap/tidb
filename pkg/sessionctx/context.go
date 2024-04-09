@@ -103,7 +103,7 @@ type Context interface {
 	GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor
 
 	// GetExprCtx returns the expression context of the session.
-	GetExprCtx() exprctx.BuildContext
+	GetExprCtx() exprctx.ExprContext
 
 	// GetTableCtx returns the table.MutateContext
 	GetTableCtx() tbctx.MutateContext

@@ -111,7 +111,7 @@ func (c *extensionFuncClass) getFunction(ctx BuildContext, args []Expression) (b
 	// Though currently, `getFunction` does not require too much information that makes it safe to be cached,
 	// we still skip the plan cache for extension functions because there are no strong requirements to do it.
 	// Skipping the plan cache can make the behavior simple.
-	ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("extension function should not be cached"))
+	ctx.SetSkipPlanCache(errors.NewNoStackError("extension function should not be cached"))
 	bf.tp.SetFlen(c.flen)
 	sig := &extensionFuncSig{baseBuiltinFunc: bf, FunctionDef: c.funcDef}
 	return sig, nil

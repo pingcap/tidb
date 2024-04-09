@@ -34,25 +34,29 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
-// sessionctx.Context + *ExprCtxExtendedImpl should implement `expression.BuildContext`
+// sessionctx.Context + *ExprCtxExtendedImpl should implement
+// `expression.BuildContext` and `expression.AggFuncBuildContext`
 // Only used to assert `ExprCtxExtendedImpl` should implement all methods not in `sessionctx.Context`
-var _ exprctx.BuildContext = struct {
+var _ exprctx.ExprContext = struct {
 	sessionctx.Context
 	*ExprCtxExtendedImpl
 }{}
 
 // ExprCtxExtendedImpl extends the sessionctx.Context to implement `expression.BuildContext`
 type ExprCtxExtendedImpl struct {
+	sctx sessionctx.Context
 	*SessionEvalContext
 }
 
 // NewExprExtendedImpl creates a new ExprCtxExtendedImpl.
 func NewExprExtendedImpl(sctx sessionctx.Context) *ExprCtxExtendedImpl {
 	return &ExprCtxExtendedImpl{
+		sctx:               sctx,
 		SessionEvalContext: NewSessionEvalContext(sctx),
 	}
 }
@@ -60,6 +64,60 @@ func NewExprExtendedImpl(sctx sessionctx.Context) *ExprCtxExtendedImpl {
 // GetEvalCtx returns the EvalContext.
 func (ctx *ExprCtxExtendedImpl) GetEvalCtx() exprctx.EvalContext {
 	return ctx.SessionEvalContext
+}
+
+// GetCharsetInfo gets charset and collation for current context.
+func (ctx *ExprCtxExtendedImpl) GetCharsetInfo() (string, string) {
+	return ctx.sctx.GetSessionVars().GetCharsetInfo()
+}
+
+// GetDefaultCollationForUTF8MB4 returns the default collation of UTF8MB4.
+func (ctx *ExprCtxExtendedImpl) GetDefaultCollationForUTF8MB4() string {
+	return ctx.sctx.GetSessionVars().DefaultCollationForUTF8MB4
+}
+
+// GetBlockEncryptionMode returns the variable block_encryption_mode
+func (ctx *ExprCtxExtendedImpl) GetBlockEncryptionMode() string {
+	blockMode, _ := ctx.sctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	return blockMode
+}
+
+// GetSysdateIsNow returns a bool to determine whether Sysdate is an alias of Now function.
+// It is the value of variable `tidb_sysdate_is_now`.
+func (ctx *ExprCtxExtendedImpl) GetSysdateIsNow() bool {
+	return ctx.sctx.GetSessionVars().SysdateIsNow
+}
+
+// GetNoopFuncsMode returns the noop function mode: OFF/ON/WARN values as 0/1/2.
+func (ctx *ExprCtxExtendedImpl) GetNoopFuncsMode() int {
+	return ctx.sctx.GetSessionVars().NoopFuncsMode
+}
+
+// Rng is used to generate random values.
+func (ctx *ExprCtxExtendedImpl) Rng() *mathutil.MysqlRng {
+	return ctx.sctx.GetSessionVars().Rng
+}
+
+// IsUseCache indicates whether to cache the build expression in plan cache.
+// If SetSkipPlanCache is invoked, it should return false.
+func (ctx *ExprCtxExtendedImpl) IsUseCache() bool {
+	return ctx.sctx.GetSessionVars().StmtCtx.UseCache
+}
+
+// SetSkipPlanCache sets to skip the plan cache and records the reason.
+func (ctx *ExprCtxExtendedImpl) SetSkipPlanCache(reason error) {
+	ctx.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+}
+
+// GetWindowingUseHighPrecision determines whether to compute window operations without loss of precision.
+// see https://dev.mysql.com/doc/refman/8.0/en/window-function-optimization.html for more details.
+func (ctx *ExprCtxExtendedImpl) GetWindowingUseHighPrecision() bool {
+	return ctx.sctx.GetSessionVars().WindowingUseHighPrecision
+}
+
+// GetGroupConcatMaxLen returns the value of the 'group_concat_max_len' system variable.
+func (ctx *ExprCtxExtendedImpl) GetGroupConcatMaxLen() uint64 {
+	return ctx.sctx.GetSessionVars().GroupConcatMaxLen
 }
 
 // SessionEvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.
@@ -90,6 +148,11 @@ func (ctx *SessionEvalContext) setOptionalProp(prop exprctx.OptionalEvalPropProv
 		return !ctx.props.Contains(prop.Desc().Key())
 	})
 	ctx.props.Add(prop)
+}
+
+// Sctx returns the innert session context
+func (ctx *SessionEvalContext) Sctx() sessionctx.Context {
+	return ctx.sctx
 }
 
 // CtxID returns the context id.

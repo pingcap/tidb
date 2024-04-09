@@ -2513,7 +2513,7 @@ func (s *session) GetPlanCtx() planctx.PlanContext {
 }
 
 // GetExprCtx returns the expression context of the session.
-func (s *session) GetExprCtx() exprctx.BuildContext {
+func (s *session) GetExprCtx() exprctx.ExprContext {
 	return s.exprctx
 }
 

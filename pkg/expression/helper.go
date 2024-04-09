@@ -84,7 +84,7 @@ func getTimeCurrentTimeStamp(ctx BuildContext, tp byte, fsp int) (t types.Time, 
 // GetTimeValue gets the time value with type tp.
 func GetTimeValue(ctx BuildContext, v any, tp byte, fsp int, explicitTz *time.Location) (d types.Datum, err error) {
 	var value types.Time
-	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
+	tc := ctx.GetEvalCtx().TypeCtx()
 	if explicitTz != nil {
 		tc = tc.WithLocation(explicitTz)
 	}

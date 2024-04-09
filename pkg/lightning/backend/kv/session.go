@@ -405,7 +405,7 @@ func (se *Session) GetPlanCtx() planctx.PlanContext {
 }
 
 // GetExprCtx returns the expression context of the session.
-func (se *Session) GetExprCtx() exprctx.BuildContext {
+func (se *Session) GetExprCtx() exprctx.ExprContext {
 	return se.exprCtx
 }
 
