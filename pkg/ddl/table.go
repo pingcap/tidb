@@ -186,6 +186,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	createTableEvent := statsutil.NewCreateTableEvent(
+		job.SchemaID,
 		tbInfo,
 	)
 	asyncNotifyEvent(d, createTableEvent)
@@ -263,6 +264,7 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 
 	for i := range args {
 		createTableEvent := statsutil.NewCreateTableEvent(
+			job.SchemaID,
 			args[i],
 		)
 		asyncNotifyEvent(d, createTableEvent)
@@ -412,6 +414,7 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
 			dropTableEvent := statsutil.NewDropTableEvent(
+				job.SchemaID,
 				tblInfo,
 			)
 			asyncNotifyEvent(d, dropTableEvent)
@@ -856,6 +859,7 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	truncateTableEvent := statsutil.NewTruncateTableEvent(
+		job.SchemaID,
 		tblInfo,
 		oldTblInfo,
 	)

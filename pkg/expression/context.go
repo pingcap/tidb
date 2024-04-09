@@ -32,6 +32,9 @@ type EvalContext = context.EvalContext
 // BuildContext is used to build an expression
 type BuildContext = context.BuildContext
 
+// AggFuncBuildContext is used to build an aggregation expression
+type AggFuncBuildContext = context.ExprContext
+
 // OptionalEvalPropKey is an alias of context.OptionalEvalPropKey
 type OptionalEvalPropKey = context.OptionalEvalPropKey
 
@@ -57,18 +60,7 @@ func errCtx(ctx EvalContext) errctx.Context {
 }
 
 func location(ctx EvalContext) (loc *time.Location) {
-	loc = ctx.Location()
-	intest.AssertFunc(func() bool {
-		tc := ctx.TypeCtx()
-		intest.Assert(tc.Location() == loc)
-		if ctx.GetOptionalPropSet().Contains(context.OptPropSessionVars) {
-			vars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(ctx)
-			intest.AssertNoError(err)
-			intest.Assert(vars.Location() == loc)
-		}
-		return true
-	})
-	return
+	return ctx.Location()
 }
 
 func warningCount(ctx EvalContext) int {
@@ -77,4 +69,55 @@ func warningCount(ctx EvalContext) int {
 
 func truncateWarnings(ctx EvalContext, start int) []stmtctx.SQLWarn {
 	return ctx.TruncateWarnings(start)
+}
+
+// assertionEvalContext is used to do some assertions.
+// It is only used in tests.
+type assertionEvalContext struct {
+	EvalContext
+	fn builtinFunc
+}
+
+func wrapEvalAssert(ctx EvalContext, fn builtinFunc) (ret *assertionEvalContext) {
+	originalCtx := ctx
+	if assertCtx, ok := ctx.(*assertionEvalContext); ok {
+		originalCtx = assertCtx.EvalContext
+		if assertCtx.fn == fn {
+			ret = assertCtx
+		}
+	}
+
+	checkEvalCtx(originalCtx)
+	if ret == nil {
+		ret = &assertionEvalContext{EvalContext: originalCtx, fn: fn}
+	}
+
+	return
+}
+
+func checkEvalCtx(ctx EvalContext) {
+	loc := ctx.Location().String()
+	tc := ctx.TypeCtx()
+	tcLoc := tc.Location().String()
+	intest.Assert(loc == tcLoc, "location mismatch, evalCtx: %s, typeCtx: %s", loc, tcLoc)
+	if ctx.GetOptionalPropSet().Contains(context.OptPropSessionVars) {
+		vars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(ctx)
+		intest.AssertNoError(err)
+		stmtLoc := vars.StmtCtx.TimeZone().String()
+		intest.Assert(loc == stmtLoc, "location mismatch, evalCtx: %s, stmtCtx: %s", loc, stmtLoc)
+	}
+}
+
+func (ctx *assertionEvalContext) GetOptionalPropProvider(key OptionalEvalPropKey) (OptionalEvalPropProvider, bool) {
+	var requiredOptionalProps OptionalEvalPropKeySet
+	if ctx.fn != nil {
+		requiredOptionalProps = ctx.fn.RequiredOptionalEvalProps()
+	}
+
+	intest.Assert(
+		requiredOptionalProps.Contains(key),
+		"optional property '%s' is read in function '%T' but not declared in RequiredOptionalEvalProps",
+		key, ctx.fn,
+	)
+	return ctx.EvalContext.GetOptionalPropProvider(key)
 }

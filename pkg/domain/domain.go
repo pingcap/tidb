@@ -2243,11 +2243,10 @@ func quitStatsOwner(do *Domain, mgr owner.Manager) {
 // StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
 func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	statsHandle := do.StatsHandle()
-	for i, ctx := range ctxList {
+	for _, ctx := range ctxList {
 		// The sync load will affect how optimizer choose the plan.
 		// We need to assign high priority to it so that we can get the stats as quick as we can.
 		ctx.GetSessionVars().StmtCtx.Priority = mysql.HighPriority
-		statsHandle.SetSubCtxs(i, ctx)
 		do.wg.Add(1)
 		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
 	}

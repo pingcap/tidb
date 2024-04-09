@@ -177,16 +177,6 @@ func (c *Context) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
 	return c
 }
 
-// SetDiskFullOpt sets allowed options of current operation in each TiKV disk usage level.
-func (c *Context) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	c.level = level
-}
-
-// ClearDiskFullOpt clears allowed options of current operation in each TiKV disk usage level.
-func (c *Context) ClearDiskFullOpt() {
-	c.level = kvrpcpb.DiskFullOpt_NotAllowedOnFull
-}
-
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
 func (*Context) ExecuteInternal(_ context.Context, _ string, _ ...any) (sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Supported")
@@ -239,7 +229,7 @@ func (c *Context) GetPlanCtx() planctx.PlanContext {
 }
 
 // GetExprCtx returns the expression context of the session.
-func (c *Context) GetExprCtx() exprctx.BuildContext {
+func (c *Context) GetExprCtx() exprctx.ExprContext {
 	return c
 }
 
@@ -249,8 +239,33 @@ func (c *Context) GetTableCtx() tbctx.MutateContext {
 }
 
 // GetDistSQLCtx returns the distsql context of the session
-func (c *Context) GetDistSQLCtx() distsqlctx.DistSQLContext {
-	return c
+func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
+	vars := c.GetSessionVars()
+	sc := vars.StmtCtx
+
+	return &distsqlctx.DistSQLContext{
+		AppendWarning:                        sc.AppendWarning,
+		InRestrictedSQL:                      sc.InRestrictedSQL,
+		Client:                               c.GetClient(),
+		EnabledRateLimitAction:               vars.EnabledRateLimitAction,
+		EnableChunkRPC:                       vars.EnableChunkRPC,
+		OriginalSQL:                          sc.OriginalSQL,
+		KVVars:                               vars.KVVars,
+		KvExecCounter:                        sc.KvExecCounter,
+		SessionMemTracker:                    vars.MemTracker,
+		Location:                             sc.TimeZone(),
+		RuntimeStatsColl:                     sc.RuntimeStatsColl,
+		SQLKiller:                            &vars.SQLKiller,
+		ErrCtx:                               sc.ErrCtx(),
+		TiFlashReplicaRead:                   vars.TiFlashReplicaRead,
+		TiFlashMaxThreads:                    vars.TiFlashMaxThreads,
+		TiFlashMaxBytesBeforeExternalJoin:    vars.TiFlashMaxBytesBeforeExternalJoin,
+		TiFlashMaxBytesBeforeExternalGroupBy: vars.TiFlashMaxBytesBeforeExternalGroupBy,
+		TiFlashMaxBytesBeforeExternalSort:    vars.TiFlashMaxBytesBeforeExternalSort,
+		TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
+		TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
+		ExecDetails:                          &sc.SyncExecDetails,
+	}
 }
 
 // Txn implements sessionctx.Context Txn interface.

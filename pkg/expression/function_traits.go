@@ -141,7 +141,7 @@ func IsDeferredFunctions(ctx BuildContext, fn string) bool {
 	if ok {
 		return ok
 	}
-	if fn == ast.Sysdate && ctx.GetSessionVars().SysdateIsNow {
+	if fn == ast.Sysdate && ctx.GetSysdateIsNow() {
 		return true
 	}
 	return ok

@@ -991,7 +991,7 @@ func TestEnableInfoSchemaV2(t *testing.T) {
 type infoschemaTestContext struct {
 	// only test one db.
 	dbInfo *model.DBInfo
-	t      *testing.T
+	t      testing.TB
 	re     autoid.Requirement
 	ctx    context.Context
 	data   *infoschema.Data

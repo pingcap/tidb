@@ -44,7 +44,7 @@ import (
 )
 
 type benchHelper struct {
-	ctx   BuildContext
+	ctx   *mock.Context
 	exprs []Expression
 
 	inputTypes  []*types.FieldType
@@ -160,10 +160,11 @@ func BenchmarkVectorizedExecute(b *testing.B) {
 	h.init()
 	inputIter := chunk.NewIterator4Chunk(h.inputChunk)
 
+	evalCtx := h.ctx.GetEvalCtx()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		h.outputChunk.Reset()
-		if err := VectorizedExecute(h.ctx, h.exprs, inputIter, h.outputChunk); err != nil {
+		if err := VectorizedExecute(evalCtx, h.exprs, inputIter, h.outputChunk); err != nil {
 			panic("errors happened during \"VectorizedExecute\"")
 		}
 	}

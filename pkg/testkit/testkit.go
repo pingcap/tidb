@@ -20,11 +20,15 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"net"
+	"net/http"
+	"net/http/pprof"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -36,10 +40,13 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -62,7 +69,11 @@ type TestKit struct {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
-	require.True(t, intest.InTest, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
+	if _, ok := t.(*testing.B); !ok {
+		// Don't check `intest.InTest` for benchmark. We should allow to run benchmarks without `intest` tag, because some assert may have significant performance
+		// impact.
+		require.True(t, intest.InTest, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
+	}
 	testenv.SetGOMAXPROCSForTest()
 	tk := &TestKit{
 		require: require.New(t),
@@ -707,4 +718,35 @@ func EnableFailPoint(t testing.TB, name, expr string) {
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable(name))
 	})
+}
+
+// MockTiDBStatusPort mock the TiDB server status port to have metrics.
+func MockTiDBStatusPort(ctx context.Context, b *testing.B, port string) *util.WaitGroupWrapper {
+	var wg util.WaitGroupWrapper
+	err := metricsutil.RegisterMetrics()
+	terror.MustNil(err)
+	router := mux.NewRouter()
+	router.Handle("/metrics", promhttp.Handler())
+	serverMux := http.NewServeMux()
+	serverMux.Handle("/", router)
+	serverMux.HandleFunc("/debug/pprof/", pprof.Index)
+	serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	serverMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+	statusListener, err := net.Listen("tcp", "0.0.0.0:"+port)
+	require.NoError(b, err)
+	statusServer := &http.Server{Handler: serverMux}
+	wg.RunWithLog(func() {
+		if err := statusServer.Serve(statusListener); err != nil {
+			b.Logf("status server serve failed: %v", err)
+		}
+	})
+	wg.RunWithLog(func() {
+		<-ctx.Done()
+		_ = statusServer.Close()
+	})
+
+	return &wg
 }

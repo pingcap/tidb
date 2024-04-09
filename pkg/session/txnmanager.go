@@ -373,3 +373,8 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 		return nil, errors.Errorf("Invalid txn mode '%s'", txnMode)
 	}
 }
+
+// SetOptionsBeforeCommit sets options before commit.
+func (m *txnManager) SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error {
+	return m.ctxProvider.SetOptionsBeforeCommit(txn, commitTSChecker)
+}
