@@ -143,7 +143,7 @@ func (rs *RegionSplitter) executeSplitByRanges(
 // executeSplitByKeys will split regions by **sorted** keys with following steps.
 // 1. locate regions with correspond keys.
 // 2. split these regions with correspond keys.
-// 3. make sure new splitted regions are balanced.
+// 3. make sure new split regions are balanced.
 func (rs *RegionSplitter) executeSplitByKeys(
 	ctx context.Context,
 	splitContext SplitContext,
@@ -173,7 +173,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				log.Info("get split keys for split regions",
 					logutil.Region(region.Region), logutil.Keys(keys))
-				newRegions, err := rs.splitAndScatterRegions(ectx, region, keys, sctx.isRawKv)
+				newRegions, err := rs.splitAndScatterRegions(ectx, region, keys)
 				if err != nil {
 					return err
 				}
@@ -216,7 +216,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 }
 
 func (rs *RegionSplitter) splitAndScatterRegions(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte, _ bool,
+	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
 ) ([]*split.RegionInfo, error) {
 	newRegions, err := rs.client.SplitWaitAndScatter(ctx, regionInfo, keys)
 	return newRegions, err
@@ -409,7 +409,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 	}
 
 	helper.pool.ApplyOnErrorGroup(helper.eg, func() error {
-		newRegions, errSplit := regionSplitter.splitAndScatterRegions(ctx, region, splitPoints, false)
+		newRegions, errSplit := regionSplitter.splitAndScatterRegions(ctx, region, splitPoints)
 		if errSplit != nil {
 			log.Warn("failed to split the scaned region", zap.Error(errSplit))
 			_, startKey, _ := codec.DecodeBytes(region.Region.StartKey, nil)
