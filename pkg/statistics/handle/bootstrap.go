@@ -402,7 +402,7 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 }
 
 func (h *Handle) initStatsTopN(cache statstypes.StatsCache) error {
-	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1 order by table_id"
+	sql := "select /*+ ORDER_INDEX(mysql.stats_top_n,tbl)*/  HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1 order by table_id"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
