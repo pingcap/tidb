@@ -154,7 +154,7 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx PlanContext,
 		return nil, err
 	}
 	partCols, colLen := getPartColumnsForHashPartition(hashExpr)
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx.GetRangerCtx(), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, err
 	}
@@ -170,12 +170,12 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx PlanContext,
 			if col, ok := hashExpr.(*expression.Column); ok && col.RetType.EvalType() == types.ETInt {
 				numPartitions := len(pi.Definitions)
 
-				posHigh, highIsNull, err := hashExpr.EvalInt(ctx.GetExprCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
+				posHigh, highIsNull, err := hashExpr.EvalInt(ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
 				if err != nil {
 					return nil, err
 				}
 
-				posLow, lowIsNull, err := hashExpr.EvalInt(ctx.GetExprCtx(), chunk.MutRowFromDatums(r.LowVal).ToRow())
+				posLow, lowIsNull, err := hashExpr.EvalInt(ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(r.LowVal).ToRow())
 				if err != nil {
 					return nil, err
 				}
@@ -246,7 +246,7 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx PlanContext,
 		highLowVals := make([]types.Datum, 0, len(r.HighVal)+len(r.LowVal))
 		highLowVals = append(highLowVals, r.HighVal...)
 		highLowVals = append(highLowVals, r.LowVal...)
-		pos, isNull, err := hashExpr.EvalInt(ctx.GetExprCtx(), chunk.MutRowFromDatums(highLowVals).ToRow())
+		pos, isNull, err := hashExpr.EvalInt(ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(highLowVals).ToRow())
 		if err != nil {
 			// If we failed to get the point position, we can just skip and ignore it.
 			continue
@@ -270,7 +270,7 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx PlanContext,
 	partExpr := tbl.(partitionTable).PartitionExpr()
 	partCols, colLen := partExpr.GetPartColumnsForKeyPartition(columns)
 	pe := &tables.ForKeyPruning{KeyPartCols: partCols}
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx.GetRangerCtx(), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, err
 	}
@@ -282,12 +282,12 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx PlanContext,
 		if !r.IsPointNullable(tc) {
 			if len(partCols) == 1 && partCols[0].RetType.EvalType() == types.ETInt {
 				col := partCols[0]
-				posHigh, highIsNull, err := col.EvalInt(ctx.GetExprCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
+				posHigh, highIsNull, err := col.EvalInt(ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
 				if err != nil {
 					return nil, err
 				}
 
-				posLow, lowIsNull, err := col.EvalInt(ctx.GetExprCtx(), chunk.MutRowFromDatums(r.LowVal).ToRow())
+				posLow, lowIsNull, err := col.EvalInt(ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(r.LowVal).ToRow())
 				if err != nil {
 					return nil, err
 				}
@@ -727,7 +727,7 @@ func (l *listPartitionPruner) detachCondAndBuildRange(conds []expression.Express
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
 
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(l.ctx, conds, cols, colLen, l.ctx.GetSessionVars().RangeMaxSize)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(l.ctx.GetRangerCtx(), conds, cols, colLen, l.ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, err
 	}
@@ -771,7 +771,7 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 		if len(r.HighVal) != len(exprCols) {
 			return l.fullRange, nil
 		}
-		value, isNull, err := pruneExpr.EvalInt(l.ctx.GetExprCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
+		value, isNull, err := pruneExpr.EvalInt(l.ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(r.HighVal).ToRow())
 		if err != nil {
 			return nil, err
 		}
@@ -1226,7 +1226,7 @@ func multiColumnRangeColumnsPruner(sctx PlanContext, exprs []expression.Expressi
 		lens = append(lens, columnsPruner.partCols[i].RetType.GetFlen())
 	}
 
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, exprs, columnsPruner.partCols, lens, sctx.GetSessionVars().RangeMaxSize)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), exprs, columnsPruner.partCols, lens, sctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return fullRange(len(columnsPruner.lessThan))
 	}
@@ -1419,10 +1419,10 @@ func partitionRangeForInExpr(sctx PlanContext, args []expression.Expression,
 		if pruner.partFn != nil {
 			// replace fn(col) to fn(const)
 			partFnConst := replaceColumnWithConst(pruner.partFn, constExpr)
-			val, _, err = partFnConst.EvalInt(sctx.GetExprCtx(), chunk.Row{})
+			val, _, err = partFnConst.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			unsigned = mysql.HasUnsignedFlag(partFnConst.GetType().GetFlag())
 		} else {
-			val, _, err = constExpr.EvalInt(sctx.GetExprCtx(), chunk.Row{})
+			val, _, err = constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
 		}
 		if err != nil {
@@ -1538,7 +1538,7 @@ func (p *rangePruner) extractDataForPrune(sctx PlanContext, expr expression.Expr
 	if !expression.ConstExprConsiderPlanCache(constExpr, sctx.GetSessionVars().StmtCtx.UseCache) {
 		return ret, false
 	}
-	c, isNull, err := constExpr.EvalInt(sctx.GetExprCtx(), chunk.Row{})
+	c, isNull, err := constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 	if err == nil && !isNull {
 		ret.c = c
 		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
@@ -1962,7 +1962,7 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx PlanContext, op string, d
 			}
 			expr.SetCharsetAndCollation(charSet, collation)
 			var val int64
-			val, isNull, err = expr.EvalInt(sctx.GetExprCtx(), chunk.Row{})
+			val, isNull, err = expr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				savedError = err
 				return true

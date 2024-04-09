@@ -40,13 +40,13 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -58,11 +58,11 @@ var _ exec.Executor = &TableReaderExecutor{}
 
 // selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
 type selectResultHook struct {
-	selectResultFunc func(ctx context.Context, dctx distsqlctx.DistSQLContext, kvReq *kv.Request,
+	selectResultFunc func(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Request,
 		fieldTypes []*types.FieldType, copPlanIDs []int) (distsql.SelectResult, error)
 }
 
-func (sr selectResultHook) SelectResult(ctx context.Context, dctx distsqlctx.DistSQLContext, kvReq *kv.Request,
+func (sr selectResultHook) SelectResult(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Request,
 	fieldTypes []*types.FieldType, copPlanIDs []int, rootPlanID int) (distsql.SelectResult, error) {
 	if sr.selectResultFunc == nil {
 		return distsql.SelectWithRuntimeStats(ctx, dctx, kvReq, fieldTypes, copPlanIDs, rootPlanID)
@@ -77,15 +77,14 @@ type kvRangeBuilder interface {
 
 // tableReaderExecutorContext is the execution context for the `TableReaderExecutor`
 type tableReaderExecutorContext struct {
-	dctx distsqlctx.DistSQLContext
+	dctx *distsqlctx.DistSQLContext
+	rctx *rangerctx.RangerContext
 	pctx planctx.PlanContext
 	ectx exprctx.BuildContext
 
-	getDDLOwner func(context.Context) (*infosync.ServerInfo, error)
-}
+	stmtMemTracker *memory.Tracker
 
-func (treCtx *tableReaderExecutorContext) GetSessionVars() *variable.SessionVars {
-	return treCtx.dctx.GetSessionVars()
+	getDDLOwner func(context.Context) (*infosync.ServerInfo, error)
 }
 
 func (treCtx *tableReaderExecutorContext) GetInfoSchema() infoschema.InfoSchema {
@@ -117,11 +116,14 @@ func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorC
 		}
 	}
 
+	pctx := sctx.GetPlanCtx()
 	return tableReaderExecutorContext{
-		dctx:        sctx.GetDistSQLCtx(),
-		pctx:        sctx.GetPlanCtx(),
-		ectx:        sctx.GetExprCtx(),
-		getDDLOwner: getDDLOwner,
+		dctx:           sctx.GetDistSQLCtx(),
+		rctx:           pctx.GetRangerCtx(),
+		pctx:           pctx,
+		ectx:           sctx.GetExprCtx(),
+		stmtMemTracker: sctx.GetSessionVars().StmtCtx.MemTracker,
+		getDDLOwner:    getDDLOwner,
 	}
 }
 
@@ -224,7 +226,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	} else {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	e.memTracker.AttachTo(e.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker.AttachTo(e.stmtMemTracker)
 
 	var err error
 	if e.corColInFilter {
@@ -242,7 +244,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			}
 		}
 	}
-	if e.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+	if e.dctx.RuntimeStatsColl != nil {
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
@@ -434,14 +436,14 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetKeepOrder(e.keepOrder).
 			SetTxnScope(e.txnScope).
 			SetReadReplicaScope(e.readReplicaScope).
-			SetFromSessionVars(e.GetSessionVars()).
+			SetFromSessionVars(e.dctx).
 			SetFromInfoSchema(e.GetInfoSchema()).
 			SetMemTracker(e.memTracker).
 			SetStoreType(e.storeType).
 			SetPaging(e.paging).
 			SetAllowBatchCop(e.batchCop).
-			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.GetSessionVars(), &reqBuilder.Request, e.netDataSize)).
-			SetConnIDAndConnAlias(e.GetSessionVars().ConnectionID, e.GetSessionVars().SessionAlias).
+			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
+			SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
 			Build()
 		if err != nil {
 			return nil, err
@@ -476,14 +478,14 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
-		SetFromSessionVars(e.GetSessionVars()).
+		SetFromSessionVars(e.dctx).
 		SetFromInfoSchema(e.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetPaging(e.paging).
 		SetAllowBatchCop(e.batchCop).
-		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.GetSessionVars(), &reqBuilder.Request, e.netDataSize)).
-		SetConnIDAndConnAlias(e.GetSessionVars().ConnectionID, e.GetSessionVars().SessionAlias).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
+		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
 		Build()
 	if err != nil {
 		return nil, err
@@ -501,7 +503,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		}
 		reqBuilder = builder.SetPartitionKeyRanges(kvRange)
 	} else {
-		reqBuilder = builder.SetHandleRanges(e.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges)
+		reqBuilder = builder.SetHandleRanges(e.dctx, getPhysicalTableID(e.table), e.table.Meta() != nil && e.table.Meta().IsCommonHandle, ranges)
 	}
 	if e.table != nil && e.table.Type().IsClusterTable() {
 		copDestination := infoschema.GetClusterTableCopDestination(e.table.Meta().Name.L)
@@ -521,14 +523,14 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
-		SetFromSessionVars(e.GetSessionVars()).
+		SetFromSessionVars(e.dctx).
 		SetFromInfoSchema(e.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
-		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.GetSessionVars(), &reqBuilder.Request, e.netDataSize)).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
 		SetPaging(e.paging).
-		SetConnIDAndConnAlias(e.GetSessionVars().ConnectionID, e.GetSessionVars().SessionAlias)
+		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
 	return reqBuilder.Build()
 }
 

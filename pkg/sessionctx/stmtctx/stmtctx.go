@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -167,6 +168,21 @@ type StatementContext struct {
 	// errCtx is used to indicate how to handle the errors
 	errCtx errctx.Context
 
+	// distSQLCtxCache is used to persist all variables and tools needed by the `distsql`
+	// this cache is set on `StatementContext` because it has to be updated after each statement.
+	distSQLCtxCache struct {
+		init sync.Once
+		dctx *distsqlctx.DistSQLContext
+	}
+
+	// rangerCtxCache is used to persist all variables and tools needed by the `ranger`
+	// this cache is set on `StatementContext` because it has to be updated after each statement.
+	// `rctx` uses `any` type to avoid cyclic dependency
+	rangerCtxCache struct {
+		init sync.Once
+		rctx any
+	}
+
 	// Set the following variables before execution
 	hint.StmtHints
 
@@ -190,7 +206,6 @@ type StatementContext struct {
 	ForcePlanCache         bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
 	CacheType              PlanCacheType
 	BatchCheck             bool
-	InNullRejectCheck      bool
 	IgnoreExplainIDSuffix  bool
 	MultiSchemaInfo        *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
@@ -1063,6 +1078,9 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.IndexNames = sc.IndexNames[:0]
 	sc.TaskID = AllocateTaskID()
 	sc.SyncExecDetails.Reset()
+
+	// `TaskID` is reset, we'll need to reset distSQLCtx
+	sc.distSQLCtxCache.init = sync.Once{}
 }
 
 // GetExecDetails gets the execution details for the statement.
@@ -1232,6 +1250,26 @@ func (sc *StatementContext) TypeCtxOrDefault() types.Context {
 	}
 
 	return types.DefaultStmtNoWarningContext
+}
+
+// GetOrInitDistSQLFromCache returns the `DistSQLContext` inside cache. If it didn't exist, return a new one created by
+// the `create` function.
+func (sc *StatementContext) GetOrInitDistSQLFromCache(create func() *distsqlctx.DistSQLContext) *distsqlctx.DistSQLContext {
+	sc.distSQLCtxCache.init.Do(func() {
+		sc.distSQLCtxCache.dctx = create()
+	})
+
+	return sc.distSQLCtxCache.dctx
+}
+
+// GetOrInitRangerCtxFromCache returns the `RangerContext` inside cache. If it didn't exist, return a new one created by
+// the `create` function.
+func (sc *StatementContext) GetOrInitRangerCtxFromCache(create func() any) any {
+	sc.rangerCtxCache.init.Do(func() {
+		sc.rangerCtxCache.rctx = create()
+	})
+
+	return sc.rangerCtxCache.rctx
 }
 
 func newErrCtx(tc types.Context, otherLevels errctx.LevelMap, handler contextutil.WarnHandler) errctx.Context {

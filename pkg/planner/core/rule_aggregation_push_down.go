@@ -196,7 +196,7 @@ func (*aggregationPushDownSolver) addGbyCol(ctx PlanContext, gbyCols []*expressi
 	for _, c := range cols {
 		duplicate := false
 		for _, gbyCol := range gbyCols {
-			if c.Equal(ctx.GetExprCtx(), gbyCol) {
+			if c.Equal(ctx.GetExprCtx().GetEvalCtx(), gbyCol) {
 				duplicate = true
 				break
 			}

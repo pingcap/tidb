@@ -649,7 +649,7 @@ func fixOldVersionPartitionInfo(sctx expression.BuildContext, str string) (int64
 	if err != nil {
 		return 0, false
 	}
-	ret, isNull, err := tmp.EvalInt(sctx, chunk.Row{})
+	ret, isNull, err := tmp.EvalInt(sctx.GetEvalCtx(), chunk.Row{})
 	if err != nil || isNull {
 		return 0, false
 	}
@@ -947,7 +947,7 @@ func (lp *ForListPruning) buildListPartitionValueMap(ctx expression.BuildContext
 			if err != nil {
 				return errors.Trace(err)
 			}
-			v, isNull, err := expr.EvalInt(ctx, chunk.Row{})
+			v, isNull, err := expr.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1088,12 +1088,12 @@ func (lp *ForListColumnPruning) genConstExprKey(ctx expression.BuildContext, exp
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	v, err := expr.Eval(ctx, chunk.Row{})
+	v, err := expr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	tc, ec := sc.TypeCtx(), sc.ErrCtx()
+	evalCtx := ctx.GetEvalCtx()
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
 	key, err := lp.genKey(tc, ec, v)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1293,11 +1293,11 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.BuildContext, tp
 		}
 	case model.PartitionTypeHash:
 		// Note that only LIST and RANGE supports REORGANIZE PARTITION
-		idx, err = t.locateHashPartition(ctx, partitionExpr, num, r)
+		idx, err = t.locateHashPartition(ctx.GetEvalCtx(), partitionExpr, num, r)
 	case model.PartitionTypeKey:
 		idx, err = partitionExpr.LocateKeyPartition(num, r)
 	case model.PartitionTypeList:
-		idx, err = partitionExpr.locateListPartition(ctx, r)
+		idx, err = partitionExpr.locateListPartition(ctx.GetEvalCtx(), r)
 	case model.PartitionTypeNone:
 		idx = 0
 	}
@@ -1354,7 +1354,7 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx expression.BuildContex
 	defer t.evalBufferPool.Put(evalBuffer)
 	idx := sort.Search(len(upperBounds), func(i int) bool {
 		evalBuffer.SetDatums(r...)
-		ret, isNull, err := upperBounds[i].EvalInt(ctx, evalBuffer.ToRow())
+		ret, isNull, err := upperBounds[i].EvalInt(ctx.GetEvalCtx(), evalBuffer.ToRow())
 		if err != nil {
 			lastError = err
 			return true // Does not matter, will propagate the last error anyway.
@@ -1375,7 +1375,7 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx expression.BuildContex
 		if t.meta.Partition.Expr != "" {
 			e, err := expression.ParseSimpleExpr(ctx, t.meta.Partition.Expr, expression.WithTableInfo("", t.meta))
 			if err == nil {
-				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+				val, _, err := e.EvalInt(ctx.GetEvalCtx(), chunk.MutRowFromDatums(r).ToRow())
 				if err == nil {
 					valueMsg = strconv.FormatInt(val, 10)
 				}
@@ -1414,7 +1414,7 @@ func (t *partitionedTable) locateRangePartition(ctx expression.BuildContext, par
 		evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 		defer t.evalBufferPool.Put(evalBuffer)
 		evalBuffer.SetDatums(r...)
-		val, isNull, err = partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
+		val, isNull, err = partitionExpr.Expr.EvalInt(ctx.GetEvalCtx(), evalBuffer.ToRow())
 		if err != nil {
 			return 0, err
 		}
@@ -1439,7 +1439,7 @@ func (t *partitionedTable) locateRangePartition(ctx expression.BuildContext, par
 		if t.meta.Partition.Expr != "" {
 			e, err := expression.ParseSimpleExpr(ctx, t.meta.Partition.Expr, expression.WithTableInfo("", t.meta))
 			if err == nil {
-				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+				val, _, err := e.EvalInt(ctx.GetEvalCtx(), chunk.MutRowFromDatums(r).ToRow())
 				if err == nil {
 					if unsigned {
 						valueMsg = fmt.Sprintf("%d", uint64(val))

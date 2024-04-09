@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -38,6 +37,7 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
@@ -69,10 +69,6 @@ type Context interface {
 	SessionStatesHandler
 	contextutil.ValueStoreContext
 	tablelock.TableLockContext
-	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
-	// ClearDiskFullOpt clear the disk full opt.
-	ClearDiskFullOpt()
 	// RollbackTxn rolls back the current transaction.
 	RollbackTxn(ctx context.Context)
 	// CommitTxn commits the current transaction.
@@ -108,7 +104,7 @@ type Context interface {
 	GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor
 
 	// GetExprCtx returns the expression context of the session.
-	GetExprCtx() exprctx.BuildContext
+	GetExprCtx() exprctx.ExprContext
 
 	// GetTableCtx returns the table.MutateContext
 	GetTableCtx() tbctx.MutateContext
@@ -117,7 +113,10 @@ type Context interface {
 	GetPlanCtx() planctx.PlanContext
 
 	// GetDistSQLCtx gets the distsql ctx of the current session
-	GetDistSQLCtx() distsqlctx.DistSQLContext
+	GetDistSQLCtx() *distsqlctx.DistSQLContext
+
+	// GetRangerCtx returns the context used in `ranger` related functions
+	GetRangerCtx() *rangerctx.RangerContext
 
 	GetSessionManager() util.SessionManager
 

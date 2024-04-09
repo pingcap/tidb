@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -44,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -443,55 +442,6 @@ func CheckBackupStorageIsLocked(ctx context.Context, s storage.ExternalStorage) 
 	return nil
 }
 
-// BuildTableRanges returns the key ranges encompassing the entire table,
-// and its partitions if exists.
-func BuildTableRanges(tbl *model.TableInfo) ([]kv.KeyRange, error) {
-	pis := tbl.GetPartitionInfo()
-	if pis == nil {
-		// Short path, no partition.
-		return appendRanges(tbl, tbl.ID)
-	}
-
-	ranges := make([]kv.KeyRange, 0, len(pis.Definitions)*(len(tbl.Indices)+1)+1)
-	for _, def := range pis.Definitions {
-		rgs, err := appendRanges(tbl, def.ID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ranges = append(ranges, rgs...)
-	}
-	return ranges, nil
-}
-
-func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
-	var ranges []*ranger.Range
-	if tbl.IsCommonHandle {
-		ranges = ranger.FullNotNullRange()
-	} else {
-		ranges = ranger.FullIntRange(false)
-	}
-
-	retRanges := make([]kv.KeyRange, 0, 1+len(tbl.Indices))
-	kvRanges, err := distsql.TableHandleRangesToKVRanges(nil, []int64{tblID}, tbl.IsCommonHandle, ranges)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	retRanges = kvRanges.AppendSelfTo(retRanges)
-
-	for _, index := range tbl.Indices {
-		if index.State != model.StatePublic {
-			continue
-		}
-		ranges = ranger.FullRange()
-		idxRanges, err := distsql.IndexRangesToKVRanges(nil, tblID, index.ID, ranges)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		retRanges = idxRanges.AppendSelfTo(retRanges)
-	}
-	return retRanges, nil
-}
-
 // BuildBackupRangeAndSchema gets KV range and schema of tables.
 // KV ranges are separated by Table IDs.
 // Also, KV ranges are separated by Index IDs in the same table.
@@ -555,7 +505,7 @@ func BuildBackupRangeAndInitSchema(
 			schemasNum += 1
 			hasTable = true
 			if buildRange {
-				tableRanges, err := BuildTableRanges(tableInfo)
+				tableRanges, err := distsql.BuildTableRanges(tableInfo)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -674,7 +624,7 @@ func BuildBackupSchemas(
 			// Treat cached table as normal table.
 			tableInfo.TableCacheStatusType = model.TableCacheStatusDisable
 
-			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
+			if tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration
 				var globalAutoRandID int64
 				globalAutoRandID, err = autoIDAccess.RandomID().Get()
@@ -861,7 +811,7 @@ func (bc *Client) BackupRanges(
 	}
 
 	// we collect all files in a single goroutine to avoid thread safety issues.
-	workerPool := utils.NewWorkerPool(concurrency, "Ranges")
+	workerPool := util.NewWorkerPool(concurrency, "Ranges")
 	eg, ectx := errgroup.WithContext(ctx)
 	for id, r := range ranges {
 		id := id

@@ -176,8 +176,8 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	tbl := ds.tableStats.HistColl
 	ndvs := make([]property.GroupNDV, 0, len(colGroups))
 	for idxID, idx := range tbl.Indices {
-		colsLen := len(tbl.Idx2ColumnIDs[idxID])
-		// tbl.Idx2ColumnIDs may only contain the prefix of index columns.
+		colsLen := len(tbl.Idx2ColUniqueIDs[idxID])
+		// tbl.Idx2ColUniqueIDs may only contain the prefix of index columns.
 		// But it may exceeds the total index since the index would contain the handle column if it's not a unique index.
 		// We append the handle at fillIndexPath.
 		if colsLen < len(idx.Info.Columns) {
@@ -186,7 +186,7 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 			colsLen--
 		}
 		idxCols := make([]int64, colsLen)
-		copy(idxCols, tbl.Idx2ColumnIDs[idxID])
+		copy(idxCols, tbl.Idx2ColUniqueIDs[idxID])
 		slices.Sort(idxCols)
 		for _, g := range colGroups {
 			// We only want those exact matches.
@@ -537,7 +537,7 @@ func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.S
 	// TODO: support clustered index.
 	if ts.HandleCols != nil {
 		// TODO: restrict mem usage of table ranges.
-		ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessConds, ts.SCtx(), ts.HandleCols.GetCol(0).RetType, 0)
+		ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessConds, ts.SCtx().GetRangerCtx(), ts.HandleCols.GetCol(0).RetType, 0)
 	} else {
 		isUnsigned := false
 		if ts.Source.tableInfo.PKIsHandle {

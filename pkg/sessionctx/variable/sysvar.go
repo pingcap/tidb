@@ -723,7 +723,27 @@ var defaultSysVars = []*SysVar{
 		EnableLocalTxn.Store(newVal)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeRatio, Value: strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64},
+	{
+		Scope:    ScopeGlobal,
+		Name:     TiDBAutoAnalyzeRatio,
+		Value:    strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64),
+		Type:     TypeFloat,
+		MinValue: 0,
+		MaxValue: math.MaxUint64,
+		// The value of TiDBAutoAnalyzeRatio should be greater than 0.00001 or equal to 0.00001.
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			ratio, err := strconv.ParseFloat(normalizedValue, 64)
+			if err != nil {
+				return "", err
+			}
+			const minRatio = 0.00001
+			const tolerance = 1e-9
+			if ratio < minRatio && math.Abs(ratio-minRatio) > tolerance {
+				return "", errors.Errorf("the value of %s should be greater than or equal to %f", TiDBAutoAnalyzeRatio, minRatio)
+			}
+			return normalizedValue, nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeStartTime, Value: DefAutoAnalyzeStartTime, Type: TypeTime},
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeEndTime, Value: DefAutoAnalyzeEndTime, Type: TypeTime},
 	{Scope: ScopeGlobal, Name: TiDBMemQuotaBindingCache, Value: strconv.FormatInt(DefTiDBMemQuotaBindingCache, 10), Type: TypeUnsigned, MaxValue: math.MaxInt32, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
@@ -1660,7 +1680,7 @@ var defaultSysVars = []*SysVar{
 	{
 		Scope:                   ScopeGlobal | ScopeSession,
 		Name:                    GroupConcatMaxLen,
-		Value:                   "1024",
+		Value:                   strconv.FormatUint(DefGroupConcatMaxLen, 10),
 		IsHintUpdatableVerified: true,
 		Type:                    TypeUnsigned,
 		MinValue:                4,
@@ -1681,7 +1701,18 @@ var defaultSysVars = []*SysVar{
 				}
 			}
 			return normalizedValue, nil
-		}},
+		},
+		SetSession: func(sv *SessionVars, s string) error {
+			var err error
+			if sv.GroupConcatMaxLen, err = strconv.ParseUint(s, 10, 64); err != nil {
+				return err
+			}
+			return nil
+		},
+		GetSession: func(sv *SessionVars) (string, error) {
+			return strconv.FormatUint(sv.GroupConcatMaxLen, 10), nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetConnection, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharacterSetConnection)
 	}, SetSession: func(s *SessionVars, val string) error {
@@ -2305,7 +2336,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStatsLoadSyncWait, Value: strconv.Itoa(DefTiDBStatsLoadSyncWait), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		SetSession: func(s *SessionVars, val string) error {
-			s.StatsLoadSyncWait = TidbOptInt64(val, DefTiDBStatsLoadSyncWait)
+			s.StatsLoadSyncWait.Store(TidbOptInt64(val, DefTiDBStatsLoadSyncWait))
 			return nil
 		},
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {

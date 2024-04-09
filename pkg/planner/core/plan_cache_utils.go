@@ -121,10 +121,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	prepared := &ast.Prepared{
-		Stmt:          paramStmt,
-		StmtType:      ast.GetStmtLabel(paramStmt),
-		Params:        extractor.markers,
-		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
+		Stmt:     paramStmt,
+		StmtType: ast.GetStmtLabel(paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
@@ -158,8 +156,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	// parameters are unknown here, so regard them all as NULL.
 	// For non-prepared statements, all parameters are already initialized at `ParameterizeAST`, so no need to set NULL.
 	if isPrepStmt {
-		for i := range prepared.Params {
-			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+		for i := range extractor.markers {
+			param := extractor.markers[i].(*driver.ParamMarkerExpr)
 			param.Datum.SetNull()
 			param.InExecute = false
 		}
@@ -194,6 +192,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
 		QueryFeatures:       features,
+		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
+		Params:              extractor.markers,
 	}
 	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
@@ -446,11 +446,23 @@ type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared
 	StmtDB      string // which DB the statement will be processed over
 	VisitInfos  []visitInfo
-	ColumnInfos any
-	// Executor is only used for point get scene.
-	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
-	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
-	Executor any
+	Params      []ast.ParamMarkerExpr
+
+	// To further improve the performance of PointGet, cache execution info for PointGet directly.
+	// Use any to avoid cycle import.
+	// TODO: caching execution info directly is risky and tricky to the optimizer, refactor it later.
+	PointGet struct {
+		ColumnInfos any
+		ColumnNames any
+		// Executor is only used for point get scene.
+		// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
+		// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
+		Executor any
+		Plan     any // the cached PointGet Plan
+	}
+
+	// below fields are for PointGet short path
+	SchemaVersion int64
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
