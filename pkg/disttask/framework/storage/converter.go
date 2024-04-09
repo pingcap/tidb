@@ -45,18 +45,18 @@ func Row2Task(r chunk.Row) *proto.Task {
 	taskBase := row2TaskBasic(r)
 	task := &proto.Task{TaskBase: *taskBase}
 	var startTime, updateTime time.Time
-	if !r.IsNull(8) {
-		startTime, _ = r.GetTime(8).GoTime(time.Local)
-	}
 	if !r.IsNull(9) {
-		updateTime, _ = r.GetTime(9).GoTime(time.Local)
+		startTime, _ = r.GetTime(9).GoTime(time.Local)
+	}
+	if !r.IsNull(10) {
+		updateTime, _ = r.GetTime(10).GoTime(time.Local)
 	}
 	task.StartTime = startTime
 	task.StateUpdateTime = updateTime
-	task.Meta = r.GetBytes(10)
-	task.SchedulerID = r.GetString(11)
-	if !r.IsNull(12) {
-		errBytes := r.GetBytes(12)
+	task.Meta = r.GetBytes(11)
+	task.SchedulerID = r.GetString(12)
+	if !r.IsNull(13) {
+		errBytes := r.GetBytes(13)
 		stdErr := errors.Normalize("")
 		err := stdErr.UnmarshalJSON(errBytes)
 		if err != nil {

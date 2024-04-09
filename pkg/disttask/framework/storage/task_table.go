@@ -282,7 +282,7 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 	for _, r := range rs {
 		res = append(res, &TaskExecInfo{
 			TaskBase:           row2TaskBasic(r),
-			SubtaskConcurrency: int(r.GetInt64(8)),
+			SubtaskConcurrency: int(r.GetInt64(9)),
 		})
 	}
 	return res, nil
