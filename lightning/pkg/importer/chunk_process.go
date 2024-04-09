@@ -37,9 +37,7 @@ import (
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -428,18 +426,6 @@ func (cr *chunkProcessor) encodeLoop(
 						continue
 					}
 
-					indexName, keyData, err := cr.getIndexNameAndKeyData(
-						t.encTable,
-						originalTableEncoder,
-						lastRow,
-						lastOffset,
-						dupIgnoreRowsIter.UnsafeValue(),
-						logger,
-					)
-					if err != nil {
-						return 0, 0, errors.Trace(err)
-					}
-
 					dupMsg := cr.getDuplicateMessage(
 						originalTableEncoder,
 						lastRow,
@@ -453,13 +439,11 @@ func (cr *chunkProcessor) encodeLoop(
 						ctx,
 						logger,
 						t.tableName,
-						indexName,
-						keyData,
-						rowText,
 						cr.chunk.Key.Path,
 						newOffset,
 						dupMsg,
 						lastRow.RowID,
+						rowText,
 					)
 					if err != nil {
 						return 0, 0, err
@@ -530,74 +514,6 @@ func (cr *chunkProcessor) encodeLoop(
 
 	err = send([]deliveredKVs{{offset: cr.chunk.Chunk.EndOffset, realOffset: cr.chunk.FileMeta.FileSize}})
 	return
-}
-
-// getIndexNameAndKeyData gets the index name of the duplicate row.
-func (cr *chunkProcessor) getIndexNameAndKeyData(
-	tbl table.Table,
-	kvEncoder encode.Encoder,
-	lastRow mydump.Row,
-	lastOffset int64,
-	encodedIdxID []byte,
-	logger log.Logger,
-) (string, string, error) {
-	sessionOpts := encode.SessionOptions{
-		SQLMode: mysql.ModeStrictAllTables,
-	}
-	decoder, err := kv.NewTableKVDecoder(tbl, tbl.Meta().Name.L, &sessionOpts, log.L())
-	if err != nil {
-		return "", "", errors.Trace(err)
-	}
-
-	_, idxID, err := codec.DecodeVarint(encodedIdxID)
-	if err != nil {
-		return "", "", errors.Trace(err)
-	}
-
-	kvs, err := kvEncoder.Encode(lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, lastOffset)
-	if err != nil {
-		return "", "", errors.Trace(err)
-	}
-
-	if idxID == conflictOnHandle {
-		for _, kv := range kvs.(*kv.Pairs).Pairs {
-			if tablecodec.IsRecordKey(kv.Key) {
-				handle, err := tablecodec.DecodeRowKey(kv.Key)
-				if err != nil {
-					return "", "", errors.Trace(err)
-				}
-
-				rowData := decoder.DecodeRawRowDataAsStr(handle, kv.Val)
-				return "PRIMARY", handle.String(), nil
-			}
-		}
-		// should not happen
-		logger.Warn("fail to find conflict record key",
-			zap.String("file", cr.chunk.FileMeta.Path),
-			zap.Any("row", lastRow.Row))
-	} else {
-		idxInfo := model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
-
-		for _, kv := range kvs.(*kv.Pairs).Pairs {
-			_, decodedIdxID, isRecordKey, err := tablecodec.DecodeKeyHead(kv.Key)
-			if err != nil {
-				return "", "", errors.Trace(err)
-			}
-			if !isRecordKey && decodedIdxID == idxID {
-				h, err := decoder.DecodeHandleFromIndex(idxInfo, kv.Key, kv.Val)
-				if err != nil {
-					return "", "", errors.Trace(err)
-				}
-				return idxInfo.Name.String(), h.String(), nil
-			}
-		}
-		// should not happen
-		logger.Warn("fail to find conflict index key",
-			zap.String("file", cr.chunk.FileMeta.Path),
-			zap.Int64("idxID", idxID),
-			zap.Any("row", lastRow.Row))
-	}
-	return "", "", nil
 }
 
 // getDuplicateMessage gets the duplicate message like a SQL error. When it meets

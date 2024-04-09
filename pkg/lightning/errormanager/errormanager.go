@@ -52,7 +52,7 @@ const (
 
 	syntaxErrorTableName = "syntax_error_v1"
 	typeErrorTableName   = "type_error_v1"
-	// ConflictErrorTableName is the table name for conflict detection.
+	// ConflictErrorTableName is the table name for duplicate detection.
 	ConflictErrorTableName = "conflict_error_v3"
 	// DupRecordTable is the table name to record duplicate data that displayed to user.
 	DupRecordTable = "conflict_records"
@@ -162,9 +162,7 @@ const (
 	insertIntoDupRecord = `
 		INSERT INTO %s.` + DupRecordTable + `
 		(task_id, table_name, path, offset, error, row_id, row_data)
-		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle,
-		raw_row, is_data_kv, is_precheck_conflict)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1);
+		VALUES (?, ?, ?, ?, ?, ?, ?);
 	`
 )
 
@@ -780,13 +778,11 @@ func (em *ErrorManager) RecordDuplicate(
 	ctx context.Context,
 	logger log.Logger,
 	tableName string,
-	indexName string,
-	keyData string,
-	rowData string,
 	path string,
 	offset int64,
 	errMsg string,
 	rowID int64,
+	rowData string,
 ) error {
 	if em.conflictErrRemain.Dec() < 0 {
 		threshold := em.configConflict.Threshold
@@ -801,20 +797,18 @@ func (em *ErrorManager) RecordDuplicate(
 		return nil
 	}
 
-	return em.recordDuplicate(ctx, logger, tableName, indexName, keyData, rowData, path, offset, errMsg, rowID)
+	return em.recordDuplicate(ctx, logger, tableName, path, offset, errMsg, rowID, rowData)
 }
 
 func (em *ErrorManager) recordDuplicate(
 	ctx context.Context,
 	logger log.Logger,
 	tableName string,
-	indexName string,
-	keyData string,
-	rowData string,
 	path string,
 	offset int64,
 	errMsg string,
 	rowID int64,
+	rowData string,
 ) error {
 	exec := common.SQLWithRetry{
 		DB:           em.db,
@@ -822,17 +816,14 @@ func (em *ErrorManager) recordDuplicate(
 		HideQueryLog: redact.NeedRedact(),
 	}
 	return exec.Exec(ctx, "insert duplicate record",
-		common.SprintfWithIdentifiers(
-			insertIntoDupRecord, em.schema),
+		common.SprintfWithIdentifiers(insertIntoDupRecord, em.schema),
 		em.taskID,
 		tableName,
-		indexName,
-		keyData,
-		rowData,
 		path,
 		offset,
 		errMsg,
 		rowID,
+		rowData,
 	)
 }
 
@@ -844,19 +835,17 @@ func (em *ErrorManager) RecordDuplicateOnce(
 	ctx context.Context,
 	logger log.Logger,
 	tableName string,
-	indexName string,
-	keyData string,
-	rowData string,
 	path string,
 	offset int64,
 	errMsg string,
 	rowID int64,
+	rowData string,
 ) {
 	ok := em.recordErrorOnce.CompareAndSwap(false, true)
 	if !ok {
 		return
 	}
-	err := em.recordDuplicate(ctx, logger, tableName, indexName, keyData, rowData, path, offset, errMsg, rowID)
+	err := em.recordDuplicate(ctx, logger, tableName, path, offset, errMsg, rowID, rowData)
 	if err != nil {
 		logger.Warn("meet error when record duplicate entry error", zap.Error(err))
 	}
