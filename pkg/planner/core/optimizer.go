@@ -287,6 +287,7 @@ func doOptimize(
 	if err != nil {
 		return nil, nil, 0, err
 	}
+
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
