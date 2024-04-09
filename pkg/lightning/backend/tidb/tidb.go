@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -799,24 +798,17 @@ stmtLoop:
 		firstRow := stmtTask.rows[0]
 
 		if isDupEntryError(err) {
-			keyData, indexName, err := retrieveKeyAndIndexNameFromDupEntryError(err)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
 			// rowID is ignored in tidb backend
 			if be.conflictCfg.Strategy == config.ErrorOnDup {
 				be.errorMgr.RecordDuplicateOnce(
 					ctx,
 					log.FromContext(ctx),
 					tableName,
-					indexName,
-					keyData,
-					firstRow.insertStmt,
 					firstRow.path,
 					firstRow.offset,
 					err.Error(),
 					0,
+					firstRow.insertStmt,
 				)
 				return err
 			}
@@ -824,13 +816,11 @@ stmtLoop:
 				ctx,
 				log.FromContext(ctx),
 				tableName,
-				indexName,
-				keyData,
-				firstRow.insertStmt,
 				firstRow.path,
 				firstRow.offset,
 				err.Error(),
 				0,
+				firstRow.insertStmt,
 			)
 		} else {
 			err = be.errorMgr.RecordTypeError(
@@ -860,25 +850,6 @@ func isDupEntryError(err error) bool {
 		return false
 	}
 	return merr.Number == errno.ErrDupEntry
-}
-
-func retrieveKeyAndIndexNameFromDupEntryError(err error) (string, string, error) {
-	tErr, ok := errors.Cause(err).(*terror.Error)
-	if !ok {
-		return "", "", err
-	}
-	if len(tErr.Args()) != 2 {
-		return "", "", err
-	}
-	key, keyIsByte := tErr.Args()[0].([]byte)
-	tableIndexName, tbIdxIsByte := tErr.Args()[1].([]byte)
-	if !keyIsByte || !tbIdxIsByte {
-		return "", "", err
-	}
-
-	indexName := strings.Split(string(tableIndexName), ".")[1]
-
-	return string(key), indexName, nil
 }
 
 // FlushEngine flushes the data in the engine to the underlying storage.
