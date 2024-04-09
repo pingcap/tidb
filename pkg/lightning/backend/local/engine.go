@@ -1368,8 +1368,9 @@ var errorUnorderedSSTInsertion = errors.New("inserting KVs into SST without orde
 
 type sstWriter struct {
 	*sstMeta
-	writer *sstable.Writer
-	logger log.Logger
+	writer  *sstable.Writer
+	lastKey []byte
+	logger  log.Logger
 }
 
 func newSSTWriter(path string, blockSize int) (*sstable.Writer, error) {
@@ -1401,9 +1402,8 @@ func (sw *sstWriter) writeKVs(kvs []common.KvPair) error {
 	internalKey := sstable.InternalKey{
 		Trailer: uint64(sstable.InternalKeyKindSet),
 	}
-	var lastKey []byte
 	for _, p := range kvs {
-		if bytes.Equal(p.Key, lastKey) {
+		if sw.lastKey != nil && bytes.Equal(p.Key, sw.lastKey) {
 			sw.logger.Warn("duplicated key found, skip write", logutil.Key("key", p.Key))
 			continue
 		}
@@ -1412,10 +1412,10 @@ func (sw *sstWriter) writeKVs(kvs []common.KvPair) error {
 			return errors.Trace(err)
 		}
 		sw.totalSize += int64(len(p.Key)) + int64(len(p.Val))
-		lastKey = p.Key
+		sw.lastKey = p.Key
 	}
 	sw.totalCount += int64(len(kvs))
-	sw.maxKey = append(sw.maxKey[:0], lastKey...)
+	sw.maxKey = append(sw.maxKey[:0], sw.lastKey...)
 	return nil
 }
 
