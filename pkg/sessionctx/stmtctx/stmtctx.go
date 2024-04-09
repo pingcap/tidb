@@ -175,6 +175,14 @@ type StatementContext struct {
 		dctx *distsqlctx.DistSQLContext
 	}
 
+	// rangerCtxCache is used to persist all variables and tools needed by the `ranger`
+	// this cache is set on `StatementContext` because it has to be updated after each statement.
+	// `rctx` uses `any` type to avoid cyclic dependency
+	rangerCtxCache struct {
+		init sync.Once
+		rctx any
+	}
+
 	// Set the following variables before execution
 	hint.StmtHints
 
@@ -1246,13 +1254,23 @@ func (sc *StatementContext) TypeCtxOrDefault() types.Context {
 }
 
 // GetOrInitDistSQLFromCache returns the `DistSQLContext` inside cache. If it didn't exist, return a new one created by
-// the `create` function. It uses the `any` to avoid cycle dependency.
-func (sc *StatementContext) GetOrInitDistSQLFromCache(create func() *distsqlctx.DistSQLContext) any {
+// the `create` function.
+func (sc *StatementContext) GetOrInitDistSQLFromCache(create func() *distsqlctx.DistSQLContext) *distsqlctx.DistSQLContext {
 	sc.distSQLCtxCache.init.Do(func() {
 		sc.distSQLCtxCache.dctx = create()
 	})
 
 	return sc.distSQLCtxCache.dctx
+}
+
+// GetOrInitRangerCtxFromCache returns the `RangerContext` inside cache. If it didn't exist, return a new one created by
+// the `create` function.
+func (sc *StatementContext) GetOrInitRangerCtxFromCache(create func() any) any {
+	sc.rangerCtxCache.init.Do(func() {
+		sc.rangerCtxCache.rctx = create()
+	})
+
+	return sc.rangerCtxCache.rctx
 }
 
 func newErrCtx(tc types.Context, otherLevels errctx.LevelMap, handler contextutil.WarnHandler) errctx.Context {

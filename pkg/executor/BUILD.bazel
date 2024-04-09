@@ -409,7 +409,6 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner",
-        "//pkg/planner/context",
         "//pkg/planner/core",
         "//pkg/planner/property",
         "//pkg/planner/util",

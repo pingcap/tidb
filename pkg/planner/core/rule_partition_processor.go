@@ -154,7 +154,7 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx PlanContext,
 		return nil, err
 	}
 	partCols, colLen := getPartColumnsForHashPartition(hashExpr)
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(GetRangerCtx(ctx), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx.GetRangerCtx(), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +270,7 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx PlanContext,
 	partExpr := tbl.(partitionTable).PartitionExpr()
 	partCols, colLen := partExpr.GetPartColumnsForKeyPartition(columns)
 	pe := &tables.ForKeyPruning{KeyPartCols: partCols}
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(GetRangerCtx(ctx), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx.GetRangerCtx(), conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, err
 	}
@@ -727,7 +727,7 @@ func (l *listPartitionPruner) detachCondAndBuildRange(conds []expression.Express
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
 
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(GetRangerCtx(l.ctx), conds, cols, colLen, l.ctx.GetSessionVars().RangeMaxSize)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(l.ctx.GetRangerCtx(), conds, cols, colLen, l.ctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, err
 	}
@@ -1226,7 +1226,7 @@ func multiColumnRangeColumnsPruner(sctx PlanContext, exprs []expression.Expressi
 		lens = append(lens, columnsPruner.partCols[i].RetType.GetFlen())
 	}
 
-	res, err := ranger.DetachCondAndBuildRangeForIndex(GetRangerCtx(sctx), exprs, columnsPruner.partCols, lens, sctx.GetSessionVars().RangeMaxSize)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), exprs, columnsPruner.partCols, lens, sctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return fullRange(len(columnsPruner.lessThan))
 	}

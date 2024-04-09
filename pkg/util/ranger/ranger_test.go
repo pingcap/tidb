@@ -259,7 +259,7 @@ func TestTableRange(t *testing.T) {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session()
-			rctx := plannercore.GetRangerCtx(sctx.GetPlanCtx())
+			rctx := sctx.GetRangerCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -457,7 +457,7 @@ create table t(
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session()
-			rctx := plannercore.GetRangerCtx(sctx.GetPlanCtx())
+			rctx := sctx.GetRangerCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -819,7 +819,7 @@ func TestColumnRange(t *testing.T) {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session()
-			rctx := plannercore.GetRangerCtx(sctx.GetPlanCtx())
+			rctx := sctx.GetRangerCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -977,7 +977,7 @@ func TestIndexRangeForYear(t *testing.T) {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session()
-			rctx := plannercore.GetRangerCtx(sctx.GetPlanCtx())
+			rctx := sctx.GetRangerCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -1046,7 +1046,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 		t.Run(tt.exprStr, func(t *testing.T) {
 			sql := "select * from t where " + tt.exprStr
 			sctx := testKit.Session()
-			rctx := plannercore.GetRangerCtx(sctx.GetPlanCtx())
+			rctx := sctx.GetRangerCtx()
 			stmts, err := session.Parse(sctx, sql)
 			require.NoError(t, err)
 			require.Len(t, stmts, 1)
@@ -1411,7 +1411,7 @@ create table t(
 			}
 			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(plannercore.GetRangerCtx(sctx.GetPlanCtx()), conds, cols, lengths, 0)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
 			require.NoError(t, err)
 			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
 			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
@@ -1819,7 +1819,7 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	}
 
 	for _, tt := range test {
-		newConds, _ := ranger.AddExpr4EqAndInCondition(plannercore.GetRangerCtx(sctx.GetPlanCtx()), tt.inputConds, shardIndexCols)
+		newConds, _ := ranger.AddExpr4EqAndInCondition(sctx.GetRangerCtx(), tt.inputConds, shardIndexCols)
 		require.Equal(t, fmt.Sprintf("%s", newConds), tt.outputConds)
 	}
 }
@@ -1860,7 +1860,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	sctx := tk.Session()
-	rctx := plannercore.GetRangerCtx(sctx.GetPlanCtx())
+	rctx := sctx.GetRangerCtx()
 
 	// test CNF condition
 	sql := "select * from t1 where a in (10,20,30) and b in (40,50,60) and c >= 70 and c <= 80"
@@ -2103,7 +2103,7 @@ func TestRangeFallbackForBuildTableRange(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	sctx := tk.Session()
-	rctx := plannercore.GetRangerCtx(sctx.GetPlanCtx())
+	rctx := sctx.GetRangerCtx()
 	sql := "select * from t where a in (10,20,30,40,50)"
 	selection := getSelectionFromQuery(t, sctx, sql)
 	conds := selection.Conditions
@@ -2138,7 +2138,7 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	sctx := tk.Session()
-	rctx := plannercore.GetRangerCtx(sctx.GetPlanCtx())
+	rctx := sctx.GetRangerCtx()
 	sql := "select * from t where a in ('aaa','bbb','ccc','ddd','eee')"
 	selection := getSelectionFromQuery(t, sctx, sql)
 	conds := selection.Conditions
@@ -2282,7 +2282,7 @@ create table t(
 		}
 		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		require.NotNil(t, cols)
-		res, err := ranger.DetachCondAndBuildRangeForIndex(plannercore.GetRangerCtx(sctx.GetPlanCtx()), conds, cols, lengths, 0)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
 		require.NoError(t, err)
 		require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds), fmt.Sprintf("wrong access conditions for expr: %s", tt.exprStr))
 		require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds), fmt.Sprintf("wrong filter conditions for expr: %s", tt.exprStr))

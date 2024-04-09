@@ -127,7 +127,7 @@ WHERE
 	b.ResetTimer()
 	pctx := sctx.GetPlanCtx()
 	for i := 0; i < b.N; i++ {
-		_, err = ranger.DetachCondAndBuildRangeForIndex(plannercore.GetRangerCtx(pctx), conds, cols, lengths, 0)
+		_, err = ranger.DetachCondAndBuildRangeForIndex(pctx.GetRangerCtx(), conds, cols, lengths, 0)
 		require.NoError(b, err)
 	}
 	b.StopTimer()

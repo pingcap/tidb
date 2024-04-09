@@ -328,7 +328,7 @@ OUTER:
 		}
 
 		dnfItems := expression.FlattenDNFConditions(scalarCond)
-		dnfItems = ranger.MergeDNFItems4Col(context.GetRangerCtx(ctx), dnfItems)
+		dnfItems = ranger.MergeDNFItems4Col(ctx.GetRangerCtx(), dnfItems)
 		// If the conditions only contain a single column, we won't handle them.
 		if len(dnfItems) <= 1 {
 			continue
@@ -697,8 +697,8 @@ func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, ra
 	var accessConds, remainedConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
-		accessConds = ranger.ExtractAccessConditionsForColumn(context.GetRangerCtx(ctx), exprs, cols[0])
-		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, context.GetRangerCtx(ctx), cols[0].RetType,
+		accessConds = ranger.ExtractAccessConditionsForColumn(ctx.GetRangerCtx(), exprs, cols[0])
+		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx.GetRangerCtx(), cols[0].RetType,
 			types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {
@@ -707,7 +707,7 @@ func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, ra
 			break
 		}
 		var res *ranger.DetachRangeResult
-		res, err = ranger.DetachCondAndBuildRangeForIndex(context.GetRangerCtx(ctx), exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
+		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx.GetRangerCtx(), exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
 		if err != nil {
 			return 0, nil, false, err
 		}

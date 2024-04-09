@@ -159,7 +159,7 @@ func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexSca
 		access = append(access, newCond)
 	}
 	// All of access conditions must be used to build ranges, so we don't limit range memory usage.
-	ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(plannercore.GetRangerCtx(ctx.GetPlanCtx()), access, idxCols, colLens, 0)
+	ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(ctx.GetRangerCtx(), access, idxCols, colLens, 0)
 	return ranges, err
 }
 

@@ -198,7 +198,7 @@ func (*PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 	if ts.HandleCols == nil {
 		return nil, false, false, nil
 	}
-	accesses, remained := ranger.DetachCondsForColumn(context.GetRangerCtx(ts.SCtx()), sel.Conditions, ts.HandleCols.GetCol(0))
+	accesses, remained := ranger.DetachCondsForColumn(ts.SCtx().GetRangerCtx(), sel.Conditions, ts.HandleCols.GetCol(0))
 	if accesses == nil {
 		return nil, false, false, nil
 	}
@@ -260,7 +260,7 @@ func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		copy(conditions, sel.Conditions)
 		copy(conditions[len(sel.Conditions):], is.AccessConds)
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(context.GetRangerCtx(is.SCtx()), conditions, is.IdxCols, is.IdxColLens, is.SCtx().GetSessionVars().RangeMaxSize)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(is.SCtx().GetRangerCtx(), conditions, is.IdxCols, is.IdxColLens, is.SCtx().GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, false, false, err
 	}

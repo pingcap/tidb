@@ -119,7 +119,7 @@ func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorC
 	pctx := sctx.GetPlanCtx()
 	return tableReaderExecutorContext{
 		dctx:           sctx.GetDistSQLCtx(),
-		rctx:           planctx.GetRangerCtx(pctx),
+		rctx:           pctx.GetRangerCtx(),
 		pctx:           pctx,
 		ectx:           sctx.GetExprCtx(),
 		stmtMemTracker: sctx.GetSessionVars().StmtCtx.MemTracker,

@@ -1631,7 +1631,7 @@ func detachCondAndBuildRangeForPath(
 		path.TableFilters = conds
 		return nil
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(GetRangerCtx(sctx), conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return err
 	}
@@ -1724,7 +1724,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	// for cnf condition combination, c=1 and c=2 and (1 member of (a)),
 	// c=1 and c=2 will derive invalid range represented by an access condition as constant of 0 (false).
 	// later this constant of 0 will be built as empty range.
-	path.AccessConds, path.TableFilters = ranger.DetachCondsForColumn(GetRangerCtx(ds.SCtx()), conds, pkCol)
+	path.AccessConds, path.TableFilters = ranger.DetachCondsForColumn(ds.SCtx().GetRangerCtx(), conds, pkCol)
 	// If there's no access cond, we try to find that whether there's expression containing correlated column that
 	// can be used to access data.
 	corColInAccessConds := false
@@ -1761,7 +1761,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 		return nil
 	}
 	var remainedConds []expression.Expression
-	path.Ranges, path.AccessConds, remainedConds, err = ranger.BuildTableRange(path.AccessConds, GetRangerCtx(ds.SCtx()), pkCol.RetType, ds.SCtx().GetSessionVars().RangeMaxSize)
+	path.Ranges, path.AccessConds, remainedConds, err = ranger.BuildTableRange(path.AccessConds, ds.SCtx().GetRangerCtx(), pkCol.RetType, ds.SCtx().GetSessionVars().RangeMaxSize)
 	path.TableFilters = append(path.TableFilters, remainedConds...)
 	if err != nil {
 		return err
