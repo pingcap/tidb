@@ -865,7 +865,7 @@ func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Exp
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
 		ctx.SetSkipPlanCache(errors.NewNoStackError("%v affects null check"))
 	}
-	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
+	if ctx.IsInNullRejectCheck() {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
 		return expr
 	}
@@ -1022,7 +1022,7 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, 
 		newCol := &Column{
 			RetType:  col.FieldType.Clone(),
 			ID:       col.ID,
-			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: ctx.AllocPlanColumnID(),
 			Index:    col.Offset,
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
