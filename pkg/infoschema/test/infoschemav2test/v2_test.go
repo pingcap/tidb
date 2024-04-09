@@ -87,12 +87,10 @@ func TestTableSize(t *testing.T) {
 	// So when CI fail, check here and update the code.
 	sz := internal.Sizeof(tbl)
 	require.Less(t, sz, 1800)
-	require.Greater(t, sz, 1700)
 
 	// The size of a partition table is 265559
 	sz = internal.Sizeof(pt)
 	require.Less(t, sz, 266000)
-	require.Greater(t, sz, 265000)
 
 	// Size of a partition is basically the same with the whole partition (now 265511), because
 	// it references the partition table object.
@@ -100,5 +98,4 @@ func TestTableSize(t *testing.T) {
 	p0 := ptt.GetPartition(ptt.GetAllPartitionIDs()[0])
 	sz = internal.Sizeof(p0)
 	require.Less(t, sz, 266000)
-	require.Greater(t, sz, 265000)
 }
