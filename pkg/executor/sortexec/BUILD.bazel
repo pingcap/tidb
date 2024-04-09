@@ -3,6 +3,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "sortexec",
     srcs = [
+        "multi_way_merge.go",
+        "parallel_sort_spill_helper.go",
         "parallel_sort_worker.go",
         "sort.go",
         "sort_partition.go",
@@ -20,6 +22,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/channel",
         "//pkg/util/chunk",
         "//pkg/util/disk",
         "//pkg/util/logutil",
@@ -36,7 +39,7 @@ go_test(
     timeout = "short",
     srcs = ["sort_test.go"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 10,
     deps = [
         "//pkg/config",
         "//pkg/sessionctx/variable",
@@ -52,6 +55,7 @@ go_test(
     timeout = "short",
     srcs = [
         "benchmark_test.go",
+        "parallel_sort_spill_test.go",
         "parallel_sort_test.go",
         "sort_spill_test.go",
         "sort_test.go",

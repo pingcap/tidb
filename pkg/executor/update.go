@@ -285,7 +285,8 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 			}
 		}
 		txn, err := e.Ctx().Txn(true)
-		if err == nil {
+		// pipelined dml may already flush in background, don't touch it to avoid race.
+		if err == nil && !txn.IsPipelined() {
 			sc := e.Ctx().GetSessionVars().StmtCtx
 			txn.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 			if sc.KvExecCounter != nil {
@@ -355,7 +356,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 			continue
 		}
 		con := assign.Expr.(*expression.Constant)
-		val, err := con.Eval(e.Ctx().GetExprCtx(), emptyRow)
+		val, err := con.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), emptyRow)
 		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}
@@ -382,7 +383,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
 			continue
 		}
-		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx(), e.evalBuffer.ToRow())
+		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), e.evalBuffer.ToRow())
 		if err != nil {
 			return nil, err
 		}
@@ -411,7 +412,7 @@ func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datu
 		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
 			continue
 		}
-		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx(), e.evalBuffer.ToRow())
+		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), e.evalBuffer.ToRow())
 		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}

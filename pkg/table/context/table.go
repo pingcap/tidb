@@ -32,7 +32,7 @@ var _ AllocatorContext = MutateContext(nil)
 type MutateContext interface {
 	AllocatorContext
 	// GetExprCtx returns the context to build or evaluate expressions
-	GetExprCtx() exprctx.BuildContext
+	GetExprCtx() exprctx.ExprContext
 	// Value returns the value associated with this context for key.
 	Value(key fmt.Stringer) any
 	// GetSessionVars returns the session variables.
@@ -45,7 +45,7 @@ type MutateContext interface {
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
 	// GetDomainInfoSchema returns the latest information schema in domain
-	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
 	// TxnRecordTempTable record the temporary table to the current transaction.
 	// This method will be called when the temporary table is modified or should allocate id in the transaction.
 	TxnRecordTempTable(tbl *model.TableInfo) tableutil.TempTable

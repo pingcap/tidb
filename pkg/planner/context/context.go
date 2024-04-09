@@ -23,14 +23,19 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // PlanContext is the context for building plan.
 type PlanContext interface {
 	contextutil.ValueStoreContext
 	tablelock.TableLockReadContext
+	// GetSQLExecutor gets the SQLExecutor.
+	GetSQLExecutor() sqlexec.SQLExecutor
+	// GetRestrictedSQLExecutor gets the RestrictedSQLExecutor.
+	GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor
 	// GetExprCtx gets the expression context.
-	GetExprCtx() exprctx.BuildContext
+	GetExprCtx() exprctx.ExprContext
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 	// GetSessionVars gets the session variables.
@@ -38,9 +43,9 @@ type PlanContext interface {
 	// GetDomainInfoSchema returns the latest information schema in domain
 	// Different with `domain.InfoSchema()`, the information schema returned by this method
 	// includes the temporary table definitions stored in session
-	GetDomainInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetDomainInfoSchema() infoschema.MetaOnlyInfoSchema
 	// GetInfoSchema returns the current infoschema
-	GetInfoSchema() infoschema.InfoSchemaMetaVersion
+	GetInfoSchema() infoschema.MetaOnlyInfoSchema
 	// UpdateColStatsUsage updates the column stats usage.
 	UpdateColStatsUsage(predicateColumns []model.TableItemID)
 	// GetClient gets a kv.Client.

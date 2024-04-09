@@ -16,7 +16,6 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
-        "//br/pkg/lightning/backend/local",
         "//br/pkg/mock",
         "//br/pkg/mock/mocklocal",
         "//br/pkg/streamhelper",
@@ -32,6 +31,7 @@ go_test(
         "//pkg/executor",
         "//pkg/executor/importer",
         "//pkg/kv",
+        "//pkg/lightning/backend/local",
         "//pkg/parser/auth",
         "//pkg/parser/terror",
         "//pkg/session",

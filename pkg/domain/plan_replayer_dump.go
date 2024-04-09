@@ -621,7 +621,7 @@ func dumpSessionBindRecords(records []bindinfo.Bindings, zw *zip.Writer) error {
 }
 
 func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "show bindings")
+	recordSets, err := ctx.GetSQLExecutor().Execute(context.Background(), "show bindings")
 	if err != nil {
 		return err
 	}
@@ -645,7 +645,7 @@ func dumpSessionBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 }
 
 func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "show global bindings")
+	recordSets, err := ctx.GetSQLExecutor().Execute(context.Background(), "show global bindings")
 	if err != nil {
 		return err
 	}
@@ -671,7 +671,7 @@ func dumpGlobalBindings(ctx sessionctx.Context, zw *zip.Writer) error {
 func dumpEncodedPlan(ctx sessionctx.Context, zw *zip.Writer, encodedPlan string) error {
 	var recordSets []sqlexec.RecordSet
 	var err error
-	recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("select tidb_decode_plan('%s')", encodedPlan))
+	recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("select tidb_decode_plan('%s')", encodedPlan))
 	if err != nil {
 		return err
 	}
@@ -707,13 +707,13 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []
 		var recordSets []sqlexec.RecordSet
 		if isAnalyze {
 			// Explain analyze
-			recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain analyze %s", sql))
+			recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("explain analyze %s", sql))
 			if err != nil {
 				return nil, err
 			}
 		} else {
 			// Explain
-			recordSets, err = ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("explain %s", sql))
+			recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("explain %s", sql))
 			if err != nil {
 				return nil, err
 			}
@@ -759,7 +759,7 @@ func ExtractTableNames(ctx context.Context, sctx sessionctx.Context,
 	execStmts []ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,
-		executor: sctx.(sqlexec.RestrictedSQLExecutor),
+		executor: sctx.GetRestrictedSQLExecutor(),
 		is:       GetDomain(sctx).InfoSchema(),
 		curDB:    curDB,
 		names:    make(map[tableNamePair]struct{}),
@@ -789,7 +789,7 @@ func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*u
 }
 
 func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Context) error {
-	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.Background(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
+	recordSets, err := ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
 	if err != nil {
 		return err
 	}

@@ -18,13 +18,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net"
-	"net/http"
-	"net/http/pprof"
 	"testing"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -33,13 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/metricsutil"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/mock/gomock"
@@ -63,7 +55,7 @@ var (
 // bench.test -test.v -run ^$ -test.bench=BenchmarkSchedulerOverhead --with-tikv "upstream-pd:2379?disableGC=true"
 func BenchmarkSchedulerOverhead(b *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
-	statusWG := mockTiDBStatusPort(ctx, b)
+	statusWG := testkit.MockTiDBStatusPort(ctx, b, "10080")
 	defer func() {
 		cancel()
 		statusWG.Wait()
@@ -136,38 +128,6 @@ func prepareForBenchTest(b *testing.B) {
 	tk.MustExec("delete from mysql.tidb_global_task_history")
 	tk.MustExec("delete from mysql.tidb_background_subtask")
 	tk.MustExec("delete from mysql.tidb_background_subtask_history")
-}
-
-// we run this test on a k8s environment, so we need to mock the TiDB server status port
-// to have metrics.
-func mockTiDBStatusPort(ctx context.Context, b *testing.B) *util.WaitGroupWrapper {
-	var wg util.WaitGroupWrapper
-	err := metricsutil.RegisterMetrics()
-	terror.MustNil(err)
-	router := mux.NewRouter()
-	router.Handle("/metrics", promhttp.Handler())
-	serverMux := http.NewServeMux()
-	serverMux.Handle("/", router)
-	serverMux.HandleFunc("/debug/pprof/", pprof.Index)
-	serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	serverMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-
-	statusListener, err := net.Listen("tcp", "0.0.0.0:10080")
-	require.NoError(b, err)
-	statusServer := &http.Server{Handler: serverMux}
-	wg.RunWithLog(func() {
-		if err := statusServer.Serve(statusListener); err != nil {
-			b.Logf("status server serve failed: %v", err)
-		}
-	})
-	wg.RunWithLog(func() {
-		<-ctx.Done()
-		_ = statusServer.Close()
-	})
-
-	return &wg
 }
 
 func registerTaskTypeForBench(c *testutil.TestDXFContext) {

@@ -197,10 +197,7 @@ func GetStartTS(sctx sessionctx.Context) (uint64, error) {
 
 // Exec is a helper function to execute sql and return RecordSet.
 func Exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
-	sqlExec, ok := sctx.(sqlexec.SQLExecutor)
-	if !ok {
-		return nil, errors.Errorf("invalid sql executor")
-	}
+	sqlExec := sctx.GetSQLExecutor()
 	// TODO: use RestrictedSQLExecutor + ExecOptionUseCurSession instead of SQLExecutor
 	return sqlExec.ExecuteInternal(StatsCtx, sql, args...)
 }
@@ -214,19 +211,13 @@ func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Ro
 		}
 	}
 
-	sqlExec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		return nil, nil, errors.Errorf("invalid sql executor")
-	}
+	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(StatsCtx, UseCurrentSessionOpt, sql, args...)
 }
 
 // ExecWithOpts is a helper function to execute sql and return rows and fields.
 func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
-	sqlExec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		return nil, nil, errors.Errorf("invalid sql executor")
-	}
+	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(StatsCtx, opts, sql, args...)
 }
 

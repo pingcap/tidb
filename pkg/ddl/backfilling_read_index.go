@@ -23,12 +23,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -38,12 +38,14 @@ import (
 )
 
 type readIndexExecutor struct {
+	execute.StepExecFrameworkInfo
 	d       *ddl
 	job     *model.Job
 	indexes []*model.IndexInfo
 	ptbl    table.PhysicalTable
 	jc      *JobContext
 
+	avgRowSize      int
 	cloudStorageURI string
 
 	bc          ingest.BackendCtx
@@ -65,6 +67,7 @@ func newReadIndexExecutor(
 	jc *JobContext,
 	bcGetter func() (ingest.BackendCtx, error),
 	cloudStorageURI string,
+	avgRowSize int,
 ) (*readIndexExecutor, error) {
 	bc, err := bcGetter()
 	if err != nil {
@@ -78,6 +81,7 @@ func newReadIndexExecutor(
 		jc:              jc,
 		bc:              bc,
 		cloudStorageURI: cloudStorageURI,
+		avgRowSize:      avgRowSize,
 		curRowCount:     &atomic.Int64{},
 	}, nil
 }
@@ -102,11 +106,6 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	startKey, endKey, tbl, err := r.getTableStartEndKey(sm)
-	if err != nil {
-		return err
-	}
-
 	sessCtx, err := newSessCtx(
 		r.d.store, r.job.ReorgMeta.SQLMode, r.job.ReorgMeta.Location, r.job.ReorgMeta.ResourceGroupName)
 	if err != nil {
@@ -119,9 +118,9 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	var pipe *operator.AsyncPipeline
 	if len(r.cloudStorageURI) > 0 {
-		pipe, err = r.buildExternalStorePipeline(opCtx, subtask.ID, sessCtx, tbl, startKey, endKey, r.curRowCount)
+		pipe, err = r.buildExternalStorePipeline(opCtx, subtask.ID, sessCtx, sm, subtask.Concurrency)
 	} else {
-		pipe, err = r.buildLocalStorePipeline(opCtx, sessCtx, tbl, startKey, endKey, r.curRowCount)
+		pipe, err = r.buildLocalStorePipeline(opCtx, sessCtx, sm, subtask.Concurrency)
 	}
 	if err != nil {
 		return err
@@ -222,10 +221,13 @@ func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 func (r *readIndexExecutor) buildLocalStorePipeline(
 	opCtx *OperatorCtx,
 	sessCtx sessionctx.Context,
-	tbl table.PhysicalTable,
-	start, end kv.Key,
-	totalRowCount *atomic.Int64,
+	sm *BackfillSubTaskMeta,
+	concurrency int,
 ) (*operator.AsyncPipeline, error) {
+	start, end, tbl, err := r.getTableStartEndKey(sm)
+	if err != nil {
+		return nil, err
+	}
 	d := r.d
 	engines := make([]ingest.Engine, 0, len(r.indexes))
 	for _, index := range r.indexes {
@@ -240,17 +242,37 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewAddIndexIngestPipeline(
-		opCtx, d.store, d.sessPool, r.bc, engines, sessCtx, tbl, r.indexes, start, end, totalRowCount, counter, r.job.ReorgMeta)
+		opCtx,
+		d.store,
+		d.sessPool,
+		r.bc,
+		engines,
+		sessCtx,
+		r.job.ID,
+		tbl,
+		r.indexes,
+		start,
+		end,
+		r.curRowCount,
+		counter,
+		r.job.ReorgMeta,
+		r.avgRowSize,
+		concurrency,
+	)
 }
 
 func (r *readIndexExecutor) buildExternalStorePipeline(
 	opCtx *OperatorCtx,
 	subtaskID int64,
 	sessCtx sessionctx.Context,
-	tbl table.PhysicalTable,
-	start, end kv.Key,
-	totalRowCount *atomic.Int64,
+	sm *BackfillSubTaskMeta,
+	concurrency int,
 ) (*operator.AsyncPipeline, error) {
+	start, end, tbl, err := r.getTableStartEndKey(sm)
+	if err != nil {
+		return nil, err
+	}
+
 	d := r.d
 	onClose := func(summary *external.WriterSummary) {
 		sum, _ := r.subtaskSummary.Load(subtaskID)
@@ -278,8 +300,11 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		r.indexes,
 		start,
 		end,
-		totalRowCount,
+		r.curRowCount,
 		counter,
 		onClose,
-		r.job.ReorgMeta)
+		r.job.ReorgMeta,
+		r.avgRowSize,
+		concurrency,
+	)
 }

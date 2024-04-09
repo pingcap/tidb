@@ -39,7 +39,7 @@ This rule reorders results by modifying or injecting a Sort operator:
 type resultReorder struct {
 }
 
-func (rs *resultReorder) optimize(_ context.Context, lp LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (rs *resultReorder) optimize(_ context.Context, lp LogicalPlan, _ *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	ordered := rs.completeSort(lp)
 	if !ordered {

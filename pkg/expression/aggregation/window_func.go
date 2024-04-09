@@ -35,13 +35,13 @@ func NewWindowFuncDesc(ctx expression.BuildContext, name string, args []expressi
 	if !skipCheckArgs {
 		switch strings.ToLower(name) {
 		case ast.WindowFuncNthValue:
-			val, isNull, ok := expression.GetUint64FromConstant(ctx, args[1])
+			val, isNull, ok := expression.GetUint64FromConstant(ctx.GetEvalCtx(), args[1])
 			// nth_value does not allow `0`, but allows `null`.
 			if !ok || (val == 0 && !isNull) {
 				return nil, nil
 			}
 		case ast.WindowFuncNtile:
-			val, isNull, ok := expression.GetUint64FromConstant(ctx, args[0])
+			val, isNull, ok := expression.GetUint64FromConstant(ctx.GetEvalCtx(), args[0])
 			// ntile does not allow `0`, but allows `null`.
 			if !ok || (val == 0 && !isNull) {
 				return nil, nil
@@ -50,7 +50,7 @@ func NewWindowFuncDesc(ctx expression.BuildContext, name string, args []expressi
 			if len(args) < 2 {
 				break
 			}
-			_, isNull, ok := expression.GetUint64FromConstant(ctx, args[1])
+			_, isNull, ok := expression.GetUint64FromConstant(ctx.GetEvalCtx(), args[1])
 			if !ok || isNull {
 				return nil, nil
 			}
@@ -142,9 +142,9 @@ func WindowFuncToPBExpr(sctx expression.EvalContext, client kv.Client, desc *Win
 }
 
 // CanPushDownToTiFlash control whether a window function desc can be push down to tiflash.
-func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx expression.EvalContext, client kv.Client) bool {
+func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx expression.PushDownContext) bool {
 	// args
-	if !expression.CanExprsPushDown(ctx, s.Args, client, kv.TiFlash) {
+	if !expression.CanExprsPushDown(ctx, s.Args, kv.TiFlash) {
 		return false
 	}
 	// window functions

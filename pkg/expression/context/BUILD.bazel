@@ -10,12 +10,12 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/errctx",
-        "//pkg/infoschema/context",
-        "//pkg/kv",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
+        "//pkg/util/intest",
+        "//pkg/util/mathutil",
     ],
 )
 
@@ -25,6 +25,6 @@ go_test(
     srcs = ["optional_test.go"],
     embed = [":context"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 3,
     deps = ["@com_github_stretchr_testify//require"],
 )
