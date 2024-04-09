@@ -38,7 +38,7 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 		return plan, planChanged, nil
 	}
 	predicateNeeded := variable.EnableColumnTracking.Load()
-	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait
+	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
 	histNeeded := syncWait > 0
 	predicateColumns, histNeededColumns, visitedPhysTblIDs := CollectColumnStatsUsage(plan, predicateNeeded, histNeeded)
 	if len(predicateColumns) > 0 {

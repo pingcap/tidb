@@ -1001,7 +1001,7 @@ func newBatchPointGetPlan(
 				if err != nil {
 					return nil
 				}
-				d, err = con.Eval(ctx.GetExprCtx(), chunk.Row{})
+				d, err = con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return nil
 				}
@@ -1116,7 +1116,7 @@ func newBatchPointGetPlan(
 					if err != nil {
 						return nil
 					}
-					d, err := con.Eval(ctx.GetExprCtx(), chunk.Row{})
+					d, err := con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 					if err != nil {
 						return nil
 					}
@@ -1155,7 +1155,7 @@ func newBatchPointGetPlan(
 			if err != nil {
 				return nil
 			}
-			d, err := con.Eval(ctx.GetExprCtx(), chunk.Row{})
+			d, err := con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return nil
 			}
@@ -1663,7 +1663,7 @@ func getNameValuePairs(ctx PlanContext, tbl *model.TableInfo, tblName model.CISt
 				if err != nil {
 					return nil, false
 				}
-				d, err = con.Eval(ctx.GetExprCtx(), chunk.Row{})
+				d, err = con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return nil, false
 				}
@@ -1677,7 +1677,7 @@ func getNameValuePairs(ctx PlanContext, tbl *model.TableInfo, tblName model.CISt
 				if err != nil {
 					return nil, false
 				}
-				d, err = con.Eval(ctx.GetExprCtx(), chunk.Row{})
+				d, err = con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return nil, false
 				}

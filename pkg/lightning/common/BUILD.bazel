@@ -112,7 +112,7 @@ go_test(
     ],
     embed = [":common"],
     flaky = True,
-    shard_count = 30,
+    shard_count = 29,
     deps = [
         "//br/pkg/errors",
         "//pkg/ddl",

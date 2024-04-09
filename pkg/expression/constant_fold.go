@@ -52,12 +52,12 @@ func isNullHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 	arg0 := expr.GetArgs()[0]
 	if constArg, isConst := arg0.(*Constant); isConst {
 		isDeferredConst := constArg.DeferredExpr != nil || constArg.ParamMarker != nil
-		value, err := expr.Eval(ctx, chunk.Row{})
+		value, err := expr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			// Failed to fold this expr to a constant, print the DEBUG log and
 			// return the original expression to let the error to be evaluated
 			// again, in that time, the error is returned to the client.
-			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", expr.ExplainInfo(ctx)), zap.Error(err))
+			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", expr.ExplainInfo(ctx.GetEvalCtx())), zap.Error(err))
 			return expr, isDeferredConst
 		}
 		if isDeferredConst {
@@ -75,12 +75,12 @@ func ifFoldHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
 	args := expr.GetArgs()
 	foldedArg0, _ := foldConstant(ctx, args[0])
 	if constArg, isConst := foldedArg0.(*Constant); isConst {
-		arg0, isNull0, err := constArg.EvalInt(ctx, chunk.Row{})
+		arg0, isNull0, err := constArg.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			// Failed to fold this expr to a constant, print the DEBUG log and
 			// return the original expression to let the error to be evaluated
 			// again, in that time, the error is returned to the client.
-			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", expr.ExplainInfo(ctx)), zap.Error(err))
+			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", expr.ExplainInfo(ctx.GetEvalCtx())), zap.Error(err))
 			return expr, false
 		}
 		if !isNull0 && arg0 != 0 {
@@ -129,7 +129,7 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 		// If the condition is const and true, and the previous conditions
 		// has no expr, then the folded execution body is returned, otherwise
 		// the arguments of the casewhen are folded and replaced.
-		val, isNull, err := args[i].EvalInt(ctx, chunk.Row{})
+		val, isNull, err := args[i].EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return expr, false
 		}
@@ -209,7 +209,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 			if err != nil {
 				return expr, isDeferredConst
 			}
-			value, err := dummyScalarFunc.Eval(ctx, chunk.Row{})
+			value, err := dummyScalarFunc.Eval(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return expr, isDeferredConst
 			}
@@ -220,7 +220,8 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 				// of Constant to nil is ok.
 				return &Constant{Value: value, RetType: x.RetType}, false
 			}
-			if isTrue, err := value.ToBool(sc.TypeCtx()); err == nil && isTrue == 0 {
+			evalCtx := ctx.GetEvalCtx()
+			if isTrue, err := value.ToBool(evalCtx.TypeCtx()); err == nil && isTrue == 0 {
 				// This Constant is created to compose the result expression of EvaluateExprWithNull when InNullRejectCheck
 				// is true. We just check whether the result expression is null or false and then let it die. Basically,
 				// the constant is used once briefly and will not be retained for a long time. Hence setting DeferredExpr
@@ -229,7 +230,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 			}
 			return expr, isDeferredConst
 		}
-		value, err := x.Eval(ctx, chunk.Row{})
+		value, err := x.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		retType := x.RetType.Clone()
 		if !hasNullArg {
 			// set right not null flag for constant value
@@ -241,7 +242,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 			}
 		}
 		if err != nil {
-			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", x.ExplainInfo(ctx)), zap.Error(err))
+			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", x.ExplainInfo(ctx.GetEvalCtx())), zap.Error(err))
 			return expr, isDeferredConst
 		}
 		if isDeferredConst {
@@ -257,9 +258,9 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 				ParamMarker:  x.ParamMarker,
 			}, true
 		} else if x.DeferredExpr != nil {
-			value, err := x.DeferredExpr.Eval(ctx, chunk.Row{})
+			value, err := x.DeferredExpr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
-				logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", x.ExplainInfo(ctx)), zap.Error(err))
+				logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", x.ExplainInfo(ctx.GetEvalCtx())), zap.Error(err))
 				return expr, true
 			}
 			return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x.DeferredExpr}, true

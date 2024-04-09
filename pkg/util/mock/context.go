@@ -177,16 +177,6 @@ func (c *Context) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
 	return c
 }
 
-// SetDiskFullOpt sets allowed options of current operation in each TiKV disk usage level.
-func (c *Context) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	c.level = level
-}
-
-// ClearDiskFullOpt clears allowed options of current operation in each TiKV disk usage level.
-func (c *Context) ClearDiskFullOpt() {
-	c.level = kvrpcpb.DiskFullOpt_NotAllowedOnFull
-}
-
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
 func (*Context) ExecuteInternal(_ context.Context, _ string, _ ...any) (sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Supported")
@@ -239,7 +229,7 @@ func (c *Context) GetPlanCtx() planctx.PlanContext {
 }
 
 // GetExprCtx returns the expression context of the session.
-func (c *Context) GetExprCtx() exprctx.BuildContext {
+func (c *Context) GetExprCtx() exprctx.ExprContext {
 	return c
 }
 

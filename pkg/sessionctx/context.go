@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -69,10 +68,6 @@ type Context interface {
 	SessionStatesHandler
 	contextutil.ValueStoreContext
 	tablelock.TableLockContext
-	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
-	// ClearDiskFullOpt clear the disk full opt.
-	ClearDiskFullOpt()
 	// RollbackTxn rolls back the current transaction.
 	RollbackTxn(ctx context.Context)
 	// CommitTxn commits the current transaction.
@@ -108,7 +103,7 @@ type Context interface {
 	GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor
 
 	// GetExprCtx returns the expression context of the session.
-	GetExprCtx() exprctx.BuildContext
+	GetExprCtx() exprctx.ExprContext
 
 	// GetTableCtx returns the table.MutateContext
 	GetTableCtx() tbctx.MutateContext

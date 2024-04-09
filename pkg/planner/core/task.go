@@ -1432,7 +1432,7 @@ func BuildFinalModeAggregation(
 				// 1. add all args to partial.GroupByItems
 				foundInGroupBy := false
 				for j, gbyExpr := range partial.GroupByItems {
-					if gbyExpr.Equal(sctx.GetExprCtx(), distinctArg) && gbyExpr.GetType().Equal(distinctArg.GetType()) {
+					if gbyExpr.Equal(sctx.GetExprCtx().GetEvalCtx(), distinctArg) && gbyExpr.GetType().Equal(distinctArg.GetType()) {
 						// if the two expressions exactly the same in terms of data types and collation, then can avoid it.
 						foundInGroupBy = true
 						ret = partialGbySchema.Columns[j]
@@ -1896,7 +1896,7 @@ func RemoveUnnecessaryFirstRow(
 				if _, ok := gbyExpr.(*expression.Constant); ok {
 					continue
 				}
-				if gbyExpr.Equal(sctx.GetExprCtx(), aggFunc.Args[0]) {
+				if gbyExpr.Equal(sctx.GetExprCtx().GetEvalCtx(), aggFunc.Args[0]) {
 					canOptimize = true
 					firstRowFuncMap[aggFunc].Args[0] = finalGbyItems[j]
 					break
