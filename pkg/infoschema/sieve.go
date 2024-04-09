@@ -39,7 +39,7 @@ func (t *entry[K, V]) Size() int {
 	return t.size
 }
 
-// SIEVE is an efficient turn-Key eviction algorithm for web caches.
+// Sieve is an efficient turn-Key eviction algorithm for web caches.
 // See blog post https://cachemon.github.io/SIEVE-website/blog/2023/12/17/sieve-is-simpler-than-lru/
 // and also the academic paper "SIEVE is simpler than LRU"
 type Sieve[K comparable, V any] struct {
