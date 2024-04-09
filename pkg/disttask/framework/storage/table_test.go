@@ -690,7 +690,6 @@ func TestGetSubtaskCntByStates(t *testing.T) {
 	require.Equal(t, int64(1), cntByStates[proto.SubtaskStateFailed])
 }
 
-// ywq todo test refine
 func TestDistFrameworkMeta(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 
@@ -737,6 +736,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
+		{ID: ":4001", Role: "", CPUCount: 8},
 		{ID: ":4002", Role: "background", CPUCount: 100},
 		{ID: ":4003", Role: "background", CPUCount: 100},
 	}, nodes)
@@ -745,6 +745,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
+		{ID: ":4001", Role: "", CPUCount: 8},
 		{ID: ":4002", Role: "background", CPUCount: 100},
 	}, nodes)
 
@@ -762,6 +763,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
+		{ID: ":4001", Role: "", CPUCount: 8},
 		{ID: ":4002", Role: "background", CPUCount: 100},
 	}, nodes)
 	// should not reset role
@@ -769,6 +771,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
+		{ID: ":4001", Role: "", CPUCount: 8},
 		{ID: ":4002", Role: "background", CPUCount: 100},
 	}, nodes)
 }
