@@ -82,25 +82,25 @@ run_sql 'SELECT COUNT(*) FROM mytest.testtbl'
 check_contains "COUNT(*): ${remaining_row_count}"
 
 # import a fourth time
-run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_records'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_records_v2'
 ! run_lightning --backend local --config "${mydir}/ignore_config.toml"
 [ $? -eq 0 ]
 tail -n 10 $TEST_DIR/lightning.log | grep "ERROR" | tail -n 1 | grep -Fq "[Lightning:Config:ErrInvalidConfig]conflict.strategy cannot be set to \\\"ignore\\\" when use tikv-importer.backend = \\\"local\\\""
 
-# Check tidb backend record duplicate entry in conflict_records table
-run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_records'
+# Check tidb backend record duplicate entry in conflict_records_v2 table
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_records_v2'
 run_lightning --backend tidb --config "${mydir}/tidb.toml"
-run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_records'
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_records_v2'
 check_contains "COUNT(*): 15"
-run_sql 'SELECT * FROM lightning_task_info.conflict_records WHERE offset = 149'
+run_sql 'SELECT * FROM lightning_task_info.conflict_records_v2 WHERE offset = 149'
 check_contains "error: Error 1062 (23000): Duplicate entry '5' for key 'testtbl.PRIMARY'"
 check_contains "row_data: ('5','bbb05')"
 
-# Check max-error-record can limit the size of conflict_records table
+# Check max-error-record can limit the size of conflict_records_v2 table
 run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
 run_sql 'DROP DATABASE IF EXISTS mytest'
 run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml" 2>&1 | grep "\`lightning_task_info\`.\`conflict_error_v3\`" | grep -q "5"
-run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_records'
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_records_v2'
 check_contains "COUNT(*): 5"
 
 # Check conflict.threshold
@@ -116,8 +116,8 @@ run_sql 'DROP DATABASE IF EXISTS mytest'
 rm "${TEST_DIR}/lightning.log"
 run_lightning --backend tidb --config "${mydir}/tidb-error.toml" 2>&1 | grep -q "Error 1062 (23000): Duplicate entry '1' for key 'testtbl.PRIMARY'"
 check_contains "Error 1062 (23000): Duplicate entry '1' for key 'testtbl.PRIMARY'" "${TEST_DIR}/lightning.log"
-run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_records'
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_records_v2'
 check_contains "COUNT(*): 1"
-run_sql 'SELECT * FROM lightning_task_info.conflict_records'
+run_sql 'SELECT * FROM lightning_task_info.conflict_records_v2'
 check_contains "error: Error 1062 (23000): Duplicate entry '1' for key 'testtbl.PRIMARY'"
 check_contains "row_data: ('1','bbb01')"

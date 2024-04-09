@@ -55,7 +55,7 @@ const (
 	// ConflictErrorTableName is the table name for duplicate detection.
 	ConflictErrorTableName = "conflict_error_v3"
 	// DupRecordTable is the table name to record duplicate data that displayed to user.
-	DupRecordTable = "conflict_records"
+	DupRecordTable = "conflict_records_v2"
 
 	createSyntaxErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + syntaxErrorTableName + ` (
@@ -83,6 +83,7 @@ const (
 
 	createConflictErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + ConflictErrorTableName + ` (
+			is_precheck_conflict tinyint(1) NOT NULL DEFAULT 0,
 			task_id              bigint NOT NULL,
 			create_time          datetime(6) NOT NULL DEFAULT now(6),
 			table_name           varchar(261) NOT NULL,
@@ -94,7 +95,6 @@ const (
 			raw_handle           mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
 			raw_row              mediumblob NOT NULL COMMENT 'the data retrieved from the handle',
 			is_data_kv           tinyint(1) NOT NULL,
-			is_precheck_conflict tinyint(1) NOT NULL DEFAULT 0,
 			INDEX (task_id, table_name),
 			INDEX (index_name),
 			INDEX (table_name, index_name),
@@ -104,15 +104,17 @@ const (
 
 	createDupRecordTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + DupRecordTable + ` (
-			task_id     bigint NOT NULL,
-			create_time datetime(6) NOT NULL DEFAULT now(6),
-			table_name  varchar(261) NOT NULL,
-			path        varchar(2048) NOT NULL,
-			offset      bigint NOT NULL,
-			error       text NOT NULL,
-			row_id 	    bigint NOT NULL COMMENT 'the row id of the conflicted row',
-			row_data    text NOT NULL COMMENT 'the row data of the conflicted row',
-			KEY (task_id, table_name)
+			is_precheck_conflict tinyint(1) NOT NULL DEFAULT 1,
+			task_id              bigint NOT NULL,
+			create_time          datetime(6) NOT NULL DEFAULT now(6),
+			table_name           varchar(261) NOT NULL,
+			path                 varchar(2048) NOT NULL,
+			offset               bigint NOT NULL,
+			error                text NOT NULL,
+			row_id 	             bigint NOT NULL COMMENT 'the row id of the conflicted row',
+			row_data             text NOT NULL COMMENT 'the row data of the conflicted row',
+			INDEX (task_id, table_name),
+			INDEX (is_precheck_conflict)
 		);
 	`
 
@@ -124,21 +126,21 @@ const (
 
 	insertIntoConflictErrorData = `
 		INSERT INTO %s.` + ConflictErrorTableName + `
-		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle,
-		raw_row, is_data_kv, is_precheck_conflict)
+		(is_precheck_conflict, task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle,
+		raw_row, is_data_kv)
 		VALUES
 	`
 
-	sqlValuesConflictErrorData = "(?,?,'PRIMARY',?,?,?,?,raw_key,raw_value,?,0)"
+	sqlValuesConflictErrorData = "(0,?,?,'PRIMARY',?,?,?,?,raw_key,raw_value,?)"
 
 	insertIntoConflictErrorIndex = `
 		INSERT INTO %s.` + ConflictErrorTableName + `
-		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle,
-		raw_row, is_data_kv, is_precheck_conflict)
+		(is_precheck_conflict, task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle,
+		raw_row, is_data_kv)
 		VALUES
 	`
 
-	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?,?,0)"
+	sqlValuesConflictErrorIndex = "(0,?,?,?,?,?,?,?,?,?,?)"
 
 	selectIndexConflictKeysReplace = `
 		SELECT raw_key, index_name, raw_value, raw_handle
@@ -161,8 +163,8 @@ const (
 
 	insertIntoDupRecord = `
 		INSERT INTO %s.` + DupRecordTable + `
-		(task_id, table_name, path, offset, error, row_id, row_data)
-		VALUES (?, ?, ?, ?, ?, ?, ?);
+		(is_precheck_conflict, task_id, table_name, path, offset, error, row_id, row_data)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?);
 	`
 )
 
