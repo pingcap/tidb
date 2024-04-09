@@ -108,7 +108,7 @@ func TestMaintainManagedNodes(t *testing.T) {
 		{ID: ":4001", CPUCount: 100},
 	}, nil)
 	nodeMgr.refreshNodes(ctx, mockTaskMgr, slotMgr)
-	require.Equal(t, []string{":4000", ":4001"}, nodeMgr.getNodes())
+	require.Equal(t, []proto.ManagedNode{{ID: ":4000", Role: "", CPUCount: 100}, {ID: ":4001", Role: "", CPUCount: 100}}, nodeMgr.getNodes())
 	require.Equal(t, 100, int(slotMgr.capacity.Load()))
 	require.True(t, ctrl.Satisfied())
 	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return(nil, nil)
