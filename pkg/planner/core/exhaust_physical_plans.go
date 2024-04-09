@@ -2554,9 +2554,6 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 	newCols := make([]property.SortItem, 0, len(prop.SortItems))
 	for _, col := range prop.SortItems {
 		idx := p.schema.ColumnIndex(col.Col)
-		if idx == -1 {
-			logutil.BgLogger().Info("column not found in schema", zap.String("column", col.Col.String()))
-		}
 		switch expr := p.Exprs[idx].(type) {
 		case *expression.Column:
 			newCols = append(newCols, property.SortItem{Col: expr, Desc: col.Desc})
