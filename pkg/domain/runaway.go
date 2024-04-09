@@ -162,12 +162,12 @@ func (do *Domain) runawayStartLoop() {
 				return
 			}
 		}
-		count++
 		if count %= runawayLoopLogErrorIntervalCount; count == 0 {
 			logutil.BgLogger().Warn(
 				"failed to start runaway manager loop, please check whether the bootstrap or update is finished",
 				zap.Error(err))
 		}
+		count++
 	}
 }
 
@@ -202,10 +202,10 @@ func (do *Domain) runawayWatchSyncLoop() {
 		case <-runawayWatchSyncTicker.C:
 			err := do.updateNewAndDoneWatch()
 			if err != nil {
-				count++
 				if count %= runawayLoopLogErrorIntervalCount; count == 0 {
 					logutil.BgLogger().Warn("get runaway watch record failed", zap.Error(err))
 				}
+				count++
 			}
 		}
 	}
