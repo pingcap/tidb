@@ -319,7 +319,7 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 
 		cancel()
 
-		if err != nil && txnResp.Succeeded {
+		if err == nil && txnResp.Succeeded {
 			return nil
 		}
 
