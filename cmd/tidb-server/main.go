@@ -65,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	distroleutil "github.com/pingcap/tidb/pkg/util/distrole"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -676,15 +675,9 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 		cfg.KeyspaceName = *keyspaceName
 	}
 
+	// ywq todo check
 	if actualFlags[nmTiDBServiceScope] {
-		scope, ok := distroleutil.ToTiDBServiceScope(*serviceScope)
-		if !ok {
-			err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
-				*serviceScope,
-				nmTiDBServiceScope, `"", background`)
-			terror.MustNil(err)
-		}
-		cfg.Instance.TiDBServiceScope = scope
+		cfg.Instance.TiDBServiceScope = *serviceScope
 	}
 }
 

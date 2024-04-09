@@ -74,15 +74,17 @@ func (b *balancer) balance(ctx context.Context, sm *Manager) {
 	// we will use currUsedSlots to calculate adjusted eligible nodes during balance,
 	// it's initial value depends on the managed nodes, to have a consistent view,
 	// DO NOT call getManagedNodes twice during 1 balance.
-	managedNodes := b.nodeMgr.getManagedNodes()
+	managedNodes := b.nodeMgr.getNodes()
 	b.currUsedSlots = make(map[string]int, len(managedNodes))
 	for _, n := range managedNodes {
-		b.currUsedSlots[n] = 0
+		b.currUsedSlots[n.ID] = 0
 	}
 
 	schedulers := sm.getSchedulers()
 	for _, sch := range schedulers {
-		if err := b.balanceSubtasks(ctx, sch, managedNodes); err != nil {
+		// filter with sch.GetTask().TargetScope
+		nodeIDs := filterByScope(managedNodes, sch.GetTask().TargetScope)
+		if err := b.balanceSubtasks(ctx, sch, nodeIDs); err != nil {
 			b.logger.Warn("failed to balance subtasks",
 				zap.Int64("task-id", sch.GetTask().ID), llog.ShortError(err))
 			return

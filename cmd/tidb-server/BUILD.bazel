@@ -41,7 +41,6 @@ go_library(
         "//pkg/util/cpuprofile",
         "//pkg/util/deadlockhistory",
         "//pkg/util/disk",
-        "//pkg/util/distrole",
         "//pkg/util/domainutil",
         "//pkg/util/kvcache",
         "//pkg/util/logutil",

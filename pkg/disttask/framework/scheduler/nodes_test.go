@@ -98,23 +98,23 @@ func TestMaintainManagedNodes(t *testing.T) {
 
 	slotMgr := newSlotManager()
 	mockTaskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return(nil, errors.New("mock error"))
-	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr, slotMgr)
+	nodeMgr.refreshNodes(ctx, mockTaskMgr, slotMgr)
 	require.Equal(t, cpu.GetCPUCount(), int(slotMgr.capacity.Load()))
-	require.Empty(t, nodeMgr.getManagedNodes())
+	require.Empty(t, nodeMgr.getNodes())
 	require.True(t, ctrl.Satisfied())
 
 	mockTaskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]proto.ManagedNode{
 		{ID: ":4000", CPUCount: 100},
 		{ID: ":4001", CPUCount: 100},
 	}, nil)
-	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr, slotMgr)
-	require.Equal(t, []string{":4000", ":4001"}, nodeMgr.getManagedNodes())
+	nodeMgr.refreshNodes(ctx, mockTaskMgr, slotMgr)
+	require.Equal(t, []string{":4000", ":4001"}, nodeMgr.getNodes())
 	require.Equal(t, 100, int(slotMgr.capacity.Load()))
 	require.True(t, ctrl.Satisfied())
 	mockTaskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return(nil, nil)
-	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr, slotMgr)
-	require.NotNil(t, nodeMgr.getManagedNodes())
-	require.Empty(t, nodeMgr.getManagedNodes())
+	nodeMgr.refreshNodes(ctx, mockTaskMgr, slotMgr)
+	require.NotNil(t, nodeMgr.getNodes())
+	require.Empty(t, nodeMgr.getNodes())
 	require.Equal(t, 100, int(slotMgr.capacity.Load()))
 	require.True(t, ctrl.Satisfied())
 }

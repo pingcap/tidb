@@ -129,7 +129,7 @@ func TestTaskFailInManager(t *testing.T) {
 	defer schManager.Stop()
 
 	// unknown task type
-	taskID, err := mgr.CreateTask(ctx, "test", "test-type", 1, nil)
+	taskID, err := mgr.CreateTask(ctx, "test", "test-type", 1, "", nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		task, err := mgr.GetTaskByID(ctx, taskID)
@@ -139,7 +139,7 @@ func TestTaskFailInManager(t *testing.T) {
 	}, time.Second*10, time.Millisecond*300)
 
 	// scheduler init error
-	taskID, err = mgr.CreateTask(ctx, "test2", proto.TaskTypeExample, 1, nil)
+	taskID, err = mgr.CreateTask(ctx, "test2", proto.TaskTypeExample, 1, "", nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		task, err := mgr.GetTaskByID(ctx, taskID)
@@ -215,7 +215,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	// Mock add tasks.
 	taskIDs := make([]int64, 0, taskCnt)
 	for i := 0; i < taskCnt; i++ {
-		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", i), proto.TaskTypeExample, 0, nil)
+		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", i), proto.TaskTypeExample, 0, "", nil)
 		require.NoError(t, err)
 		taskIDs = append(taskIDs, taskID)
 	}
@@ -225,7 +225,7 @@ func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	checkSubtaskCnt(tasks, taskIDs)
 	// test parallelism control
 	if taskCnt == 1 {
-		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", taskCnt), proto.TaskTypeExample, 0, nil)
+		taskID, err := mgr.CreateTask(ctx, fmt.Sprintf("%d", taskCnt), proto.TaskTypeExample, 0, "", nil)
 		require.NoError(t, err)
 		checkGetRunningTaskCnt(taskCnt)
 		// Clean the task.
@@ -454,7 +454,7 @@ func TestManagerScheduleLoop(t *testing.T) {
 		},
 	)
 	for i := 0; i < len(concurrencies); i++ {
-		_, err := taskMgr.CreateTask(ctx, fmt.Sprintf("key/%d", i), proto.TaskTypeExample, concurrencies[i], []byte("{}"))
+		_, err := taskMgr.CreateTask(ctx, fmt.Sprintf("key/%d", i), proto.TaskTypeExample, concurrencies[i], "", []byte("{}"))
 		require.NoError(t, err)
 	}
 	getRunningTaskKeys := func() []string {

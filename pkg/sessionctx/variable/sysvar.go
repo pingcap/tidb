@@ -41,7 +41,6 @@ import (
 	_ "github.com/pingcap/tidb/pkg/types/parser_driver" // for parser driver
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	distroleutil "github.com/pingcap/tidb/pkg/util/distrole"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -3127,16 +3126,6 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{Scope: ScopeInstance, Name: TiDBServiceScope, Value: "", Type: TypeStr,
-		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
-			_, ok := distroleutil.ToTiDBServiceScope(originalValue)
-			if !ok {
-				err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
-					originalValue,
-					TiDBServiceScope, `"", background`)
-				return normalizedValue, err
-			}
-			return normalizedValue, nil
-		},
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			newValue := strings.ToLower(s)
 			ServiceScope.Store(newValue)
