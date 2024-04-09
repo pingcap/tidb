@@ -107,6 +107,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/sli"
@@ -2513,7 +2514,7 @@ func (s *session) GetPlanCtx() planctx.PlanContext {
 }
 
 // GetExprCtx returns the expression context of the session.
-func (s *session) GetExprCtx() exprctx.BuildContext {
+func (s *session) GetExprCtx() exprctx.ExprContext {
 	return s.exprctx
 }
 
@@ -2527,7 +2528,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	vars := s.GetSessionVars()
 	sc := vars.StmtCtx
 
-	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
+	return sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
 		return &distsqlctx.DistSQLContext{
 			AppendWarning:   sc.AppendWarning,
 			InRestrictedSQL: sc.InRestrictedSQL,
@@ -2579,8 +2580,30 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			ExecDetails: &sc.SyncExecDetails,
 		}
 	})
+}
 
-	return dctx.(*distsqlctx.DistSQLContext)
+// GetRangerCtx returns the context used in `ranger` related functions
+func (s *session) GetRangerCtx() *rangerctx.RangerContext {
+	vars := s.GetSessionVars()
+	sc := vars.StmtCtx
+
+	rctx := sc.GetOrInitRangerCtxFromCache(func() any {
+		return &rangerctx.RangerContext{
+			ExprCtx: s.GetExprCtx(),
+			TypeCtx: s.GetSessionVars().StmtCtx.TypeCtx(),
+			ErrCtx:  s.GetSessionVars().StmtCtx.ErrCtx(),
+
+			InPreparedPlanBuilding:   s.GetSessionVars().StmtCtx.InPreparedPlanBuilding,
+			RegardNULLAsPoint:        s.GetSessionVars().RegardNULLAsPoint,
+			OptPrefixIndexSingleScan: s.GetSessionVars().OptPrefixIndexSingleScan,
+			OptimizerFixControl:      s.GetSessionVars().OptimizerFixControl,
+
+			// TODO: avoid using the whole `StmtCtx` here.
+			RangeFallbackHandler: s.GetSessionVars().StmtCtx,
+		}
+	})
+
+	return rctx.(*rangerctx.RangerContext)
 }
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {

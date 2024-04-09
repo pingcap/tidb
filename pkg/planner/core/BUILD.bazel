@@ -157,6 +157,7 @@ go_library(
         "//pkg/util/plancache",
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
+        "//pkg/util/ranger/context",
         "//pkg/util/rowcodec",
         "//pkg/util/sem",
         "//pkg/util/set",
