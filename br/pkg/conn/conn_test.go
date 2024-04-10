@@ -25,9 +25,11 @@ import (
 )
 
 func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel", "1*return(true)->1*return(false)")
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel", "1*return(true)->1*return(false)")
+	require.NoError(t, err)
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel")
+		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel")
+		require.NoError(t, err)
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -59,7 +61,7 @@ func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 		Stores: stores,
 	}
 
-	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
+	_, err = GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
 	errs := multierr.Errors(err)
 	require.Equal(t, 2, len(errs))
@@ -67,9 +69,11 @@ func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 }
 
 func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error", "1*return(true)->1*return(false)")
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error", "1*return(true)->1*return(false)")
+	require.NoError(t, err)
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error")
+		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error")
+		require.NoError(t, err)
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -101,7 +105,7 @@ func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
 		Stores: stores,
 	}
 
-	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
+	_, err = GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
 	errs := multierr.Errors(err)
 	require.Equal(t, 2, len(errs))
