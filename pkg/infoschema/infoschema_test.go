@@ -1004,7 +1004,7 @@ func (tc *infoschemaTestContext) createSchema() {
 func (tc *infoschemaTestContext) runCreateSchema() {
 	// create schema
 	tc.createSchema()
-	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionCreateSchema, SchemaID: tc.dbInfo.ID}, false, func(tc *infoschemaTestContext) {
 		dbInfo, ok := tc.is.SchemaByID(tc.dbInfo.ID)
 		require.True(tc.t, ok)
 		require.Equal(tc.t, dbInfo.Name, tc.dbInfo.Name)
@@ -1016,7 +1016,7 @@ func (tc *infoschemaTestContext) runDropSchema() {
 	tc.runCreateSchema()
 	// drop schema
 	internal.DropDB(tc.t, tc.re.Store(), tc.dbInfo)
-	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionDropSchema, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionDropSchema, SchemaID: tc.dbInfo.ID}, false, func(tc *infoschemaTestContext) {
 		_, ok := tc.is.SchemaByID(tc.dbInfo.ID)
 		require.False(tc.t, ok)
 	})
@@ -1026,14 +1026,14 @@ func (tc *infoschemaTestContext) runRecoverSchema() {
 	tc.runDropSchema()
 	// recover schema
 	internal.AddDB(tc.t, tc.re.Store(), tc.dbInfo)
-	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionRecoverSchema, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionRecoverSchema, SchemaID: tc.dbInfo.ID}, false, func(tc *infoschemaTestContext) {
 		dbInfo, ok := tc.is.SchemaByID(tc.dbInfo.ID)
 		require.True(tc.t, ok)
 		require.Equal(tc.t, dbInfo.Name, tc.dbInfo.Name)
 	})
 }
 
-func (tc *infoschemaTestContext) runCreateTable(tblName string) int64 {
+func (tc *infoschemaTestContext) runCreateTable(tblName string, delta bool) int64 {
 	if tc.dbInfo == nil {
 		tc.runCreateSchema()
 	}
@@ -1041,7 +1041,7 @@ func (tc *infoschemaTestContext) runCreateTable(tblName string) int64 {
 	tblInfo := internal.MockTableInfo(tc.t, tc.re.Store(), tblName)
 	internal.AddTable(tc.t, tc.re.Store(), tc.dbInfo, tblInfo)
 
-	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: tc.dbInfo.ID, TableID: tblInfo.ID}, func(tc *infoschemaTestContext) {
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: tc.dbInfo.ID, TableID: tblInfo.ID}, delta, func(tc *infoschemaTestContext) {
 		tbl, ok := tc.is.TableByID(tblInfo.ID)
 		require.True(tc.t, ok)
 		require.Equal(tc.t, tbl.Meta().Name.O, tblName)
@@ -1064,7 +1064,7 @@ func (tc *infoschemaTestContext) runCreateTables(tblNames []string) {
 		}
 	}
 
-	tc.applyDiffAndCheck(&diff, func(tc *infoschemaTestContext) {
+	tc.applyDiffAndCheck(&diff, false, func(tc *infoschemaTestContext) {
 		for i, opt := range diff.AffectedOpts {
 			tbl, ok := tc.is.TableByID(opt.TableID)
 			require.True(tc.t, ok)
@@ -1075,11 +1075,11 @@ func (tc *infoschemaTestContext) runCreateTables(tblNames []string) {
 
 func (tc *infoschemaTestContext) runDropTable(tblName string) {
 	// createTable
-	tblID := tc.runCreateTable(tblName)
+	tblID := tc.runCreateTable(tblName, false)
 
 	// dropTable
 	internal.DropTable(tc.t, tc.re.Store(), tc.dbInfo, tblID, tblName)
-	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionDropTable, SchemaID: tc.dbInfo.ID, TableID: tblID}, func(tc *infoschemaTestContext) {
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionDropTable, SchemaID: tc.dbInfo.ID, TableID: tblID}, false, func(tc *infoschemaTestContext) {
 		tbl, ok := tc.is.TableByID(tblID)
 		require.False(tc.t, ok)
 		require.Nil(tc.t, tbl)
@@ -1102,7 +1102,7 @@ func (tc *infoschemaTestContext) runAddColumn(tblName string) {
 	require.NoError(tc.t, err)
 
 	tc.addColumn(tbl.Meta())
-	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionAddColumn, SchemaID: tc.dbInfo.ID, TableID: tbl.Meta().ID}, func(tc *infoschemaTestContext) {
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionAddColumn, SchemaID: tc.dbInfo.ID, TableID: tbl.Meta().ID}, false, func(tc *infoschemaTestContext) {
 		tbl, ok := tc.is.TableByID(tbl.Meta().ID)
 		require.True(tc.t, ok)
 		require.Equal(tc.t, 2, len(tbl.Cols()))
@@ -1135,7 +1135,7 @@ func (tc *infoschemaTestContext) runModifyColumn(tblName string) {
 	require.NoError(tc.t, err)
 
 	tc.modifyColumn(tbl.Meta())
-	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionModifyColumn, SchemaID: tc.dbInfo.ID, TableID: tbl.Meta().ID}, func(tc *infoschemaTestContext) {
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionModifyColumn, SchemaID: tc.dbInfo.ID, TableID: tbl.Meta().ID}, false, func(tc *infoschemaTestContext) {
 		tbl, ok := tc.is.TableByID(tbl.Meta().ID)
 		require.True(tc.t, ok)
 		require.Equal(tc.t, "test", tbl.Cols()[0].Comment)
@@ -1158,7 +1158,7 @@ func (tc *infoschemaTestContext) runModifySchemaCharsetAndCollate(charset, colla
 	tc.dbInfo.Charset = charset
 	tc.dbInfo.Collate = collate
 	internal.UpdateDB(tc.t, tc.re.Store(), tc.dbInfo)
-	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionModifySchemaCharsetAndCollate, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionModifySchemaCharsetAndCollate, SchemaID: tc.dbInfo.ID}, false, func(tc *infoschemaTestContext) {
 		schema, ok := tc.is.SchemaByID(tc.dbInfo.ID)
 		require.True(tc.t, ok)
 		require.Equal(tc.t, charset, schema.Charset)
@@ -1169,19 +1169,22 @@ func (tc *infoschemaTestContext) runModifySchemaCharsetAndCollate(charset, colla
 func (tc *infoschemaTestContext) runModifySchemaDefaultPlacement(policy *model.PolicyRefInfo) {
 	tc.dbInfo.PlacementPolicyRef = policy
 	internal.UpdateDB(tc.t, tc.re.Store(), tc.dbInfo)
-	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionModifySchemaDefaultPlacement, SchemaID: tc.dbInfo.ID}, func(tc *infoschemaTestContext) {
+	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionModifySchemaDefaultPlacement, SchemaID: tc.dbInfo.ID}, false, func(tc *infoschemaTestContext) {
 		schema, ok := tc.is.SchemaByID(tc.dbInfo.ID)
 		require.True(tc.t, ok)
 		require.Equal(tc.t, policy, schema.PlacementPolicyRef)
 	})
 }
 
-func (tc *infoschemaTestContext) applyDiffAndCheck(diff *model.SchemaDiff, checkFn func(tc *infoschemaTestContext)) {
+func (tc *infoschemaTestContext) applyDiffAndCheck(diff *model.SchemaDiff, delta bool, checkFn func(tc *infoschemaTestContext)) {
 	txn, err := tc.re.Store().Begin()
 	require.NoError(tc.t, err)
 
 	builder, err := infoschema.NewBuilder(tc.re, nil, tc.data).InitWithOldInfoSchema(tc.is)
 	require.NoError(tc.t, err)
+	if delta {
+		builder.SetDeltaUpdateBundles()
+	}
 	// applyDiff
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), diff)
 	require.NoError(tc.t, err)
@@ -1219,12 +1222,12 @@ func TestApplyDiff(t *testing.T) {
 		tc.clear()
 		tc.runDropSchema()
 		tc.clear()
-		tc.runCreateTable("test")
+		tc.runCreateTable("test", false)
 		tc.clear()
 		tc.runDropTable("test")
 		tc.clear()
 
-		tc.runCreateTable("test")
+		tc.runCreateTable("test", false)
 		tc.runModifyTable("test", model.ActionAddColumn)
 		tc.runModifyTable("test", model.ActionModifyColumn)
 
