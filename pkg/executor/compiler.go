@@ -111,9 +111,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	})
 
 	if preparedObj != nil {
-		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL)
+		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	} else {
-		CountStmtNode(stmtNode, sessVars.InRestrictedSQL)
+		CountStmtNode(stmtNode, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	}
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
@@ -129,7 +129,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
 		OutputNames:   names,
-		Ti:            &TelemetryInfo{},
 	}
 	// Use cached plan if possible.
 	if pointGetPlanShortPathOK {
@@ -141,7 +140,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 				stmt.PsStmt = preparedObj
 			} else {
 				// invalid the previous cached point plan
-				preparedObj.PreparedAst.CachedPlan = nil
+				preparedObj.PointGet.Plan = nil
 			}
 		}
 	}
@@ -197,7 +196,7 @@ func isPhysicalPlanNeedLowerPriority(p plannercore.PhysicalPlan) bool {
 }
 
 // CountStmtNode records the number of statements with the same type.
-func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
+func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool, resourceGroup string) {
 	if inRestrictedSQL {
 		return
 	}
@@ -213,11 +212,11 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 			}
 		case config.GetGlobalConfig().Status.RecordDBLabel:
 			for dbLabel := range dbLabels {
-				metrics.StmtNodeCounter.WithLabelValues(typeLabel, dbLabel).Inc()
+				metrics.StmtNodeCounter.WithLabelValues(typeLabel, dbLabel, resourceGroup).Inc()
 			}
 		}
 	} else {
-		metrics.StmtNodeCounter.WithLabelValues(typeLabel, "").Inc()
+		metrics.StmtNodeCounter.WithLabelValues(typeLabel, "", resourceGroup).Inc()
 	}
 }
 

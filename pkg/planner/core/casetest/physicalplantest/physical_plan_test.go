@@ -1241,10 +1241,11 @@ func TestHJBuildAndProbeHint4TiFlash(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		tableName := tblInfo.Name.L
+	for _, tbl := range is.SchemaTables(db.Name) {
+		table := tbl.Meta()
+		tableName := table.Name.L
 		if tableName == "t1" || tableName == "t2" || tableName == "t3" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+			table.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
 				Available: true,
 			}
@@ -1283,7 +1284,8 @@ func TestMPPSinglePartitionType(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "employee" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -1332,7 +1334,8 @@ func TestCountStarForTiFlash(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		tableName := tblInfo.Name.L
 		if tableName == "t" || tableName == "t_pick_row_id" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
@@ -1427,7 +1430,8 @@ func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		tableName := tblInfo.Name.L
 		if tableName == "tbl_15" || tableName == "tbl_16" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
@@ -1441,6 +1445,34 @@ func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash';")
 
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestPointgetIndexChoosen(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t ( a int NOT NULL ,  b int NOT NULL,
+			c varchar(64) NOT NULL ,  d varchar(64) NOT NULL  ,
+			UNIQUE KEY ub (b),
+			UNIQUE KEY ubc (b, c));`)
 	for i, ts := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts

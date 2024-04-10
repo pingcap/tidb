@@ -389,7 +389,7 @@ func (decoder *BytesDecoder) decodeToBytesInternal(outputOffset map[int64]int, h
 	values := make([][]byte, len(outputOffset))
 	for i := range decoder.columns {
 		col := &decoder.columns[i]
-		tp := fieldType2Flag(col.Ft.GetType(), col.Ft.GetFlag()&mysql.UnsignedFlag == 0)
+		tp := fieldType2Flag(col.Ft.ArrayType().GetType(), col.Ft.GetFlag()&mysql.UnsignedFlag == 0)
 		colID := col.ID
 		offset := outputOffset[colID]
 		idx, isNil, notFound := r.findColID(colID)

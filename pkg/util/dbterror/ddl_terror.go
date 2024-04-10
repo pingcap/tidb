@@ -19,6 +19,7 @@ import (
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	parser_mysql "github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 )
 
 var (
@@ -34,6 +35,8 @@ var (
 	ErrCancelledDDLJob = ClassDDL.NewStd(mysql.ErrCancelledDDLJob)
 	// ErrPausedDDLJob returns when the DDL job cannot be paused.
 	ErrPausedDDLJob = ClassDDL.NewStd(mysql.ErrPausedDDLJob)
+	// ErrBDRRestrictedDDL means the DDL is restricted in BDR mode.
+	ErrBDRRestrictedDDL = ClassDDL.NewStd(mysql.ErrBDRRestrictedDDL)
 	// ErrRunMultiSchemaChanges means we run multi schema changes.
 	ErrRunMultiSchemaChanges = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "multi schema change for %s"), nil))
 	// ErrOperateSameColumn means we change the same columns multiple times in a DDL.
@@ -285,6 +288,8 @@ var (
 	ErrUnsupportedConstraintCheck = ClassDDL.NewStd(mysql.ErrUnsupportedConstraintCheck)
 	// ErrDerivedMustHaveAlias returns when a sub select statement does not have a table alias.
 	ErrDerivedMustHaveAlias = ClassDDL.NewStd(mysql.ErrDerivedMustHaveAlias)
+	// ErrNullInValuesLessThan returns when a range partition LESS THAN expression includes a NULL
+	ErrNullInValuesLessThan = ClassDDL.NewStd(mysql.ErrNullInValuesLessThan)
 
 	// ErrSequenceRunOut returns when the sequence has been run out.
 	ErrSequenceRunOut = ClassDDL.NewStd(mysql.ErrSequenceRunOut)
@@ -511,4 +516,7 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 	mysql.ErrWriteConflictInTiDB:       {},
 	mysql.ErrTxnRetryable:              {},
 	mysql.ErrNotOwner:                  {},
+
+	// Temporary network partitioning may cause pk commit failure.
+	uint16(terror.CodeResultUndetermined): {},
 }

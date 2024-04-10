@@ -576,7 +576,10 @@ func GetFsp(s string) int {
 
 // GetFracIndex finds the last '.' for get fracStr, index = -1 means fracStr not found.
 // but for format like '2019.01.01 00:00:00', the index should be -1.
-// It will not be affected by the time zone suffix. For format like '2020-01-01 12:00:00.123456+05:00', the index should be 19.
+//
+// It will not be affected by the time zone suffix.
+// For format like '2020-01-01 12:00:00.123456+05:00' and `2020-01-01 12:00:00.123456-05:00`, the index should be 19.
+// related issue https://github.com/pingcap/tidb/issues/35291 and https://github.com/pingcap/tidb/issues/49555
 func GetFracIndex(s string) (index int) {
 	tzIndex, _, _, _, _ := GetTimezone(s)
 	var end int
@@ -587,7 +590,7 @@ func GetFracIndex(s string) (index int) {
 	}
 	index = -1
 	for i := end; i >= 0; i-- {
-		if unicode.IsPunct(rune(s[i])) {
+		if s[i] != '+' && s[i] != '-' && isPunctuation(s[i]) {
 			if s[i] == '.' {
 				index = i
 			}
@@ -953,7 +956,7 @@ func parseDatetime(ctx Context, str string, fsp int, isFloat bool) (Time, error)
 
 	seps, fracStr, hasTZ, tzSign, tzHour, tzSep, tzMinute, truncatedOrIncorrect := splitDateTime(str)
 	if truncatedOrIncorrect {
-		ctx.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
+		ctx.AppendWarning(ErrTruncatedWrongVal.FastGenByArgs("datetime", str))
 	}
 	/*
 		if we have timezone parsed, there are the following cases to be considered, however some of them are wrongly parsed, and we should consider absorb them back to seps.
@@ -1116,11 +1119,11 @@ func parseDatetime(ctx Context, str string, fsp int, isFloat bool) (Time, error)
 			truncatedOrIncorrect = err != nil
 		}
 		if truncatedOrIncorrect {
-			ctx.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
+			ctx.AppendWarning(ErrTruncatedWrongVal.FastGenByArgs("datetime", str))
 			err = nil
 		}
 	case 2:
-		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+		return ZeroDatetime, errors.Trace(ErrWrongValue.FastGenByArgs(DateTimeStr, str))
 	case 3:
 		// YYYY-MM-DD
 		err = scanTimeArgs(seps, &year, &month, &day)
@@ -1139,7 +1142,7 @@ func parseDatetime(ctx Context, str string, fsp int, isFloat bool) (Time, error)
 		// For case like `2020-05-28 23:59:59 00:00:00`, the seps should be > 6, the reluctant parts should be truncated.
 		seps = seps[:6]
 		// YYYY-MM-DD HH-MM-SS
-		ctx.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
+		ctx.AppendWarning(ErrTruncatedWrongVal.FastGenByArgs("datetime", str))
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
 		hhmmss = true
 	}
@@ -2917,7 +2920,7 @@ func (t *Time) StrToDate(typeCtx Context, date, format string) bool {
 	if warning {
 		// Only append this warning when success but still need warning.
 		// Currently this only happens when `date` has extra characters at the end.
-		typeCtx.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs(DateTimeStr, date))
+		typeCtx.AppendWarning(ErrTruncatedWrongVal.FastGenByArgs(DateTimeStr, date))
 	}
 	return true
 }

@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"go.uber.org/zap"
 )
@@ -215,7 +214,7 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 		finish := true
 		dr.keys = dr.keys[:0]
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-		err := kv.RunInNewTxn(ctx, dr.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, dr.store, false, func(_ context.Context, txn kv.Transaction) error {
 			if topsqlstate.TopSQLEnabled() {
 				// Only when TiDB run without PD(use unistore as storage for test) will run into here, so just set a mock internal resource tagger.
 				txn.SetOption(kv.ResourceGroupTagger, util.GetInternalResourceGroupTaggerForTopSQL())
@@ -357,7 +356,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
-		var indexName interface{}
+		var indexName any
 		var partitionIDs []int64
 		ifExists := make([]bool, 1)
 		allIndexIDs := make([]int64, 1)
@@ -492,18 +491,15 @@ type DelRangeExecWrapper interface {
 // It consumes the delete ranges by directly insert rows into mysql.gc_delete_range.
 type sessionDelRangeExecWrapper struct {
 	sctx sessionctx.Context
-	s    sqlexec.SQLExecutor
 	ts   uint64
 
 	// temporary values
-	paramsList []interface{}
+	paramsList []any
 }
 
 func newDelRangeExecWrapper(sctx sessionctx.Context) DelRangeExecWrapper {
 	return &sessionDelRangeExecWrapper{
-		sctx: sctx,
-		s:    sctx.(sqlexec.SQLExecutor),
-
+		sctx:       sctx,
 		paramsList: nil,
 	}
 }
@@ -518,7 +514,7 @@ func (sdr *sessionDelRangeExecWrapper) UpdateTSOForJob() error {
 }
 
 func (sdr *sessionDelRangeExecWrapper) PrepareParamsList(sz int) {
-	sdr.paramsList = make([]interface{}, 0, sz)
+	sdr.paramsList = make([]any, 0, sz)
 }
 
 func (*sessionDelRangeExecWrapper) RewriteTableID(tableID int64) (int64, bool) {
@@ -531,10 +527,10 @@ func (sdr *sessionDelRangeExecWrapper) AppendParamsList(jobID, elemID int64, sta
 
 func (sdr *sessionDelRangeExecWrapper) ConsumeDeleteRange(ctx context.Context, sql string) error {
 	// set session disk full opt
-	sdr.s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	_, err := sdr.s.ExecuteInternal(ctx, sql, sdr.paramsList...)
+	sdr.sctx.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	_, err := sdr.sctx.GetSQLExecutor().ExecuteInternal(ctx, sql, sdr.paramsList...)
 	// clear session disk full opt
-	sdr.s.ClearDiskFullOpt()
+	sdr.sctx.GetSessionVars().ClearDiskFullOpt()
 	sdr.paramsList = nil
 	return errors.Trace(err)
 }

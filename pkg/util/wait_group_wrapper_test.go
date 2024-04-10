@@ -16,9 +16,12 @@ package util
 
 import (
 	"fmt"
+	"os"
+	"path"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
@@ -53,7 +56,7 @@ func TestWaitGroupWrapperRunWithRecover(t *testing.T) {
 	for i := int32(0); i < expect; i++ {
 		wg.RunWithRecover(func() {
 			panic("test1")
-		}, func(r interface{}) {
+		}, func(r any) {
 			val.Inc()
 		})
 	}
@@ -65,7 +68,7 @@ func TestWaitGroupWrapperRunWithRecover(t *testing.T) {
 	for i := int32(0); i < expect; i++ {
 		wg2.RunWithRecover(func() {
 			panic("test1")
-		}, func(r interface{}) {
+		}, func(r any) {
 			val.Inc()
 		}, fmt.Sprintf("test_%v", i))
 	}
@@ -91,11 +94,52 @@ func TestWaitGroupWrapperCheck(t *testing.T) {
 	require.False(t, wg.check())
 }
 
+func TestWaitGroupWrapperGo(t *testing.T) {
+	file, fileName := prepareStdoutLogger(t)
+	var wg WaitGroupWrapper
+	wg.RunWithLog(func() {
+		middleF()
+	})
+	wg.Wait()
+	require.NoError(t, file.Close())
+	content, err := os.ReadFile(fileName)
+	require.NoError(t, err)
+	require.Contains(t, string(content), "pkg/util.middleF")
+}
+
+func prepareStdoutLogger(t *testing.T) (*os.File, string) {
+	bak := os.Stdout
+	t.Cleanup(func() {
+		os.Stdout = bak
+	})
+	tempDir := t.TempDir()
+	fileName := path.Join(tempDir, "test.log")
+	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, 0644)
+	require.NoError(t, err)
+	os.Stdout = file
+	// InitLogger contains zap.AddStacktrace(zapcore.FatalLevel), so log level
+	// below fatal will not contain stack automatically.
+	require.NoError(t, logutil.InitLogger(&logutil.LogConfig{}))
+
+	return file, fileName
+}
+
+func middleF() {
+	var a int
+	_ = 10 / a
+}
+
 func TestNewErrorGroupWithRecover(t *testing.T) {
+	file, fileName := prepareStdoutLogger(t)
 	eg := NewErrorGroupWithRecover()
 	eg.Go(func() error {
-		panic("test")
+		middleF()
+		return nil
 	})
 	err := eg.Wait()
-	require.Errorf(t, err, "test")
+	require.ErrorContains(t, err, "runtime error: integer divide by zero")
+	require.NoError(t, file.Close())
+	content, err := os.ReadFile(fileName)
+	require.NoError(t, err)
+	require.Contains(t, string(content), "pkg/util.middleF")
 }

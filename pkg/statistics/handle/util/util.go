@@ -196,17 +196,14 @@ func GetStartTS(sctx sessionctx.Context) (uint64, error) {
 }
 
 // Exec is a helper function to execute sql and return RecordSet.
-func Exec(sctx sessionctx.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	sqlExec, ok := sctx.(sqlexec.SQLExecutor)
-	if !ok {
-		return nil, errors.Errorf("invalid sql executor")
-	}
+func Exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
+	sqlExec := sctx.GetSQLExecutor()
 	// TODO: use RestrictedSQLExecutor + ExecOptionUseCurSession instead of SQLExecutor
 	return sqlExec.ExecuteInternal(StatsCtx, sql, args...)
 }
 
 // ExecRows is a helper function to execute sql and return rows and fields.
-func ExecRows(sctx sessionctx.Context, sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
 	if intest.InTest {
 		if v := sctx.Value(mock.RestrictedSQLExecutorKey{}); v != nil {
 			return v.(*mock.MockRestrictedSQLExecutor).ExecRestrictedSQL(StatsCtx,
@@ -214,19 +211,13 @@ func ExecRows(sctx sessionctx.Context, sql string, args ...interface{}) (rows []
 		}
 	}
 
-	sqlExec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		return nil, nil, errors.Errorf("invalid sql executor")
-	}
+	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(StatsCtx, UseCurrentSessionOpt, sql, args...)
 }
 
 // ExecWithOpts is a helper function to execute sql and return rows and fields.
-func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
-	sqlExec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		return nil, nil, errors.Errorf("invalid sql executor")
-	}
+func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(StatsCtx, opts, sql, args...)
 }
 
@@ -237,10 +228,10 @@ func DurationToTS(d time.Duration) uint64 {
 
 // GetFullTableName returns the full table name.
 func GetFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string {
-	for _, schema := range is.AllSchemas() {
-		if t, err := is.TableByName(schema.Name, tblInfo.Name); err == nil {
+	for _, schemaName := range is.AllSchemaNames() {
+		if t, err := is.TableByName(schemaName, tblInfo.Name); err == nil {
 			if t.Meta().ID == tblInfo.ID {
-				return schema.Name.O + "." + tblInfo.Name.O
+				return schemaName.O + "." + tblInfo.Name.O
 			}
 		}
 	}

@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -48,7 +48,7 @@ type aggregationEliminateChecker struct {
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
-func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation, opt *logicalOptimizeOp) *LogicalProjection {
+func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation, opt *util.LogicalOptimizeOp) *LogicalProjection {
 	for _, af := range agg.AggFuncs {
 		// TODO(issue #9968): Actually, we can rewrite GROUP_CONCAT when all the
 		// arguments it accepts are promised to be NOT-NULL.
@@ -89,7 +89,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 
 // tryToEliminateDistinct will eliminate distinct in the aggregation function if the aggregation args
 // have unique key column. see detail example in https://github.com/pingcap/tidb/issues/23436
-func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregation, opt *logicalOptimizeOp) {
+func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregation, opt *util.LogicalOptimizeOp) {
 	for _, af := range agg.AggFuncs {
 		if af.HasDistinct {
 			cols := make([]*expression.Column, 0, len(af.Args))
@@ -129,7 +129,7 @@ func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *LogicalAggregati
 	}
 }
 
-func appendAggregationEliminateTraceStep(agg *LogicalAggregation, proj *LogicalProjection, uniqueKey expression.KeyInfo, opt *logicalOptimizeOp) {
+func appendAggregationEliminateTraceStep(agg *LogicalAggregation, proj *LogicalProjection, uniqueKey expression.KeyInfo, opt *util.LogicalOptimizeOp) {
 	reason := func() string {
 		return fmt.Sprintf("%s is a unique key", uniqueKey.String())
 	}
@@ -137,18 +137,18 @@ func appendAggregationEliminateTraceStep(agg *LogicalAggregation, proj *LogicalP
 		return fmt.Sprintf("%v_%v is simplified to a %v_%v", agg.TP(), agg.ID(), proj.TP(), proj.ID())
 	}
 
-	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
+	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
 func appendDistinctEliminateTraceStep(agg *LogicalAggregation, uniqueKey expression.KeyInfo, af *aggregation.AggFuncDesc,
-	opt *logicalOptimizeOp) {
+	opt *util.LogicalOptimizeOp) {
 	reason := func() string {
 		return fmt.Sprintf("%s is a unique key", uniqueKey.String())
 	}
 	action := func() string {
 		return fmt.Sprintf("%s(distinct ...) is simplified to %s(...)", af.Name, af.Name)
 	}
-	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
+	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
 // CheckCanConvertAggToProj check whether a special old aggregation (which has already been pushed down) to projection.
@@ -183,9 +183,9 @@ func CheckCanConvertAggToProj(agg *LogicalAggregation) bool {
 func ConvertAggToProj(agg *LogicalAggregation, schema *expression.Schema) (bool, *LogicalProjection) {
 	proj := LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
-	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	for _, fun := range agg.AggFuncs {
-		ok, expr := rewriteExpr(agg.SCtx(), fun)
+		ok, expr := rewriteExpr(agg.SCtx().GetExprCtx(), fun)
 		if !ok {
 			return false, nil
 		}
@@ -196,7 +196,7 @@ func ConvertAggToProj(agg *LogicalAggregation, schema *expression.Schema) (bool,
 }
 
 // rewriteExpr will rewrite the aggregate function to expression doesn't contain aggregate function.
-func rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) (bool, expression.Expression) {
+func rewriteExpr(ctx expression.BuildContext, aggFunc *aggregation.AggFuncDesc) (bool, expression.Expression) {
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
 		if aggFunc.Mode == aggregation.FinalMode &&
@@ -214,7 +214,7 @@ func rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) (bool
 	}
 }
 
-func rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetTp *types.FieldType) expression.Expression {
+func rewriteCount(ctx expression.BuildContext, exprs []expression.Expression, targetTp *types.FieldType) expression.Expression {
 	// If is count(expr), we will change it to if(isnull(expr), 0, 1).
 	// If is count(distinct x, y, z), we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
 	// If is count(expr not null), we will change it to constant 1.
@@ -233,7 +233,7 @@ func rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetT
 	return newExpr
 }
 
-func rewriteBitFunc(ctx sessionctx.Context, funcType string, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
+func rewriteBitFunc(ctx expression.BuildContext, funcType string, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
 	// For not integer type. We need to cast(cast(arg as signed) as unsigned) to make the bit function work.
 	innerCast := expression.WrapWithCastAsInt(ctx, arg)
 	outerCast := wrapCastFunction(ctx, innerCast, targetTp)
@@ -247,14 +247,14 @@ func rewriteBitFunc(ctx sessionctx.Context, funcType string, arg expression.Expr
 }
 
 // wrapCastFunction will wrap a cast if the targetTp is not equal to the arg's.
-func wrapCastFunction(ctx sessionctx.Context, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
+func wrapCastFunction(ctx expression.BuildContext, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
 	if arg.GetType().Equal(targetTp) {
 		return arg
 	}
 	return expression.BuildCastFunction(ctx, arg, targetTp)
 }
 
-func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan, opt *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {

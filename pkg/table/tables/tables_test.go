@@ -105,7 +105,7 @@ func TestBasic(t *testing.T) {
 	require.Greater(t, handle.IntValue(), int64(0))
 
 	ctx := tk.Session()
-	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
+	rid, err := tb.AddRecord(ctx.GetTableCtx(), types.MakeDatums(1, "abc"))
 	require.NoError(t, err)
 	require.Greater(t, rid.IntValue(), int64(0))
 	row, err := tables.RowWithCols(tb, ctx, rid, tb.Cols())
@@ -113,12 +113,12 @@ func TestBasic(t *testing.T) {
 	require.Equal(t, 2, len(row))
 	require.Equal(t, int64(1), row[0].GetInt64())
 
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"))
+	_, err = tb.AddRecord(ctx.GetTableCtx(), types.MakeDatums(1, "aba"))
 	require.Error(t, err)
-	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
+	_, err = tb.AddRecord(ctx.GetTableCtx(), types.MakeDatums(2, "abc"))
 	require.Error(t, err)
 
-	require.Nil(t, tb.UpdateRecord(context.Background(), ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}))
+	require.Nil(t, tb.UpdateRecord(context.Background(), ctx.GetTableCtx(), rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}))
 
 	err = tables.IterRecords(tb, ctx, tb.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		return true, nil
@@ -144,10 +144,10 @@ func TestBasic(t *testing.T) {
 
 	// Make sure there is index data in the storage.
 	require.Greater(t, indexCnt(), 0)
-	require.Nil(t, tb.RemoveRecord(ctx, rid, types.MakeDatums(1, "cba")))
+	require.Nil(t, tb.RemoveRecord(ctx.GetTableCtx(), rid, types.MakeDatums(1, "cba")))
 	// Make sure index data is also removed after tb.RemoveRecord().
 	require.Equal(t, 0, indexCnt())
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
+	_, err = tb.AddRecord(ctx.GetTableCtx(), types.MakeDatums(1, "abc"))
 	require.NoError(t, err)
 	require.Greater(t, indexCnt(), 0)
 	handle, found, err := seek(tb.(table.PhysicalTable), ctx, kv.IntHandle(0))
@@ -259,9 +259,9 @@ func TestUniqueIndexMultipleNullEntries(t *testing.T) {
 
 	sctx := tk.Session()
 	require.Nil(t, sessiontxn.NewTxn(ctx, sctx))
-	_, err = tb.AddRecord(sctx, types.MakeDatums(1, nil))
+	_, err = tb.AddRecord(sctx.GetTableCtx(), types.MakeDatums(1, nil))
 	require.NoError(t, err)
-	_, err = tb.AddRecord(sctx, types.MakeDatums(2, nil))
+	_, err = tb.AddRecord(sctx.GetTableCtx(), types.MakeDatums(2, nil))
 	require.NoError(t, err)
 	txn, err := sctx.Txn(true)
 	require.NoError(t, err)
@@ -321,7 +321,7 @@ func TestUnsignedPK(t *testing.T) {
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
-	rid, err := tb.AddRecord(tk.Session(), types.MakeDatums(1, "abc"))
+	rid, err := tb.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(1, "abc"))
 	require.NoError(t, err)
 	pt := tb.(table.PhysicalTable)
 	row, err := tables.RowWithCols(pt, tk.Session(), rid, tb.Cols())
@@ -400,14 +400,14 @@ func TestTableFromMeta(t *testing.T) {
 	tk.MustExec("create table t_meta (a int) shard_row_id_bits = 15")
 	tb, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_meta"))
 	require.NoError(t, err)
-	_, err = tables.AllocHandle(context.Background(), tk.Session(), tb)
+	_, err = tables.AllocHandle(context.Background(), tk.Session().GetTableCtx(), tb)
 	require.NoError(t, err)
 
 	maxID := 1<<(64-15-1) - 1
-	err = tb.Allocators(tk.Session()).Get(autoid.RowIDAllocType).Rebase(context.Background(), int64(maxID), false)
+	err = tb.Allocators(tk.Session().GetTableCtx()).Get(autoid.RowIDAllocType).Rebase(context.Background(), int64(maxID), false)
 	require.NoError(t, err)
 
-	_, err = tables.AllocHandle(context.Background(), tk.Session(), tb)
+	_, err = tables.AllocHandle(context.Background(), tk.Session().GetTableCtx(), tb)
 	require.Error(t, err)
 }
 
@@ -426,12 +426,6 @@ func TestHiddenColumn(t *testing.T) {
 	colInfo[1].Hidden = true
 	colInfo[3].Hidden = true
 	colInfo[5].Hidden = true
-	tc := tb.(*tables.TableCommon)
-	// Reset related caches
-	tc.VisibleColumns = nil
-	tc.WritableColumns = nil
-	tc.HiddenColumns = nil
-	tc.FullHiddenColsAndVisibleColumns = nil
 
 	// Basic test
 	cols := tb.VisibleCols()
@@ -550,6 +544,7 @@ func TestHiddenColumn(t *testing.T) {
 	tk.MustGetErrMsg("update t set a=1 where c=3 order by b;", "[planner:1054]Unknown column 'b' in 'order clause'")
 
 	// `DELETE` statement
+	tk.MustQuery("trace plan delete from t;")
 	tk.MustExec("delete from t;")
 	tk.MustQuery("select count(*) from t;").Check(testkit.Rows("0"))
 	tk.MustExec("insert into t values (1, 3, 5);")
@@ -600,7 +595,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 
 	records := [][]types.Datum{types.MakeDatums(uint64(1), "abc"), types.MakeDatums(uint64(2), "abcd")}
 	for _, r := range records {
-		rid, err := tb.AddRecord(tk.Session(), r)
+		rid, err := tb.AddRecord(tk.Session().GetTableCtx(), r)
 		require.NoError(t, err)
 		row, err := tables.RowWithCols(tb.(table.PhysicalTable), tk.Session(), rid, tb.Cols())
 		require.NoError(t, err)
@@ -703,7 +698,7 @@ func TestViewColumns(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	for _, testCase := range testCases {
 		require.Len(t, tk.MustQuery(testCase.query).Rows(), 0)
-		tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
+		tk.MustQuery("show warnings").Sort().Check(testkit.RowsWithSep("|",
 			"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
 			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
 	}
@@ -796,7 +791,7 @@ func TestTxnAssertion(t *testing.T) {
 			tk.MustExec("create table t(id int primary key, v int, v2 int, v3 int, v4 varchar(64), index(v2), unique index(v3), index(v4))")
 		}
 
-		var id1, id2, id3 interface{}
+		var id1, id2, id3 any
 		if useCommonHandle {
 			id1, id2, id3 = "1", "2", "3"
 		} else {
@@ -846,6 +841,14 @@ func TestTxnAssertion(t *testing.T) {
 			err = tk.ExecToErr("insert into t values (?, 10, 100, 1000, '10000')", id1)
 			expectAssertionErr(level, err)
 		})
+
+		tk.MustExec("set @@tidb_redact_log=MARKER")
+		withFailpoint(fpAdd, func() {
+			err = tk.ExecToErr("insert into t values (?, 10, 100, 1000, '10000')", id1)
+			require.Contains(t, err.Error(), "‹")
+		})
+		tk.MustExec("set @@tidb_redact_log=0")
+
 		withFailpoint(fpUpdate, func() {
 			err = tk.ExecToErr("update t set v = v + 1 where id = ?", id2)
 			expectAssertionErr(level, err)
@@ -1672,7 +1675,7 @@ func TestWriteWithChecksums(t *testing.T) {
 				}
 				data := rowcodec.RowData{Cols: cols}
 				sort.Sort(data)
-				checksum, err := data.Checksum()
+				checksum, err := data.Checksum(time.Local)
 				assert.NoError(t, err)
 				expectChecksums = append(expectChecksums, checksum)
 			}

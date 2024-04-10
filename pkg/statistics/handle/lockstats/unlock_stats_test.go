@@ -83,7 +83,7 @@ func TestGetStatsDeltaFromTableLocked(t *testing.T) {
 				util.StatsCtx,
 				util.UseCurrentSessionOpt,
 				selectDeltaSQL,
-				gomock.Eq([]interface{}{int64(1)}),
+				gomock.Eq([]any{int64(1)}),
 			).Return(tt.execResult, nil, tt.execError)
 
 			count, modifyCount, version, err := getStatsDeltaFromTableLocked(wrapAsSCtx(exec), 1)
@@ -142,7 +142,7 @@ func TestUpdateStatsAndUnlockTable(t *testing.T) {
 				util.StatsCtx,
 				util.UseCurrentSessionOpt,
 				selectDeltaSQL,
-				gomock.Eq([]interface{}{tt.tableID}),
+				gomock.Eq([]any{tt.tableID}),
 			).Return([]chunk.Row{createStatsDeltaRow(1, 1, 1000)}, nil, nil)
 
 			if tt.execError == nil {
@@ -150,20 +150,20 @@ func TestUpdateStatsAndUnlockTable(t *testing.T) {
 					util.StatsCtx,
 					util.UseCurrentSessionOpt,
 					updateDeltaSQL,
-					gomock.Eq([]interface{}{uint64(1000), int64(1), int64(1), int64(1), int64(1)}),
+					gomock.Eq([]any{uint64(1000), int64(1), int64(1), int64(1), int64(1)}),
 				).Return(nil, nil, nil)
 				exec.EXPECT().ExecRestrictedSQL(
 					util.StatsCtx,
 					util.UseCurrentSessionOpt,
 					DeleteLockSQL,
-					gomock.Eq([]interface{}{tt.tableID}),
+					gomock.Eq([]any{tt.tableID}),
 				).Return(nil, nil, nil)
 			} else {
 				exec.EXPECT().ExecRestrictedSQL(
 					util.StatsCtx,
 					util.UseCurrentSessionOpt,
 					updateDeltaSQL,
-					gomock.Eq([]interface{}{uint64(1000), int64(1), int64(1), int64(1), int64(1)}),
+					gomock.Eq([]any{uint64(1000), int64(1), int64(1), int64(1), int64(1)}),
 				).Return(nil, nil, tt.execError)
 			}
 
@@ -199,49 +199,49 @@ func TestRemoveLockedTables(t *testing.T) {
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		selectDeltaSQL,
-		gomock.Eq([]interface{}{int64(1)}),
+		gomock.Eq([]any{int64(1)}),
 	).Return([]chunk.Row{}, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		updateDeltaSQL,
-		gomock.Eq([]interface{}{uint64(0), int64(0), int64(0), int64(0), int64(1)}),
+		gomock.Eq([]any{uint64(0), int64(0), int64(0), int64(0), int64(1)}),
 	).Return(nil, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		DeleteLockSQL,
-		gomock.Eq([]interface{}{int64(1)}),
+		gomock.Eq([]any{int64(1)}),
 	).Return(nil, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		selectDeltaSQL,
-		gomock.Eq([]interface{}{int64(4)}),
+		gomock.Eq([]any{int64(4)}),
 	).Return([]chunk.Row{createStatsDeltaRow(1, 1, 1000)}, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		updateDeltaSQL,
-		gomock.Eq([]interface{}{uint64(1000), int64(1), int64(1), int64(1), int64(4)}),
+		gomock.Eq([]any{uint64(1000), int64(1), int64(1), int64(1), int64(4)}),
 	).Return(nil, nil, nil)
 	// Patch the delta to table 1 from partition p1.
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		updateDeltaSQL,
-		gomock.Eq([]interface{}{uint64(1000), int64(1), int64(1), int64(1), int64(1)}),
+		gomock.Eq([]any{uint64(1000), int64(1), int64(1), int64(1), int64(1)}),
 	).Return(nil, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		DeleteLockSQL,
-		gomock.Eq([]interface{}{int64(4)}),
+		gomock.Eq([]any{int64(4)}),
 	).Return(nil, nil, nil)
 
 	tables := map[int64]*stststypes.StatsLockTable{
@@ -286,28 +286,28 @@ func TestRemoveLockedPartitions(t *testing.T) {
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		selectDeltaSQL,
-		gomock.Eq([]interface{}{int64(2)}),
+		gomock.Eq([]any{int64(2)}),
 	).Return([]chunk.Row{createStatsDeltaRow(1, 1, 1000)}, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		updateDeltaSQL,
-		gomock.Eq([]interface{}{uint64(1000), int64(1), int64(1), int64(1), int64(2)}),
+		gomock.Eq([]any{uint64(1000), int64(1), int64(1), int64(1), int64(2)}),
 	).Return(nil, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		updateDeltaSQL,
-		gomock.Eq([]interface{}{uint64(1000), int64(1), int64(1), int64(1), int64(1)}),
+		gomock.Eq([]any{uint64(1000), int64(1), int64(1), int64(1), int64(1)}),
 	).Return(nil, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		DeleteLockSQL,
-		gomock.Eq([]interface{}{int64(2)}),
+		gomock.Eq([]any{int64(2)}),
 	).Return(nil, nil, nil)
 
 	pidAndNames := map[int64]string{

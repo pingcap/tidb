@@ -7,12 +7,13 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"go.uber.org/zap"
 )
 
 const (
@@ -33,54 +34,16 @@ type MergeRangesStat struct {
 	MergedRegionBytesAvg int
 }
 
-// NeedsMerge checks whether two ranges needs to be merged.
-func NeedsMerge(left, right *rtree.Range, splitSizeBytes, splitKeyCount uint64) bool {
-	leftBytes, leftKeys := left.BytesAndKeys()
-	rightBytes, rightKeys := right.BytesAndKeys()
-	if rightBytes == 0 {
-		return true
-	}
-	if leftBytes+rightBytes > splitSizeBytes {
-		return false
-	}
-	if leftKeys+rightKeys > splitKeyCount {
-		return false
-	}
-	tableID1, indexID1, isRecord1, err1 := tablecodec.DecodeKeyHead(kv.Key(left.StartKey))
-	tableID2, indexID2, isRecord2, err2 := tablecodec.DecodeKeyHead(kv.Key(right.StartKey))
-
-	// Failed to decode the file key head... can this happen?
-	if err1 != nil || err2 != nil {
-		log.Warn("Failed to parse the key head for merging files, skipping",
-			logutil.Key("left-start-key", left.StartKey),
-			logutil.Key("right-start-key", right.StartKey),
-			logutil.AShortError("left-err", err1),
-			logutil.AShortError("right-err", err2),
-		)
-		return false
-	}
-	// Merge if they are both record keys
-	if isRecord1 && isRecord2 {
-		// Do not merge ranges in different tables.
-		return tableID1 == tableID2
-	}
-	// If they are all index keys...
-	if !isRecord1 && !isRecord2 {
-		// Do not merge ranges in different indexes even if they are in the same
-		// table, as rewrite rule only supports rewriting one pattern.
-		// Merge left and right if they are in the same index.
-		return tableID1 == tableID2 && indexID1 == indexID2
-	}
-	return false
-}
-
-// MergeFileRanges returns ranges of the files are merged based on
+// MergeAndRewriteFileRanges returns ranges of the files are merged based on
 // splitSizeBytes and splitKeyCount.
 //
 // By merging small ranges, it speeds up restoring a backup that contains many
 // small ranges (regions) as it reduces split region and scatter region.
-func MergeFileRanges(
-	files []*backuppb.File, splitSizeBytes, splitKeyCount uint64,
+func MergeAndRewriteFileRanges(
+	files []*backuppb.File,
+	rewriteRules *RewriteRules,
+	splitSizeBytes,
+	splitKeyCount uint64,
 ) ([]rtree.Range, *MergeRangesStat, error) {
 	if len(files) == 0 {
 		return []rtree.Range{}, &MergeRangesStat{}, nil
@@ -119,28 +82,30 @@ func MergeFileRanges(
 	rangeTree := rtree.NewRangeTree()
 	for key := range filesMap {
 		files := filesMap[key]
-		if out := rangeTree.InsertRange(rtree.Range{
+		rangeSize := uint64(0)
+		for _, f := range filesMap[key] {
+			rangeSize += f.Size_
+		}
+		rg := &rtree.Range{
 			StartKey: files[0].GetStartKey(),
 			EndKey:   files[0].GetEndKey(),
 			Files:    files,
-		}); out != nil {
-			return nil, nil, errors.Annotatef(berrors.ErrRestoreInvalidRange,
+			Size:     rangeSize,
+		}
+		// rewrite Range for split.
+		// so that splitRanges no need to handle rewrite rules any more.
+		tmpRng, err := RewriteRange(rg, rewriteRules)
+		if err != nil {
+			return nil, nil, errors.Annotatef(berrors.ErrInvalidRange,
+				"unable to rewrite range files %+v", files)
+		}
+		if out := rangeTree.InsertRange(*tmpRng); out != nil {
+			return nil, nil, errors.Annotatef(berrors.ErrInvalidRange,
 				"duplicate range %s files %+v", out, files)
 		}
 	}
 
-	sortedRanges := rangeTree.GetSortedRanges()
-	for i := 1; i < len(sortedRanges); {
-		if !NeedsMerge(&sortedRanges[i-1], &sortedRanges[i], splitSizeBytes, splitKeyCount) {
-			i++
-			continue
-		}
-		sortedRanges[i-1].EndKey = sortedRanges[i].EndKey
-		sortedRanges[i-1].Files = append(sortedRanges[i-1].Files, sortedRanges[i].Files...)
-		// TODO: this is slow when there are lots of ranges need to merge.
-		sortedRanges = append(sortedRanges[:i], sortedRanges[i+1:]...)
-	}
-
+	sortedRanges := rangeTree.MergedRanges(splitSizeBytes, splitKeyCount)
 	regionBytesAvg := totalBytes / uint64(totalRegions)
 	regionKeysAvg := totalKvs / uint64(totalRegions)
 	mergedRegionBytesAvg := totalBytes / uint64(len(sortedRanges))
@@ -157,4 +122,41 @@ func MergeFileRanges(
 		MergedRegionKeysAvg:  int(mergedRegionKeysAvg),
 		MergedRegionBytesAvg: int(mergedRegionBytesAvg),
 	}, nil
+}
+
+func RewriteRange(rg *rtree.Range, rewriteRules *RewriteRules) (*rtree.Range, error) {
+	if rewriteRules == nil {
+		return rg, nil
+	}
+	startID := tablecodec.DecodeTableID(rg.StartKey)
+	endID := tablecodec.DecodeTableID(rg.EndKey)
+	var rule *import_sstpb.RewriteRule
+	if startID != endID {
+		log.Warn("table id does not match",
+			logutil.Key("startKey", rg.StartKey),
+			logutil.Key("endKey", rg.EndKey),
+			zap.Int64("startID", startID),
+			zap.Int64("endID", endID))
+		return nil, errors.Annotate(berrors.ErrRestoreTableIDMismatch, "table id mismatch")
+	}
+	rg.StartKey, rule = replacePrefix(rg.StartKey, rewriteRules)
+	if rule == nil {
+		log.Warn("cannot find rewrite rule", logutil.Key("key", rg.StartKey))
+	} else {
+		log.Debug(
+			"rewrite start key",
+			logutil.Key("key", rg.StartKey), logutil.RewriteRule(rule))
+	}
+	oldKey := rg.EndKey
+	rg.EndKey, rule = replacePrefix(rg.EndKey, rewriteRules)
+	if rule == nil {
+		log.Warn("cannot find rewrite rule", logutil.Key("key", rg.EndKey))
+	} else {
+		log.Debug(
+			"rewrite end key",
+			logutil.Key("origin-key", oldKey),
+			logutil.Key("key", rg.EndKey),
+			logutil.RewriteRule(rule))
+	}
+	return rg, nil
 }

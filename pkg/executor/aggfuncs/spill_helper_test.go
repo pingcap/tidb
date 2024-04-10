@@ -839,9 +839,9 @@ func TestPartialResult4JsonArrayagg(t *testing.T) {
 
 	// Initialize test data
 	expectData := []partialResult4JsonArrayagg{
-		{entries: []interface{}{int64(1), float64(1.1), "", true, types.Opaque{TypeCode: 1, Buf: getLargeRandBuffer()}, types.NewTime(9876, 12, 10)}},
-		{entries: []interface{}{int64(1), float64(1.1), false, types.NewDuration(1, 2, 3, 4, 5), testLongStr1}},
-		{entries: []interface{}{"dw啊q", float64(-1.1), int64(0), types.NewDuration(1, 2, 3, 4, 5), types.NewTime(123, 1, 2), testLongStr1, types.BinaryJSON{TypeCode: 1, Value: []byte(testLongStr2)}, types.Opaque{TypeCode: 6, Buf: getLargeRandBuffer()}}},
+		{entries: []any{int64(1), float64(1.1), "", true, types.Opaque{TypeCode: 1, Buf: getLargeRandBuffer()}, types.NewTime(9876, 12, 10)}},
+		{entries: []any{int64(1), float64(1.1), false, types.NewDuration(1, 2, 3, 4, 5), testLongStr1}},
+		{entries: []any{"dw啊q", float64(-1.1), int64(0), types.NewDuration(1, 2, 3, 4, 5), types.NewTime(123, 1, 2), testLongStr1, types.BinaryJSON{TypeCode: 1, Value: []byte(testLongStr2)}, types.Opaque{TypeCode: 6, Buf: getLargeRandBuffer()}}},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -886,9 +886,9 @@ func TestPartialResult4JsonObjectAgg(t *testing.T) {
 
 	// Initialize test data
 	expectData := []partialResult4JsonObjectAgg{
-		{entries: map[string]interface{}{"123": int64(1), "234": float64(1.1), "999": true, "235": "123"}, bInMap: 0},
-		{entries: map[string]interface{}{"啊": testLongStr1, "我": float64(1.1), "反": int64(456)}, bInMap: 0},
-		{entries: map[string]interface{}{"fe": testLongStr1, " ": int64(36798), "888": false, "": testLongStr2}, bInMap: 0},
+		{entries: map[string]any{"123": int64(1), "234": float64(1.1), "999": true, "235": "123"}, bInMap: 0},
+		{entries: map[string]any{"啊": testLongStr1, "我": float64(1.1), "反": int64(456)}, bInMap: 0},
+		{entries: map[string]any{"fe": testLongStr1, " ": int64(36798), "888": false, "": testLongStr2}, bInMap: 0},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)

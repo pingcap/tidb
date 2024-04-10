@@ -45,6 +45,8 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		Args:            nil,
 		MultiSchemaInfo: ctx.GetSessionVars().StmtCtx.MultiSchemaInfo,
 		ReorgMeta:       nil,
+		CDCWriteSource:  ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:         ctx.GetSessionVars().SQLMode,
 	}
 	if containsDistTaskSubJob(subJobs) {
 		job.ReorgMeta, err = newReorgMetaFromVariables(job, ctx)
@@ -395,7 +397,7 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 		}
 	}
 	if newSubJob != nil {
-		newSubJob.Args = []interface{}{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
+		newSubJob.Args = []any{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
 		newSubJobs = append(newSubJobs, newSubJob)
 		info.SubJobs = newSubJobs
 	}

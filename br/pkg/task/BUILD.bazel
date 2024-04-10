@@ -20,6 +20,7 @@ go_library(
     deps = [
         "//br/pkg/aws",
         "//br/pkg/backup",
+        "//br/pkg/backup/prepare_snap",
         "//br/pkg/checkpoint",
         "//br/pkg/checksum",
         "//br/pkg/common",
@@ -53,8 +54,8 @@ go_library(
         "//pkg/statistics/handle",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/cdcutil",
         "//pkg/util/mathutil",
-        "//pkg/util/sqlexec",
         "//pkg/util/table-filter",
         "@com_github_docker_go_units//:go-units",
         "@com_github_fatih_color//:color",
@@ -101,6 +102,7 @@ go_test(
     flaky = True,
     shard_count = 22,
     deps = [
+        "//br/pkg/config",
         "//br/pkg/conn",
         "//br/pkg/errors",
         "//br/pkg/metautil",

@@ -370,7 +370,7 @@ child	CREATE TABLE `child` (
   `parent_id` int(11) NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `par_ind` (`parent_id`),
-  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `executor__show`.`parent` (`id`)
+  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 DROP TABLE child;
 CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE RESTRICT ON UPDATE CASCADE);
@@ -381,7 +381,7 @@ child	CREATE TABLE `child` (
   `parent_id` int(11) NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `par_ind` (`parent_id`),
-  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `executor__show`.`parent` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 create database test1;
 create database test2;
@@ -542,7 +542,7 @@ t	CREATE TABLE `t` (
   `a` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`a`)
-(PARTITION `p` VALUES LESS THAN (x'7f'))
+(PARTITION `p` VALUES LESS THAN (0x7f))
 set @@session.tidb_enable_list_partition = default;
 set @@foreign_key_checks=default;
 create table if not exists show_errors (a int);
@@ -1123,3 +1123,12 @@ select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER
 COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
 utf8mb4_bin	utf8mb4	46	Yes	Yes	1
 set @@session.default_collation_for_utf8mb4=default;
+DROP TABLE IF EXISTS `t`;
+CREATE TABLE `t` (a BIGINT PRIMARY KEY AUTO_RANDOM(2), b INT) PRE_SPLIT_REGIONS=4;
+SHOW CREATE TABLE `t`;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(2) */,
+  `b` int(11) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! PRE_SPLIT_REGIONS=2 */

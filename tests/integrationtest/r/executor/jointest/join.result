@@ -1590,3 +1590,16 @@ insert into t1 values(2,3),(4,4);
 select /*+ TIDB_HJ(t, t2) */ * from t, t1 where t.c1 = t1.c1;
 c1	c2	c1	c2
 2	2	2	3
+drop table if exists t1,t2,t3,t4;
+create table t1 (c int, b int);
+create table t2 (a int, b int);
+create table t3 (b int, c int);
+create table t4 (y int, c int);
+select * from t1 natural join (t3 cross join t4);
+Error 1052 (23000): Column 'c' in from clause is ambiguous
+select * from (t3 cross join t4) natural join t1;
+Error 1052 (23000): Column 'c' in from clause is ambiguous
+select * from (t1 join t2 on t1.b=t2.b) natural join (t3 natural join t4);
+Error 1052 (23000): Column 'b' in from clause is ambiguous
+select * from (t3 natural join t4) natural join (t1 join t2 on t1.b=t2.b);
+Error 1052 (23000): Column 'b' in from clause is ambiguous

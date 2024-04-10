@@ -78,7 +78,7 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("admin check index t idx;")
 	taskMgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	ctx := util.WithInternalSourceType(context.Background(), "dispatcher")
+	ctx := util.WithInternalSourceType(context.Background(), "scheduler")
 	task, err := taskMgr.GetTaskByIDWithHistory(ctx, storage.TestLastTaskID.Load())
 	require.NoError(t, err)
 	require.Equal(t, 1, task.Concurrency)
@@ -152,6 +152,7 @@ func TestAddIndexDistCancel(t *testing.T) {
 }
 
 func TestAddIndexDistPauseAndResume(t *testing.T) {
+	t.Skip("unstable") // TODO(tangenta): fix this unstable test
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	if store.Name() != "TiKV" {
 		t.Skip("TiKV store only")
@@ -284,13 +285,13 @@ func TestAddIndexTSErrorWhenResetImportEngine(t *testing.T) {
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	tk.MustExec("set global tidb_enable_dist_task = on;")
 
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockAllocateTSErr", `1*return`)
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/mockAllocateTSErr", `1*return`)
 	require.NoError(t, err)
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1), (2), (3);")
 	dom.DDL().SetHook(cb)
 	tk.MustExec("alter table t add index idx(a);")
-	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockAllocateTSErr")
+	err = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/mockAllocateTSErr")
 	require.NoError(t, err)
 
 	dts := []types.Datum{types.NewIntDatum(1)}

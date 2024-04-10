@@ -278,7 +278,7 @@ func (fkc *FKCheckExec) buildCheckKeyFromFKValue(sc *stmtctx.StatementContext, v
 		}
 		return key, true, nil
 	}
-	key, distinct, err := fkc.Idx.GenIndexKey(sc, vals, nil, nil)
+	key, distinct, err := fkc.Idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), vals, nil, nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -760,7 +760,7 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 	if err != nil {
 		return nil, err
 	}
-	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx, stmtNode, fkc.b.is)
+	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx.GetPlanCtx(), stmtNode, fkc.b.is)
 	if err != nil {
 		return nil, err
 	}

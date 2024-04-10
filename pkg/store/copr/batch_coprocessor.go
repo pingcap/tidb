@@ -635,7 +635,7 @@ func buildBatchCopTasksConsistentHash(
 
 	for i, ranges := range rangesForEachPhysicalTable {
 		rangesLen += ranges.Len()
-		locations, err := cache.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit)
+		locations, err := cache.SplitKeyRangesByLocationsWithoutBuckets(bo, ranges, UnspecifiedLimit)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -655,7 +655,6 @@ func buildBatchCopTasksConsistentHash(
 	fetchTopoStart := time.Now()
 	for {
 		retryNum++
-		// todo: use AssureAndGetTopo() after SNS is done.
 		storesStr, err = tiflashcompute.GetGlobalTopoFetcher().FetchAndGetTopo()
 		if err != nil {
 			return nil, err
@@ -905,7 +904,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		rangesLen = 0
 		for i, ranges := range rangesForEachPhysicalTable {
 			rangesLen += ranges.Len()
-			locations, err := cache.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit)
+			locations, err := cache.SplitKeyRangesByLocationsWithoutBuckets(bo, ranges, UnspecifiedLimit)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -979,7 +978,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				regionIDErrMsg += fmt.Sprintf("%d, ", regionIDsInOtherZones[i])
 			}
 			warningMsg += regionIDErrMsg + "etc"
-			appendWarning(errors.Errorf(warningMsg))
+			appendWarning(errors.NewNoStackErrorf(warningMsg))
 		}
 
 		for _, task := range storeTaskMap {
@@ -1168,7 +1167,12 @@ func (b *batchCopIterator) recvFromRespCh(ctx context.Context) (resp *batchCopRe
 		case resp, ok = <-b.respChan:
 			return
 		case <-ticker.C:
-			if atomic.LoadUint32(b.vars.Killed) == 1 {
+			killed := atomic.LoadUint32(b.vars.Killed)
+			if killed != 0 {
+				logutil.Logger(ctx).Info(
+					"a killed signal is received",
+					zap.Uint32("signal", killed),
+				)
 				resp = &batchCopResponse{err: derr.ErrQueryInterrupted}
 				ok = true
 				return
@@ -1426,7 +1430,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 		splitKeyStart := time.Now()
 		for i, ranges := range rangesForEachPhysicalTable {
 			rangesLen += ranges.Len()
-			locations, err := cache.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit)
+			locations, err := cache.SplitKeyRangesByLocationsWithoutBuckets(bo, ranges, UnspecifiedLimit)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

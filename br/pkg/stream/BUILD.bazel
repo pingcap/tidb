@@ -21,7 +21,6 @@ go_library(
         "//br/pkg/restore/tiflashrec",
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
-        "//br/pkg/utils",
         "//pkg/ddl",
         "//pkg/kv",
         "//pkg/meta",
@@ -55,7 +54,7 @@ go_test(
     ],
     embed = [":stream"],
     flaky = True,
-    shard_count = 25,
+    shard_count = 26,
     deps = [
         "//br/pkg/storage",
         "//br/pkg/streamhelper",

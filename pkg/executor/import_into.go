@@ -16,11 +16,11 @@ package executor
 
 import (
 	"context"
-	"sync/atomic"
+	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -29,26 +29,23 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
 var (
-	// TestDetachedTaskFinished is a flag for test.
-	TestDetachedTaskFinished atomic.Bool
 	// TestCancelFunc for test.
 	TestCancelFunc context.CancelFunc
 )
@@ -58,11 +55,13 @@ const unknownImportedRowCount = -1
 // ImportIntoExec represents a IMPORT INTO executor.
 type ImportIntoExec struct {
 	exec.BaseExecutor
+	selectExec exec.Executor
 	userSctx   sessionctx.Context
-	importPlan *importer.Plan
 	controller *importer.LoadDataController
 	stmt       string
 
+	plan       *plannercore.ImportInto
+	tbl        table.Table
 	dataFilled bool
 }
 
@@ -70,23 +69,15 @@ var (
 	_ exec.Executor = (*ImportIntoExec)(nil)
 )
 
-func newImportIntoExec(b exec.BaseExecutor, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (
-	*ImportIntoExec, error) {
-	importPlan, err := importer.NewImportPlan(userSctx, plan, tbl)
-	if err != nil {
-		return nil, err
-	}
-	astArgs := importer.ASTArgsFromImportPlan(plan)
-	controller, err := importer.NewLoadDataController(importPlan, tbl, astArgs)
-	if err != nil {
-		return nil, err
-	}
+func newImportIntoExec(b exec.BaseExecutor, selectExec exec.Executor, userSctx sessionctx.Context,
+	plan *plannercore.ImportInto, tbl table.Table) (*ImportIntoExec, error) {
 	return &ImportIntoExec{
 		BaseExecutor: b,
+		selectExec:   selectExec,
 		userSctx:     userSctx,
-		importPlan:   importPlan,
-		controller:   controller,
 		stmt:         plan.Stmt,
+		plan:         plan,
+		tbl:          tbl,
 	}, nil
 }
 
@@ -98,6 +89,22 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		// need to return an empty req to indicate all results have been written
 		return nil
 	}
+	importPlan, err := importer.NewImportPlan(ctx, e.userSctx, e.plan, e.tbl)
+	if err != nil {
+		return err
+	}
+	astArgs := importer.ASTArgsFromImportPlan(e.plan)
+	controller, err := importer.NewLoadDataController(importPlan, e.tbl, astArgs)
+	if err != nil {
+		return err
+	}
+	e.controller = controller
+
+	if e.selectExec != nil {
+		// `import from select` doesn't return rows, so no need to set dataFilled.
+		return e.importFromSelect(ctx)
+	}
+
 	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 		return err2
 	}
@@ -108,12 +115,12 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 	defer CloseSession(newSCtx)
-	sqlExec := newSCtx.(sqlexec.SQLExecutor)
+	sqlExec := newSCtx.GetSQLExecutor()
 	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
 		return err2
 	}
 
-	if err := e.importPlan.InitTiKVConfigs(ctx, newSCtx); err != nil {
+	if err := e.controller.InitTiKVConfigs(ctx, newSCtx); err != nil {
 		return err
 	}
 
@@ -123,53 +130,16 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		ctx = newCtx
 		TestCancelFunc = cancel
 	})
-	// todo: we don't need Job now, remove it later.
-	parentCtx := ctx
-	if e.controller.Detached {
-		parentCtx = context.Background()
-	}
-	group, groupCtx := errgroup.WithContext(parentCtx)
-	groupCtx = kv.WithInternalSourceType(groupCtx, kv.InternalDistTask)
 
-	param := &importer.JobImportParam{
-		Job:      &importer.Job{},
-		Group:    group,
-		GroupCtx: groupCtx,
-		Done:     make(chan struct{}),
-		Progress: importer.NewProgress(),
-	}
-	distImporter, err := e.getJobImporter(ctx, param)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = distImporter.Close()
-	}()
-	param.Progress.SourceFileSize = e.controller.TotalFileSize
-	jobID, task, err := distImporter.SubmitTask(ctx)
+	jobID, task, err := e.submitTask(ctx)
 	if err != nil {
 		return err
 	}
 
-	if e.controller.Detached {
-		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalImportInto)
-		se, err := CreateSession(e.userSctx)
-		if err != nil {
+	if !e.controller.Detached {
+		if err = e.waitTask(ctx, jobID, task); err != nil {
 			return err
 		}
-		go func() {
-			defer CloseSession(se)
-			// error is stored in system table, so we can ignore it here
-			//nolint: errcheck
-			_ = e.doImport(ctx, se, distImporter, task)
-			failpoint.Inject("testDetachedTaskFinished", func() {
-				TestDetachedTaskFinished.Store(true)
-			})
-		}()
-		return e.fillJobInfo(ctx, jobID, req)
-	}
-	if err = e.doImport(ctx, e.userSctx, distImporter, task); err != nil {
-		return err
 	}
 	return e.fillJobInfo(ctx, jobID, req)
 }
@@ -184,7 +154,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	}
 	var info *importer.JobInfo
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
-		sqlExec := se.(sqlexec.SQLExecutor)
+		sqlExec := se.GetSQLExecutor()
 		var err2 error
 		info, err2 = importer.GetJob(ctx, sqlExec, jobID, e.Ctx().GetSessionVars().User.String(), false)
 		return err2
@@ -195,32 +165,32 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	return nil
 }
 
-func (e *ImportIntoExec) getJobImporter(ctx context.Context, param *importer.JobImportParam) (*importinto.DistImporter, error) {
+func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase, error) {
 	importFromServer, err := storage.IsLocalPath(e.controller.Path)
 	if err != nil {
 		// since we have checked this during creating controller, this should not happen.
-		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
+		return 0, nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
 	}
 	logutil.Logger(ctx).Info("get job importer", zap.Stringer("param", e.controller.Parameters),
 		zap.Bool("dist-task-enabled", variable.EnableDistTask.Load()))
 	if importFromServer {
 		ecp, err2 := e.controller.PopulateChunks(ctx)
 		if err2 != nil {
-			return nil, err2
+			return 0, nil, err2
 		}
-		return importinto.NewDistImporterServerFile(param, e.importPlan, e.stmt, ecp, e.controller.TotalFileSize)
+		return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, ecp)
 	}
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
 	if variable.EnableDistTask.Load() {
-		return importinto.NewDistImporter(param, e.importPlan, e.stmt, e.controller.TotalFileSize)
+		return importinto.SubmitTask(ctx, e.controller.Plan, e.stmt)
 	}
-	return importinto.NewDistImporterCurrNode(param, e.importPlan, e.stmt, e.controller.TotalFileSize)
+	return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, nil)
 }
 
-func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, distImporter *importinto.DistImporter, task *proto.Task) error {
-	distImporter.ImportTask(task)
-	group := distImporter.Param().Group
-	err := group.Wait()
+// waitTask waits for the task to finish.
+// NOTE: WaitTaskDoneOrPaused also return error when task fails.
+func (*ImportIntoExec) waitTask(ctx context.Context, jobID int64, task *proto.TaskBase) error {
+	err := handle.WaitTaskDoneOrPaused(ctx, task.ID)
 	// when user KILL the connection, the ctx will be canceled, we need to cancel the import job.
 	if errors.Cause(err) == context.Canceled {
 		taskManager, err2 := fstorage.GetTaskManager()
@@ -228,12 +198,96 @@ func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, di
 			return err2
 		}
 		// use background, since ctx is canceled already.
-		return cancelAndWaitImportJob(context.Background(), taskManager, distImporter.JobID())
-	}
-	if err2 := flushStats(ctx, se, e.importPlan.TableInfo.ID, distImporter.Result(ctx)); err2 != nil {
-		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))
+		return cancelAndWaitImportJob(context.Background(), taskManager, jobID)
 	}
 	return err
+}
+
+func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
+	e.dataFilled = true
+	// must use a new session as:
+	// 	- pre-check will execute other sql, the stmt in show processlist will be changed.
+	// 	- userSctx might be in stale read, we cannot do write.
+	newSCtx, err2 := CreateSession(e.userSctx)
+	if err2 != nil {
+		return err2
+	}
+	defer CloseSession(newSCtx)
+
+	sqlExec := newSCtx.GetSQLExecutor()
+	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
+		return err2
+	}
+	if err := e.controller.InitTiKVConfigs(ctx, newSCtx); err != nil {
+		return err
+	}
+
+	importID := uuid.New().String()
+	logutil.Logger(ctx).Info("importing data from select statement",
+		zap.String("import-id", importID), zap.Int("concurrency", e.controller.ThreadCnt),
+		zap.String("target-table", e.controller.FullTableName()),
+		zap.Int64("target-table-id", e.controller.TableInfo.ID))
+	ti, err2 := importer.NewTableImporter(ctx, e.controller, importID, e.Ctx().GetStore())
+	if err2 != nil {
+		return err2
+	}
+	defer func() {
+		if err := ti.Close(); err != nil {
+			logutil.Logger(ctx).Error("close importer failed", zap.Error(err))
+		}
+	}()
+	selectedRowCh := make(chan importer.QueryRow)
+	ti.SetSelectedRowCh(selectedRowCh)
+
+	var importResult *importer.JobImportResult
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		var err error
+		importResult, err = ti.ImportSelectedRows(egCtx, newSCtx)
+		return err
+	})
+	eg.Go(func() error {
+		defer close(selectedRowCh)
+		fields := exec.RetTypes(e.selectExec)
+		var idAllocator int64
+		for {
+			// rows will be consumed concurrently, we cannot use chunk pool in session ctx.
+			chk := exec.NewFirstChunk(e.selectExec)
+			iter := chunk.NewIterator4Chunk(chk)
+			err := exec.Next(egCtx, e.selectExec, chk)
+			if err != nil {
+				return err
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+			for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
+				idAllocator++
+				select {
+				case selectedRowCh <- importer.QueryRow{
+					ID:   idAllocator,
+					Data: innerChunkRow.GetDatumRow(fields),
+				}:
+				case <-egCtx.Done():
+					return egCtx.Err()
+				}
+			}
+		}
+		return nil
+	})
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+
+	if err2 = importer.FlushTableStats(ctx, newSCtx, e.controller.TableInfo.ID, importResult); err2 != nil {
+		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))
+	}
+
+	stmtCtx := e.userSctx.GetSessionVars().StmtCtx
+	stmtCtx.SetAffectedRows(importResult.Affected)
+	// TODO: change it after spec is ready.
+	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %s", importResult.Affected, importID))
+	return nil
 }
 
 // ImportIntoActionExec represents a import into action executor.
@@ -276,7 +330,7 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) (err er
 func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, manager *fstorage.TaskManager, hasSuperPriv bool) error {
 	var info *importer.JobInfo
 	if err := manager.WithNewSession(func(se sessionctx.Context) error {
-		exec := se.(sqlexec.SQLExecutor)
+		exec := se.GetSQLExecutor()
 		var err2 error
 		info, err2 = importer.GetJob(ctx, exec, e.jobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
 		return err2
@@ -287,19 +341,6 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 		return exeerrors.ErrLoadDataInvalidOperation.FastGenByArgs("CANCEL")
 	}
 	return nil
-}
-
-// flushStats flushes the stats of the table.
-func flushStats(ctx context.Context, se sessionctx.Context, tableID int64, result importer.JobImportResult) error {
-	if err := sessiontxn.NewTxn(ctx, se); err != nil {
-		return err
-	}
-	sessionVars := se.GetSessionVars()
-	sessionVars.TxnCtxMu.Lock()
-	defer sessionVars.TxnCtxMu.Unlock()
-	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected), result.ColSizeMap)
-	se.StmtCommit(ctx)
-	return se.CommitTxn(ctx)
 }
 
 func cancelAndWaitImportJob(ctx context.Context, manager *fstorage.TaskManager, jobID int64) error {

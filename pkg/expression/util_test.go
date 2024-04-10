@@ -351,7 +351,7 @@ func TestHashGroupKey(t *testing.T) {
 			bufs[j] = bufs[j][:0]
 		}
 		var err error
-		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
+		err = EvalExpr(ctx, ctx.GetSessionVars().EnableVectorizedExpression, colExpr, colExpr.GetType().EvalType(), input, colBuf)
 		require.NoError(t, err)
 		bufs, err = codec.HashGroupKey(sc.TimeZone(), 1024, colBuf, bufs, ft)
 		require.NoError(t, err)
@@ -495,7 +495,7 @@ func BenchmarkExprFromSchema(b *testing.B) {
 type MockExpr struct {
 	err error
 	t   *types.FieldType
-	i   interface{}
+	i   any
 }
 
 func (m *MockExpr) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
@@ -571,7 +571,7 @@ func (m *MockExpr) GetType() *types.FieldType                         { return m
 func (m *MockExpr) Clone() Expression                                 { return nil }
 func (m *MockExpr) Equal(ctx EvalContext, e Expression) bool          { return false }
 func (m *MockExpr) IsCorrelated() bool                                { return false }
-func (m *MockExpr) ConstItem(_ bool) bool                             { return false }
+func (m *MockExpr) ConstLevel() ConstLevel                            { return ConstNone }
 func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
 func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
 func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }

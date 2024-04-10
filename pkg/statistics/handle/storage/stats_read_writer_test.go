@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResetTableStats2KVForDrop(t *testing.T) {
+func TestUpdateStatsMetaVersionForGC(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	h := do.StatsHandle()
@@ -60,7 +60,7 @@ func TestResetTableStats2KVForDrop(t *testing.T) {
 
 	// Reset one partition stats.
 	p0 := pi.Definitions[0]
-	err = h.ResetTableStats2KVForDrop(p0.ID)
+	err = h.UpdateStatsMetaVersionForGC(p0.ID)
 	require.NoError(t, err)
 
 	// Get partition stats from stats_meta table.

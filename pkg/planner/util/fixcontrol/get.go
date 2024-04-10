@@ -20,6 +20,10 @@ import (
 )
 
 const (
+	// Fix33031 controls whether to disallow plan cache for partitioned
+	// tables (both prepared statments and non-prepared statements)
+	// See #33031
+	Fix33031 uint64 = 33031
 	// Fix44262 controls whether to allow to use dynamic-mode to access partitioning tables without global-stats (#44262).
 	Fix44262 uint64 = 44262
 	// Fix44389 controls whether to consider non-point ranges of some CNF item when building ranges.
@@ -40,6 +44,9 @@ const (
 	Fix45798 uint64 = 45798
 	// Fix46177 controls whether to explore enforced plans for DataSource if it has already found an unenforced plan.
 	Fix46177 uint64 = 46177
+	// Fix49736 controls whether to force the optimizer to use plan cache even if there is risky optimization.
+	// This fix-control is test-only.
+	Fix49736 uint64 = 49736
 )
 
 // GetStr fetches the given key from the fix control map as a string type.

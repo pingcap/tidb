@@ -23,10 +23,12 @@ import (
 	"time"
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -171,6 +173,12 @@ type columnAPI interface {
 	FullHiddenColsAndVisibleCols() []*Column
 }
 
+// MutateContext is used to when mutating a table.
+type MutateContext = tbctx.MutateContext
+
+// AllocatorContext is used to provide context for method `table.Allocators`.
+type AllocatorContext = tbctx.AllocatorContext
+
 // Table is used to retrieve and modify rows in table.
 type Table interface {
 	columnAPI
@@ -185,16 +193,16 @@ type Table interface {
 	IndexPrefix() kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
-	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
+	AddRecord(ctx MutateContext, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
-	UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error
+	UpdateRecord(gctx context.Context, ctx MutateContext, h kv.Handle, currData, newData []types.Datum, touched []bool) error
 
 	// RemoveRecord removes a row in the table.
-	RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error
+	RemoveRecord(ctx MutateContext, h kv.Handle, r []types.Datum) error
 
 	// Allocators returns all allocators.
-	Allocators(ctx sessionctx.Context) autoid.Allocators
+	Allocators(ctx AllocatorContext) autoid.Allocators
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
@@ -212,7 +220,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 	defer r.End()
 	increment := sctx.GetSessionVars().AutoIncrementIncrement
 	offset := sctx.GetSessionVars().AutoIncrementOffset
-	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
+	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
 	_, max, err := alloc.Alloc(ctx, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
@@ -225,7 +233,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
 	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
 	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
-	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
+	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
 	min, max, err := alloc.Alloc(ctx, uint64(N), increment, offset)
 	if err != nil {
 		return min, max, err
@@ -249,11 +257,12 @@ type PhysicalTable interface {
 type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
-	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
+	GetPartitionByRow(expression.BuildContext, []types.Datum) (PhysicalTable, error)
+	GetPartitionIdxByRow(expression.BuildContext, []types.Datum) (int, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnIDs() []int64
 	GetPartitionColumnNames() []model.CIStr
-	CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
+	CheckForExchangePartition(ctx expression.BuildContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

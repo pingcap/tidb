@@ -321,11 +321,11 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = completeInsertErr(c, val, rowIdx, err)
 	}
 
-	if !e.Ctx().GetSessionVars().StmtCtx.DupKeyAsWarning {
-		return err
-	}
 	// TODO: should not filter all types of errors here.
-	e.handleWarning(err)
+	if err != nil {
+		ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
+		return ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err)
+	}
 	return nil
 }
 
@@ -348,10 +348,11 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 
 	e.evalBuffer.SetDatums(row...)
 	sctx := e.Ctx()
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for i, expr := range list {
-		val, err := expr.Eval(sctx, e.evalBuffer.ToRow())
+		val, err := expr.Eval(evalCtx, e.evalBuffer.ToRow())
 		if err != nil {
 			return nil, err
 		}
@@ -388,11 +389,12 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 	row := make([]types.Datum, rowLen)
 	hasValue := make([]bool, rowLen)
 	sctx := e.Ctx()
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for i, expr := range list {
 		con := expr.(*expression.Constant)
-		val, err := con.Eval(sctx, emptyRow)
+		val, err := con.Eval(evalCtx, emptyRow)
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
@@ -580,9 +582,12 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 
 	var defaultVal types.Datum
 	if col.DefaultIsExpr && col.DefaultExpr != nil {
-		defaultVal, err = table.EvalColDefaultExpr(e.Ctx(), col.ToInfo(), col.DefaultExpr)
+		defaultVal, err = table.EvalColDefaultExpr(e.Ctx().GetExprCtx(), col.ToInfo(), col.DefaultExpr)
 	} else {
-		defaultVal, err = table.GetColDefaultValue(e.Ctx(), col.ToInfo())
+		if err := table.CheckNoDefaultValueForInsert(e.Ctx().GetSessionVars().StmtCtx, col.ToInfo()); err != nil {
+			return types.Datum{}, err
+		}
+		defaultVal, err = table.GetColDefaultValue(e.Ctx().GetExprCtx(), col.ToInfo())
 	}
 	if err != nil {
 		return types.Datum{}, err
@@ -607,7 +612,7 @@ func (e *InsertValues) fillColValue(
 		if !hasValue && mysql.HasNoDefaultValueFlag(column.ToInfo().GetFlag()) {
 			vars := e.Ctx().GetSessionVars()
 			sc := vars.StmtCtx
-			if vars.StrictSQLMode {
+			if vars.SQLMode.HasStrictMode() {
 				return datum, table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name)
 			}
 			sc.AppendWarning(table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name))
@@ -685,7 +690,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 				return nil, err
 			}
 			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.GetFlag())) {
-				if err = c.HandleBadNull(&row[i], e.Ctx().GetSessionVars().StmtCtx, rowCntInLoadData); err != nil {
+				if err = c.HandleBadNull(e.Ctx().GetSessionVars().StmtCtx.ErrCtx(), &row[i], rowCntInLoadData); err != nil {
 					return nil, err
 				}
 			}
@@ -695,17 +700,18 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	// Handle exchange partition
 	tbl := e.Table.Meta()
 	if tbl.ExchangePartitionInfo != nil && tbl.GetPartitionInfo() == nil {
-		if err := checkRowForExchangePartition(e.Ctx(), row, tbl); err != nil {
+		if err := checkRowForExchangePartition(e.Ctx().GetTableCtx(), row, tbl); err != nil {
 			return nil, err
 		}
 	}
 
 	sctx := e.Ctx()
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
-		val, err := e.GenExprs[i].Eval(sctx, chunk.MutRowFromDatums(row).ToRow())
+		val, err := e.GenExprs[i].Eval(evalCtx, chunk.MutRowFromDatums(row).ToRow())
 		if err != nil && gCol.FieldType.IsArray() {
 			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
 		}
@@ -724,7 +730,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			warnCnt += len(newWarnings)
 		}
 		// Handle the bad null error.
-		if err = gCol.HandleBadNull(&row[colIdx], sc, rowCntInLoadData); err != nil {
+		if err = gCol.HandleBadNull(sc.ErrCtx(), &row[colIdx], rowCntInLoadData); err != nil {
 			return nil, err
 		}
 	}
@@ -820,7 +826,8 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 	if !found {
 		return rows, nil
 	}
-	retryInfo := e.Ctx().GetSessionVars().RetryInfo
+	sessVars := e.Ctx().GetSessionVars()
+	retryInfo := sessVars.RetryInfo
 	rowCount := len(rows)
 	for processedIdx := 0; processedIdx < rowCount; processedIdx++ {
 		autoDatum := rows[processedIdx][idx]
@@ -835,7 +842,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		}
 		// Use the value if it's not null and not 0.
 		if recordID != 0 {
-			alloc := e.Table.Allocators(e.Ctx()).Get(autoid.AutoIncrementType)
+			alloc := e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.AutoIncrementType)
 			err = alloc.Rebase(ctx, recordID, true)
 			if err != nil {
 				return nil, err
@@ -906,7 +913,8 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 func (e *InsertValues) adjustAutoIncrementDatum(
 	ctx context.Context, d types.Datum, hasValue bool, c *table.Column,
 ) (types.Datum, error) {
-	retryInfo := e.Ctx().GetSessionVars().RetryInfo
+	sessVars := e.Ctx().GetSessionVars()
+	retryInfo := sessVars.RetryInfo
 	if retryInfo.Retrying {
 		id, ok := retryInfo.GetCurrAutoIncrementID()
 		if ok {
@@ -931,7 +939,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
-		err = e.Table.Allocators(e.Ctx()).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true)
+		err = e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -1049,7 +1057,7 @@ func (e *InsertValues) adjustAutoRandomDatum(
 
 // allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
 func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.FieldType) (int64, error) {
-	alloc := e.Table.Allocators(e.Ctx()).Get(autoid.AutoRandomType)
+	alloc := e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 	increment := e.Ctx().GetSessionVars().AutoIncrementIncrement
 	offset := e.Ctx().GetSessionVars().AutoIncrementOffset
@@ -1073,7 +1081,7 @@ func (e *InsertValues) rebaseAutoRandomID(ctx context.Context, recordID int64, f
 	if recordID < 0 {
 		return nil
 	}
-	alloc := e.Table.Allocators(e.Ctx()).Get(autoid.AutoRandomType)
+	alloc := e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
 
 	shardFmt := autoid.NewShardIDFormat(fieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
@@ -1112,7 +1120,7 @@ func (e *InsertValues) adjustImplicitRowID(
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
-		intHandle, err := tables.AllocHandle(ctx, e.Ctx(), e.Table)
+		intHandle, err := tables.AllocHandle(ctx, e.Ctx().GetTableCtx(), e.Table)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -1129,7 +1137,7 @@ func (e *InsertValues) rebaseImplicitRowID(ctx context.Context, recordID int64) 
 	if recordID < 0 {
 		return nil
 	}
-	alloc := e.Table.Allocators(e.Ctx()).Get(autoid.RowIDAllocType)
+	alloc := e.Table.Allocators(e.Ctx().GetTableCtx()).Get(autoid.RowIDAllocType)
 	tableInfo := e.Table.Meta()
 
 	shardFmt := autoid.NewShardIDFormat(
@@ -1162,6 +1170,28 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 	return false
 }
 
+func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transaction, uk *keyValueWithDupInfo, replace bool, r toBeCheckedRow) (bool, error) {
+	if !replace {
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+		if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic && e.Ctx().GetSessionVars().LockUnchangedKeys {
+			txnCtx.AddUnchangedKeyForLock(uk.newKey)
+		}
+		return true, nil
+	}
+	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
+	if err != nil {
+		return false, err
+	}
+	if handle == nil {
+		return false, nil
+	}
+	_, err = e.removeRow(ctx, txn, handle, r, true)
+	if err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
 func (e *InsertValues) batchCheckAndInsert(
@@ -1184,12 +1214,6 @@ func (e *InsertValues) batchCheckAndInsert(
 		return err
 	}
 	setOptionForTopSQL(e.Ctx().GetSessionVars().StmtCtx, txn)
-	if e.collectRuntimeStatsEnabled() {
-		if snapshot := txn.GetSnapshot(); snapshot != nil {
-			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
-			defer snapshot.SetOption(kv.CollectRuntimeStats, nil)
-		}
-	}
 	sc := e.Ctx().GetSessionVars().StmtCtx
 	for _, fkc := range e.fkChecks {
 		err = fkc.checkRows(ctx, sc, txn, toBeCheckedRows)
@@ -1212,7 +1236,6 @@ func (e *InsertValues) batchCheckAndInsert(
 	}
 
 	// append warnings and get no duplicated error rows
-CheckAndInsert:
 	for i, r := range toBeCheckedRows {
 		if r.ignored {
 			continue
@@ -1248,40 +1271,42 @@ CheckAndInsert:
 			}
 		}
 
+		rowInserted := false
 		for _, uk := range r.uniqueKeys {
 			_, err := txn.Get(ctx, uk.newKey)
-			if err == nil {
-				if !replace {
-					// If duplicate keys were found in BatchGet, mark row = nil.
-					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-					if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
-						e.Ctx().GetSessionVars().LockUnchangedKeys {
-						// lock duplicated unique key on insert-ignore
-						txnCtx.AddUnchangedKeyForLock(uk.newKey)
-					}
-					continue CheckAndInsert
-				}
-				_, handle, err := tables.FetchDuplicatedHandle(
-					ctx,
-					uk.newKey,
-					true,
-					txn,
-					e.Table.Meta().ID,
-					uk.commonHandle,
-				)
-				if err != nil {
-					return err
-				}
-				if handle == nil {
-					continue
-				}
-				_, err = e.removeRow(ctx, txn, handle, r, true)
-				if err != nil {
-					return err
-				}
-			} else if !kv.IsErrNotFound(err) {
+			if err != nil && !kv.IsErrNotFound(err) {
 				return err
 			}
+			if err == nil {
+				rowInserted, err = e.handleDuplicateKey(ctx, txn, uk, replace, r)
+				if err != nil {
+					return err
+				}
+				if rowInserted {
+					break
+				}
+				continue
+			}
+			if tablecodec.IsTempIndexKey(uk.newKey) {
+				tablecodec.TempIndexKey2IndexKey(uk.newKey)
+				_, err = txn.Get(ctx, uk.newKey)
+				if err != nil && !kv.IsErrNotFound(err) {
+					return err
+				}
+				if err == nil {
+					rowInserted, err = e.handleDuplicateKey(ctx, txn, uk, replace, r)
+					if err != nil {
+						return err
+					}
+					if rowInserted {
+						break
+					}
+				}
+			}
+		}
+
+		if rowInserted {
+			continue
 		}
 
 		// If row was checked with no duplicate keys,
@@ -1348,7 +1373,7 @@ func (e *InsertValues) removeRow(
 		return true, nil
 	}
 
-	err = r.t.RemoveRecord(e.Ctx(), handle, oldRow)
+	err = r.t.RemoveRecord(e.Ctx().GetTableCtx(), handle, oldRow)
 	if err != nil {
 		return false, err
 	}
@@ -1394,9 +1419,9 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 		vars.PresumeKeyNotExists = true
 	}
 	if reserveAutoIDCount > 0 {
-		_, err = e.Table.AddRecord(e.Ctx(), row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
+		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
 	} else {
-		_, err = e.Table.AddRecord(e.Ctx(), row, table.WithCtx(ctx))
+		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx))
 	}
 	vars.PresumeKeyNotExists = false
 	if err != nil {
@@ -1485,6 +1510,11 @@ func (e *InsertRuntimeStat) String() string {
 		buf.WriteString("}")
 	} else {
 		fmt.Fprintf(buf, "insert:%v", execdetails.FormatDuration(e.CheckInsertTime))
+		if e.SnapshotRuntimeStats != nil {
+			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
+				fmt.Fprintf(buf, ", rpc:{%s}", rpc)
+			}
+		}
 	}
 	return buf.String()
 }

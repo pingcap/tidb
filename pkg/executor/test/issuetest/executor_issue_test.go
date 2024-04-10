@@ -607,3 +607,31 @@ func TestIssue42662(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/issue42662_1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2"))
 }
+
+func TestIssue50393(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+
+	tk.MustExec("create table t1 (a blob)")
+	tk.MustExec("create table t2 (a blob)")
+	tk.MustExec("insert into t1 values (0xC2A0)")
+	tk.MustExec("insert into t2 values (0xC2)")
+	tk.MustQuery("select count(*) from t1,t2 where t1.a like concat(\"%\",t2.a,\"%\")").Check(testkit.Rows("1"))
+}
+
+func TestIssue51874(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().AllowProjectionPushDown = true
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t2")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create table t2 (i int)")
+	tk.MustExec("insert into t values (5, 6), (1, 7)")
+	tk.MustExec("insert into t2 values (10), (100)")
+	tk.MustQuery("select (select sum(a) over () from t2 limit 1) from t;").Check(testkit.Rows("10", "2"))
+}

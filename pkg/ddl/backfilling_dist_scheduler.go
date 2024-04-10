@@ -21,22 +21,25 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -68,16 +71,16 @@ func (*BackfillingSchedulerExt) OnTick(_ context.Context, _ *proto.Task) {
 // OnNextSubtasksBatch generate batch of next step's plan.
 func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 	ctx context.Context,
-	taskHandle scheduler.TaskHandle,
+	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
-	serverInfo []*infosync.ServerInfo,
+	execIDs []string,
 	nextStep proto.Step,
 ) (taskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
-		zap.String("curr-step", StepStr(task.Step)),
-		zap.String("next-step", StepStr(nextStep)),
+		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
+		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 	)
 	var backfillMeta BackfillTaskMeta
 	if err := json.Unmarshal(task.Meta, &backfillMeta); err != nil {
@@ -92,33 +95,18 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 
 	// TODO: use planner.
 	switch nextStep {
-	case StepReadIndex:
+	case proto.BackfillStepReadIndex:
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(tblInfo)
 		}
-		return generateNonPartitionPlan(sch.d, tblInfo, job, sch.GlobalSort, len(serverInfo))
-	case StepMergeSort:
-		res, err := generateMergePlan(taskHandle, task, logger)
-		if err != nil {
-			return nil, err
-		}
-		if len(res) > 0 {
-			backfillMeta.UseMergeSort = true
-			if err := updateMeta(task, &backfillMeta); err != nil {
-				return nil, err
-			}
-		}
-		return res, nil
-	case StepWriteAndIngest:
+		return generateNonPartitionPlan(sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
+	case proto.BackfillStepMergeSort:
+		return generateMergePlan(taskHandle, task, logger)
+	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
-			prevStep := StepReadIndex
-			if backfillMeta.UseMergeSort {
-				prevStep = StepMergeSort
-			}
-
 			failpoint.Inject("mockWriteIngest", func() {
 				m := &BackfillSubTaskMeta{
-					SortedKVMeta: external.SortedKVMeta{},
+					MetaGroups: []*external.SortedKVMeta{},
 				}
 				metaBytes, _ := json.Marshal(m)
 				metaArr := make([][]byte, 0, 16)
@@ -127,11 +115,10 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 			})
 			return generateGlobalSortIngestPlan(
 				ctx,
+				sch.d.store.(kv.StorageWithPD),
 				taskHandle,
 				task,
-				job.ID,
 				backfillMeta.CloudStorageURI,
-				prevStep,
 				logger)
 		}
 		return nil, nil
@@ -140,28 +127,19 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 	}
 }
 
-func updateMeta(task *proto.Task, taskMeta *BackfillTaskMeta) error {
-	bs, err := json.Marshal(taskMeta)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	task.Meta = bs
-	return nil
-}
-
 // GetNextStep implements scheduler.Extension interface.
-func (sch *BackfillingSchedulerExt) GetNextStep(task *proto.Task) proto.Step {
+func (sch *BackfillingSchedulerExt) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
-		return StepReadIndex
-	case StepReadIndex:
+		return proto.BackfillStepReadIndex
+	case proto.BackfillStepReadIndex:
 		if sch.GlobalSort {
-			return StepMergeSort
+			return proto.BackfillStepMergeSort
 		}
 		return proto.StepDone
-	case StepMergeSort:
-		return StepWriteAndIngest
-	case StepWriteAndIngest:
+	case proto.BackfillStepMergeSort:
+		return proto.BackfillStepWriteAndIngest
+	case proto.BackfillStepWriteAndIngest:
 		return proto.StepDone
 	default:
 		return proto.StepDone
@@ -176,17 +154,13 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 }
 
 // OnDone implements scheduler.Extension interface.
-func (*BackfillingSchedulerExt) OnDone(_ context.Context, _ scheduler.TaskHandle, _ *proto.Task) error {
+func (*BackfillingSchedulerExt) OnDone(_ context.Context, _ diststorage.TaskHandle, _ *proto.Task) error {
 	return nil
 }
 
 // GetEligibleInstances implements scheduler.Extension interface.
-func (*BackfillingSchedulerExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-	serverInfos, err := scheduler.GenerateTaskExecutorNodes(ctx)
-	if err != nil {
-		return nil, true, err
-	}
-	return serverInfos, true, nil
+func (*BackfillingSchedulerExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]string, error) {
+	return nil, nil
 }
 
 // IsRetryableErr implements scheduler.Extension.IsRetryableErr interface.
@@ -200,11 +174,10 @@ type LitBackfillScheduler struct {
 	d *ddl
 }
 
-func newLitBackfillScheduler(ctx context.Context, d *ddl, taskMgr scheduler.TaskManager,
-	serverID string, task *proto.Task) scheduler.Scheduler {
+func newLitBackfillScheduler(ctx context.Context, d *ddl, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 	sch := LitBackfillScheduler{
 		d:             d,
-		BaseScheduler: scheduler.NewBaseScheduler(ctx, taskMgr, serverID, task),
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
 	}
 	return &sch
 }
@@ -212,7 +185,7 @@ func newLitBackfillScheduler(ctx context.Context, d *ddl, taskMgr scheduler.Task
 // Init implements BaseScheduler interface.
 func (sch *LitBackfillScheduler) Init() (err error) {
 	taskMeta := &BackfillTaskMeta{}
-	if err = json.Unmarshal(sch.BaseScheduler.Task.Meta, taskMeta); err != nil {
+	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 	sch.BaseScheduler.Extension = &BackfillingSchedulerExt{
@@ -227,7 +200,7 @@ func (sch *LitBackfillScheduler) Close() {
 }
 
 func getTblInfo(d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
-	err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(d.ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		tblInfo, err = meta.NewMeta(txn).GetTable(job.SchemaID, job.TableID)
 		return err
 	})
@@ -261,6 +234,11 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 	return subTaskMetas, nil
 }
 
+const (
+	scanRegionBackoffBase = 200 * time.Millisecond
+	scanRegionBackoffMax  = 2 * time.Second
+)
+
 func generateNonPartitionPlan(
 	d *ddl,
 	tblInfo *model.TableInfo,
@@ -284,53 +262,77 @@ func generateNonPartitionPlan(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	regionCache := d.store.(helper.Storage).GetRegionCache()
-	recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
-	if err != nil {
-		return nil, err
-	}
-	regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
 	subTaskMetas := make([][]byte, 0, 4)
-	sort.Slice(recordRegionMetas, func(i, j int) bool {
-		return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
-	})
-	for i := 0; i < len(recordRegionMetas); i += regionBatch {
-		end := i + regionBatch
-		if end > len(recordRegionMetas) {
-			end = len(recordRegionMetas)
-		}
-		batch := recordRegionMetas[i:end]
-		subTaskMeta := &BackfillSubTaskMeta{
-			SortedKVMeta: external.SortedKVMeta{
-				StartKey: batch[0].StartKey(),
-				EndKey:   batch[len(batch)-1].EndKey(),
-			},
-		}
-		if i == 0 {
-			subTaskMeta.StartKey = startKey
-		}
-		if end == len(recordRegionMetas) {
-			subTaskMeta.EndKey = endKey
-		}
-		metaBytes, err := json.Marshal(subTaskMeta)
+	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
+	err = handle.RunWithRetry(d.ctx, 8, backoffer, logutil.Logger(d.ctx), func(_ context.Context) (bool, error) {
+		regionCache := d.store.(helper.Storage).GetRegionCache()
+		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
 		if err != nil {
-			return nil, err
+			return false, err
 		}
-		subTaskMetas = append(subTaskMetas, metaBytes)
+		sort.Slice(recordRegionMetas, func(i, j int) bool {
+			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
+		})
+
+		// Check if regions are continuous.
+		shouldRetry := false
+		cur := recordRegionMetas[0]
+		for _, m := range recordRegionMetas[1:] {
+			if !bytes.Equal(cur.EndKey(), m.StartKey()) {
+				shouldRetry = true
+				break
+			}
+			cur = m
+		}
+
+		if shouldRetry {
+			return true, nil
+		}
+
+		regionBatch := calculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
+
+		for i := 0; i < len(recordRegionMetas); i += regionBatch {
+			end := i + regionBatch
+			if end > len(recordRegionMetas) {
+				end = len(recordRegionMetas)
+			}
+			batch := recordRegionMetas[i:end]
+			subTaskMeta := &BackfillSubTaskMeta{
+				RowStart: batch[0].StartKey(),
+				RowEnd:   batch[len(batch)-1].EndKey(),
+			}
+			if i == 0 {
+				subTaskMeta.RowStart = startKey
+			}
+			if end == len(recordRegionMetas) {
+				subTaskMeta.RowEnd = endKey
+			}
+			metaBytes, err := json.Marshal(subTaskMeta)
+			if err != nil {
+				return false, err
+			}
+			subTaskMetas = append(subTaskMetas, metaBytes)
+		}
+		return false, nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(subTaskMetas) == 0 {
+		return nil, errors.Errorf("regions are not continuous")
 	}
 	return subTaskMetas, nil
 }
 
 func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
 	var regionBatch int
-	avgTasksPerInstance := totalRegionCnt / instanceCnt
+	avgTasksPerInstance := (totalRegionCnt + instanceCnt - 1) / instanceCnt // ceiling
 	if useLocalDisk {
-		// Make subtask large enough to reduce the overhead of local/global flush.
-		avgTasksPerDisk := int(int64(variable.DDLDiskQuota.Load()) / int64(config.SplitRegionSize))
-		regionBatch = min(avgTasksPerDisk, avgTasksPerInstance)
+		regionBatch = avgTasksPerInstance
 	} else {
-		regionBatch = min(100, avgTasksPerInstance)
+		// For cloud storage, each subtask should contain no more than 4000 regions.
+		regionBatch = min(4000, avgTasksPerInstance)
 	}
 	regionBatch = max(regionBatch, 1)
 	return regionBatch
@@ -338,23 +340,72 @@ func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 
 func generateGlobalSortIngestPlan(
 	ctx context.Context,
-	taskHandle scheduler.TaskHandle,
+	store kv.StorageWithPD,
+	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
-	jobID int64,
 	cloudStorageURI string,
-	step proto.Step,
 	logger *zap.Logger,
 ) ([][]byte, error) {
-	startKeyFromSumm, endKeyFromSumm, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID, step)
+	var kvMetaGroups []*external.SortedKVMeta
+	for _, step := range []proto.Step{proto.BackfillStepMergeSort, proto.BackfillStepReadIndex} {
+		hasSubtasks := false
+		err := forEachBackfillSubtaskMeta(taskHandle, task.ID, step, func(subtask *BackfillSubTaskMeta) {
+			hasSubtasks = true
+			if kvMetaGroups == nil {
+				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
+			}
+			for i, cur := range subtask.MetaGroups {
+				if kvMetaGroups[i] == nil {
+					kvMetaGroups[i] = &external.SortedKVMeta{}
+				}
+				kvMetaGroups[i].Merge(cur)
+			}
+		})
+		if err != nil {
+			return nil, err
+		}
+		if hasSubtasks {
+			break
+		}
+		// If there is no subtask for merge sort step,
+		// it means the merge sort step is skipped.
+	}
+
+	instanceIDs, err := scheduler.GetLiveExecIDs(ctx)
 	if err != nil {
 		return nil, err
 	}
-	instanceIDs, err := scheduler.GenerateTaskExecutorNodes(ctx)
-	if err != nil {
-		return nil, err
+	iCnt := int64(len(instanceIDs))
+	metaArr := make([][]byte, 0, 16)
+	for i, g := range kvMetaGroups {
+		if g == nil {
+			logger.Error("meet empty kv group when getting subtask summary",
+				zap.Int64("taskID", task.ID))
+			return nil, errors.Errorf("subtask kv group %d is empty", i)
+		}
+		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, cloudStorageURI, iCnt, logger)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		metaArr = append(metaArr, newMeta...)
+	}
+	return metaArr, nil
+}
+
+func splitSubtaskMetaForOneKVMetaGroup(
+	ctx context.Context,
+	store kv.StorageWithPD,
+	kvMeta *external.SortedKVMeta,
+	cloudStorageURI string,
+	instanceCnt int64,
+	logger *zap.Logger,
+) (metaArr [][]byte, err error) {
+	if len(kvMeta.StartKey) == 0 && len(kvMeta.EndKey) == 0 {
+		// Skip global sort for empty table.
+		return nil, nil
 	}
 	splitter, err := getRangeSplitter(
-		ctx, cloudStorageURI, jobID, int64(totalSize), int64(len(instanceIDs)), dataFiles, statFiles, logger)
+		ctx, store, cloudStorageURI, int64(kvMeta.TotalKVSize), instanceCnt, kvMeta.MultipleFilesStats, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -365,8 +416,7 @@ func generateGlobalSortIngestPlan(
 		}
 	}()
 
-	metaArr := make([][]byte, 0, 16)
-	startKey := startKeyFromSumm
+	startKey := kvMeta.StartKey
 	var endKey kv.Key
 	for {
 		endKeyOfGroup, dataFiles, statFiles, rangeSplitKeys, err := splitter.SplitOneRangesGroup()
@@ -374,7 +424,7 @@ func generateGlobalSortIngestPlan(
 			return nil, err
 		}
 		if len(endKeyOfGroup) == 0 {
-			endKey = endKeyFromSumm
+			endKey = kvMeta.EndKey
 		} else {
 			endKey = kv.Key(endKeyOfGroup).Clone()
 		}
@@ -382,16 +432,16 @@ func generateGlobalSortIngestPlan(
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)))
 
-		if startKey.Cmp(endKey) >= 0 {
+		if bytes.Compare(startKey, endKey) >= 0 {
 			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
 				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 		}
 		m := &BackfillSubTaskMeta{
-			SortedKVMeta: external.SortedKVMeta{
+			MetaGroups: []*external.SortedKVMeta{{
 				StartKey:    startKey,
 				EndKey:      endKey,
-				TotalKVSize: totalSize / uint64(len(instanceIDs)),
-			},
+				TotalKVSize: kvMeta.TotalKVSize / uint64(instanceCnt),
+			}},
 			DataFiles:      dataFiles,
 			StatFiles:      statFiles,
 			RangeSplitKeys: rangeSplitKeys,
@@ -402,72 +452,95 @@ func generateGlobalSortIngestPlan(
 		}
 		metaArr = append(metaArr, metaBytes)
 		if len(endKeyOfGroup) == 0 {
-			return metaArr, nil
+			break
 		}
 		startKey = endKey
 	}
+	return metaArr, nil
 }
 
 func generateMergePlan(
-	taskHandle scheduler.TaskHandle,
+	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	// check data files overlaps,
 	// if data files overlaps too much, we need a merge step.
-	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, StepReadIndex)
+	var multiStatsGroup [][]external.MultipleFilesStat
+	var kvMetaGroups []*external.SortedKVMeta
+	err := forEachBackfillSubtaskMeta(taskHandle, task.ID, proto.BackfillStepReadIndex,
+		func(subtask *BackfillSubTaskMeta) {
+			if kvMetaGroups == nil {
+				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
+				multiStatsGroup = make([][]external.MultipleFilesStat, len(subtask.MetaGroups))
+			}
+			for i, g := range subtask.MetaGroups {
+				if kvMetaGroups[i] == nil {
+					kvMetaGroups[i] = &external.SortedKVMeta{}
+					multiStatsGroup[i] = make([]external.MultipleFilesStat, 0, 100)
+				}
+				kvMetaGroups[i].Merge(g)
+				multiStatsGroup[i] = append(multiStatsGroup[i], g.MultipleFilesStats...)
+			}
+		})
 	if err != nil {
 		return nil, err
 	}
-	multiStats := make([]external.MultipleFilesStat, 0, 100)
-	for _, bs := range subTaskMetas {
-		var subtask BackfillSubTaskMeta
-		err = json.Unmarshal(bs, &subtask)
-		if err != nil {
-			return nil, err
+
+	allSkip := true
+	for _, multiStats := range multiStatsGroup {
+		if !skipMergeSort(multiStats) {
+			allSkip = false
+			break
 		}
-		multiStats = append(multiStats, subtask.MultipleFilesStats...)
 	}
-	if skipMergeSort(multiStats) {
+	if allSkip {
 		logger.Info("skip merge sort")
 		return nil, nil
 	}
 
-	// generate merge sort plan.
-	_, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID, StepReadIndex)
-	if err != nil {
-		return nil, err
-	}
-
-	start := 0
-	step := external.MergeSortFileCountStep
 	metaArr := make([][]byte, 0, 16)
-	for start < len(dataFiles) {
-		end := start + step
-		if end > len(dataFiles) {
-			end = len(dataFiles)
+	for i, g := range kvMetaGroups {
+		dataFiles := make([]string, 0, 1000)
+		if g == nil {
+			logger.Error("meet empty kv group when getting subtask summary",
+				zap.Int64("taskID", task.ID))
+			return nil, errors.Errorf("subtask kv group %d is empty", i)
 		}
-		m := &BackfillSubTaskMeta{
-			DataFiles: dataFiles[start:end],
+		for _, m := range g.MultipleFilesStats {
+			for _, filePair := range m.Filenames {
+				dataFiles = append(dataFiles, filePair[0])
+			}
 		}
-		metaBytes, err := json.Marshal(m)
-		if err != nil {
-			return nil, err
-		}
-		metaArr = append(metaArr, metaBytes)
+		start := 0
+		step := external.MergeSortFileCountStep
+		for start < len(dataFiles) {
+			end := start + step
+			if end > len(dataFiles) {
+				end = len(dataFiles)
+			}
+			m := &BackfillSubTaskMeta{
+				DataFiles: dataFiles[start:end],
+			}
+			metaBytes, err := json.Marshal(m)
+			if err != nil {
+				return nil, err
+			}
+			metaArr = append(metaArr, metaBytes)
 
-		start = end
+			start = end
+		}
 	}
 	return metaArr, nil
 }
 
 func getRangeSplitter(
 	ctx context.Context,
+	store kv.StorageWithPD,
 	cloudStorageURI string,
-	jobID int64,
 	totalSize int64,
 	instanceCnt int64,
-	dataFiles, statFiles []string,
+	multiFileStat []external.MultipleFilesStat,
 	logger *zap.Logger,
 ) (*external.RangeSplitter, error) {
 	backend, err := storage.ParseBackend(cloudStorageURI, nil)
@@ -481,85 +554,48 @@ func getRangeSplitter(
 
 	rangeGroupSize := totalSize / instanceCnt
 	rangeGroupKeys := int64(math.MaxInt64)
-	bcCtx, ok := ingest.LitBackCtxMgr.Load(jobID)
-	if !ok {
-		return nil, errors.Errorf("backend context not found")
+
+	var maxSizePerRange = int64(config.SplitRegionSize)
+	var maxKeysPerRange = int64(config.SplitRegionKeys)
+	if store != nil {
+		pdCli := store.GetPDClient()
+		tls, err := ingest.NewDDLTLS()
+		if err == nil {
+			size, keys, err := local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
+			if err == nil {
+				maxSizePerRange = max(maxSizePerRange, size)
+				maxKeysPerRange = max(maxKeysPerRange, keys)
+			} else {
+				logger.Warn("fail to get region split keys and size", zap.Error(err))
+			}
+		} else {
+			logger.Warn("fail to get region split keys and size", zap.Error(err))
+		}
 	}
 
-	local := bcCtx.GetLocalBackend()
-	if local == nil {
-		return nil, errors.Errorf("local backend not found")
-	}
-	maxSizePerRange, maxKeysPerRange, err := local.GetRegionSplitSizeKeys(ctx)
-	if err != nil {
-		logger.Warn("fail to get region split keys and size", zap.Error(err))
-	}
-	maxSizePerRange = max(maxSizePerRange, int64(config.SplitRegionSize))
-	maxKeysPerRange = max(maxKeysPerRange, int64(config.SplitRegionKeys))
-
-	return external.NewRangeSplitter(ctx, dataFiles, statFiles, extStore,
-		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange, true)
+	return external.NewRangeSplitter(ctx, multiFileStat, extStore,
+		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange)
 }
 
-func getSummaryFromLastStep(
-	taskHandle scheduler.TaskHandle,
+func forEachBackfillSubtaskMeta(
+	taskHandle diststorage.TaskHandle,
 	gTaskID int64,
 	step proto.Step,
-) (startKey, endKey kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
+	fn func(subtask *BackfillSubTaskMeta),
+) error {
 	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, step)
 	if err != nil {
-		return nil, nil, 0, nil, nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	allDataFiles := make([]string, 0, 16)
-	allStatFiles := make([]string, 0, 16)
 	for _, subTaskMeta := range subTaskMetas {
-		var subtask BackfillSubTaskMeta
-		err := json.Unmarshal(subTaskMeta, &subtask)
+		subtask, err := decodeBackfillSubTaskMeta(subTaskMeta)
 		if err != nil {
-			return nil, nil, 0, nil, nil, errors.Trace(err)
+			logutil.BgLogger().Error("unmarshal error",
+				zap.String("category", "ddl"),
+				zap.Error(err))
+			return errors.Trace(err)
 		}
-		// Skip empty subtask.StartKey/EndKey because it means
-		// no records need to be written in this subtask.
-		if subtask.StartKey == nil || subtask.EndKey == nil {
-			continue
-		}
-
-		if len(startKey) == 0 {
-			startKey = subtask.StartKey
-		} else {
-			startKey = external.BytesMin(startKey, subtask.StartKey)
-		}
-		if len(endKey) == 0 {
-			endKey = subtask.EndKey
-		} else {
-			endKey = external.BytesMax(endKey, subtask.EndKey)
-		}
-		totalKVSize += subtask.TotalKVSize
-
-		for _, stat := range subtask.MultipleFilesStats {
-			for i := range stat.Filenames {
-				allDataFiles = append(allDataFiles, stat.Filenames[i][0])
-				allStatFiles = append(allStatFiles, stat.Filenames[i][1])
-			}
-		}
+		fn(subtask)
 	}
-	return startKey, endKey, totalKVSize, allDataFiles, allStatFiles, nil
-}
-
-// StepStr convert proto.Step to string.
-func StepStr(step proto.Step) string {
-	switch step {
-	case proto.StepInit:
-		return "init"
-	case StepReadIndex:
-		return "read-index"
-	case StepMergeSort:
-		return "merge-sort"
-	case StepWriteAndIngest:
-		return "write&ingest"
-	case proto.StepDone:
-		return "done"
-	default:
-		return "unknown"
-	}
+	return nil
 }

@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/distsql"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -79,7 +80,7 @@ func (r *requiredRowsSelectResult) genOneRow() chunk.Row {
 	return row.ToRow()
 }
 
-func (r *requiredRowsSelectResult) genValue(valType *types.FieldType) interface{} {
+func (r *requiredRowsSelectResult) genValue(valType *types.FieldType) any {
 	switch valType.GetType() {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
@@ -111,7 +112,7 @@ func mockDistsqlSelectCtxGet(ctx context.Context) (totalRows int, expectedRowsRe
 	return
 }
 
-func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+func mockSelectResult(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Request,
 	fieldTypes []*types.FieldType, copPlanIDs []int) (distsql.SelectResult, error) {
 	totalRows, expectedRowsRet := mockDistsqlSelectCtxGet(ctx)
 	return &requiredRowsSelectResult{
@@ -122,11 +123,19 @@ func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Re
 }
 
 func buildTableReader(sctx sessionctx.Context) exec.Executor {
+	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
+	cols := make([]*expression.Column, len(retTypes))
+	for i := range retTypes {
+		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
+	}
+	schema := expression.NewSchema(cols...)
+
 	e := &TableReaderExecutor{
-		BaseExecutor:     buildMockBaseExec(sctx),
-		table:            &tables.TableCommon{},
-		dagPB:            buildMockDAGRequest(sctx),
-		selectResultHook: selectResultHook{mockSelectResult},
+		BaseExecutorV2:             exec.NewBaseExecutorV2(sctx.GetSessionVars(), schema, 0),
+		tableReaderExecutorContext: newTableReaderExecutorContext(sctx),
+		table:                      &tables.TableCommon{},
+		dagPB:                      buildMockDAGRequest(sctx),
+		selectResultHook:           selectResultHook{mockSelectResult},
 	}
 	return e
 }

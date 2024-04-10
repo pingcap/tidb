@@ -15,6 +15,7 @@
 package metrics
 
 import (
+	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/prometheus/client_golang/prometheus"
@@ -48,34 +49,34 @@ func init() {
 // InitMetricsVars init server metrics vars.
 func InitMetricsVars() {
 	QueryTotalCountOk = []prometheus.Counter{
-		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "OK"),
-		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "OK"),
-		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "OK"),
-		mysql.ComQuery:            metrics.QueryTotalCounter.WithLabelValues("Query", "OK"),
-		mysql.ComPing:             metrics.QueryTotalCounter.WithLabelValues("Ping", "OK"),
-		mysql.ComFieldList:        metrics.QueryTotalCounter.WithLabelValues("FieldList", "OK"),
-		mysql.ComStmtPrepare:      metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "OK"),
-		mysql.ComStmtExecute:      metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "OK"),
-		mysql.ComStmtFetch:        metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "OK"),
-		mysql.ComStmtClose:        metrics.QueryTotalCounter.WithLabelValues("StmtClose", "OK"),
-		mysql.ComStmtSendLongData: metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "OK"),
-		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "OK"),
-		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "OK"),
+		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "OK", resourcegroup.DefaultResourceGroupName),
+		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "OK", resourcegroup.DefaultResourceGroupName),
+		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "OK", resourcegroup.DefaultResourceGroupName),
+		mysql.ComQuery:            metrics.QueryTotalCounter.WithLabelValues("Query", "OK", resourcegroup.DefaultResourceGroupName),
+		mysql.ComPing:             metrics.QueryTotalCounter.WithLabelValues("Ping", "OK", resourcegroup.DefaultResourceGroupName),
+		mysql.ComFieldList:        metrics.QueryTotalCounter.WithLabelValues("FieldList", "OK", resourcegroup.DefaultResourceGroupName),
+		mysql.ComStmtPrepare:      metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "OK", resourcegroup.DefaultResourceGroupName),
+		mysql.ComStmtExecute:      metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "OK", resourcegroup.DefaultResourceGroupName),
+		mysql.ComStmtFetch:        metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "OK", resourcegroup.DefaultResourceGroupName),
+		mysql.ComStmtClose:        metrics.QueryTotalCounter.WithLabelValues("StmtClose", "OK", resourcegroup.DefaultResourceGroupName),
+		mysql.ComStmtSendLongData: metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "OK", resourcegroup.DefaultResourceGroupName),
+		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "OK", resourcegroup.DefaultResourceGroupName),
+		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "OK", resourcegroup.DefaultResourceGroupName),
 	}
 	QueryTotalCountErr = []prometheus.Counter{
-		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "Error"),
-		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "Error"),
-		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "Error"),
-		mysql.ComQuery:            metrics.QueryTotalCounter.WithLabelValues("Query", "Error"),
-		mysql.ComPing:             metrics.QueryTotalCounter.WithLabelValues("Ping", "Error"),
-		mysql.ComFieldList:        metrics.QueryTotalCounter.WithLabelValues("FieldList", "Error"),
-		mysql.ComStmtPrepare:      metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "Error"),
-		mysql.ComStmtExecute:      metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "Error"),
-		mysql.ComStmtFetch:        metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "Error"),
-		mysql.ComStmtClose:        metrics.QueryTotalCounter.WithLabelValues("StmtClose", "Error"),
-		mysql.ComStmtSendLongData: metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "Error"),
-		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "Error"),
-		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error"),
+		mysql.ComSleep:            metrics.QueryTotalCounter.WithLabelValues("Sleep", "Error", resourcegroup.DefaultResourceGroupName),
+		mysql.ComQuit:             metrics.QueryTotalCounter.WithLabelValues("Quit", "Error", resourcegroup.DefaultResourceGroupName),
+		mysql.ComInitDB:           metrics.QueryTotalCounter.WithLabelValues("InitDB", "Error", resourcegroup.DefaultResourceGroupName),
+		mysql.ComQuery:            metrics.QueryTotalCounter.WithLabelValues("Query", "Error", resourcegroup.DefaultResourceGroupName),
+		mysql.ComPing:             metrics.QueryTotalCounter.WithLabelValues("Ping", "Error", resourcegroup.DefaultResourceGroupName),
+		mysql.ComFieldList:        metrics.QueryTotalCounter.WithLabelValues("FieldList", "Error", resourcegroup.DefaultResourceGroupName),
+		mysql.ComStmtPrepare:      metrics.QueryTotalCounter.WithLabelValues("StmtPrepare", "Error", resourcegroup.DefaultResourceGroupName),
+		mysql.ComStmtExecute:      metrics.QueryTotalCounter.WithLabelValues("StmtExecute", "Error", resourcegroup.DefaultResourceGroupName),
+		mysql.ComStmtFetch:        metrics.QueryTotalCounter.WithLabelValues("StmtFetch", "Error", resourcegroup.DefaultResourceGroupName),
+		mysql.ComStmtClose:        metrics.QueryTotalCounter.WithLabelValues("StmtClose", "Error", resourcegroup.DefaultResourceGroupName),
+		mysql.ComStmtSendLongData: metrics.QueryTotalCounter.WithLabelValues("StmtSendLongData", "Error", resourcegroup.DefaultResourceGroupName),
+		mysql.ComStmtReset:        metrics.QueryTotalCounter.WithLabelValues("StmtReset", "Error", resourcegroup.DefaultResourceGroupName),
+		mysql.ComSetOption:        metrics.QueryTotalCounter.WithLabelValues("SetOption", "Error", resourcegroup.DefaultResourceGroupName),
 	}
 
 	DisconnectNormal = metrics.DisconnectionCounter.WithLabelValues(metrics.LblOK)

@@ -53,7 +53,7 @@ func TestStateSyncerSimple(t *testing.T) {
 	cli := cluster.RandClient()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ic := infoschema.NewCache(2)
+	ic := infoschema.NewCache(nil, 2)
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d := NewDDL(
 		ctx,

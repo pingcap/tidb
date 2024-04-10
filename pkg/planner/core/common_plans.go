@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -168,16 +168,6 @@ type AdminPlugins struct {
 	Plugins []string
 }
 
-// AdminShowTelemetry displays telemetry status including tracking ID, status and so on.
-type AdminShowTelemetry struct {
-	baseSchemaProducer
-}
-
-// AdminResetTelemetryID regenerates a new telemetry tracking ID.
-type AdminResetTelemetryID struct {
-	baseSchemaProducer
-}
-
 // Change represents a change plan.
 type Change struct {
 	baseSchemaProducer
@@ -205,10 +195,10 @@ type Execute struct {
 
 // Check if result of GetVar expr is BinaryLiteral
 // Because GetVar use String to represent BinaryLiteral, here we need to convert string back to BinaryLiteral.
-func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) (res bool) {
+func isGetVarBinaryLiteral(sctx PlanContext, expr expression.Expression) (res bool) {
 	scalarFunc, ok := expr.(*expression.ScalarFunction)
 	if ok && scalarFunc.FuncName.L == ast.GetVar {
-		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx, chunk.Row{})
+		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil || isNull {
 			res = false
 		} else if dt, ok2 := sctx.GetSessionVars().GetUserVarVal(name); ok2 {
@@ -274,7 +264,6 @@ type SQLBindPlan struct {
 	NormdOrigSQL string
 	BindSQL      string
 	IsGlobal     bool
-	IsUniversal  bool // for universal binding
 	BindStmt     ast.StmtNode
 	Db           string
 	Charset      string
@@ -596,6 +585,8 @@ type ImportInto struct {
 
 	GenCols InsertGeneratedColumns
 	Stmt    string
+
+	SelectPlan PhysicalPlan
 }
 
 // LoadStats represents a load stats plan.
@@ -1026,7 +1017,7 @@ func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
 	e.prepareOperatorInfo(flatOp.Origin, taskTp, textTreeExplainID)
 }
 
-func getRuntimeInfoStr(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
+func getRuntimeInfoStr(ctx PlanContext, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
 	if runtimeStatsColl == nil {
 		runtimeStatsColl = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		if runtimeStatsColl == nil {
@@ -1057,7 +1048,7 @@ func getRuntimeInfoStr(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdet
 	return
 }
 
-func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (
+func getRuntimeInfo(ctx PlanContext, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (
 	rootStats *execdetails.RootRuntimeStats,
 	copStats *execdetails.CopRuntimeStats,
 	memTracker *memory.Tracker,
@@ -1179,7 +1170,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (estRows, estCost, costForm
 }
 
 // BinaryPlanStrFromFlatPlan generates the compressed and encoded binary plan from a FlatPhysicalPlan.
-func BinaryPlanStrFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPlan) string {
+func BinaryPlanStrFromFlatPlan(explainCtx PlanContext, flat *FlatPhysicalPlan) string {
 	binary := binaryDataFromFlatPlan(explainCtx, flat)
 	if binary == nil {
 		return ""
@@ -1192,7 +1183,7 @@ func BinaryPlanStrFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysical
 	return str
 }
 
-func binaryDataFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPlan) *tipb.ExplainData {
+func binaryDataFromFlatPlan(explainCtx PlanContext, flat *FlatPhysicalPlan) *tipb.ExplainData {
 	if len(flat.Main) == 0 {
 		return nil
 	}
@@ -1217,7 +1208,7 @@ func binaryDataFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPla
 	return res
 }
 
-func binaryOpTreeFromFlatOps(explainCtx sessionctx.Context, ops FlatPlanTree) *tipb.ExplainOperator {
+func binaryOpTreeFromFlatOps(explainCtx PlanContext, ops FlatPlanTree) *tipb.ExplainOperator {
 	s := make([]tipb.ExplainOperator, len(ops))
 	for i, op := range ops {
 		binaryOpFromFlatOp(explainCtx, op, &s[i])
@@ -1228,7 +1219,7 @@ func binaryOpTreeFromFlatOps(explainCtx sessionctx.Context, ops FlatPlanTree) *t
 	return &s[0]
 }
 
-func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *tipb.ExplainOperator) {
+func binaryOpFromFlatOp(explainCtx PlanContext, op *FlatOperator, out *tipb.ExplainOperator) {
 	out.Name = op.Origin.ExplainID().String()
 	switch op.Label {
 	case BuildSide:
@@ -1391,8 +1382,8 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 //  1. ctx is auto commit tagged
 //  2. session is not InTxn
 //  3. plan is point get by pk, or point get by unique index (no double read)
-func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bool, error) {
-	if !IsAutoCommitTxn(ctx) {
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p Plan) (bool, error) {
+	if !IsAutoCommitTxn(vars) {
 		return false, nil
 	}
 
@@ -1404,13 +1395,13 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 	switch v := p.(type) {
 	case *PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx), nil
+		return indexScan.IsPointGetByUniqueKey(vars.StmtCtx.TypeCtx()), nil
 	case *PhysicalTableReader:
 		tableScan, ok := v.TablePlans[0].(*PhysicalTableScan)
 		if !ok {
 			return false, nil
 		}
-		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPointNonNullable(ctx)
+		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPointNonNullable(vars.StmtCtx.TypeCtx())
 		if !isPointRange {
 			return false, nil
 		}
@@ -1441,8 +1432,8 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 
 // IsAutoCommitTxn checks if session is in autocommit mode and not InTxn
 // used for fast plan like point get
-func IsAutoCommitTxn(ctx sessionctx.Context) bool {
-	return ctx.GetSessionVars().IsAutocommit() && !ctx.GetSessionVars().InTxn()
+func IsAutoCommitTxn(vars *variable.SessionVars) bool {
+	return vars.IsAutocommit() && !vars.InTxn()
 }
 
 // AdminShowBDRRole represents a show bdr role plan.

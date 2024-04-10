@@ -82,12 +82,12 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(ctx EvalContext, inpu
 	y := buf.Decimals()
 	var to types.MyDecimal
 	var frac int
-	sc := ctx.GetSessionVars().StmtCtx
+	ec := errCtx(ctx)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		err = types.DecimalDiv(&x[i], &y[i], &to, types.DivFracIncr)
+		err = types.DecimalDiv(&x[i], &y[i], &to, ctx.GetDivPrecisionIncrement())
 		if err == types.ErrDivByZero {
 			if err = handleDivisionByZeroError(ctx); err != nil {
 				return err
@@ -95,7 +95,7 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(ctx EvalContext, inpu
 			result.SetNull(i, true)
 			continue
 		} else if err == types.ErrTruncated {
-			if err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", to)); err != nil {
+			if err = ec.HandleError(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", to)); err != nil {
 				return err
 			}
 		} else if err == nil {
@@ -139,17 +139,14 @@ func (b *builtinArithmeticModIntUnsignedUnsignedSig) vecEvalInt(ctx EvalContext,
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
+		if lh.IsNull(i) || rh.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
 		if rhi64s[i] == 0 {
-			if rh.IsNull(i) {
-				continue
-			}
 			if err := handleDivisionByZeroError(ctx); err != nil {
 				return err
 			}
-			rh.SetNull(i, true)
-			continue
-		}
-		if lh.IsNull(i) {
 			rh.SetNull(i, true)
 			continue
 		}
@@ -183,17 +180,14 @@ func (b *builtinArithmeticModIntUnsignedSignedSig) vecEvalInt(ctx EvalContext, i
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
+		if lh.IsNull(i) || rh.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
 		if rhi64s[i] == 0 {
-			if rh.IsNull(i) {
-				continue
-			}
 			if err := handleDivisionByZeroError(ctx); err != nil {
 				return err
 			}
-			rh.SetNull(i, true)
-			continue
-		}
-		if lh.IsNull(i) {
 			rh.SetNull(i, true)
 			continue
 		}
@@ -231,17 +225,14 @@ func (b *builtinArithmeticModIntSignedUnsignedSig) vecEvalInt(ctx EvalContext, i
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
+		if lh.IsNull(i) || rh.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
 		if rhi64s[i] == 0 {
-			if rh.IsNull(i) {
-				continue
-			}
 			if err := handleDivisionByZeroError(ctx); err != nil {
 				return err
 			}
-			rh.SetNull(i, true)
-			continue
-		}
-		if lh.IsNull(i) {
 			rh.SetNull(i, true)
 			continue
 		}
@@ -279,17 +270,14 @@ func (b *builtinArithmeticModIntSignedSignedSig) vecEvalInt(ctx EvalContext, inp
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
+		if lh.IsNull(i) || rh.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
 		if rhi64s[i] == 0 {
-			if rh.IsNull(i) {
-				continue
-			}
 			if err := handleDivisionByZeroError(ctx); err != nil {
 				return err
 			}
-			rh.SetNull(i, true)
-			continue
-		}
-		if lh.IsNull(i) {
 			rh.SetNull(i, true)
 			continue
 		}
@@ -395,7 +383,7 @@ func (b *builtinArithmeticMinusIntSig) vecEvalInt(ctx EvalContext, input *chunk.
 	rhi64s := rh.Int64s()
 	resulti64s := result.Int64s()
 
-	forceToSigned := ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
+	forceToSigned := sqlMode(ctx).HasNoUnsignedSubtractionMode()
 	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
 	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
 
@@ -432,17 +420,17 @@ func (b *builtinArithmeticModRealSig) vecEvalReal(ctx EvalContext, input *chunk.
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[1].VecEvalReal(ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
-	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
+	if err := b.args[1].VecEvalReal(ctx, input, buf); err != nil {
 		return err
 	}
 	result.MergeNulls(buf)
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
+		if buf.IsNull(i) || result.IsNull(i) {
 			continue
 		}
 		if y[i] == 0 {
@@ -481,7 +469,7 @@ func (b *builtinArithmeticModDecimalSig) vecEvalDecimal(ctx EvalContext, input *
 	y := buf.Decimals()
 	var to types.MyDecimal
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if result.IsNull(i) || buf.IsNull(i) {
 			continue
 		}
 		err = types.DecimalMod(&x[i], &y[i], &to)
@@ -576,7 +564,7 @@ func (b *builtinArithmeticIntDivideDecimalSig) vectorized() bool {
 }
 
 func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	sc := ctx.GetSessionVars().StmtCtx
+	ec := errCtx(ctx)
 	n := input.NumRows()
 	var err error
 	var buf [2]*chunk.Column
@@ -608,7 +596,7 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(ctx EvalContext, input
 		}
 
 		c := &types.MyDecimal{}
-		err = types.DecimalDiv(&num[0][i], &num[1][i], c, types.DivFracIncr)
+		err = types.DecimalDiv(&num[0][i], &num[1][i], c, ctx.GetDivPrecisionIncrement())
 		if err == types.ErrDivByZero {
 			if err = handleDivisionByZeroError(ctx); err != nil {
 				return err
@@ -617,10 +605,10 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(ctx EvalContext, input
 			continue
 		}
 		if err == types.ErrTruncated {
-			err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
+			err = ec.HandleError(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
 		} else if err == types.ErrOverflow {
 			newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c)
-			err = sc.HandleError(newErr)
+			err = ec.HandleError(newErr)
 		}
 		if err != nil {
 			return err

@@ -28,16 +28,16 @@ import (
 
 func TestSlotManagerReserve(t *testing.T) {
 	sm := newSlotManager()
-	sm.capacity = 16
+	sm.updateCapacity(16)
 	// no node
-	_, ok := sm.canReserve(&proto.Task{Concurrency: 1})
+	_, ok := sm.canReserve(&proto.TaskBase{Concurrency: 1})
 	require.False(t, ok)
 
 	// reserve by stripes
-	sm.usedSlots = map[string]int{
+	sm.usedSlots.Store(&map[string]int{
 		"tidb-1": 16,
-	}
-	task := proto.Task{
+	})
+	task := proto.TaskBase{
 		Priority:    proto.NormalPriority,
 		Concurrency: 16,
 		CreateTime:  time.Now(),
@@ -69,13 +69,13 @@ func TestSlotManagerReserve(t *testing.T) {
 	require.Equal(t, 8, sm.reservedStripes[1].stripes)
 	require.Equal(t, map[int64]int{10: 0, 20: 1}, sm.task2Index)
 	require.Empty(t, sm.reservedSlots)
-	// higher priority task can preempt lower priority task
+	// higher rank task can preempt lower rank task
 	task9 := task
 	task9.ID = 9
 	task9.Concurrency = 16
 	_, ok = sm.canReserve(&task9)
 	require.True(t, ok)
-	// 4 slots are reserved for high priority tasks, so cannot reserve.
+	// 4 slots are reserved for high rank tasks, so cannot reserve.
 	task11 := task
 	task11.ID = 11
 	_, ok = sm.canReserve(&task11)
@@ -86,10 +86,10 @@ func TestSlotManagerReserve(t *testing.T) {
 	require.True(t, ok)
 
 	// reserve by slots
-	sm.usedSlots = map[string]int{
+	sm.usedSlots.Store(&map[string]int{
 		"tidb-1": 12,
 		"tidb-2": 8,
-	}
+	})
 	task40 := task
 	task40.ID = 40
 	task40.Concurrency = 16
@@ -107,7 +107,7 @@ func TestSlotManagerReserve(t *testing.T) {
 	require.Equal(t, 8, sm.reservedStripes[2].stripes)
 	require.Equal(t, map[int64]int{10: 0, 20: 1, 40: 2}, sm.task2Index)
 	require.Equal(t, map[string]int{"tidb-2": 8}, sm.reservedSlots)
-	// higher priority task stop task 15 to run
+	// higher rank task stop task 15 to run
 	task15 := task
 	task15.ID = 15
 	task15.Concurrency = 16
@@ -179,47 +179,71 @@ func TestSlotManagerReserve(t *testing.T) {
 func TestSlotManagerUpdate(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	ctx := context.Background()
 
+	nodeMgr := newNodeManager("")
 	taskMgr := mock.NewMockTaskManager(ctrl)
-	taskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]string{"tidb-1", "tidb-2", "tidb-3"}, nil)
+	nodeMgr.managedNodes.Store(&[]string{"tidb-1", "tidb-2", "tidb-3"})
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{
 		"tidb-1": 12,
 		"tidb-2": 8,
 	}, nil)
 	sm := newSlotManager()
-	sm.capacity = 16
-	require.Empty(t, sm.usedSlots)
+	sm.updateCapacity(16)
+	require.Empty(t, sm.usedSlots.Load())
 	require.Empty(t, sm.reservedSlots)
-	require.NoError(t, sm.update(context.Background(), taskMgr))
+	require.NoError(t, sm.update(ctx, nodeMgr, taskMgr))
 	require.Empty(t, sm.reservedSlots)
 	require.Equal(t, map[string]int{
 		"tidb-1": 12,
 		"tidb-2": 8,
 		"tidb-3": 0,
-	}, sm.usedSlots)
+	}, *sm.usedSlots.Load())
+	require.True(t, ctrl.Satisfied())
+
 	// some node scaled in, should be reflected
-	taskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]string{"tidb-1"}, nil)
+	nodeMgr.managedNodes.Store(&[]string{"tidb-1"})
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{
 		"tidb-1": 12,
 		"tidb-2": 8,
 	}, nil)
-	require.NoError(t, sm.update(context.Background(), taskMgr))
+	require.NoError(t, sm.update(ctx, nodeMgr, taskMgr))
 	require.Empty(t, sm.reservedSlots)
 	require.Equal(t, map[string]int{
 		"tidb-1": 12,
-	}, sm.usedSlots)
+	}, *sm.usedSlots.Load())
+	require.True(t, ctrl.Satisfied())
 	// on error, the usedSlots should not be changed
-	taskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return(nil, errors.New("mock err"))
-	require.ErrorContains(t, sm.update(context.Background(), taskMgr), "mock err")
-	require.Empty(t, sm.reservedSlots)
-	require.Equal(t, map[string]int{
-		"tidb-1": 12,
-	}, sm.usedSlots)
-	taskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]string{"tidb-1"}, nil)
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, errors.New("mock err"))
-	require.ErrorContains(t, sm.update(context.Background(), taskMgr), "mock err")
+	require.ErrorContains(t, sm.update(ctx, nodeMgr, taskMgr), "mock err")
 	require.Empty(t, sm.reservedSlots)
 	require.Equal(t, map[string]int{
 		"tidb-1": 12,
-	}, sm.usedSlots)
+	}, *sm.usedSlots.Load())
+}
+
+func TestSchedulerAdjustEligibleNodes(t *testing.T) {
+	slotMgr := newSlotManager()
+	slotMgr.updateCapacity(16)
+
+	allNodes := []string{":4000", ":4001", ":4002"}
+	require.Equal(t, allNodes, slotMgr.adjustEligibleNodes(allNodes, 10))
+
+	usedSlots := map[string]int{
+		":4000": 12,
+		":4001": 4,
+		":4003": 0, // stale node
+	}
+	slotMgr.usedSlots.Store(&usedSlots)
+	require.Equal(t, []string{":4001"}, slotMgr.adjustEligibleNodes(allNodes, 10))
+}
+
+func TestSlotManagerUpdateCapacity(t *testing.T) {
+	sm := newSlotManager()
+	sm.updateCapacity(16)
+	require.Equal(t, 16, int(sm.capacity.Load()))
+	sm.updateCapacity(32)
+	require.Equal(t, 32, int(sm.capacity.Load()))
+	sm.updateCapacity(0)
+	require.Equal(t, 32, int(sm.capacity.Load()))
 }

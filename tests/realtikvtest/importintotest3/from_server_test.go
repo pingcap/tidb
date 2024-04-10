@@ -15,12 +15,19 @@
 package importintotest
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
+	"strconv"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func (s *mockGCSSuite) TestImportFromServer() {
@@ -53,6 +60,17 @@ func (s *mockGCSSuite) TestImportFromServer() {
 		s.getCompressedData(mydump.CompressionGZ, []byte("1,test1\n2,test2")),
 		0o644))
 	s.tk.MustExec("truncate table t")
-	s.tk.MustQuery(fmt.Sprintf("IMPORT INTO t FROM '%s'", path.Join(tempDir, "test.csv.gz")))
+	rows := s.tk.MustQuery(fmt.Sprintf("IMPORT INTO t FROM '%s'", path.Join(tempDir, "test.csv.gz"))).Rows()
 	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows([]string{"1 test1", "2 test2"}...))
+	jobID, err := strconv.Atoi(rows[0][0].(string))
+	s.NoError(err)
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	taskKey := importinto.TaskKey(int64(jobID))
+	ctx := util.WithInternalSourceType(context.Background(), "taskManager")
+	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
+	s.NoError(err2)
+	var taskMeta importinto.TaskMeta
+	require.NoError(s.T(), json.Unmarshal(task.Meta, &taskMeta))
+	require.Len(s.T(), taskMeta.ChunkMap, 2)
 }

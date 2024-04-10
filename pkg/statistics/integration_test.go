@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -306,9 +306,9 @@ func TestOutdatedStatsCheck(t *testing.T) {
 
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	exec.AutoAnalyzeMinCnt = 0
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = 1000
+		exec.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -363,7 +363,7 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 }
 
-func hasPseudoStats(rows [][]interface{}) bool {
+func hasPseudoStats(rows [][]any) bool {
 	for i := range rows {
 		if strings.Contains(rows[i][4].(string), "stats:pseudo") {
 			return true
@@ -480,4 +480,98 @@ func TestIssue44369(t *testing.T) {
 	require.NoError(t, h.Update(is))
 	tk.MustExec("alter table t rename column b to bb;")
 	tk.MustExec("select * from t where a = 10 and bb > 20;")
+}
+
+// Test the case that after ALTER TABLE happens, the pointer to the column info/index info should be refreshed.
+func TestColAndIdxExistenceMapChangedAfterAlterTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index iab(a,b));")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t value(1,1);")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t;")
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	statsTbl := h.GetTableStats(tblInfo)
+	colA := tblInfo.Columns[0]
+	colInfo := statsTbl.ColAndIdxExistenceMap.GetCol(colA.ID)
+	require.Equal(t, colA, colInfo)
+
+	tk.MustExec("alter table t modify column a double")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	is = dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo = tbl.Meta()
+	newColA := tblInfo.Columns[0]
+	require.NotEqual(t, colA.ID, newColA.ID)
+	statsTbl = h.GetTableStats(tblInfo)
+	colInfo = statsTbl.ColAndIdxExistenceMap.GetCol(newColA.ID)
+	require.Equal(t, newColA, colInfo)
+	tk.MustExec("analyze table t;")
+	require.NoError(t, h.Update(is))
+	statsTbl = h.GetTableStats(tblInfo)
+	colInfo = statsTbl.ColAndIdxExistenceMap.GetCol(newColA.ID)
+	require.Equal(t, newColA, colInfo)
+}
+
+func TestTableLastAnalyzeVersion(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+
+	// Only create table should not set the last_analyze_version
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl, found := h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
+
+	// Only alter table should not set the last_analyze_version
+	tk.MustExec("alter table t add column b int default 0")
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	require.NoError(t, h.Update(is))
+	statsTbl, found = h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
+	tk.MustExec("alter table t add index idx(a)")
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	// We don't handle the ADD INDEX event in the HandleDDLEvent.
+	require.Equal(t, 0, len(h.DDLEventCh()))
+	require.NoError(t, err)
+	require.NoError(t, h.Update(is))
+	statsTbl, found = h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
+
+	// INSERT and updating the modify_count should not set the last_analyze_version
+	tk.MustExec("insert into t values(1, 1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(is))
+	statsTbl, found = h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
+
+	// After analyze, last_analyze_version is set.
+	tk.MustExec("analyze table t")
+	require.NoError(t, h.Update(is))
+	statsTbl, found = h.Get(tbl.Meta().ID)
+	require.True(t, found)
+	require.NotEqual(t, uint64(0), statsTbl.LastAnalyzeVersion)
 }

@@ -104,7 +104,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 		}
 		evalCtx.Buffer.Truncate(i)
 		if !cf.truncated {
-			sc.AppendWarning(expression.ErrCutValueGroupConcat.GenWithStackByArgs(cf.Args[0].String()))
+			sc.AppendWarning(expression.ErrCutValueGroupConcat.FastGenByArgs(cf.Args[0].String()))
 		}
 		cf.truncated = true
 	}
@@ -123,7 +123,7 @@ func (cf *concatFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum)
 
 func (cf *concatFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
 	if cf.HasDistinct {
-		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
+		evalCtx.DistinctChecker = createDistinctChecker(ctx)
 	}
 	evalCtx.Ctx = ctx
 	evalCtx.Buffer = nil

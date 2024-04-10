@@ -28,18 +28,20 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -60,6 +62,10 @@ type baseBuiltinFunc struct {
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 	return b.pbCode
+}
+
+func (*baseBuiltinFunc) RequiredOptionalEvalProps() (set OptionalEvalPropKeySet) {
+	return
 }
 
 // metadata returns the metadata of a function.
@@ -104,7 +110,7 @@ func adjustNullFlagForReturnType(funcName string, args []Expression, bf baseBuil
 	}
 }
 
-func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression, tp *types.FieldType) (baseBuiltinFunc, error) {
+func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp *types.FieldType) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
@@ -162,7 +168,7 @@ func newReturnFieldTypeForBaseBuiltinFunc(funcName string, retType types.EvalTyp
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
 // argTps indicates the types of the args, retType indicates the return type of the built-in function.
 // Every built-in function needs to be determined argTps and retType when we create it.
-func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc, err error) {
+func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
 	}
@@ -220,7 +226,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 // argTps indicates the field types of the args, retType indicates the return type of the built-in function.
 // newBaseBuiltinFuncWithTp and newBaseBuiltinFuncWithFieldTypes are essentially the same, but newBaseBuiltinFuncWithFieldTypes uses FieldType to cast args.
 // If there are specific requirements for decimal/datetime/timestamp, newBaseBuiltinFuncWithFieldTypes should be used, such as if,ifnull and casewhen.
-func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...*types.FieldType) (bf baseBuiltinFunc, err error) {
+func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []Expression, retType types.EvalType, argTps ...*types.FieldType) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
 	}
@@ -474,6 +480,7 @@ type vecBuiltinFunc interface {
 
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
+	contextopt.RequireOptionalEvalProps
 	vecBuiltinFunc
 
 	// evalInt evaluates int result of builtinFunc by given row.
@@ -547,7 +554,7 @@ func VerifyArgsWrapper(name string, l int) error {
 // functionClass is the interface for a function which may contains multiple functions.
 type functionClass interface {
 	// getFunction gets a function signature by the types and the counts of given arguments.
-	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
+	getFunction(ctx BuildContext, args []Expression) (builtinFunc, error)
 	// verifyArgsByCount verifies the count of parameters.
 	verifyArgsByCount(l int) error
 }
@@ -1016,4 +1023,47 @@ func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
 		sum += e.MemoryUsage()
 	}
 	return
+}
+
+type builtinFuncCacheItem[T any] struct {
+	ctxID uint64
+	item  T
+}
+
+type builtinFuncCache[T any] struct {
+	sync.Mutex
+	cached atomic.Pointer[builtinFuncCacheItem[T]]
+}
+
+func (c *builtinFuncCache[T]) getCache(ctxID uint64) (v T, ok bool) {
+	if p := c.cached.Load(); p != nil && p.ctxID == ctxID {
+		return p.item, true
+	}
+	return v, false
+}
+
+func (c *builtinFuncCache[T]) getOrInitCache(ctx EvalContext, constructCache func() (T, error)) (T, error) {
+	intest.Assert(constructCache != nil)
+	ctxID := ctx.CtxID()
+	if item, ok := c.getCache(ctxID); ok {
+		return item, nil
+	}
+
+	c.Lock()
+	defer c.Unlock()
+	if item, ok := c.getCache(ctxID); ok {
+		return item, nil
+	}
+
+	item, err := constructCache()
+	if err != nil {
+		var def T
+		return def, err
+	}
+
+	c.cached.Store(&builtinFuncCacheItem[T]{
+		ctxID: ctxID,
+		item:  item,
+	})
+	return item, nil
 }

@@ -1170,7 +1170,7 @@
           },
           "yaxes": [
             {
-              "format": "short",
+              "format": "bytes",
               "label": null,
               "logBase": 1,
               "max": null,
@@ -2412,6 +2412,14 @@
               "intervalFactor": 2,
               "legendFormat": "HeapInuse-{{instance}}",
               "refId": "B",
+              "step": 10
+            },
+            {
+              "expr": "tidb_server_memory_quota_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "quota-{{instance}}",
+              "refId": "C",
               "step": 10
             }
           ],

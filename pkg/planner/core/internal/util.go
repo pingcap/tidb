@@ -15,14 +15,14 @@
 package internal
 
 import (
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 // WrapCastForAggFuncs wraps the args of an aggregate function with a cast function.
 // If the mode is FinalMode or Partial2Mode, we do not need to wrap cast upon the args,
 // since the types of the args are already the expected.
-func WrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) {
+func WrapCastForAggFuncs(sctx expression.BuildContext, aggFuncs []*aggregation.AggFuncDesc) {
 	for i := range aggFuncs {
 		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
 			aggFuncs[i].WrapCastForAggArgs(sctx)

@@ -18,7 +18,7 @@ import (
 	"context"
 	stderrors "errors"
 	"math"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -200,17 +200,17 @@ func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
 	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Base().Samples))
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for _, sample := range collector.Base().Samples {
-		for i := range sample.Columns {
+		for i, columns := range sample.Columns {
 			if schema.Columns[i].VirtualExpr != nil {
 				continue
 			}
-			_, err := decoder.DecodeOne(sample.Columns[i].GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType)
+			_, err := decoder.DecodeOne(columns.GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType)
 			if err != nil {
 				return err
 			}
 		}
 	}
-	err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx, chk)
+	err := table.FillVirtualColumnValue(fieldTps, virtualColIdx, schema.Columns, e.colsInfo, e.ctx.GetExprCtx(), chk)
 	if err != nil {
 		return err
 	}
@@ -378,8 +378,8 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	colLen := len(e.colsInfo)
 	// The order of the samples are broken when merging samples from sub-collectors.
 	// So now we need to sort the samples according to the handle in order to calculate correlation.
-	sort.Slice(rootRowCollector.Base().Samples, func(i, j int) bool {
-		return rootRowCollector.Base().Samples[i].Handle.Compare(rootRowCollector.Base().Samples[j].Handle) < 0
+	slices.SortFunc(rootRowCollector.Base().Samples, func(i, j *statistics.ReservoirRowSampleItem) int {
+		return i.Handle.Compare(j.Handle)
 	})
 
 	totalLen := len(e.colsInfo) + len(e.indexes)
@@ -571,11 +571,12 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 	_, offset := timeutil.Zone(e.ctx.GetSessionVars().Location())
 	tasks := make([]*analyzeTask, 0, len(indexInfos))
 	sc := e.ctx.GetSessionVars().StmtCtx
+	concurrency := e.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
 	for _, indexInfo := range indexInfos {
 		base := baseAnalyzeExec{
 			ctx:         e.ctx,
 			tableID:     e.TableID,
-			concurrency: e.ctx.GetSessionVars().IndexSerialScanConcurrency(),
+			concurrency: concurrency,
 			analyzePB: &tipb.AnalyzeReq{
 				Tp:             tipb.AnalyzeType_TypeIndex,
 				Flags:          sc.PushDownFlags(),

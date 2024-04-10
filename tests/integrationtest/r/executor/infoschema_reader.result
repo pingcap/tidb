@@ -49,6 +49,7 @@ select TABLE_COLLATION is null from INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='
 TABLE_COLLATION is null
 1
 1
+1
 SELECT * FROM information_schema.views WHERE table_schema='executor__infoschema_reader' AND table_name='v1';
 TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	VIEW_DEFINITION	CHECK_OPTION	IS_UPDATABLE	DEFINER	SECURITY_TYPE	CHARACTER_SET_CLIENT	COLLATION_CONNECTION
 def	executor__infoschema_reader	v1	SELECT 1 AS `1`	CASCADED	NO	root@localhost	DEFINER	utf8mb4	utf8mb4_general_ci
@@ -186,6 +187,12 @@ set role r_stats_meta;
 select count(*)>0 from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta';
 count(*)>0
 1
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where upper(TABLE_NAME)='STATS_META';
+count(*)>0
+1
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where lower(TABLE_NAME)='stats_meta';
+count(*)>0
+1
 drop table if exists e, e2;
 CREATE TABLE e ( id INT NOT NULL, fname VARCHAR(30), lname VARCHAR(30)) PARTITION BY RANGE (id) (
 PARTITION p0 VALUES LESS THAN (50),
@@ -283,3 +290,41 @@ SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"
 GRANTEE	TABLE_CATALOG	PRIVILEGE_TYPE	IS_GRANTABLE
 'usageuser'@'%'	def	BACKUP_ADMIN	NO
 'usageuser'@'%'	def	SELECT	YES
+select VARIABLE_NAME from information_schema.VARIABLES_INFO where DEFAULT_VALUE = CURRENT_VALUE and variable_name in ('tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;
+VARIABLE_NAME
+tidb_enable_1pc
+tidb_enable_async_commit
+tidb_enable_auto_analyze
+tidb_enable_mutation_checker
+tidb_mem_oom_action
+tidb_pessimistic_txn_fair_locking
+tidb_row_format_version
+tidb_txn_assertion_level
+set global tidb_enable_async_commit = default;
+set global tidb_enable_1pc = default;
+set global tidb_mem_oom_action = default;
+set global tidb_enable_auto_analyze = default;
+set global tidb_row_format_version = default;
+set global tidb_txn_assertion_level = default;
+set global tidb_enable_mutation_checker = default;
+set global tidb_pessimistic_txn_fair_locking = default;
+select a.VARIABLE_NAME from information_schema.VARIABLES_INFO as a, mysql.GLOBAL_VARIABLES as b where a.VARIABLE_NAME = b.VARIABLE_NAME and a.DEFAULT_VALUE = b.VARIABLE_VALUE and a.CURRENT_VALUE = b.VARIABLE_VALUE and a.variable_name in ('tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;
+VARIABLE_NAME
+tidb_enable_1pc
+tidb_enable_async_commit
+tidb_enable_auto_analyze
+tidb_enable_mutation_checker
+tidb_mem_oom_action
+tidb_pessimistic_txn_fair_locking
+tidb_row_format_version
+tidb_txn_assertion_level
+drop table if exists t;
+CREATE TABLE t (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));
+insert into t(a, b, c) values(1, 2, 'c'), (7, 3, 'd'), (12, 4, 'e');
+analyze table t;
+select sleep(1);
+sleep(1)
+0
+select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t' AND TABLE_SCHEMA='executor__infoschema_reader';
+table_rows	avg_row_length	data_length	index_length
+3	18	54	6

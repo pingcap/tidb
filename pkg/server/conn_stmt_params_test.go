@@ -68,7 +68,7 @@ func TestParseExecArgs(t *testing.T) {
 		args   args
 		err    error
 		warn   error
-		expect interface{}
+		expect any
 	}{
 		// Tests for int overflow
 		{
@@ -341,7 +341,7 @@ func expectedDatetimeExecuteResult(t *testing.T, c *mockConn, time types.Time, w
 		require.NoError(t, conn.writePacket(data))
 
 		for i := 0; i < warnCount; i++ {
-			conn.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("any error"))
+			conn.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("any error"))
 		}
 		require.NoError(t, conn.writeEOF(context.Background(), mysql.ServerStatusAutocommit))
 	})

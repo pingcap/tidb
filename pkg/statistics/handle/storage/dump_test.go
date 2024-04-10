@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"runtime"
 	"strings"
 	"testing"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
@@ -73,7 +75,6 @@ func cleanStats(tk *testkit.TestKit, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_buckets")
 	tk.MustExec("delete from mysql.stats_extended")
 	tk.MustExec("delete from mysql.stats_fm_sketch")
-	tk.MustExec("delete from mysql.schema_index_usage")
 	tk.MustExec("delete from mysql.column_stats_usage")
 	do.StatsHandle().Clear()
 }
@@ -124,6 +125,17 @@ func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *handl
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo, nil, true)
 	require.NoError(t, err)
 	return jsonTbl
+}
+
+func persistStats(ctx context.Context, t *testing.T, dom *domain.Domain, db, tableName string, persist statstypes.PersistFunc) {
+	is := dom.InfoSchema()
+	h := dom.StatsHandle()
+	require.Nil(t, h.Update(is))
+	table, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(tableName))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	err = h.PersistStatsBySnapshot(ctx, "test", tableInfo, math.MaxUint64, persist)
+	require.NoError(t, err)
 }
 
 func TestDumpGlobalStats(t *testing.T) {
@@ -620,4 +632,45 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
 	for _, idx := range statsTbl.Indices {
 		require.False(t, idx.IsStatsInitialized())
 	}
+}
+
+func TestPersistStats(t *testing.T) {
+	ctx := context.Background()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	createTable := `CREATE TABLE t1 (a int, b int, primary key(a), index idx(b))
+PARTITION BY RANGE ( a ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+)`
+	tk.MustExec(createTable)
+	tk.MustExec("CREATE TABLE t2 (a int, b int, primary key(a), index idx(b))")
+	for i := 1; i < 21; i++ {
+		tk.MustExec("insert into t1 values (?, ?)", i, i)
+		tk.MustExec("insert into t2 values (?, ?)", i, i)
+	}
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+
+	statsCnt := 0
+	persistStats(ctx, t, dom, "test", "t1", func(ctx context.Context, jsonTable *handleutil.JSONTable, physicalID int64) error {
+		require.True(t, physicalID > 0)
+		require.NotNil(t, jsonTable)
+		statsCnt += 1
+		return nil
+	})
+	require.Equal(t, statsCnt, 5)
+	statsCnt = 0
+	persistStats(ctx, t, dom, "test", "t2", func(ctx context.Context, jsonTable *handleutil.JSONTable, physicalID int64) error {
+		require.True(t, physicalID > 0)
+		require.NotNil(t, jsonTable)
+		statsCnt += 1
+		return nil
+	})
+	require.Equal(t, statsCnt, 1)
 }

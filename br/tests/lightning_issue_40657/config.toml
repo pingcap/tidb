@@ -1,7 +1,0 @@
-[tikv-importer]
-backend = "local"
-duplicate-resolution = "remove"
-add-index-by-sql = false
-
-[mydumper.csv]
-header = true

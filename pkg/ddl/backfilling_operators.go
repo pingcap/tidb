@@ -26,15 +26,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/internal/session"
-	util2 "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -84,8 +83,9 @@ type OperatorCtx struct {
 }
 
 // NewOperatorCtx creates a new OperatorCtx.
-func NewOperatorCtx(ctx context.Context) *OperatorCtx {
+func NewOperatorCtx(ctx context.Context, taskID, subtaskID int64) *OperatorCtx {
 	opCtx, cancel := context.WithCancel(ctx)
+	opCtx = logutil.WithFields(opCtx, zap.Int64("task-id", taskID), zap.Int64("subtask-id", subtaskID))
 	return &OperatorCtx{
 		Context: opCtx,
 		cancel:  cancel,
@@ -112,11 +112,11 @@ func (ctx *OperatorCtx) OperatorErr() error {
 	return *err
 }
 
-func getWriterMemSize(idxNum int) (uint64, error) {
+func getWriterMemSize(avgRowSize, concurrency, idxNum int) (uint64, error) {
 	failpoint.Inject("mockWriterMemSize", func() {
 		failpoint.Return(1*size.GB, nil)
 	})
-	_, writerCnt := expectedIngestWorkerCnt()
+	_, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 	memTotal, err := memory.MemTotal()
 	if err != nil {
 		return 0, err
@@ -131,12 +131,13 @@ func getWriterMemSize(idxNum int) (uint64, error) {
 	return memSize, nil
 }
 
-func getMergeSortPartSize(concurrency int, idxNum int) (uint64, error) {
-	writerMemSize, err := getWriterMemSize(idxNum)
+func getMergeSortPartSize(avgRowSize int, concurrency int, idxNum int) (uint64, error) {
+	writerMemSize, err := getWriterMemSize(avgRowSize, concurrency, idxNum)
 	if err != nil {
 		return 0, nil
 	}
-	return writerMemSize / uint64(concurrency) / 10, nil
+	// Prevent part count being too large.
+	return writerMemSize / uint64(concurrency) / 10000 * uint64(external.MergeSortOverlapThreshold), nil
 }
 
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
@@ -147,12 +148,15 @@ func NewAddIndexIngestPipeline(
 	backendCtx ingest.BackendCtx,
 	engines []ingest.Engine,
 	sessCtx sessionctx.Context,
+	jobID int64,
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
 	totalRowCount *atomic.Int64,
 	metricCounter prometheus.Counter,
 	reorgMeta *model.DDLReorgMeta,
+	avgRowSize int,
+	concurrency int,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -169,7 +173,7 @@ func NewAddIndexIngestPipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
-	readerCnt, writerCnt := expectedIngestWorkerCnt()
+	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
@@ -179,6 +183,11 @@ func NewAddIndexIngestPipeline(
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
 	operator.Compose[IndexWriteResult](ingestOp, sinkOp)
+
+	logutil.Logger(ctx).Info("build add index local storage operators",
+		zap.Int64("jobID", jobID),
+		zap.Int("reader", readerCnt),
+		zap.Int("writer", writerCnt))
 
 	return operator.NewAsyncPipeline(
 		srcOp, scanOp, ingestOp, sinkOp,
@@ -200,6 +209,8 @@ func NewWriteIndexToExternalStoragePipeline(
 	metricCounter prometheus.Counter,
 	onClose external.OnCloseFunc,
 	reorgMeta *model.DDLReorgMeta,
+	avgRowSize int,
+	concurrency int,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -216,7 +227,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
-	readerCnt, writerCnt := expectedIngestWorkerCnt()
+	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
 	if err != nil {
@@ -227,7 +238,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 
-	memSize, err := getWriterMemSize(len(indexes))
+	memSize, err := getWriterMemSize(avgRowSize, concurrency, len(indexes))
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +252,11 @@ func NewWriteIndexToExternalStoragePipeline(
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, writeOp)
 	operator.Compose[IndexWriteResult](writeOp, sinkOp)
+
+	logutil.Logger(ctx).Info("build add index cloud storage operators",
+		zap.Int64("jobID", jobID),
+		zap.Int("reader", readerCnt),
+		zap.Int("writer", writerCnt))
 
 	return operator.NewAsyncPipeline(
 		srcOp, scanOp, writeOp, sinkOp,
@@ -472,7 +488,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		for !done {
 			srcChk := w.getChunk()
 			done, err = fetchTableScanResult(w.ctx, w.copCtx.GetBase(), rs, srcChk)
-			if err != nil || util2.IsContextDone(w.ctx) {
+			if err != nil || w.ctx.Err() != nil {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)
 				return err
@@ -528,11 +544,12 @@ func NewWriteExternalStoreOperator(
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			writers := make([]ingest.Writer, 0, len(indexes))
-			for _, index := range indexes {
+			for i, index := range indexes {
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
 					SetKeyDuplicationEncoding(index.Meta().Unique).
-					SetMemorySizeLimit(memoryQuota)
+					SetMemorySizeLimit(memoryQuota).
+					SetGroupOffset(i)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 				writer := builder.Build(store, prefix, writerID)
@@ -796,7 +813,7 @@ func (s *indexWriteResultSink) flush() error {
 				err = convertToKeyExistsErr(err, idxInfo, s.tbl.Meta())
 				return err
 			}
-			logutil.BgLogger().Error("flush error",
+			logutil.Logger(s.ctx).Error("flush error",
 				zap.String("category", "ddl"), zap.Error(err))
 			return err
 		}

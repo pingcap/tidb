@@ -155,7 +155,7 @@ yeZMN4+EMse5+0hAhg5UiPHE6pG8RI3zYnp0EYKvN+M9/cdNntyuKCCCvOCi4b4d
 
 type pair struct {
 	name  string
-	value interface{}
+	value any
 }
 
 func init() {
@@ -229,7 +229,7 @@ func init() {
 	}
 }
 
-func getSignedTokenString(priKey *rsa.PrivateKey, pairs map[string]interface{}) (string, error) {
+func getSignedTokenString(priKey *rsa.PrivateKey, pairs map[string]any) (string, error) {
 	jwt := jwtRepo.New()
 	header := jwsRepo.NewHeaders()
 	headerPairs := []pair{
@@ -264,7 +264,7 @@ func TestAuthTokenClaims(t *testing.T) {
 	var jwksImpl JWKSImpl
 	now := time.Now()
 	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(nil, nil, path[0], time.Hour), path[0])
-	claims := map[string]interface{}{
+	claims := map[string]any{
 		jwsRepo.KeyIDKey:      "the-key-id-0",
 		jwtRepo.SubjectKey:    email1,
 		openid.EmailKey:       email1,
@@ -369,7 +369,7 @@ func TestJWKSImpl(t *testing.T) {
 
 	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(nil, nil, path[0], time.Hour), path[0])
 	now := time.Now()
-	claims := map[string]interface{}{
+	claims := map[string]any{
 		jwsRepo.KeyIDKey:      "the-key-id-0",
 		jwtRepo.SubjectKey:    email1,
 		openid.EmailKey:       email1,

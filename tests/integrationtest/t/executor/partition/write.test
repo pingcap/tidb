@@ -7,7 +7,7 @@ create table t (id int, name varchar(10),b int generated always as (length(name)
    	partition p0 values in (3,5,6,9,17),
    	partition p1 values in (1,2,10,11,19,20),
    	partition p2 values in (4,12,13,14,18),
-   	partition p3 values in (7,8,15,16,null)
+   	partition p3 values in (7,8,15,16,27,null)
 );
 
 analyze table t;
@@ -602,3 +602,20 @@ replace into tIssue989(a, b) values (111, 2);
 select * from tIssue989;
 
 set @@session.tidb_enable_table_partition = default;
+
+## test partition insert/update ignore to invalid partition
+drop table if exists insert_update_ignore_test;
+create table insert_update_ignore_test (a int) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200));
+insert ignore into insert_update_ignore_test values(1000);
+show warnings where Message not like '%disable dynamic pruning%';
+insert ignore into insert_update_ignore_test partition(p0) values(101);
+show warnings where Message not like '%disable dynamic pruning%';
+select * from insert_update_ignore_test;
+insert into insert_update_ignore_test values(1);
+update ignore insert_update_ignore_test set a=1000;
+show warnings where Message not like '%disable dynamic pruning%';
+select * from insert_update_ignore_test;
+update ignore insert_update_ignore_test partition(p0) set a=101;
+show warnings where Message not like '%disable dynamic pruning%';
+select * from insert_update_ignore_test;
+drop table insert_update_ignore_test;

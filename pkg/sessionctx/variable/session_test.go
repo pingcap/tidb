@@ -189,7 +189,7 @@ func TestSlowLogFormat(t *testing.T) {
 		ColumnStatsLoadStatus: map[int64]string{2: "unInitialized"},
 	}
 
-	copTasks := &stmtctx.CopTasksDetails{
+	copTasks := &execdetails.CopTasksDetails{
 		NumCopTasks:       10,
 		AvgProcessTime:    time.Second,
 		P90ProcessTime:    time.Second * 2,
@@ -300,12 +300,14 @@ func TestSlowLogFormat(t *testing.T) {
 		ExecRetryTime:     5*time.Second + time.Millisecond*100,
 		IsExplicitTxn:     true,
 		IsWriteCacheTable: true,
-		UsedStats:         map[int64]*stmtctx.UsedStatsInfoForTable{1: usedStats1, 2: usedStats2},
+		UsedStats:         &stmtctx.UsedStatsInfo{},
 		ResourceGroupName: "rg1",
 		RRU:               50.0,
 		WRU:               100.56,
 		WaitRUDuration:    134 * time.Millisecond,
 	}
+	logItems.UsedStats.RecordUsedInfo(1, usedStats1)
+	logItems.UsedStats.RecordUsedInfo(2, usedStats2)
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
 
@@ -469,33 +471,33 @@ func TestGetReuseChunk(t *testing.T) {
 
 	// SetAlloc efficient
 	sessVars.SetAlloc(nil)
-	require.Nil(t, sessVars.ChunkPool.Alloc)
+	require.False(t, sessVars.IsAllocValid())
 	require.False(t, sessVars.GetUseChunkAlloc())
 	// alloc is nil ，Allocate memory from the system
-	chk1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, sessVars.ChunkPool.Alloc)
+	chk1 := sessVars.GetChunkAllocator().Alloc(fieldTypes, 10, 10)
 	require.NotNil(t, chk1)
 
 	chunkReuseMap := make(map[*chunk.Chunk]struct{}, 14)
 	columnReuseMap := make(map[*chunk.Column]struct{}, 14)
 
 	alloc := chunk.NewAllocator()
-	sessVars.EnableReuseCheck = true
+	sessVars.EnableReuseChunk = true
 	sessVars.SetAlloc(alloc)
-	require.NotNil(t, sessVars.ChunkPool.Alloc)
-	require.Equal(t, alloc, sessVars.ChunkPool.Alloc)
+	require.True(t, sessVars.IsAllocValid())
 	require.False(t, sessVars.GetUseChunkAlloc())
 
 	//tries to apply from the cache
 	initCap := 10
-	chk1 = sessVars.GetNewChunkWithCapacity(fieldTypes, initCap, initCap, sessVars.ChunkPool.Alloc)
+	chk1 = sessVars.GetChunkAllocator().Alloc(fieldTypes, initCap, initCap)
 	require.NotNil(t, chk1)
 	chunkReuseMap[chk1] = struct{}{}
 	for i := 0; i < chk1.NumCols(); i++ {
 		columnReuseMap[chk1.Column(i)] = struct{}{}
 	}
+	require.True(t, sessVars.GetUseChunkAlloc())
 
 	alloc.Reset()
-	chkres1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, sessVars.ChunkPool.Alloc)
+	chkres1 := sessVars.GetChunkAllocator().Alloc(fieldTypes, 10, 10)
 	require.NotNil(t, chkres1)
 	_, exist := chunkReuseMap[chkres1]
 	require.True(t, exist)
@@ -503,14 +505,14 @@ func TestGetReuseChunk(t *testing.T) {
 		_, exist := columnReuseMap[chkres1.Column(i)]
 		require.True(t, exist)
 	}
-	allocpool := variable.ReuseChunkPool{Alloc: alloc}
 
-	sessVars.ClearAlloc(&allocpool.Alloc, false)
-	require.Equal(t, alloc, allocpool.Alloc)
+	var allocpool chunk.Allocator = alloc
+	sessVars.ClearAlloc(&allocpool, false)
+	require.Equal(t, alloc, allocpool)
 
-	sessVars.ClearAlloc(&allocpool.Alloc, true)
-	require.NotEqual(t, allocpool.Alloc, alloc)
-	require.Nil(t, sessVars.ChunkPool.Alloc)
+	sessVars.ClearAlloc(&allocpool, true)
+	require.NotEqual(t, allocpool, alloc)
+	require.False(t, sessVars.IsAllocValid())
 }
 
 func TestUserVarConcurrently(t *testing.T) {
@@ -543,4 +545,17 @@ func TestUserVarConcurrently(t *testing.T) {
 	})
 	wg.Wait()
 	cancel()
+}
+
+func TestSetStatus(t *testing.T) {
+	sv := variable.NewSessionVars(nil)
+	require.True(t, sv.IsAutocommit())
+	sv.SetStatusFlag(mysql.ServerStatusInTrans, true)
+	require.True(t, sv.InTxn())
+	sv.SetStatusFlag(mysql.ServerStatusCursorExists, true)
+	require.True(t, sv.InTxn())
+	sv.SetStatusFlag(mysql.ServerStatusInTrans, false)
+	require.True(t, sv.HasStatusFlag(mysql.ServerStatusCursorExists))
+	require.False(t, sv.InTxn())
+	require.Equal(t, mysql.ServerStatusAutocommit|mysql.ServerStatusCursorExists, sv.Status())
 }

@@ -82,7 +82,7 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 	}
 
 	chk := exec.TryNewCacheChunk(e)
-	tps := e.Base().RetFieldTypes()
+	tps := e.RetFieldTypes()
 	var totalChunks, partChunks []tipb.Chunk
 	memTracker := h.sctx.GetSessionVars().StmtCtx.MemTracker
 	for {
@@ -125,7 +125,7 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 	}
 
 	chk := exec.TryNewCacheChunk(e)
-	tps := e.Base().RetFieldTypes()
+	tps := e.RetFieldTypes()
 	for {
 		chk.Reset()
 		if err = exec.Next(ctx, e, chk); err != nil {
@@ -193,14 +193,14 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec
 	h.dagReq = dagReq
 	is := h.sctx.GetInfoSchema().(infoschema.InfoSchema)
 	// Build physical plan.
-	bp := core.NewPBPlanBuilder(h.sctx, is, req.Ranges)
+	bp := core.NewPBPlanBuilder(h.sctx.GetPlanCtx(), is, req.Ranges)
 	plan, err := bp.Build(dagReq.Executors)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	plan = core.InjectExtraProjection(plan)
 	// Build executor.
-	b := newExecutorBuilder(h.sctx, is, nil)
+	b := newExecutorBuilder(h.sctx, is)
 	return b.build(plan), nil
 }
 

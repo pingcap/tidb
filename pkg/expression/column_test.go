@@ -47,7 +47,7 @@ func TestColumn(t *testing.T) {
 	require.True(t, corCol.EqualColumn(corCol))
 	require.False(t, corCol.EqualColumn(invalidCorCol))
 	require.True(t, corCol.IsCorrelated())
-	require.False(t, corCol.ConstItem(false))
+	require.Equal(t, ConstNone, corCol.ConstLevel())
 	require.True(t, col.EqualColumn(corCol.Decorrelate(schema)))
 	require.True(t, invalidCorCol.EqualColumn(invalidCorCol.Decorrelate(schema)))
 

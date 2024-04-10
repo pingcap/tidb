@@ -15,9 +15,11 @@
 package executor
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,9 +61,9 @@ func buildHashAggExecutor(ctx sessionctx.Context, src exec.Executor, schema *exp
 	plan.AggFuncs = aggFuncs
 	plan.GroupByItems = groupItems
 	plan.SetSchema(schema)
-	plan.Init(ctx, nil, 0)
+	plan.Init(ctx.GetPlanCtx(), nil, 0)
 	plan.SetChildren(nil)
-	b := newExecutorBuilder(ctx, nil, nil)
+	b := newExecutorBuilder(ctx, nil)
 	exec := b.build(plan)
 	hashAgg := exec.(*aggregate.HashAggExec)
 	hashAgg.SetChildren(0, src)
@@ -76,7 +78,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schem
 	sg.AggFuncs = aggFuncs
 	sg.GroupByItems = groupItems
 	sg.SetSchema(schema)
-	sg.Init(ctx, nil, 0)
+	sg.Init(ctx.GetPlanCtx(), nil, 0)
 
 	var tail core.PhysicalPlan = sg
 	// if data source is not sorted, we have to attach sort, to make the input of stream-agg sorted
@@ -107,13 +109,13 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schem
 			DataSources:  []core.PhysicalPlan{src},
 			SplitterType: splitter,
 			ByItemArrays: [][]expression.Expression{sg.GroupByItems},
-		}.Init(ctx, nil, 0)
+		}.Init(ctx.GetPlanCtx(), nil, 0)
 		plan.SetChildren(sg)
 	} else {
 		plan = sg
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil)
+	b := newExecutorBuilder(ctx, nil)
 	return b.build(plan)
 }
 
@@ -135,7 +137,7 @@ func buildAggExecutor(b *testing.B, testCase *testutil.AggTestCase, child exec.E
 	childCols := testCase.Columns()
 	schema := expression.NewSchema(childCols...)
 	groupBy := []expression.Expression{childCols[1]}
-	aggFunc, err := aggregation.NewAggFuncDesc(testCase.Ctx, testCase.AggFunc, []expression.Expression{childCols[0]}, testCase.HasDistinct)
+	aggFunc, err := aggregation.NewAggFuncDesc(testCase.Ctx.GetExprCtx(), testCase.AggFunc, []expression.Expression{childCols[0]}, testCase.HasDistinct)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -296,7 +298,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		default:
 			args = append(args, partitionBy[0])
 		}
-		desc, _ := aggregation.NewWindowFuncDesc(ctx, windowFunc, args, false)
+		desc, _ := aggregation.NewWindowFuncDesc(ctx.GetExprCtx(), windowFunc, args, false)
 
 		win.WindowFuncDescs = append(win.WindowFuncDescs, desc)
 		winSchema.Append(&expression.Column{
@@ -311,7 +313,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 	win.OrderBy = nil
 
 	win.SetSchema(winSchema)
-	win.Init(ctx, nil, 0)
+	win.Init(ctx.GetPlanCtx(), nil, 0)
 
 	var tail core.PhysicalPlan = win
 	if !dataSourceSorted {
@@ -340,13 +342,13 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			DataSources:  []core.PhysicalPlan{src},
 			SplitterType: core.PartitionHashSplitterType,
 			ByItemArrays: [][]expression.Expression{byItems},
-		}.Init(ctx, nil, 0)
+		}.Init(ctx.GetPlanCtx(), nil, 0)
 		plan.SetChildren(win)
 	} else {
 		plan = win
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil)
+	b := newExecutorBuilder(ctx, nil)
 	exec := b.build(plan)
 	return exec
 }
@@ -615,6 +617,44 @@ func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, us
 	return tc
 }
 
+func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, joinType core.JoinType) *expression.Schema {
+	colsNeedResolving := joinSchema.Len()
+	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
+	if joinType == core.LeftOuterSemiJoin || joinType == core.AntiLeftOuterSemiJoin {
+		colsNeedResolving--
+	}
+	mergedSchema := expression.MergeSchema(lSchema, rSchema)
+	// To avoid that two plan shares the same column slice.
+	shallowColSlice := make([]*expression.Column, joinSchema.Len())
+	copy(shallowColSlice, joinSchema.Columns)
+	joinSchema = expression.NewSchema(shallowColSlice...)
+	foundCnt := 0
+	// Here we want to resolve all join schema columns directly as a merged schema, and you know same name
+	// col in join schema should be separately redirected to corresponded same col in child schema. But two
+	// column sets are **NOT** always ordered, see comment: https://github.com/pingcap/tidb/pull/45831#discussion_r1481031471
+	// we are using mapping mechanism instead of moving j forward.
+	marked := make([]bool, mergedSchema.Len())
+	for i := 0; i < colsNeedResolving; i++ {
+		findIdx := -1
+		for j := 0; j < len(mergedSchema.Columns); j++ {
+			if !joinSchema.Columns[i].EqualColumn(mergedSchema.Columns[j]) || marked[j] {
+				continue
+			}
+			// resolve to a same unique id one, and it not being marked.
+			findIdx = j
+			break
+		}
+		if findIdx != -1 {
+			// valid one.
+			joinSchema.Columns[i] = joinSchema.Columns[i].Clone().(*expression.Column)
+			joinSchema.Columns[i].Index = findIdx
+			marked[findIdx] = true
+			foundCnt++
+		}
+	}
+	return joinSchema
+}
+
 func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Executor) *HashJoinExec {
 	if testCase.useOuterToBuild {
 		innerExec, outerExec = outerExec, innerExec
@@ -638,6 +678,10 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 		joinSchema.Append(cols0...)
 		joinSchema.Append(cols1...)
 	}
+	// todo: need systematic way to protect.
+	// physical join should resolveIndices to get right schema column index.
+	// otherwise, markChildrenUsedColsForTest will fail below.
+	joinSchema = prepareResolveIndices(joinSchema, innerExec.Schema(), outerExec.Schema(), core.InnerJoin)
 
 	joinKeysColIdx := make([]int, 0, len(testCase.keyIdx))
 	joinKeysColIdx = append(joinKeysColIdx, testCase.keyIdx...)
@@ -653,6 +697,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 			concurrency:     uint(testCase.concurrency),
 			probeTypes:      exec.RetTypes(outerExec),
 			buildTypes:      exec.RetTypes(innerExec),
+			allocPool:       chunk.NewEmptyAllocator(),
 		},
 		probeSideTupleFetcher: &probeSideTupleFetcher{
 			probeSideExec: outerExec,
@@ -693,25 +738,39 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 
 // markChildrenUsedColsForTest compares each child with the output schema, and mark
 // each column of the child is used by output or not.
-func markChildrenUsedColsForTest(ctx sessionctx.Context, outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]bool) {
-	childrenUsed = make([][]bool, 0, len(childSchemas))
-	markedOffsets := make(map[int]struct{})
-	for _, col := range outputSchema.Columns {
-		markedOffsets[col.Index] = struct{}{}
+func markChildrenUsedColsForTest(ctx sessionctx.Context, outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]int) {
+	childrenUsed = make([][]int, 0, len(childSchemas))
+	markedOffsets := make(map[int]int)
+	for originalIdx, col := range outputSchema.Columns {
+		markedOffsets[col.Index] = originalIdx
 	}
 	prefixLen := 0
+	type intPair struct {
+		first  int
+		second int
+	}
+	// for example here.
+	// left child schema: [col11]
+	// right child schema: [col21, col22]
+	// output schema is [col11, col22, col21], if not records the original derived order after physical resolve index.
+	// the lused will be [0], the rused will be [0,1], while the actual order is dismissed, [1,0] is correct for rused.
 	for _, childSchema := range childSchemas {
-		used := make([]bool, len(childSchema.Columns))
+		usedIdxPair := make([]intPair, 0, len(childSchema.Columns))
 		for i := range childSchema.Columns {
-			if _, ok := markedOffsets[prefixLen+i]; ok {
-				used[i] = true
+			if originalIdx, ok := markedOffsets[prefixLen+i]; ok {
+				usedIdxPair = append(usedIdxPair, intPair{first: originalIdx, second: i})
 			}
 		}
-		childrenUsed = append(childrenUsed, used)
-	}
-	for _, child := range childSchemas {
-		used := expression.GetUsedList(ctx, outputSchema.Columns, child)
-		childrenUsed = append(childrenUsed, used)
+		// sort the used idxes according their original indexes derived after resolveIndex.
+		slices.SortFunc(usedIdxPair, func(a, b intPair) int {
+			return cmp.Compare(a.first, b.first)
+		})
+		usedIdx := make([]int, 0, len(childSchema.Columns))
+		for _, one := range usedIdxPair {
+			usedIdx = append(usedIdx, one.second)
+		}
+		childrenUsed = append(childrenUsed, usedIdx)
+		prefixLen += childSchema.Len()
 	}
 	return
 }
@@ -720,7 +779,7 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 	opt1 := testutil.MockDataSourceParameters{
 		Rows: casTest.rows,
 		Ctx:  casTest.ctx,
-		GenDataFunc: func(row int, typ *types.FieldType) interface{} {
+		GenDataFunc: func(row int, typ *types.FieldType) any {
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -931,7 +990,7 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 		DataSchema: expression.NewSchema(casTest.columns()...),
 		Rows:       casTest.rows,
 		Ctx:        casTest.ctx,
-		GenDataFunc: func(row int, typ *types.FieldType) interface{} {
+		GenDataFunc: func(row int, typ *types.FieldType) any {
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1068,7 +1127,7 @@ func (tc IndexJoinTestCase) GetMockDataSourceOptByRows(rows int) testutil.MockDa
 		DataSchema: expression.NewSchema(tc.Columns()...),
 		Rows:       rows,
 		Ctx:        tc.Ctx,
-		GenDataFunc: func(row int, typ *types.FieldType) interface{} {
+		GenDataFunc: func(row int, typ *types.FieldType) any {
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1098,7 +1157,7 @@ func prepare4IndexInnerHashJoin(tc *IndexJoinTestCase, outerDS *testutil.MockDat
 		keyOff2IdxOff[i] = i
 	}
 
-	readerBuilder, err := newExecutorBuilder(tc.Ctx, nil, nil).
+	readerBuilder, err := newExecutorBuilder(tc.Ctx, nil).
 		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
 	if err != nil {
 		return nil, err
@@ -1172,7 +1231,7 @@ func prepare4IndexMergeJoin(tc *IndexJoinTestCase, outerDS *testutil.MockDataSou
 		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 
-	readerBuilder, err := newExecutorBuilder(tc.Ctx, nil, nil).
+	readerBuilder, err := newExecutorBuilder(tc.Ctx, nil).
 		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
 	if err != nil {
 		return nil, err
@@ -1313,6 +1372,20 @@ func prepareMergeJoinExec(tc *mergeJoinTestCase, joinSchema *expression.Schema, 
 		isOuterJoin:  false,
 	}
 
+	var usedIdx [][]int
+	if tc.childrenUsedSchema != nil {
+		usedIdx = make([][]int, 0, len(tc.childrenUsedSchema))
+		for _, childSchema := range tc.childrenUsedSchema {
+			used := make([]int, 0, len(childSchema))
+			for idx, one := range childSchema {
+				if one {
+					used = append(used, idx)
+				}
+			}
+			usedIdx = append(usedIdx, used)
+		}
+	}
+
 	mergeJoinExec.joiner = newJoiner(
 		tc.Ctx,
 		0,
@@ -1321,7 +1394,7 @@ func prepareMergeJoinExec(tc *mergeJoinTestCase, joinSchema *expression.Schema, 
 		nil,
 		exec.RetTypes(leftExec),
 		exec.RetTypes(rightExec),
-		tc.childrenUsedSchema,
+		usedIdx,
 		false,
 	)
 
@@ -1482,7 +1555,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		DataSchema: expression.NewSchema(tc.Columns()...),
 		Rows:       numOuterRows,
 		Ctx:        tc.Ctx,
-		GenDataFunc: func(row int, typ *types.FieldType) interface{} {
+		GenDataFunc: func(row int, typ *types.FieldType) any {
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1500,7 +1573,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		DataSchema: expression.NewSchema(tc.Columns()...),
 		Rows:       numInnerRows,
 		Ctx:        tc.Ctx,
-		GenDataFunc: func(row int, typ *types.FieldType) interface{} {
+		GenDataFunc: func(row int, typ *types.FieldType) any {
 			row = row / numInnerDup
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:

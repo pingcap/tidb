@@ -36,18 +36,18 @@ import (
 type maxMinEliminator struct {
 }
 
-func (a *maxMinEliminator) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (a *maxMinEliminator) optimize(_ context.Context, p LogicalPlan, opt *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	return a.eliminateMaxMin(p, opt), planChanged, nil
 }
 
 // composeAggsByInnerJoin composes the scalar aggregations by cartesianJoin.
-func (*maxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, aggs []*LogicalAggregation, opt *logicalOptimizeOp) (plan LogicalPlan) {
+func (*maxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, aggs []*LogicalAggregation, opt *util.LogicalOptimizeOp) (plan LogicalPlan) {
 	plan = aggs[0]
 	sctx := plan.SCtx()
 	joins := make([]*LogicalJoin, 0)
 	for i := 1; i < len(aggs); i++ {
-		join := LogicalJoin{JoinType: InnerJoin}.Init(sctx, plan.SelectBlockOffset())
+		join := LogicalJoin{JoinType: InnerJoin}.Init(sctx, plan.QueryBlockOffset())
 		join.SetChildren(plan, aggs[i])
 		join.schema = buildLogicalJoinSchema(InnerJoin, join)
 		join.cartesianJoin = true
@@ -74,7 +74,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 				// we only need to check if all of the conditions can be pushed down as accessConds
 				// and `col` is the handle column.
 				if p.handleCols != nil && col.EqualColumn(p.handleCols.GetCol(0)) {
-					if _, filterConds := ranger.DetachCondsForColumn(p.SCtx(), conditions, col); len(filterConds) != 0 {
+					if _, filterConds := ranger.DetachCondsForColumn(p.SCtx().GetRangerCtx(), conditions, col); len(filterConds) != 0 {
 						return false
 					}
 					return true
@@ -86,7 +86,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 				}
 				// 1. whether all of the conditions can be pushed down as accessConds.
 				// 2. whether the AccessPath can satisfy the order property of `col` with these accessConds.
-				result, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx(), conditions, indexCols, indexColLen, p.SCtx().GetSessionVars().RangeMaxSize)
+				result, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx().GetRangerCtx(), conditions, indexCols, indexColLen, p.SCtx().GetSessionVars().RangeMaxSize)
 				if err != nil || len(result.RemainedConds) != 0 {
 					continue
 				}
@@ -110,14 +110,14 @@ func (a *maxMinEliminator) cloneSubPlans(plan LogicalPlan) LogicalPlan {
 	case *LogicalSelection:
 		newConditions := make([]expression.Expression, len(p.Conditions))
 		copy(newConditions, p.Conditions)
-		sel := LogicalSelection{Conditions: newConditions}.Init(p.SCtx(), p.SelectBlockOffset())
+		sel := LogicalSelection{Conditions: newConditions}.Init(p.SCtx(), p.QueryBlockOffset())
 		sel.SetChildren(a.cloneSubPlans(p.children[0]))
 		return sel
 	case *DataSource:
 		// Quick clone a DataSource.
 		// ReadOnly fields uses a shallow copy, while the fields which will be overwritten must use a deep copy.
 		newDs := *p
-		newDs.baseLogicalPlan = newBaseLogicalPlan(p.SCtx(), p.TP(), &newDs, p.SelectBlockOffset())
+		newDs.baseLogicalPlan = newBaseLogicalPlan(p.SCtx(), p.TP(), &newDs, p.QueryBlockOffset())
 		newDs.schema = p.schema.Clone()
 		newDs.Columns = make([]*model.ColumnInfo, len(p.Columns))
 		copy(newDs.Columns, p.Columns)
@@ -138,7 +138,7 @@ func (a *maxMinEliminator) cloneSubPlans(plan LogicalPlan) LogicalPlan {
 // `select max(a) from t` + `select min(a) from t` + `select max(b) from t`.
 // Then we check whether `a` and `b` have indices. If any of the used column has no index, we cannot eliminate
 // this aggregation.
-func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, opt *logicalOptimizeOp) (aggs []*LogicalAggregation, canEliminate bool) {
+func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, opt *util.LogicalOptimizeOp) (aggs []*LogicalAggregation, canEliminate bool) {
 	for _, f := range agg.AggFuncs {
 		// We must make sure the args of max/min is a simple single column.
 		col, ok := f.Args[0].(*expression.Column)
@@ -152,20 +152,25 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 	aggs = make([]*LogicalAggregation, 0, len(agg.AggFuncs))
 	// we can split the aggregation only if all of the aggFuncs pass the check.
 	for i, f := range agg.AggFuncs {
-		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.SCtx(), agg.SelectBlockOffset())
+		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.SCtx(), agg.QueryBlockOffset())
 		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
 		// Since LogicalAggregation doesn’t use the parent LogicalPlan, passing an incorrect parameter here won’t affect subsequent optimizations.
-		if err := newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt, newAgg); err != nil {
+		var (
+			p   LogicalPlan
+			err error
+		)
+		if p, err = newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt); err != nil {
 			return nil, false
 		}
+		newAgg = p.(*LogicalAggregation)
 		aggs = append(aggs, newAgg)
 	}
 	return aggs, true
 }
 
 // eliminateSingleMaxMin tries to convert a single max/min to Limit+Sort operators.
-func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *logicalOptimizeOp) *LogicalAggregation {
+func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *util.LogicalOptimizeOp) *LogicalAggregation {
 	f := agg.AggFuncs[0]
 	child := agg.Children()[0]
 	ctx := agg.SCtx()
@@ -176,9 +181,9 @@ func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *log
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
 		if !mysql.HasNotNullFlag(f.Args[0].GetType().GetFlag()) {
-			sel = LogicalSelection{}.Init(ctx, agg.SelectBlockOffset())
-			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
-			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
+			sel = LogicalSelection{}.Init(ctx, agg.QueryBlockOffset())
+			isNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
+			notNullFunc := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 			sel.Conditions = []expression.Expression{notNullFunc}
 			sel.SetChildren(agg.Children()[0])
 			child = sel
@@ -188,14 +193,14 @@ func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *log
 		// For max function, the sort order should be desc.
 		desc := f.Name == ast.AggFuncMax
 		// Compose Sort operator.
-		sort = LogicalSort{}.Init(ctx, agg.SelectBlockOffset())
+		sort = LogicalSort{}.Init(ctx, agg.QueryBlockOffset())
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: f.Args[0], Desc: desc})
 		sort.SetChildren(child)
 		child = sort
 	}
 
 	// Compose Limit operator.
-	li := LogicalLimit{Count: 1}.Init(ctx, agg.SelectBlockOffset())
+	li := LogicalLimit{Count: 1}.Init(ctx, agg.QueryBlockOffset())
 	li.SetChildren(child)
 
 	// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.
@@ -206,7 +211,7 @@ func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *log
 }
 
 // eliminateMaxMin tries to convert max/min to Limit+Sort operators.
-func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan, opt *logicalOptimizeOp) LogicalPlan {
+func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan, opt *util.LogicalOptimizeOp) LogicalPlan {
 	// CTE's logical optimization is indenpent.
 	if _, ok := p.(*LogicalCTE); ok {
 		return p
@@ -256,7 +261,7 @@ func (*maxMinEliminator) name() string {
 	return "max_min_eliminate"
 }
 
-func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *LogicalSelection, sort *LogicalSort, limit *LogicalLimit, opt *logicalOptimizeOp) {
+func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *LogicalSelection, sort *LogicalSort, limit *LogicalLimit, opt *util.LogicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString("")
 		if sel != nil {
@@ -278,10 +283,10 @@ func appendEliminateSingleMaxMinTrace(agg *LogicalAggregation, sel *LogicalSelec
 		}
 		return buffer.String()
 	}
-	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
+	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func appendEliminateMultiMinMaxTraceStep(originAgg *LogicalAggregation, aggs []*LogicalAggregation, joins []*LogicalJoin, opt *logicalOptimizeOp) {
+func appendEliminateMultiMinMaxTraceStep(originAgg *LogicalAggregation, aggs []*LogicalAggregation, joins []*LogicalJoin, opt *util.LogicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v splited into [", originAgg.TP(), originAgg.ID()))
 		for i, agg := range aggs {
@@ -311,5 +316,5 @@ func appendEliminateMultiMinMaxTraceStep(originAgg *LogicalAggregation, aggs []*
 		buffer.WriteString("] and none of them has group by clause")
 		return buffer.String()
 	}
-	opt.appendStepToCurrent(originAgg.ID(), originAgg.TP(), reason, action)
+	opt.AppendStepToCurrent(originAgg.ID(), originAgg.TP(), reason, action)
 }

@@ -21,42 +21,40 @@ import (
 	"go.uber.org/goleak"
 )
 
-// SchedulerForTest exports for testing.
-type SchedulerManagerForTest interface {
-	GetRunningTaskCnt() int
-	DelRunningTask(id int64)
-	DoCleanUpRoutine()
+// GetRunningTaskCnt implements Scheduler.GetRunningTaskCnt interface.
+func (sm *Manager) GetRunningTaskCnt() int {
+	return sm.getSchedulerCount()
 }
 
-// GetRunningGTaskCnt implements Scheduler.GetRunningGTaskCnt interface.
-func (dm *Manager) GetRunningTaskCnt() int {
-	return dm.getSchedulerCount()
+// DelRunningTask implements Scheduler.DelRunningTask interface.
+func (sm *Manager) DelRunningTask(id int64) {
+	sm.delScheduler(id)
 }
 
-// DelRunningGTask implements Scheduler.DelRunningGTask interface.
-func (dm *Manager) DelRunningTask(id int64) {
-	dm.delScheduler(id)
+// DoCleanupRoutine implements Scheduler.DoCleanupRoutine interface.
+func (sm *Manager) DoCleanupRoutine() {
+	sm.doCleanupTask()
 }
 
-// DoCleanUpRoutine implements Scheduler.DoCleanUpRoutine interface.
-func (dm *Manager) DoCleanUpRoutine() {
-	dm.doCleanUpRoutine()
+func (s *BaseScheduler) Switch2NextStep() (err error) {
+	return s.switch2NextStep()
 }
 
-func (s *BaseScheduler) OnNextStage() (err error) {
-	return s.onNextStage()
+func NewNodeManager() *NodeManager {
+	return newNodeManager("")
 }
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	// Make test more fast.
-	checkTaskRunningInterval = checkTaskRunningInterval / 10
-	checkTaskFinishedInterval = checkTaskFinishedInterval / 10
-	RetrySQLInterval = RetrySQLInterval / 20
+	CheckTaskRunningInterval /= 10
+	CheckTaskFinishedInterval /= 10
+	RetrySQLInterval /= 20
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),

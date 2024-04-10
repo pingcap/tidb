@@ -12,9 +12,11 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
+        "//pkg/statistics/handle/usage/indexusage",
         "//pkg/statistics/handle/util",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/sqlexec",
+        "@org_golang_x_sync//singleflight",
     ],
 )

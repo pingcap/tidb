@@ -552,12 +552,8 @@ func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
 
 // Prepared represents a prepared statement.
 type Prepared struct {
-	Stmt          StmtNode
-	StmtType      string
-	Params        []ParamMarkerExpr
-	SchemaVersion int64
-	CachedPlan    interface{}
-	CachedNames   interface{}
+	Stmt     StmtNode
+	StmtType string
 }
 
 // ExecuteStmt is a statement to execute PreparedStmt.
@@ -1972,7 +1968,6 @@ type CreateBindingStmt struct {
 	stmtNode
 
 	GlobalScope bool
-	IsUniversal bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
 	PlanDigest  string
@@ -1984,9 +1979,6 @@ func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("GLOBAL ")
 	} else {
 		ctx.WriteKeyWord("SESSION ")
-	}
-	if n.IsUniversal {
-		ctx.WriteKeyWord("UNIVERSAL ")
 	}
 	if n.OriginNode == nil {
 		ctx.WriteKeyWord("BINDING FROM HISTORY USING PLAN DIGEST ")
@@ -2332,12 +2324,11 @@ const (
 	AdminCaptureBindings
 	AdminEvolveBindings
 	AdminReloadBindings
-	AdminShowTelemetry
-	AdminResetTelemetryID
 	AdminReloadStatistics
 	AdminFlushPlanCache
 	AdminSetBDRRole
 	AdminShowBDRRole
+	AdminUnsetBDRRole
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2350,11 +2341,44 @@ type HandleRange struct {
 type BDRRole string
 
 const (
-	BDRRoleNone      BDRRole = "none"
 	BDRRolePrimary   BDRRole = "primary"
 	BDRRoleSecondary BDRRole = "secondary"
-	BDRRoleLocalOnly BDRRole = "local_only"
+	BDRRoleNone      BDRRole = ""
 )
+
+// DeniedByBDR checks whether the DDL is denied by BDR.
+func DeniedByBDR(role BDRRole, action model.ActionType, job *model.Job) (denied bool) {
+	ddlType, ok := model.ActionBDRMap[action]
+	switch role {
+	case BDRRolePrimary:
+		if !ok {
+			return true
+		}
+
+		// Can't add unique index on primary role.
+		if job != nil && (action == model.ActionAddIndex || action == model.ActionAddPrimaryKey) &&
+			len(job.Args) >= 1 && job.Args[0].(bool) {
+			// job.Args[0] is unique when job.Type is ActionAddIndex or ActionAddPrimaryKey.
+			return true
+		}
+
+		if ddlType == model.SafeDDL || ddlType == model.UnmanagementDDL {
+			return false
+		}
+	case BDRRoleSecondary:
+		if !ok {
+			return true
+		}
+		if ddlType == model.UnmanagementDDL {
+			return false
+		}
+	default:
+		// if user do not set bdr role, we will not deny any ddl as `none`
+		return false
+	}
+
+	return true
+}
 
 type StatementScope int
 
@@ -2584,10 +2608,6 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("EVOLVE BINDINGS")
 	case AdminReloadBindings:
 		ctx.WriteKeyWord("RELOAD BINDINGS")
-	case AdminShowTelemetry:
-		ctx.WriteKeyWord("SHOW TELEMETRY")
-	case AdminResetTelemetryID:
-		ctx.WriteKeyWord("RESET TELEMETRY_ID")
 	case AdminReloadStatistics:
 		ctx.WriteKeyWord("RELOAD STATS_EXTENDED")
 	case AdminFlushPlanCache:
@@ -2600,19 +2620,17 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	case AdminSetBDRRole:
 		switch n.BDRRole {
-		case BDRRoleNone:
-			ctx.WriteKeyWord("SET BDR ROLE NONE")
 		case BDRRolePrimary:
 			ctx.WriteKeyWord("SET BDR ROLE PRIMARY")
 		case BDRRoleSecondary:
 			ctx.WriteKeyWord("SET BDR ROLE SECONDARY")
-		case BDRRoleLocalOnly:
-			ctx.WriteKeyWord("SET BDR ROLE LOCAL_ONLY")
 		default:
 			return errors.New("Unsupported BDR role")
 		}
 	case AdminShowBDRRole:
 		ctx.WriteKeyWord("SHOW BDR ROLE")
+	case AdminUnsetBDRRole:
+		ctx.WriteKeyWord("UNSET BDR ROLE")
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
@@ -3670,9 +3688,11 @@ type HintTable struct {
 }
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
-	if ht.DBName.L != "" {
-		ctx.WriteName(ht.DBName.String())
-		ctx.WriteKeyWord(".")
+	if !ctx.Flags.HasWithoutSchemaNameFlag() {
+		if ht.DBName.L != "" {
+			ctx.WriteName(ht.DBName.String())
+			ctx.WriteKeyWord(".")
+		}
 	}
 	ctx.WriteName(ht.TableName.String())
 	if ht.QBName.L != "" {
@@ -3723,7 +3743,9 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.HintData.(string))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
-	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join", "broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
+		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading", "no_hash_join", "no_merge_join",
+		"no_index_join", "no_index_hash_join", "no_index_merge_join":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")
@@ -3781,7 +3803,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		hintData := n.HintData.(HintSetVar)
 		ctx.WritePlain(hintData.VarName)
 		ctx.WritePlain(" = ")
-		ctx.WritePlain(hintData.Value)
+		ctx.WriteString(hintData.Value)
 	}
 	ctx.WritePlain(")")
 	return nil

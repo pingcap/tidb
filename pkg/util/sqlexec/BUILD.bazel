@@ -11,11 +11,11 @@ go_library(
     deps = [
         "//pkg/parser",
         "//pkg/parser/ast",
-        "//pkg/sessionctx",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util/chunk",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
     ],
 )
 

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -38,7 +39,7 @@ func ExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) 
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
-			return nil, ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
+			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
 		}
 		pbExpr = append(pbExpr, v)
 	}
@@ -142,9 +143,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			sc := pc.ctx.GetSessionVars().StmtCtx
-			val, err := codec.EncodeMySQLTime(sc.TimeZone(), d.GetMysqlTime(), ft.GetType(), nil)
-			err = sc.HandleError(err)
+			tc, ec := typeCtx(pc.ctx), errCtx(pc.ctx)
+			val, err := codec.EncodeMySQLTime(tc.Location(), d.GetMysqlTime(), ft.GetType(), nil)
+			err = ec.HandleError(err)
 			if err != nil {
 				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
 				return tp, nil, false

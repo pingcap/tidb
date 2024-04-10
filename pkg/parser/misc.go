@@ -29,6 +29,17 @@ func isIdentExtend(ch byte) bool {
 	return ch >= 0x80
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+func isInCorrectIdentifierName(name string) bool {
+	if len(name) == 0 {
+		return true
+	}
+	if name[len(name)-1] == ' ' {
+		return true
+	}
+	return false
+}
+
 // Initialize a lookup table for isUserVarChar
 var isUserVarCharTable [256]bool
 
@@ -492,7 +503,6 @@ var tokenMap = map[string]int{
 	"LOCAL":                    local,
 	"LOCALTIME":                localTime,
 	"LOCALTIMESTAMP":           localTs,
-	"LOCAL_ONLY":               local_only,
 	"LOCATION":                 location,
 	"LOCK":                     lock,
 	"LOCKED":                   locked,
@@ -789,8 +799,6 @@ var tokenMap = map[string]int{
 	"TABLES":                   tables,
 	"TABLESAMPLE":              tableSample,
 	"TABLESPACE":               tablespace,
-	"TELEMETRY":                telemetry,
-	"TELEMETRY_ID":             telemetryID,
 	"TEMPORARY":                temporary,
 	"TEMPTABLE":                temptable,
 	"TERMINATED":               terminated,
@@ -844,11 +852,11 @@ var tokenMap = map[string]int{
 	"UNDEFINED":                undefined,
 	"UNICODE":                  unicodeSym,
 	"UNION":                    union,
-	"UNIVERSAL":                universal,
 	"UNIQUE":                   unique,
 	"UNKNOWN":                  unknown,
 	"UNLOCK":                   unlock,
 	"UNLIMITED":                unlimited,
+	"UNSET":                    unset,
 	"UNSIGNED":                 unsigned,
 	"UNTIL":                    until,
 	"UNTIL_TS":                 untilTS,

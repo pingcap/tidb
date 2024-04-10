@@ -65,6 +65,8 @@ type Manager interface {
 
 	// SetBeOwnerHook sets a hook. The hook is called before becoming an owner.
 	SetBeOwnerHook(hook func())
+	// SetRetireOwnerHook will be called after retiring the owner.
+	SetRetireOwnerHook(hook func())
 }
 
 const (
@@ -114,8 +116,10 @@ type ownerManager struct {
 	elec           unsafe.Pointer
 	sessionLease   *atomicutil.Int64
 	wg             sync.WaitGroup
-	beOwnerHook    func()
 	campaignCancel context.CancelFunc
+
+	beOwnerHook     func()
+	retireOwnerHook func()
 }
 
 // NewOwnerManager creates a new Manager.
@@ -158,6 +162,10 @@ func (*ownerManager) RequireOwner(_ context.Context) error {
 
 func (m *ownerManager) SetBeOwnerHook(hook func()) {
 	m.beOwnerHook = hook
+}
+
+func (m *ownerManager) SetRetireOwnerHook(hook func()) {
+	m.retireOwnerHook = hook
 }
 
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
@@ -222,6 +230,9 @@ func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
 
 // RetireOwner make the manager to be a not owner.
 func (m *ownerManager) RetireOwner() {
+	if m.retireOwnerHook != nil {
+		m.retireOwnerHook()
+	}
 	atomic.StorePointer(&m.elec, nil)
 }
 
@@ -327,8 +338,8 @@ func getOwnerInfo(ctx, logCtx context.Context, etcdCli *clientv3.Client, ownerPa
 	var resp *clientv3.GetResponse
 	var err error
 	for i := 0; i < 3; i++ {
-		if util.IsContextDone(ctx) {
-			return "", nil, op, 0, errors.Trace(ctx.Err())
+		if err = ctx.Err(); err != nil {
+			return "", nil, op, 0, errors.Trace(err)
 		}
 
 		childCtx, cancel := context.WithTimeout(ctx, util.KeyOpDefaultTimeout)
@@ -411,11 +422,11 @@ func (m *ownerManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
 		If(clientv3.Compare(clientv3.ModRevision(ownerKey), "=", modRevision)).
 		Then(clientv3.OpPut(ownerKey, string(newOwnerVal), leaseOp)).
 		Commit()
-	logutil.BgLogger().Info("set owner op value", zap.String("owner key", ownerKey), zap.ByteString("ownerID", ownerID),
-		zap.Stringer("old Op", currOp), zap.Stringer("op", op), zap.Bool("isSuc", resp.Succeeded), zap.Error(err))
-	if !resp.Succeeded {
+	if err == nil && !resp.Succeeded {
 		err = errors.New("put owner key failed, cmp is false")
 	}
+	logutil.BgLogger().Info("set owner op value", zap.String("owner key", ownerKey), zap.ByteString("ownerID", ownerID),
+		zap.Stringer("old Op", currOp), zap.Stringer("op", op), zap.Error(err))
 	metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.PutValue+"_"+metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }

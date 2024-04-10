@@ -19,18 +19,15 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
+	mockscheduler "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -39,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
@@ -48,44 +46,17 @@ const (
 	subtaskCnt = 3
 )
 
-var mockedAllServerInfos = []*infosync.ServerInfo{}
-
-func getTestSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
-	mockScheduler := mockDispatch.NewMockExtension(ctrl)
+func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
+	mockScheduler := mockscheduler.NewMockExtension(ctrl)
 	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return mockedAllServerInfos, true, nil
-		},
-	).AnyTimes()
-	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
-	mockScheduler.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
-			return proto.StepDone
-		},
-	).AnyTimes()
-	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ scheduler.TaskHandle, _ *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+		func(ctx context.Context, _ *proto.Task) ([]string, error) {
 			return nil, nil
 		},
 	).AnyTimes()
-
-	mockScheduler.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	return mockScheduler
-}
-
-func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
-	mockScheduler := mockDispatch.NewMockExtension(ctrl)
-	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
-	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			serverInfo, err := scheduler.GenerateTaskExecutorNodes(ctx)
-			return serverInfo, true, err
-		},
-	).AnyTimes()
 	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
 	mockScheduler.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
+		func(task *proto.TaskBase) proto.Step {
 			switch task.Step {
 			case proto.StepInit:
 				return proto.StepOne
@@ -95,7 +66,7 @@ func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ scheduler.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
 			switch task.Step {
 			case proto.StepInit:
 				for i := 0; i < subtaskCnt; i++ {
@@ -116,111 +87,23 @@ func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 	return mockScheduler
 }
 
-func MockSchedulerManager(t *testing.T, ctrl *gomock.Controller, pool *pools.ResourcePool, ext scheduler.Extension, cleanUp scheduler.CleanUpRoutine) (*scheduler.Manager, *storage.TaskManager) {
+func MockSchedulerManager(t *testing.T, ctrl *gomock.Controller, pool *pools.ResourcePool, ext scheduler.Extension, cleanup scheduler.CleanUpRoutine) (*scheduler.Manager, *storage.TaskManager) {
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	sch, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
-	require.NoError(t, err)
+	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr scheduler.TaskManager, serverID string, task *proto.Task) scheduler.Scheduler {
-			mockScheduler := sch.MockScheduler(task)
+		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+			mockScheduler := scheduler.NewBaseScheduler(ctx, task, param)
 			mockScheduler.Extension = ext
 			return mockScheduler
 		})
 	return sch, mgr
 }
 
-func MockSchedulerManagerWithMockTaskMgr(t *testing.T, ctrl *gomock.Controller, pool *pools.ResourcePool, taskMgr *mock.MockTaskManager, ext scheduler.Extension, cleanUp scheduler.CleanUpRoutine) *scheduler.Manager {
-	ctx := context.WithValue(context.Background(), "etcd", true)
-	sch, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), taskMgr, "host:port")
-	require.NoError(t, err)
-	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr scheduler.TaskManager, serverID string, task *proto.Task) scheduler.Scheduler {
-			mockScheduler := sch.MockScheduler(task)
-			mockScheduler.Extension = ext
-			return mockScheduler
-		})
-	scheduler.RegisterSchedulerCleanUpFactory(proto.TaskTypeExample,
-		func() scheduler.CleanUpRoutine {
-			return cleanUp
-		})
-	return sch
-}
-
 func deleteTasks(t *testing.T, store kv.Storage, taskID int64) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(fmt.Sprintf("delete from mysql.tidb_global_task where id = %d", taskID))
-}
-
-func TestGetInstance(t *testing.T) {
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "scheduler")
-
-	store := testkit.CreateMockStore(t)
-	gtk := testkit.NewTestKit(t, store)
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return gtk.Session(), nil
-	}, 1, 1, time.Second)
-	defer pool.Close()
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes", "return()"))
-	schManager, mgr := MockSchedulerManager(t, ctrl, pool, getTestSchedulerExt(ctrl), nil)
-	// test no server
-	task := &proto.Task{ID: 1, Type: proto.TaskTypeExample}
-	sch := schManager.MockScheduler(task)
-	sch.Extension = getTestSchedulerExt(ctrl)
-	instanceIDs, err := sch.GetAllTaskExecutorIDs(ctx, task)
-	require.Lenf(t, instanceIDs, 0, "GetAllTaskExecutorIDs when there's no subtask")
-	require.NoError(t, err)
-
-	// test 2 servers
-	// server ids: uuid0, uuid1
-	// subtask instance ids: nil
-	uuids := []string{"ddl_id_1", "ddl_id_2"}
-	serverIDs := []string{"10.123.124.10:32457", "[ABCD:EF01:2345:6789:ABCD:EF01:2345:6789]:65535"}
-
-	scheduler.MockServerInfo = []*infosync.ServerInfo{
-		{
-			ID:   uuids[0],
-			IP:   "10.123.124.10",
-			Port: 32457,
-		},
-		{
-			ID:   uuids[1],
-			IP:   "ABCD:EF01:2345:6789:ABCD:EF01:2345:6789",
-			Port: 65535,
-		},
-	}
-	instanceIDs, err = sch.GetAllTaskExecutorIDs(ctx, task)
-	require.Lenf(t, instanceIDs, 0, "GetAllTaskExecutorIDs")
-	require.NoError(t, err)
-
-	// server ids: uuid0, uuid1
-	// subtask instance ids: uuid1
-	subtask := &proto.Subtask{
-		Type:   proto.TaskTypeExample,
-		TaskID: task.ID,
-		ExecID: serverIDs[1],
-	}
-	testutil.CreateSubTask(t, mgr, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, 11, true)
-	instanceIDs, err = sch.GetAllTaskExecutorIDs(ctx, task)
-	require.NoError(t, err)
-	require.Equal(t, []string{serverIDs[1]}, instanceIDs)
-	// server ids: uuid0, uuid1
-	// subtask instance ids: uuid0, uuid1
-	subtask = &proto.Subtask{
-		Type:   proto.TaskTypeExample,
-		TaskID: task.ID,
-		ExecID: serverIDs[0],
-	}
-	testutil.CreateSubTask(t, mgr, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, 11, true)
-	instanceIDs, err = sch.GetAllTaskExecutorIDs(ctx, task)
-	require.NoError(t, err)
-	require.Len(t, instanceIDs, len(serverIDs))
-	require.ElementsMatch(t, instanceIDs, serverIDs)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes"))
 }
 
 func TestTaskFailInManager(t *testing.T) {
@@ -235,11 +118,11 @@ func TestTaskFailInManager(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "handle_test")
 
-	mockScheduler := mock.NewMockScheduler(ctrl)
-	mockScheduler.EXPECT().Init().Return(errors.New("mock scheduler init error"))
-	schManager, mgr := MockSchedulerManager(t, ctrl, pool, getTestSchedulerExt(ctrl), nil)
+	schManager, mgr := MockSchedulerManager(t, ctrl, pool, scheduler.GetTestSchedulerExt(ctrl), nil)
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr scheduler.TaskManager, serverID string, task *proto.Task) scheduler.Scheduler {
+		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+			mockScheduler := mock.NewMockScheduler(ctrl)
+			mockScheduler.EXPECT().Init().Return(errors.New("mock scheduler init error"))
 			return mockScheduler
 		})
 	schManager.Start()
@@ -266,12 +149,9 @@ func TestTaskFailInManager(t *testing.T) {
 	}, time.Second*10, time.Millisecond*300)
 }
 
-func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel, isPauseAndResume bool) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
-	}()
-	// test DispatchTaskLoop
+func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel, isPauseAndResume bool) {
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	// test scheduleTaskLoop
 	// test parallelism control
 	var originalConcurrency int
 	if taskCnt == 1 {
@@ -292,6 +172,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	ctx = util.WithInternalSourceType(ctx, "scheduler")
 
 	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), nil)
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", "background"))
 	sch.Start()
 	defer func() {
 		sch.Stop()
@@ -301,14 +182,12 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		}
 	}()
 
-	require.NoError(t, mgr.StartManager(ctx, ":4000", "background"))
-
 	// 3s
 	cnt := 60
 	checkGetRunningTaskCnt := func(expected int) {
 		require.Eventually(t, func() bool {
 			return sch.GetRunningTaskCnt() == expected
-		}, time.Second, 50*time.Millisecond)
+		}, 5*time.Second, 50*time.Millisecond)
 	}
 
 	checkTaskRunningCnt := func() []*proto.Task {
@@ -318,7 +197,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			tasks, err = mgr.GetTasksInStates(ctx, proto.TaskStateRunning)
 			require.NoError(t, err)
 			return len(tasks) == taskCnt
-		}, time.Second, 50*time.Millisecond)
+		}, 5*time.Second, 50*time.Millisecond)
 		return tasks
 	}
 
@@ -326,10 +205,10 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		for i, taskID := range taskIDs {
 			require.Equal(t, int64(i+1), tasks[i].ID)
 			require.Eventually(t, func() bool {
-				cnt, err := mgr.GetSubtaskInStatesCnt(ctx, taskID, proto.TaskStatePending)
+				cntByStates, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepOne)
 				require.NoError(t, err)
-				return int64(subtaskCnt) == cnt
-			}, time.Second, 50*time.Millisecond)
+				return int64(subtaskCnt) == cntByStates[proto.SubtaskStatePending]
+			}, 5*time.Second, 50*time.Millisecond)
 		}
 	}
 
@@ -363,7 +242,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			if len(tasks) == taskCnt {
 				break
 			}
-			historyTasks, err := mgr.GetTasksFromHistoryInStates(ctx, expectedState)
+			historyTasks, err := testutil.GetTasksFromHistoryInStates(ctx, mgr, expectedState)
 			require.NoError(t, err)
 			if len(tasks)+len(historyTasks) == taskCnt {
 				break
@@ -377,7 +256,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	if isSucc {
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateSucceed, nil)
+			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
 			require.NoError(t, err)
 		}
 		checkGetTaskState(proto.TaskStateSucceed)
@@ -395,44 +274,38 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	} else if isPauseAndResume {
 		for i := 0; i < taskCnt; i++ {
 			found, err := mgr.PauseTask(ctx, fmt.Sprintf("%d", i))
-			require.Equal(t, true, found)
+			require.True(t, found)
 			require.NoError(t, err)
 		}
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStatePaused, nil)
+			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStatePaused, nil)
 			require.NoError(t, err)
 		}
 		checkGetTaskState(proto.TaskStatePaused)
 		for i := 0; i < taskCnt; i++ {
 			found, err := mgr.ResumeTask(ctx, fmt.Sprintf("%d", i))
-			require.Equal(t, true, found)
+			require.True(t, found)
 			require.NoError(t, err)
 		}
 
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateSucceed, nil)
+			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
 			require.NoError(t, err)
 		}
 		checkGetTaskState(proto.TaskStateSucceed)
 		return
 	} else {
-		// Test each task has a subtask failed.
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)"))
-		defer func() {
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/storage/MockUpdateTaskErr"))
-		}()
-
 		if isSubtaskCancel {
 			// Mock a subtask canceled
 			for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-				err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateCanceled, nil)
+				err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateCanceled, nil)
 				require.NoError(t, err)
 			}
 		} else {
 			// Mock a subtask fails.
 			for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-				err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateFailed, nil)
+				err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateFailed, nil)
 				require.NoError(t, err)
 			}
 		}
@@ -440,54 +313,57 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 
 	checkGetTaskState(proto.TaskStateReverting)
 	require.Len(t, tasks, taskCnt)
-	// Mock all subtask reverted.
-	start := subtaskCnt * taskCnt
-	for i := start; i <= start+subtaskCnt*taskCnt; i++ {
-		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateReverted, nil)
+	for _, task := range tasks {
+		subtasks, err := mgr.GetSubtasksByExecIDAndStepAndStates(
+			ctx, ":4000", task.ID, task.Step,
+			proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		require.NoError(t, err)
+		for _, subtask := range subtasks {
+			require.NoError(t, mgr.UpdateSubtaskStateAndError(ctx, ":4000", subtask.ID, proto.SubtaskStateCanceled, nil))
+		}
 	}
 	checkGetTaskState(proto.TaskStateReverted)
 	require.Len(t, tasks, taskCnt)
 }
 
 func TestSimple(t *testing.T) {
-	checkDispatch(t, 1, true, false, false, false)
+	checkSchedule(t, 1, true, false, false, false)
 }
 
 func TestSimpleErrStage(t *testing.T) {
-	checkDispatch(t, 1, false, false, false, false)
+	checkSchedule(t, 1, false, false, false, false)
 }
 
 func TestSimpleCancel(t *testing.T) {
-	checkDispatch(t, 1, false, true, false, false)
+	checkSchedule(t, 1, false, true, false, false)
 }
 
 func TestSimpleSubtaskCancel(t *testing.T) {
-	checkDispatch(t, 1, false, false, true, false)
+	checkSchedule(t, 1, false, false, true, false)
 }
 
 func TestParallel(t *testing.T) {
-	checkDispatch(t, 3, true, false, false, false)
+	checkSchedule(t, 3, true, false, false, false)
 }
 
 func TestParallelErrStage(t *testing.T) {
-	checkDispatch(t, 3, false, false, false, false)
+	checkSchedule(t, 3, false, false, false, false)
 }
 
 func TestParallelCancel(t *testing.T) {
-	checkDispatch(t, 3, false, true, false, false)
+	checkSchedule(t, 3, false, true, false, false)
 }
 
 func TestParallelSubtaskCancel(t *testing.T) {
-	checkDispatch(t, 3, false, false, true, false)
+	checkSchedule(t, 3, false, false, true, false)
 }
 
 func TestPause(t *testing.T) {
-	checkDispatch(t, 1, false, false, false, true)
+	checkSchedule(t, 1, false, false, false, true)
 }
 
 func TestParallelPause(t *testing.T) {
-	checkDispatch(t, 3, false, false, false, true)
+	checkSchedule(t, 3, false, false, false, true)
 }
 
 func TestVerifyTaskStateTransform(t *testing.T) {
@@ -505,7 +381,6 @@ func TestVerifyTaskStateTransform(t *testing.T) {
 		{proto.TaskStateRunning, proto.TaskStatePausing, true},
 		{proto.TaskStateRunning, proto.TaskStateResuming, false},
 		{proto.TaskStateCancelling, proto.TaskStateRunning, false},
-		{proto.TaskStateCanceled, proto.TaskStateRunning, false},
 	}
 	for _, tc := range testCases {
 		require.Equal(t, tc.expect, scheduler.VerifyTaskStateTransform(tc.oldState, tc.newState))
@@ -518,111 +393,9 @@ func TestIsCancelledErr(t *testing.T) {
 	require.True(t, scheduler.IsCancelledErr(errors.New("cancelled by user")))
 }
 
-func TestDispatcherOnNextStage(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	taskMgr := mock.NewMockTaskManager(ctrl)
-	schExt := mockDispatch.NewMockExtension(ctrl)
-
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "dispatcher")
-	task := proto.Task{
-		ID:    1,
-		State: proto.TaskStatePending,
-		Step:  proto.StepInit,
-	}
-	cloneTask := task
-	sch := scheduler.NewBaseScheduler(ctx, taskMgr, ":4000", &cloneTask)
-	sch.Extension = schExt
-
-	// test next step is done
-	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepDone)
-	schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("done err"))
-	require.ErrorContains(t, sch.OnNextStage(), "done err")
-	require.True(t, ctrl.Satisfied())
-	// we update task step before OnDone
-	require.Equal(t, proto.StepDone, sch.Task.Step)
-	*sch.Task = task
-	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepDone)
-	schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-	taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).Return(nil)
-	require.NoError(t, sch.OnNextStage())
-	require.True(t, ctrl.Satisfied())
-
-	// GetEligibleInstances err
-	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
-	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, false, errors.New("GetEligibleInstances err"))
-	require.ErrorContains(t, sch.OnNextStage(), "GetEligibleInstances err")
-	require.True(t, ctrl.Satisfied())
-	// GetEligibleInstances no instance
-	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
-	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, false, nil)
-	require.ErrorContains(t, sch.OnNextStage(), "no available TiDB node to dispatch subtasks")
-	require.True(t, ctrl.Satisfied())
-
-	serverNodes := []*infosync.ServerInfo{
-		{IP: "", Port: 4000},
-	}
-	// OnNextSubtasksBatch err
-	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
-	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(serverNodes, false, nil)
-	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil, errors.New("OnNextSubtasksBatch err"))
-	schExt.EXPECT().IsRetryableErr(gomock.Any()).Return(true)
-	require.ErrorContains(t, sch.OnNextStage(), "OnNextSubtasksBatch err")
-	require.True(t, ctrl.Satisfied())
-
-	bak := kv.TxnTotalSizeLimit.Load()
-	t.Cleanup(func() {
-		kv.TxnTotalSizeLimit.Store(bak)
-	})
-
-	// dispatch in batch
-	subtaskMetas := [][]byte{
-		[]byte(`{"xx": "1"}`),
-		[]byte(`{"xx": "2"}`),
-	}
-	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
-	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(serverNodes, false, nil)
-	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(subtaskMetas, nil)
-	taskMgr.EXPECT().SwitchTaskStepInBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-	kv.TxnTotalSizeLimit.Store(1)
-	require.NoError(t, sch.OnNextStage())
-	require.True(t, ctrl.Satisfied())
-	// met unstable subtasks
-	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
-	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(serverNodes, false, nil)
-	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(subtaskMetas, nil)
-	taskMgr.EXPECT().SwitchTaskStepInBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(errors.Annotatef(storage.ErrUnstableSubtasks, "expected %d, got %d",
-			2, 100))
-	kv.TxnTotalSizeLimit.Store(1)
-	startTime := time.Now()
-	err := sch.OnNextStage()
-	require.ErrorIs(t, err, storage.ErrUnstableSubtasks)
-	require.ErrorContains(t, err, "expected 2, got 100")
-	require.WithinDuration(t, startTime, time.Now(), 10*time.Second)
-	require.True(t, ctrl.Satisfied())
-
-	// dispatch in one txn
-	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
-	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(serverNodes, false, nil)
-	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(subtaskMetas, nil)
-	taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-	kv.TxnTotalSizeLimit.Store(config.DefTxnTotalSizeLimit)
-	require.NoError(t, sch.OnNextStage())
-	require.True(t, ctrl.Satisfied())
-}
-
-func TestManagerDispatchLoop(t *testing.T) {
+func TestManagerScheduleLoop(t *testing.T) {
 	// Mock 16 cpu node.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-	})
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockScheduler := mock.NewMockScheduler(ctrl)
@@ -644,35 +417,39 @@ func TestManagerDispatchLoop(t *testing.T) {
 	serverInfos, err := infosync.GetAllServerInfo(ctx)
 	require.NoError(t, err)
 	for _, s := range serverInfos {
-		execID := disttaskutil.GenerateExecID(s.IP, s.Port)
-		testutil.InsertSubtask(t, taskMgr, 1000000, proto.StepOne, execID, []byte(""), proto.TaskStatePending, proto.TaskTypeExample, 16)
+		execID := disttaskutil.GenerateExecID(s)
+		testutil.InsertSubtask(t, taskMgr, 1000000, proto.StepOne, execID, []byte(""), proto.SubtaskStatePending, proto.TaskTypeExample, 16)
 	}
 	concurrencies := []int{4, 6, 16, 2, 4, 4}
-	waitChannels := make([]chan struct{}, len(concurrencies))
-	for i := range waitChannels {
-		waitChannels[i] = make(chan struct{})
+	waitChannels := make(map[string](chan struct{}))
+	for i := 0; i < len(concurrencies); i++ {
+		waitChannels[fmt.Sprintf("key/%d", i)] = make(chan struct{})
 	}
-	var counter atomic.Int32
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr scheduler.TaskManager, serverID string, task *proto.Task) scheduler.Scheduler {
-			idx := counter.Load()
+		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			mockScheduler = mock.NewMockScheduler(ctrl)
+			// below 2 are for balancer loop, it's async, cannot determine how
+			// many times it will be called.
+			mockScheduler.EXPECT().GetTask().Return(task).AnyTimes()
+			mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 			mockScheduler.EXPECT().Init().Return(nil)
-			mockScheduler.EXPECT().ExecuteTask().Do(func() {
+			mockScheduler.EXPECT().ScheduleTask().Do(func() {
+				if task.IsDone() {
+					return
+				}
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
-					_, err := storage.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
+					_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateRunning, proto.StepOne, task.ID)
 					return err
 				}))
-				<-waitChannels[idx]
+				<-waitChannels[task.Key]
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
-					_, err := storage.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
+					_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateSucceed, proto.StepDone, task.ID)
 					return err
 				}))
 			})
 			mockScheduler.EXPECT().Close()
-			counter.Add(1)
 			return mockScheduler
 		},
 	)
@@ -697,7 +474,7 @@ func TestManagerDispatchLoop(t *testing.T) {
 			taskKeys[2] == "key/3" && taskKeys[3] == "key/4"
 	}, time.Second*10, time.Millisecond*100)
 	// finish the first task
-	close(waitChannels[0])
+	close(waitChannels["key/0"])
 	require.Eventually(t, func() bool {
 		taskKeys := getRunningTaskKeys()
 		return err == nil && len(taskKeys) == 4 &&
@@ -705,7 +482,7 @@ func TestManagerDispatchLoop(t *testing.T) {
 			taskKeys[2] == "key/4" && taskKeys[3] == "key/5"
 	}, time.Second*10, time.Millisecond*100)
 	// finish the second task
-	close(waitChannels[1])
+	close(waitChannels["key/1"])
 	require.Eventually(t, func() bool {
 		taskKeys := getRunningTaskKeys()
 		return err == nil && len(taskKeys) == 4 &&
@@ -714,7 +491,7 @@ func TestManagerDispatchLoop(t *testing.T) {
 	}, time.Second*10, time.Millisecond*100)
 	// close others
 	for i := 2; i < len(concurrencies); i++ {
-		close(waitChannels[i])
+		close(waitChannels[fmt.Sprintf("key/%d", i)])
 	}
 	require.Eventually(t, func() bool {
 		taskKeys := getRunningTaskKeys()

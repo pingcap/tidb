@@ -25,12 +25,12 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/importinto/mock"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -81,7 +81,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	}
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(context.Background(), executorForParam, nil, 3, 0)
+	op := newEncodeAndSortOperator(context.Background(), executorForParam, nil, 3, 1)
 	op.SetSource(source)
 	require.NoError(t, op.Open())
 	require.Greater(t, len(op.String()), 0)
@@ -101,7 +101,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	// cancel on error and log other errors
 	mockErr2 := errors.New("mock err 2")
 	source = operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, 2, 0)
+	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, 2, 2)
 	op.SetSource(source)
 	executor1 := mock.NewMockMiniTaskExecutor(ctrl)
 	executor2 := mock.NewMockMiniTaskExecutor(ctrl)
@@ -146,60 +146,82 @@ func TestEncodeAndSortOperator(t *testing.T) {
 
 func TestGetWriterMemorySizeLimit(t *testing.T) {
 	cases := []struct {
-		createSQL             string
-		numOfIndexGenKV       int
-		writerMemorySizeLimit uint64
+		createSQL               string
+		numOfIndexGenKV         int
+		dataKVMemSizePerCon     uint64
+		perIndexKVMemSizePerCon uint64
 	}{
 		{
-			createSQL:             "create table t (a int)",
-			numOfIndexGenKV:       0,
-			writerMemorySizeLimit: external.DefaultMemSizeLimit,
+			createSQL:           "create table t (a int)",
+			numOfIndexGenKV:     0,
+			dataKVMemSizePerCon: units.GiB,
 		},
 		{
-			createSQL:             "create table t (a int primary key clustered)",
-			numOfIndexGenKV:       0,
-			writerMemorySizeLimit: external.DefaultMemSizeLimit,
+			createSQL:           "create table t (a int primary key clustered)",
+			numOfIndexGenKV:     0,
+			dataKVMemSizePerCon: units.GiB,
 		},
 		{
-			createSQL:             "create table t (a int primary key nonclustered)",
-			numOfIndexGenKV:       1,
-			writerMemorySizeLimit: external.DefaultMemSizeLimit,
+			createSQL:               "create table t (a int primary key nonclustered)",
+			numOfIndexGenKV:         1,
+			dataKVMemSizePerCon:     768 * units.MiB,
+			perIndexKVMemSizePerCon: 256 * units.MiB,
 		},
 		{
-			createSQL:             "create table t (a int primary key clustered, b int, key(b))",
-			numOfIndexGenKV:       1,
-			writerMemorySizeLimit: external.DefaultMemSizeLimit,
+			createSQL:               "create table t (a int primary key clustered, b int, key(b))",
+			numOfIndexGenKV:         1,
+			dataKVMemSizePerCon:     768 * units.MiB,
+			perIndexKVMemSizePerCon: 256 * units.MiB,
 		},
 		{
-			createSQL:             "create table t (a int primary key clustered, b int, key(b), key(a,b))",
-			numOfIndexGenKV:       2,
-			writerMemorySizeLimit: external.DefaultMemSizeLimit,
+			createSQL:               "create table t (a int primary key clustered, b int, key(b), key(a,b))",
+			numOfIndexGenKV:         2,
+			dataKVMemSizePerCon:     644245094,
+			perIndexKVMemSizePerCon: 214748364,
 		},
 		{
-			createSQL:             "create table t (a int primary key clustered, b int, c int, key(b,c), unique(b), unique(c), key(a,b))",
-			numOfIndexGenKV:       4,
-			writerMemorySizeLimit: indexKVTotalBufSize / 4,
+			createSQL:               "create table t (a int primary key clustered, b int, c int, key(b,c), unique(b), unique(c), key(a,b))",
+			numOfIndexGenKV:         4,
+			dataKVMemSizePerCon:     460175067,
+			perIndexKVMemSizePerCon: 153391689,
 		},
 		{
-			createSQL:             "create table t (a int, b int, c int, primary key(a,b,c) nonclustered, key(b,c), unique(b), unique(c), key(a,b))",
-			numOfIndexGenKV:       5,
-			writerMemorySizeLimit: indexKVTotalBufSize / 5,
+			createSQL:               "create table t (a int, b int, c int, primary key(a,b,c) clustered, key(b,c), unique(b), unique(c), key(a,b))",
+			numOfIndexGenKV:         4,
+			dataKVMemSizePerCon:     460175067,
+			perIndexKVMemSizePerCon: 153391689,
+		},
+		{
+			createSQL:               "create table t (a int, b int, c int, primary key(a,b,c) nonclustered, key(b,c), unique(b), unique(c), key(a,b))",
+			numOfIndexGenKV:         5,
+			dataKVMemSizePerCon:     402653184,
+			perIndexKVMemSizePerCon: 134217728,
 		},
 	}
 
 	for _, c := range cases {
 		p := parser.New()
-		node, err := p.ParseOneStmt(c.createSQL, "", "")
-		require.NoError(t, err)
-		sctx := utilmock.NewContext()
-		info, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
-		require.NoError(t, err)
-		info.State = model.StatePublic
+		t.Run(c.createSQL, func(t *testing.T) {
+			node, err := p.ParseOneStmt(c.createSQL, "", "")
+			require.NoError(t, err)
+			sctx := utilmock.NewContext()
+			info, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
+			require.NoError(t, err)
+			info.State = model.StatePublic
 
-		require.Equal(t, c.numOfIndexGenKV, getNumOfIndexGenKV(info), c.createSQL)
-		require.Equal(t, c.writerMemorySizeLimit, getWriterMemorySizeLimit(&importer.Plan{
-			DesiredTableInfo: info,
-		}), c.createSQL)
+			require.Equal(t, c.numOfIndexGenKV, getNumOfIndexGenKV(info), c.createSQL)
+			dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(&proto.StepResource{
+				Mem: proto.NewAllocatable(2 * units.GiB),
+			}, &importer.Plan{
+				DesiredTableInfo: info,
+				ThreadCnt:        1,
+			})
+			require.Equal(t, c.dataKVMemSizePerCon, dataKVMemSizePerCon, c.createSQL)
+			if c.numOfIndexGenKV > 0 {
+				require.Equal(t, c.perIndexKVMemSizePerCon, perIndexKVMemSizePerCon, c.createSQL)
+			}
+			require.LessOrEqual(t, c.dataKVMemSizePerCon+c.perIndexKVMemSizePerCon*uint64(c.numOfIndexGenKV), uint64(units.GiB))
+		})
 	}
 }
 

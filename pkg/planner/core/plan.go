@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -33,6 +34,21 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+// PlanContext is the context for building plan.
+type PlanContext = context.PlanContext
+
+// BuildPBContext is the context for building `*tipb.Executor`.
+type BuildPBContext = context.BuildPBContext
+
+// AsSctx converts PlanContext to sessionctx.Context.
+func AsSctx(pctx PlanContext) (sessionctx.Context, error) {
+	sctx, ok := pctx.(sessionctx.Context)
+	if !ok {
+		return nil, errors.New("the current PlanContext cannot be converted to sessionctx.Context")
+	}
+	return sctx, nil
+}
 
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,
@@ -56,7 +72,7 @@ type Plan interface {
 	// ReplaceExprColumns replace all the column reference in the plan's expression node.
 	ReplaceExprColumns(replace map[string]*expression.Column)
 
-	SCtx() sessionctx.Context
+	SCtx() PlanContext
 
 	// StatsInfo will return the property.StatsInfo for this plan.
 	StatsInfo() *property.StatsInfo
@@ -67,12 +83,16 @@ type Plan interface {
 	// SetOutputNames sets the outputting name by the given slice.
 	SetOutputNames(names types.NameSlice)
 
-	SelectBlockOffset() int
+	// QueryBlockOffset is query block offset.
+	// For example, in query
+	//		`select /*+ use_index(@sel_2 t2, a) */ * from t1, (select a*2 as b from t2) tx where a>b`
+	// the hint should be applied on the sub-query, whose query block is 2.
+	QueryBlockOffset() int
 
 	BuildPlanTrace() *tracing.PlanTrace
 }
 
-func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
+func enforceProperty(p *property.PhysicalProperty, tsk task, ctx PlanContext) task {
 	if p.TaskTp == property.MppTaskType {
 		mpp, ok := tsk.(*mppTask)
 		if !ok || mpp.invalid() {
@@ -84,7 +104,9 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 		}
 		tsk = mpp.enforceExchanger(p)
 	}
-	if p.IsSortItemEmpty() || tsk.plan() == nil {
+	// when task is double cop task warping a index merge reader, tsk.plan() may be nil when indexPlanFinished is marked
+	// as false, while the real plan is in idxMergePartPlans. tsk.plan()==nil is not right here.
+	if p.IsSortItemEmpty() || tsk.invalid() {
 		return tsk
 	}
 	if p.TaskTp != property.MppTaskType {
@@ -94,7 +116,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	sort := PhysicalSort{
 		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
 		IsPartialSort: p.IsSortItemAllForPartition(),
-	}.Init(ctx, tsk.plan().StatsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
+	}.Init(ctx, tsk.plan().StatsInfo(), tsk.plan().QueryBlockOffset(), sortReqProp)
 	for _, col := range p.SortItems {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}
@@ -102,7 +124,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
-func optimizeByShuffle(tsk task, ctx sessionctx.Context) task {
+func optimizeByShuffle(tsk task, ctx PlanContext) task {
 	if tsk.plan() == nil {
 		return tsk
 	}
@@ -124,7 +146,7 @@ func optimizeByShuffle(tsk task, ctx sessionctx.Context) task {
 	return tsk
 }
 
-func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *PhysicalShuffle {
+func optimizeByShuffle4Window(pp *PhysicalWindow, ctx PlanContext) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().WindowConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -159,11 +181,11 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{byItems},
-	}.Init(ctx, pp.StatsInfo(), pp.SelectBlockOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.QueryBlockOffset(), reqProp)
 	return shuffle
 }
 
-func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) *PhysicalShuffle {
+func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx PlanContext) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().StreamAggConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -196,11 +218,11 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{util.CloneExprs(pp.GroupByItems)},
-	}.Init(ctx, pp.StatsInfo(), pp.SelectBlockOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.QueryBlockOffset(), reqProp)
 	return shuffle
 }
 
-func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) *PhysicalShuffle {
+func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx PlanContext) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().MergeJoinConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -235,7 +257,7 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) 
 		DataSources:  dataSources,
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{leftByItemArray, rightByItemArray},
-	}.Init(ctx, pp.StatsInfo(), pp.SelectBlockOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.QueryBlockOffset(), reqProp)
 	return shuffle
 }
 
@@ -251,10 +273,10 @@ type LogicalPlan interface {
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression, *logicalOptimizeOp) ([]expression.Expression, LogicalPlan)
+	PredicatePushDown([]expression.Expression, *util.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan)
 
-	// PruneColumns prunes the unused columns.
-	PruneColumns([]*expression.Column, *logicalOptimizeOp, LogicalPlan) error
+	// PruneColumns prunes the unused columns, and return the new logical plan if changed, otherwise it's same.
+	PruneColumns([]*expression.Column, *util.LogicalOptimizeOp) (LogicalPlan, error)
 
 	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -273,16 +295,16 @@ type LogicalPlan interface {
 	BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema)
 
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
-	pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan
+	pushDownTopN(topN *LogicalTopN, opt *util.LogicalOptimizeOp) LogicalPlan
 
 	// deriveTopN derives an implicit TopN from a filter on row_number window function..
-	deriveTopN(opt *logicalOptimizeOp) LogicalPlan
+	deriveTopN(opt *util.LogicalOptimizeOp) LogicalPlan
 
 	// predicateSimplification consolidates different predcicates on a column and its equivalence classes.
-	predicateSimplification(opt *logicalOptimizeOp) LogicalPlan
+	predicateSimplification(opt *util.LogicalOptimizeOp) LogicalPlan
 
 	// constantPropagation generate new constant predicate according to column equivalence relation
-	constantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *logicalOptimizeOp) (newRoot LogicalPlan)
+	constantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *util.LogicalOptimizeOp) (newRoot LogicalPlan)
 
 	// pullUpConstantPredicates recursive find constant predicate, used for the constant propagation rule
 	pullUpConstantPredicates() []expression.Expression
@@ -352,7 +374,7 @@ type PhysicalPlan interface {
 	attach2Task(...task) task
 
 	// ToPB converts physical plan to tipb executor.
-	ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error)
+	ToPB(ctx *BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error)
 
 	// GetChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty
@@ -734,17 +756,17 @@ func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 	}
 }
 
-func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan, offset int) baseLogicalPlan {
+func newBaseLogicalPlan(ctx PlanContext, tp string, self LogicalPlan, qbOffset int) baseLogicalPlan {
 	return baseLogicalPlan{
 		taskMap:      make(map[string]task),
 		taskMapBak:   make([]string, 0, 10),
 		taskMapBakTS: make([]uint64, 0, 10),
-		Plan:         base.NewBasePlan(ctx, tp, offset),
+		Plan:         base.NewBasePlan(ctx, tp, qbOffset),
 		self:         self,
 	}
 }
 
-func newBasePhysicalPlan(ctx sessionctx.Context, tp string, self PhysicalPlan, offset int) basePhysicalPlan {
+func newBasePhysicalPlan(ctx PlanContext, tp string, self PhysicalPlan, offset int) basePhysicalPlan {
 	return basePhysicalPlan{
 		Plan: base.NewBasePlan(ctx, tp, offset),
 		self: self,
@@ -756,11 +778,16 @@ func (*baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp, _ LogicalPlan) error {
+func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *util.LogicalOptimizeOp) (LogicalPlan, error) {
 	if len(p.children) == 0 {
-		return nil
+		return p.self, nil
 	}
-	return p.children[0].PruneColumns(parentUsedCols, opt, p)
+	var err error
+	p.children[0], err = p.children[0].PruneColumns(parentUsedCols, opt)
+	if err != nil {
+		return nil, err
+	}
+	return p.self, nil
 }
 
 // Schema implements Plan Schema interface.

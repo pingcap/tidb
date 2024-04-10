@@ -19,7 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -82,6 +82,17 @@ func NewInt64Const(num int64) *Constant {
 	}
 }
 
+// NewStrConst stands for constant of a given string.
+// used in test only now.
+func NewStrConst(str string) *Constant {
+	retT := types.NewFieldType(mysql.TypeVarString)
+	retT.SetFlen(len(str))
+	return &Constant{
+		Value:   types.NewDatum(str),
+		RetType: retT,
+	}
+}
+
 // NewNull stands for null constant.
 func NewNull() *Constant {
 	retT := types.NewFieldType(mysql.TypeTiny)
@@ -119,7 +130,7 @@ type Constant struct {
 
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
 type ParamMarker struct {
-	ctx   sessionctx.Context
+	ctx   variable.SessionVarsProvider
 	order int
 }
 
@@ -248,7 +259,7 @@ func (c *Constant) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 		}
 		if c.DeferredExpr != nil {
 			if dt.Kind() != types.KindMysqlDecimal {
-				val, err := dt.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), c.RetType)
+				val, err := dt.ConvertTo(typeCtx(ctx), c.RetType)
 				if err != nil {
 					return dt, err
 				}
@@ -275,13 +286,13 @@ func (c *Constant) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) 
 	if c.GetType().GetType() == mysql.TypeNull || dt.IsNull() {
 		return 0, true, nil
 	} else if dt.Kind() == types.KindBinaryLiteral {
-		val, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		val, err := dt.GetBinaryLiteral().ToInt(typeCtx(ctx))
 		return int64(val), err != nil, err
 	} else if c.GetType().Hybrid() || dt.Kind() == types.KindString {
-		res, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		res, err := dt.ToInt64(typeCtx(ctx))
 		return res, false, err
 	} else if dt.Kind() == types.KindMysqlBit {
-		uintVal, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		uintVal, err := dt.GetBinaryLiteral().ToInt(typeCtx(ctx))
 		return int64(uintVal), false, err
 	}
 	return dt.GetInt64(), false, nil
@@ -300,7 +311,7 @@ func (c *Constant) EvalReal(ctx EvalContext, row chunk.Row) (float64, bool, erro
 		return 0, true, nil
 	}
 	if c.GetType().Hybrid() || dt.Kind() == types.KindBinaryLiteral || dt.Kind() == types.KindString {
-		res, err := dt.ToFloat64(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		res, err := dt.ToFloat64(typeCtx(ctx))
 		return res, false, err
 	}
 	return dt.GetFloat64(), false, nil
@@ -334,7 +345,7 @@ func (c *Constant) EvalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal
 	if c.GetType().GetType() == mysql.TypeNull || dt.IsNull() {
 		return nil, true, nil
 	}
-	res, err := dt.ToDecimal(ctx.GetSessionVars().StmtCtx.TypeCtx())
+	res, err := dt.ToDecimal(typeCtx(ctx))
 	if err != nil {
 		return nil, false, err
 	}
@@ -409,7 +420,7 @@ func (c *Constant) Equal(ctx EvalContext, b Expression) bool {
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	con, err := c.Value.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &y.Value, collate.GetBinaryCollator())
+	con, err := c.Value.Compare(typeCtx(ctx), &y.Value, collate.GetBinaryCollator())
 	if err != nil || con != 0 {
 		return false
 	}
@@ -421,9 +432,12 @@ func (c *Constant) IsCorrelated() bool {
 	return false
 }
 
-// ConstItem implements Expression interface.
-func (c *Constant) ConstItem(acrossCtx bool) bool {
-	return !acrossCtx || (c.DeferredExpr == nil && c.ParamMarker == nil)
+// ConstLevel returns the const level for the expression
+func (c *Constant) ConstLevel() ConstLevel {
+	if c.DeferredExpr != nil || c.ParamMarker != nil {
+		return ConstOnlyInContext
+	}
+	return ConstStrict
 }
 
 // Decorrelate implements Expression interface.

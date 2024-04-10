@@ -32,27 +32,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testCostQueries(t *testing.T, tk *testkit.TestKit, queries []string) {
-	// costs of these queries expected increasing
-	var lastCost float64
-	var lastPlan []string
-	var lastQuery string
-	for _, q := range queries {
-		rs := tk.MustQuery("explain format='verbose' " + q).Rows()
-		cost, err := strconv.ParseFloat(rs[0][2].(string), 64)
-		require.Nil(t, err)
-		var plan []string
-		for _, r := range rs {
-			plan = append(plan, fmt.Sprintf("%v", r))
-		}
-		require.True(t, cost > lastCost, fmt.Sprintf("cost of %v should be larger than\n%v\n%v\n%v\n",
-			q, lastQuery, strings.Join(plan, "\n"), strings.Join(lastPlan, "\n")))
-		lastCost = cost
-		lastPlan = plan
-		lastQuery = q
-	}
-}
-
 func TestCostModelVer2ScanRowSize(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
