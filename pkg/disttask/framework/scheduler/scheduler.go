@@ -438,9 +438,6 @@ func (s *BaseScheduler) switch2NextStep() error {
 
 	nodes := s.nodeMgr.getNodes()
 	nodeIDs := filterByScope(nodes, task.TargetScope)
-
-	s.logger.Info("ywq test", zap.Any("nodeIDs", nodeIDs), zap.Any("nodes", nodes), zap.Any("target scope", task.TargetScope))
-
 	eligibleNodes, err := getEligibleNodes(s.ctx, s, nodeIDs)
 	if err != nil {
 		return err
