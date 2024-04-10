@@ -165,6 +165,7 @@ func (m *ownerManager) SetBeOwnerHook(hook func()) {
 }
 
 func (m *ownerManager) SetRetireOwnerHook(hook func()) {
+	logutil.BgLogger().Info("lance test in SetRetireOwnerHook", zap.Bool("hook == nil", hook == nil))
 	m.retireOwnerHook = hook
 }
 
@@ -230,6 +231,7 @@ func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
 
 // RetireOwner make the manager to be a not owner.
 func (m *ownerManager) RetireOwner() {
+	logutil.BgLogger().Info("lance test in RetireOwner", zap.Bool("retireOwnerHook == nil", m.retireOwnerHook == nil))
 	if m.retireOwnerHook != nil {
 		m.retireOwnerHook()
 	}

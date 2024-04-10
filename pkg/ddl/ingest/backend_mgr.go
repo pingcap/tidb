@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -29,6 +30,7 @@ import (
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -113,6 +115,8 @@ func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 	return true, nil
 }
 
+var ResignOwnerForTest = atomic.NewBool(false)
+
 // Register creates a new backend and registers it to the backend context.
 func (m *litBackendCtxMgr) Register(
 	ctx context.Context,
@@ -142,6 +146,12 @@ func (m *litBackendCtxMgr) Register(
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
 		return nil, err
 	}
+	logutil.Logger(ctx).Info("lance test before failpoint")
+	failpoint.Inject("afterCreateLocalBackend", func() {
+		ResignOwnerForTest.Store(true)
+		time.Sleep(time.Second)
+	})
+	logutil.Logger(ctx).Info("lance test after failpoint")
 
 	bcCtx := newBackendContext(ctx, jobID, bd, cfg.lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
 	m.Store(jobID, bcCtx)

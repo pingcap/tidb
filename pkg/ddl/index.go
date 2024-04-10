@@ -818,8 +818,8 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 // cleanupSortPath is used to clean up the temp data of the previous jobs.
 // Because we don't remove all the files after the support of checkpoint,
 // there maybe some stale files in the sort path if TiDB is killed during the backfill process.
-// TODO(lance6716):
 func cleanupSortPath(ctx context.Context, currentJobID int64) error {
+	logutil.Logger(ctx).Info("lance test enter cleanupSortPath")
 	sortPath := ingest.ConfigSortPath()
 	err := os.MkdirAll(sortPath, 0700)
 	if err != nil {
@@ -831,6 +831,7 @@ func cleanupSortPath(ctx context.Context, currentJobID int64) error {
 		return errors.Trace(err)
 	}
 	for _, entry := range entries {
+		logutil.Logger(ctx).Info("lance test", zap.String("entry", entry.Name()))
 		if !entry.IsDir() {
 			continue
 		}
@@ -942,7 +943,6 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			indexInfo.BackfillState = model.BackfillStateMerging
 		}
 		if reorgTp == model.ReorgTypeLitMerge {
-			// TODO(lance6716):
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
 		job.SnapshotVer = 0 // Reset the snapshot version for merge index reorg.
