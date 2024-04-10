@@ -259,7 +259,7 @@ func TestRangePropertiesWithPebble(t *testing.T) {
 	keysDistance := uint64(20)
 	opt := &pebble.Options{
 		MemTableSize:             512 * units.MiB,
-		MaxConcurrentCompactions: 16,
+		MaxConcurrentCompactions: func() int { return 16 },
 		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
 		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
 		MaxOpenFiles:             10000,
@@ -321,7 +321,7 @@ func TestRangePropertiesWithPebble(t *testing.T) {
 func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
-		MaxConcurrentCompactions: 16,
+		MaxConcurrentCompactions: func() int { return 16 },
 		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
 		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
 		DisableWAL:               true,
@@ -404,7 +404,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	require.NoError(t, f.flushEngineWithoutLock(ctx))
 	require.True(t, flushStatus.Flushed())
 	o := &pebble.IterOptions{}
-	it := db.NewIter(o)
+	it, _ := db.NewIter(o)
 
 	sort.Slice(keys, func(i, j int) bool {
 		return bytes.Compare(keys[i], keys[j]) < 0
@@ -476,7 +476,7 @@ func (i testIngester) ingest([]*sstMeta) error {
 func TestLocalIngestLoop(t *testing.T) {
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
-		MaxConcurrentCompactions: 16,
+		MaxConcurrentCompactions: func() int { return 16 },
 		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
 		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
 		DisableWAL:               true,
@@ -565,7 +565,7 @@ func makeRanges(input []string) []common.Range {
 func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
-		MaxConcurrentCompactions: 16,
+		MaxConcurrentCompactions: func() int { return 16 },
 		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
 		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
 		DisableWAL:               true,
