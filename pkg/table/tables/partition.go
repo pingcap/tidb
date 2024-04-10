@@ -1763,24 +1763,19 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 		}
 	}
 
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	memBuffer := txn.GetMemBuffer()
+	sh := memBuffer.Staging()
+	defer func() {
+		memBuffer.Cleanup(sh)
+	}()
+
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
 	if from != to {
-		txn, err := ctx.Txn(true)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		memBuffer := txn.GetMemBuffer()
-		sh := memBuffer.Staging()
-		defer func() {
-			// NOTICE: Don't create a new `err` in this branch.
-			if err == nil {
-				memBuffer.Release(sh)
-			} else {
-				memBuffer.Cleanup(sh)
-			}
-		}()
-
 		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
 		if err != nil {
 			return errors.Trace(err)
@@ -1808,8 +1803,12 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 		}
 		if newTo == newFrom && newTo != 0 {
 			// Update needs to be done in StateDeleteOnly as well
-			tbl := t.GetPartition(newTo)
-			return tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
+			err = t.GetPartition(newTo).UpdateRecord(gctx, ctx, h, currData, newData, touched)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			memBuffer.Release(sh)
+			return nil
 		}
 
 		if newFrom != 0 {
@@ -1825,6 +1824,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 				return errors.Trace(err)
 			}
 		}
+		memBuffer.Release(sh)
 		return nil
 	}
 	tbl := t.GetPartition(to)
@@ -1853,6 +1853,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 			if err != nil {
 				return errors.Trace(err)
 			}
+			memBuffer.Release(sh)
 			return nil
 		}
 		if t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
@@ -1868,6 +1869,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 			return errors.Trace(err)
 		}
 	}
+	memBuffer.Release(sh)
 	return nil
 }
 
