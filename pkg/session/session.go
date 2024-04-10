@@ -2606,6 +2606,32 @@ func (s *session) GetRangerCtx() *rangerctx.RangerContext {
 	return rctx.(*rangerctx.RangerContext)
 }
 
+// GetBuildPBCtx returns the context used in `ToPB` method
+func (s *session) GetBuildPBCtx() *planctx.BuildPBContext {
+	vars := s.GetSessionVars()
+	sc := vars.StmtCtx
+
+	bctx := sc.GetOrInitBuildPBCtxFromCache(func() any {
+		return &planctx.BuildPBContext{
+			ExprCtx: s.GetExprCtx(),
+			Client:  s.GetClient(),
+
+			TiFlashFastScan:                    s.GetSessionVars().TiFlashFastScan,
+			TiFlashFineGrainedShuffleBatchSize: s.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
+
+			// the following fields are used to build `expression.PushDownContext`.
+			// TODO: it'd be better to embed `expression.PushDownContext` in `BuildPBContext`. But `expression` already
+			// depends on this package, so we need to move `expression.PushDownContext` to a standalone package first.
+			GroupConcatMaxLen:  s.GetSessionVars().GroupConcatMaxLen,
+			InExplainStmt:      s.GetSessionVars().StmtCtx.InExplainStmt,
+			AppendWarning:      s.GetSessionVars().StmtCtx.AppendWarning,
+			AppendExtraWarning: s.GetSessionVars().StmtCtx.AppendExtraWarning,
+		}
+	})
+
+	return bctx.(*planctx.BuildPBContext)
+}
+
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
 	pm := privilege.GetPrivilegeManager(s)
 	authplugin, err := pm.GetAuthPluginForConnection(user.Username, user.Hostname)

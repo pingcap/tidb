@@ -118,6 +118,9 @@ type Context interface {
 	// GetRangerCtx returns the context used in `ranger` related functions
 	GetRangerCtx() *rangerctx.RangerContext
 
+	// GetBuildPBCtx gets the ctx used in `ToPB` of the current session
+	GetBuildPBCtx() *planctx.BuildPBContext
+
 	GetSessionManager() util.SessionManager
 
 	// RefreshTxnCtx commits old transaction without retry,

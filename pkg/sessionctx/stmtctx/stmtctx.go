@@ -183,6 +183,13 @@ type StatementContext struct {
 		rctx any
 	}
 
+	// buildPBCtxCache is used to persist all variables and tools needed by the `ToPB`
+	// this cache is set on `StatementContext` because it has to be updated after each statement.
+	buildPBCtxCache struct {
+		init sync.Once
+		bctx any
+	}
+
 	// Set the following variables before execution
 	hint.StmtHints
 
@@ -1270,6 +1277,16 @@ func (sc *StatementContext) GetOrInitRangerCtxFromCache(create func() any) any {
 	})
 
 	return sc.rangerCtxCache.rctx
+}
+
+// GetOrInitBuildPBCtxFromCache returns the `BuildPBContext` inside cache. If it didn't exist, return a new one created by
+// the `create` function. It uses the `any` to avoid cycle dependency.
+func (sc *StatementContext) GetOrInitBuildPBCtxFromCache(create func() any) any {
+	sc.buildPBCtxCache.init.Do(func() {
+		sc.buildPBCtxCache.bctx = create()
+	})
+
+	return sc.buildPBCtxCache.bctx
 }
 
 func newErrCtx(tc types.Context, otherLevels errctx.LevelMap, handler contextutil.WarnHandler) errctx.Context {
