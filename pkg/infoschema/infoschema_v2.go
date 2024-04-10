@@ -891,13 +891,13 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 		return
 	}
 
-	for id, _ := range b.updatePolicies {
+	for id := range b.updatePolicies {
 		if _, ok := is.policyRefMap[id]; ok {
 			b.markTableBundleShouldUpdate(id)
 		}
 	}
 
-	for id, _ := range b.updatePartitions {
+	for id := range b.updatePartitions {
 		if _, ok := is.policyRefMap[id]; ok {
 			b.markTableBundleShouldUpdate(id)
 		}
