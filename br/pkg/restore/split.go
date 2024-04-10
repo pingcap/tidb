@@ -144,13 +144,6 @@ func (rs *RegionSplitter) executeSplitByKeys(
 	return nil
 }
 
-func (rs *RegionSplitter) splitAndScatterRegions(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
-) ([]*split.RegionInfo, error) {
-	newRegions, err := rs.client.SplitWaitAndScatter(ctx, regionInfo, keys)
-	return newRegions, err
-}
-
 // waitRegionsScattered try to wait mutilple regions scatterd in 3 minutes.
 // this could timeout, but if many regions scatterd the restore could continue
 // so we don't wait long time here.
@@ -338,7 +331,7 @@ func (helper *LogSplitHelper) splitRegionByPoints(
 	}
 
 	helper.pool.ApplyOnErrorGroup(helper.eg, func() error {
-		newRegions, errSplit := regionSplitter.splitAndScatterRegions(ctx, region, splitPoints)
+		newRegions, errSplit := regionSplitter.client.SplitWaitAndScatter(ctx, region, splitPoints)
 		if errSplit != nil {
 			log.Warn("failed to split the scaned region", zap.Error(errSplit))
 			_, startKey, _ := codec.DecodeBytes(region.Region.StartKey, nil)
