@@ -1392,7 +1392,12 @@ func (w *diskSorterWriter) flush() error {
 	slices.SortFunc(w.kvs, func(a, b keyValue) int {
 		return bytes.Compare(a.key, b.key)
 	})
+	lastKey := nil
 	for _, kv := range w.kvs {
+		if bytes.Equal(lastKey, kv.key) {
+			continue
+		}
+		lastKey = kv.key
 		if err := sw.Set(kv.key, kv.value); err != nil {
 			_ = sw.Close()
 			return err
