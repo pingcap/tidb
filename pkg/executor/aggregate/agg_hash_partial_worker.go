@@ -201,6 +201,9 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 
 		// We must ensure that there is no panic before `waitGroup.Done()` or there will be hang
 		waitGroup.Done()
+
+		tryToRecyclePartialResultsBuffer(&w.partialResultsBuffer)
+		tryToRecycleGroupKey(&w.groupKey)
 	}()
 
 	intestBeforePartialWorkerRun()

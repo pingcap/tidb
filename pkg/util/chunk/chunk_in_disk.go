@@ -19,6 +19,7 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"sync"
 	"unsafe"
 
 	errors2 "github.com/pingcap/errors"
@@ -38,6 +39,27 @@ const colMetaSize = int64Len * 4
 
 const defaultChunkDataInDiskByChunksPath = "defaultChunkDataInDiskByChunksPath"
 
+const defaultBufCap = 4096
+
+var bufPool = sync.Pool{
+	New: func() any {
+		s := make([]byte, 0, defaultBufCap)
+		return &s
+	},
+}
+
+func getBufFromPool() *[]byte {
+	buf := bufPool.Get().(*[]byte)
+	(*buf) = (*buf)[:0]
+	return buf
+}
+
+func tryToRecycleBuf(buf *[]byte) {
+	if cap(*buf) < defaultBufCap {
+		bufPool.Put(buf)
+	}
+}
+
 // DataInDiskByChunks represents some data stored in temporary disk.
 // They can only be restored by chunks.
 type DataInDiskByChunks struct {
@@ -56,13 +78,14 @@ type DataInDiskByChunks struct {
 
 // NewDataInDiskByChunks creates a new DataInDiskByChunks with field types.
 func NewDataInDiskByChunks(fieldTypes []*types.FieldType) *DataInDiskByChunks {
+	buf := getBufFromPool()
 	d := &DataInDiskByChunks{
 		fieldTypes:    fieldTypes,
 		totalDataSize: 0,
 		totalRowNum:   0,
 		// TODO: set the quota of disk usage.
 		diskTracker: disk.NewTracker(memory.LabelForChunkDataInDiskByChunks, -1),
-		buf:         make([]byte, 0, 4096),
+		buf:         *buf,
 	}
 	return d
 }
@@ -164,6 +187,7 @@ func (d *DataInDiskByChunks) Close() {
 		terror.Call(d.dataFile.file.Close)
 		terror.Log(os.Remove(d.dataFile.file.Name()))
 	}
+	tryToRecycleBuf(&d.buf)
 }
 
 func (d *DataInDiskByChunks) serializeColMeta(pos int64, length int64, nullMapSize int64, dataSize int64, offsetSize int64) {

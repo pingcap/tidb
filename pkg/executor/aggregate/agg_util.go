@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/rand"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -39,6 +40,47 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
+
+const defaultPartialResultsBufferCap = 2048
+const defaultGroupKeyCap = 8
+
+var partialResultsBufferPool = sync.Pool{
+	New: func() any {
+		s := make([][]aggfuncs.PartialResult, 0, defaultPartialResultsBufferCap)
+		return &s
+	},
+}
+
+var groupKeyPool = sync.Pool{
+	New: func() any {
+		s := make([][]byte, 0, defaultGroupKeyCap)
+		return &s
+	},
+}
+
+func getPartialResultsBufferFromPool() *[][]aggfuncs.PartialResult {
+	partialResultsBuffer := partialResultsBufferPool.Get().(*[][]aggfuncs.PartialResult)
+	*partialResultsBuffer = (*partialResultsBuffer)[:0]
+	return partialResultsBuffer
+}
+
+func getGroupKeyFromPool() *[][]byte {
+	groupKey := groupKeyPool.Get().(*[][]byte)
+	*groupKey = (*groupKey)[:0]
+	return groupKey
+}
+
+func tryToRecyclePartialResultsBuffer(buf *[][]aggfuncs.PartialResult) {
+	if cap(*buf) <= defaultPartialResultsBufferCap {
+		partialResultsBufferPool.Put(buf)
+	}
+}
+
+func tryToRecycleGroupKey(buf *[][]byte) {
+	if cap(*buf) <= defaultGroupKeyCap {
+		groupKeyPool.Put(buf)
+	}
+}
 
 func closeBaseExecutor(b *exec.BaseExecutor) {
 	if r := recover(); r != nil {
