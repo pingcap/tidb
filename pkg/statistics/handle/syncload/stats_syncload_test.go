@@ -218,10 +218,14 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 
 		rs1, ok1 := <-stmtCtx1.StatsLoad.ResultCh
 		require.True(t, ok1)
-		require.Equal(t, neededColumns[0].TableItemID, rs1.Item)
+		require.NoError(t, rs1.Err)
+		result := <-rs1.Val.(chan stmtctx.StatsLoadResult)
+		require.Equal(t, neededColumns[0].TableItemID, result)
 		rs2, ok2 := <-stmtCtx2.StatsLoad.ResultCh
 		require.True(t, ok2)
-		require.Equal(t, neededColumns[0].TableItemID, rs2.Item)
+		require.NoError(t, rs1.Err)
+		result2 := <-rs2.Val.(chan stmtctx.StatsLoadResult)
+		require.Equal(t, neededColumns[0].TableItemID, result2)
 
 		stat = h.GetTableStats(tableInfo)
 		hg := stat.Columns[tableInfo.Columns[2].ID].Histogram
