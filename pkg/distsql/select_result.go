@@ -499,7 +499,7 @@ func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.Runti
 
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) (err error) {
 	callee := copStats.CalleeAddress
-	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && len(copStats.Stats) == 0) {
+	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && len(copStats.ReqStats.RPCStats) == 0) {
 		return
 	}
 
@@ -513,7 +513,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if r.stats == nil {
 		r.stats = &selectResultRuntimeStats{
 			backoffSleep:       make(map[string]time.Duration),
-			rpcStat:            tikv.NewRegionRequestRuntimeStats(),
+			reqStat:            tikv.NewRegionRequestRuntimeStats(),
 			distSQLConcurrency: r.distSQLConcurrency,
 		}
 		if ci, ok := r.resp.(copr.CopInfo); ok {
@@ -639,7 +639,7 @@ type selectResultRuntimeStats struct {
 	backoffSleep            map[string]time.Duration
 	totalProcessTime        time.Duration
 	totalWaitTime           time.Duration
-	rpcStat                 tikv.RegionRequestRuntimeStats
+	reqStat                 *tikv.RegionRequestRuntimeStats
 	distSQLConcurrency      int
 	extraConcurrency        int
 	CoprCacheHitNum         int64
@@ -658,7 +658,7 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntim
 	maps.Copy(s.backoffSleep, copStats.BackoffSleep)
 	s.totalProcessTime += copStats.TimeDetail.ProcessTime
 	s.totalWaitTime += copStats.TimeDetail.WaitTime
-	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
+	s.reqStat.Merge(copStats.ReqStats)
 	if copStats.CoprCacheHit {
 		s.CoprCacheHitNum++
 	}
@@ -669,7 +669,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		copRespTime:             execdetails.Percentile[execdetails.Duration]{},
 		procKeys:                execdetails.Percentile[execdetails.Int64]{},
 		backoffSleep:            make(map[string]time.Duration, len(s.backoffSleep)),
-		rpcStat:                 tikv.NewRegionRequestRuntimeStats(),
+		reqStat:                 tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency:      s.distSQLConcurrency,
 		extraConcurrency:        s.extraConcurrency,
 		CoprCacheHitNum:         s.CoprCacheHitNum,
@@ -684,7 +684,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 	}
 	newRs.totalProcessTime += s.totalProcessTime
 	newRs.totalWaitTime += s.totalWaitTime
-	maps.Copy(newRs.rpcStat.Stats, s.rpcStat.Stats)
+	newRs.reqStat = s.reqStat.Clone()
 	return &newRs
 }
 
@@ -701,7 +701,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	}
 	s.totalProcessTime += other.totalProcessTime
 	s.totalWaitTime += other.totalWaitTime
-	s.rpcStat.Merge(other.rpcStat)
+	s.reqStat.Merge(other.reqStat)
 	s.CoprCacheHitNum += other.CoprCacheHitNum
 	if other.distSQLConcurrency > s.distSQLConcurrency {
 		s.distSQLConcurrency = other.distSQLConcurrency
@@ -716,7 +716,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 
 func (s *selectResultRuntimeStats) String() string {
 	buf := bytes.NewBuffer(nil)
-	rpcStat := s.rpcStat
+	reqStat := s.reqStat
 	if s.copRespTime.Size() > 0 {
 		size := s.copRespTime.Size()
 		if size == 1 {
@@ -747,10 +747,10 @@ func (s *selectResultRuntimeStats) String() string {
 				buf.WriteString(execdetails.FormatDuration(s.totalWaitTime))
 			}
 		}
-		copRPC := rpcStat.Stats[tikvrpc.CmdCop]
+		copRPC := reqStat.RPCStats[tikvrpc.CmdCop]
 		if copRPC != nil && copRPC.Count > 0 {
-			rpcStat = rpcStat.Clone()
-			delete(rpcStat.Stats, tikvrpc.CmdCop)
+			reqStat = reqStat.Clone()
+			delete(reqStat.RPCStats, tikvrpc.CmdCop)
 			buf.WriteString(", rpc_num: ")
 			buf.WriteString(strconv.FormatInt(copRPC.Count, 10))
 			buf.WriteString(", rpc_time: ")
@@ -785,7 +785,7 @@ func (s *selectResultRuntimeStats) String() string {
 		buf.WriteString("}")
 	}
 
-	rpcStatsStr := rpcStat.String()
+	rpcStatsStr := reqStat.String()
 	if len(rpcStatsStr) > 0 {
 		buf.WriteString(", ")
 		buf.WriteString(rpcStatsStr)
