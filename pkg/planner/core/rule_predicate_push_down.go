@@ -428,10 +428,10 @@ func isNullRejected(ctx PlanContext, schema *expression.Schema, expr expression.
 		return false
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.InNullRejectCheck = true
-	defer func() {
-		sc.InNullRejectCheck = false
-	}()
+	if !exprCtx.IsInNullRejectCheck() {
+		exprCtx.SetInNullRejectCheck(true)
+		defer exprCtx.SetInNullRejectCheck(false)
+	}
 	for _, cond := range expression.SplitCNFItems(expr) {
 		if isNullRejectedSpecially(ctx, schema, expr) {
 			return true
@@ -985,7 +985,7 @@ func (adder *exprPrefixAdder) addExprPrefix4ShardIndex() ([]expression.Expressio
 //
 // @return  -     the new condition after adding expression prefix
 func (adder *exprPrefixAdder) addExprPrefix4CNFCond(conds []expression.Expression) ([]expression.Expression, error) {
-	newCondtionds, err := ranger.AddExpr4EqAndInCondition(adder.sctx,
+	newCondtionds, err := ranger.AddExpr4EqAndInCondition(adder.sctx.GetRangerCtx(),
 		conds, adder.cols)
 
 	return newCondtionds, err

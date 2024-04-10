@@ -15,7 +15,6 @@
 package context
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -86,12 +85,18 @@ type BuildContext interface {
 	IsUseCache() bool
 	// SetSkipPlanCache sets to skip the plan cache and records the reason.
 	SetSkipPlanCache(reason error)
+	// AllocPlanColumnID allocates column id for plan.
+	AllocPlanColumnID() int64
+	// SetInNullRejectCheck sets the flag to indicate whether the expression is in null reject check.
+	SetInNullRejectCheck(in bool)
+	// IsInNullRejectCheck returns the flag to indicate whether the expression is in null reject check.
+	IsInNullRejectCheck() bool
+	// SetInUnionCast sets the flag to indicate whether the expression is in union cast.
+	SetInUnionCast(in bool)
+	// IsInUnionCast indicates whether executing in special cast context that negative unsigned num will be zero.
+	IsInUnionCast() bool
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
-	// Value returns the value associated with this context for key.
-	Value(key fmt.Stringer) any
-	// SetValue saves a value associated with this context for key.
-	SetValue(key fmt.Stringer, value any)
 }
 
 // ExprContext contains full context for expression building and evaluating.

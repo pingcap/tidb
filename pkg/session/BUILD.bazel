@@ -103,6 +103,7 @@ go_library(
         "//pkg/util/logutil/consistency",
         "//pkg/util/memory",
         "//pkg/util/parser",
+        "//pkg/util/ranger/context",
         "//pkg/util/redact",
         "//pkg/util/sem",
         "//pkg/util/sli",
