@@ -245,6 +245,7 @@ func generateNonPartitionPlan(
 	job *model.Job,
 	useCloud bool,
 	instanceCnt int) (metas [][]byte, err error) {
+	logutil.BgLogger().Info("ywq test job scope", zap.Any("target_scope", job.ReorgMeta.TargetScope))
 	tbl, err := getTable((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
@@ -328,6 +329,7 @@ func generateNonPartitionPlan(
 func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
 	var regionBatch int
 	avgTasksPerInstance := (totalRegionCnt + instanceCnt - 1) / instanceCnt // ceiling
+	logutil.BgLogger().Info("ywq test avg", zap.Any("avgTasksPerInstance", avgTasksPerInstance))
 	if useLocalDisk {
 		regionBatch = avgTasksPerInstance
 	} else {
