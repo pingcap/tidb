@@ -174,27 +174,6 @@ func TestNewDownloadSSTBackofferWithCancel(t *testing.T) {
 		context.Canceled,
 	}, multierr.Errors(err))
 }
-<<<<<<< HEAD
-=======
-
-func TestNewBackupSSTBackofferWithCancel(t *testing.T) {
-	var counter int
-	backoffer := utils.NewBackupSSTBackoffer()
-	err := utils.WithRetry(context.Background(), func() error {
-		defer func() { counter++ }()
-		if counter == 3 {
-			return context.Canceled
-		}
-		return berrors.ErrKVIngestFailed
-	}, backoffer)
-	require.Equal(t, 4, counter)
-	require.Equal(t, []error{
-		berrors.ErrKVIngestFailed,
-		berrors.ErrKVIngestFailed,
-		berrors.ErrKVIngestFailed,
-		context.Canceled,
-	}, multierr.Errors(err))
-}
 
 func TestConstantBackoff(t *testing.T) {
 	backedOff := func(t *testing.T) {
@@ -235,4 +214,3 @@ func TestConstantBackoff(t *testing.T) {
 	t.Run("backedOff", backedOff)
 	t.Run("infRetry", infRetry)
 }
->>>>>>> cc3c1baf306 (operator: make an infinity retry for connecting to store (#52177))
