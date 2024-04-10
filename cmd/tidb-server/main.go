@@ -675,7 +675,6 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 		cfg.KeyspaceName = *keyspaceName
 	}
 
-	// ywq todo check
 	if actualFlags[nmTiDBServiceScope] {
 		cfg.Instance.TiDBServiceScope = *serviceScope
 	}
