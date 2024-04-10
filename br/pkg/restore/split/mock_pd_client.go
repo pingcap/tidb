@@ -181,6 +181,9 @@ func (c *MockPDClientForSplit) GetOperator(_ context.Context, regionID uint64) (
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.getOperator.responses == nil {
+		return &pdpb.GetOperatorResponse{Desc: []byte("scatter-region"), Status: pdpb.OperatorStatus_SUCCESS}, nil
+	}
 	ret := c.getOperator.responses[regionID][0]
 	c.getOperator.responses[regionID] = c.getOperator.responses[regionID][1:]
 	return ret, nil

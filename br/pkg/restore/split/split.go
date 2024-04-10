@@ -36,7 +36,7 @@ const (
 	ScanRegionPaginationLimit = 128
 )
 
-func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
+func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
 	// current pd can't guarantee the consistency of returned regions
 	if len(regions) == 0 {
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endKey: %s",
@@ -119,7 +119,7 @@ func PaginateScanRegion(
 		}
 		lastRegions = regions
 
-		if err = CheckRegionConsistency(startKey, endKey, regions); err != nil {
+		if err = checkRegionConsistency(startKey, endKey, regions); err != nil {
 			log.Warn("failed to scan region, retrying",
 				logutil.ShortError(err),
 				zap.Int("regionLength", len(regions)))
@@ -276,7 +276,7 @@ func (b *BackoffMayNotCountBackoffer) Attempt() int {
 	return b.state.Attempt()
 }
 
-// GetSplitKeysOfRegions checks every input key is necessary to split region on
+// getSplitKeysOfRegions checks every input key is necessary to split region on
 // it. Returns a map from region to split keys belongs to it.
 //
 // The key will be skipped if it's the region boundary.
@@ -286,7 +286,7 @@ func (b *BackoffMayNotCountBackoffer) Attempt() int {
 // - sortedRegions are continuous and sorted in ascending order by start key.
 // - sortedRegions can cover all keys in sortedKeys.
 // PaginateScanRegion should satisfy the above prerequisites.
-func GetSplitKeysOfRegions(
+func getSplitKeysOfRegions(
 	sortedKeys [][]byte,
 	sortedRegions []*RegionInfo,
 	isRawKV bool,
