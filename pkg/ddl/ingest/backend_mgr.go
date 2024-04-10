@@ -141,17 +141,14 @@ func (m *litBackendCtxMgr) Register(
 		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 		return nil, err
 	}
+	failpoint.Inject("beforeCreateLocalBackend", func() {
+		ResignOwnerForTest.Store(true)
+	})
 	bd, err := createLocalBackend(ctx, cfg, pdSvcDiscovery)
 	if err != nil {
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
 		return nil, err
 	}
-	logutil.Logger(ctx).Info("lance test before failpoint")
-	failpoint.Inject("afterCreateLocalBackend", func() {
-		ResignOwnerForTest.Store(true)
-		time.Sleep(time.Second)
-	})
-	logutil.Logger(ctx).Info("lance test after failpoint")
 
 	bcCtx := newBackendContext(ctx, jobID, bd, cfg.lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
 	m.Store(jobID, bcCtx)

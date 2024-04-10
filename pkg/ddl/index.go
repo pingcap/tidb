@@ -819,7 +819,6 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 // Because we don't remove all the files after the support of checkpoint,
 // there maybe some stale files in the sort path if TiDB is killed during the backfill process.
 func cleanupSortPath(ctx context.Context, currentJobID int64) error {
-	logutil.Logger(ctx).Info("lance test enter cleanupSortPath")
 	sortPath := ingest.ConfigSortPath()
 	err := os.MkdirAll(sortPath, 0700)
 	if err != nil {
@@ -831,7 +830,6 @@ func cleanupSortPath(ctx context.Context, currentJobID int64) error {
 		return errors.Trace(err)
 	}
 	for _, entry := range entries {
-		logutil.Logger(ctx).Info("lance test", zap.String("entry", entry.Name()))
 		if !entry.IsDir() {
 			continue
 		}

@@ -872,7 +872,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.ownerManager.SetRetireOwnerHook(func() {
 		// Since this instance is not DDL owner anymore, we clean up the processing job info.
 		if ingest.LitBackCtxMgr != nil {
-			logutil.BgLogger().Info("lance test mark job finish")
 			ingest.LitBackCtxMgr.MarkJobFinish()
 		}
 		d.runningJobs.clear()

@@ -548,31 +548,35 @@ func TestFirstLitSlowStart(t *testing.T) {
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 
 	tk.MustExec("create table t(a int, b int);")
-	tk.MustExec("insert into t values (1, 1), (2, 2), (1, 3);")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
 	tk.MustExec("create table t2(a int, b int);")
-	tk.MustExec("insert into t2 values (1, 1), (2, 2), (1, 3);")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3);")
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use addindexlit;")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/afterCreateLocalBackend", "1*return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/beforeCreateLocalBackend", "1*return()"))
 	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/afterCreateLocalBackend"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/beforeCreateLocalBackend"))
 	})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ownerResignAfterDispatchLoopCheck", "return()"))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ownerResignAfterDispatchLoopCheck"))
+	})
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/slowCreateFS", "return()"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/slowCreateFS"))
 	})
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		tk.MustExecToErr("alter table t add unique index idx(a);")
+		tk.MustExec("alter table t add unique index idx(a);")
 	}()
 	go func() {
 		defer wg.Done()
-		tk1.MustExecToErr("alter table t2 add unique index idx(a);")
+		tk1.MustExec("alter table t2 add unique index idx(a);")
 	}()
 	wg.Wait()
 }

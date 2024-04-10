@@ -100,7 +100,6 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	logutil.BgLogger().Info("lance test enter getJob", zap.Int("len(rows)", len(rows)))
 	for _, row := range rows {
 		jobBinary := row.GetBytes(0)
 		isJobProcessing := row.GetInt64(1) == 1
@@ -226,7 +225,6 @@ func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
 
 func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 	return d.getJob(sess, jobTypeReorg, func(job *model.Job) (bool, error) {
-		logutil.BgLogger().Info("lance test enter getReorgJob")
 		if !d.runningJobs.checkRunnable(job) {
 			return false, nil
 		}
@@ -237,7 +235,6 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 			ingest.LitBackCtxMgr != nil {
 			succeed := ingest.LitBackCtxMgr.MarkJobProcessing(job.ID)
 			if !succeed {
-				logutil.BgLogger().Info("lance test MarkJobProcessing fail")
 				// We only allow one task to use ingest at the same time in order to limit the CPU/memory usage.
 				return false, nil
 			}
@@ -297,10 +294,9 @@ func (d *ddl) startDispatchLoop() {
 		}
 		failpoint.Inject("ownerResignAfterDispatchLoopCheck", func() {
 			if ingest.ResignOwnerForTest.Load() {
-				logutil.BgLogger().Info("lance test resign now")
 				err2 := d.ownerManager.ResignOwner(context.Background())
 				if err2 != nil {
-					logutil.BgLogger().Info("lance test resign meet error", zap.Error(err2))
+					logutil.BgLogger().Info("resign meet error", zap.Error(err2))
 				}
 				time.Sleep(500 * time.Millisecond)
 				ingest.ResignOwnerForTest.Store(false)
