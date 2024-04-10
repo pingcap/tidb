@@ -931,13 +931,6 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	defer func() { e.done = true }()
 
-	// See the comment of `ColumnInfos2ColumnsAndNames`. It's fixing #42341
-	originalTypeFlags := e.Ctx().GetSessionVars().StmtCtx.TypeFlags()
-	defer func() {
-		e.Ctx().GetSessionVars().StmtCtx.SetTypeFlags(originalTypeFlags)
-	}()
-	e.Ctx().GetSessionVars().StmtCtx.SetTypeFlags(originalTypeFlags.WithIgnoreTruncateErr(true))
-
 	idxNames := make([]string, 0, len(e.indexInfos))
 	for _, idx := range e.indexInfos {
 		if idx.MVIndex {
