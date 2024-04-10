@@ -1856,17 +1856,17 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 			memBuffer.Release(sh)
 			return nil
 		}
+		tbl = t.GetPartition(newFrom)
+		err = tbl.RemoveRecord(ctx, h, currData)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
 			tbl = t.GetPartition(newTo)
 			_, err = tbl.AddRecord(ctx, newData)
 			if err != nil {
 				return errors.Trace(err)
 			}
-		}
-		tbl = t.GetPartition(newFrom)
-		err = tbl.RemoveRecord(ctx, h, currData)
-		if err != nil {
-			return errors.Trace(err)
 		}
 	}
 	memBuffer.Release(sh)
