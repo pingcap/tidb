@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
@@ -1427,9 +1428,9 @@ func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
 }
 
 // BuildRangesByRow will build range of the given row. It will eval each function's arg then call BuildRange.
-func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx PlanContext, row chunk.Row) ([]*ranger.Range, error) {
+func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx *rangerctx.RangerContext, row chunk.Row) ([]*ranger.Range, error) {
 	exprs := make([]expression.Expression, len(cwc.OpType))
-	exprCtx := ctx.GetExprCtx()
+	exprCtx := ctx.ExprCtx
 	for i, opType := range cwc.OpType {
 		constantArg, err := cwc.opArg[i].Eval(exprCtx.GetEvalCtx(), row)
 		if err != nil {
@@ -1534,7 +1535,7 @@ func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSo
 	// Extract the eq/in functions of possible join key.
 	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
 	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _, emptyRange = ranger.ExtractEqAndInCondition(
-		innerPlan.SCtx(), innerPlan.pushedDownConds,
+		innerPlan.SCtx().GetRangerCtx(), innerPlan.pushedDownConds,
 		ijHelper.curNotUsedIndexCols,
 		ijHelper.curNotUsedColLens,
 	)
@@ -1729,12 +1730,12 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		if matchedKeyCnt <= 0 {
 			return false, nil
 		}
-		colAccesses, colRemained := ranger.DetachCondsForColumn(ijHelper.join.SCtx(), rangeFilterCandidates, lastPossibleCol)
+		colAccesses, colRemained := ranger.DetachCondsForColumn(ijHelper.join.SCtx().GetRangerCtx(), rangeFilterCandidates, lastPossibleCol)
 		var nextColRange []*ranger.Range
 		var err error
 		if len(colAccesses) > 0 {
 			var colRemained2 []expression.Expression
-			nextColRange, colAccesses, colRemained2, err = ranger.BuildColumnRange(colAccesses, ijHelper.join.SCtx(), lastPossibleCol.RetType, path.IdxColLens[lastColPos], rangeMaxSize)
+			nextColRange, colAccesses, colRemained2, err = ranger.BuildColumnRange(colAccesses, ijHelper.join.SCtx().GetRangerCtx(), lastPossibleCol.RetType, path.IdxColLens[lastColPos], rangeMaxSize)
 			if err != nil {
 				return false, err
 			}
@@ -1875,7 +1876,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 			i++
 		} else {
 			exprs := []expression.Expression{eqAndInFuncs[j]}
-			oneColumnRan, _, remained, err := ranger.BuildColumnRange(exprs, ijHelper.join.SCtx(), ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j], rangeMaxSize)
+			oneColumnRan, _, remained, err := ranger.BuildColumnRange(exprs, ijHelper.join.SCtx().GetRangerCtx(), ijHelper.curNotUsedIndexCols[j].RetType, ijHelper.curNotUsedColLens[j], rangeMaxSize)
 			if err != nil {
 				return &templateRangeResult{err: err}
 			}

@@ -304,6 +304,11 @@ func (rm *RunawayManager) markQuarantine(resourceGroupName, convict string, watc
 	}
 }
 
+// IsSyncerInitialized is only used for test.
+func (rm *RunawayManager) IsSyncerInitialized() bool {
+	return rm.syncerInitialized.Load()
+}
+
 func (rm *RunawayManager) addWatchList(record *QuarantineRecord, ttl time.Duration, force bool) {
 	key := record.GetRecordKey()
 	// This is a pre-check, because we generally believe that in most cases, we will not add a watch list to a key repeatedly.

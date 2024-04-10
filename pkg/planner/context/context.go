@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
@@ -63,6 +64,8 @@ type PlanContext interface {
 	HasDirtyContent(tid int64) bool
 	// AdviseTxnWarmup advises the txn to warm up.
 	AdviseTxnWarmup() error
+	// GetRangerCtx returns the context used in `ranger` functions
+	GetRangerCtx() *rangerctx.RangerContext
 }
 
 // EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.
