@@ -124,9 +124,8 @@ func (s *mockStore) Recv() (*brpb.PrepareSnapshotBackupResponse, error) {
 		case err, ok := <-s.injectConnErr:
 			if ok {
 				return nil, err
-			} else {
-				s.injectConnErr = nil
 			}
+			s.injectConnErr = nil
 		}
 	}
 }
