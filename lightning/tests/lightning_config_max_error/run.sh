@@ -99,7 +99,7 @@ check_contains "row_data: ('5','bbb05')"
 # Check max-error-record can limit the size of conflict_records_v2 table
 run_sql 'DROP DATABASE IF EXISTS lightning_task_info'
 run_sql 'DROP DATABASE IF EXISTS mytest'
-run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml" 2>&1 | grep "\`lightning_task_info\`.\`conflict_error_v3\`" | grep -q "5"
+run_lightning --backend tidb --config "${mydir}/tidb-limit-record.toml" 2>&1 | grep "\`lightning_task_info\`.\`conflict_records_v2\`" | grep -q "5"
 run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_records_v2'
 check_contains "COUNT(*): 5"
 
