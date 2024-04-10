@@ -680,13 +680,20 @@ const (
 		created_by VARCHAR(300) NOT NULL,
 		parameters text NOT NULL,
 		source_file_size bigint(64) NOT NULL,
+		batch varchar(64) NOT NULL default 'default',
 		status VARCHAR(64) NOT NULL,
 		step VARCHAR(64) NOT NULL,
 		summary text DEFAULT NULL,
 		error_message TEXT DEFAULT NULL,
 		PRIMARY KEY (id),
 		KEY (created_by),
-		KEY (status));`
+		KEY (status),
+		KEY idx_create_time (create_time),
+		KEY idx_table_schema (table_schema),
+		KEY idx_table_name (table_name),
+		KEY idx_table_id (table_id),
+		KEY idx_batch (batch)
+	);`
 
 	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
 	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
@@ -1082,11 +1089,19 @@ const (
 	//   create `sys` schema
 	//   create `sys.schema_unused_indexes` table
 	version195 = 195
+
+	// ...
+	// [196, 216) is the version range reserved for patches of 8.1.x
+	// ...
+
+	// version 216
+	// add 'batch' field and some indices to `mysql.tidb_import_jobs`
+	version216 = 216
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version195
+var currentBootstrapVersion int64 = version216
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1247,6 +1262,7 @@ var (
 		upgradeToVer193,
 		upgradeToVer194,
 		upgradeToVer195,
+		upgradeToVer216,
 	}
 )
 
@@ -3067,6 +3083,19 @@ func upgradeToVer195(s sessiontypes.Session, ver int64) {
 	}
 
 	doReentrantDDL(s, DropMySQLIndexUsageTable)
+}
+
+func upgradeToVer216(s sessiontypes.Session, ver int64) {
+	if ver >= version216 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD COLUMN batch varchar(64) NOT NULL default 'default' AFTER `source_file_size`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD INDEX idx_table_schema (table_schema)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD INDEX idx_table_name (table_name)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD INDEX idx_table_id (table_id)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD INDEX idx_batch (batch)", dbterror.ErrDupKeyName)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
