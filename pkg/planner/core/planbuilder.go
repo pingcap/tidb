@@ -1562,11 +1562,11 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		extraHandleCol:   extraCol,
 		commonHandleCols: commonCols,
 	}
-	rootT := cop.convertToRootTask(b.ctx)
-	if err := rootT.p.ResolveIndices(); err != nil {
+	rootT := cop.ConvertToRootTask(b.ctx)
+	if err := rootT.GetPlan().ResolveIndices(); err != nil {
 		return nil, err
 	}
-	return rootT.p, nil
+	return rootT.GetPlan(), nil
 }
 
 func getIndexColumnInfos(tblInfo *model.TableInfo, idx *model.IndexInfo) []*model.ColumnInfo {

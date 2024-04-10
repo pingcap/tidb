@@ -61,26 +61,26 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	buf.Grow(80 * opCount)
 	encodeFlatPlanTree(flat.Main, 0, &buf)
 	for _, cte := range flat.CTEs {
-		op := cte[0]
+		fop := cte[0]
 		cteDef := cte[0].Origin.(*CTEDefinition)
 		id := cteDef.CTE.IDForStorage
 		tp := plancodec.TypeCTEDefinition
-		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
-		p := op.Origin
+		taskTypeInfo := plancodec.EncodeTaskType(fop.IsRoot, fop.StoreType)
+		p := fop.Origin
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 		var estRows float64
-		if op.IsPhysicalPlan {
-			estRows = op.Origin.(PhysicalPlan).getEstRowCountForDisplay()
+		if fop.IsPhysicalPlan {
+			estRows = fop.Origin.(PhysicalPlan).GetEstRowCountForDisplay()
 		} else if statsInfo := p.StatsInfo(); statsInfo != nil {
 			estRows = statsInfo.RowCount
 		}
 		plancodec.EncodePlanNode(
-			int(op.Depth),
-			strconv.Itoa(id)+op.Label.String(),
+			int(fop.Depth),
+			strconv.Itoa(id)+fop.Label.String(),
 			tp,
 			estRows,
 			taskTypeInfo,
-			op.Origin.ExplainInfo(),
+			fop.Origin.ExplainInfo(),
 			actRows,
 			analyzeInfo,
 			memoryInfo,
@@ -96,23 +96,23 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 
 func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 	for i := 0; i < len(flatTree); {
-		op := flatTree[i]
-		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
-		p := op.Origin
+		fop := flatTree[i]
+		taskTypeInfo := plancodec.EncodeTaskType(fop.IsRoot, fop.StoreType)
+		p := fop.Origin
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 		var estRows float64
-		if op.IsPhysicalPlan {
-			estRows = op.Origin.(PhysicalPlan).getEstRowCountForDisplay()
+		if fop.IsPhysicalPlan {
+			estRows = fop.Origin.(PhysicalPlan).GetEstRowCountForDisplay()
 		} else if statsInfo := p.StatsInfo(); statsInfo != nil {
 			estRows = statsInfo.RowCount
 		}
 		plancodec.EncodePlanNode(
-			int(op.Depth),
-			strconv.Itoa(op.Origin.ID())+op.Label.String(),
-			op.Origin.TP(),
+			int(fop.Depth),
+			strconv.Itoa(fop.Origin.ID())+fop.Label.String(),
+			fop.Origin.TP(),
 			estRows,
 			taskTypeInfo,
-			op.Origin.ExplainInfo(),
+			fop.Origin.ExplainInfo(),
 			actRows,
 			analyzeInfo,
 			memoryInfo,
@@ -120,16 +120,16 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 			buf,
 		)
 
-		if op.NeedReverseDriverSide {
+		if fop.NeedReverseDriverSide {
 			// If NeedReverseDriverSide is true, we don't rely on the order of flatTree.
 			// Instead, we manually slice the build and probe side children from flatTree and recursively call
 			// encodeFlatPlanTree to keep build side before probe side.
-			buildSide := flatTree[op.ChildrenIdx[1]-offset : op.ChildrenEndIdx+1-offset]
-			probeSide := flatTree[op.ChildrenIdx[0]-offset : op.ChildrenIdx[1]-offset]
-			encodeFlatPlanTree(buildSide, op.ChildrenIdx[1], buf)
-			encodeFlatPlanTree(probeSide, op.ChildrenIdx[0], buf)
+			buildSide := flatTree[fop.ChildrenIdx[1]-offset : fop.ChildrenEndIdx+1-offset]
+			probeSide := flatTree[fop.ChildrenIdx[0]-offset : fop.ChildrenIdx[1]-offset]
+			encodeFlatPlanTree(buildSide, fop.ChildrenIdx[1], buf)
+			encodeFlatPlanTree(probeSide, fop.ChildrenIdx[0], buf)
 			// Skip the children plan tree of the current operator.
-			i = op.ChildrenEndIdx + 1 - offset
+			i = fop.ChildrenEndIdx + 1 - offset
 		} else {
 			// Normally, we just go to the next element in the slice.
 			i++
@@ -210,7 +210,7 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth
 	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 	rowCount := 0.0
 	if pp, ok := p.(PhysicalPlan); ok {
-		rowCount = pp.getEstRowCountForDisplay()
+		rowCount = pp.GetEstRowCountForDisplay()
 	} else if statsInfo := p.StatsInfo(); statsInfo != nil {
 		rowCount = statsInfo.RowCount
 	}
@@ -283,12 +283,12 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 	}()
 	// assume an operator costs around 30 bytes, preallocate space for them
 	d.buf.Grow(30 * len(selectPlan))
-	for _, op := range selectPlan {
-		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(op.IsRoot, op.StoreType)
-		p := op.Origin.(PhysicalPlan)
+	for _, fop := range selectPlan {
+		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(fop.IsRoot, fop.StoreType)
+		p := fop.Origin.(PhysicalPlan)
 		plancodec.NormalizePlanNode(
-			int(op.Depth-uint32(selectPlanOffset)),
-			op.Origin.TP(),
+			int(fop.Depth-uint32(selectPlanOffset)),
+			fop.Origin.TP(),
 			taskTypeInfo,
 			p.ExplainNormalizedInfo(),
 			&d.buf,
