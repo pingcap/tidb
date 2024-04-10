@@ -689,6 +689,7 @@ const (
 		KEY (created_by),
 		KEY (status),
 		KEY idx_create_time (create_time),
+		KEY idx_end_time (end_time),
 		KEY idx_table_schema (table_schema),
 		KEY idx_table_name (table_name),
 		KEY idx_table_id (table_id),
@@ -3092,6 +3093,7 @@ func upgradeToVer216(s sessiontypes.Session, ver int64) {
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD COLUMN batch varchar(64) NOT NULL default 'default' AFTER `source_file_size`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD INDEX idx_end_time (end_time)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD INDEX idx_table_schema (table_schema)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD INDEX idx_table_name (table_name)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_import_jobs ADD INDEX idx_table_id (table_id)", dbterror.ErrDupKeyName)
