@@ -1769,9 +1769,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 	}
 	memBuffer := txn.GetMemBuffer()
 	sh := memBuffer.Staging()
-	defer func() {
-		memBuffer.Cleanup(sh)
-	}()
+	defer memBuffer.Cleanup(sh)
 
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
