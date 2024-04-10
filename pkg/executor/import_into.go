@@ -294,7 +294,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 type ImportIntoActionExec struct {
 	exec.BaseExecutor
 	tp    ast.ImportIntoActionTp
-	jobID int64
+	jobID *int64
 }
 
 var (
@@ -304,6 +304,10 @@ var (
 // Next implements the Executor Next interface.
 func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalImportInto)
+	if e.jobID == nil {
+		// TODO support cancel job batch
+		return nil
+	}
 
 	var hasSuperPriv bool
 	if pm := privilege.GetPrivilegeManager(e.Ctx()); pm != nil {
@@ -319,12 +323,12 @@ func (e *ImportIntoActionExec) Next(ctx context.Context, _ *chunk.Chunk) (err er
 		return err
 	}
 
-	task := log.BeginTask(logutil.Logger(ctx).With(zap.Int64("jobID", e.jobID),
+	task := log.BeginTask(logutil.Logger(ctx).With(zap.Int64("jobID", *e.jobID),
 		zap.Any("action", e.tp)), "import into action")
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
-	return cancelAndWaitImportJob(ctx, taskManager, e.jobID)
+	return cancelAndWaitImportJob(ctx, taskManager, *e.jobID)
 }
 
 func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, manager *fstorage.TaskManager, hasSuperPriv bool) error {
@@ -332,7 +336,7 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 	if err := manager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.GetSQLExecutor()
 		var err2 error
-		info, err2 = importer.GetJob(ctx, exec, e.jobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
+		info, err2 = importer.GetJob(ctx, exec, *e.jobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
 		return err2
 	}); err != nil {
 		return err
