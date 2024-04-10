@@ -81,4 +81,3 @@ for casename in $SELECTED_TEST_NAME; do
     script="$CUR/$casename/run.sh"
     run_case "$casename" "$script"
 done
-# add new line to test trigger
