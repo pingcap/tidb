@@ -93,7 +93,8 @@ type TaskBase struct {
 	// Concurrency controls the max resource usage of the task, i.e. the max number
 	// of slots the task can use on each node.
 	Concurrency int
-	// ywq todo
+	// TargetScope indicates that the task should be running on tidb nodes which
+	// contain the tidb_service_scope=TargetScope label.
 	TargetScope string
 	CreateTime  time.Time
 }
