@@ -1,0 +1,166 @@
+# TestIndexJoinProjPattern
+set @@session.tidb_opt_advanced_join_hint=0;
+drop table if exists t1, t2;
+create table t1(
+    pnbrn_cnaps varchar(5) not null,
+    new_accno varchar(18) not null,
+    primary key(pnbrn_cnaps,new_accno) nonclustered
+);
+create table t2(
+    pnbrn_cnaps varchar(5) not null,
+    txn_accno varchar(18) not null,
+    txn_dt date not null,
+    yn_frz varchar(1) default null
+);
+insert into t1(pnbrn_cnaps,new_accno) values ("40001","123");
+insert into t2(pnbrn_cnaps, txn_accno, txn_dt, yn_frz) values ("40001","123","20221201","0");
+set @@session.tidb_enable_inl_join_inner_multi_pattern='ON';
+explain format='brief' update
+/*+ inl_join(a) */
+t2 b,
+(
+    select t1.pnbrn_cnaps,
+    t1.new_accno
+    from t1
+    where t1.pnbrn_cnaps = '40001'
+) a
+set b.yn_frz = '1'
+where b.txn_dt = str_to_date('20221201', '%Y%m%d')
+and b.pnbrn_cnaps = a.pnbrn_cnaps
+and b.txn_accno = a.new_accno;
+
+set @@session.tidb_enable_inl_join_inner_multi_pattern='OFF';
+explain format='brief' update
+/*+ inl_join(a) */
+t2 b,
+(
+    select t1.pnbrn_cnaps,
+    t1.new_accno
+    from t1
+    where t1.pnbrn_cnaps = '40001'
+) a
+set b.yn_frz = '1'
+where b.txn_dt = str_to_date('20221201', '%Y%m%d')
+and b.pnbrn_cnaps = a.pnbrn_cnaps
+and b.txn_accno = a.new_accno;
+
+set @@session.tidb_enable_inl_join_inner_multi_pattern='ON';
+update
+/*+ inl_join(a) */
+t2 b,
+(
+    select t1.pnbrn_cnaps,
+    t1.new_accno
+    from t1
+    where t1.pnbrn_cnaps = '40001'
+) a
+set b.yn_frz = '1'
+where b.txn_dt = str_to_date('20221201', '%Y%m%d')
+and b.pnbrn_cnaps = a.pnbrn_cnaps
+and b.txn_accno = a.new_accno;
+select yn_frz from t2;
+
+set @@session.tidb_opt_advanced_join_hint=default;
+set @@session.tidb_enable_inl_join_inner_multi_pattern=default;
+
+# TestIndexJoinSelPattern
+set @@tidb_opt_advanced_join_hint=0;
+drop table if exists tbl_miss, tbl_src;
+create table tbl_miss(
+    id bigint(20) unsigned not null,
+    txn_dt date default null,
+    perip_sys_uuid varchar(32) not null,
+    rvrs_idr varchar(1) not null,
+    primary key(id) clustered,
+    key idx1 (txn_dt, perip_sys_uuid, rvrs_idr)
+);
+insert into tbl_miss (id,txn_dt,perip_sys_uuid,rvrs_idr) values (1,"20221201","123","1");
+create table tbl_src(
+    txn_dt date default null,
+    uuid varchar(32) not null,
+    rvrs_idr char(1),
+    expd_inf varchar(5000),
+    primary key(uuid,rvrs_idr) nonclustered
+);
+insert into tbl_src (txn_dt,uuid,rvrs_idr) values ("20221201","123","1");
+
+set @@session.tidb_enable_inl_join_inner_multi_pattern='OFF';
+explain format='brief' select /*+ use_index(mis,) inl_join(src) */
+   *
+from tbl_miss mis
+    ,tbl_src src
+where src.txn_dt >= str_to_date('20221201', '%Y%m%d')
+and mis.id between 1 and 10000
+and mis.perip_sys_uuid = src.uuid
+and mis.rvrs_idr = src.rvrs_idr
+and mis.txn_dt = src.txn_dt
+and (
+    case when isnull(src.expd_inf) = 1 then ''
+    else
+        substr(concat_ws('',src.expd_inf,'~~'),
+            instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4,
+            instr(substr(concat_ws('',src.expd_inf,'~~'),
+                instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4, length(concat_ws('',src.expd_inf,'~~'))),'~~') -1)
+    end
+) != '01';
+
+set @@session.tidb_enable_inl_join_inner_multi_pattern='ON';
+explain format='brief' select /*+ use_index(mis,) inl_join(src) */
+   *
+from tbl_miss mis
+    ,tbl_src src
+where src.txn_dt >= str_to_date('20221201', '%Y%m%d')
+and mis.id between 1 and 10000
+and mis.perip_sys_uuid = src.uuid
+and mis.rvrs_idr = src.rvrs_idr
+and mis.txn_dt = src.txn_dt
+and (
+    case when isnull(src.expd_inf) = 1 then ''
+    else
+        substr(concat_ws('',src.expd_inf,'~~'),
+            instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4,
+            instr(substr(concat_ws('',src.expd_inf,'~~'),
+                instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4, length(concat_ws('',src.expd_inf,'~~'))),'~~') -1)
+    end
+) != '01';
+select /*+ use_index(mis,) inl_join(src) */
+   *
+from tbl_miss mis
+    ,tbl_src src
+where src.txn_dt >= str_to_date('20221201', '%Y%m%d')
+and mis.id between 1 and 10000
+and mis.perip_sys_uuid = src.uuid
+and mis.rvrs_idr = src.rvrs_idr
+and mis.txn_dt = src.txn_dt
+and (
+    case when isnull(src.expd_inf) = 1 then ''
+    else
+        substr(concat_ws('',src.expd_inf,'~~'),
+            instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4,
+            instr(substr(concat_ws('',src.expd_inf,'~~'),
+                instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4, length(concat_ws('',src.expd_inf,'~~'))),'~~') -1)
+    end
+) != '01';
+
+set @@session.tidb_enable_inl_join_inner_multi_pattern='OFF';
+select /*+ use_index(mis,) inl_join(src) */
+   *
+from tbl_miss mis
+    ,tbl_src src
+where src.txn_dt >= str_to_date('20221201', '%Y%m%d')
+and mis.id between 1 and 10000
+and mis.perip_sys_uuid = src.uuid
+and mis.rvrs_idr = src.rvrs_idr
+and mis.txn_dt = src.txn_dt
+and (
+    case when isnull(src.expd_inf) = 1 then ''
+    else
+        substr(concat_ws('',src.expd_inf,'~~'),
+            instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4,
+            instr(substr(concat_ws('',src.expd_inf,'~~'),
+                instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4, length(concat_ws('',src.expd_inf,'~~'))),'~~') -1)
+    end
+) != '01';
+
+set @@tidb_opt_advanced_join_hint=default;
+set @@session.tidb_enable_inl_join_inner_multi_pattern=default;

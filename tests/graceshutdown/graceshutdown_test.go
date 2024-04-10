@@ -71,7 +71,8 @@ func connectTiDB(port int) (db *sql.DB, err error) {
 	dsn := fmt.Sprintf("root@(%s)/test", addr)
 	sleepTime := 250 * time.Millisecond
 	startTime := time.Now()
-	for i := 0; i < 5; i++ {
+	maxRetry := 10
+	for i := 0; i < maxRetry; i++ {
 		db, err = sql.Open("mysql", dsn)
 		if err != nil {
 			log.Warn("open addr failed",
@@ -91,9 +92,9 @@ func connectTiDB(port int) (db *sql.DB, err error) {
 			zap.Error(err),
 		)
 
-		err = db.Close()
-		if err != nil {
-			log.Warn("close db failed", zap.Int("retry count", i), zap.Error(err))
+		err1 := db.Close()
+		if err1 != nil {
+			log.Warn("close db failed", zap.Int("retry count", i), zap.Error(err1))
 			break
 		}
 		time.Sleep(sleepTime)
@@ -130,7 +131,9 @@ func TestGracefulShutdown(t *testing.T) {
 	conn1, err := db.Conn(ctx)
 	require.NoError(t, err)
 	defer func() {
-		require.NoError(t, conn1.Close())
+		if conn1 != nil {
+			require.NoError(t, conn1.Close())
+		}
 	}()
 
 	_, err = conn1.ExecContext(ctx, "drop table if exists t;")
@@ -140,15 +143,27 @@ func TestGracefulShutdown(t *testing.T) {
 	_, err = conn1.ExecContext(ctx, "insert into t values(1);")
 	require.NoError(t, err)
 
+	done := make(chan struct{})
 	go func() {
-		time.Sleep(1e9)
+		time.Sleep(time.Second)
 		err = stopService("tidb", tidb)
 		require.NoError(t, err)
+		close(done)
 	}()
 
+	// Graceful shutdown will wait for connections in transaction only.
+	// See https://github.com/pingcap/tidb/pull/44953.
+	txn, err := conn1.BeginTx(ctx, nil)
+	require.NoError(t, err)
 	sql := `select 1 from t where not (select sleep(3)) ;`
 	var a int64
-	err = conn1.QueryRowContext(ctx, sql).Scan(&a)
+	err = txn.QueryRowContext(ctx, sql).Scan(&a)
 	require.NoError(t, err)
 	require.Equal(t, a, int64(1))
+	require.NoError(t, txn.Commit())
+
+	conn1.Close()
+	conn1 = nil
+
+	<-done
 }

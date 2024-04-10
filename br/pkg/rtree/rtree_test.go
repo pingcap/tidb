@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"testing"
 
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,6 +50,10 @@ func TestRangeTree(t *testing.T) {
 		}
 	}
 
+	assertIncomplete([]byte(""), []byte("b"), []rtree.Range{{StartKey: []byte(""), EndKey: []byte("b")}})
+	assertIncomplete([]byte(""), []byte(""), []rtree.Range{{StartKey: []byte(""), EndKey: []byte("")}})
+	assertIncomplete([]byte("b"), []byte(""), []rtree.Range{{StartKey: []byte("b"), EndKey: []byte("")}})
+
 	range0 := newRange([]byte(""), []byte("a"))
 	rangeA := newRange([]byte("a"), []byte("b"))
 	rangeB := newRange([]byte("b"), []byte("c"))
@@ -61,6 +68,7 @@ func TestRangeTree(t *testing.T) {
 			{StartKey: []byte(""), EndKey: []byte("a")},
 			{StartKey: []byte("b"), EndKey: []byte("")},
 		})
+	assertIncomplete([]byte("b"), []byte(""), []rtree.Range{{StartKey: []byte("b"), EndKey: []byte("")}})
 
 	rangeTree.Update(*rangeC)
 	require.Equal(t, 2, rangeTree.Len())
@@ -173,5 +181,42 @@ func BenchmarkRangeTreeUpdate(b *testing.B) {
 			EndKey:   []byte(fmt.Sprintf("%20d", i+1)),
 		}
 		rangeTree.Update(item)
+	}
+}
+
+func encodeTableRecord(prefix kv.Key, rowID uint64) []byte {
+	return tablecodec.EncodeRecordKey(prefix, kv.IntHandle(rowID))
+}
+
+func TestRangeTreeMerge(t *testing.T) {
+	rangeTree := rtree.NewRangeTree()
+	tablePrefix := tablecodec.GenTableRecordPrefix(1)
+	for i := uint64(0); i < 10000; i += 1 {
+		item := rtree.Range{
+			StartKey: encodeTableRecord(tablePrefix, i),
+			EndKey:   encodeTableRecord(tablePrefix, i+1),
+			Files: []*backuppb.File{
+				{
+					Name:       fmt.Sprintf("%20d", i),
+					TotalKvs:   1,
+					TotalBytes: 1,
+				},
+			},
+			Size: i,
+		}
+		rangeTree.Update(item)
+	}
+	sortedRanges := rangeTree.MergedRanges(10, 10)
+	require.Equal(t, 1000, len(sortedRanges))
+	for i, rg := range sortedRanges {
+		require.Equal(t, encodeTableRecord(tablePrefix, uint64(i)*10), rg.StartKey)
+		require.Equal(t, encodeTableRecord(tablePrefix, uint64(i+1)*10), rg.EndKey)
+		require.Equal(t, uint64(i*10*10+45), rg.Size)
+		require.Equal(t, 10, len(rg.Files))
+		for j, file := range rg.Files {
+			require.Equal(t, fmt.Sprintf("%20d", i*10+j), file.Name)
+			require.Equal(t, uint64(1), file.TotalKvs)
+			require.Equal(t, uint64(1), file.TotalBytes)
+		}
 	}
 }

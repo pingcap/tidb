@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "benchkv_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/cmd/benchkv",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/parser/terror",
+        "//pkg/store/driver",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_golang//prometheus/promhttp",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "benchkv",
+    embed = [":benchkv_lib"],
+    visibility = ["//visibility:public"],
+)

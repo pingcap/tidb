@@ -1,0 +1,5 @@
+[tikv-importer]
+backend = "local"
+
+[mydumper.csv]
+header = true

@@ -1,0 +1,98 @@
+select @@tidb_external_ts;
+@@tidb_external_ts
+0
+set global tidb_external_ts=19980613;
+select @@tidb_external_ts;
+@@tidb_external_ts
+19980613
+set global tidb_external_ts=20220930;
+select @@tidb_external_ts;
+@@tidb_external_ts
+20220930
+drop table if exists t;
+create table t (id INT NOT NULL,d double,PRIMARY KEY (id));
+insert into t values (0, 100);
+insert into t values (1, 100);
+insert into t values (2, 100);
+insert into t values (3, 100);
+select * from t;
+id	d
+0	100
+1	100
+2	100
+3	100
+start transaction;
+set global tidb_external_ts=@@tidb_current_ts;
+commit;
+insert into t values (4, 100);
+set tidb_enable_external_ts_read=ON;
+select * from t;
+id	d
+0	100
+1	100
+2	100
+3	100
+set tidb_enable_external_ts_read=OFF;
+select * from t;
+id	d
+0	100
+1	100
+2	100
+3	100
+4	100
+drop table if exists t;
+create table t (id INT NOT NULL,PRIMARY KEY (id));
+start transaction;
+set global tidb_external_ts=@@tidb_current_ts;
+commit;
+insert into t values (0);
+select * from t;
+id
+0
+set tidb_enable_external_ts_read=ON;
+select * from t;
+id
+start transaction;
+select * from t;
+id
+commit;
+set tidb_enable_external_ts_read=OFF;
+start transaction;
+select * from t;
+id
+0
+commit;
+start transaction;
+select * from t;
+id
+0
+set tidb_enable_external_ts_read=ON;
+select * from t;
+id
+0
+set tidb_enable_external_ts_read=OFF;
+commit;
+drop table if exists t;
+create table t (id INT NOT NULL,PRIMARY KEY (id));
+insert into t values (0);
+select * from t;
+id
+0
+start transaction;
+set global tidb_external_ts=@@tidb_current_ts;
+commit;
+insert into t values (1);
+select * from t;
+id
+0
+1
+set tidb_enable_external_ts_read=on;
+prepare my_select from 'select * from t';
+execute my_select;
+id
+0
+set tidb_enable_external_ts_read=off;
+execute my_select;
+id
+0
+1

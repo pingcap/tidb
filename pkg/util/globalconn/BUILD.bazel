@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "globalconn",
+    srcs = [
+        "globalconn.go",
+        "pool.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/globalconn",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/logutil",
+        "@com_github_cznic_mathutil//:mathutil",
+        "@com_github_ngaut_sync2//:sync2",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "globalconn_test",
+    timeout = "short",
+    srcs = [
+        "globalconn_test.go",
+        "pool_test.go",
+    ],
+    flaky = True,
+    deps = [
+        ":globalconn",
+        "@com_github_cznic_mathutil//:mathutil",
+        "@com_github_stretchr_testify//assert",
+    ],
+)

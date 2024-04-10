@@ -1,0 +1,1069 @@
+# TestAggPrune
+drop table if exists t;
+create table t(id int primary key, b varchar(50), c int);
+insert into t values(1, '1ff', NULL), (2, '234.02', 1);
+select id, sum(b) from t group by id;
+select sum(b) from t;
+select id, count(c) from t group by id;
+drop table if exists t;
+create table t(id int primary key, b float, c float);
+insert into t values(1, 1, 3), (2, 1, 6);
+select sum(b/c) from t group by id;
+drop table if exists t;
+create table t(id int primary key, b float, c float, d float);
+insert into t values(1, 1, 3, NULL), (2, 1, NULL, 6), (3, NULL, 1, 2), (4, NULL, NULL, 1), (5, NULL, 2, NULL), (6, 3, NULL, NULL), (7, NULL, NULL, NULL), (8, 1, 2 ,3);
+select count(distinct b, c, d) from t group by id;
+select approx_count_distinct( b, c, d) from t group by id order by id;
+drop table if exists t;
+create table t(a int primary key, b varchar(10));
+insert into t value(1, 11),(3, NULL);
+SELECT a, MIN(b), MAX(b) FROM t GROUP BY a;
+
+# TestAggPushDown
+drop table if exists t;
+create table t (a int, b int, c int);
+alter table t add index idx(a, b, c);
+select count(a) from t group by a;
+select count(a) from t;
+insert t values(0,0,0);
+select distinct b from t;
+select count(b) from t group by a;
+insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);
+--sorted_result
+select count(a) from t where b>0 group by a, b;
+select count(a) from t where b>0 group by a, b order by a;
+select count(a) from t where b>0 group by a, b order by a limit 1;
+drop table if exists t, tt;
+create table t(a int primary key, b int, c int);
+create table tt(a int primary key, b int, c int);
+insert into t values(1, 1, 1), (2, 1, 1);
+insert into tt values(1, 2, 1);
+select max(a.b), max(b.b) from t a join tt b on a.a = b.a group by a.c;
+select a, count(b) from (select * from t union all select * from tt) k group by a order by a;
+
+# TestIssue16279
+set sql_mode = 'ONLY_FULL_GROUP_BY';
+drop table if exists s;
+create table s(a int);
+select count(a) , date_format(a, '%Y-%m-%d') from s group by date_format(a, '%Y-%m-%d');
+select count(a) , date_format(a, '%Y-%m-%d') as xx from s group by date_format(a, '%Y-%m-%d');
+select count(a) , date_format(a, '%Y-%m-%d') as xx from s group by xx;
+set sql_mode = default;
+
+# TestAggPushDownPartitionTable
+drop table if exists t1;
+CREATE TABLE t1 (
+		a int(11) DEFAULT NULL,
+		b tinyint(4) NOT NULL,
+		PRIMARY KEY (b)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	PARTITION BY RANGE ( b ) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20),
+		PARTITION p2 VALUES LESS THAN (30),
+		PARTITION p3 VALUES LESS THAN (40),
+		PARTITION p4 VALUES LESS THAN (MAXVALUE)
+	);
+insert into t1 values (0, 0), (1, 1), (1, 2), (1, 3), (2, 4), (2, 5), (2, 6), (3, 7), (3, 10), (3, 11), (12, 12), (12, 13), (14, 14), (14, 15), (20, 20), (20, 21), (20, 22), (23, 23), (23, 24), (23, 25), (31, 30), (31, 31), (31, 32), (33, 33), (33, 34), (33, 35), (36, 36), (80, 80), (90, 90), (100, 100);
+set @@tidb_opt_agg_push_down = 1;
+--sorted_result
+select /*+ AGG_TO_COP() */ sum(a), sum(b) from t1 where a < 40 group by a;
+set @@tidb_opt_agg_push_down = default;
+
+# TestIssue14947
+set sql_mode = 'ONLY_FULL_GROUP_BY';
+drop table if exists t;
+create table t(a int);
+select ((+a+1)) as tmp from t group by tmp;
+set @@tidb_opt_agg_push_down = default;
+
+# TestHaving
+set sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION';
+drop table if exists t;
+create table t (c1 int, c2 int, c3 int);
+insert into t values (1,2,3), (2, 3, 1), (3, 1, 2);
+select c1 as c2, c3 from t having c2 = 2;
+select c1 as c2, c3 from t group by c2 having c2 = 2;
+select c1 as c2, c3 from t group by c2 having sum(c2) = 2;
+select c1 as c2, c3 from t group by c3 having sum(c2) = 2;
+select c1 as c2, c3 from t group by c3 having sum(0) + c2 = 2;
+select c1 as a from t having c1 = 1;
+select t.c1 from t having c1 = 1;
+select a.c1 from t as a having c1 = 1;
+select c1 as a from t group by c3 having sum(a) = 1;
+select c1 as a from t group by c3 having sum(a) + a = 2;
+select a.c1 as c, a.c1 as d from t as a, t as b having c1 = 1 limit 1;
+select sum(c1) as s from t group by c1 having sum(c1) order by s;
+select sum(c1) - 1 as s from t group by c1 having sum(c1) - 1 order by s;
+select 1 from t group by c1 having sum(abs(c2 + c3)) = c1;
+set @@tidb_opt_agg_push_down = default;
+
+# TestAggEliminator
+drop table if exists t;
+create table t(a int primary key, b int);
+select min(a), min(a) from t;
+insert into t values(1, -1), (2, -2), (3, 1), (4, NULL);
+select max(a) from t;
+select min(b) from t;
+select max(b*b) from t;
+select min(b*b) from t;
+--sorted_result
+select group_concat(b, b) from t group by a;
+
+# TestClusterIndexMaxMinEliminator
+drop table if exists t;
+set @@tidb_enable_clustered_index = 1;
+create table t (a int, b int, c int, primary key(a, b));
+insert into t values (0, 0, 0);
+insert into t values (1, 1, 1);
+insert into t values (2, 2, 2);
+insert into t values (3, 3, 3);
+insert into t values (4, 4, 4);
+insert into t values (5, 5, 5);
+insert into t values (6, 6, 6);
+insert into t values (7, 7, 7);
+insert into t values (8, 8, 8);
+insert into t values (9, 9, 9);
+insert into t values (10, 10, 10);
+select max(a), min(a+b) from t;
+select max(a+b), min(a+b) from t;
+select min(a), max(a), min(b), max(b) from t;
+set @@tidb_enable_clustered_index = default;
+
+# TestMaxMinFloatScalaFunc
+DROP TABLE IF EXISTS T;
+CREATE TABLE T(A VARCHAR(10), B VARCHAR(10), C FLOAT);
+INSERT INTO T VALUES('0', "val_b", 12.191);
+SELECT MAX(CASE B WHEN 'val_b'  THEN C ELSE 0 END) val_b FROM T WHERE cast(A as signed) = 0 GROUP BY a;
+SELECT MIN(CASE B WHEN 'val_b'  THEN C ELSE 0 END) val_b FROM T WHERE cast(A as signed) = 0 GROUP BY a;
+
+# TestBuildProjBelowAgg
+drop table if exists t;
+create table t (i int);
+insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);
+select i+1 as a, count(i+2), sum(i+3), group_concat(i+4), bit_or(i+5) from t group by i, hex(i+6) order by a;
+
+# TestFirstRowEnum
+drop table if exists t;
+create table t(a enum('a', 'b'));
+insert into t values('a');
+select a from t group by a;
+
+# TestAggJSON
+drop table if exists t;
+create table t(a datetime, b json, index idx(a));
+insert into t values('2019-03-20 21:50:00', '["a", "b", 1]');
+insert into t values('2019-03-20 21:50:01', '["a", "b", 1]');
+insert into t values('2019-03-20 21:50:02', '["a", "b", 1]');
+insert into t values('2019-03-20 21:50:03', '{"k1": "value", "k2": [10, 20]}');
+insert into t values('2019-03-20 21:50:04', '{"k1": "value", "k2": [10, 20]}');
+insert into t values('2019-03-20 21:50:05', '{"k1": "value", "k2": [10, 20]}');
+insert into t values('2019-03-20 21:50:06', '"hello"');
+insert into t values('2019-03-20 21:50:07', '"hello"');
+insert into t values('2019-03-20 21:50:08', '"hello"');
+set @@sql_mode='';
+select b from t group by a order by a;
+select min(b) from t group by a order by a;
+select max(b) from t group by a order by a;
+set @@sql_mode=default;
+
+# TestIssue10099
+drop table if exists t;
+create table t(a char(10), b char(10));
+insert into t values('1', '222'), ('12', '22');
+select count(distinct a, b) from t;
+select approx_count_distinct( a, b) from t;
+
+# TestIssue10098
+drop table if exists t;
+create table t(a char(10), b char(10));
+insert into t values('1', '222'), ('12', '22');
+select group_concat(distinct a, b) from t;
+
+# TestIssue10608
+drop table if exists t, s;
+create table t(a int);
+create table s(a int, b int);
+insert into s values(100292, 508931), (120002, 508932);
+insert into t values(508931), (508932);
+select (select  /*+ stream_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;
+select (select  /*+ hash_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;
+CREATE TABLE `t49`(`c0` char(1) DEFAULT '1',  `c2` char(1) DEFAULT NULL,  UNIQUE KEY `c2` (`c2`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+INSERT INTO `t49` VALUES ('0','0'),('0','1');
+CREATE TABLE `t0` (`c0` blob DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+INSERT INTO `t0` VALUES (_binary ']'),(_binary '777926278'),(_binary '0.2136404982804636'),(_binary '1901362489'),(_binary '1558203848'),(''),(_binary '1830406335'),(''),(_binary '0'),(NULL),(_binary '601930250'),(_binary '1558203848'),(_binary '-122008948'),(_binary '-2053608489'),(_binary 'hb/vt  <7'),(_binary 'RC&2*'),(_binary '1'),(_binary '-1722334316'),(_binary '1830406335'),(_binary '1372126029'),(_binary '882291196'),(NULL),(_binary '-399693596');
+CREATE ALGORITHM=TEMPTABLE DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v0` (`c0`, `c1`, `c2`) AS SELECT NULL AS `NULL`,`t49`.`c2` AS `c2`,(((CASE _UTF8MB4'I되EkfIO퀶' WHEN NULL THEN `t49`.`c0` WHEN `t49`.`c2` THEN `t0`.`c0` ELSE (CASE `t49`.`c0` WHEN _UTF8MB4'%' THEN 1035293362 ELSE _UTF8MB4',' END) END))<<(`t49`.`c0`)) AS `(((CASE 'I되EkfIO퀶' WHEN NULL THEN t49.c0 WHEN t49.c2 THEN t0.c0 ELSE (CASE t49.c0 WHEN '%' THEN 1035293362 ELSE ',' END ) END ))<<(t49.c0))` FROM (`t0`) JOIN `t49` WHERE TRUE;
+SELECT /*+ STREAM_AGG()*/v0.c0 FROM t49, v0 LEFT OUTER JOIN t0 ON ('Iw') GROUP BY true;
+
+# TestPR15242ShallowCopy
+drop table if exists t;
+create table t(a json);
+insert into t values ('{"id": 1,"score":23}');
+insert into t values ('{"id": 2,"score":23}');
+insert into t values ('{"id": 1,"score":233}');
+insert into t values ('{"id": 2,"score":233}');
+insert into t values ('{"id": 3,"score":233}');
+set tidb_max_chunk_size = 2;
+select max(JSON_EXTRACT(a, '$.score')) as max_score,JSON_EXTRACT(a,'$.id') as id from t group by id order by id;
+set tidb_max_chunk_size = default;
+
+# TestIssue15690
+set tidb_max_chunk_size = 2;
+drop table if exists t;
+create table t(a int);
+insert into t values(null),(null);
+insert into t values(0),(2),(2),(4),(8);
+--enable_warnings
+select /*+ stream_agg() */ distinct * from t;
+--disable_warnings
+drop table if exists t;
+create table t(a float);
+insert into t values(null),(null),(null),(null);
+insert into t values(1.1),(1.1);
+--enable_warnings
+select /*+ stream_agg() */ distinct * from t;
+--disable_warnings
+drop table if exists t;
+create table t(a decimal(5,1));
+insert into t values(null),(null),(null);
+insert into t values(1.1),(2.2),(2.2);
+--enable_warnings
+select /*+ stream_agg() */ distinct * from t;
+--disable_warnings
+drop table if exists t;
+create table t(a datetime);
+insert into t values(null);
+insert into t values("2019-03-20 21:50:00"),("2019-03-20 21:50:01"), ("2019-03-20 21:50:00");
+--enable_warnings
+select /*+ stream_agg() */ distinct * from t;
+--disable_warnings
+drop table if exists t;
+create table t(a json);
+insert into t values(null),(null),(null),(null);
+--enable_warnings
+select /*+ stream_agg() */ distinct * from t;
+--disable_warnings
+drop table if exists t;
+create table t(a char);
+insert into t values(null),(null),(null),(null);
+insert into t values('a'),('b');
+--enable_warnings
+select /*+ stream_agg() */ distinct * from t;
+--disable_warnings
+set tidb_max_chunk_size = default;
+
+# TestIssue15958
+set tidb_max_chunk_size = 2;
+drop table if exists t;
+create table t(y year);
+insert into t values (2020), (2000), (2050);
+select sum(y) from t;
+select avg(y) from t;
+set tidb_max_chunk_size = default;
+
+# TestIssue17216
+drop table if exists t1;
+CREATE TABLE t1 (
+	  pk int(11) NOT NULL,
+	  col1 decimal(40,20) DEFAULT NULL
+	);
+INSERT INTO t1 VALUES (2084,0.02040000000000000000),(35324,0.02190000000000000000),(43760,0.00510000000000000000),(46084,0.01400000000000000000),(46312,0.00560000000000000000),(61632,0.02730000000000000000),(94676,0.00660000000000000000),(102244,0.01810000000000000000),(113144,0.02140000000000000000),(157024,0.02750000000000000000),(157144,0.01750000000000000000),(182076,0.02370000000000000000),(188696,0.02330000000000000000),(833,0.00390000000000000000),(6701,0.00230000000000000000),(8533,0.01690000000000000000),(13801,0.01360000000000000000),(20797,0.00680000000000000000),(36677,0.00550000000000000000),(46305,0.01290000000000000000),(76113,0.00430000000000000000),(76753,0.02400000000000000000),(92393,0.01720000000000000000),(111733,0.02690000000000000000),(152757,0.00250000000000000000),(162393,0.02760000000000000000),(167169,0.00440000000000000000),(168097,0.01360000000000000000),(180309,0.01720000000000000000),(19918,0.02620000000000000000),(58674,0.01820000000000000000),(67454,0.01510000000000000000),(70870,0.02880000000000000000),(89614,0.02530000000000000000),(106742,0.00180000000000000000),(107886,0.01580000000000000000),(147506,0.02230000000000000000),(148366,0.01340000000000000000),(167258,0.01860000000000000000),(194438,0.00500000000000000000),(10307,0.02850000000000000000),(14539,0.02210000000000000000),(27703,0.00050000000000000000),(32495,0.00680000000000000000),(39235,0.01450000000000000000),(52379,0.01640000000000000000),(54551,0.01910000000000000000),(85659,0.02330000000000000000),(104483,0.02670000000000000000),(109911,0.02040000000000000000),(114523,0.02110000000000000000),(119495,0.02120000000000000000),(137603,0.01910000000000000000),(154031,0.02580000000000000000);
+SELECT count(distinct col1) FROM t1;
+
+# TestIssue23277
+drop table if exists t;
+create table t(a tinyint(1));
+insert into t values (-120), (127);
+--sorted_result
+select avg(a) from t group by a;
+drop table t;
+create table t(a smallint(1));
+insert into t values (-120), (127);
+--sorted_result
+select avg(a) from t group by a;
+drop table t;
+create table t(a mediumint(1));
+insert into t values (-120), (127);
+--sorted_result
+select avg(a) from t group by a;
+drop table t;
+create table t(a int(1));
+insert into t values (-120), (127);
+--sorted_result
+select avg(a) from t group by a;
+drop table t;
+create table t(a bigint(1));
+insert into t values (-120), (127);
+--sorted_result
+select avg(a) from t group by a;
+drop table t;
+
+# TestAvgDecimal
+drop table if exists td;
+create table td (col_bigint bigint(20), col_smallint smallint(6));
+insert into td values (null, 22876);
+insert into td values (9220557287087669248, 32767);
+insert into td values (28030, 32767);
+insert into td values (-3309864251140603904,32767);
+insert into td values (4,0);
+insert into td values (null,0);
+insert into td values (4,-23828);
+insert into td values (54720,32767);
+insert into td values (0,29815);
+insert into td values (10017,-32661);
+--sorted_result
+SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;
+--sorted_result
+SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;
+drop table td;
+
+# TestIssue23314
+drop table if exists t1;
+create table t1(col1 time(2) NOT NULL);
+insert into t1 values("16:40:20.01");
+select col1 from t1 group by col1;
+
+# TestIssue35295
+drop table if exists t100;
+set @@tidb_partition_prune_mode = 'static';
+CREATE TABLE t100 (
+ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+col1 int(10) NOT NULL DEFAULT '0' COMMENT 'test',
+money bigint(20) NOT NULL COMMENT 'test',
+logtime datetime NOT NULL COMMENT '记录时间',
+PRIMARY KEY (ID,logtime)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=1 COMMENT='test'
+PARTITION BY RANGE COLUMNS(logtime) (
+PARTITION p20220608 VALUES LESS THAN ("20220609"),
+PARTITION p20220609 VALUES LESS THAN ("20220610"),
+PARTITION p20220610 VALUES LESS THAN ("20220611"),
+PARTITION p20220611 VALUES LESS THAN ("20220612"),
+PARTITION p20220612 VALUES LESS THAN ("20220613"),
+PARTITION p20220613 VALUES LESS THAN ("20220614"),
+PARTITION p20220614 VALUES LESS THAN ("20220615"),
+PARTITION p20220615 VALUES LESS THAN ("20220616"),
+PARTITION p20220616 VALUES LESS THAN ("20220617"),
+PARTITION p20220617 VALUES LESS THAN ("20220618"),
+PARTITION p20220618 VALUES LESS THAN ("20220619"),
+PARTITION p20220619 VALUES LESS THAN ("20220620"),
+PARTITION p20220620 VALUES LESS THAN ("20220621"),
+PARTITION p20220621 VALUES LESS THAN ("20220622"),
+PARTITION p20220622 VALUES LESS THAN ("20220623"),
+PARTITION p20220623 VALUES LESS THAN ("20220624"),
+PARTITION p20220624 VALUES LESS THAN ("20220625")
+ );
+insert into t100(col1,money,logtime) values (100,10,'2022-06-09 00:00:00');
+insert into t100(col1,money,logtime) values (100,10,'2022-06-10 00:00:00');
+SELECT /*+STREAM_AGG()*/ col1,sum(money) FROM t100 WHERE logtime>='2022-06-09 00:00:00' AND col1=100 ;
+SELECT /*+HASH_AGG()*/ col1,sum(money) FROM t100 WHERE logtime>='2022-06-09 00:00:00' AND col1=100 ;
+set @@tidb_partition_prune_mode = default;
+
+# TestIssue27751
+drop table if exists t;
+create table t(nname char(20));
+insert into t values ('2'),(null),('11'),('2'),(null),('2'),(null),('11'),('33');
+set @@group_concat_max_len=0;
+select group_concat(nname order by 1 separator '#' ) from t;
+select group_concat(nname order by 1 desc separator '#' ) from t;
+set @@group_concat_max_len=default;
+
+# TestIssue44795
+DROP TABLE IF EXISTS customer, orders;
+CREATE TABLE `customer` (  `C_CUSTKEY` bigint(20) NOT NULL,  `C_NAME` varchar(25) NOT NULL,  `C_ADDRESS` varchar(40) NOT NULL,  `C_NATIONKEY` bigint(20) NOT NULL,  `C_PHONE` char(15) NOT NULL,  `C_ACCTBAL` decimal(15,2) NOT NULL,  `C_MKTSEGMENT` char(10) NOT NULL,  `C_COMMENT` varchar(117) NOT NULL,  PRIMARY KEY (`C_CUSTKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE TABLE `orders` (  `O_ORDERKEY` bigint(20) NOT NULL,  `O_CUSTKEY` bigint(20) NOT NULL,  `O_ORDERSTATUS` char(1) NOT NULL,  `O_TOTALPRICE` decimal(15,2) NOT NULL,  `O_ORDERDATE` date NOT NULL,  `O_ORDERPRIORITY` char(15) NOT NULL,  `O_CLERK` char(15) NOT NULL,  `O_SHIPPRIORITY` bigint(20) NOT NULL,  `O_COMMENT` varchar(79) NOT NULL,  PRIMARY KEY (`O_ORDERKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+set tidb_opt_agg_push_down=ON;
+explain format='brief' SELECT  /*+ hash_join_build(customer) */ c_custkey, count(o_orderkey)  as  c_count  from customer left join orders on c_custkey = o_custkey and o_comment not like '%special%requests%'        group by c_custkey;
+set tidb_opt_agg_push_down=default;
+
+# TestIssue26885
+SET sql_mode = 'NO_ENGINE_SUBSTITUTION';
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (c1 ENUM('a', '', 'b'));
+INSERT INTO t1 (c1) VALUES ('b');
+INSERT INTO t1 (c1) VALUES ('');
+INSERT INTO t1 (c1) VALUES ('a');
+INSERT INTO t1 (c1) VALUES ('');
+INSERT INTO t1 (c1) VALUES (0);
+select * from t1;
+--sorted_result
+select c1 + 0 from t1;
+SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;
+alter table t1 add index idx(c1);
+--sorted_result
+select c1 + 0 from t1;
+SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (c1 ENUM('a', 'b', 'c'));
+INSERT INTO t1 (c1) VALUES ('b');
+INSERT INTO t1 (c1) VALUES ('a');
+INSERT INTO t1 (c1) VALUES ('b');
+INSERT INTO t1 (c1) VALUES ('c');
+INSERT INTO t1 (c1) VALUES (0);
+select * from t1;
+SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;
+SET sql_mode = default;
+
+# TestAggregation
+set @@tidb_hash_join_concurrency=1;
+set sql_mode='STRICT_TRANS_TABLES';
+drop table if exists t;
+create table t (c int, d int);
+insert t values (NULL, 1);
+insert t values (1, 1);
+insert t values (1, 2);
+insert t values (1, 3);
+insert t values (1, 1);
+insert t values (3, 2);
+insert t values (4, 3);
+select bit_and(c) from t where NULL;
+select bit_or(c) from t where NULL;
+select bit_xor(c) from t where NULL;
+select approx_count_distinct(c) from t where NULL;
+select count(*) from t;
+select count(*) from t group by d order by c;
+select distinct 99 from t group by d having d > 0;
+select count(*) from t having 1 = 0;
+select c,d from t group by d order by d;
+select - c, c as d from t group by c having null not between c and avg(distinct d) - d;
+select - c as c from t group by c having t.c > 5;
+select t1.c from t t1, t t2 group by c having c > 5;
+select count(*) from (select d, c from t) k where d != 0 group by d order by c;
+select c as a from t group by d having a < 0;
+select c as a from t group by d having sum(a) = 2;
+select count(distinct c) from t group by d order by c;
+select approx_count_distinct(c) from t group by d order by c;
+select sum(c) as a from t group by d order by a;
+select sum(c) as a, sum(c+1), sum(c), sum(c+1) from t group by d order by a;
+select count(distinct c,d) from t;
+select approx_count_distinct(c,d) from t;
+--error 1064
+select count(c,d) from t;
+select d*2 as ee, sum(c) from t group by ee order by ee;
+select sum(distinct c) as a from t group by d order by a;
+select min(c) as a from t group by d order by a;
+select max(c) as a from t group by d order by a;
+select avg(c) as a from t group by d order by a;
+select c, approx_count_distinct(d) as a from t group by c order by a, c;
+select d, d + 1 from t group by d order by d;
+select count(*) from t;
+select count(distinct d) from t;
+select approx_count_distinct(d) from t;
+select count(*) as a from t group by d having sum(c) > 3 order by a;
+select max(c) from t group by d having sum(c) > 3 order by avg(c) desc;
+select sum(-1) from t a left outer join t b on not null is null;
+select count(*), b.d from t a left join t b on a.c = b.d group by b.d order by b.d;
+select count(b.d), b.d from t a left join t b on a.c = b.d group by b.d order by b.d;
+select count(b.d), b.d from t b right join t a on a.c = b.d group by b.d order by b.d;
+select count(*), b.d from t b right join t a on a.c = b.d group by b.d order by b.d;
+select max(case when b.d is null then 10 else b.c end), b.d from t b right join t a on a.c = b.d group by b.d order by b.d;
+select count(*) from t a , t b;
+select count(*) from t a , t b, t c;
+select count(*) from t a , t b where a.c = b.d;
+select count(a.d), sum(b.c) from t a , t b where a.c = b.d order by a.d;
+select count(*) from t a , t b, t c where a.c = b.d and b.d = c.d;
+select count(*), a.c from t a , t b, t c where a.c = b.d and b.d = c.d group by c.d order by a.c;
+select count(a.c), c.d from t a , t b, t c where a.c = b.d and b.d = c.d group by c.d order by c.d;
+select count(*) from t a , t b where a.c = b.d and a.c + b.d = 2;
+select count(*) from t a join t b having sum(a.c) < 0;
+select count(*) from t a join t b where a.c < 0;
+select sum(b.c), count(b.d), a.c from t a left join t b on a.c = b.d group by b.d order by b.d;
+select 1-d as d from t having d < 0 order by d desc;
+select 1-d as d from t having d + 1 < 0 order by d + 1;
+drop table if exists t;
+create table t (keywords varchar(20), type int);
+insert into t values('测试', 1), ('test', 2);
+select group_concat(keywords) from t group by type order by type;
+drop table if exists t;
+create table t (c int, d int);
+insert t values (1, -1);
+insert t values (1, 0);
+insert t values (1, 1);
+select d, d*d as d from t having d = -1;
+select d*d as d from t group by d having d = -1;
+select d, 1-d as d, c as d from t order by d;
+select d, 1-d as d, c as d from t order by d+1;
+select d, 1-d as d, c as d from t group by d order by d;
+select d as d1, t.d as d1, 1-d as d1, c as d1 from t having d1 < 10 order by d;
+select d*d as d1, c as d1 from t group by d1 order by d1;
+select d*d as d1, c as d1 from t group by 2;
+select * from t group by 2 order by d;
+select * , sum(d) from t group by 1 order by d;
+select sum(d), t.* from t group by 2 order by d;
+select d as d, c as d from t group by d + 1 order by t.d;
+select c as d, c as d from t group by d order by d;
+--error 1052
+select d as d, c as d from t group by d;
+--error 1052
+select t.d, c as d from t group by d;
+select *, c+1 as d from t group by 3 order by d;
+drop table if exists t1;
+create table t1(a float, b int default 3);
+insert into t1 (a) values (2), (11), (8);
+select min(a), min(case when 1=1 then a else NULL end), min(case when 1!=1 then NULL else a end) from t1 where b=3 group by b;
+drop table if exists t1;
+create table t1(a int, index(a));
+insert into t1 (a) values (1),(2),(3),(4),(5);
+select count(a) from t1 where a < 3;
+drop table if exists t1;
+create table t1(a int, b int, index(a));
+select sum(b) from (select * from t1) t group by a;
+select sum(b) from (select * from t1) t;
+insert into t1 (a, b) values (1, 1),(2, 2),(3, 3),(1, 4),(3, 5);
+select avg(b) from (select * from t1) t group by a order by a;
+select sum(b) from (select * from t1) t group by a order by a;
+select count(b) from (select * from t1) t group by a order by a;
+select max(b) from (select * from t1) t group by a order by a;
+select min(b) from (select * from t1) t group by a order by a;
+drop table if exists t1;
+create table t1(a int, b int, index(a,b));
+insert into t1 (a, b) values (1, 1),(2, 2),(3, 3),(1, 4), (1,1),(3, 5), (2,2), (3,5), (3,3);
+select avg(distinct b) from (select * from t1) t group by a order by a;
+select sum(distinct b) from (select * from t1) t group by a order by a;
+select count(distinct b) from (select * from t1) t group by a order by a;
+select approx_count_distinct(b) from (select * from t1) t group by a order by a;
+select max(distinct b) from (select * from t1) t group by a order by a;
+select min(distinct b) from (select * from t1) t group by a order by a;
+drop table if exists t1;
+create table t1(a int, b int, index(b, a));
+insert into t1 (a, b) values (1, 1),(2, 2),(3, 3),(1, 4), (1,1),(3, 5), (2,2), (3,5), (3,3);
+select avg(distinct b) from (select * from t1) t group by a order by a;
+select sum(distinct b) from (select * from t1) t group by a order by a;
+select count(distinct b) from (select * from t1) t group by a order by a;
+select max(distinct b) from (select * from t1) t group by a order by a;
+select min(distinct b) from (select * from t1) t group by a order by a;
+drop table if exists t;
+create table t (id int primary key, ds date);
+insert into t (id, ds) values (1, "1991-09-05"),(2,"1991-09-05"), (3, "1991-09-06"),(0,"1991-09-06");
+select sum(id), ds from t group by ds order by id;
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (col0 int, col1 int);
+create table t2 (col0 int, col1 int);
+insert into t1 values(83, 0), (26, 0), (43, 81);
+insert into t2 values(22, 2), (3, 12), (38, 98);
+SELECT COALESCE ( + 1, cor0.col0 ) + - CAST( NULL AS DECIMAL ) FROM t2, t1 AS cor0, t2 AS cor1 GROUP BY cor0.col1;
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (c1 int);
+create table t2 (c1 int);
+insert into t1 values(3), (2);
+insert into t2 values(1), (2);
+set @@session.tidb_opt_insubq_to_join_and_agg = 0;
+select sum(c1 in (select * from t2)) from t1;
+set @@session.tidb_opt_insubq_to_join_and_agg = 1;
+select sum(c1 in (select * from t2)) from t1;
+select sum(c1) k from (select * from t1 union all select * from t2)t group by c1 * 2 order by k;
+drop table if exists t;
+create table t (a int, b int, c int);
+insert into t values(1, 2, 3), (1, 2, 4);
+select count(distinct c), count(distinct a,b) from t;
+select approx_count_distinct( c), approx_count_distinct( a,b) from t;
+drop table if exists t;
+create table t (a float);
+insert into t values(966.36), (363.97), (569.99), (453.33), (376.45), (321.93), (12.12), (45.77), (9.66), (612.17);
+select distinct count(distinct a) from t;
+select distinct approx_count_distinct( a) from t;
+create table idx_agg (a int, b int, index (b));
+insert idx_agg values (1, 1), (1, 2), (2, 2);
+select sum(a), sum(b) from idx_agg where b > 0 and b < 10;
+select 10 from idx_agg group by b;
+select 11 from idx_agg group by a;
+set @@tidb_init_chunk_size=1;
+--sorted_result
+select group_concat(b) from idx_agg group by b;
+set @@tidb_init_chunk_size=2;
+drop table if exists t;
+create table t(a int(11), b decimal(15,2));
+insert into t values(1,771.64),(2,378.49),(3,920.92),(4,113.97);
+select a, max(b) from t group by a order by a limit 2;
+drop table if exists t;
+create table t(a int(11), b char(15));
+insert into t values(1,771.64),(2,378.49),(3,920.92),(4,113.97);
+select a, max(b) from t group by a order by a limit 2;
+drop table if exists t;
+create table t (id int(11) NOT NULL, tags json DEFAULT NULL);
+insert into t values (1, '{"i": 1, "n": "n1"}');
+insert into t values (2, '{"i": 2, "n": "n2"}');
+insert into t values (3, '{"i": 3, "n": "n3"}');
+insert into t values (4, '{"i": 4, "n": "n4"}');
+insert into t values (5, '{"i": 5, "n": "n5"}');
+insert into t values (6, '{"i": 0, "n": "n6"}');
+insert into t values (7, '{"i": -1, "n": "n7"}');
+select sum(tags->'$.i') from t;
+select id, count(95), sum(95), avg(95), bit_or(95), bit_and(95), bit_or(95), max(95), min(95), group_concat(95) from t where null;
+truncate table t;
+drop table if exists s;
+create table s(id int);
+select t.id, count(95), sum(95), avg(95), bit_or(95), bit_and(95), bit_or(95), max(95), min(95), group_concat(95), approx_count_distinct(95) from t left join s on t.id = s.id;
+insert into t values (1, '{"i": 1, "n": "n1"}');
+select t.id, count(95), sum(95), avg(95), bit_or(95), bit_and(95), bit_or(95), max(95), min(95), group_concat(95), approx_count_distinct(95) from t left join s on t.id = s.id;
+set @@tidb_hash_join_concurrency=5;
+drop table t;
+CREATE TABLE `t` (`a` bit(1) NOT NULL, PRIMARY KEY (`a`));
+insert into t value(1), (0);
+select a from t group by 1;
+select max(a) from t group by a order by a;
+select cast(a as signed) as idx, cast(max(a) as signed),  cast(min(a) as signed) from t group by 1 order by idx;
+drop table t;
+create table t(a int, b int);
+insert into t value(null, null);
+select group_concat(a), group_concat(distinct a) from t;
+insert into t value(1, null), (null, 1), (1, 2), (3, 4);
+select group_concat(a, b), group_concat(distinct a,b) from t;
+set @@session.tidb_opt_distinct_agg_push_down = 0;
+select count(distinct a) from t;
+set @@session.tidb_opt_distinct_agg_push_down = 1;
+select count(distinct a) from t;
+set @@session.tidb_opt_distinct_agg_push_down = 0;
+select approx_count_distinct( a) from t;
+drop table t;
+create table t(a decimal(10, 4));
+select 10 from t group by a;
+insert into t value(0), (-0.9871), (-0.9871);
+select 10 from t group by a;
+select sum(a) from (select a from t union all select a from t) tmp;
+drop table t;
+create table t(a tinyint, b smallint, c mediumint, d int, e bigint, f float, g double, h decimal);
+insert into t values(1, 2, 3, 4, 5, 6.1, 7.2, 8.3), (1, 3, 4, 5, 6, 7.1, 8.2, 9.3);
+select var_pop(b), var_pop(c), var_pop(d), var_pop(e), var_pop(f), var_pop(g), var_pop(h) from t group by a;
+insert into t values(2, 3, 4, 5, 6, 7.2, 8.3, 9);
+--sorted_result
+select a, var_pop(b) over w, var_pop(c) over w from t window w as (partition by a);
+delete from t where t.a = 2;
+insert into t values(1, 2, 4, 5, 6, 6.1, 7.2, 9);
+select a, var_pop(distinct b), var_pop(distinct c), var_pop(distinct d), var_pop(distinct e), var_pop(distinct f), var_pop(distinct g), var_pop(distinct h) from t group by a;
+drop table t;
+create table t(a int, b bigint, c float, d double, e decimal);
+insert into t values(1, 1000, 6.8, 3.45, 8.3), (1, 3998, -3.4, 5.12, 9.3),(1, 288, 9.2, 6.08, 1);
+select variance(b), variance(c), variance(d), variance(e) from t group by a;
+insert into t values(1, 255, 6.8, 6.08, 1);
+select variance(distinct b), variance(distinct c), variance(distinct d), variance(distinct e) from t group by a;
+insert into t values(2, 322, 0.8, 2.22, 6);
+--sorted_result
+select a, variance(b) over w from t window w as (partition by a);
+-- error 1305
+select std_samp(a) from t;
+drop table if exists t1;
+create table t1 (a int, b int generated always as (-a) virtual, c int generated always as (-a) stored);
+insert into t1 (a) values (2), (1), (1), (3), (NULL);
+select sum(a) from t1 group by b order by b;
+select sum(a) from t1 group by c order by c;
+select sum(b) from t1 group by a order by a;
+select sum(b) from t1 group by c order by c;
+select sum(c) from t1 group by a order by a;
+select sum(c) from t1 group by b order by b;
+drop table if exists t1;
+create table t1 (grp int, a bigint unsigned, c char(10) not null);
+insert into t1 values (1,1,"a");
+insert into t1 values (2,2,"b");
+insert into t1 values (2,3,"c");
+insert into t1 values (3,4,"E");
+insert into t1 values (3,5,"C");
+insert into t1 values (3,6,"D");
+select stddev_pop(all a) from t1;
+select stddev_pop(a) from t1 group by grp order by grp;
+select sum(a)+count(a)+avg(a)+stddev_pop(a) as sum from t1 group by grp order by grp;
+select std(all a) from t1;
+select std(a) from t1 group by grp order by grp;
+select sum(a)+count(a)+avg(a)+std(a) as sum from t1 group by grp order by grp;
+select stddev(all a) from t1;
+select stddev(a) from t1 group by grp order by grp;
+select sum(a)+count(a)+avg(a)+stddev(a) as sum from t1 group by grp order by grp;
+drop table if exists t1;
+CREATE TABLE t1 (a int, b int);
+select  stddev_pop(b) from t1;
+select  std(b) from t1;
+select  stddev(b) from t1;
+insert into t1 values (1,null);
+select stddev_pop(b) from t1 group by a order by a;
+select std(b) from t1 group by a order by a;
+select stddev(b) from t1 group by a order by a;
+insert into t1 values (1,null);
+insert into t1 values (2,null);
+select  stddev_pop(b) from t1 group by a order by a;
+select  std(b) from t1 group by a order by a;
+select  stddev(b) from t1 group by a order by a;
+insert into t1 values (2,1);
+select  stddev_pop(b) from t1 group by a order by a;
+select  std(b) from t1 group by a order by a;
+select  stddev(b) from t1 group by a order by a;
+insert into t1 values (3,1);
+select  stddev_pop(b) from t1 group by a order by a;
+select  std(b) from t1 group by a order by a;
+select  stddev(b) from t1 group by a order by a;
+drop table if exists t1;
+CREATE TABLE t1 (id int(11),value1 float(10,2));
+INSERT INTO t1 VALUES (1,0.00),(1,1.00), (1,2.00), (2,10.00), (2,11.00), (2,12.00), (2,13.00);
+select id, stddev_pop(value1), var_pop(value1), stddev_samp(value1), var_samp(value1) from t1 group by id order by id;
+drop table if exists t1;
+CREATE TABLE t1 (id int);
+insert into t1 values (1),(2);
+select  stddev_pop(id) from t1;
+insert into t1 values (1);
+select  stddev_pop(distinct id) from t1;
+set @@tidb_hash_join_concurrency=default;
+set sql_mode=default;
+set @@session.tidb_opt_insubq_to_join_and_agg = default;
+set @@tidb_init_chunk_size=default;
+set @@session.tidb_opt_distinct_agg_push_down = default;
+
+# TestOnlyFullGroupBy
+set sql_mode = 'ONLY_FULL_GROUP_BY';
+set @@session.tidb_enable_new_only_full_group_by_check = 'on';
+drop table if exists t, x;
+create table t(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d));
+create table x(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d));
+select max(a) from t group by d;
+select max(a), any_value(c) from t group by d;
+--error 1055
+select * from t group by d;
+--error 1055
+select b-c from t group by b+c;
+--error 1055
+select (b-c)*(b+c), min(a) from t group by b+c, b-c;
+--error 1055
+select b between c and d from t group by b,c;
+--error 1055
+select case b when 1 then c when 2 then d else d end from t group by b,c;
+--error 1055
+select c > (select b from t) from t group by b;
+--error 1055
+select c is null from t group by b;
+--error 1055
+select c is true from t group by b;
+--error 1055
+select (c+b)*d from t group by c,d;
+--error 1055
+select b in (c,d) from t group by b,c;
+--error 1055
+select b like '%a' from t group by c;
+--error 1055
+select c REGEXP '1.*' from t group by b;
+--error 1055
+select -b from t group by c;
+--error 8123
+select a, max(b) from t;
+--error 8123
+select sum(a)+b from t;
+--error 8123
+select count(b), c from t;
+select count(b), any_value(c) from t;
+select count(b), any_value(c) + 2 from t;
+--error 8123
+select distinct a, b, count(a) from t;
+select a from t group by a,b,c;
+select b from t group by b;
+--error 1055
+select b*rand() from t group by b;
+select b as e from t group by b;
+select b+c from t group by b+c;
+select b+c, min(a) from t group by b+c, b-c;
+select b+c, min(a) from t group by b, c;
+select b+c from t group by b,c;
+--error 1055
+select b+c from (select b, b+rand() as c from t) t group by b;
+select b between c and d from t group by b,c,d;
+select case b when 1 then c when 2 then d else d end from t group by b,c,d;
+select c > (select b from t) from t group by c;
+select exists (select * from t) from t group by d;
+select c is null from t group by c;
+select c is true from t group by c;
+select (c+b)*d from t group by c,b,d;
+select b in (c,d) from t group by b,c,d;
+select b like '%a' from t group by b;
+select c REGEXP '1.*' from t group by c;
+select -b from t group by b;
+select max(a+b) from t;
+select avg(a)+1 from t;
+select count(c), 5 from t;
+select * from t group by a;
+select * from t group by b,d;
+--error 1055
+select * from t group by b,c;
+select * from t where c = d group by b, c;
+select t.*, x.* from t, x where t.a = x.a group by t.a;
+select t.*, x.* from t, x where t.b = x.b and t.d = x.d group by t.b, t.d;
+select t.*, x.* from t, x where t.b = x.a group by t.b, t.d;
+select t.b, x.* from t, x where t.b = x.a group by t.b;
+select t.*, x.* from t, x where t.c = x.a group by t.b, t.c;
+select t.*, x.* from t inner join x on t.a = x.a group by t.a;
+select t.*, x.* from t inner join x  on (t.b = x.b and t.d = x.d) group by t.b, x.d;
+select t.b, x.* from t inner join x on t.b = x.b group by t.b, x.d;
+select t.b, x.* from t left join x on t.b = x.b group by t.b, x.d;
+select t.b, x.* from t left join x on x.b = t.b group by t.b, x.d;
+select x.b, t.* from t right join x on x.b = t.b group by x.b, t.d;
+select x.b, t.* from t right join x on t.b = x.b group by x.b, t.d;
+--error 1055
+select t.b, x.* from t right join x on t.b = x.b group by t.b, x.d;
+--error 1055
+select t.b, x.* from t right join x on t.b = x.b group by t.b, x.d;
+select * from (select * from t) as e group by a;
+select * from (select * from t) as e group by b,d;
+--error 1055
+select * from (select * from t) as e group by b,c;
+select c from t group by c,d order by d;
+--error 1055
+select c from t group by c order by d;
+--error 1052
+select c from t,x group by t.c;
+set sql_mode = default;
+set @@session.tidb_enable_new_only_full_group_by_check = default;
+
+# TestIssue24676
+set sql_mode = 'ONLY_FULL_GROUP_BY';
+drop table if exists t1;
+create table t1(
+		id int(11) NOT NULL PRIMARY KEY,
+		c1 int(11) NOT NULL DEFAULT '0'
+		);
+SELECT c1 FROM t1 GROUP BY c1 ORDER BY c1 ASC;
+SELECT ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) AS `c1` FROM `t1` GROUP BY ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) ORDER BY ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) ASC;
+--error 1055
+SELECT ((floor(((`c1` - 10) / 300)) * 50000) + 0.0) AS `c1` FROM `t1` GROUP BY ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) ORDER BY ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) ASC;
+set sql_mode = default;
+
+# TestIssue13652
+set sql_mode = 'ONLY_FULL_GROUP_BY';
+drop table if exists t;
+create table t(a real);
+select a from t group by (a);
+select a from t group by ((a));
+select a from t group by +a;
+select a from t group by ((+a));
+-- error 1055
+select a from t group by (-a);
+set sql_mode = default;
+
+# TestGroupConcatAggr
+## issue #5411
+drop table if exists test;
+create table test(id int, name int);
+insert into test values(1, 10);
+insert into test values(1, 20);
+insert into test values(1, 30);
+insert into test values(2, 20);
+insert into test values(3, 200);
+insert into test values(3, 500);
+select id, group_concat(name) from test group by id order by id;
+select id, group_concat(name SEPARATOR ';') from test group by id order by id;
+select id, group_concat(name SEPARATOR ',') from test group by id order by id;
+select id, group_concat(name SEPARATOR '%') from test group by id order by id;
+select id, group_concat(name SEPARATOR '') from test group by id order by id;
+select id, group_concat(name SEPARATOR '123') from test group by id order by id;
+select group_concat(id ORDER BY name) from (select * from test order by id, name limit 2,2) t;
+select group_concat(id ORDER BY name desc) from (select * from test order by id, name limit 2,2) t;
+select group_concat(name ORDER BY id) from (select * from test order by id, name limit 2,2) t;
+select group_concat(name ORDER BY id desc) from (select * from test order by id, name limit 2,2) t;
+select group_concat(name ORDER BY name desc SEPARATOR '++') from test;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select group_concat(distinct name order by name desc) from test;
+set session group_concat_max_len=4;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=5;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=6;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=7;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=8;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=9;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=10;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=11;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=12;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=13;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=14;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=15;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=4;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=5;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=6;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=7;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=8;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=9;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=10;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=11;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=12;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=13;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=14;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=15;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=4;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=5;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=6;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=7;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=8;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=9;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=10;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=11;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=12;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=13;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=14;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=15;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=default;
+
+## test varchar table
+drop table if exists test2;
+create table test2(id varchar(20), name varchar(20));
+insert into test2 select * from test;
+select group_concat(id ORDER BY name) from (select * from test2 order by id, name limit 2,2) t;
+select group_concat(id ORDER BY name desc) from (select * from test2 order by id, name limit 2,2) t;
+select group_concat(name ORDER BY id) from (select * from test2 order by id, name limit 2,2) t;
+select group_concat(name ORDER BY id desc) from (select * from test2 order by id, name limit 2,2) t;
+select group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test2;
+
+## test Position Expr
+select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 1 desc, id SEPARATOR '++') from test;
+select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 2 desc, name SEPARATOR '++') from test;
+-- error 1054
+select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 3 desc, name SEPARATOR '++') from test;
+
+## test Param Marker
+prepare s1 from "select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY floor(id/?) desc, name SEPARATOR '++') from test";
+set @a=2;
+execute s1 using @a;
+prepare s1 from "select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY ? desc, name SEPARATOR '++') from test";
+set @a=2;
+execute s1 using @a;
+set @a=3;
+-- error 1054
+execute s1 using @a;
+set @a=3.0;
+execute s1 using @a;
+
+## test partition table
+drop table if exists ptest;
+CREATE TABLE ptest (id int,name int) PARTITION BY RANGE ( id ) (PARTITION `p0` VALUES LESS THAN (2), PARTITION `p1` VALUES LESS THAN (11));
+insert into ptest select * from test;
+set session tidb_opt_distinct_agg_push_down = 0;
+set session tidb_opt_agg_push_down = 0;
+select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
+select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
+set session tidb_opt_distinct_agg_push_down = 0;
+set session tidb_opt_agg_push_down = 1;
+select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
+select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
+set session tidb_opt_distinct_agg_push_down = 1;
+set session tidb_opt_agg_push_down = 0;
+select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
+select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
+set session tidb_opt_distinct_agg_push_down = 1;
+set session tidb_opt_agg_push_down = 1;
+select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
+select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
+set session tidb_opt_distinct_agg_push_down = default;
+set session tidb_opt_agg_push_down = default;
+
+## issue #9920
+select group_concat(123, null);
+
+## issue #23129
+drop table if exists t1;
+create table t1(cid int, sname varchar(100));
+insert into t1 values(1, 'Bob'), (1, 'Alice');
+insert into t1 values(3, 'Ace');
+set @@group_concat_max_len=5;
+select group_concat(sname order by sname) from t1 group by cid;
+drop table if exists t1;
+create table t1(c1 varchar(10));
+insert into t1 values('0123456789');
+insert into t1 values('12345');
+set @@group_concat_max_len=8;
+select group_concat(c1 order by c1) from t1 group by c1;
+set @@group_concat_max_len=default;
+
+# TestSelectDistinct
+drop table if exists select_distinct_test;
+create table select_distinct_test(id int not null default 1, name varchar(255), PRIMARY KEY(id));
+insert INTO select_distinct_test VALUES (1, "hello");
+insert into select_distinct_test values (2, "hello");
+begin;
+select distinct name from select_distinct_test;
+commit;
+
+# TestInjectProjBelowTopN
+drop table if exists t;
+create table t (i int);
+insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);
+explain format = 'brief' select * from t order by i + 1;
+select * from t order by i + 1;
+explain format = 'brief' select * from t order by i + 1 limit 2;
+select * from t order by i + 1 limit 2;
+select i, i, i from t order by i + 1;
+
+# TestIssue12759HashAggCalledByApply
+insert into mysql.opt_rule_blacklist value("decorrelate");
+drop table if exists test;
+create table test (a int);
+insert into test value(1);
+select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
+explain format = 'brief' select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
+delete from mysql.opt_rule_blacklist where name = "decorrelate";
+admin reload opt_rule_blacklist;
+

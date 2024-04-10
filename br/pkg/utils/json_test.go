@@ -54,13 +54,13 @@ var testMetaJSONs = [][]byte{
             "origin_default_bit": null,
             "state": 5,
             "type": {
-              "Charset": "utf8mb4",
-              "Collate": "utf8mb4_bin",
-              "Decimal": 0,
-              "Elems": null,
-              "Flag": 4099,
-              "Flen": 256,
-              "Tp": 15
+              "charset": "utf8mb4",
+              "collate": "utf8mb4_bin",
+              "decimal": 0,
+              "elems": null,
+              "flag": 4099,
+              "flen": 256,
+              "tp": 15
             },
             "version": 2
           }
@@ -204,6 +204,44 @@ var testMetaJSONs = [][]byte{
   "is_raw_kv": true,
   "br_version": "BR\nRelease Version: v5.0.0-master\nGit Commit Hash: c0d60dae4998cf9ac40f02e5444731c15f0b2522\nGit Branch: HEAD\nGo Version: go1.13.4\nUTC Build Time: 2021-03-25 08:10:08\nRace Enabled: false"
 }`),
+	[]byte(`{
+    "files": [
+      {
+        "sha256": "3ae857ef9b379d498ae913434f1d47c3e90a55f3a4cd9074950bfbd163d5e5fc",
+        "start_key": "7480000000000000115f720000000000000000",
+        "end_key": "7480000000000000115f72ffffffffffffffff00",
+        "name": "1_20_9_36adb8cedcd7af34708edff520499e712e2cfdcb202f5707dc9305a031d55a98_1675066275424_write.sst",
+        "end_version": 439108573623222300,
+        "crc64xor": 16261462091570213000,
+        "total_kvs": 15,
+        "total_bytes": 1679,
+        "cf": "write",
+        "size": 2514,
+        "cipher_iv": "56MTbxA4CaNILpirKnBxUw=="
+      }
+    ],
+    "schemas": [
+      {
+        "db": {
+          "charset": "utf8mb4",
+          "collate": "utf8mb4_bin",
+          "db_name": {
+            "L": "test",
+            "O": "test"
+          },
+          "id": 1,
+          "policy_ref_info": null,
+          "state": 5
+        }
+      }
+    ],
+    "ddls": [],
+    "cluster_id": 7194351714070942000,
+    "cluster_version": "\"6.1.0\"\n",
+    "br_version": "BR\nRelease Version: v6.1.0\nGit Commit Hash: 1a89decdb192cbdce6a7b0020d71128bc964d30f\nGit Branch: heads/refs/tags/v6.1.0\nGo Version: go1.18.2\nUTC Build Time: 2022-06-05 05:09:12\nRace Enabled: false",
+    "end_version": 439108573623222300,
+    "new_collations_enabled": "True"
+  }`),
 }
 
 func TestEncodeAndDecode(t *testing.T) {

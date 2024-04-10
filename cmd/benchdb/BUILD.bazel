@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "benchdb_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/cmd/benchdb",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/parser/terror",
+        "//pkg/session",
+        "//pkg/session/types",
+        "//pkg/store",
+        "//pkg/store/driver",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "benchdb",
+    embed = [":benchdb_lib"],
+    visibility = ["//visibility:public"],
+)

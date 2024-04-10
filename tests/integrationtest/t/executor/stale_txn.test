@@ -1,0 +1,41 @@
+# TestIssue35686
+## This query should not panic
+--disable_result_log
+select * from information_schema.ddl_jobs as of timestamp now();
+--enable_result_log
+
+# TestIssue31954
+drop table if exists t1;
+create table t1 (id int primary key, v int);
+insert into t1 values(1, 10);
+select sleep(0.1);
+set @a=now(6);
+select sleep(0.1);
+update t1 set v=100 where id=1;
+select * from t1 as of timestamp @a where v=(select v from t1 as of timestamp @a where id=1);
+select (select v from t1 as of timestamp @a where id=1) as v;
+
+# TestIssue30872
+set tidb_txn_mode='pessimistic';
+set tx_isolation = 'READ-COMMITTED';
+drop table if exists t1;
+create table t1 (id int primary key, v int);
+insert into t1 values(1, 10);
+select sleep(0.1);
+set @a=now(6);
+select sleep(0.1);
+update t1 set v=100 where id=1;
+set autocommit=0;
+select * from t1 as of timestamp @a;
+
+set tidb_txn_mode = default;
+set tx_isolation = default;
+set autocommit = default;
+
+# TestIssue33728
+drop table if exists t1;
+create table t1 (id int primary key, v int);
+--error 8135
+select * from t1 as of timestamp NULL;
+--error 8135
+start transaction read only as of timestamp NULL;

@@ -1,0 +1,48 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "log",
+    srcs = [
+        "filter.go",
+        "log.go",
+        "testlogger.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/lightning/log",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/logutil",
+        "@com_github_aws_aws_sdk_go//aws/awserr",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+        "@org_uber_go_zap//zaptest",
+    ],
+)
+
+go_test(
+    name = "log_test",
+    timeout = "short",
+    srcs = [
+        "filter_test.go",
+        "log_test.go",
+    ],
+    flaky = True,
+    importpath = "github.com/pingcap/tidb/pkg/lightning/log_test",
+    shard_count = 5,
+    deps = [
+        ":log",
+        "//pkg/util/logutil",
+        "@com_github_aws_aws_sdk_go//aws/awserr",
+        "@com_github_aws_aws_sdk_go//aws/request",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)

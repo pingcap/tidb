@@ -1,0 +1,34 @@
+set @a = now(6);
+drop table if exists t;
+create table t(a int);
+insert into t values (1), (1), (1), (1), (1);
+select * from t t1 join t t2 on t1.a = t2.a;
+a	a
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+1	1
+select timestampdiff(microsecond, @a, now(6)) < 1000000;
+timestampdiff(microsecond, @a, now(6)) < 1000000
+1

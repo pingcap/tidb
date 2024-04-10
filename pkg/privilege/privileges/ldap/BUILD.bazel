@@ -1,0 +1,37 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ldap",
+    srcs = [
+        "const.go",
+        "ldap_common.go",
+        "sasl.go",
+        "simple.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/privilege/privileges/ldap",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/privilege/conn",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "@com_github_go_ldap_ldap_v3//:ldap",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "ldap_test",
+    timeout = "short",
+    srcs = ["ldap_common_test.go"],
+    embed = [":ldap"],
+    embedsrcs = [
+        "test/ca.crt",
+        "test/ldap.crt",
+        "test/ldap.key",
+    ],
+    flaky = True,
+    shard_count = 4,
+    deps = ["@com_github_stretchr_testify//require"],
+)

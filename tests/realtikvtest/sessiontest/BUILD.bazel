@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "sessiontest_test",
+    timeout = "moderate",
+    srcs = [
+        "main_test.go",
+        "paging_test.go",
+        "session_fail_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    deps = [
+        "//pkg/config",
+        "//pkg/session",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/util/sqlkiller",
+        "//tests/realtikvtest",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

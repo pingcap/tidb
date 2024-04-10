@@ -1,0 +1,177 @@
+drop table if exists t;
+create table t(a int primary key auto_increment not null, b int, c int, unique key idx_abc(a, b, c));
+insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 5);
+select * from t;
+a	b	c
+1	1	1
+2	2	2
+3	3	3
+4	4	5
+select a, b, c from t where (a, b, c) in ((1, 1, 1), (1, 1, 1), (1, 1, 1));
+a	b	c
+1	1	1
+select a, b, c from t where (a, b, c) in ((1, 1, 1), (2, 2, 2), (1, 1, 1));
+a	b	c
+1	1	1
+2	2	2
+select a, b, c from t where (a, b, c) in ((1, 1, 1), (2, 2, 2), (100, 1, 1));
+a	b	c
+1	1	1
+2	2	2
+select a, b, c from t where (a, b, c) in ((1, 1, 1), (2, 2, 2), (100, 1, 1), (4, 4, 5));
+a	b	c
+1	1	1
+2	2	2
+4	4	5
+select * from t where a in (1, 2, 4, 1, 2);
+a	b	c
+1	1	1
+2	2	2
+4	4	5
+select * from t where a in (1, 2, 4, 1, 2, 100);
+a	b	c
+1	1	1
+2	2	2
+4	4	5
+select a from t where a in (1, 2, 4, 1, 2, 100);
+a
+1
+2
+4
+drop table if exists t;
+create table t (id int primary key auto_increment, name varchar(30));
+begin;
+insert into t values (4, 'name');
+select * from t where id in (4);
+id	name
+4	name
+select * from t where id in (4) for update;
+id	name
+4	name
+rollback;
+begin pessimistic;
+insert into t values (4, 'name');
+select * from t where id in (4);
+id	name
+4	name
+select * from t where id in (4) for update;
+id	name
+4	name
+rollback;
+create table s (a int, b int, c int, primary key (a, b));
+insert s values (1, 1, 1), (3, 3, 3), (5, 5, 5);
+begin pessimistic;
+update s set c = 10 where a = 3;
+select * from s where (a, b) in ((1, 1), (2, 2), (3, 3)) for update;
+a	b	c
+1	1	1
+3	3	10
+rollback;
+drop table if exists customers;
+create table customers (id int primary key, token varchar(255) unique);
+INSERT INTO executor__batch_point_get.customers (id, token) VALUES (28, '07j');
+INSERT INTO executor__batch_point_get.customers (id, token) VALUES (29, '03j');
+BEGIN;
+SELECT id, token FROM executor__batch_point_get.customers WHERE id IN (28);
+id	token
+28	07j
+SELECT id, token FROM executor__batch_point_get.customers WHERE id IN (28, 29);
+id	token
+28	07j
+29	03j
+rollback;
+drop table if exists t18843;
+create table t18843 ( id bigint(10) primary key, f varchar(191) default null, unique key `idx_f` (`f`));
+insert into t18843 values (1, '');
+select * from t18843 where f in (null);
+id	f
+insert into t18843 values (2, null);
+select * from t18843 where f in (null);
+id	f
+select * from t18843 where f is null;
+id	f
+2	NULL
+drop table if exists ttt;
+create table ttt(a enum("a","b","c","d"), primary key(a));
+insert into ttt values(1);
+select * from ttt where ttt.a in ("1","b");
+a
+select * from ttt where ttt.a in (1,"b");
+a
+a
+drop table if exists t2;
+create table t2 (id bigint(20) unsigned, primary key(id));
+insert into t2 values (8738875760185212610);
+insert into t2 values (9814441339970117597);
+insert into t2 values (1);
+select id from t2 where id in (8738875760185212610, 1, 9814441339970117597) order by id;
+id
+1
+8738875760185212610
+9814441339970117597
+select id from t2 where id in (8738875760185212610, 1, 9814441339970117597) order by id desc;
+id
+9814441339970117597
+8738875760185212610
+1
+drop table if exists t;
+create table t (a int primary key);
+set @a=(select current_timestamp(3));
+select sleep(0.05);
+sleep(0.05)
+0
+insert into t values (1);
+select * from t as of timestamp @a where a in (1,2,3);
+a
+drop table if exists t;
+drop table if exists t1;
+CREATE TABLE t1 (id int, c varchar(128), primary key (id)) PARTITION BY HASH (id) PARTITIONS 3;
+insert into t1 values (1, "a"), (11, "b"), (21, "c");
+explain format='brief' select * from t1 where id in (1, 1, 11);
+id	estRows	task	access object	operator info
+Batch_Point_Get	3.00	root	table:t1, partition:p1,p2	handle:[1 11], keep order:false, desc:false
+select * from t1 where id in (1, 1, 11);
+id	c
+1	a
+11	b
+explain format='brief' select * from t1 where id in (1, 11, 11, 21);
+id	estRows	task	access object	operator info
+Batch_Point_Get	4.00	root	table:t1, partition:p0,p1,p2	handle:[1 11 21], keep order:false, desc:false
+select * from t1 where id in (1, 11, 11, 21);
+id	c
+1	a
+11	b
+21	c
+drop table if exists t2;
+CREATE TABLE t2 (id int, c varchar(128), primary key (id)) partition by range (id)(
+partition p0 values less than (10),
+partition p1 values less than (20),
+partition p2 values less than (30));
+insert into t2 values (1, "a"), (11, "b"), (21, "c");
+explain format='brief' select * from t2 where id in (1, 1, 11);
+id	estRows	task	access object	operator info
+Batch_Point_Get	3.00	root	table:t2, partition:p0,p1	handle:[1 11], keep order:false, desc:false
+select * from t2 where id in (1, 1, 11);
+id	c
+1	a
+11	b
+explain format='brief' select * from t2 where id in (1, 1, 11);
+id	estRows	task	access object	operator info
+Batch_Point_Get	3.00	root	table:t2, partition:p0,p1	handle:[1 11], keep order:false, desc:false
+select * from t2 where id in (1, 11, 11, 21);
+id	c
+1	a
+11	b
+21	c
+drop table if exists tkey;
+create table tkey (col1 int not null, col2 varchar(32) not null, col3 int not null, unique(col1, col2)) partition by key(col2) partitions 4;
+insert into tkey values(1, 'a', 1), (2, 'b', 2);
+set session tidb_skip_missing_partition_stats=0;
+set session tidb_opt_fix_control = "";
+explain format='brief' select col1, col2, col3 from tkey where col1 = 1 and col2 = 'a' or col1 = 3 and col2 = 'c';
+id	estRows	task	access object	operator info
+Batch_Point_Get	2.00	root	table:tkey, partition:p3, index:col1(col1, col2)	keep order:false, desc:false
+select col1, col2, col3 from tkey where col1 = 1 and col2 = 'a' or col1 = 3 and col2 = 'c';
+col1	col2	col3
+1	a	1
+drop table tkey;

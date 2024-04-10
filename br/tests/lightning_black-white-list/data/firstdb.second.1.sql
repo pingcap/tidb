@@ -1,1 +1,0 @@
-create table `second` values (909);

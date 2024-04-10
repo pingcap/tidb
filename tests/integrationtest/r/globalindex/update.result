@@ -1,0 +1,28 @@
+set tidb_enable_global_index=true;
+drop table if exists t;
+CREATE TABLE `t` (
+`a` int(11) NOT NULL,
+`b` int(11) DEFAULT NULL,
+`c` int(11) DEFAULT NULL,
+PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
+UNIQUE KEY `idx1` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`a`) PARTITIONS 5;
+begin;
+insert into t values (1, 2, 3);
+insert into t values (2, 2, 3);
+Error 1062 (23000): Duplicate entry '2' for key 't.idx1'
+rollback;
+drop table if exists t;
+create table t ( a int, b int, c int, unique key idx(b))
+partition by range( a ) (
+partition p1 values less than (10),
+partition p2 values less than (20),
+partition p3 values less than (30)
+);
+begin;
+insert into t values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);
+update t set a = 2, b = 12 where a = 11;
+Error 1062 (23000): Duplicate entry '12' for key 't.idx'
+rollback;
+set tidb_enable_global_index=default;

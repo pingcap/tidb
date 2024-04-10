@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "operator",
+    srcs = [
+        "compose.go",
+        "operator.go",
+        "pipeline.go",
+        "wrapper.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/disttask/operator",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/resourcemanager/pool/workerpool",
+        "//pkg/resourcemanager/util",
+        "@org_golang_x_sync//errgroup",
+    ],
+)
+
+go_test(
+    name = "operator_test",
+    timeout = "short",
+    srcs = ["pipeline_test.go"],
+    embed = [":operator"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

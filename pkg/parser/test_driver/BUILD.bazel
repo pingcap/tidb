@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "test_driver",
+    srcs = [
+        "test_driver.go",
+        "test_driver_datum.go",
+        "test_driver_helper.go",
+        "test_driver_mydecimal.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/parser/test_driver",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/ast",
+        "//pkg/parser/charset",
+        "//pkg/parser/format",
+        "//pkg/parser/mysql",
+        "//pkg/parser/types",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)

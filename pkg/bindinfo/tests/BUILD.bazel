@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "tests_test",
+    timeout = "moderate",
+    srcs = [
+        "bind_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 18,
+    deps = [
+        "//pkg/bindinfo",
+        "//pkg/bindinfo/internal",
+        "//pkg/bindinfo/norm",
+        "//pkg/domain",
+        "//pkg/parser",
+        "//pkg/parser/model",
+        "//pkg/parser/terror",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "//pkg/util",
+        "//pkg/util/parser",
+        "//pkg/util/stmtsummary",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

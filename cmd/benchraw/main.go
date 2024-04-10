@@ -14,7 +14,6 @@
 
 package main
 
-// #nosec G108
 import (
 	"context"
 	"flag"
@@ -27,10 +26,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/rawkv"
-
 	"go.uber.org/zap"
 )
 

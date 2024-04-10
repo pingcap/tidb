@@ -1,0 +1,854 @@
+set tidb_cost_model_version=2;
+drop table if exists t1, t2;
+set tidb_enable_clustered_index=int_only;
+create table t1(a int not null, c int not null);
+create table t2(a int not null, b int not null, c int not null, primary key(a,b));
+insert into t1 values(1,1);
+insert into t2 values(1,1,1),(1,2,1);
+analyze table t1,t2;
+explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c = t2.c;
+id	estRows	task	access object	operator info
+IndexJoin	2.00	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t1.a, inner key:planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.c, planner__core__casetest__index__index.t2.c)
+├─TableReader(Build)	1.00	root		data:TableFullScan
+│ └─TableFullScan	1.00	cop[tikv]	table:t1	keep order:false
+└─IndexLookUp(Probe)	2.00	root		
+  ├─IndexRangeScan(Build)	2.00	cop[tikv]	table:t2, index:PRIMARY(a, b)	range: decided by [eq(planner__core__casetest__index__index.t2.a, planner__core__casetest__index__index.t1.a)], keep order:false
+  └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t2	keep order:false
+explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c <= t2.b;
+id	estRows	task	access object	operator info
+IndexJoin	2.00	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t1.a, inner key:planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), other cond:le(planner__core__casetest__index__index.t1.c, planner__core__casetest__index__index.t2.b)
+├─TableReader(Build)	1.00	root		data:TableFullScan
+│ └─TableFullScan	1.00	cop[tikv]	table:t1	keep order:false
+└─IndexLookUp(Probe)	2.00	root		
+  ├─IndexRangeScan(Build)	2.00	cop[tikv]	table:t2, index:PRIMARY(a, b)	range: decided by [eq(planner__core__casetest__index__index.t2.a, planner__core__casetest__index__index.t1.a) le(planner__core__casetest__index__index.t1.c, planner__core__casetest__index__index.t2.b)], keep order:false
+  └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t2	keep order:false
+explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t2.b = 1;
+id	estRows	task	access object	operator info
+IndexJoin	1.00	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t1.a, inner key:planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a)
+├─TableReader(Build)	1.00	root		data:TableFullScan
+│ └─TableFullScan	1.00	cop[tikv]	table:t1	keep order:false
+└─IndexLookUp(Probe)	1.00	root		
+  ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t2, index:PRIMARY(a, b)	range: decided by [eq(planner__core__casetest__index__index.t2.a, planner__core__casetest__index__index.t1.a) eq(planner__core__casetest__index__index.t2.b, 1)], keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t2	keep order:false
+set tidb_enable_clustered_index=default;
+drop table if exists t2;
+create table t2(pk int primary key, a json, b json, c int, d int, e int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d));
+explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1) or (2 member of (b) and c=1); -- 1: OR index merge from multi complicated mv index (memberof);
+id	estRows	task	access object	operator info
+IndexMerge_8	0.20	root		type: union
+├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1) or (2 member of (b) and c=1); -- 2: OR index merge from multi complicated mv index (memberof);
+id	estRows	task	access object	operator info
+IndexMerge_8	0.20	root		type: union
+├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 3: OR index merge from multi complicated mv index (memberof)，while each DNF item contains redundant condition, which should be remained as table filters;
+id	estRows	task	access object	operator info
+IndexMerge_9	0.20	root		type: union
+├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 3,2 3], keep order:false, stats:pseudo
+└─Selection_8(Probe)	0.20	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
+  └─TableRowIDScan_7	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_contains(a, '[1, 2, 3]') and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 4: OR index merge from multi complicated mv index (memberof)，make full use of DNF item's condition even if the predicate is intersection case (json_contains);
+id	estRows	task	access object	operator info
+IndexLookUp_11	8.00	root		
+├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t2, index:idx3(c, d)	range:[1 2,1 2], [3 2,3 2], keep order:false, stats:pseudo
+└─Selection_10(Probe)	8.00	cop[tikv]		or(and(json_contains(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
+  └─TableRowIDScan_9	10.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_overlaps(a, '[1, 2, 3]') and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 5: OR index merge from multi complicated mv index (memberof)，make full use of DNF item's condition even if the predicate is intersection case (json_contains);
+id	estRows	task	access object	operator info
+Selection_5	0.32	root		or(and(json_overlaps(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
+└─IndexMerge_11	0.40	root		type: union
+  ├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
+  ├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 2,1 2], keep order:false, stats:pseudo
+  ├─IndexRangeScan_8(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 3,1 3], keep order:false, stats:pseudo
+  ├─IndexRangeScan_9(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 3,2 3], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	0.40	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where ( json_contains(a, '[1, 2, 3]') and d=2) or (2 member of (b) and c=3 and d=2); -- 6: OR index merge from multi complicated mv index (memberof)，make full use of other DNF items even if one of the DNF items fails;
+id	estRows	task	access object	operator info
+IndexMerge_9	0.01	root		type: union
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t2, index:idx4(d)	range:[2,2], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 3,2 3], keep order:false, stats:pseudo
+└─Selection_8(Probe)	0.01	cop[tikv]		or(and(json_contains(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), eq(planner__core__casetest__index__index.t2.d, 2)), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
+  └─TableRowIDScan_7	10.10	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4); -- 7: OR index merge from multi complicated mv index (memberof)，each DNF item can be more complicated like a another embedded CNF member-of composition.;
+id	estRows	task	access object	operator info
+IndexMerge_9	0.20	root		type: union
+├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[3 1,3 1], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[3 4,3 4], keep order:false, stats:pseudo
+└─Selection_8(Probe)	0.20	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 3))), and(json_memberof(cast(3, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 4)))
+  └─TableRowIDScan_7	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or e=1; -- 8: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path.;
+id	estRows	task	access object	operator info
+TableReader_7	10.18	root		data:Selection_6
+└─Selection_6	10.18	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 3))), or(and(json_memberof(cast(3, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 4)), eq(planner__core__casetest__index__index.t2.e, 1)))
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or d=1; -- 9: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path, specify the index in index merge hint;
+id	estRows	task	access object	operator info
+IndexMerge_10	0.01	root		type: union
+├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[3 1,3 1], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[3 4,3 4], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	10.00	cop[tikv]	table:t2, index:idx4(d)	range:[1,1], keep order:false, stats:pseudo
+└─Selection_9(Probe)	0.01	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 3))), or(and(json_memberof(cast(3, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 4)), eq(planner__core__casetest__index__index.t2.d, 1)))
+  └─TableRowIDScan_8	10.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+drop table if exists t1, t2;
+create table t1(pk int primary key, a json, b json, c int, d int, index idx((cast(a as signed array))), index idx2((cast(b as signed array))));
+create table t2(pk int primary key, a json, b json, c int, d int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d));
+explain select /*+ use_index_merge(t1, idx2, idx) */ * from t1 where 1 member of (a) and 2 member of (b); -- 1: AND index merge from multi member mv index predicate, since member of is single partial path, it can be merged with outer index merge.;
+id	estRows	task	access object	operator info
+IndexMerge_8	0.01	root		type: intersection
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:idx(cast(`a` as signed array))	range:[1,1], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:t1, index:idx2(cast(`b` as signed array))	range:[2,2], keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and 2 member of (b); -- 2: AND index merge from multi complicated mv index;
+id	estRows	task	access object	operator info
+IndexMerge_8	0.00	root		type: intersection
+├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where 1 member of (a) and c=1 and 2 member of (b) and d=3; -- 3: AND index merge from multi complicated mv indexes and normal indexes;
+id	estRows	task	access object	operator info
+IndexMerge_9	0.00	root		type: intersection
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t2, index:idx4(d)	range:[3,3], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
+└─TableRowIDScan_8(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_contains(a, '[1, 2, 3]') and c=1 and 2 member of (b) and d=3; -- 4: AND index merge from multi complicated mv indexes (json_contains (intersection))and normal indexes;
+id	estRows	task	access object	operator info
+IndexMerge_11	0.00	root		type: intersection
+├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx3(c, d)	range:[1 3,1 3], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 2,1 2], keep order:false, stats:pseudo
+├─IndexRangeScan_8(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 3,1 3], keep order:false, stats:pseudo
+├─IndexRangeScan_9(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
+└─TableRowIDScan_10(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t2, idx2, idx, idx3) */ * from t2 where json_overlaps(a, '[1, 2, 3]') and c=1 and 2 member of (b) and d=3; -- 5: AND index merge from multi complicated mv indexes (json_overlap (intersection))and normal indexes;
+id	estRows	task	access object	operator info
+Selection_5	0.00	root		json_overlaps(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY))
+└─IndexMerge_9	0.00	root		type: intersection
+  ├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx3(c, d)	range:[1 3,1 3], keep order:false, stats:pseudo
+  ├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
+  └─TableRowIDScan_8(Probe)	0.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and c=2; -- 6: AND index merge from multi complicated mv indexes (empty range);
+id	estRows	task	access object	operator info
+TableDual_5	0.00	root		rows:0
+drop table if exists t;
+create table t(a int, b int, c int, unique index(a), unique index(b), primary key(c));
+explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 1 or b = 2;
+id	estRows	task	access object	operator info
+IndexMerge	2.00	root		type: union
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:a(a)	range:[1,1], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:b(b)	range:[2,2], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select /*+ USE_INDEX_MERGE(t, A, B) */ * from t where a = 1 or b = 2;
+id	estRows	task	access object	operator info
+IndexMerge	2.00	root		type: union
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:a(a)	range:[1,1], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:b(b)	range:[2,2], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select /*+ USE_INDEX_MERGE(t, primary) */ * from t where 1 or t.c;
+id	estRows	task	access object	operator info
+TableReader	10000.00	root		data:TableFullScan
+└─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, b, c) */ * from t where 1 or t.a = 1 or t.b = 2;
+id	estRows	task	access object	operator info
+TableReader	10000.00	root		data:Selection
+└─Selection	10000.00	cop[tikv]		or(1, or(eq(planner__core__casetest__index__index.t.a, 1), eq(planner__core__casetest__index__index.t.b, 2)))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t1, t2, t3, t4;
+create table t1(a int, b int, primary key (a), key idx_t1_b (b));
+create table t2(a int, b int, primary key (a), key idx_t1_b (b));
+create table t3(a int, b int, c int);
+create table t4(a int, b int, c int, primary key (a, b) clustered);
+desc format = 'brief' select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.b;
+id	estRows	task	access object	operator info
+IndexJoin	12487.50	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t1.a, inner key:planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.b)
+├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+│ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx_t1_b(b)	keep order:false, stats:pseudo
+└─TableReader(Probe)	9980.01	root		data:Selection
+  └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.b))
+    └─TableRangeScan	9990.00	cop[tikv]	table:t2	range: decided by [planner__core__casetest__index__index.t1.a], keep order:false, stats:pseudo
+desc format = 'brief' select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b;
+id	estRows	task	access object	operator info
+IndexJoin	12487.50	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t1.b, inner key:planner__core__casetest__index__index.t2.a, planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.b)
+├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+│ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx_t1_b(b)	keep order:false, stats:pseudo
+└─TableReader(Probe)	9980.01	root		data:Selection
+  └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.b))
+    └─TableRangeScan	9990.00	cop[tikv]	table:t2	range: decided by [planner__core__casetest__index__index.t1.a planner__core__casetest__index__index.t1.b], keep order:false, stats:pseudo
+desc format = 'brief' select /*+ INL_JOIN(t4) */ * from t3 join t4 on t3.a = t4.a where t4.b = 1;
+id	estRows	task	access object	operator info
+Projection	12.50	root		planner__core__casetest__index__index.t3.a, planner__core__casetest__index__index.t3.b, planner__core__casetest__index__index.t3.c, planner__core__casetest__index__index.t4.a, planner__core__casetest__index__index.t4.b, planner__core__casetest__index__index.t4.c
+└─IndexJoin	12.50	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t3.a, inner key:planner__core__casetest__index__index.t4.a, equal cond:eq(planner__core__casetest__index__index.t3.a, planner__core__casetest__index__index.t4.a)
+  ├─TableReader(Build)	9990.00	root		data:Selection
+  │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t3.a))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─TableReader(Probe)	9.99	root		data:Selection
+    └─Selection	9.99	cop[tikv]		eq(planner__core__casetest__index__index.t4.b, 1)
+      └─TableRangeScan	9990.00	cop[tikv]	table:t4	range: decided by [eq(planner__core__casetest__index__index.t4.a, planner__core__casetest__index__index.t3.a) eq(planner__core__casetest__index__index.t4.b, 1)], keep order:false, stats:pseudo
+desc format = 'brief' select /*+ INL_JOIN(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 1;
+id	estRows	task	access object	operator info
+Projection	12.50	root		planner__core__casetest__index__index.t3.a, planner__core__casetest__index__index.t3.b, planner__core__casetest__index__index.t3.c, planner__core__casetest__index__index.t4.a, planner__core__casetest__index__index.t4.b, planner__core__casetest__index__index.t4.c
+└─IndexJoin	12.50	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t3.b, inner key:planner__core__casetest__index__index.t4.b, equal cond:eq(planner__core__casetest__index__index.t3.b, planner__core__casetest__index__index.t4.b)
+  ├─TableReader(Build)	9990.00	root		data:Selection
+  │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t3.b))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─TableReader(Probe)	9.99	root		data:Selection
+    └─Selection	9.99	cop[tikv]		eq(planner__core__casetest__index__index.t4.a, 1)
+      └─TableRangeScan	9990.00	cop[tikv]	table:t4	range: decided by [eq(planner__core__casetest__index__index.t4.b, planner__core__casetest__index__index.t3.b) eq(planner__core__casetest__index__index.t4.a, 1)], keep order:false, stats:pseudo
+set tidb_cost_model_version=2;
+drop table if exists t1, t2;
+create table t1(a int not null, b int not null, c int not null);
+create table t2(a int not null, b int not null, c int not null, index idx1(a,b), index idx2(c));
+insert into t1 values(1,1,1),(1,1,1),(1,1,1);
+insert into t2 values(1,1,1),(1,1,2),(1,1,3);
+analyze table t1, t2;
+explain format = 'brief' select /*+ inl_join(t2) */ * from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c = t2.c;
+id	estRows	task	access object	operator info
+IndexJoin	3.00	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t1.c, inner key:planner__core__casetest__index__index.t2.c, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t1.c, planner__core__casetest__index__index.t2.c)
+├─TableReader(Build)	3.00	root		data:TableFullScan
+│ └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
+└─IndexLookUp(Probe)	3.00	root		
+  ├─IndexRangeScan(Build)	3.00	cop[tikv]	table:t2, index:idx2(c)	range: decided by [eq(planner__core__casetest__index__index.t2.c, planner__core__casetest__index__index.t1.c)], keep order:false
+  └─TableRowIDScan(Probe)	3.00	cop[tikv]	table:t2	keep order:false
+set tidb_cost_model_version=default;
+drop table if exists t;
+create table t (a int, b int, unique key(a), unique key(b));
+insert into t value (1, 5), (2, 4), (3, 3), (4, 2), (5, 1);
+insert into t value (6, 0), (7, -1), (8, -2), (9, -3), (10, -4);
+analyze table t;
+desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and b+2>1);
+id	estRows	task	access object	operator info
+IndexMerge	8.00	root		type: union
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:a(a)	range:[1,1], keep order:false
+├─Selection(Build)	1.00	cop[tikv]		1
+│ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:b(b)	range:[1,1], keep order:false
+└─TableRowIDScan(Probe)	8.00	cop[tikv]	table:t	keep order:false
+show warnings;
+Level	Code	Message
+desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and length(b)=1);
+id	estRows	task	access object	operator info
+IndexMerge	8.00	root		type: union
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:a(a)	range:[1,1], keep order:false
+├─Selection(Build)	1.00	cop[tikv]		1
+│ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:b(b)	range:[1,1], keep order:false
+└─TableRowIDScan(Probe)	8.00	cop[tikv]	table:t	keep order:false
+show warnings;
+Level	Code	Message
+desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1);
+id	estRows	task	access object	operator info
+IndexMerge	8.00	root		type: union
+├─Selection(Build)	1.00	cop[tikv]		1
+│ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:a(a)	range:[1,1], keep order:false
+├─Selection(Build)	1.00	cop[tikv]		1
+│ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:b(b)	range:[1,1], keep order:false
+└─TableRowIDScan(Probe)	8.00	cop[tikv]	table:t	keep order:false
+show warnings;
+Level	Code	Message
+desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(b)=1) or (b=1 and length(a)=1);
+id	estRows	task	access object	operator info
+IndexMerge	0.29	root		type: union
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:a(a)	range:[1,1], keep order:false
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:b(b)	range:[1,1], keep order:false
+└─Selection(Probe)	0.29	cop[tikv]		or(and(eq(planner__core__casetest__index__index.t.a, 1), eq(length(cast(planner__core__casetest__index__index.t.b, var_string(20))), 1)), and(eq(planner__core__casetest__index__index.t.b, 1), eq(length(cast(planner__core__casetest__index__index.t.a, var_string(20))), 1)))
+  └─TableRowIDScan	1.90	cop[tikv]	table:t	keep order:false
+show warnings;
+Level	Code	Message
+set tidb_cost_model_version=2;
+set tidb_enable_clustered_index=on;
+drop table if exists t;
+create table t (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c));
+insert into t values (1,"111",1.1,11), (2,"222",2.2,12), (3,"333",3.3,13);
+analyze table t;
+explain  format = 'brief'select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
+id	estRows	task	access object	operator info
+IndexJoin	3.00	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t.a, inner key:planner__core__casetest__index__index.t.a, equal cond:eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a)
+├─TableReader(Build)	3.00	root		data:TableFullScan
+│ └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
+└─TableReader(Probe)	3.00	root		data:TableRangeScan
+  └─TableRangeScan	3.00	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a)], keep order:false
+select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
+a	b	c	d	a	b	c	d
+1	111	1.1000000000	11	1	111	1.1000000000	11
+2	222	2.2000000000	12	2	222	2.2000000000	12
+3	333	3.3000000000	13	3	333	3.3000000000	13
+explain  format = 'brief'select /*+ inl_merge_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
+id	estRows	task	access object	operator info
+IndexMergeJoin	3.00	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t.a, inner key:planner__core__casetest__index__index.t.a
+├─TableReader(Build)	3.00	root		data:TableFullScan
+│ └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
+└─TableReader(Probe)	3.00	root		data:TableRangeScan
+  └─TableRangeScan	3.00	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a)], keep order:true
+select /*+ inl_merge_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
+a	b	c	d	a	b	c	d
+1	111	1.1000000000	11	1	111	1.1000000000	11
+2	222	2.2000000000	12	2	222	2.2000000000	12
+3	333	3.3000000000	13	3	333	3.3000000000	13
+explain  format = 'brief'select /*+ inl_hash_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
+id	estRows	task	access object	operator info
+IndexHashJoin	3.00	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t.a, inner key:planner__core__casetest__index__index.t.a, equal cond:eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a)
+├─TableReader(Build)	3.00	root		data:TableFullScan
+│ └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
+└─TableReader(Probe)	3.00	root		data:TableRangeScan
+  └─TableRangeScan	3.00	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a)], keep order:false
+select /*+ inl_hash_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
+a	b	c	d	a	b	c	d
+1	111	1.1000000000	11	1	111	1.1000000000	11
+2	222	2.2000000000	12	2	222	2.2000000000	12
+3	333	3.3000000000	13	3	333	3.3000000000	13
+explain  format = 'brief'select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.b = t2.b;
+id	estRows	task	access object	operator info
+IndexJoin	3.00	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.b, inner key:planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.b, equal cond:eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a), eq(planner__core__casetest__index__index.t.b, planner__core__casetest__index__index.t.b)
+├─TableReader(Build)	3.00	root		data:TableFullScan
+│ └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
+└─TableReader(Probe)	3.00	root		data:TableRangeScan
+  └─TableRangeScan	3.00	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a) eq(planner__core__casetest__index__index.t.b, planner__core__casetest__index__index.t.b)], keep order:false
+select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.b = t2.b;
+a	b	c	d	a	b	c	d
+1	111	1.1000000000	11	1	111	1.1000000000	11
+2	222	2.2000000000	12	2	222	2.2000000000	12
+3	333	3.3000000000	13	3	333	3.3000000000	13
+explain  format = 'brief'select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.c = t2.c;
+id	estRows	task	access object	operator info
+IndexJoin	3.00	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t.c, inner key:planner__core__casetest__index__index.t.c, equal cond:eq(planner__core__casetest__index__index.t.c, planner__core__casetest__index__index.t.c)
+├─TableReader(Build)	3.00	root		data:Selection
+│ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t.c))
+│   └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
+└─IndexLookUp(Probe)	3.00	root		
+  ├─Selection(Build)	3.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t.c))
+  │ └─IndexRangeScan	3.00	cop[tikv]	table:t2, index:c(c)	range: decided by [eq(planner__core__casetest__index__index.t.c, planner__core__casetest__index__index.t.c)], keep order:false
+  └─TableRowIDScan(Probe)	3.00	cop[tikv]	table:t2	keep order:false
+select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.c = t2.c;
+a	b	c	d	a	b	c	d
+1	111	1.1000000000	11	1	111	1.1000000000	11
+2	222	2.2000000000	12	2	222	2.2000000000	12
+3	333	3.3000000000	13	3	333	3.3000000000	13
+explain  format = 'brief'select /*+ inl_merge_join(t1,t2) */ t2.a, t2.c, t2.d from t t1 left join t t2 on t1.a = t2.c;
+id	estRows	task	access object	operator info
+IndexMergeJoin	3.00	root		left outer join, inner:Projection, outer key:Column#9, inner key:planner__core__casetest__index__index.t.c
+├─Projection(Build)	3.00	root		cast(planner__core__casetest__index__index.t.a, decimal(10,0) BINARY)->Column#9
+│ └─IndexReader	3.00	root		index:IndexFullScan
+│   └─IndexFullScan	3.00	cop[tikv]	table:t1, index:c(c)	keep order:false
+└─Projection(Probe)	3.00	root		planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.c, planner__core__casetest__index__index.t.d
+  └─IndexLookUp	3.00	root		
+    ├─IndexRangeScan(Build)	3.00	cop[tikv]	table:t2, index:c(c)	range: decided by [eq(planner__core__casetest__index__index.t.c, Column#9)], keep order:true
+    └─TableRowIDScan(Probe)	3.00	cop[tikv]	table:t2	keep order:false
+select /*+ inl_merge_join(t1,t2) */ t2.a, t2.c, t2.d from t t1 left join t t2 on t1.a = t2.c;
+a	c	d
+NULL	NULL	NULL
+NULL	NULL	NULL
+NULL	NULL	NULL
+set tidb_enable_clustered_index=default;
+set tidb_cost_model_version=default;
+set tidb_cost_model_version=2;
+drop table if exists t1, t2;
+create table t1(c1 int, c2 int, c3 int, primary key(c1), key(c2));
+insert into t1 values(1, 1, 1);
+insert into t1 values(2, 2, 2);
+create table t2(c1 int, c2 int, c3 int);
+insert into t2 values(1, 1, 1);
+insert into t2 values(2, 2, 2);
+drop table if exists tt1, tt2;
+create table tt1  (c_int int, c_str varchar(40), c_datetime datetime, c_decimal decimal(12, 6), primary key(c_int), key(c_int), key(c_str), unique key(c_decimal), key(c_datetime));
+create table tt2  like tt1 ;
+insert into tt1 (c_int, c_str, c_datetime, c_decimal) values (6, 'sharp payne', '2020-06-07 10:40:39', 6.117000) ,
+(7, 'objective kare', '2020-02-05 18:47:26', 1.053000) ,
+(8, 'thirsty pasteur', '2020-01-02 13:06:56', 2.506000) ,
+(9, 'blissful wilbur', '2020-06-04 11:34:04', 9.144000) ,
+(10, 'reverent mclean', '2020-02-12 07:36:26', 7.751000) ;
+insert into tt2 (c_int, c_str, c_datetime, c_decimal) values (6, 'beautiful joliot', '2020-01-16 01:44:37', 5.627000) ,
+(7, 'hopeful blackburn', '2020-05-23 21:44:20', 7.890000) ,
+(8, 'ecstatic davinci', '2020-02-01 12:27:17', 5.648000) ,
+(9, 'hopeful lewin', '2020-05-05 05:58:25', 7.288000) ,
+(10, 'sharp jennings', '2020-01-28 04:35:03', 9.758000) ;
+explain format=brief select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;
+id	estRows	task	access object	operator info
+Sort	10000.00	root		planner__core__casetest__index__index.t2.c1
+└─Projection	10000.00	root		planner__core__casetest__index__index.t2.c1, planner__core__casetest__index__index.t2.c2, planner__core__casetest__index__index.t2.c3
+  └─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
+    ├─TableReader(Build)	10000.00	root		data:TableFullScan
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
+      └─IndexMerge	63.35	root		type: union
+        ├─Selection(Build)	10000.00	cop[tikv]		eq(10, planner__core__casetest__index__index.t2.c3)
+        │ └─TableRangeScan	10000.00	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
+        ├─Selection(Build)	80000.00	cop[tikv]		eq(1, planner__core__casetest__index__index.t2.c3)
+        │ └─IndexRangeScan	100000.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
+        └─Selection(Probe)	63.35	cop[tikv]		or(and(eq(planner__core__casetest__index__index.t1.c1, 10), eq(10, planner__core__casetest__index__index.t2.c3)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(1, planner__core__casetest__index__index.t2.c3))), substring(cast(planner__core__casetest__index__index.t1.c3, var_string(20)), 10)
+          └─TableRowIDScan	89992.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;
+c1	c2	c3
+1	1	1
+2	2	2
+explain format=brief select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and reverse(c3)) order by c1;
+id	estRows	task	access object	operator info
+Sort	10000.00	root		planner__core__casetest__index__index.t2.c1
+└─Projection	10000.00	root		planner__core__casetest__index__index.t2.c1, planner__core__casetest__index__index.t2.c2, planner__core__casetest__index__index.t2.c3
+  └─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
+    ├─TableReader(Build)	10000.00	root		data:TableFullScan
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
+      └─IndexMerge	63.35	root		type: union
+        ├─Selection(Build)	10000.00	cop[tikv]		eq(10, planner__core__casetest__index__index.t2.c3)
+        │ └─TableRangeScan	10000.00	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
+        ├─Selection(Build)	80000.00	cop[tikv]		eq(1, planner__core__casetest__index__index.t2.c3)
+        │ └─IndexRangeScan	100000.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
+        └─Selection(Probe)	63.35	cop[tikv]		or(and(eq(planner__core__casetest__index__index.t1.c1, 10), eq(10, planner__core__casetest__index__index.t2.c3)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(1, planner__core__casetest__index__index.t2.c3))), reverse(cast(planner__core__casetest__index__index.t1.c3, var_string(20)))
+          └─TableRowIDScan	89992.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and reverse(c3)) order by c1;
+c1	c2	c3
+2	2	2
+explain format=brief select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 >= 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;
+id	estRows	task	access object	operator info
+Sort	10000.00	root		planner__core__casetest__index__index.t2.c1
+└─Projection	10000.00	root		planner__core__casetest__index__index.t2.c1, planner__core__casetest__index__index.t2.c2, planner__core__casetest__index__index.t2.c3
+  └─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
+    ├─TableReader(Build)	10000.00	root		data:TableFullScan
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
+      └─IndexMerge	30263.46	root		type: union
+        ├─Selection(Build)	33333.33	cop[tikv]		eq(planner__core__casetest__index__index.t1.c1, planner__core__casetest__index__index.t2.c3)
+        │ └─TableRangeScan	33333333.33	cop[tikv]	table:t1	range:[10,+inf], keep order:false, stats:pseudo
+        ├─Selection(Build)	80000.00	cop[tikv]		eq(1, planner__core__casetest__index__index.t2.c3)
+        │ └─IndexRangeScan	100000.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
+        └─Selection(Probe)	30263.46	cop[tikv]		or(and(ge(planner__core__casetest__index__index.t1.c1, 10), eq(planner__core__casetest__index__index.t1.c1, planner__core__casetest__index__index.t2.c3)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(1, planner__core__casetest__index__index.t2.c3))), substring(cast(planner__core__casetest__index__index.t1.c3, var_string(20)), 10)
+          └─TableRowIDScan	33386666.67	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 >= 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;
+c1	c2	c3
+1	1	1
+2	2	2
+explain format=brief select c_int from tt1 where c_decimal < all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt1.c_int = tt2.c_int and tt1.c_datetime > tt2.c_datetime and tt2.c_decimal = 9.060 or tt2.c_str <= 'interesting shtern' and tt1.c_int = tt2.c_int) order by 1;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		planner__core__casetest__index__index.tt1.c_int
+└─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.tt1.c_decimal, Column#9), if(ne(Column#10, 0), NULL, 1)), or(eq(Column#11, 0), if(isnull(planner__core__casetest__index__index.tt1.c_decimal), NULL, 0)))
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:tt1	keep order:true, stats:pseudo
+  └─StreamAgg(Probe)	10000.00	root		funcs:min(Column#14)->Column#9, funcs:sum(Column#15)->Column#10, funcs:count(1)->Column#11
+    └─Projection	11.05	root		planner__core__casetest__index__index.tt2.c_decimal->Column#14, cast(isnull(planner__core__casetest__index__index.tt2.c_decimal), decimal(20,0) BINARY)->Column#15
+      └─IndexMerge	11.05	root		type: union
+        ├─Selection(Build)	10.00	cop[tikv]		eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)
+        │ └─IndexRangeScan	10000.00	cop[tikv]	table:tt2, index:c_decimal(c_decimal)	range:[9.060000,9.060000], keep order:false, stats:pseudo
+        ├─Selection(Build)	33233.33	cop[tikv]		eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)
+        │ └─IndexRangeScan	33233333.33	cop[tikv]	table:tt2, index:c_str(c_str)	range:[-inf,"interesting shtern"], keep order:false, stats:pseudo
+        └─Selection(Probe)	11.05	cop[tikv]		or(and(eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int), and(gt(planner__core__casetest__index__index.tt1.c_datetime, planner__core__casetest__index__index.tt2.c_datetime), eq(planner__core__casetest__index__index.tt2.c_decimal, 9.060))), and(le(planner__core__casetest__index__index.tt2.c_str, "interesting shtern"), eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)))
+          └─TableRowIDScan	33243.33	cop[tikv]	table:tt2	keep order:false, stats:pseudo
+select c_int from tt1 where c_decimal < all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt1.c_int = tt2.c_int and tt1.c_datetime > tt2.c_datetime and tt2.c_decimal = 9.060 or tt2.c_str <= 'interesting shtern' and tt1.c_int = tt2.c_int) order by 1;
+c_int
+7
+8
+10
+explain format=brief select c_int from tt1 where c_decimal > all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		planner__core__casetest__index__index.tt1.c_int
+└─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(planner__core__casetest__index__index.tt1.c_decimal, Column#9), if(ne(Column#10, 0), NULL, 1)), or(eq(Column#11, 0), if(isnull(planner__core__casetest__index__index.tt1.c_decimal), NULL, 0)))
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:tt1	keep order:true, stats:pseudo
+  └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#14)->Column#9, funcs:sum(Column#15)->Column#10, funcs:count(1)->Column#11
+    └─Projection	17.91	root		planner__core__casetest__index__index.tt2.c_decimal->Column#14, cast(isnull(planner__core__casetest__index__index.tt2.c_decimal), decimal(20,0) BINARY)->Column#15
+      └─IndexMerge	17.91	root		type: union
+        ├─Selection(Build)	10000.00	cop[tikv]		lt(7, planner__core__casetest__index__index.tt1.c_decimal)
+        │ └─TableRangeScan	10000.00	cop[tikv]	table:tt2	range:[7,7], keep order:false, stats:pseudo
+        ├─Selection(Build)	33333.33	cop[tikv]		eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)
+        │ └─IndexRangeScan	33333333.33	cop[tikv]	table:tt2, index:c_str(c_str)	range:["zzzzzzzzzzzzzzzzzzz",+inf], keep order:false, stats:pseudo
+        └─Selection(Probe)	17.91	cop[tikv]		or(and(eq(planner__core__casetest__index__index.tt2.c_int, 7), lt(7, planner__core__casetest__index__index.tt1.c_decimal)), and(ge(planner__core__casetest__index__index.tt2.c_str, "zzzzzzzzzzzzzzzzzzz"), eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)))
+          └─TableRowIDScan	43330.00	cop[tikv]	table:tt2	keep order:false, stats:pseudo
+select c_int from tt1 where c_decimal > all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;
+c_int
+6
+7
+8
+9
+set tidb_cost_model_version=default;
+drop table if exists t1, t2;
+create table t1(a int, b int, c varchar(10), d varchar(10), index idx_a_b_c_d(a, b, c(2), d(2)));
+create table t2(e int, f int, g varchar(10), h varchar(10));
+set @@tidb_opt_range_max_size = 0;
+explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb');
+id	estRows	task	access object	operator info
+IndexJoin	0.50	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t2.g, inner key:planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t1.d, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.b), eq(planner__core__casetest__index__index.t2.g, planner__core__casetest__index__index.t1.d)
+├─TableReader(Build)	9980.01	root		data:Selection
+│ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.g))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexLookUp(Probe)	0.50	root		
+  ├─Selection(Build)	249.50	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.b)), not(isnull(planner__core__casetest__index__index.t1.d))
+  │ └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.e) eq(planner__core__casetest__index__index.t1.d, planner__core__casetest__index__index.t2.g) in(planner__core__casetest__index__index.t1.a, 1, 3) in(planner__core__casetest__index__index.t1.c, aaa, bbb)], keep order:false, stats:pseudo
+  └─Selection(Probe)	0.50	cop[tikv]		in(planner__core__casetest__index__index.t1.c, "aaa", "bbb")
+    └─TableRowIDScan	249.50	cop[tikv]	table:t1	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+set @@tidb_opt_range_max_size = 2900;
+explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb');
+id	estRows	task	access object	operator info
+IndexJoin	0.50	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.b, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.b), eq(planner__core__casetest__index__index.t2.g, planner__core__casetest__index__index.t1.d)
+├─TableReader(Build)	9980.01	root		data:Selection
+│ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.g))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexLookUp(Probe)	0.50	root		
+  ├─Selection(Build)	249.50	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.b)), not(isnull(planner__core__casetest__index__index.t1.d))
+  │ └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.e) in(planner__core__casetest__index__index.t1.a, 1, 3) in(planner__core__casetest__index__index.t1.c, aaa, bbb)], keep order:false, stats:pseudo
+  └─Selection(Probe)	0.50	cop[tikv]		in(planner__core__casetest__index__index.t1.c, "aaa", "bbb")
+    └─TableRowIDScan	249.50	cop[tikv]	table:t1	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1105	Memory capacity of 2900 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen
+set @@tidb_opt_range_max_size = 2300;
+explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb');
+id	estRows	task	access object	operator info
+IndexJoin	0.50	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.b, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.b), eq(planner__core__casetest__index__index.t2.g, planner__core__casetest__index__index.t1.d)
+├─TableReader(Build)	9980.01	root		data:Selection
+│ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.g))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexLookUp(Probe)	0.50	root		
+  ├─Selection(Build)	249.50	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.b)), not(isnull(planner__core__casetest__index__index.t1.d))
+  │ └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.e) in(planner__core__casetest__index__index.t1.a, 1, 3)], keep order:false, stats:pseudo
+  └─Selection(Probe)	0.50	cop[tikv]		in(planner__core__casetest__index__index.t1.c, "aaa", "bbb")
+    └─TableRowIDScan	249.50	cop[tikv]	table:t1	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1105	Memory capacity of 2300 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen
+set @@tidb_opt_range_max_size = 700;
+explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb');
+id	estRows	task	access object	operator info
+HashJoin	0.05	root		inner join, equal:[eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.e) eq(planner__core__casetest__index__index.t1.d, planner__core__casetest__index__index.t2.g)]
+├─IndexLookUp(Build)	0.04	root		
+│ ├─Selection(Build)	19.96	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.b)), not(isnull(planner__core__casetest__index__index.t1.d))
+│ │ └─IndexRangeScan	20.00	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range:[1,1], [3,3], keep order:false, stats:pseudo
+│ └─Selection(Probe)	0.04	cop[tikv]		in(planner__core__casetest__index__index.t1.c, "aaa", "bbb")
+│   └─TableRowIDScan	19.96	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableReader(Probe)	9980.01	root		data:Selection
+  └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.g))
+    └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1105	Memory capacity of 700 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen
+Warning	1815	Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable
+set @@tidb_opt_range_max_size = 0;
+explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > 1 and t1.b < 10;
+id	estRows	task	access object	operator info
+IndexJoin	312.19	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.a, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.a)
+├─TableReader(Build)	9990.00	root		data:Selection
+│ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexLookUp(Probe)	312.19	root		
+  ├─Selection(Build)	312.19	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.a))
+  │ └─IndexRangeScan	312.50	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.e) gt(planner__core__casetest__index__index.t1.b, 1) lt(planner__core__casetest__index__index.t1.b, 10)], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	312.19	cop[tikv]	table:t1	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+set @@tidb_opt_range_max_size = 300;
+explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > 1 and t1.b < 10;
+id	estRows	task	access object	operator info
+IndexJoin	312.19	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.a, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.a)
+├─TableReader(Build)	9990.00	root		data:Selection
+│ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexLookUp(Probe)	312.19	root		
+  ├─Selection(Build)	312.19	cop[tikv]		gt(planner__core__casetest__index__index.t1.b, 1), lt(planner__core__casetest__index__index.t1.b, 10), not(isnull(planner__core__casetest__index__index.t1.a))
+  │ └─IndexRangeScan	12500.00	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.e)], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	312.19	cop[tikv]	table:t1	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1105	Memory capacity of 300 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen
+set @@tidb_opt_range_max_size = 0;
+explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > t2.f and t1.b < t2.f + 10;
+id	estRows	task	access object	operator info
+IndexJoin	12475.01	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.a, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.a), other cond:gt(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.f), lt(planner__core__casetest__index__index.t1.b, plus(planner__core__casetest__index__index.t2.f, 10))
+├─TableReader(Build)	9980.01	root		data:Selection
+│ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.f))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexLookUp(Probe)	12475.01	root		
+  ├─Selection(Build)	12475.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.a)), not(isnull(planner__core__casetest__index__index.t1.b))
+  │ └─IndexRangeScan	12500.00	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.e) lt(planner__core__casetest__index__index.t1.b, plus(planner__core__casetest__index__index.t2.f, 10)) gt(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.f)], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	12475.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+set @@tidb_opt_range_max_size = 300;
+explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > t2.f and t1.b < t2.f + 10;
+id	estRows	task	access object	operator info
+IndexJoin	12475.01	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.a, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.a), other cond:gt(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.f), lt(planner__core__casetest__index__index.t1.b, plus(planner__core__casetest__index__index.t2.f, 10))
+├─TableReader(Build)	9980.01	root		data:Selection
+│ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.f))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexLookUp(Probe)	12475.01	root		
+  ├─Selection(Build)	12475.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.a)), not(isnull(planner__core__casetest__index__index.t1.b))
+  │ └─IndexRangeScan	12500.00	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.e)], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	12475.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1105	Memory capacity of 300 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen
+set @@tidb_opt_range_max_size = default;
+set tidb_cost_model_version=2;
+drop table if exists t1, t2, t3, t4;
+create table t1(a int, b int, c int, d int, e int, f int, g int, primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g));
+create table t2(a int, b int, c int, d int, unique index idx_a (a), unique index idx_b_c (b, c), unique index idx_b_c_a_d (b, c, a, d));
+create table t3(a bigint, b varchar(255), c bigint, primary key(a, b) clustered);
+create table t4(a bigint, b varchar(255), c bigint, primary key(a, b) nonclustered);
+set @@tidb_enable_chunk_rpc = on;
+explain format = 'verbose' select * from t1 where a = 3 or a = 5;
+id	estRows	estCost	task	access object	operator info
+Batch_Point_Get_5	2.00	887.04	root	table:t1	handle:[3 5], keep order:false, desc:false
+show warnings;
+Level	Code	Message
+Note	1105	handle of t1 is selected since the path only has point ranges
+explain format = 'verbose' select f, g from t1 where f = 2 and g in (3, 4, 5);
+id	estRows	estCost	task	access object	operator info
+Batch_Point_Get_5	3.00	380.16	root	table:t1, index:f_g(f, g)	keep order:false, desc:false
+show warnings;
+Level	Code	Message
+Note	1105	unique index f_g of t1 is selected since the path only has point ranges with single scan
+explain format = 'verbose' select * from t1 where c = 1 and (d = 2 or d = 3) and e in (4, 5);
+id	estRows	estCost	task	access object	operator info
+Batch_Point_Get_5	4.00	1774.08	root	table:t1, index:c_d_e(c, d, e)	keep order:false, desc:false
+show warnings;
+Level	Code	Message
+Note	1105	unique index c_d_e of t1 is selected since the path only has point ranges with double scan
+explain format = 'verbose' select f, g from t1 where f = 2 and g > 3;
+id	estRows	estCost	task	access object	operator info
+IndexReader_6	33.33	733.82	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	33.33	6783.33	cop[tikv]	table:t1, index:f_g(f, g)	range:(2 3,2 +inf], keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Note	1105	unique index f_g of t1 is selected since the path only fetches limited number of rows with single scan
+explain format = 'verbose' select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5);
+id	estRows	estCost	task	access object	operator info
+Selection_6	0.01	289.88	root		eq(planner__core__casetest__index__index.t2.b, 2), in(planner__core__casetest__index__index.t2.c, 1, 2, 3, 4, 5)
+└─Point_Get_5	1.00	190.08	root	table:t2, index:idx_a(a)	
+show warnings;
+Level	Code	Message
+Note	1105	unique index idx_a of t2 is selected since the path only has point ranges with double scan
+explain format = 'verbose' select * from t3 where (a = 1 or a = 3) and b = 'xx';
+id	estRows	estCost	task	access object	operator info
+Batch_Point_Get_5	2.00	1449.36	root	table:t3, clustered index:PRIMARY(a, b)	keep order:false, desc:false
+show warnings;
+Level	Code	Message
+Note	1105	handle of t3 is selected since the path only has point ranges
+explain format = 'verbose' select * from t4 where (a = 1 or a = 3) and b = 'xx';
+id	estRows	estCost	task	access object	operator info
+Batch_Point_Get_5	2.00	1449.36	root	table:t4, index:PRIMARY(a, b)	keep order:false, desc:false
+show warnings;
+Level	Code	Message
+Note	1105	unique index PRIMARY of t4 is selected since the path only has point ranges with double scan
+explain format = 'verbose' select a, b from t3 where (a = 1 or a = 3) and b = 'xx';
+id	estRows	estCost	task	access object	operator info
+Batch_Point_Get_5	2.00	1322.64	root	table:t3, clustered index:PRIMARY(a, b)	keep order:false, desc:false
+show warnings;
+Level	Code	Message
+Note	1105	handle of t3 is selected since the path only has point ranges
+explain format = 'verbose' select a, b from t4 where (a = 1 or a = 3) and b = 'xx';
+id	estRows	estCost	task	access object	operator info
+Batch_Point_Get_5	2.00	1322.64	root	table:t4, index:PRIMARY(a, b)	keep order:false, desc:false
+show warnings;
+Level	Code	Message
+Note	1105	unique index PRIMARY of t4 is selected since the path only has point ranges with single scan
+explain format = 'verbose' update t1 set b = 2 where a = 4 or a = 6;
+id	estRows	estCost	task	access object	operator info
+Update_4	N/A	N/A	root		N/A
+└─Batch_Point_Get_6	2.00	887.04	root	table:t1	handle:[4 6], keep order:false, desc:false
+show warnings;
+Level	Code	Message
+Note	1105	handle of t1 is selected since the path only has point ranges
+explain format = 'verbose' delete from t1 where f = 2 and g in (3, 4);
+id	estRows	estCost	task	access object	operator info
+Delete_4	N/A	N/A	root		N/A
+└─Selection_7	2.00	493.42	root		in(planner__core__casetest__index__index.t1.g, 3, 4)
+  └─Point_Get_6	1.00	443.52	root	table:t1, index:f(f)	
+show warnings;
+Level	Code	Message
+Note	1105	unique index f of t1 is selected since the path only has point ranges with double scan
+explain format = 'verbose' insert into t3 select a, b, c from t1 where f = 2;
+id	estRows	estCost	task	access object	operator info
+Insert_1	N/A	N/A	root		N/A
+└─Projection_6	1.00	253.74	root		planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t1.c
+  └─Point_Get_7	1.00	253.44	root	table:t1, index:f(f)	
+show warnings;
+Level	Code	Message
+Note	1105	unique index f of t1 is selected since the path only has point ranges with double scan
+explain format = 'verbose' replace into t3 select a, b, c from t1 where a = 3;
+id	estRows	estCost	task	access object	operator info
+Insert_1	N/A	N/A	root		N/A
+└─Point_Get_7	1.00	190.08	root	table:t1	handle:3
+show warnings;
+Level	Code	Message
+Note	1105	handle of t1 is selected since the path only has point ranges
+set @@tidb_enable_chunk_rpc = default;
+set tidb_cost_model_version=default;
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t(a int, b int, c int, d int, index idx(a,b,c));
+desc format = 'brief' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b,c limit 10;
+id	estRows	task	access object	operator info
+Limit	0.00	root		offset:0, count:10
+└─Projection	0.00	root		planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.b, planner__core__casetest__index__index.t.c, planner__core__casetest__index__index.t.d
+  └─IndexLookUp	0.00	root		
+    ├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx(a, b, c)	range:(1 2,1 10), keep order:true, stats:pseudo
+    └─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__casetest__index__index.t.d, 10)
+      └─TableRowIDScan	2.50	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format = 'brief' select * from t where a = 1 and b > 2 and b < 10 and d = 10 order by b desc, c desc limit 10;
+id	estRows	task	access object	operator info
+Limit	0.00	root		offset:0, count:10
+└─Projection	0.00	root		planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.b, planner__core__casetest__index__index.t.c, planner__core__casetest__index__index.t.d
+  └─IndexLookUp	0.00	root		
+    ├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:idx(a, b, c)	range:(1 2,1 10), keep order:true, desc, stats:pseudo
+    └─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__casetest__index__index.t.d, 10)
+      └─TableRowIDScan	2.50	cop[tikv]	table:t	keep order:false, stats:pseudo
+set tidb_cost_model_version=default;
+set tidb_enable_clustered_index=on;
+drop table if exists t1;
+create table t1 (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c));
+insert into t1 values (1,"111",1.1,11), (2,"222",2.2,12), (3,"333",3.3,13);
+analyze table t1;
+explain format='brief' select * from t1;
+id	estRows	task	access object	operator info
+TableReader	3.00	root		data:TableFullScan
+└─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
+select * from t1;
+a	b	c	d
+1	111	1.1000000000	11
+2	222	2.2000000000	12
+3	333	3.3000000000	13
+explain format='brief' select * from t1 where t1.a >= 1 and t1.a < 4;
+id	estRows	task	access object	operator info
+TableReader	3.00	root		data:TableRangeScan
+└─TableRangeScan	3.00	cop[tikv]	table:t1	range:[1,4), keep order:false
+select * from t1 where t1.a >= 1 and t1.a < 4;
+a	b	c	d
+1	111	1.1000000000	11
+2	222	2.2000000000	12
+3	333	3.3000000000	13
+explain format='brief' select * from t1 where t1.a = 1 and t1.b < "333";
+id	estRows	task	access object	operator info
+TableReader	1.00	root		data:TableRangeScan
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[1 -inf,1 "333"), keep order:false
+select * from t1 where t1.a = 1 and t1.b < "333";
+a	b	c	d
+1	111	1.1000000000	11
+explain format='brief' select t1.a, t1.b, t1.c from t1 where t1.c = 3.3;
+id	estRows	task	access object	operator info
+IndexReader	1.00	root		index:IndexRangeScan
+└─IndexRangeScan	1.00	cop[tikv]	table:t1, index:c(c)	range:[3.3000000000,3.3000000000], keep order:false
+select t1.a, t1.b, t1.c from t1 where t1.c = 3.3;
+a	b	c
+3	333	3.3000000000
+explain format='brief' select t1.b, t1.c from t1 where t1.c = 2.2;
+id	estRows	task	access object	operator info
+IndexReader	1.00	root		index:IndexRangeScan
+└─IndexRangeScan	1.00	cop[tikv]	table:t1, index:c(c)	range:[2.2000000000,2.2000000000], keep order:false
+select t1.b, t1.c from t1 where t1.c = 2.2;
+b	c
+222	2.2000000000
+explain format='brief' select /*+ use_index(t1, c) */ * from t1;
+id	estRows	task	access object	operator info
+IndexLookUp	3.00	root		
+├─IndexFullScan(Build)	3.00	cop[tikv]	table:t1, index:c(c)	keep order:false
+└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:t1	keep order:false
+select /*+ use_index(t1, c) */ * from t1;
+a	b	c	d
+1	111	1.1000000000	11
+2	222	2.2000000000	12
+3	333	3.3000000000	13
+explain format='brief' select * from t1 use index(c) where t1.c in (2.2, 3.3);
+id	estRows	task	access object	operator info
+IndexLookUp	2.00	root		
+├─IndexRangeScan(Build)	2.00	cop[tikv]	table:t1, index:c(c)	range:[2.2000000000,2.2000000000], [3.3000000000,3.3000000000], keep order:false
+└─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t1	keep order:false
+select * from t1 use index(c) where t1.c in (2.2, 3.3);
+a	b	c	d
+2	222	2.2000000000	12
+3	333	3.3000000000	13
+explain format='brief' select * from t1 where t1.a = 1 order by b;
+id	estRows	task	access object	operator info
+TableReader	1.00	root		data:TableRangeScan
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[1,1], keep order:true
+select * from t1 where t1.a = 1 order by b;
+a	b	c	d
+1	111	1.1000000000	11
+explain format='brief' select * from t1 order by a, b limit 1;
+id	estRows	task	access object	operator info
+Limit	1.00	root		offset:0, count:1
+└─TableReader	1.00	root		data:Limit
+  └─Limit	1.00	cop[tikv]		offset:0, count:1
+    └─TableFullScan	1.00	cop[tikv]	table:t1	keep order:true
+select * from t1 order by a, b limit 1;
+a	b	c	d
+1	111	1.1000000000	11
+explain format='brief' select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a >= 1 or t1.c = 2.2;
+id	estRows	task	access object	operator info
+IndexMerge	3.00	root		type: union
+├─TableRangeScan(Build)	3.00	cop[tikv]	table:t1	range:[1,+inf], keep order:false
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t1, index:c(c)	range:[2.2000000000,2.2000000000], keep order:false
+└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:t1	keep order:false
+select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a >= 1 or t1.c = 2.2;
+a	b	c	d
+1	111	1.1000000000	11
+2	222	2.2000000000	12
+3	333	3.3000000000	13
+explain format='brief' select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a = 1 and t1.b = '111' or t1.c = 3.3;
+id	estRows	task	access object	operator info
+IndexMerge	1.67	root		type: union
+├─TableRangeScan(Build)	1.00	cop[tikv]	table:t1	range:[1 "111",1 "111"], keep order:false
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t1, index:c(c)	range:[3.3000000000,3.3000000000], keep order:false
+└─TableRowIDScan(Probe)	1.67	cop[tikv]	table:t1	keep order:false
+select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a = 1 and t1.b = '111' or t1.c = 3.3;
+a	b	c	d
+1	111	1.1000000000	11
+3	333	3.3000000000	13
+set tidb_enable_clustered_index=default;
+drop table if exists t;
+create table t(pk varbinary(255) NOT NULL, domains json null, image_signatures json null, canonical_links json null, fpi json null,  KEY `domains` ((cast(`domains` as char(253) array))), KEY `image_signatures` ((cast(`image_signatures` as char(32) array))),KEY `canonical_links` ((cast(`canonical_links` as char(1000) array))), KEY `fpi` ((cast(`fpi` as unsigned array))));
+explain format='brief' SELECT pk FROM  t WHERE   "B2c32" member of (domains)   OR "2eoqyp6399" member of (image_signatures)   OR "E33EAdAc2Bee.com/s/link" member of (canonical_links)   OR json_contains(fpi, '[69236881]') LIMIT   10;
+id	estRows	task	access object	operator info
+Projection	10.00	root		planner__core__casetest__index__index.t.pk
+└─IndexMerge	10.00	root		type: union, limit embedded(offset:0, count:10)
+  ├─Limit(Build)	2.50	cop[tikv]		offset:0, count:10
+  │ └─IndexRangeScan	2.50	cop[tikv]	table:t, index:domains(cast(`domains` as char(253) array))	range:["B2c32","B2c32"], keep order:false, stats:pseudo
+  ├─Limit(Build)	2.50	cop[tikv]		offset:0, count:10
+  │ └─IndexRangeScan	2.50	cop[tikv]	table:t, index:image_signatures(cast(`image_signatures` as char(32) array))	range:["2eoqyp6399","2eoqyp6399"], keep order:false, stats:pseudo
+  ├─Limit(Build)	2.50	cop[tikv]		offset:0, count:10
+  │ └─IndexRangeScan	2.50	cop[tikv]	table:t, index:canonical_links(cast(`canonical_links` as char(1000) array))	range:["E33EAdAc2Bee.com/s/link","E33EAdAc2Bee.com/s/link"], keep order:false, stats:pseudo
+  ├─Limit(Build)	2.50	cop[tikv]		offset:0, count:10
+  │ └─IndexRangeScan	2.50	cop[tikv]	table:t, index:fpi(cast(`fpi` as unsigned array))	range:[69236881,69236881], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t1, t2;
+CREATE TABLE `t1` (`a` varchar(488) COLLATE utf8_general_ci DEFAULT NULL, `b` binary(206) DEFAULT '0', `c` json DEFAULT NULL, UNIQUE KEY `idx_29` (`a`,(cast(`c` as signed array)),`b`), UNIQUE KEY `idx_30` ((cast(`c` as signed array)),`a`(5))) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+CREATE TABLE `t2` (`a` float NOT NULL DEFAULT '5217.6055',`b` json NOT NULL,`c` json NOT NULL,`d` varchar(181) COLLATE gbk_bin NOT NULL DEFAULT 'FbVkA~^', KEY `idx_26` (`a`),PRIMARY KEY (`a`,`d`) /*T![clustered_index] NONCLUSTERED */,UNIQUE KEY `idx_28` (`a`,(cast(`b` as binary(64) array)),`d`)) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin;
+EXPLAIN format='brief' SELECT /*+ inl_join(t1)*/ `t2`.`c` AS `r0` FROM `t1` JOIN `t2` ON `t1`.`a`=`t2`.`d` WHERE `t2`.`d`='' AND NOT (6252179388429456273 MEMBER OF (`t1`.`c`));
+id	estRows	task	access object	operator info
+HashJoin	12.50	root		inner join, equal:[eq(planner__core__casetest__index__index.t2.d, planner__core__casetest__index__index.t1.a)]
+├─TableReader(Build)	10.00	root		data:Selection
+│ └─Selection	10.00	cop[tikv]		eq(planner__core__casetest__index__index.t2.d, "")
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	7992.00	root		data:Selection
+  └─Selection	7992.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.a)), not(istrue_with_null(json_memberof(cast(6252179388429456273, json BINARY), planner__core__casetest__index__index.t1.c)))
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+SHOW WARNINGS
+Level	Code	Message
+Warning	1815	Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable
+DROP table if exists t;
+CREATE TABLE `t` (`pk` varbinary(255) NOT NULL,`nslc` json DEFAULT NULL,`fpi` json DEFAULT NULL,`point_of_sale_country` varchar(2) DEFAULT NULL,PRIMARY KEY (`pk`) /*T![clustered_index] CLUSTERED */,KEY `fpi` ((cast(`fpi` as unsigned array))),KEY `nslc` ((cast(`nslc` as char(1000) array)),`point_of_sale_country`),KEY `nslc_old` ((cast(`nslc` as char(1000) array))));
+EXPLAIN format='brief' SELECT /*+ use_index_merge(t, fpi, nslc_old, nslc) */ * FROM   t WHERE   15975127 member of (fpi)   AND "OC8p0106XTkt.org/s/link" member of (nslc) LIMIT   10;
+id	estRows	task	access object	operator info
+IndexMerge	0.01	root		type: intersection, limit embedded(offset:0, count:10)
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:fpi(cast(`fpi` as unsigned array))	range:[15975127,15975127], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:nslc(cast(`nslc` as char(1000) array), point_of_sale_country)	range:["OC8p0106XTkt.org/s/link","OC8p0106XTkt.org/s/link"], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	0.01	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+CREATE TABLE t (nslc json DEFAULT NULL,fpi json DEFAULT NULL,point_of_sale_country int,KEY nslc ((cast(nslc as char(1000) array)),point_of_sale_country),KEY fpi ((cast(fpi as unsigned array))));
+explain format='brief' SELECT  /*+ use_index_merge(t, nslc) */ *  FROM t WHERE  57260686 member of (fpi)  AND "OC8p1763XTkt.org/s/link" member of (nslc)  LIMIT  1;
+id	estRows	task	access object	operator info
+Limit	0.01	root		offset:0, count:1
+└─IndexMerge	0.01	root		type: union
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:nslc(cast(`nslc` as char(1000) array), point_of_sale_country)	range:["OC8p1763XTkt.org/s/link","OC8p1763XTkt.org/s/link"], keep order:false, stats:pseudo
+  └─Limit(Probe)	0.01	cop[tikv]		offset:0, count:1
+    └─Selection	0.01	cop[tikv]		json_memberof(cast(57260686, json BINARY), planner__core__casetest__index__index.t.fpi)
+      └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' SELECT  /*+ use_index_merge(t, fpi) */ *  FROM t WHERE  57260686 member of (fpi)  AND "OC8p1763XTkt.org/s/link" member of (nslc)  LIMIT  1;
+id	estRows	task	access object	operator info
+Limit	0.01	root		offset:0, count:1
+└─IndexMerge	0.01	root		type: union
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:fpi(cast(`fpi` as unsigned array))	range:[57260686,57260686], keep order:false, stats:pseudo
+  └─Limit(Probe)	0.01	cop[tikv]		offset:0, count:1
+    └─Selection	0.01	cop[tikv]		json_memberof(cast("OC8p1763XTkt.org/s/link", json BINARY), planner__core__casetest__index__index.t.nslc)
+      └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo

@@ -11,7 +11,7 @@ import (
 
 // We cannot directly set global logger as log.L(),
 // or when the global logger updated, we cannot get the latest logger.
-var globalLogger *zap.Logger = nil
+var globalLogger *zap.Logger
 
 // ResetGlobalLogger resets the global logger.
 // Contexts have already made by `ContextWithField` would keep untouched,
@@ -24,7 +24,7 @@ func ResetGlobalLogger(l *zap.Logger) {
 
 type loggingContextKey struct{}
 
-var keyLogger loggingContextKey = loggingContextKey{}
+var keyLogger = loggingContextKey{}
 
 // ContextWithField wrap a context with a logger with some fields.
 func ContextWithField(c context.Context, fields ...zap.Field) context.Context {

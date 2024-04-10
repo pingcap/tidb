@@ -1,0 +1,1106 @@
+# TestMultiJoin
+drop table if exists t35,t40,t14,t42,t15,t7,t64,t19,t8,t57,t37,t44,t38,t18,t62,t4,t48,t31,t16,t12;
+create table t35(a35 int primary key, b35 int, x35 int);
+create table t40(a40 int primary key, b40 int, x40 int);
+create table t14(a14 int primary key, b14 int, x14 int);
+create table t42(a42 int primary key, b42 int, x42 int);
+create table t15(a15 int primary key, b15 int, x15 int);
+create table t7(a7 int primary key, b7 int, x7 int);
+create table t64(a64 int primary key, b64 int, x64 int);
+create table t19(a19 int primary key, b19 int, x19 int);
+create table t9(a9 int primary key, b9 int, x9 int);
+create table t8(a8 int primary key, b8 int, x8 int);
+create table t57(a57 int primary key, b57 int, x57 int);
+create table t37(a37 int primary key, b37 int, x37 int);
+create table t44(a44 int primary key, b44 int, x44 int);
+create table t38(a38 int primary key, b38 int, x38 int);
+create table t18(a18 int primary key, b18 int, x18 int);
+create table t62(a62 int primary key, b62 int, x62 int);
+create table t4(a4 int primary key, b4 int, x4 int);
+create table t48(a48 int primary key, b48 int, x48 int);
+create table t31(a31 int primary key, b31 int, x31 int);
+create table t16(a16 int primary key, b16 int, x16 int);
+create table t12(a12 int primary key, b12 int, x12 int);
+insert into t35 values(1,1,1);
+insert into t40 values(1,1,1);
+insert into t14 values(1,1,1);
+insert into t42 values(1,1,1);
+insert into t15 values(1,1,1);
+insert into t7 values(1,1,1);
+insert into t64 values(1,1,1);
+insert into t19 values(1,1,1);
+insert into t9 values(1,1,1);
+insert into t8 values(1,1,1);
+insert into t57 values(1,1,1);
+insert into t37 values(1,1,1);
+insert into t44 values(1,1,1);
+insert into t38 values(1,1,1);
+insert into t18 values(1,1,1);
+insert into t62 values(1,1,1);
+insert into t4 values(1,1,1);
+insert into t48 values(1,1,1);
+insert into t31 values(1,1,1);
+insert into t16 values(1,1,1);
+insert into t12 values(1,1,1);
+insert into t35 values(7,7,7);
+insert into t40 values(7,7,7);
+insert into t14 values(7,7,7);
+insert into t42 values(7,7,7);
+insert into t15 values(7,7,7);
+insert into t7 values(7,7,7);
+insert into t64 values(7,7,7);
+insert into t19 values(7,7,7);
+insert into t9 values(7,7,7);
+insert into t8 values(7,7,7);
+insert into t57 values(7,7,7);
+insert into t37 values(7,7,7);
+insert into t44 values(7,7,7);
+insert into t38 values(7,7,7);
+insert into t18 values(7,7,7);
+insert into t62 values(7,7,7);
+insert into t4 values(7,7,7);
+insert into t48 values(7,7,7);
+insert into t31 values(7,7,7);
+insert into t16 values(7,7,7);
+insert into t12 values(7,7,7);
+SELECT x4,x8,x38,x44,x31,x9,x57,x48,x19,x40,x14,x12,x7,x64,x37,x18,x62,x35,x42,x15,x16 FROM
+t35,t40,t14,t42,t15,t7,t64,t19,t9,t8,t57,t37,t44,t38,t18,t62,t4,t48,t31,t16,t12
+WHERE b48=a57
+AND a4=b19
+AND a14=b16
+AND b37=a48
+AND a40=b42
+AND a31=7
+AND a15=b40
+AND a38=b8
+AND b15=a31
+AND b64=a18
+AND b12=a44
+AND b7=a8
+AND b35=a16
+AND a12=b14
+AND a64=b57
+AND b62=a7
+AND a35=b38
+AND b9=a19
+AND a62=b18
+AND b4=a37
+AND b44=a42;
+
+# TestSubquerySameTable
+drop table if exists t;
+create table t (a int);
+insert t values (1), (2);
+select a from t where exists(select 1 from t as x where x.a < t.a);
+select a from t where not exists(select 1 from t as x where x.a < t.a);
+
+# TestInSubquery
+drop table if exists t;
+create table t (a int, b int);
+insert t values (1, 1), (2, 1);
+select m1.a from t as m1 where m1.a in (select m2.b from t as m2);
+--sorted_result
+select m1.a from t as m1 where (3, m1.b) not in (select * from t as m2);
+select m1.a from t as m1 where m1.a in (select m2.b+1 from t as m2);
+prepare stmt1 from 'select m1.a from t as m1 where m1.a in (select m2.b+? from t as m2)';
+set @a = 1;
+execute stmt1 using @a;
+set @a = 0;
+execute stmt1 using @a;
+select m1.a from t as m1 where m1.a in (1, 3, 5);
+drop table if exists t1;
+create table t1 (a float);
+insert t1 values (281.37);
+select a from t1 where (a in (select a from t1));
+drop table if exists t1, t2;
+create table t1 (a int, b int);
+insert into t1 values (0,0),(1,1),(2,2),(3,3),(4,4);
+create table t2 (a int);
+insert into t2 values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+select a from t1 where (1,1) in (select * from t2 s , t2 t where t1.a = s.a and s.a = t.a limit 1);
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int);
+insert into t1 values (1),(2);
+insert into t2 values (1),(2);
+set @@session.tidb_opt_insubq_to_join_and_agg = 0;
+--sorted_result
+select * from t1 where a in (select * from t2);
+--sorted_result
+select * from t1 where a in (select * from t2 where false);
+--sorted_result
+select * from t1 where a not in (select * from t2 where false);
+set @@session.tidb_opt_insubq_to_join_and_agg = 1;
+--sorted_result
+select * from t1 where a in (select * from t2);
+--sorted_result
+select * from t1 where a in (select * from t2 where false);
+--sorted_result
+select * from t1 where a not in (select * from t2 where false);
+drop table if exists t1, t2;
+create table t1 (a int, key b (a));
+create table t2 (a int, key b (a));
+insert into t1 values (1),(2),(2);
+insert into t2 values (1),(2),(2);
+--sorted_result
+select * from t1 where a in (select * from t2) order by a desc;
+--sorted_result
+select * from t1 where a in (select count(*) from t2 where t1.a = t2.a) order by a desc;
+set @@session.tidb_opt_insubq_to_join_and_agg = default;
+
+# TestIssue5255
+drop table if exists t1, t2;
+create table t1(a int, b date, c float, primary key(a, b));
+create table t2(a int primary key);
+insert into t1 values(1, '2017-11-29', 2.2);
+insert into t2 values(1);
+select /*+ INL_JOIN(t1) */ * from t1 join t2 on t1.a=t2.a;
+select /*+ INL_HASH_JOIN(t1) */ * from t1 join t2 on t1.a=t2.a;
+select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a=t2.a;
+
+# TestIssue5278
+drop table if exists t, tt;
+create table t(a int, b int);
+create table tt(a varchar(10), b int);
+insert into t values(1, 1);
+select * from t left join tt on t.a=tt.a left join t ttt on t.a=ttt.a;
+
+# TestIssue15686
+drop table if exists t, k;
+create table k (a int, pk int primary key, index(a));
+create table t (a int, pk int primary key, index(a));
+insert into k values(0,8),(0,23),(1,21),(1,33),(1,52),(2,17),(2,34),(2,39),(2,40),(2,66),(2,67),(3,9),(3,25),(3,41),(3,48),(4,4),(4,11),(4,15),(4,26),(4,27),(4,31),(4,35),(4,45),(4,47),(4,49);
+insert into t values(3,4),(3,5),(3,27),(3,29),(3,57),(3,58),(3,79),(3,84),(3,92),(3,95);
+select /*+ inl_join(t) */ count(*) from k left join t on k.a = t.a and k.pk > t.pk;
+select /*+ inl_hash_join(t) */ count(*) from k left join t on k.a = t.a and k.pk > t.pk;
+select /*+ inl_merge_join(t) */ count(*) from k left join t on k.a = t.a and k.pk > t.pk;
+
+# TestMergejoinOrder
+drop table if exists t1, t2;
+create table t1(a bigint primary key, b bigint);
+create table t2(a bigint primary key, b bigint);
+insert into t1 values(1, 100), (2, 100), (3, 100), (4, 100), (5, 100);
+insert into t2 select a*100, b*100 from t1;
+explain format = 'brief' select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;
+set @@tidb_init_chunk_size=1;
+select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;
+drop table if exists t;
+create table t(a bigint, b bigint, index idx_1(a,b));
+insert into t values(1, 1), (1, 2), (2, 1), (2, 2);
+select /*+ TIDB_SMJ(t1, t2) */ * from t t1 join t t2 on t1.b = t2.b and t1.a=t2.a;
+drop table if exists t;
+create table t(a decimal(6,2), index idx(a));
+insert into t values(1.01), (2.02), (NULL);
+select /*+ TIDB_SMJ(t1) */ t1.a from t t1 join t t2 on t1.a=t2.a order by t1.a;
+set @@tidb_init_chunk_size=default;
+
+# TestEmbeddedOuterJoin
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+insert into t1 values(1, 1);
+select * from (t1 left join t2 on t1.a = t2.a) left join (t2 t3 left join t2 t4 on t3.a = t4.a) on t2.b = 1;
+
+# TestJoinDifferentDecimals
+Drop table if exists t1;
+Create table t1 (v int);
+Insert into t1 value (1);
+Insert into t1 value (2);
+Insert into t1 value (3);
+Drop table if exists t2;
+Create table t2 (v decimal(12, 3));
+Insert into t2 value (1);
+Insert into t2 value (2.0);
+Insert into t2 value (000003.000000);
+Select * from t1, t2 where t1.v = t2.v order by t1.v;
+
+# TestScalarFuncNullSemiJoin
+drop table if exists t;
+create table t(a int, b int);
+insert into t values(null, 1), (1, 2);
+drop table if exists s;
+create table s(a varchar(20), b varchar(20));
+insert into s values(null, '1');
+select a in (select a from s) from t;
+drop table s;
+create table s(a int, b int);
+insert into s values(null, 1);
+select a in (select a+b from s) from t;
+
+# TestInjectProjOnTopN
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a bigint, b bigint);
+create table t2(a bigint, b bigint);
+insert into t1 values(1, 1);
+select t1.a+t1.b as result from t1 left join t2 on 1 = 0 order by result limit 20;
+
+# TestIssue11544
+drop table if exists 11544t, 11544tt;
+create table 11544t(a int);
+create table 11544tt(a int, b varchar(10), index idx(a, b(3)));
+insert into 11544t values(1);
+insert into 11544tt values(1, 'aaaaaaa'), (1, 'aaaabbb'), (1, 'aaaacccc');
+select /*+ INL_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and (tt.b = 'aaaaaaa' or tt.b = 'aaaabbb');
+select /*+ INL_HASH_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and (tt.b = 'aaaaaaa' or tt.b = 'aaaabbb');
+--sorted_result
+select /*+ INL_MERGE_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and (tt.b = 'aaaaaaa' or tt.b = 'aaaabbb');
+select /*+ INL_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and tt.b in ('aaaaaaa', 'aaaabbb', 'aaaacccc');
+select /*+ INL_HASH_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and tt.b in ('aaaaaaa', 'aaaabbb', 'aaaacccc');
+--sorted_result
+select /*+ INL_MERGE_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and tt.b in ('aaaaaaa', 'aaaabbb', 'aaaacccc');
+
+# TestIssue11390
+drop table if exists 11390t;
+create table 11390t (k1 int unsigned, k2 int unsigned, key(k1, k2));
+insert into 11390t values(1, 1);
+select /*+ INL_JOIN(t1, t2) */ * from 11390t t1, 11390t t2 where t1.k2 > 0 and t1.k2 = t2.k2 and t2.k1=1;
+select /*+ INL_HASH_JOIN(t1, t2) */ * from 11390t t1, 11390t t2 where t1.k2 > 0 and t1.k2 = t2.k2 and t2.k1=1;
+select /*+ INL_MERGE_JOIN(t1, t2) */ * from 11390t t1, 11390t t2 where t1.k2 > 0 and t1.k2 = t2.k2 and t2.k1=1;
+
+# TestIssue13177
+drop table if exists t1, t2;
+create table t1(a varchar(20), b int, c int);
+create table t2(a varchar(20), b int, c int, primary key(a, b));
+insert into t1 values("abcd", 1, 1), ("bacd", 2, 2), ("cbad", 3, 3);
+insert into t2 values("bcd", 1, 1), ("acd", 2, 2), ("bad", 3, 3);
+--sorted_result
+select /*+ inl_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5;
+--sorted_result
+select /*+ inl_hash_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5;
+--sorted_result
+select /*+ inl_merge_join(t1, t2) */ * from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5;
+--sorted_result
+select /*+ inl_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5;
+--sorted_result
+select /*+ inl_hash_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5;
+--sorted_result
+select /*+ inl_merge_join(t1, t2) */ t1.* from t1 join t2 on substr(t1.a, 2, 4) = t2.a and t1.b = t2.b where t1.c between 1 and 5;
+
+# TestIssue14514
+drop table if exists t;
+create table t (pk varchar(14) primary key, a varchar(12));
+select * from (select t1.pk or '/' as c from t as t1 left join t as t2 on t1.a = t2.pk) as t where t.c = 1;
+
+# TestOuterMatchStatusIssue14742
+drop table if exists testjoin;
+create table testjoin(a int);
+set @@tidb_max_chunk_size=2;
+insert into testjoin values (NULL);
+insert into testjoin values (1);
+insert into testjoin values (2), (2), (2);
+SELECT * FROM testjoin t1 RIGHT JOIN testjoin t2 ON t1.a > t2.a order by t1.a, t2.a;
+set @@tidb_max_chunk_size=default;
+
+# TestIssue18564
+drop table if exists t1, t2;
+create table t1(a int, b int, primary key(a), index idx(b,a));
+create table t2(a int, b int, primary key(a), index idx(b,a));
+insert into t1 values(1, 1);
+insert into t2 values(1, 1);
+select /*+ INL_JOIN(t1) */ * from t1 FORCE INDEX (idx) join t2 on t1.b=t2.b and t1.a = t2.a;
+
+# TestInvalidEnumVal
+set sql_mode = '';
+drop table if exists t1;
+create table t1(c1 enum('a', 'b'));
+insert into t1 values('a');
+insert into t1 values(0);
+insert into t1 values(100);
+select /*+ hash_join(t_alias1, t_alias2)*/ * from t1 t_alias1 inner join t1 t_alias2 on t_alias1.c1 = t_alias2.c1;
+set sql_mode = default;
+
+# TestApplyOuterAggEmptyInput
+drop table if exists t1, t2;
+create table t1(a int);
+create table t2(a int);
+insert into t1 values(1);
+insert into t2 values(1);
+select count(1), (select count(1) from t2 where t2.a > t1.a) as field from t1 where t1.a = 100;
+select /*+ agg_to_cop() */ count(1), (select count(1) from t2 where t2.a > t1.a) as field from t1 where t1.a = 100;
+select count(1), (select count(1) from t2 where t2.a > t1.a) as field from t1 where t1.a = 1;
+select /*+ agg_to_cop() */ count(1), (select count(1) from t2 where t2.a > t1.a) as field from t1 where t1.a = 1;
+
+# TestIssue19112
+drop table if exists t1, t2;
+create table t1 ( c_int int, c_decimal decimal(12, 6), key(c_int), unique key(c_decimal) );
+create table t2 like t1;
+insert into t1 (c_int, c_decimal) values (1, 4.064000), (2, 0.257000), (3, 1.010000);
+insert into t2 (c_int, c_decimal) values (1, 4.064000), (3, 1.010000);
+select /*+ HASH_JOIN(t1,t2) */  * from t1 join t2 on t1.c_decimal = t2.c_decimal order by t1.c_int;
+
+# TestIssue11896
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 bigint);
+create table t1(c1 bit(64));
+insert into t value(1);
+insert into t1 value(1);
+select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int);
+create table t1(c1 bit(32));
+insert into t value(1);
+insert into t1 value(1);
+select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 mediumint);
+create table t1(c1 bit(24));
+insert into t value(1);
+insert into t1 value(1);
+select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 smallint);
+create table t1(c1 bit(16));
+insert into t value(1);
+insert into t1 value(1);
+select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 tinyint);
+create table t1(c1 bit(8));
+insert into t value(1);
+insert into t1 value(1);
+select t.c1, hex(t1.c1) from t, t1 where t.c1 = t1.c1;
+
+# TestIssue19498
+drop table if exists t1;
+create table t1 (c_int int, primary key (c_int));
+insert into t1 values (1),(2),(3),(4);
+drop table if exists t2;
+create table t2 (c_str varchar(40));
+insert into t2 values ('zen sammet');
+insert into t2 values ('happy fermat');
+insert into t2 values ('happy archimedes');
+insert into t2 values ('happy hypatia');
+drop table if exists t3;
+create table t3 (c_int int, c_str varchar(40), primary key (c_int), key (c_str));
+insert into t3 values (1, 'sweet hoover');
+insert into t3 values (2, 'awesome elion');
+insert into t3 values (3, 'hungry khayyam');
+insert into t3 values (4, 'objective kapitsa');
+select c_str, (select /*+ INL_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;
+select c_str, (select /*+ INL_HASH_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;
+select c_str, (select /*+ INL_MERGE_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;
+
+# TestIssue19500
+drop table if exists t1;
+create table t1 (c_int int, primary key (c_int));
+insert into t1 values (1),(2),(3),(4),(5);
+drop table if exists t2;
+create table t2 (c_int int unsigned, c_str varchar(40), primary key (c_int), key (c_str));
+insert into t2 values (1, 'dazzling panini'),(2, 'infallible perlman'),(3, 'recursing cannon'),(4, 'vigorous satoshi'),(5, 'vigilant gauss'),(6, 'nervous jackson');
+drop table if exists t3;
+create table t3 (c_int int, c_str varchar(40), key (c_str));
+insert into t3 values (1, 'sweet morse'),(2, 'reverent golick'),(3, 'clever rubin'),(4, 'flamboyant morse');
+select (select (select sum(c_int) from t3 where t3.c_str > t2.c_str) from t2 where t2.c_int > t1.c_int order by c_int limit 1) q from t1 order by q;
+
+# TestIssue20710
+drop table if exists t;
+drop table if exists s;
+create table t(a int, b int);
+create table s(a int, b int, index(a));
+insert into t values(1,1),(1,2),(2,2);
+insert into s values(1,1),(2,2),(2,1);
+--enable_warnings
+select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.b;
+select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.a;
+select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.a = s.b;
+select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.b;
+select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.a;
+select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.a = s.b;
+--disable_warnings
+
+# TestIssue20219
+drop table if exists t,s ;
+CREATE TABLE `t` (   `a` set('a','b','c','d','e','f','g','h','i','j') DEFAULT NULL );
+insert into t values('i'), ('j');
+CREATE TABLE `s` (   `a` char(1) DEFAULT NULL,   KEY `a` (`a`) );
+insert into s values('i'), ('j');
+--enable_warnings
+select /*+ inl_hash_join(s)*/ t.a from t left join s on t.a = s.a;
+select /*+ inl_join(s)*/ t.a from t left join s on t.a = s.a;
+--disable_warnings
+
+# TestIssue25902
+drop table if exists tt1,tt2,tt3;
+create table tt1 (ts timestamp);
+create table tt2 (ts varchar(32));
+create table tt3 (ts datetime);
+insert into tt1 values ("2001-01-01 00:00:00");
+insert into tt2 values ("2001-01-01 00:00:00");
+insert into tt3 values ("2001-01-01 00:00:00");
+select * from tt1 where ts in (select ts from tt2);
+select * from tt1 where ts in (select ts from tt3);
+set @@session.time_zone = '+10:00';
+select * from tt1 where ts in (select ts from tt2);
+set @@session.time_zone = default;
+
+# TestOuterJoin
+drop table if exists t1, t2, t3, t4;
+create table t1(a int, b int, c int);
+create table t2(a int, b int, c int);
+create table t3(a int, b int, c int);
+create table t4(a int, b int, c int);
+INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);
+INSERT INTO t2 VALUES (3,3,0), (4,2,0), (5,3,0);
+INSERT INTO t3 VALUES (1,2,0), (2,2,0);
+INSERT INTO t4 VALUES (3,2,0), (4,2,0);
+SELECT t2.a,t2.b,t3.a,t3.b,t4.a,t4.b from (t3, t4) left join (t1, t2) on t3.a=1 AND t3.b=t2.b AND t2.b=t4.b order by 1, 2, 3, 4, 5;
+drop table if exists t1, t2, t3;
+create table t1 (a1 int, a2 int);
+create table t2 (b1 int not null, b2 int);
+create table t3 (c1 int, c2 int);
+insert into t1 values (1,2), (2,2), (3,2);
+insert into t2 values (1,3), (2,3);
+insert into t3 values (2,4),        (3,4);
+select * from t1 left join t2  on  b1 = a1 left join t3  on  c1 = a1  and  b1 is null order by 1, 2, 3, 4, 5, 6;
+
+# TestJoinPanic2
+set sql_mode = 'ONLY_FULL_GROUP_BY';
+drop table if exists events;
+create table events (clock int, source int);
+SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock;
+--error 1055
+SELECT * FROM events e JOIN (SELECT clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock;
+drop table if exists tpj1,tpj2;
+create table tpj1 (id int, b int,  unique index (id));
+create table tpj2 (id int, b int,  unique index (id));
+insert into tpj1 values  (1,1);
+insert into tpj2 values  (1,1);
+select tpj1.b,tpj2.b from tpj1 left join tpj2 on tpj1.id=tpj2.id where tpj1.id=1;
+set sql_mode = default;
+
+# TestSubqueryInJoinOn
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (id int);
+create table t2 (id int);
+insert into t1 values (1);
+insert into t2 values (1);
+--error 1105
+SELECT * FROM t1 JOIN t2 on (t2.id < all (SELECT 1));
+
+# TestIssue15850JoinNullValue
+--enable_warnings
+SELECT * FROM (select null) v NATURAL LEFT JOIN (select null) v1;
+--disable_warnings
+drop table if exists t0;
+drop view if exists v0;
+CREATE TABLE t0(c0 TEXT);
+CREATE VIEW v0(c0) AS SELECT NULL;
+--enable_warnings
+SELECT /*+ HASH_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;
+SELECT /*+ MERGE_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;
+--disable_warnings
+
+# TestTiDBNAAJ
+drop table if exists t;
+set @@session.tidb_enable_null_aware_anti_join=0;
+create table t(a decimal(40,0), b bigint(20) not null);
+insert into t values(7,8),(7,8),(3,4),(3,4),(9,2),(9,2),(2,0),(2,0),(0,4),(0,4),(8,8),(8,8),(6,1),(6,1),(NULL, 0),(NULL,0);
+select ( table1 . a , table1 . b ) NOT IN ( SELECT 3 , 2 UNION  SELECT 9, 2 ) AS field2 from t as table1 order by field2;
+set @@session.tidb_enable_null_aware_anti_join=1;
+select ( table1 . a , table1 . b ) NOT IN ( SELECT 3 , 2 UNION  SELECT 9, 2 ) AS field2 from t as table1 order by field2;
+set @@session.tidb_enable_null_aware_anti_join=default;
+
+# TestNaturalJoin
+drop table if exists t1, t2;
+create table t1 (a int, b int);
+create table t2 (a int, c int);
+insert t1 values (1,2), (10,20), (0,0);
+insert t2 values (1,3), (100,200), (0,0);
+explain format = 'brief' select * from t1 natural join t2;
+--sorted_result
+select * from t1 natural join t2;
+explain format = 'brief' select * from t1 natural left join t2 order by a;
+--sorted_result
+select * from t1 natural left join t2 order by a;
+explain format = 'brief' select * from t1 natural right join t2 order by a;
+--sorted_result
+select * from t1 natural right join t2 order by a;
+explain format = 'brief' SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=> t2.a);
+--sorted_result
+SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=> t2.a);
+
+# TestUsingAndNaturalJoinSchema
+drop table if exists t1, t2, t3, t4;
+create table t1 (c int, b int);
+create table t2 (a int, b int);
+create table t3 (b int, c int);
+create table t4 (y int, c int);
+insert into t1 values (10,1);
+insert into t1 values (3 ,1);
+insert into t1 values (3 ,2);
+insert into t2 values (2, 1);
+insert into t3 values (1, 3);
+insert into t3 values (1,10);
+insert into t4 values (11,3);
+insert into t4 values (2, 3);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) natural join (t3 natural join t4);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (b);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (c);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (c,b);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (b);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (c);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (c,b);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (b);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (c);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (c,b);
+--sorted_result
+select * from (t1  natural join t2) natural join (t3 natural  join t4);
+--sorted_result
+select * from (t1 natural join t2) join (t3 natural join t4) using (b);
+--sorted_result
+select * from (t1 natural join t2) left outer join (t3 natural join t4) using (b);
+--sorted_result
+select * from (t1 natural join t2) right outer join (t3 natural join t4) using (c,b);
+
+# TestIssue19410
+drop table if exists t, t1, t2, t3;
+create table t(a int, b enum('A', 'B'));
+create table t1(a1 int, b1 enum('B', 'A') NOT NULL, UNIQUE KEY (b1));
+insert into t values (1, 'A');
+insert into t1 values (1, 'A');
+select /*+ INL_HASH_JOIN(t1) */ * from t join t1 on t.b = t1.b1;
+select /*+ INL_JOIN(t1) */ * from t join t1 on t.b = t1.b1;
+create table t2(a1 int, b1 enum('C', 'D') NOT NULL, UNIQUE KEY (b1));
+insert into t2 values (1, 'C');
+select /*+ INL_HASH_JOIN(t2) */ * from t join t2 on t.b = t2.b1;
+select /*+ INL_JOIN(t2) */ * from t join t2 on t.b = t2.b1;
+create table t3(a1 int, b1 enum('A', 'B') NOT NULL, UNIQUE KEY (b1));
+insert into t3 values (1, 'A');
+select /*+ INL_HASH_JOIN(t3) */ * from t join t3 on t.b = t3.b1;
+select /*+ INL_JOIN(t3) */ * from t join t3 on t.b = t3.b1;
+
+# TestJoinCast
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int);
+create table t1(c1 int unsigned);
+insert into t values (1);
+insert into t1 values (1);
+select t.c1 from t , t1 where t.c1 = t1.c1;
+
+## int64(-1) != uint64(18446744073709551615)
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 bigint);
+create table t1(c1 bigint unsigned);
+insert into t values (-1);
+insert into t1 values (18446744073709551615);
+select * from t , t1 where t.c1 = t1.c1;
+
+## float(1) == double(1)
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 float);
+create table t1(c1 double);
+insert into t values (1.0);
+insert into t1 values (1.00);
+select t.c1 from t , t1 where t.c1 = t1.c1;
+
+## varchar("x") == char("x")
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 varchar(1));
+create table t1(c1 char(1));
+insert into t values ("x");
+insert into t1 values ("x");
+select t.c1 from t , t1 where t.c1 = t1.c1;
+
+## varchar("x") != char("y")
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 varchar(1));
+create table t1(c1 char(1));
+insert into t values ("x");
+insert into t1 values ("y");
+select t.c1 from t , t1 where t.c1 = t1.c1;
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int,c2 double);
+create table t1(c1 double,c2 int);
+insert into t values (1, 2), (1, NULL);
+insert into t1 values (1, 2), (1, NULL);
+select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);
+
+## Issue 11895
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 bigint unsigned);
+create table t1(c1 bit(64));
+insert into t value(18446744073709551615);
+insert into t1 value(-1);
+select * from t, t1 where t.c1 = t1.c1;
+
+## Issues 11896
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 bigint);
+create table t1(c1 bit(64));
+insert into t value(1);
+insert into t1 value(1);
+select * from t, t1 where t.c1 = t1.c1;
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 bigint);
+create table t1(c1 bit(64));
+insert into t value(-1);
+insert into t1 value(18446744073709551615);
+## TODO: MySQL will return one row, because c1 in t1 is 0xffffffff, which equals to -1.
+select * from t, t1 where t.c1 = t1.c1;
+
+drop table if exists t;
+drop table if exists t1;
+drop table if exists t2;
+create table t(c1 bigint);
+create table t1(c1 bigint unsigned);
+create table t2(c1 Date);
+insert into t value(20191111);
+insert into t1 value(20191111);
+insert into t2 value('2019-11-11');
+select * from t, t1, t2 where t.c1 = t2.c1 and t1.c1 = t2.c1;
+
+drop table if exists t;
+drop table if exists t1;
+drop table if exists t2;
+create table t(c1 bigint);
+create table t1(c1 bigint unsigned);
+create table t2(c1 enum('a', 'b', 'c', 'd'));
+insert into t value(3);
+insert into t1 value(3);
+insert into t2 value('c');
+select * from t, t1, t2 where t.c1 = t2.c1 and t1.c1 = t2.c1;
+
+drop table if exists t;
+drop table if exists t1;
+drop table if exists t2;
+create table t(c1 bigint);
+create table t1(c1 bigint unsigned);
+create table t2 (c1 SET('a', 'b', 'c', 'd'));
+insert into t value(9);
+insert into t1 value(9);
+insert into t2 value('a,d');
+select * from t, t1, t2 where t.c1 = t2.c1 and t1.c1 = t2.c1;
+
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 int);
+create table t1(c1 decimal(4,2));
+insert into t values(0), (2);
+insert into t1 values(0), (9);
+select * from t left join t1 on t1.c1 = t.c1;
+
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 decimal(4,1));
+create table t1(c1 decimal(4,2));
+insert into t values(0), (2);
+insert into t1 values(0), (9);
+select * from t left join t1 on t1.c1 = t.c1;
+
+drop table if exists t;
+drop table if exists t1;
+create table t(c1 decimal(4,1));
+create table t1(c1 decimal(4,2));
+create index k1 on t1(c1);
+insert into t values(0), (2);
+insert into t1 values(0), (9);
+--sorted_result
+select /*+ INL_JOIN(t1) */ * from t left join t1 on t1.c1 = t.c1;
+--sorted_result
+select /*+ INL_HASH_JOIN(t1) */ * from t left join t1 on t1.c1 = t.c1;
+--sorted_result
+select /*+ INL_MERGE_JOIN(t1) */ * from t left join t1 on t1.c1 = t.c1;
+
+drop table if exists t;
+drop table if exists t1;
+drop table if exists t2;
+create table t(c1 char(10));
+create table t1(c1 char(10));
+create table t2(c1 char(10));
+insert into t values('abd');
+insert into t1 values('abc');
+insert into t2 values('abc');
+--sorted_result
+select * from (select * from t union all select * from t1) t1 join t2 on t1.c1 = t2.c1;
+
+drop table if exists t;
+create table t(a varchar(10), index idx(a));
+insert into t values('1'), ('2'), ('3');
+set @@tidb_init_chunk_size=1;
+--sorted_result
+select a from (select /*+ INL_JOIN(t1, t2) */ t1.a from t t1 join t t2 on t1.a=t2.a) t group by a;
+--sorted_result
+select a from (select /*+ INL_HASH_JOIN(t1, t2) */ t1.a from t t1 join t t2 on t1.a=t2.a) t group by a;
+--sorted_result
+select a from (select /*+ INL_MERGE_JOIN(t1, t2) */ t1.a from t t1 join t t2 on t1.a=t2.a) t group by a;
+set @@tidb_init_chunk_size=default;
+
+# TestUsing
+drop table if exists t1, t2, t3, t4;
+create table t1 (a int, c int);
+create table t2 (a int, d int);
+create table t3 (a int);
+create table t4 (a int);
+insert t1 values (2, 4), (1, 3);
+insert t2 values (2, 5), (3, 6);
+insert t3 values (1);
+select * from t1 join t2 using (a);
+select t1.a, t2.a from t1 join t2 using (a);
+select * from t1 right join t2 using (a) order by a;
+select t1.a, t2.a from t1 right join t2 using (a) order by t2.a;
+select * from t1 left join t2 using (a) order by a;
+select t1.a, t2.a from t1 left join t2 using (a) order by t1.a;
+select * from t1 join t2 using (a) right join t3 using (a);
+select * from t1 join t2 using (a) right join t3 on (t2.a = t3.a);
+select t2.a from t1 join t2 using (a) right join t3 on (t1.a = t3.a);
+select t1.a, t2.a, t3.a from t1 join t2 using (a) right join t3 using (a);
+select t1.c, t2.d from t1 join t2 using (a) right join t3 using (a);
+alter table t1 add column b int default 1 after a;
+alter table t2 add column b int default 1 after a;
+select * from t1 join t2 using (b, a);
+select * from (t1 join t2 using (a)) join (t3 join t4 using (a)) on (t2.a = t4.a and t1.a = t3.a);
+
+drop table if exists t, tt;
+create table t(a int, b int);
+create table tt(b int, a int);
+insert into t (a, b) values(1, 1);
+insert into tt (a, b) values(1, 2);
+## Check whether this sql can execute successfully.
+select * from t join tt using(a);
+
+drop table if exists t, tt;
+create table t(a float, b int);
+create table tt(b bigint, a int);
+select * from t join tt using(a);
+
+drop table if exists t, s;
+create table t(a int, b int);
+create table s(b int, a int);
+insert into t values(1,1), (2,2), (3,3), (null,null);
+insert into s values(1,1), (3,3), (null,null);
+
+## For issue 20477
+select t.*, s.* from t join s using(a);
+select s.a from t join s using(a);
+select s.a from t join s using(a) where s.a > 1;
+select s.a from t join s using(a) order by s.a;
+select s.a from t join s using(a) where s.a > 1 order by s.a;
+select s.a from t join s using(a) where s.a > 1 order by s.a limit 2;
+
+## For issue 20441
+DROP TABLE if exists t1, t2, t3;
+create table t1 (i int);
+create table t2 (i int);
+create table t3 (i int);
+select * from t1,t2 natural left join t3 order by t1.i,t2.i,t3.i;
+select t1.i,t2.i,t3.i from t2 natural left join t3,t1 order by t1.i,t2.i,t3.i;
+select * from t1,t2 natural right join t3 order by t1.i,t2.i,t3.i;
+select t1.i,t2.i,t3.i from t2 natural right join t3,t1 order by t1.i,t2.i,t3.i;
+
+## For issue 15844
+DROP TABLE if exists t0, t1;
+CREATE TABLE t0(c0 INT);
+CREATE TABLE t1(c0 INT);
+SELECT t0.c0 FROM t0 NATURAL RIGHT JOIN t1 WHERE t1.c0;
+
+## For issue 20958
+DROP TABLE if exists t1, t2;
+create table t1(id int, name varchar(20));
+create table t2(id int, address varchar(30));
+insert into t1 values(1,'gangshen');
+insert into t2 values(1,'HangZhou');
+select t2.* from t1 inner join t2 using (id) limit 1;
+select t2.* from t1 inner join t2 on t1.id = t2.id  limit 1;
+
+## For issue 20476
+drop table if exists t1;
+create table t1(a int);
+insert into t1 (a) values(1);
+select t1.*, t2.* from t1 join t1 t2 using(a);
+select * from t1 join t1 t2 using(a);
+
+## For issue 18992
+drop table t;
+CREATE TABLE t (   a varchar(55) NOT NULL,   b varchar(55) NOT NULL,   c int(11) DEFAULT NULL,   d int(11) DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+update t t1 join t t2 using(a,b) set t1.c=t2.d;
+
+## For issue 20467
+DROP TABLE if exists t1,t2,t3,t4,t5;
+CREATE TABLE t1 (a INT, b INT);
+CREATE TABLE t2 (a INT, b INT);
+CREATE TABLE t3 (a INT, b INT);
+INSERT INTO t1 VALUES (1,1);
+INSERT INTO t2 VALUES (1,1);
+INSERT INTO t3 VALUES (1,1);
+-- error 1052
+SELECT * FROM t1 JOIN (t2 JOIN t3 USING (b)) USING (a);
+
+## For issue 6712
+drop table if exists t1,t2;
+create table t1 (t1 int , t0 int);
+create table t2 (t2 int, t0 int);
+insert into t1 select 11, 1;
+insert into t2 select 22, 1;
+select t1.t0, t2.t0 from t1 join t2 using(t0) group by t1.t0;
+select t1.t0, t2.t0 from t1 join t2 using(t0) having t1.t0 > 0;
+
+# TestSubquery
+set @@tidb_hash_join_concurrency=1;
+set @@tidb_hashagg_partial_concurrency=1;
+set @@tidb_hashagg_final_concurrency=1;
+drop table if exists t;
+create table t (c int, d int);
+begin;
+insert t values (1, 1);
+insert t values (2, 2);
+insert t values (3, 4);
+commit;
+
+set sql_mode = 'STRICT_TRANS_TABLES';
+
+select * from t where exists(select * from t k where t.c = k.c having sum(c) = 1);
+select * from t where exists(select k.c, k.d from t k, t p where t.c = k.d);
+select 1 = (select count(*) from t where t.c = k.d) from t k;
+--sorted_result
+select 1 = (select count(*) from t where exists( select * from t m where t.c = k.d)) from t k;
+--sorted_result
+select t.c = any (select count(*) from t) from t;
+select * from t where (t.c, 6) = any (select count(*), sum(t.c) from t);
+--sorted_result
+select t.c from t where (t.c) < all (select count(*) from t);
+--sorted_result
+select t.c from t where (t.c, t.d) = any (select * from t);
+select t.c from t where (t.c, t.d) != all (select * from t);
+--sorted_result
+select (select count(*) from t where t.c = k.d) from t k;
+--sorted_result
+select t.c from t where (t.c, t.d) in (select * from t);
+select t.c from t where (t.c, t.d) not in (select * from t);
+select * from t A inner join t B on A.c = B.c and A.c > 100;
+## = all empty set is true
+--sorted_result
+select t.c from t where (t.c, t.d) != all (select * from t where d > 1000);
+select t.c from t where (t.c) < any (select c from t where d > 1000);
+insert t values (NULL, NULL);
+--sorted_result
+select (t.c) < any (select c from t) from t;
+select (10) > all (select c from t) from t;
+select (c) > all (select c from t) from t;
+
+drop table if exists a;
+create table a (c int, d int);
+insert a values (1, 2);
+drop table if exists b;
+create table b (c int, d int);
+insert b values (2, 1);
+
+select * from a b where c = (select d from b a where a.c = 2 and b.c = 1);
+
+drop table if exists t;
+create table t(c int);
+insert t values(10), (8), (7), (9), (11);
+select * from t where 9 in (select c from t s where s.c < t.c limit 3);
+
+drop table if exists t;
+create table t(id int, v int);
+insert into t values(1, 1), (2, 2), (3, 3);
+select * from t where v=(select min(t1.v) from t t1, t t2, t t3 where t1.id=t2.id and t2.id=t3.id and t1.id=t.id);
+
+select exists (select t.id from t where s.id < 2 and t.id = s.id) from t s;
+
+drop table if exists t;
+create table t(c int);
+select exists(select count(*) from t);
+
+drop table if exists t;
+create table t(id int primary key, v int);
+insert into t values(1, 1), (2, 2), (3, 3);
+--sorted_result
+select (select t.id from t where s.id < 2 and t.id = s.id) from t s;
+--error 1242
+select (select t.id from t where t.id = t.v and t.v != s.id) from t s;
+
+drop table if exists t;
+drop table if exists s;
+create table t(id int);
+create table s(id int);
+insert into t values(1), (2);
+insert into s values(2), (2);
+select id from t where(select count(*) from s where s.id = t.id) > 0;
+select *, (select count(*) from s where id = t.id limit 1, 1) from t;
+
+drop table if exists t;
+drop table if exists s;
+create table t(id int primary key);
+create table s(id int);
+insert into t values(1), (2);
+insert into s values(2), (2);
+select *, (select count(id) from s where id = t.id) from t;
+select *, 0 < any (select count(id) from s where id = t.id) from t;
+select (select count(*) from t k where t.id = id) from s, t where t.id = s.id limit 1;
+
+drop table if exists t, s;
+create table t(id int primary key);
+create table s(id int, index k(id));
+insert into t values(1), (2);
+insert into s values(2), (2);
+select (select id from s where s.id = t.id order by s.id limit 1) from t;
+
+drop table if exists t, s;
+create table t(id int);
+create table s(id int);
+insert into t values(2), (2);
+insert into s values(2);
+select (select id from s where s.id = t.id order by s.id) from t;
+
+drop table if exists t;
+create table t(dt datetime);
+select (select 1 from t where DATE_FORMAT(o.dt,'%Y-%m')) from t o;
+
+drop table if exists t1, t2;
+create table t1(f1 int, f2 int);
+create table t2(fa int, fb int);
+insert into t1 values (1,1),(1,1),(1,2),(1,2),(1,2),(1,3);
+insert into t2 values (1,1),(1,2),(1,3);
+select f1,f2 from t1 group by f1,f2 having count(1) >= all (select fb from t2 where fa = f1);
+
+DROP TABLE IF EXISTS t1, t2;
+CREATE TABLE t1(a INT);
+CREATE TABLE t2 (d BINARY(2), PRIMARY KEY (d(1)), UNIQUE KEY (d));
+INSERT INTO t1 values(1);
+SELECT 1 FROM executor__jointest__join.t1, executor__jointest__join.t2 WHERE 1 = (SELECT executor__jointest__join.t2.d FROM executor__jointest__join.t2 WHERE executor__jointest__join.t1.a >= 1) and executor__jointest__join.t2.d = 1;
+
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(a int, b int default 0);
+create index k1 on t1(a);
+INSERT INTO t1 (a) values(1), (2), (3), (4), (5);
+select (select /*+ INL_JOIN(x2) */ x2.a from t1 x1, t1 x2 where x1.a = t1.a and x1.a = x2.a) from t1;
+select (select /*+ INL_HASH_JOIN(x2) */ x2.a from t1 x1, t1 x2 where x1.a = t1.a and x1.a = x2.a) from t1;
+select (select /*+ INL_MERGE_JOIN(x2) */ x2.a from t1 x1, t1 x2 where x1.a = t1.a and x1.a = x2.a) from t1;
+
+select 1 from (select t1.a in (select t1.a from t1) from t1) x;
+select 1 from (select t1.a not in (select t1.a from t1) from t1) x;
+
+drop table if exists t1, t2;
+create table t1(a int);
+create table t2(b int);
+insert into t1 values(1);
+insert into t2 values(1);
+select * from t1 where a in (select a from t2);
+
+insert into t2 value(null);
+select * from t1 where 1 in (select b from t2);
+select * from t1 where 1 not in (select b from t2);
+select * from t1 where 2 not in (select b from t2);
+select * from t1 where 2 in (select b from t2);
+select 1 in (select b from t2) from t1;
+select 1 in (select 1 from t2) from t1;
+select 1 not in (select b from t2) from t1;
+select 1 not in (select 1 from t2) from t1;
+
+delete from t2 where b=1;
+select 1 in (select b from t2) from t1;
+select 1 not in (select b from t2) from t1;
+select 1 not in (select 1 from t2) from t1;
+select 1 in (select 1 from t2) from t1;
+select 1 not in (select null from t1) from t2;
+select 1 in (select null from t1) from t2;
+
+drop table if exists s;
+create table s(a int not null, b int);
+set sql_mode = '';
+select (2,0) in (select s.a, min(s.b) from s) as f;
+select (2,0) not in (select s.a, min(s.b) from s) as f;
+select (2,0) = any (select s.a, min(s.b) from s) as f;
+select (2,0) != all (select s.a, min(s.b) from s) as f;
+select (2,0) in (select s.b, min(s.b) from s) as f;
+select (2,0) not in (select s.b, min(s.b) from s) as f;
+select (2,0) = any (select s.b, min(s.b) from s) as f;
+select (2,0) != all (select s.b, min(s.b) from s) as f;
+insert into s values(1,null);
+select 1 in (select b from s);
+
+drop table if exists t;
+create table t(a int);
+insert into t values(1),(null);
+select a not in (select 1) from t;
+select 1 not in (select null from t t1) from t;
+select 1 in (select null from t t1) from t;
+select a in (select 0) xx from (select null as a) x;
+
+drop table t;
+create table t(a int, b int);
+insert into t values(1,null),(null, null),(null, 2);
+select * from t t1 where (2 in (select a from t t2 where (t2.b=t1.b) is null));
+--sorted_result
+select (t2.a in (select t1.a from t t1)) is true from t t2;
+
+set sql_mode=default;
+set @@tidb_hash_join_concurrency=default;
+set @@tidb_hashagg_partial_concurrency=default;
+set @@tidb_hashagg_final_concurrency=default;
+
+# TestCartesianJoinPanic
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+set tidb_mem_quota_query = 1 << 18;
+set global tidb_mem_oom_action = 'CANCEL';
+set global tidb_enable_tmp_storage_on_oom = off;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;
+
+set tidb_mem_quota_query = default;
+set global tidb_mem_oom_action = default;
+set global tidb_enable_tmp_storage_on_oom = default;
+
+# TestJoinInDisk
+SET GLOBAL tidb_mem_oom_action='LOG';
+## TODO(fengliyuan): how to ensure that it is using disk really?
+set @@tidb_mem_quota_query=1;
+drop table if exists t, t1;
+create table t(c1 int, c2 int);
+create table t1(c1 int, c2 int);
+insert into t values(1,1),(2,2);
+insert into t1 values(2,3),(4,4);
+select /*+ TIDB_HJ(t, t2) */ * from t, t1 where t.c1 = t1.c1;
+
+# TestIssue30244
+drop table if exists t1,t2,t3,t4;
+create table t1 (c int, b int);
+create table t2 (a int, b int);
+create table t3 (b int, c int);
+create table t4 (y int, c int);
+--error 1052
+select * from t1 natural join (t3 cross join t4);
+--error 1052
+select * from (t3 cross join t4) natural join t1;
+--error 1052
+select * from (t1 join t2 on t1.b=t2.b) natural join (t3 natural join t4);
+--error 1052
+select * from (t3 natural join t4) natural join (t1 join t2 on t1.b=t2.b);

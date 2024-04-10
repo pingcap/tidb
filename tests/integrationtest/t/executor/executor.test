@@ -1,0 +1,2914 @@
+# TestSelectWithoutFrom
+select 1 + 2*3;
+select _utf8"string";
+select 1 order by 1;
+SELECT  'a' as f1 having f1 = 'a';
+SELECT (SELECT * FROM (SELECT 'a') t) AS f1 HAVING (f1 = 'a' OR TRUE);
+SELECT (SELECT * FROM (SELECT 'a') t) + 1 AS f1 HAVING (f1 = 'a' OR TRUE);
+
+# TestOrderBy
+create table t (c1 int, c2 int, c3 varchar(20));
+insert into t values (1, 2, 'abc'), (2, 1, 'bcd');
+## Fix issue https://github.com/pingcap/tidb/issues/337
+select c1 as a, c1 as b from t order by c1;
+select c1 as a, t.c1 as a from t order by a desc;
+select c1 as c2 from t order by c2;
+select sum(c1) from t order by sum(c1);
+select c1 as c2 from t order by c2 + 1;
+## Order by position.
+select * from t order by 1;
+select * from t order by 2;
+## Order by binary.
+select c1, c3 from t order by binary c1 desc;
+select c1, c2 from t order by binary c3;
+
+# TestNeighbouringProj
+create table t1(a int, b int);
+create table t2(a int, b int);
+insert into t1 value(1, 1), (2, 2);
+insert into t2 value(1, 1), (2, 2);
+select sum(c) from (select t1.a as a, t1.a as c, length(t1.b) from t1  union select a, b, b from t2) t;
+drop table if exists t;
+create table t(a bigint, b bigint, c bigint);
+insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3);
+select cast(count(a) as signed), a as another, a from t group by a order by cast(count(a) as signed), a limit 10;
+
+# TestIndexReverseOrder
+drop table if exists t;
+create table t (a int primary key auto_increment, b int, index idx (b));
+insert t (b) values (0), (1), (2), (3), (4), (5), (6), (7), (8), (9);
+select b from t order by b desc;
+select b from t where b <3 or (b >=6 and b < 8) order by b desc;
+drop table if exists t;
+create table t (a int, b int, index idx (b, a));
+insert t values (0, 2), (1, 2), (2, 2), (0, 1), (1, 1), (2, 1), (0, 0), (1, 0), (2, 0);
+select b, a from t order by b, a desc;
+
+# TestTableReverseOrder
+drop table if exists t;
+create table t (a int primary key auto_increment, b int);
+insert t (b) values (1), (2), (3), (4), (5), (6), (7), (8), (9);
+select b from t order by a desc;
+select a from t where a <3 or (a >=6 and a < 8) order by a desc;
+
+# TestUnsignedPKColumn
+drop table if exists t;
+create table t (a int unsigned primary key, b int, c int, key idx_ba (b, c, a));
+insert t values (1, 1, 1);
+select * from t;
+update t set c=2 where a=1;
+select * from t where b=1;
+
+# TestMultiUpdate
+CREATE TABLE test_mu (a int primary key, b int, c int);
+INSERT INTO test_mu VALUES (1, 2, 3), (4, 5, 6), (7, 8, 9);
+INSERT INTO test_mu VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE b = 3, c = b;
+SELECT * FROM test_mu ORDER BY a;
+INSERT INTO test_mu VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE c = 2, b = c+5;
+SELECT * FROM test_mu ORDER BY a;
+UPDATE test_mu SET b = 0, c = b WHERE a = 4;
+SELECT * FROM test_mu ORDER BY a;
+UPDATE test_mu SET c = 8, b = c WHERE a = 4;
+SELECT * FROM test_mu ORDER BY a;
+UPDATE test_mu SET c = b, b = c WHERE a = 7;
+SELECT * FROM test_mu ORDER BY a;
+
+# TestGeneratedColumnPointGet
+drop table if exists tu;
+CREATE TABLE tu(a int, b int, c int GENERATED ALWAYS AS (a + b) VIRTUAL, d int as (a * b) stored, e int GENERATED ALWAYS as (b * 2) VIRTUAL, PRIMARY KEY (a), UNIQUE KEY ukc (c), unique key ukd(d), key ke(e));
+insert into tu(a, b) values(1, 2);
+insert into tu(a, b) values(5, 6);
+select * from tu for update;
+select * from tu where a = 1;
+select * from tu where a in (1, 2);
+select * from tu where c in (1, 2, 3);
+select * from tu where c = 3;
+select d, e from tu where c = 3;
+select * from tu where d in (1, 2, 3);
+select * from tu where d = 2;
+select c, d from tu where d = 2;
+select d, e from tu where e = 4;
+select * from tu where e = 4;
+update tu set a = a + 1, b = b + 1 where c = 11;
+select * from tu for update;
+select * from tu where a = 6;
+select * from tu where c in (5, 6, 13);
+select b, c, e, d from tu where c = 13;
+select a, e, d from tu where c in (5, 6, 13);
+drop table if exists tu;
+
+# TestUnionAutoSignedCast
+drop table if exists t1,t2;
+create table t1 (id int, i int, b bigint, d double, dd decimal);
+create table t2 (id int, i int unsigned, b bigint unsigned, d double unsigned, dd decimal unsigned);
+insert into t1 values(1, -1, -1, -1.1, -1);
+insert into t2 values(2, 1, 1, 1.1, 1);
+select * from t1 union select * from t2 order by id;
+select id, i, b, d, dd from t2 union select id, i, b, d, dd from t1 order by id;
+select id, i from t2 union select id, cast(i as unsigned int) from t1 order by id;
+select dd from t2 union all select dd from t2;
+drop table if exists t3,t4;
+create table t3 (id int, v int);
+create table t4 (id int, v double unsigned);
+insert into t3 values (1, -1);
+insert into t4 values (2, 1);
+select id, v from t3 union select id, v from t4 order by id;
+select id, v from t4 union select id, v from t3 order by id;
+drop table if exists t5,t6,t7;
+create table t5 (id int, v bigint unsigned);
+create table t6 (id int, v decimal);
+create table t7 (id int, v bigint);
+insert into t5 values (1, 1);
+insert into t6 values (2, -1);
+insert into t7 values (3, -1);
+select id, v from t5 union select id, v from t6 order by id;
+select id, v from t5 union select id, v from t7 union select id, v from t6 order by id;
+
+# TestDeletePartition
+drop table if exists t1;
+create table t1 (a int) partition by range (a) (
+ partition p0 values less than (10),
+ partition p1 values less than (20),
+ partition p2 values less than (30),
+ partition p3 values less than (40),
+ partition p4 values less than MAXVALUE
+ );
+insert into t1 values (1),(11),(21),(31);
+delete from t1 partition (p4);
+select * from t1 order by a;
+delete from t1 partition (p0) where a > 10;
+select * from t1 order by a;
+delete from t1 partition (p0,p1,p2);
+select * from t1;
+
+# TestAlterTableComment
+drop table if exists t_1;
+create table t_1 (c1 int, c2 int, c3 int default 1, index (c1)) comment = 'test table';
+alter table `t_1` comment 'this is table comment';
+select table_comment from information_schema.tables where table_name = 't_1';
+alter table `t_1` comment 'table t comment';
+select table_comment from information_schema.tables where table_name = 't_1';
+
+# TestExecutorEnum
+drop table if exists t;
+create table t (c enum('a', 'b', 'c'));
+insert into t values ('a'), (2), ('c');
+select * from t where c = 'a';
+select c + 1 from t where c = 2;
+delete from t;
+insert into t values ();
+insert into t values (null), ('1');
+select c + 1 from t where c = 1;
+delete from t;
+insert into t values(1), (2), (3);
+select * from t where c;
+
+# TestExecutorSet
+drop table if exists t;
+create table t (c set('a', 'b', 'c'));
+insert into t values ('a'), (2), ('c'), ('a,b'), ('b,a');
+select * from t where c = 'a';
+select * from t where c = 'a,b';
+select c + 1 from t where c = 2;
+delete from t;
+insert into t values ();
+insert into t values (null), ('1');
+select c + 1 from t where c = 1;
+delete from t;
+insert into t values(3);
+select * from t where c;
+
+# TestSubQueryInValues
+drop table if exists t;
+create table t (id int, name varchar(20));
+drop table if exists t1;
+create table t1 (gid int);
+insert into t1 (gid) value (1);
+insert into t (id, name) value ((select gid from t1) ,'asd');
+select * from t;
+
+# TestEnhancedRangeAccess
+drop table if exists t;
+create table t (a int primary key, b int);
+insert into t values(1, 2), (2, 1);
+select * from t where (a = 1 and b = 2) or (a = 2 and b = 1);
+select * from t where (a = 1 and b = 1) or (a = 2 and b = 2);
+
+# TestTableScanWithPointRanges
+drop table if exists t;
+create table t(id int, PRIMARY KEY (id));
+insert into t values(1), (5), (10);
+select * from t where id in(1, 2, 10);
+
+# TestCheckTable
+drop table if exists admin_test;
+create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2));
+insert admin_test (c1, c2) values (1, 1), (2, 2), (NULL, NULL);
+admin check table admin_test;
+
+# TestExecutorLimit
+drop table if exists t;
+create table t(a bigint, b bigint);
+insert into t values(1, 1), (2, 2), (3, 30), (4, 40), (5, 5), (6, 6);
+select * from t order by a limit 1, 1;
+select * from t order by a limit 1, 2;
+select * from t order by a limit 1, 3;
+select * from t order by a limit 1, 4;
+select a from t where a > 0 limit 1, 1;
+select a from t where a > 0 limit 1, 2;
+select b from t where a > 0 limit 1, 3;
+select b from t where a > 0 limit 1, 4;
+set @@tidb_init_chunk_size=2;
+select * from t where a > 0 limit 2, 1;
+select * from t where a > 0 limit 2, 2;
+select * from t where a > 0 limit 2, 3;
+select * from t where a > 0 limit 2, 4;
+select a from t order by a limit 2, 1;
+select b from t order by a limit 2, 2;
+select a from t order by a limit 2, 3;
+select b from t order by a limit 2, 4;
+set @@tidb_init_chunk_size = default;
+
+# TestIndexScan
+drop table if exists t;
+create table t (a int unique);
+insert t values (-1), (2), (3), (5), (6), (7), (8), (9);
+select a from t where a < 0 or (a >= 2.1 and a < 5.1) or ( a > 5.9 and a <= 7.9) or a > '8.1';
+drop table if exists t;
+create table t (a int unique);
+insert t values (0);
+select NULL from t ;
+drop table if exists t;
+create table t (a int unique, b int);
+insert t values (5, 0);
+insert t values (4, 0);
+insert t values (3, 0);
+insert t values (2, 0);
+insert t values (1, 0);
+insert t values (0, 0);
+select * from t order by a limit 3;
+drop table if exists t;
+create table t (a int unique, b int);
+insert t values (0, 1);
+insert t values (1, 2);
+insert t values (2, 1);
+insert t values (3, 2);
+insert t values (4, 1);
+insert t values (5, 2);
+select * from t where a < 5 and b = 1 limit 2;
+drop table if exists tab1;
+CREATE TABLE tab1(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col3 INTEGER, col4 FLOAT);
+CREATE INDEX idx_tab1_0 on tab1 (col0);
+CREATE INDEX idx_tab1_1 on tab1 (col1);
+CREATE INDEX idx_tab1_3 on tab1 (col3);
+CREATE INDEX idx_tab1_4 on tab1 (col4);
+INSERT INTO tab1 VALUES(1,37,20.85,30,10.69);
+SELECT pk FROM tab1 WHERE ((col3 <= 6 OR col3 < 29 AND (col0 < 41)) OR col3 > 42) AND col1 >= 96.1 AND col3 = 30 AND col3 > 17 AND (col0 BETWEEN 36 AND 42);
+drop table if exists tab1;
+CREATE TABLE tab1(pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+CREATE INDEX idx_tab1_0 on tab1 (a);
+INSERT INTO tab1 VALUES(1,1,1);
+INSERT INTO tab1 VALUES(2,2,1);
+INSERT INTO tab1 VALUES(3,1,2);
+INSERT INTO tab1 VALUES(4,2,2);
+SELECT * FROM tab1 WHERE pk <= 3 AND a = 1;
+SELECT * FROM tab1 WHERE pk <= 4 AND a = 1 AND b = 2;
+CREATE INDEX idx_tab1_1 on tab1 (b, a);
+SELECT pk FROM tab1 WHERE b > 1;
+drop table if exists t;
+CREATE TABLE t (a varchar(3), index(a));
+insert t values('aaa'), ('aab');
+select * from t where a >= 'aaaa' and a < 'aabb';
+drop table if exists t;
+CREATE TABLE t (a int primary key, b int, c int, index(c));
+insert t values(1, 1, 1), (2, 2, 2), (4, 4, 4), (3, 3, 3), (5, 5, 5);
+select a from t where c >= 2 order by b desc limit 1;
+drop table if exists t;
+create table t(a varchar(50) primary key, b int, c int, index idx(b));
+insert into t values('aa', 1, 1);
+select * from t use index(idx) where a > 'a';
+drop table if exists t;
+CREATE TABLE `t` (a int, KEY (a));
+SELECT * FROM (SELECT * FROM (SELECT a as d FROM t WHERE a IN ('100')) AS x WHERE x.d < "123" ) tmp_count;
+
+# TestUpdateJoin
+drop table if exists t1;
+drop table if exists t2;
+drop table if exists t3;
+drop table if exists t4;
+drop table if exists t5;
+create table t1(k int, v int);
+create table t2(k int, v int);
+create table t3(id int auto_increment, k int, v int, primary key(id));
+create table t4(k int, v int);
+create table t5(v int, k int, primary key(k));
+insert into t1 values (1, 1);
+insert into t4 values (3, 3);
+drop table if exists t6;
+drop table if exists t7;
+create table t6 (id int, v longtext);
+create table t7 (x int, id int, v longtext, primary key(id));
+update t1 set v = 0 where k = 1;
+select k, v from t1 where k = 1;
+update t1 left join t3 on t1.k = t3.k set t1.v = 1;
+select k, v from t1;
+select id, k, v from t3;
+update t1 left join t2 on t1.k = t2.k set t1.v = t2.v, t2.v = 3;
+select k, v from t1;
+select k, v from t2;
+update t1 left join t2 on t1.k = t2.k set t2.v = 3, t1.v = t2.v;
+select k, v from t1;
+select k, v from t2;
+update t2 right join t1 on t2.k = t1.k set t2.v = 4, t1.v = 0;
+select k, v from t1;
+select k, v from t2;
+update t1 left join t2 on t1.k = t2.k right join t4 on t4.k = t2.k set t1.v = 4, t2.v = 4, t4.v = 4;
+select k, v from t1;
+select k, v from t2;
+select k, v from t4;
+insert t2 values (1, 10);
+update t1 left join t2 on t1.k = t2.k set t2.v = 11;
+select k, v from t2;
+update t1 t11 left join t2 on t11.k = t2.k left join t1 t12 on t2.v = t12.k set t12.v = 233, t11.v = 111;
+select k, v from t1;
+select k, v from t2;
+delete from t1;
+delete from t2;
+insert into t1 values (null, null);
+update t1 left join t2 on t1.k = t2.k set t1.v = 1;
+select k, v from t1;
+insert t5 values(0, 0);
+update t1 left join t5 on t1.k = t5.k set t1.v = 2;
+select k, v from t1;
+select k, v from t5;
+insert into t6 values (1, NULL);
+insert into t7 values (5, 1, 'a');
+update t6, t7 set t6.v = t7.v where t6.id = t7.id and t7.x = 5;
+select v from t6;
+drop table if exists t1, t2;
+create table t1(id int primary key, v int, gv int GENERATED ALWAYS AS (v * 2) STORED);
+create table t2(id int, v int);
+update t1 tt1 inner join (select count(t1.id) a, t1.id from t1 left join t2 on t1.id = t2.id group by t1.id) x on tt1.id = x.id set tt1.v = tt1.v + x.a;
+
+# TestScanControlSelection
+drop table if exists t;
+create table t(a int primary key, b int, c int, index idx_b(b));
+insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3);
+select (select count(1) k from t s where s.b = t1.c) from t t1;
+
+# TestSimpleDAG
+drop table if exists t;
+create table t(a int primary key, b int, c int);
+insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3);
+select a from t;
+select * from t where a = 4;
+select a from t limit 1;
+select a from t order by a desc;
+select a from t order by a desc limit 1;
+select a from t order by b desc limit 1;
+select a from t where a < 3;
+select a from t where b > 1;
+select a from t where b > 1 and a < 3;
+select count(*) from t where b > 1 and a < 3;
+select count(*) from t;
+select count(*), c from t group by c order by c;
+select sum(c) as s from t group by b order by s;
+select avg(a) as s from t group by b order by s;
+select sum(distinct c) from t group by b;
+create index i on t(c,b);
+select a from t where c = 1;
+select a from t where c = 1 and a < 2;
+select a from t where c = 1 order by a limit 1;
+select count(*) from t where c = 1 ;
+create index i1 on t(b);
+select c from t where b = 2;
+select * from t where b = 2;
+select count(*) from t where b = 1;
+select * from t where b = 1 and a > 1 limit 1;
+drop table if exists t;
+create table t (id int, c1 datetime);
+insert into t values (1, '2015-06-07 12:12:12');
+select id from t where c1 = '2015-06-07 12:12:12';
+drop table if exists t0;
+CREATE TABLE t0(c0 INT);
+INSERT INTO t0 VALUES (100000);
+SELECT * FROM t0 WHERE NOT SPACE(t0.c0);
+
+# TestAlterDefaultValue
+drop table if exists t;
+create table t(a int, primary key(a));
+insert into t(a) values(1);
+alter table t add column b int default 1;
+alter table t alter b set default 2;
+select b from t where a = 1;
+
+# TestGenerateColumnReplace
+## For issue 17256
+drop table if exists t1;
+create table t1 (a int, b int as (a + 1) virtual not null, unique index idx(b));
+REPLACE INTO `t1` (`a`) VALUES (2);
+REPLACE INTO `t1` (`a`) VALUES (2);
+select * from t1;
+insert into `t1` (`a`) VALUES (2) on duplicate key update a = 3;
+select * from t1;
+
+# TestIssue19372
+drop table if exists t1;
+create table t1 (c_int int, c_str varchar(40), key(c_str));
+drop table if exists t2;
+create table t2 like t1;
+insert into t1 values (1, 'a'), (2, 'b'), (3, 'c');
+insert into t2 select * from t1;
+select (select t2.c_str from t2 where t2.c_str <= t1.c_str and t2.c_int in (1, 2) order by t2.c_str limit 1) x from t1 order by c_int;
+
+# TestDeleteWithMulTbl
+## Delete multiple tables from left joined table.
+## The result of left join is (3, null, null).
+## Because rows in t2 are not matched, so no row will be deleted in t2.
+## But row in t1 is matched, so it should be deleted.
+drop table if exists t1, t2;
+create table t1 (c1 int);
+create table t2 (c1 int primary key, c2 int);
+insert into t1 values(3);
+insert into t2 values(2, 2);
+insert into t2 values(0, 0);
+delete from t1, t2 using t1 left join t2 on t1.c1 = t2.c2;
+select * from t1 order by c1;
+select * from t2 order by c1;
+## Rows in both t1 and t2 are matched, so will be deleted even if it's null.
+## NOTE: The null values are not generated by join.
+drop table if exists t1, t2;
+create table t1 (c1 int);
+create table t2 (c2 int);
+insert into t1 values(null);
+insert into t2 values(null);
+delete from t1, t2 using t1 join t2 where t1.c1 is null;
+select * from t1;
+select * from t2;
+
+# TestIssue13758
+drop table if exists t1, t2;
+create table t1 (pk int(11) primary key, a int(11) not null, b int(11), key idx_b(b), key idx_a(a));
+insert into `t1` values (1,1,0),(2,7,6),(3,2,null),(4,1,null),(5,4,5);
+create table t2 (a int);
+insert into t2 values (1),(null);
+select (select a from t1 use index(idx_a) where b >= t2.a order by a limit 1) as field from t2;
+
+# TestIssue20237
+drop table if exists t, s;
+create table t(a date, b float);
+create table s(b float);
+insert into t values(NULL,-37), ("2011-11-04",105), ("2013-03-02",-22), ("2006-07-02",-56), (NULL,124), (NULL,111), ("2018-03-03",-5);
+insert into s values(-37),(105),(-22),(-56),(124),(105),(111),(-5);
+select count(distinct t.a, t.b) from t join s on t.b= s.b;
+
+# TestToPBExpr
+drop table if exists t;
+create table t (a decimal(10,6), b decimal, index idx_b (b));
+set sql_mode = '';
+insert t values (1.1, 1.1);
+insert t values (2.4, 2.4);
+insert t values (3.3, 2.7);
+select * from t where a < 2.399999;
+select * from t where a > 1.5;
+select * from t where a <= 1.1;
+select * from t where b >= 3;
+select * from t where not (b = 1);
+select * from t where b&1 = a|1;
+select * from t where b != 2 and b <=> 3;
+select * from t where b in (3);
+select * from t where b not in (1, 2);
+drop table if exists t;
+create table t (a varchar(255), b int);
+insert t values ('abc123', 1);
+insert t values ('ab123', 2);
+select * from t where a like 'ab%';
+select * from t where a like 'ab_12';
+drop table if exists t;
+create table t (a int primary key);
+insert t values (1);
+insert t values (2);
+select * from t where not (a = 1);
+select * from t where not(not (a = 1));
+select * from t where not(a != 1 and a != 2);
+set @@sql_mode = default;
+
+# TestDatumXAPI
+drop table if exists t;
+create table t (a decimal(10,6), b decimal, index idx_b (b));
+set sql_mode = '';
+insert t values (1.1, 1.1);
+insert t values (2.2, 2.2);
+insert t values (3.3, 2.7);
+select * from t where a > 1.5;
+select * from t where b > 1.5;
+drop table if exists t;
+create table t (a time(3), b time, index idx_a (a));
+insert t values ('11:11:11', '11:11:11');
+insert t values ('11:11:12', '11:11:12');
+insert t values ('11:11:13', '11:11:13');
+select * from t where a > '11:11:11.5';
+select * from t where b > '11:11:11.5';
+set @@sql_mode = default;
+
+# TestTableDual
+Select 1;
+Select 1 from dual;
+Select count(*) from dual;
+Select 1 from dual where 1;
+drop table if exists t;
+create table t(a int primary key);
+select t1.* from t t1, t t2 where t1.a=t2.a and 1=0;
+
+# TestRow
+drop table if exists t;
+create table t (c int, d int);
+insert t values (1, 1);
+insert t values (1, 3);
+insert t values (2, 1);
+insert t values (2, 3);
+select * from t where (c, d) < (2,2);
+select * from t where (1,2,3) > (3,2,1);
+select * from t where row(1,2,3) > (3,2,1);
+select * from t where (c, d) = (select * from t where (c,d) = (1,1));
+select * from t where (c, d) = (select * from t k where (t.c,t.d) = (c,d));
+select (1, 2, 3) < (2, 3, 4);
+select (2, 3, 4) <= (2, 3, 3);
+select (2, 3, 4) <= (2, 3, 4);
+select (2, 3, 4) <= (2, 1, 4);
+select (2, 3, 4) >= (2, 3, 4);
+select (2, 3, 4) = (2, 3, 4);
+select (2, 3, 4) != (2, 3, 4);
+select row(1, 1) in (row(1, 1));
+select row(1, 0) in (row(1, 1));
+select row(1, 1) in (select 1, 1);
+select row(1, 1) > row(1, 0);
+select row(1, 1) > (select 1, 0);
+select 1 > (select 1);
+select (select 1);
+drop table if exists t1;
+create table t1 (a int, b int);
+insert t1 values (1,2),(1,null);
+drop table if exists t2;
+create table t2 (c int, d int);
+insert t2 values (0,0);
+select * from t2 where (1,2) in (select * from t1);
+select * from t2 where (1,2) not in (select * from t1);
+select * from t2 where (1,1) not in (select * from t1);
+select * from t2 where (1,null) in (select * from t1);
+select * from t2 where (null,null) in (select * from t1);
+delete from t1 where a=1 and b=2;
+select (1,1) in (select * from t2) from t1;
+select (1,1) not in (select * from t2) from t1;
+select (1,1) in (select 1,1 from t2) from t1;
+select (1,1) not in (select 1,1 from t2) from t1;
+## MySQL 5.7 returns 1 for these 2 queries, which is wrong.
+select (1,null) not in (select 1,1 from t2) from t1;
+select (t1.a,null) not in (select 1,1 from t2) from t1;
+select (1,null) in (select * from t1);
+select (1,null) not in (select * from t1);
+
+# TestStrToDateBuiltin
+select str_to_date('20190101','%Y%m%d%!') from dual;
+select str_to_date('20190101','%Y%m%d%f') from dual;
+select str_to_date('20190101','%Y%m%d%H%i%s') from dual;
+select str_to_date('18/10/22','%y/%m/%d') from dual;
+select str_to_date('a18/10/22','%y/%m/%d') from dual;
+select str_to_date('69/10/22','%y/%m/%d') from dual;
+select str_to_date('70/10/22','%y/%m/%d') from dual;
+select str_to_date('8/10/22','%y/%m/%d') from dual;
+select str_to_date('8/10/22','%Y/%m/%d') from dual;
+select str_to_date('18/10/22','%Y/%m/%d') from dual;
+select str_to_date('a18/10/22','%Y/%m/%d') from dual;
+select str_to_date('69/10/22','%Y/%m/%d') from dual;
+select str_to_date('70/10/22','%Y/%m/%d') from dual;
+select str_to_date('018/10/22','%Y/%m/%d') from dual;
+select str_to_date('2018/10/22','%Y/%m/%d') from dual;
+select str_to_date('018/10/22','%y/%m/%d') from dual;
+select str_to_date('18/10/22','%y0/%m/%d') from dual;
+select str_to_date('18/10/22','%Y0/%m/%d') from dual;
+select str_to_date('18a/10/22','%y/%m/%d') from dual;
+select str_to_date('18a/10/22','%Y/%m/%d') from dual;
+select str_to_date('20188/10/22','%Y/%m/%d') from dual;
+select str_to_date('2018510522','%Y5%m5%d') from dual;
+select str_to_date('2018^10^22','%Y^%m^%d') from dual;
+select str_to_date('2018@10@22','%Y@%m@%d') from dual;
+select str_to_date('2018%10%22','%Y%%m%%d') from dual;
+select str_to_date('2018(10(22','%Y(%m(%d') from dual;
+select str_to_date('2018\10\22','%Y\%m\%d') from dual;
+select str_to_date('2018=10=22','%Y=%m=%d') from dual;
+select str_to_date('2018+10+22','%Y+%m+%d') from dual;
+select str_to_date('2018_10_22','%Y_%m_%d') from dual;
+select str_to_date('69510522','%y5%m5%d') from dual;
+select str_to_date('69^10^22','%y^%m^%d') from dual;
+select str_to_date('18@10@22','%y@%m@%d') from dual;
+select str_to_date('18%10%22','%y%%m%%d') from dual;
+select str_to_date('18(10(22','%y(%m(%d') from dual;
+select str_to_date('18\10\22','%y\%m\%d') from dual;
+select str_to_date('18+10+22','%y+%m+%d') from dual;
+select str_to_date('18=10=22','%y=%m=%d') from dual;
+select str_to_date('18_10_22','%y_%m_%d') from dual;
+SELECT STR_TO_DATE('2020-07-04 11:22:33 PM', '%Y-%m-%d %r');
+SELECT STR_TO_DATE('2020-07-04 12:22:33 AM', '%Y-%m-%d %r');
+SELECT STR_TO_DATE('2020-07-04 12:22:33', '%Y-%m-%d %T');
+SELECT STR_TO_DATE('2020-07-04 00:22:33', '%Y-%m-%d %T');
+
+# TestReadPartitionedTable
+drop table if exists pt;
+create table pt (a int, b int, index i_b(b)) partition by range (a) (partition p1 values less than (2), partition p2 values less than (4), partition p3 values less than (6));
+insert into pt values(0, 0);
+insert into pt values(1, 1);
+insert into pt values(2, 2);
+insert into pt values(3, 3);
+insert into pt values(4, 4);
+insert into pt values(5, 5);
+## Table reader
+select * from pt order by a;
+## Index reader
+select b from pt where b = 3;
+## Index lookup
+select a from pt where b = 3;
+
+# TestIssue10435
+drop table if exists t1;
+create table t1(i int, j int, k int);
+insert into t1 VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4);
+INSERT INTO t1 SELECT 10*i,j,5*j FROM t1 UNION SELECT 20*i,j,5*j FROM t1 UNION SELECT 30*i,j,5*j FROM t1;
+set @@session.tidb_enable_window_function=1;
+SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i) ORDER BY 1+SUM(i) OVER w;
+set @@session.tidb_enable_window_function=default;
+
+# TestIndexJoinTableDualPanic
+drop table if exists a;
+create table a (f1 int, f2 varchar(32), primary key (f1));
+insert into a (f1,f2) values (1,'a'), (2,'b'), (3,'c');
+## TODO here: index join cause the data race of txn.
+select /*+ inl_merge_join(a) */ a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;
+
+# TestSortLeftJoinWithNullColumnInRightChildPanic
+drop table if exists t1, t2;
+create table t1(a int);
+create table t2(a int);
+insert into t1(a) select 1;
+select b.n from t1 left join (select a as a, null as n from t2) b on b.a = t1.a order by t1.a;
+
+# TestIssue39211
+drop table if exists t;
+drop table if exists s;
+CREATE TABLE `t` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL);
+CREATE TABLE `s` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL);
+insert into t values(1,1),(2,2);
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into s values(3,3),(4,4),(1,null),(2,null),(null,null);
+insert into s select * from s;
+insert into s select * from s;
+insert into s select * from s;
+insert into s select * from s;
+insert into s select * from s;
+set @@tidb_max_chunk_size=32;
+set @@tidb_enable_null_aware_anti_join=true;
+select * from t where (a,b) not in (select a, b from s);
+set @@tidb_max_chunk_size=default;
+set @@tidb_enable_null_aware_anti_join=default;
+
+# TestPessimisticSelectForUpdate
+drop table if exists t;
+create table t(id int primary key, a int);
+insert into t values(1, 1);
+begin PESSIMISTIC;
+select a from t where id=1 for update;
+update t set a=a+1 where id=1;
+commit;
+select a from t where id=1;
+
+# TestSelectLimit
+drop table if exists select_limit;
+create table select_limit(id int not null default 1, name varchar(255), PRIMARY KEY(id));
+insert INTO select_limit VALUES (1, "hello");
+insert into select_limit values (2, "hello");
+insert INTO select_limit VALUES (3, "hello");
+insert INTO select_limit VALUES (4, "hello");
+select * from select_limit limit 1;
+select id from (select * from select_limit limit 1) k where id != 1;
+select * from select_limit limit 18446744073709551615 offset 0;
+select * from select_limit limit 18446744073709551615 offset 1;
+select * from select_limit limit 18446744073709551615 offset 3;
+--error 1064
+select * from select_limit limit 18446744073709551616 offset 3;
+
+# TestSelectOrderBy
+drop table if exists select_order_test;
+create table select_order_test(id int not null default 1, name varchar(255), PRIMARY KEY(id));
+insert INTO select_order_test VALUES (1, "hello");
+insert into select_order_test values (2, "hello");
+select * from select_order_test where id = 1 order by id limit 1 offset 0;
+select id from select_order_test order by id desc limit 1 ;
+select id from select_order_test order by id + 1 desc limit 1 ;
+select * from select_order_test order by name, id limit 1 offset 0;
+select id as c1, name from select_order_test order by 2, id limit 1 offset 0;
+select * from select_order_test order by name, id limit 100 offset 0;
+select * from select_order_test order by name, id limit 1 offset 100;
+select id from select_order_test order by name, id limit 18446744073709551615;
+select id, name from select_order_test where id = 1 group by id, name limit 1 offset 0;
+insert INTO select_order_test VALUES (3, "zz");
+insert INTO select_order_test VALUES (4, "zz");
+insert INTO select_order_test VALUES (5, "zz");
+insert INTO select_order_test VALUES (6, "zz");
+insert INTO select_order_test VALUES (7, "zz");
+insert INTO select_order_test VALUES (8, "zz");
+insert INTO select_order_test VALUES (9, "zz");
+insert INTO select_order_test VALUES (10, "zz");
+insert INTO select_order_test VALUES (10086, "hi");
+insert INTO select_order_test VALUES (11, "hh");
+insert INTO select_order_test VALUES (12, "hh");
+insert INTO select_order_test VALUES (13, "hh");
+insert INTO select_order_test VALUES (14, "hh");
+insert INTO select_order_test VALUES (15, "hh");
+insert INTO select_order_test VALUES (16, "hh");
+insert INTO select_order_test VALUES (17, "hh");
+insert INTO select_order_test VALUES (18, "hh");
+insert INTO select_order_test VALUES (19, "hh");
+insert INTO select_order_test VALUES (20, "hh");
+insert INTO select_order_test VALUES (21, "zz");
+insert INTO select_order_test VALUES (22, "zz");
+insert INTO select_order_test VALUES (23, "zz");
+insert INTO select_order_test VALUES (24, "zz");
+insert INTO select_order_test VALUES (25, "zz");
+insert INTO select_order_test VALUES (26, "zz");
+insert INTO select_order_test VALUES (27, "zz");
+insert INTO select_order_test VALUES (28, "zz");
+insert INTO select_order_test VALUES (29, "zz");
+insert INTO select_order_test VALUES (30, "zz");
+insert INTO select_order_test VALUES (1501, "aa");
+select * from select_order_test order by name, id limit 1 offset 3;
+drop table if exists select_order_test;
+drop table if exists t;
+create table t (c int, d int);
+insert t values (1, 1);
+insert t values (1, 2);
+insert t values (1, 3);
+select 1-d as d from t order by d;
+select 1-d as d from t order by d + 1;
+select t.d from t order by d;
+drop table if exists t;
+create table t (a int, b int, c int);
+insert t values (1, 2, 3);
+select b from (select a,b from t order by a,c) t;
+select b from (select a,b from t order by a,c limit 1) t;
+drop table if exists t;
+create table t(a int, b int, index idx(a));
+insert into t values(1, 1), (2, 2);
+select * from t where 1 order by b;
+select * from t where a between 1 and 2 order by a desc;
+drop table if exists t;
+create table t(a int primary key, b int, c int, index idx(b));
+insert into t values(1, 3, 1);
+insert into t values(2, 2, 2);
+insert into t values(3, 1, 3);
+select * from t use index(idx) order by a desc limit 1;
+drop table if exists t;
+create table t(a int, b int, key b (b));
+set @@tidb_index_lookup_size = 3;
+insert into t values(0, 10);
+insert into t values(1, 9);
+insert into t values(2, 8);
+insert into t values(3, 7);
+insert into t values(4, 6);
+insert into t values(5, 5);
+insert into t values(6, 4);
+insert into t values(7, 3);
+insert into t values(8, 2);
+insert into t values(9, 1);
+select a from t use index(b) order by b;
+set @@tidb_index_lookup_size = default;
+
+# TestSelectErrorRow
+--error 1146
+select row(1, 1) from test;
+--error 1146
+select * from test group by row(1, 1);
+--error 1146
+select * from test order by row(1, 1);
+--error 1146
+select * from test having row(1, 1);
+--error 1146
+select (select 1, 1) from test;
+--error 1146
+select * from test group by (select 1, 1);
+--error 1146
+select * from test order by (select 1, 1);
+--error 1146
+select * from test having (select 1, 1);
+
+# TestIn
+drop table if exists t;
+create table t (c1 int primary key, c2 int, key c (c2));
+insert t values(0, 0);
+insert t values(1, 1);
+insert t values(2, 2);
+insert t values(3, 3);
+insert t values(4, 4);
+insert t values(5, 5);
+insert t values(6, 6);
+insert t values(7, 7);
+insert t values(8, 8);
+insert t values(9, 9);
+insert t values(10, 10);
+insert t values(11, 11);
+insert t values(12, 12);
+insert t values(13, 13);
+insert t values(14, 14);
+insert t values(15, 15);
+insert t values(16, 16);
+insert t values(17, 17);
+insert t values(18, 18);
+insert t values(19, 19);
+insert t values(20, 20);
+insert t values(21, 21);
+insert t values(22, 22);
+insert t values(23, 23);
+insert t values(24, 24);
+insert t values(25, 25);
+insert t values(26, 26);
+insert t values(27, 27);
+insert t values(28, 28);
+insert t values(29, 29);
+insert t values(30, 30);
+insert t values(31, 31);
+insert t values(32, 32);
+insert t values(33, 33);
+insert t values(34, 34);
+insert t values(35, 35);
+insert t values(36, 36);
+insert t values(37, 37);
+insert t values(38, 38);
+insert t values(39, 39);
+insert t values(40, 40);
+insert t values(41, 41);
+insert t values(42, 42);
+insert t values(43, 43);
+insert t values(44, 44);
+insert t values(45, 45);
+insert t values(46, 46);
+insert t values(47, 47);
+insert t values(48, 48);
+insert t values(49, 49);
+insert t values(50, 50);
+insert t values(51, 51);
+insert t values(52, 52);
+insert t values(53, 53);
+insert t values(54, 54);
+insert t values(55, 55);
+insert t values(56, 56);
+insert t values(57, 57);
+insert t values(58, 58);
+insert t values(59, 59);
+insert t values(60, 60);
+insert t values(61, 61);
+insert t values(62, 62);
+insert t values(63, 63);
+insert t values(64, 64);
+insert t values(65, 65);
+insert t values(66, 66);
+insert t values(67, 67);
+insert t values(68, 68);
+insert t values(69, 69);
+insert t values(70, 70);
+insert t values(71, 71);
+insert t values(72, 72);
+insert t values(73, 73);
+insert t values(74, 74);
+insert t values(75, 75);
+insert t values(76, 76);
+insert t values(77, 77);
+insert t values(78, 78);
+insert t values(79, 79);
+insert t values(80, 80);
+insert t values(81, 81);
+insert t values(82, 82);
+insert t values(83, 83);
+insert t values(84, 84);
+insert t values(85, 85);
+insert t values(86, 86);
+insert t values(87, 87);
+insert t values(88, 88);
+insert t values(89, 89);
+insert t values(90, 90);
+insert t values(91, 91);
+insert t values(92, 92);
+insert t values(93, 93);
+insert t values(94, 94);
+insert t values(95, 95);
+insert t values(96, 96);
+insert t values(97, 97);
+insert t values(98, 98);
+insert t values(99, 99);
+insert t values(100, 100);
+insert t values(101, 101);
+insert t values(102, 102);
+insert t values(103, 103);
+insert t values(104, 104);
+insert t values(105, 105);
+insert t values(106, 106);
+insert t values(107, 107);
+insert t values(108, 108);
+insert t values(109, 109);
+insert t values(110, 110);
+insert t values(111, 111);
+insert t values(112, 112);
+insert t values(113, 113);
+insert t values(114, 114);
+insert t values(115, 115);
+insert t values(116, 116);
+insert t values(117, 117);
+insert t values(118, 118);
+insert t values(119, 119);
+insert t values(120, 120);
+insert t values(121, 121);
+insert t values(122, 122);
+insert t values(123, 123);
+insert t values(124, 124);
+insert t values(125, 125);
+insert t values(126, 126);
+insert t values(127, 127);
+insert t values(128, 128);
+insert t values(129, 129);
+insert t values(130, 130);
+insert t values(131, 131);
+insert t values(132, 132);
+insert t values(133, 133);
+insert t values(134, 134);
+insert t values(135, 135);
+insert t values(136, 136);
+insert t values(137, 137);
+insert t values(138, 138);
+insert t values(139, 139);
+insert t values(140, 140);
+insert t values(141, 141);
+insert t values(142, 142);
+insert t values(143, 143);
+insert t values(144, 144);
+insert t values(145, 145);
+insert t values(146, 146);
+insert t values(147, 147);
+insert t values(148, 148);
+insert t values(149, 149);
+insert t values(150, 150);
+insert t values(151, 151);
+insert t values(152, 152);
+insert t values(153, 153);
+insert t values(154, 154);
+insert t values(155, 155);
+insert t values(156, 156);
+insert t values(157, 157);
+insert t values(158, 158);
+insert t values(159, 159);
+insert t values(160, 160);
+insert t values(161, 161);
+insert t values(162, 162);
+insert t values(163, 163);
+insert t values(164, 164);
+insert t values(165, 165);
+insert t values(166, 166);
+insert t values(167, 167);
+insert t values(168, 168);
+insert t values(169, 169);
+insert t values(170, 170);
+insert t values(171, 171);
+insert t values(172, 172);
+insert t values(173, 173);
+insert t values(174, 174);
+insert t values(175, 175);
+insert t values(176, 176);
+insert t values(177, 177);
+insert t values(178, 178);
+insert t values(179, 179);
+insert t values(180, 180);
+insert t values(181, 181);
+insert t values(182, 182);
+insert t values(183, 183);
+insert t values(184, 184);
+insert t values(185, 185);
+insert t values(186, 186);
+insert t values(187, 187);
+insert t values(188, 188);
+insert t values(189, 189);
+insert t values(190, 190);
+insert t values(191, 191);
+insert t values(192, 192);
+insert t values(193, 193);
+insert t values(194, 194);
+insert t values(195, 195);
+insert t values(196, 196);
+insert t values(197, 197);
+insert t values(198, 198);
+insert t values(199, 199);
+insert t values(200, 200);
+select c2 from t where c1 in ('7', '10', '112', '111', '98', '106', '100', '9', '18', '17') order by c2;
+select c2 from t where c1 in ('7a');
+
+# TestTablePKisHandleScan
+drop table if exists t;
+create table t (a int PRIMARY KEY AUTO_INCREMENT);
+insert t values (),();
+insert t values (-100),(0);
+select * from t;
+select * from t where a = 1;
+select * from t where a != 1;
+select * from t where a >= '1.1';
+select * from t where a < '1.1';
+select * from t where a > '-100.1' and a < 2;
+select * from t where a is null;
+select * from t where a is true;
+select * from t where a is false;
+select * from t where a in (1, 2);
+select * from t where a between 1 and 2;
+
+# TestDefaultNull
+drop table if exists t;
+create table t (a int primary key auto_increment, b int default 1, c int);
+insert t values ();
+select * from t;
+update t set b = NULL where a = 1;
+select * from t;
+update t set c = 1;
+select * from t ;
+delete from t where a = 1;
+insert t (a) values (1);
+select * from t;
+
+# TestJSON
+drop table if exists test_json;
+create table test_json (id int, a json);
+insert into test_json (id, a) values (1, '{"a":[1,"2",{"aa":"bb"},4],"b":true}');
+insert into test_json (id, a) values (2, "null");
+insert into test_json (id, a) values (3, null);
+insert into test_json (id, a) values (4, 'true');
+insert into test_json (id, a) values (5, '3');
+insert into test_json (id, a) values (5, '4.0');
+insert into test_json (id, a) values (6, '"string"');
+select tj.a from test_json tj order by tj.id;
+select json_type(a) from test_json tj order by tj.id;
+select a from test_json tj where a = 3;
+select a from test_json tj where a = 4.0;
+select a from test_json tj where a = true;
+select a from test_json tj where a = "string";
+select cast(true as JSON);
+select cast(false as JSON);
+select a->>'$.a[2].aa' as x, a->'$.b' as y from test_json having x is not null order by id;
+select a->'$.a[2].aa' as x, a->>'$.b' as y from test_json having x is not null order by id;
+-- error 1101
+create table test_bad_json(a json default '{}');
+-- error 1101
+create table test_bad_json(a blob default 'hello');
+-- error 1101
+create table test_bad_json(a text default 'world');
+-- error 3152
+create table test_bad_json(id int, a json, key (a));
+select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON);
+select a, count(1) from test_json group by a order by a;
+drop table if exists test_json;
+create table test_json ( a decimal(60,2) as (JSON_EXTRACT(b,'$.c')), b json );
+insert into test_json (b) values
+		('{"c": "1267.1"}'),
+		('{"c": "1267.01"}'),
+		('{"c": "1267.1234"}'),
+		('{"c": "1267.3456"}'),
+		('{"c": "1234567890123456789012345678901234567890123456789012345"}'),
+		('{"c": "1234567890123456789012345678901234567890123456789012345.12345"}');
+select a from test_json;
+
+# TestGeneratedColumnWrite
+drop table if exists test_gc_write, test_gc_write_1;
+-- error 3109
+CREATE TABLE test_gc_write (a int primary key auto_increment, b int, c int as (a+8) virtual);
+CREATE TABLE test_gc_write (a int primary key auto_increment, b int, c int as (b+8) virtual);
+CREATE TABLE test_gc_write_1 (a int primary key, b int, c int);
+-- error 3105
+insert into test_gc_write (a, b, c) values (1, 1, 1);
+-- error 3105
+insert into test_gc_write values (1, 1, 1);
+-- error 3105
+insert into test_gc_write select 1, 1, 1;
+-- error 3105
+insert into test_gc_write (a, b) values (1, 1) on duplicate key update c = 1;
+-- error 3105
+insert into test_gc_write set a = 1, b = 1, c = 1;
+-- error 3105
+update test_gc_write set c = 1;
+-- error 3105
+update test_gc_write, test_gc_write_1 set test_gc_write.c = 1;
+insert into test_gc_write (a, b) values (1, 1);
+insert into test_gc_write set a = 2, b = 2;
+insert into test_gc_write (b) select c from test_gc_write;
+update test_gc_write set b = 2 where a = 2;
+update test_gc_write t1, test_gc_write_1 t2 set t1.b = 3, t2.b = 4;
+-- error 1136
+insert into test_gc_write values (1, 1);
+-- error 1136
+insert into test_gc_write select 1, 1;
+-- error 1136
+insert into test_gc_write (c) select a, b from test_gc_write;
+-- error 3105
+insert into test_gc_write (b, c) select a, b from test_gc_write;
+
+# TestGeneratedColumnRead
+drop table if exists test_gc_read;
+CREATE TABLE test_gc_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored, e int as (c*2));
+SELECT generation_expression FROM information_schema.columns WHERE table_name = 'test_gc_read' AND column_name = 'd';
+INSERT INTO test_gc_read (a, b) VALUES (0,null),(1,2),(3,4);
+SELECT * FROM test_gc_read ORDER BY a;
+INSERT INTO test_gc_read SET a = 5, b = 10;
+SELECT * FROM test_gc_read ORDER BY a;
+REPLACE INTO test_gc_read (a, b) VALUES (5, 6);
+SELECT * FROM test_gc_read ORDER BY a;
+INSERT INTO test_gc_read (a, b) VALUES (5, 8) ON DUPLICATE KEY UPDATE b = 9;
+SELECT * FROM test_gc_read ORDER BY a;
+SELECT c, d FROM test_gc_read;
+SELECT e FROM test_gc_read;
+INSERT INTO test_gc_read (a, b) VALUES (5, 8) ON DUPLICATE KEY UPDATE a = 6, b = a;
+SELECT * FROM test_gc_read ORDER BY a;
+INSERT INTO test_gc_read (a, b) VALUES (6, 8) ON DUPLICATE KEY UPDATE b = 8, a = b;
+SELECT * FROM test_gc_read ORDER BY a;
+SELECT * FROM test_gc_read WHERE c = 7;
+SELECT * FROM test_gc_read WHERE d = 64;
+SELECT * FROM test_gc_read WHERE e = 6;
+UPDATE test_gc_read SET a = a + 100 WHERE c = 7;
+SELECT * FROM test_gc_read WHERE c = 107;
+UPDATE test_gc_read m SET m.a = m.a + 100 WHERE c = 107;
+SELECT * FROM test_gc_read WHERE c = 207;
+UPDATE test_gc_read SET a = a - 200 WHERE d = 812;
+SELECT * FROM test_gc_read WHERE d = 12;
+INSERT INTO test_gc_read set a = 4, b = d + 1;
+SELECT * FROM test_gc_read ORDER BY a;
+DELETE FROM test_gc_read where a = 4;
+CREATE TABLE test_gc_help(a int primary key, b int, c int, d int, e int);
+INSERT INTO test_gc_help(a, b, c, d, e) SELECT * FROM test_gc_read;
+SELECT t1.* FROM test_gc_read t1 JOIN test_gc_help t2 ON t1.c = t2.c ORDER BY t1.a;
+SELECT t1.* FROM test_gc_read t1 JOIN test_gc_help t2 ON t1.d = t2.d ORDER BY t1.a;
+SELECT t1.* FROM test_gc_read t1 JOIN test_gc_help t2 ON t1.e = t2.e ORDER BY t1.a;
+--sorted_result
+SELECT * FROM test_gc_read t WHERE t.a not in (SELECT t.a FROM test_gc_read t where t.c > 5);
+--sorted_result
+SELECT * FROM test_gc_read t WHERE t.c in (SELECT t.c FROM test_gc_read t where t.c > 5);
+SELECT tt.b FROM test_gc_read tt WHERE tt.a = (SELECT max(t.a) FROM test_gc_read t WHERE t.c = tt.c) ORDER BY b;
+SELECT c, sum(a) aa, max(d) dd, sum(e) ee FROM test_gc_read GROUP BY c ORDER BY aa;
+SELECT a, sum(c), sum(d), sum(e) FROM test_gc_read GROUP BY a ORDER BY a;
+UPDATE test_gc_read m, test_gc_read n SET m.b = m.b + 10, n.b = n.b + 10;
+SELECT * FROM test_gc_read ORDER BY a;
+drop table if exists t;
+create table t(a int);
+insert into t values(8);
+update test_gc_read set a = a+1 where a in (select a from t);
+select * from test_gc_read order by a;
+CREATE TABLE test_gc_read_cast(a VARCHAR(255), b VARCHAR(255), c INT AS (JSON_EXTRACT(a, b)), d INT AS (JSON_EXTRACT(a, b)) STORED);
+INSERT INTO test_gc_read_cast (a, b) VALUES ('{"a": "3"}', '$.a');
+SELECT c, d FROM test_gc_read_cast;
+CREATE TABLE test_gc_read_cast_1(a VARCHAR(255), b VARCHAR(255), c ENUM("red", "yellow") AS (JSON_UNQUOTE(JSON_EXTRACT(a, b))));
+INSERT INTO test_gc_read_cast_1 (a, b) VALUES ('{"a": "yellow"}', '$.a');
+SELECT c FROM test_gc_read_cast_1;
+CREATE TABLE test_gc_read_cast_2( a JSON, b JSON AS (a->>'$.a'));
+INSERT INTO test_gc_read_cast_2(a) VALUES ('{"a": "{    \\\"key\\\": \\\"\\u6d4b\\\"    }"}');
+SELECT b FROM test_gc_read_cast_2;
+CREATE TABLE test_gc_read_cast_3( a JSON, b JSON AS (a->>'$.a'), c INT AS (b * 3.14) );
+INSERT INTO test_gc_read_cast_3(a) VALUES ('{"a": "5"}');
+SELECT c FROM test_gc_read_cast_3;
+--error 1265
+INSERT INTO test_gc_read_cast_1 (a, b) VALUES ('{"a": "invalid"}', '$.a');
+DROP TABLE IF EXISTS test_gc_read_m;
+CREATE TABLE test_gc_read_m (a int primary key, b int, c int as (a+1), d int as (c*2));
+INSERT INTO test_gc_read_m(a) values (1), (2);
+ALTER TABLE test_gc_read_m DROP b;
+SELECT * FROM test_gc_read_m;
+CREATE TABLE test_gc_read_1(a int primary key, b int, c int as (a+b) not null, d int as (a*b) stored);
+CREATE TABLE test_gc_read_2(a int primary key, b int, c int as (a+b), d int as (a*b) stored not null);
+-- error 1048
+insert into test_gc_read_1(a, b) values (1, null);
+-- error 1048
+insert into test_gc_read_2(a, b) values (1, null);
+
+# TestSelectPartition
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists th, tr, tl;
+create table th (a int, b int) partition by hash(a) partitions 3;
+create table tr (a int, b int)
+							partition by range (a) (
+							partition r0 values less than (4),
+							partition r1 values less than (7),
+							partition r3 values less than maxvalue);
+create table tl (a int, b int, unique index idx(a)) partition by list  (a) (
+					    partition p0 values in (3,5,6,9,17),
+					    partition p1 values in (1,2,10,11,19,20),
+					    partition p2 values in (4,12,13,14,18),
+					    partition p3 values in (7,8,15,16,null));
+insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
+insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
+insert into tr values (-3,-3),(3,3),(4,4),(7,7),(8,8);
+insert into tl values (3,3),(1,1),(4,4),(7,7),(8,8),(null,null);
+select b from th partition (p0) order by a;
+select b from tr partition (r0) order by a;
+select b from tl partition (p0) order by a;
+select b from th partition (p0,P0) order by a;
+select b from tr partition (r0,R0,r0) order by a;
+select b from tl partition (p0,P0,p0) order by a;
+select b from th partition (P2,p0) order by a;
+select b from tr partition (r1,R3) order by a;
+select b from tl partition (p0,P3) order by a;
+-- error 1735
+select b from th partition (p0,p4);
+-- error 1735
+select b from tr partition (r1,r4);
+-- error 1735
+select b from tl partition (p0,p4);
+begin;
+insert into th values (10,10),(11,11);
+select a, b from th where b>10;
+commit;
+select a, b from th where b>10;
+drop table if exists tscalar;
+create table tscalar (c1 int) partition by range (c1 % 30) (
+								partition p0 values less than (0),
+								partition p1 values less than (10),
+								partition p2 values less than (20),
+								partition pm values less than (maxvalue));
+insert into tscalar values(0), (10), (40), (50), (55);
+insert into tscalar values(-0), (-10), (-40), (-50), (-55);
+select * from tscalar where c1 in (55, 55);
+select * from tscalar where c1 in (40, 40);
+select * from tscalar where c1 in (40);
+select * from tscalar where c1 in (-40);
+select * from tscalar where c1 in (-40, -40);
+select * from tscalar where c1 in (-1);
+set @@session.tidb_enable_list_partition = default;
+
+# TestPrepareLoadData
+-- error 1295
+prepare stmt from "load data local infile '/tmp/load_data_test.csv' into table test";
+
+# TestPrepareImportInto
+-- error 1295
+prepare stmt from "import into test from 'xx' format 'delimited'";
+
+# TestHandleTransfer
+drop table if exists t;
+create table t(a int, index idx(a));
+insert into t values(1), (2), (4);
+begin;
+update t set a = 3 where a = 4;
+select * from t ignore index(idx);
+insert into t values(4);
+select * from t use index(idx);
+select * from t use index(idx) order by a desc;
+update t set a = 5 where a = 3;
+select * from t use index(idx);
+commit;
+drop table if exists t;
+create table t(a int, b int, index idx(a));
+insert into t values(3, 3), (1, 1), (2, 2);
+select * from t use index(idx) order by a;
+
+# TestMaxInt64Handle
+drop table if exists t;
+create table t(id bigint, PRIMARY KEY (id));
+insert into t values(9223372036854775807);
+select * from t where id = 9223372036854775807;
+select * from t where id = 9223372036854775807;
+select * from t;
+--error 1062
+insert into t values(9223372036854775807);
+delete from t where id = 9223372036854775807;
+select * from t;
+
+# TestUnsignedPk
+drop table if exists t;
+create table t(id bigint unsigned primary key);
+insert into t values(9223372036854775808), (9223372036854775809), (1), (2);
+select * from t order by id;
+select * from t where id not in (2);
+drop table if exists t;
+create table t(a bigint unsigned primary key, b int, index idx(b));
+insert into t values(9223372036854775808, 1), (1, 1);
+select * from t use index(idx) where b = 1 and a < 2;
+select * from t use index(idx) where b = 1 order by b, a;
+
+# TestSignedCommonHandle
+set @@tidb_enable_clustered_index = 1;
+drop table if exists t;
+create table t(k1 int, k2 int, primary key(k1, k2));
+insert into t(k1, k2) value(-100, 1), (-50, 1), (0, 0), (1, 1), (3, 3);
+select k1 from t order by k1;
+select k1 from t order by k1 desc;
+select k1 from t where k1 < -51;
+select k1 from t where k1 < -1;
+select k1 from t where k1 <= 0;
+select k1 from t where k1 < 2;
+select k1 from t where k1 < -1 and k1 > -90;
+set @@tidb_enable_clustered_index = default;
+
+# TestContainDotColumn
+drop table if exists t1, t2, t3;
+create table t1(t1.a char);
+create table t2(a char, t2.b int);
+-- error 1103
+create table t3(s.a char);
+
+# TestCheckTableClusterIndex
+set @@tidb_enable_clustered_index = 1;
+drop table if exists admin_test;
+create table admin_test (c1 int, c2 int, c3 int default 1, primary key (c1, c2), index (c1), unique key(c2));
+insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);
+admin check table admin_test;
+set @@tidb_enable_clustered_index = default;
+
+# TestIncorrectLimitArg
+drop table if exists t;
+create table t(a bigint);
+prepare stmt1 from 'select * from t limit ?';
+prepare stmt2 from 'select * from t limit ?, ?';
+set @a = -1;
+set @b =  1;
+-- error 1210
+execute stmt1 using @a;
+-- error 1210
+execute stmt2 using @b, @a;
+-- error 1210
+execute stmt2 using @a, @b;
+-- error 1210
+execute stmt2 using @a, @a;
+
+# TestEmptyEnum
+drop table if exists t;
+create table t (e enum('Y', 'N'));
+set sql_mode='STRICT_TRANS_TABLES';
+--error 1265
+insert into t values (0);
+--error 1265
+insert into t values ('abc');
+set sql_mode='';
+insert into t values (0);
+select * from t;
+insert into t values ('abc');
+select * from t;
+insert into t values (null);
+select * from t;
+drop table if exists t;
+create table t (id int auto_increment primary key, c1 enum('a', '', 'c'));
+insert into t(c1) values (0);
+select id, c1+0, c1 from t;
+alter table t change c1 c1 enum('a', '') not null;
+select id, c1+0, c1 from t;
+insert into t(c1) values (0);
+select id, c1+0, c1 from t;
+set sql_mode=default;
+
+# TestDIVZeroInPartitionExpr
+drop table if exists t1;
+create table t1(a int) partition by range (10 div a) (partition p0 values less than (10), partition p1 values less than maxvalue);
+set @@sql_mode='';
+insert into t1 values (NULL), (0), (1);
+set @@sql_mode='STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO';
+-- error 1365
+insert into t1 values (NULL), (0), (1);
+set @@sql_mode=default;
+
+# TestInsertIntoGivenPartitionSet
+drop table if exists t1;
+create table t1(
+	a int(11) DEFAULT NULL,
+	b varchar(10) DEFAULT NULL,
+	UNIQUE KEY idx_a (a)) PARTITION BY RANGE (a)
+	(PARTITION p0 VALUES LESS THAN (10) ENGINE = InnoDB,
+	 PARTITION p1 VALUES LESS THAN (20) ENGINE = InnoDB,
+	 PARTITION p2 VALUES LESS THAN (30) ENGINE = InnoDB,
+	 PARTITION p3 VALUES LESS THAN (40) ENGINE = InnoDB,
+	 PARTITION p4 VALUES LESS THAN MAXVALUE ENGINE = InnoDB);
+insert into t1 partition(p0) values(1, 'a'), (2, 'b');
+select * from t1 partition(p0) order by a;
+insert into t1 partition(p0, p1) values(3, 'c'), (4, 'd');
+select * from t1 partition(p1);
+-- error 1062
+insert into t1 values(1, 'a');
+-- error 1735
+insert into t1 partition(p0, p_non_exist) values(1, 'a');
+-- error 1748
+insert into t1 partition(p0, p1) values(40, 'a');
+replace into t1 partition(p0) values(1, 'replace');
+replace into t1 partition(p0, p1) values(3, 'replace'), (4, 'replace');
+replace into t1 values(1, 'a');
+select * from t1 partition (p0) order by a;
+-- error 1735
+replace into t1 partition(p0, p_non_exist) values(1, 'a');
+-- error 1748
+replace into t1 partition(p0, p1) values(40, 'a');
+truncate table t1;
+drop table if exists t;
+create table t(a int, b char(10));
+-- error 1747
+insert into t partition(p0, p1) values(1, 'a');
+insert into t values(1, 'a'), (2, 'b');
+insert into t1 partition(p0) select * from t;
+select * from t1 partition(p0) order by a;
+truncate table t;
+insert into t values(3, 'c'), (4, 'd');
+insert into t1 partition(p0, p1) select * from t;
+select * from t1 partition(p1) order by a;
+select * from t1 partition(p0) order by a;
+-- error 1062
+insert into t1 select 1, 'a';
+-- error 1735
+insert into t1 partition(p0, p_non_exist) select 1, 'a';
+-- error 1748
+insert into t1 partition(p0, p1) select 40, 'a';
+replace into t1 partition(p0) select 1, 'replace';
+truncate table t;
+insert into t values(3, 'replace'), (4, 'replace');
+replace into t1 partition(p0, p1) select * from t;
+replace into t1 select 1, 'a';
+select * from t1 partition (p0) order by a;
+-- error 1735
+replace into t1 partition(p0, p_non_exist) select 1, 'a';
+-- error 1748
+replace into t1 partition(p0, p1) select 40, 'a';
+
+# TestUpdateGivenPartitionSet
+drop table if exists t1, t2, t3;
+create table t1(
+	a int(11),
+	b varchar(10) DEFAULT NULL,
+	primary key idx_a (a)) PARTITION BY RANGE (a)
+	(PARTITION p0 VALUES LESS THAN (10) ENGINE = InnoDB,
+	 PARTITION p1 VALUES LESS THAN (20) ENGINE = InnoDB,
+	 PARTITION p2 VALUES LESS THAN (30) ENGINE = InnoDB,
+	 PARTITION p3 VALUES LESS THAN (40) ENGINE = InnoDB,
+	 PARTITION p4 VALUES LESS THAN MAXVALUE ENGINE = InnoDB);
+create table t2(
+	a int(11) DEFAULT NULL,
+	b varchar(10) DEFAULT NULL) PARTITION BY RANGE (a)
+	(PARTITION p0 VALUES LESS THAN (10) ENGINE = InnoDB,
+	 PARTITION p1 VALUES LESS THAN (20) ENGINE = InnoDB,
+	 PARTITION p2 VALUES LESS THAN (30) ENGINE = InnoDB,
+	 PARTITION p3 VALUES LESS THAN (40) ENGINE = InnoDB,
+	 PARTITION p4 VALUES LESS THAN MAXVALUE ENGINE = InnoDB);
+create table t3 (a int(11), b varchar(10) default null);
+insert into t3 values(1, 'a'), (2, 'b'), (11, 'c'), (21, 'd');
+-- error 1747
+update t3 partition(p0) set a = 40 where a = 2;
+insert into t1 values(1, 'a'), (2, 'b'), (11, 'c'), (21, 'd');
+-- error 1748
+update t1 partition(p0, p1) set a = 40;
+-- error 1748
+update t1 partition(p0) set a = 40 where a = 2;
+-- error 1735
+update t1 partition (p0, p_non_exist) set a = 40;
+-- error 1748
+update t1 partition (p0), t3 set t1.a = 40 where t3.a = 2;
+update t1 partition(p0) set a = 3 where a = 2;
+update t1 partition(p0, p3) set a = 33 where a = 1;
+insert into t2 values(1, 'a'), (2, 'b'), (11, 'c'), (21, 'd');
+-- error 1748
+update t2 partition(p0, p1) set a = 40;
+-- error 1748
+update t2 partition(p0) set a = 40 where a = 2;
+update t2 partition(p0) set a = 3 where a = 2;
+update t2 partition(p0, p3) set a = 33 where a = 1;
+drop table if exists t4;
+create table t4(a int primary key, b int) partition by hash(a) partitions 2;
+insert into t4(a, b) values(1, 1),(2, 2),(3, 3);
+-- error 1748
+update t4 partition(p0) set a = 5 where a = 2;
+
+# TestIssue19667
+drop table if exists t;
+CREATE TABLE t (a DATETIME);
+INSERT INTO t VALUES('1988-04-17 01:59:59');
+SELECT DATE_ADD(a, INTERVAL 1 SECOND) FROM t;
+
+# TestZeroDateTimeCompatibility
+--enable_warnings
+select YEAR(0000-00-00), YEAR("0000-00-00");
+select MONTH(0000-00-00), MONTH("0000-00-00");
+select DAYOFMONTH(0000-00-00), DAYOFMONTH("0000-00-00");
+select QUARTER(0000-00-00), QUARTER("0000-00-00");
+select EXTRACT(DAY FROM 0000-00-00), EXTRACT(DAY FROM "0000-00-00");
+select EXTRACT(MONTH FROM 0000-00-00), EXTRACT(MONTH FROM "0000-00-00");
+select EXTRACT(YEAR FROM 0000-00-00), EXTRACT(YEAR FROM "0000-00-00");
+select EXTRACT(WEEK FROM 0000-00-00), EXTRACT(WEEK FROM "0000-00-00");
+select EXTRACT(QUARTER FROM 0000-00-00), EXTRACT(QUARTER FROM "0000-00-00");
+select DAYOFWEEK(0000-00-00), DAYOFWEEK("0000-00-00");
+select DAYOFYEAR(0000-00-00), DAYOFYEAR("0000-00-00");
+--disable_warnings
+drop table if exists t;
+create table t(v1 datetime, v2 datetime(3));
+insert ignore into t values(0,0);
+--enable_warnings
+select YEAR(v1), YEAR(v2) from t;
+select MONTH(v1), MONTH(v2) from t;
+select DAYOFMONTH(v1), DAYOFMONTH(v2) from t;
+select QUARTER(v1), QUARTER(v2) from t;
+select EXTRACT(DAY FROM v1), EXTRACT(DAY FROM v2) from t;
+select EXTRACT(MONTH FROM v1), EXTRACT(MONTH FROM v2) from t;
+select EXTRACT(YEAR FROM v1), EXTRACT(YEAR FROM v2) from t;
+select EXTRACT(WEEK FROM v1), EXTRACT(WEEK FROM v2) from t;
+select EXTRACT(QUARTER FROM v1), EXTRACT(QUARTER FROM v2) from t;
+select DAYOFWEEK(v1), DAYOFWEEK(v2) from t;
+select DAYOFYEAR(v1), DAYOFYEAR(v2) from t;
+--disable_warnings
+
+# TestInvalidDateValueInCreateTable
+drop table if exists t;
+set @@sql_mode='STRICT_TRANS_TABLES,NO_ZERO_IN_DATE';
+-- error 1067
+create table t (a datetime default '2999-00-00 00:00:00');
+create table t (a datetime);
+-- error 1067
+alter table t modify column a datetime default '2999-00-00 00:00:00';
+drop table if exists t;
+set @@sql_mode='STRICT_TRANS_TABLES,NO_ZERO_DATE';
+-- error 1067
+create table t (a datetime default '0000-00-00 00:00:00');
+create table t (a datetime);
+-- error 1067
+alter table t modify column a datetime default '0000-00-00 00:00:00';
+drop table if exists t;
+set @@sql_mode='STRICT_TRANS_TABLES';
+create table t (a datetime default '2999-00-00 00:00:00');
+drop table if exists t;
+create table t (a datetime default '0000-00-00 00:00:00');
+drop table if exists t;
+create table t (a datetime);
+alter table t modify column a datetime default '2999-00-00 00:00:00';
+alter table t modify column a datetime default '0000-00-00 00:00:00';
+drop table if exists t;
+set @@sql_mode='STRICT_TRANS_TABLES';
+-- error 1067
+create table t (a datetime default '2999-02-30 00:00:00');
+drop table if exists t;
+set @@sql_mode='STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE';
+-- error 1067
+create table t (a datetime default '2999-02-30 00:00:00');
+drop table if exists t;
+set @@sql_mode='STRICT_TRANS_TABLES,ALLOW_INVALID_DATES';
+create table t (a datetime default '2999-02-30 00:00:00');
+drop table if exists t;
+create table t (a datetime);
+alter table t modify column a datetime default '2999-02-30 00:00:00';
+drop table if exists t;
+set @@sql_mode=default;
+
+# TestEncodingSet
+drop table if exists `enum-set`;
+CREATE TABLE `enum-set` (`set` SET('x00','x01','x02','x03','x04','x05','x06','x07','x08','x09','x10','x11','x12','x13','x14','x15','x16','x17','x18','x19','x20','x21','x22','x23','x24','x25','x26','x27','x28','x29','x30','x31','x32','x33','x34','x35','x36','x37','x38','x39','x40','x41','x42','x43','x44','x45','x46','x47','x48','x49','x50','x51','x52','x53','x54','x55','x56','x57','x58','x59','x60','x61','x62','x63')NOT NULL PRIMARY KEY);
+INSERT INTO `enum-set` VALUES ("x00,x59");
+select `set` from `enum-set` use index(PRIMARY);
+admin check table `enum-set`;
+
+# TestYearTypeDeleteIndex
+drop table if exists t;
+create table t(a YEAR, PRIMARY KEY(a));
+insert into t set a = '2151';
+delete from t;
+admin check table t;
+
+# TestRowID
+drop table if exists t;
+set @@tidb_enable_clustered_index = 'int_only';
+create table t(a varchar(10), b varchar(10), c varchar(1), index idx(a, b, c));
+insert into t values('a', 'b', 'c');
+insert into t values('a', 'b', 'c');
+select b, _tidb_rowid from t use index(idx) where a = 'a';
+begin;
+select * from t for update;
+select distinct b from t use index(idx) where a = 'a';
+commit;
+drop table if exists t;
+create table t(a varchar(5) primary key);
+insert into t values('a');
+select *, _tidb_rowid from t use index(`primary`) where _tidb_rowid=1;
+set @@tidb_enable_clustered_index = default;
+
+# TestSubqueryTableAlias
+drop table if exists t;
+set sql_mode = '';
+-- error 1248
+select a, b from (select 1 a) ``, (select 2 b) ``;
+-- error 1066
+select a, b from (select 1 a) `x`, (select 2 b) `x`;
+-- error 1248
+select a, b from (select 1 a), (select 2 b);
+-- error 1248
+select a from (select 1 a) ``, (select 2 a) ``;
+-- error 1066
+select a from (select 1 a) `x`, (select 2 a) `x`;
+-- error 1066
+select x.a from (select 1 a) `x`, (select 2 a) `x`;
+-- error 1248
+select a from (select 1 a), (select 2 a);
+set sql_mode = 'oracle';
+select a, b from (select 1 a) ``, (select 2 b) ``;
+select a, b from (select 1 a) `x`, (select 2 b) `x`;
+select a, b from (select 1 a), (select 2 b);
+-- error 1052
+select a from (select 1 a) ``, (select 2 a) ``;
+-- error 1052
+select a from (select 1 a) `x`, (select 2 a) `x`;
+-- error 1052
+select x.a from (select 1 a) `x`, (select 2 a) `x`;
+-- error 1052
+select a from (select 1 a), (select 2 a);
+set sql_mode = default;
+
+# TestSelectHashPartitionTable
+drop table if exists th;
+set @@session.tidb_enable_table_partition = '1';
+create table th (a int, b int) partition by hash(a) partitions 3;
+insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
+insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
+select b from th order by a;
+select * from th where a=-2;
+select * from th where a=5;
+drop table if exists th;
+set @@session.tidb_enable_table_partition = default;
+
+# TestSelectView
+drop table if exists view_t;
+create table view_t (a int,b int);
+insert into view_t values(1,2);
+create definer='root'@'localhost' view view1 as select * from view_t;
+create definer='root'@'localhost' view view2(c,d) as select * from view_t;
+create definer='root'@'localhost' view view3(c,d) as select a,b from view_t;
+create definer='root'@'localhost' view view4 as select * from (select * from (select * from view_t) tb1) tb;
+select * from view1;
+select * from view2;
+select * from view3;
+select * from view4;
+drop table view_t;
+create table view_t(c int,d int);
+-- error 1356
+select * from view1;
+-- error 1356
+select * from view2;
+-- error 1356
+select * from view3;
+drop table view_t;
+create table view_t(a int,b int,c int);
+insert into view_t values(1,2,3);
+select * from view1;
+select * from view2;
+select * from view3;
+select * from view4;
+alter table view_t drop column a;
+alter table view_t add column a int after b;
+update view_t set a=1;
+select * from view1;
+select * from view2;
+select * from view3;
+select * from view4;
+drop table view_t;
+drop view view1,view2,view3,view4;
+set @@tidb_enable_window_function = 1;
+create table t(a int, b int);
+insert into t values (1,1),(1,2),(2,1),(2,2);
+create definer='root'@'localhost' view v as select a, first_value(a) over(rows between 1 preceding and 1 following), last_value(a) over(rows between 1 preceding and 1 following) from t;
+select * from v;
+drop view v;
+set @@tidb_enable_window_function = default;
+
+# TestBinaryStrNumericOperator
+drop table if exists t;
+create table t(a varbinary(10));
+insert into t values ('123.12');
+--enable_warnings
+select 1+a from t;
+select a-1 from t;
+select -10*a from t;
+select a/-2 from t;
+--disable_warnings
+
+# TestSetOperationOnDiffColType
+drop table if exists t1, t2, t3;
+create table t1(a int, b int);
+create table t2(a int, b varchar(20));
+create table t3(a int, b decimal(30,10));
+insert into t1 values (1,1),(1,1),(2,2),(3,3),(null,null);
+insert into t2 values (1,'1'),(2,'2'),(null,null),(null,'3');
+insert into t3 values (2,2.1),(3,3);
+explain format = 'brief' select * from t3 union select * from t1;
+--sorted_result
+select * from t3 union select * from t1;
+explain format = 'brief' select * from t2 union all select * from t1;
+--sorted_result
+select * from t2 union all select * from t1;
+explain format = 'brief' select * from t1 except select * from t3;
+--sorted_result
+select * from t1 except select * from t3;
+explain format = 'brief' select * from t1 intersect select * from t2;
+--sorted_result
+select * from t1 intersect select * from t2;
+explain format = 'brief' select * from t1 union all select * from t2 union all select * from t3;
+--sorted_result
+select * from t1 union all select * from t2 union all select * from t3;
+explain format = 'brief' select * from t1 union all select * from t2 except select * from t3;
+--sorted_result
+select * from t1 union all select * from t2 except select * from t3;
+explain format = 'brief' select * from t1 intersect select * from t2 intersect select * from t1;
+--sorted_result
+select * from t1 intersect select * from t2 intersect select * from t1;
+explain format = 'brief' select * from t1 union all select * from t2 intersect select * from t3;
+--sorted_result
+select * from t1 union all select * from t2 intersect select * from t3;
+explain format = 'brief' select * from t1 except select * from t2 intersect select * from t3;
+--sorted_result
+select * from t1 except select * from t2 intersect select * from t3;
+
+# TestIndexScanWithYearCol
+# issue-23038: wrong key range of index scan for year column
+set tidb_cost_model_version=2;
+drop table if exists t;
+create table t (c1 year(4), c2 int, key(c1));
+insert into t values(2001, 1);
+explain format = 'brief' select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+--sorted_result
+select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'brief' select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+--sorted_result
+select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'brief' select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+--sorted_result
+select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'brief' select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+--sorted_result
+select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'brief' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+--sorted_result
+select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'brief' select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+--sorted_result
+select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'brief' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL;
+--sorted_result
+select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL;
+
+# TestSetOperation
+set tidb_cost_model_version=2;
+drop table if exists t1, t2, t3;
+create table t1(a int);
+create table t2 like t1;
+create table t3 like t1;
+insert into t1 values (1),(1),(2),(3),(null);
+insert into t2 values (1),(2),(null),(null);
+insert into t3 values (2),(3);
+explain format='brief' select * from t3 union select * from t1;
+--sorted_result
+select * from t3 union select * from t1;
+explain format='brief' select * from t2 union all select * from t1;
+--sorted_result
+select * from t2 union all select * from t1;
+explain format='brief' select * from t1 except select * from t3;
+--sorted_result
+select * from t1 except select * from t3;
+explain format='brief' select * from t1 intersect select * from t2;
+--sorted_result
+select * from t1 intersect select * from t2;
+explain format='brief' select * from t1 union all select * from t2 union all select * from t3;
+--sorted_result
+select * from t1 union all select * from t2 union all select * from t3;
+explain format='brief' select * from t1 union all select * from t2 except select * from t3;
+--sorted_result
+select * from t1 union all select * from t2 except select * from t3;
+explain format='brief' select * from t1 intersect select * from t2 intersect select * from t1;
+--sorted_result
+select * from t1 intersect select * from t2 intersect select * from t1;
+explain format='brief' select * from t1 union all select * from t2 intersect select * from t3;
+--sorted_result
+select * from t1 union all select * from t2 intersect select * from t3;
+explain format='brief' select * from t1 except select * from t2 intersect select * from t3;
+--sorted_result
+select * from t1 except select * from t2 intersect select * from t3;
+explain format='brief' select * from t1 intersect (select * from t2 except (select * from t3));
+--sorted_result
+select * from t1 intersect (select * from t2 except (select * from t3));
+explain format='brief' select * from t1 union all (select * from t2 except select * from t3);
+--sorted_result
+select * from t1 union all (select * from t2 except select * from t3);
+explain format='brief' select * from t1 union (select * from t2 union all select * from t3);
+--sorted_result
+select * from t1 union (select * from t2 union all select * from t3);
+explain format='brief' (select * from t1 intersect select * from t1) except (select * from t2 union select * from t3);
+--sorted_result
+(select * from t1 intersect select * from t1) except (select * from t2 union select * from t3);
+
+# https://github.com/pingcap/tidb/issues/40279
+drop table if exists issue40279;
+CREATE TABLE `issue40279` (`a` char(155) NOT NULL DEFAULT 'on1unvbxp5sko6mbetn3ku26tuiyju7w3wc0olzto9ew7gsrx',`b` mediumint(9) NOT NULL DEFAULT '2525518',PRIMARY KEY (`b`,`a`) /*T![clustered_index] CLUSTERED */);
+insert into `issue40279` values ();
+( select    `issue40279`.`b` as r0 , from_base64( `issue40279`.`a` ) as r1 from `issue40279` ) except ( select    `issue40279`.`a` as r0 , elt(2, `issue40279`.`a` , `issue40279`.`a` ) as r1 from `issue40279`);
+drop table if exists t2;
+CREATE TABLE `t2` (   `a` varchar(20) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into t2 values(0xCED2);
+(select elt(2,t2.a,t2.a) from t2) except (select 0xCED2  from t2);
+
+# TestCompareIssue38361
+drop table if exists t;
+create table t(a datetime, b bigint, c bigint);
+insert into t values(cast('2023-08-09 00:00:00' as datetime), 20230809, 20231310);
+select a > 20230809 from t;
+select a = 20230809 from t;
+select a < 20230810 from t;
+# 20231310 can't be converted to valid datetime, thus should be compared using real date type,and datetime will be
+# converted to something like 'YYYYMMDDHHMMSS', bigger than 20231310
+select a < 20231310 from t;
+select 20230809 < a from t;
+select 20230809 = a from t;
+select 20230810 > a from t;
+select 20231310 > a from t;
+# constant datetime cmp numeric constant should be compared as real data type
+select cast('2023-08-09 00:00:00' as datetime) > 20230809 from t;
+select cast('2023-08-09 00:00:00' as datetime) = 20230809 from t;
+select cast('2023-08-09 00:00:00' as datetime) < 20230810 from t;
+select cast('2023-08-09 00:00:00' as datetime) < 20231310 from t;
+select 20230809 < cast('2023-08-09 00:00:00' as datetime) from t;
+select 20230809 = cast('2023-08-09 00:00:00' as datetime) from t;
+select 20230810 > cast('2023-08-09 00:00:00' as datetime) from t;
+select 20231310 > cast('2023-08-09 00:00:00' as datetime) from t;
+# datetime column cmp numeric column should be compared as real data type
+select a > b from t;
+select a = b from t;
+select a < b + 1 from t;
+select a < c from t;
+select b < a from t;
+select b = a from t;
+select b > a from t;
+select c > a from t;
+
+# TestLoadStats
+-- error 1064
+load stats;
+-- error 1064
+load stats ./xxx.json;
+
+# TestShow
+drop database if exists test_show;
+create database test_show;
+use test_show;
+show engines;
+drop table if exists t;
+create table t(a int primary key);
+show index in t;
+show index from t;
+--replace_column 2 0
+show master status;
+show create database test_show;
+show privileges;
+--replace_column 12 0
+show table status;
+
+drop database test_show;
+use executor__executor;
+
+# TestSelectBackslashN
+# Issue 3685.
+select \N;
+select "\N";
+
+drop table if exists test;
+create table test (`\N` int);
+insert into test values (1);
+select * from test;
+select \N from test;
+select (\N) from test;
+select `\N` from test;
+select (`\N`) from test;
+select '\N' from test;
+select ('\N') from test;
+
+# TestSelectNull
+# Issue #4053.
+select nUll;
+select (null);
+select null+NULL;
+
+# TestSelectStringLiteral Issue #3686.
+select 'abc';
+select (('abc'));
+select 'abc'+'def';
+## Below checks whether leading invalid chars are trimmed.
+select '\n';
+## Lowercased letter is a valid char.
+select '\t   col';
+## Uppercased letter is a valid char.
+select '\t   Col';
+## Chinese char is a valid char.
+select '\n\t   中文 col';
+## Punctuation is a valid char.
+select ' \r\n  .col';
+## Emoji is a valid char.
+select '   😆col';
+## Below checks whether trailing invalid chars are preserved.
+select 'abc   ';
+select '  abc   123   ';
+## Issue #4239.
+select 'a' ' ' 'string';
+select 'a' " " "string";
+select 'string' 'string';
+select "ss" "a";
+select "ss" "a" "b";
+select "ss" "a" ' ' "b";
+select "ss" "a" ' ' "b" ' ' "d";
+
+# TestUpdateClustered
+drop table if exists a, b;
+create table a (k1 int, k2 int, v int);
+create table b (a int not null, k1 int, k2 int, v int, primary key(k1, k2) );
+insert into a values (1, 1, 1), (2, 2, 2);
+insert into b values (2, 2, 2, 2);
+update a left join b on a.k1 = b.k1 and a.k2 = b.k2 set a.v = 20, b.v = 100, a.k1 = a.k1 + 1, b.k1 = b.k1 + 1, a.k2 = a.k2 + 2, b.k2 = b.k2 + 2;
+select * from b;
+select * from a;
+admin check table a;
+admin check table b;
+drop table if exists a, b;
+create table a (k1 int, k2 int, v int);
+create table b (a int not null, k1 int, k2 int, v int, primary key(k1, k2) );
+insert into a values (1, 1, 1), (2, 2, 2);
+insert into b values (2, 2, 2, 2);
+update a left join b on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2,  a.v = 20, b.v = 100;
+select * from b;
+select * from a;
+admin check table a;
+admin check table b;
+drop table if exists a, b;
+create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
+create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) , key kk1(k1(1), v(1)));
+insert into a values ('11', '11', '11'), ('22', '22', '22');
+insert into b values ('22', '22', '22', '22');
+update a left join b on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2, a.v = 20, b.v = 100;
+select * from b;
+select * from a;
+admin check table a;
+admin check table b;
+drop table if exists a, b;
+create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
+create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) , key kk1(k1(1), v(1)));
+insert into a values ('11', '11', '11'), ('22', '22', '22');
+insert into b values ('22', '22', '22', '22');
+update b right join a on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2, a.v = 20, b.v = 100;
+select * from b;
+select * from a;
+admin check table a;
+admin check table b;
+drop table if exists a, b;
+create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
+create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) , key kk1(k1(1), v(1)));
+insert into a values ('11', '11', '11'), ('22', '22', '22');
+insert into b values ('22', '22', '22', '22');
+update b join a on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2, a.v = 20, b.v = 100;
+select * from b;
+select * from a;
+admin check table a;
+admin check table b;
+drop table if exists a, b;
+create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
+create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) , key kk1(k1(1), v(1)));
+insert into a values ('11', '11', '11'), ('22', '22', '22');
+insert into b values ('22', '22', '22', '22');
+update a set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, a.v = 20 where exists (select 1 from b where a.k1 = b.k1 and a.k2 = b.k2);
+select * from b;
+select * from a;
+admin check table a;
+admin check table b;
+drop table if exists a, b;
+create table a (k1 int, k2 int, v int);
+create table b (a int not null, k1 int, k2 int, v int, primary key(k1, k2) clustered);
+insert into a values (1, 1, 1), (2, 2, 2);
+insert into b values (2, 2, 2, 2);
+update a left join b on a.k1 = b.k1 and a.k2 = b.k2 set a.v = 20, b.v = 100, a.k1 = a.k1 + 1, b.k1 = b.k1 + 1, a.k2 = a.k2 + 2, b.k2 = b.k2 + 2;
+select * from b;
+select * from a;
+admin check table a;
+admin check table b;
+drop table if exists a, b;
+create table a (k1 int, k2 int, v int);
+create table b (a int not null, k1 int, k2 int, v int, primary key(k1, k2) clustered);
+insert into a values (1, 1, 1), (2, 2, 2);
+insert into b values (2, 2, 2, 2);
+update a left join b on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2,  a.v = 20, b.v = 100;
+select * from b;
+select * from a;
+admin check table a;
+admin check table b;
+drop table if exists a, b;
+create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
+create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) clustered, key kk1(k1(1), v(1)));
+insert into a values ('11', '11', '11'), ('22', '22', '22');
+insert into b values ('22', '22', '22', '22');
+update a left join b on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2, a.v = 20, b.v = 100;
+select * from b;
+select * from a;
+admin check table a;
+admin check table b;
+drop table if exists a, b;
+create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
+create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) clustered, key kk1(k1(1), v(1)));
+insert into a values ('11', '11', '11'), ('22', '22', '22');
+insert into b values ('22', '22', '22', '22');
+update b right join a on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2, a.v = 20, b.v = 100;
+select * from b;
+select * from a;
+admin check table a;
+admin check table b;
+drop table if exists a, b;
+create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
+create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) clustered, key kk1(k1(1), v(1)));
+insert into a values ('11', '11', '11'), ('22', '22', '22');
+insert into b values ('22', '22', '22', '22');
+update b join a on a.k1 = b.k1 and a.k2 = b.k2 set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, b.k1 = b.k1 + 1, b.k2 = b.k2 + 2, a.v = 20, b.v = 100;
+select * from b;
+select * from a;
+admin check table a;
+admin check table b;
+drop table if exists a, b;
+create table a (k1 varchar(100), k2 varchar(100), v varchar(100));
+create table b (a varchar(100) not null, k1 varchar(100), k2 varchar(100), v varchar(100), primary key(k1(1), k2(1)) clustered, key kk1(k1(1), v(1)));
+insert into a values ('11', '11', '11'), ('22', '22', '22');
+insert into b values ('22', '22', '22', '22');
+update a set a.k1 = a.k1 + 1, a.k2 = a.k2 + 2, a.v = 20 where exists (select 1 from b where a.k1 = b.k1 and a.k2 = b.k2);
+select * from b;
+select * from a;
+admin check table a;
+admin check table b;
+
+# TestClusterIndexOuterJoinElimination
+set @@tidb_enable_clustered_index=On;
+drop table if exists t;
+create table t (a int, b int, c int, primary key(a,b));
+explain format = 'brief' select t1.a from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b;
+set @@tidb_enable_clustered_index=default;
+
+# TestExecutorBit
+drop table if exists t;
+create table t (c1 bit(2));
+insert into t values (0), (1), (2), (3);
+-- error 1406
+insert into t values (4);
+-- error 1406
+insert into t values ('a');
+select hex(c1) from t where c1 = 2;
+drop table if exists t;
+create table t (c1 bit(31));
+insert into t values (0x7fffffff);
+-- error 1406
+insert into t values (0x80000000);
+-- error 1406
+insert into t values (0xffffffff);
+insert into t values ('123');
+insert into t values ('1234');
+-- error 1064
+insert into t values ('12345);
+drop table if exists t;
+create table t (c1 bit(62));
+insert into t values ('12345678');
+drop table if exists t;
+create table t (c1 bit(61));
+-- error 1406
+insert into t values ('12345678');
+drop table if exists t;
+create table t (c1 bit(32));
+insert into t values (0x7fffffff);
+insert into t values (0xffffffff);
+-- error 1406
+insert into t values (0x1ffffffff);
+insert into t values ('1234');
+-- error 1406
+insert into t values ('12345');
+drop table if exists t;
+create table t (c1 bit(64));
+insert into t values (0xffffffffffffffff);
+insert into t values ('12345678');
+-- error 1366
+insert into t values ('123456789');
+drop table if exists t;
+create table t (c1 bit(64));
+insert into t values (0xffffffffffffffff);
+insert into t values ('12345678');
+select hex(c1) from t where c1;
+
+# TestTimestampTimeZone
+drop table if exists t, t1;
+create table t (ts timestamp);
+set time_zone = '+00:00';
+insert into t values ('2017-04-27 22:40:42');
+set time_zone = '+10:00';
+select * from t;
+set time_zone = '-6:00';
+select * from t;
+
+## For issue https://github.com/pingcap/tidb/issues/3467
+drop table if exists t1;
+CREATE TABLE t1 (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  uid int(11) DEFAULT NULL,
+  datetime timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ip varchar(128) DEFAULT NULL,
+PRIMARY KEY (id),
+  KEY i_datetime (datetime),
+  KEY i_userid (uid)
+);
+INSERT INTO t1 VALUES (123381351,1734,"2014-03-31 08:57:10","127.0.0.1");
+select datetime from t1;
+select datetime from t1 where datetime='2014-03-31 08:57:10';
+select * from t1 where datetime='2014-03-31 08:57:10';
+
+## For issue https://github.com/pingcap/tidb/issues/3485
+set time_zone = 'Asia/Shanghai';
+drop table if exists t1;
+CREATE TABLE t1 (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  datetime timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id)
+);
+INSERT INTO t1 VALUES (123381351,"2014-03-31 08:57:10");
+select * from t1 where datetime="2014-03-31 08:57:10";
+alter table t1 add key i_datetime (datetime);
+select * from t1 where datetime="2014-03-31 08:57:10";
+select * from t1;
+select datetime from t1 where datetime='2014-03-31 08:57:10';
+set time_zone=default;
+
+# TestInsertValuesWithSubQuery
+# this is from jira issue #5856
+drop table if exists t2;
+create table t2(a int, b int, c int);
+-- error 1054
+insert into t2 values (11, 8, (select not b));
+-- error 1064
+insert into t2 set a = 11, b = 8, c = (select b));
+insert into t2 values(1, 1, (select b from t2));
+select * from t2;
+insert into t2 set a = 1, b = 1, c = (select b+1 from t2);
+select * from t2;
+delete from t2;
+insert into t2 values(2, 4, a);
+select * from t2;
+insert into t2 set a = 3, b = 5, c = b;
+select * from t2;
+
+## issue #30626
+drop table if exists t;
+create table t(a int, b int);
+## TODO: should insert success and get (81,1) from the table
+-- error 1105
+insert into t values ( 81, ( select ( SELECT '1' AS `c0` WHERE '1' >= `subq_0`.`c0` ) as `c1` FROM ( SELECT '1' AS `c0` ) AS `subq_0` ) );
+-- error 1105
+insert into t set a = 81, b =  (select ( SELECT '1' AS `c0` WHERE '1' >= `subq_0`.`c0` ) as `c1` FROM ( SELECT '1' AS `c0` ) AS `subq_0` );
+drop table if exists t2;
+
+# TestBitColumnIn
+# fix issue https://github.com/pingcap/tidb/issues/32871
+drop table if exists t;
+create table t (id bit(16), key id(id));
+insert into t values (65);
+select * from t where id not in (-1,2);
+-- error 1582
+select * from t where id in (-1, -2);
+
+# TestProjectionBitType
+drop table if exists t;
+drop table if exists t1;
+create table t(k1 int, v bit(34) DEFAULT b'111010101111001001100111101111111', primary key(k1) clustered);
+create table t1(k1 int, v bit(34) DEFAULT b'111010101111001001100111101111111', primary key(k1) nonclustered);
+insert into t(k1) select 1;
+insert into t1(k1) select 1;
+set @@tidb_enable_vectorized_expression = 0;
+(select k1, hex(v) from t where false) union(select k1, hex(v) from t for update);
+(select k1, hex(v) from t1 where false) union(select k1, hex(v) from t1 for update);
+set @@tidb_enable_vectorized_expression = 1;
+(select k1, hex(v) from t where false) union(select k1, hex(v) from t for update);
+(select k1, hex(v) from t1 where false) union(select k1, hex(v) from t1 for update);
+
+set @@tidb_enable_vectorized_expression = default;
+
+# TestIssue24933
+drop table if exists t;
+drop view if exists v;
+create table t(a int);
+insert into t values(1), (2), (3);
+create definer='root'@'localhost' view v as select count(*) as c1 from t;
+select * from v;
+drop view v;
+create definer='root'@'localhost' view v as select * from (select count(*) from t) s;
+select * from v order by 1;
+drop view v;
+create definer='root'@'localhost' view v as select * from (select avg(a) from t group by a) s;
+select * from v order by 1;
+drop view v;
+create definer='root'@'localhost' view v as select * from (select sum(a) from t group by a) s;
+select * from v order by 1;
+drop view v;
+create definer='root'@'localhost' view v as select * from (select group_concat(a) from t group by a) s;
+select * from v order by 1;
+drop view v;
+create definer='root'@'localhost' view v as select * from (select count(0) as c1 from t) s;
+select * from v order by 1;
+drop view v;
+create definer='root'@'localhost' view v as select * from (select count(*) as c1 from t) s;
+select * from v order by 1;
+drop view v;
+create definer='root'@'localhost' view v as select * from (select group_concat(a) as `concat(a)` from t group by a) s;
+select * from v order by 1;
+drop view v;
+create definer='root'@'localhost' view v as select * from (select a from t group by a) s;
+select * from v order by 1;
+-- error 1054
+SELECT `s`.`count(a)` FROM (SELECT COUNT(`a`) FROM `executor__executor`.`t`) AS `s`;
+drop view v;
+create definer='root'@'localhost' view v as select * from (select count(a) from t) s;
+select * from v;
+drop table if exists t;
+create table t(c1 int);
+insert into t values(111), (222), (333);
+drop view if exists v;
+create definer='root'@'localhost' view v as (select * from (select row_number() over (order by c1) from t) s);
+select * from v;
+drop view if exists v;
+create definer='root'@'localhost' view v as (select * from (select c1, row_number() over (order by c1) from t) s);
+select * from v;
+drop view if exists v;
+create definer='root'@'localhost' view v as (select * from (select c1 or 0 from t) s);
+select * from v;
+select `c1 or 0` from v;
+drop view v;
+
+# TestCTEWithIndexLookupJoinDeadLock
+drop table if exists t, t1, t2;
+create table t (a int(11) default null,b int(11) default null,key b (b),key ba (b));
+create table t1 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b));
+create table t2 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b));
+
+## It's easy to reproduce this problem in 30 times execution of IndexLookUpJoin.
+--disable_result_log
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;
+--enable_result_log
+
+# TestAdminChecksumOfPartitionedTable
+DROP TABLE IF EXISTS admin_checksum_partition_test;
+CREATE TABLE admin_checksum_partition_test (a INT) PARTITION BY HASH(a) PARTITIONS 4;
+INSERT INTO admin_checksum_partition_test VALUES (1), (2);
+## The result is different with TiKV and unistore
+--disable_result_log
+ADMIN CHECKSUM TABLE admin_checksum_partition_test;
+--enable_result_log
+
+# TestSQLMode
+drop table if exists t;
+create table t (a tinyint not null);
+set sql_mode = 'STRICT_TRANS_TABLES';
+-- error 1364
+insert t values ();
+-- error 1264
+insert t values ('1000');
+create table if not exists tdouble (a double(3,2));
+-- error 1264
+insert tdouble values (10.23);
+set sql_mode = '';
+insert t values ();
+show warnings;
+insert t values (null);
+show warnings;
+insert ignore t values (null);
+show warnings;
+insert t select null;
+show warnings;
+insert t values (1000);
+select * from t order by a;
+insert tdouble values (10.23);
+select * from tdouble;
+set sql_mode = 'STRICT_TRANS_TABLES';
+set @@global.sql_mode = '';
+
+connect (conn1, localhost, root,, executor__executor);
+drop table if exists t2;
+create table t2 (a varchar(3));
+insert t2 values ('abcd');
+select * from t2;
+connection default;
+disconnect conn1;
+
+-- error 1406
+insert t2 values ('abcd');
+set sql_mode = default;
+set @@global.sql_mode = default;
+
+# TestTableScan
+use information_schema;
+## There must be these tables: information_schema, mysql, performance_schema and test.
+select count(*)>=4 from schemata;
+create database mytest;
+use information_schema;
+select * from schemata where schema_name = 'mysql';
+select * from schemata where schema_name like 'my%';
+select 1 from tables limit 1;
+use executor__executor;
+
+# TestAddDateBuiltinWithWarnings
+set @@sql_mode='NO_ZERO_DATE';
+select date_add('2001-01-00', interval -2 hour);
+show warnings;
+set @@sql_mode=default;
+
+# TestStrToDateBuiltinWithWarnings
+set @@sql_mode='NO_ZERO_DATE';
+drop table if exists t1;
+SELECT STR_TO_DATE('0000-1-01', '%Y-%m-%d');
+show warnings;
+SELECT CAST('4#,8?Q' AS DATE);
+show warnings;
+CREATE TABLE t1 (c1 INT, c2 TEXT);
+INSERT INTO t1 VALUES (1833458842, '0.3503490908550797');
+SELECT  CAST(t1.c2 AS DATE) FROM t1;
+show warnings;
+set @@sql_mode=default;
+
+# TestUnsignedDecimalOverflow
+drop table if exists t;
+create table t(a decimal(10,2) unsigned);
+-- error 1264
+insert into t values (-1);
+-- error 1264
+insert into t values ("-1.1e-1");
+-- error 1264
+insert into t values (-1.1);
+insert into t values (-0);
+set sql_mode='';
+delete from t;
+insert into t values (-1);
+select a from t limit 1;
+set sql_mode=default;
+
+# TestDoSubquery
+drop table if exists t;
+create table t(a int);
+do 1 in (select * from t);
+insert into t values(1);
+do 1 in (select * from t);
+
+# TestCountDistinctJSON
+drop table if exists t;
+create table t(j JSON);
+insert into t values('2010');
+insert into t values('2011');
+insert into t values('2012');
+insert into t values('2010.000');
+insert into t values(cast(18446744073709551615 as JSON));
+insert into t values(cast(18446744073709551616.000000 as JSON));
+select count(distinct j) from t;
+
+# TestHashJoinJSON
+drop table if exists t;
+create table t(id int(11), j JSON, d DOUBLE);
+insert into t values(0, '2010', 2010);
+insert into t values(1, '2011', 2011);
+insert into t values(2, '2012', 2012);
+insert into t values(3, cast(18446744073709551615 as JSON), 18446744073709551616.000000);
+select /*+inl_hash_join(t2)*/ t1.id, t2.id from t t1 join t t2 on t1.j = t2.d;
+
+# TestPlanReplayerDumpTPCDS
+drop table if exists catalog_sales, store_sales, date_dim;
+create table catalog_sales
+(
+    cs_sold_date_sk           int                       ,
+    cs_sold_time_sk           int                       ,
+    cs_ship_date_sk           int                       ,
+    cs_bill_customer_sk       int                       ,
+    cs_bill_cdemo_sk          int                       ,
+    cs_bill_hdemo_sk          int                       ,
+    cs_bill_addr_sk           int                       ,
+    cs_ship_customer_sk       int                       ,
+    cs_ship_cdemo_sk          int                       ,
+    cs_ship_hdemo_sk          int                       ,
+    cs_ship_addr_sk           int                       ,
+    cs_call_center_sk         int                       ,
+    cs_catalog_page_sk        int                       ,
+    cs_ship_mode_sk           int                       ,
+    cs_warehouse_sk           int                       ,
+    cs_item_sk                int               not null,
+    cs_promo_sk               int                       ,
+    cs_order_number           int               not null,
+    cs_quantity               int                       ,
+    cs_wholesale_cost         decimal(7,2)                  ,
+    cs_list_price             decimal(7,2)                  ,
+    cs_sales_price            decimal(7,2)                  ,
+    cs_ext_discount_amt       decimal(7,2)                  ,
+    cs_ext_sales_price        decimal(7,2)                  ,
+    cs_ext_wholesale_cost     decimal(7,2)                  ,
+    cs_ext_list_price         decimal(7,2)                  ,
+    cs_ext_tax                decimal(7,2)                  ,
+    cs_coupon_amt             decimal(7,2)                  ,
+    cs_ext_ship_cost          decimal(7,2)                  ,
+    cs_net_paid               decimal(7,2)                  ,
+    cs_net_paid_inc_tax       decimal(7,2)                  ,
+    cs_net_paid_inc_ship      decimal(7,2)                  ,
+    cs_net_paid_inc_ship_tax  decimal(7,2)                  ,
+    cs_net_profit             decimal(7,2)                  ,
+    primary key (cs_item_sk, cs_order_number)
+);
+create table store_sales
+(
+    ss_sold_date_sk           int                       ,
+    ss_sold_time_sk           int                       ,
+    ss_item_sk                int               not null,
+    ss_customer_sk            int                       ,
+    ss_cdemo_sk               int                       ,
+    ss_hdemo_sk               int                       ,
+    ss_addr_sk                int                       ,
+    ss_store_sk               int                       ,
+    ss_promo_sk               int                       ,
+    ss_ticket_number          int               not null,
+    ss_quantity               int                       ,
+    ss_wholesale_cost         decimal(7,2)                  ,
+    ss_list_price             decimal(7,2)                  ,
+    ss_sales_price            decimal(7,2)                  ,
+    ss_ext_discount_amt       decimal(7,2)                  ,
+    ss_ext_sales_price        decimal(7,2)                  ,
+    ss_ext_wholesale_cost     decimal(7,2)                  ,
+    ss_ext_list_price         decimal(7,2)                  ,
+    ss_ext_tax                decimal(7,2)                  ,
+    ss_coupon_amt             decimal(7,2)                  ,
+    ss_net_paid               decimal(7,2)                  ,
+    ss_net_paid_inc_tax       decimal(7,2)                  ,
+    ss_net_profit             decimal(7,2)                  ,
+    primary key (ss_item_sk, ss_ticket_number)
+);
+create table date_dim
+(
+    d_date_sk                 int               not null,
+    d_date_id                 char(16)              not null,
+    d_date                    date                          ,
+    d_month_seq               int                       ,
+    d_week_seq                int                       ,
+    d_quarter_seq             int                       ,
+    d_year                    int                       ,
+    d_dow                     int                       ,
+    d_moy                     int                       ,
+    d_dom                     int                       ,
+    d_qoy                     int                       ,
+    d_fy_year                 int                       ,
+    d_fy_quarter_seq          int                       ,
+    d_fy_week_seq             int                       ,
+    d_day_name                char(9)                       ,
+    d_quarter_name            char(6)                       ,
+    d_holiday                 char(1)                       ,
+    d_weekend                 char(1)                       ,
+    d_following_holiday       char(1)                       ,
+    d_first_dom               int                       ,
+    d_last_dom                int                       ,
+    d_same_day_ly             int                       ,
+    d_same_day_lq             int                       ,
+    d_current_day             char(1)                       ,
+    d_current_week            char(1)                       ,
+    d_current_month           char(1)                       ,
+    d_current_quarter         char(1)                       ,
+    d_current_year            char(1)                       ,
+    primary key (d_date_sk)
+);
+--disable_result_log
+plan replayer dump explain with ssci as (
+select ss_customer_sk customer_sk
+      ,ss_item_sk item_sk
+from store_sales,date_dim
+where ss_sold_date_sk = d_date_sk
+  and d_month_seq between 1212 and 1212 + 11
+group by ss_customer_sk
+        ,ss_item_sk),
+csci as(
+ select cs_bill_customer_sk customer_sk
+      ,cs_item_sk item_sk
+from catalog_sales,date_dim
+where cs_sold_date_sk = d_date_sk
+  and d_month_seq between 1212 and 1212 + 11
+group by cs_bill_customer_sk
+        ,cs_item_sk)
+ select  sum(case when ssci.customer_sk is not null and csci.customer_sk is null then 1 else 0 end) store_only
+      ,sum(case when ssci.customer_sk is null and csci.customer_sk is not null then 1 else 0 end) catalog_only
+      ,sum(case when ssci.customer_sk is not null and csci.customer_sk is not null then 1 else 0 end) store_and_catalog
+from ssci left join csci on (ssci.customer_sk=csci.customer_sk
+                               and ssci.item_sk = csci.item_sk)
+UNION
+ select  sum(case when ssci.customer_sk is not null and csci.customer_sk is null then 1 else 0 end) store_only
+      ,sum(case when ssci.customer_sk is null and csci.customer_sk is not null then 1 else 0 end) catalog_only
+      ,sum(case when ssci.customer_sk is not null and csci.customer_sk is not null then 1 else 0 end) store_and_catalog
+from ssci right join csci on (ssci.customer_sk=csci.customer_sk
+                               and ssci.item_sk = csci.item_sk)
+limit 100;
+--enable_result_log
+
+# TestBDRRole
+admin show bdr role;
+admin set bdr role primary;
+admin show bdr role;
+admin set bdr role secondary;
+admin show bdr role;
+admin unset bdr role;
+admin show bdr role;
+--error 1064
+admin set bdr role test_err;
+admin show bdr role;
+admin unset bdr role;
+
+# TestCompileOutOfMemoryQuota
+# Test for issue: https://github.com/pingcap/tidb/issues/38322
+set global tidb_mem_oom_action='CANCEL';
+drop table if exists t, t1;
+create table t(a int, b int, index idx(a));
+create table t1(a int, c int, index idx(a));
+set tidb_mem_quota_query=10;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a;
+set global tidb_mem_oom_action=default;
+set tidb_mem_quota_query=default;
+
+# TestOOMPanicAction
+drop table if exists t, t1;
+create table t (a int primary key, b double);
+insert into t values (1,1);
+SET GLOBAL tidb_mem_oom_action='CANCEL';
+set @@tidb_mem_quota_query=1;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+select sum(b) from t group by a;
+
+## Test insert from select oom panic.
+drop table if exists t,t1;
+create table t (a bigint);
+create table t1 (a bigint);
+set @@tidb_mem_quota_query=200;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+insert into t1 values (1),(2),(3),(4),(5);
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+replace into t1 values (1),(2),(3),(4),(5);
+set @@tidb_mem_quota_query=10000;
+insert into t1 values (1),(2),(3),(4),(5);
+set @@tidb_mem_quota_query=10;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+insert into t select a from t1 order by a desc;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+replace into t select a from t1 order by a desc;
+set @@tidb_mem_quota_query=10000;
+insert into t values (1),(2),(3),(4),(5);
+## Set the memory quota to 244 to make this SQL panic during the DeleteExec
+## instead of the TableReaderExec.
+set @@tidb_mem_quota_query=244;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+delete from t;
+set @@tidb_mem_quota_query=10000;
+delete from t1;
+insert into t1 values(1);
+insert into t values (1),(2),(3),(4),(5);
+set @@tidb_mem_quota_query=244;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+delete t, t1 from t join t1 on t.a = t1.a;
+set @@tidb_mem_quota_query=100000;
+truncate table t;
+insert into t values(1),(2),(3);
+## set the memory to quota to make the SQL panic during UpdateExec instead
+## of TableReader.
+set @@tidb_mem_quota_query=244;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+update t set a = 4;
+
+SET GLOBAL tidb_mem_oom_action = DEFAULT;
+set @@tidb_mem_quota_query=DEFAULT;
+
+# TestTrackAggMemoryUsage
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+set tidb_track_aggregate_memory_usage = off;
+
+--replace_column 5 <execution_info> 6 <operator_info>
+--replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
+explain analyze select /*+ HASH_AGG() */ sum(a) from t;
+
+--replace_column 5 <execution_info> 6 <operator_info>
+--replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
+explain analyze select /*+ STREAM_AGG() */ sum(a) from t;
+
+set tidb_track_aggregate_memory_usage = on;
+
+--replace_column 5 <execution_info> 6 <operator_info>
+--replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
+explain analyze select /*+ HASH_AGG() */ sum(a) from t;
+
+--replace_column 5 <execution_info> 6 <operator_info>
+--replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
+explain analyze select /*+ STREAM_AGG() */ sum(a) from t;
+
+set tidb_track_aggregate_memory_usage = default;
+
+# TestBind
+drop table if exists testbind;
+create table testbind(i int, s varchar(20));
+create index index_t on testbind(i,s);
+create global binding for select * from testbind using select * from testbind use index for join(index_t);
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where default_db='executor__executor';
+create session binding for select * from testbind using select * from testbind use index for join(index_t);
+--replace_column 5 <create_time> 6 <update_time>
+show session bindings where default_db='executor__executor';
+
+drop session binding for select * from testbind using select * from testbind use index for join(index_t);
+drop global binding for select * from testbind using select * from testbind use index for join(index_t);
+
+# TestIndexMergeRuntimeStats
+drop table if EXISTS t1;
+create table t1(id int primary key, a int, b int, c int, d int, index t1a(a), index t1b(b));
+insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5);
+--replace_regex /.*time:.*loops:.*cop_task:.*/.*time:.*loops:.*cop_task:.*/ /.*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*/.*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*/ /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
+explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;
+set @@tidb_enable_collect_execution_info=0;
+select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a;
+set @@tidb_enable_collect_execution_info=default;
+
+# TestIndexLookupRuntimeStats
+drop table if exists t1;
+create table t1 (a int, b int, index(a));
+insert into t1 values (1,2),(2,3),(3,4);
+--replace_regex /.*time:.*loops:.*index_task:.*table_task: {total_time.*num.*concurrency.*}.*/.*time:.*loops:.*index_task:.*table_task: {total_time.*num.*concurrency.*}.*/ /.*time:.*loops:.*cop_task:.*/.*time:.*loops:.*cop_task:.*/ /[.0-9]+ KB/<num> KB/ /[0-9]+ Bytes/<num> Bytes/
+explain analyze select * from t1 use index(a) where a > 1;
+
+# TestHashAggRuntimeStats
+drop table if exists t1;
+create table t1 (a int, b int);
+insert into t1 values (1,2),(2,3),(3,4);
+--replace_regex /.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*/.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*/ /time:.*loops:.*cop_task.*/time.*loops.*cop_task.*/ /tikv_task:.*/tikv_task:.*/ /[.0-9]+ KB/<num> KB/ /[.0-9]+ Bytes/<num> Bytes/
+explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;
+
+# TestSelectForUpdate
+set global tidb_txn_mode='';
+drop table if exists t, t1;
+create table t (c1 int, c2 int, c3 int);
+insert t values (11, 2, 3);
+insert t values (12, 2, 3);
+insert t values (13, 2, 3);
+create table t1 (c1 int);
+insert t1 values (11);
+
+connect (conn1, localhost, root,, executor__executor);
+begin;
+select * from t where c1=11 for update;
+
+connect (conn2, localhost, root,, executor__executor);
+begin;
+update t set c2=211 where c1=11;
+commit;
+
+connection conn1;
+--replace_regex /txnStartTS.*reason/<detail> reason/
+--error 9007
+commit;
+
+begin;
+select * from t where exists(select null from t1 where t1.c1=t.c1) for update;
+
+connection conn2;
+begin;
+update t set c2=211 where c1=12;
+commit;
+
+connection conn1;
+commit;
+
+begin;
+select * from t where c1=11 for update;
+
+connection conn2;
+begin;
+update t set c2=22 where c1=12;
+commit;
+
+connection conn1;
+commit;
+
+set @@autocommit=1;
+select * from t where c1=11 for update;
+
+connection conn2;
+begin;
+update t set c2=211 where c1=11;
+commit;
+
+connection conn1;
+commit;
+
+begin;
+--sorted_result
+select * from (select * from t for update) t join t1 for update;
+
+connection conn2;
+begin;
+update t1 set c1 = 13;
+commit;
+
+connection conn1;
+--replace_regex /txnStartTS.*reason/<detail> reason/
+--error 9007
+commit;
+
+disconnect conn1;
+disconnect conn2;
+set global tidb_txn_mode=pessimistic;
+
+# TestSelectForUpdateOf
+drop table if exists t, t1;
+create table t (i int);
+create table t1 (i int);
+insert t values (1);
+insert t1 values (1);
+begin pessimistic;
+select * from t, t1 where t.i = t1.i for update of t;
+
+connect (conn1, localhost, root,, executor__executor);
+begin pessimistic;
+select * from t1 for update;
+--error 3572
+select * from t for update nowait;
+
+connection default;
+rollback;
+
+connection conn1;
+select * from t for update nowait;
+rollback;
+disconnect conn1;
+
+# TestForSelectScopeInUnion
+set session tidb_txn_mode='';
+# A union B for update, the "for update" option belongs to union statement, so
+# it should works on both A and B.
+drop table if exists t;
+create table t(a int);
+insert into t values (1);
+begin;
+select 1 as a union select a from t for update;
+
+connect (conn1, localhost, root,, executor__executor);
+set session tidb_txn_mode='';
+update t set a = a + 1;
+
+connection default;
+## As tk1 use select 'for update', it should detect conflict and fail.
+--replace_regex /txnStartTS.*reason/<detail> reason/
+--error 9007
+commit;
+
+begin;
+--sorted_result
+select 1 as a union select a from t limit 5 for update;
+select 1 as a union select a from t order by a for update;
+
+connection conn1;
+update t set a = a + 1;
+
+connection default;
+--replace_regex /txnStartTS.*reason/<detail> reason/
+--error 9007
+commit;
+
+disconnect conn1;
+set session tidb_txn_mode=pessimistic;
+
+# TestAdminShowDDLJobsRowCount
+# https://github.com/pingcap/tidb/issues/25968
+drop table if exists t;
+create table t (id bigint key,b int);
+split table t by (10),(20),(30);
+insert into t values (0,0),(10,10),(20,20),(30,30);
+alter table t add index idx1(b);
+--replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
+admin show ddl jobs 1;
+
+insert into t values (1,0),(2,10),(3,20),(4,30);
+alter table t add index idx2(b);
+--replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
+admin show ddl jobs 1;
+
+# TestSummaryFailedUpdate
+drop table if exists t;
+create table t(a int, b int as(-a));
+insert into t(a) values(1), (3), (7);
+SET GLOBAL tidb_mem_oom_action='CANCEL';
+set @@tidb_mem_quota_query=1;
+--replace_regex /conn=[0-9]+/conn=<connID>/
+--error 8175
+update t set t.a = t.a - 1 where t.a in (select a from t where a < 4);
+set @@tidb_mem_quota_query=1000000000;
+select stmt_type from information_schema.statements_summary where digest_text = 'update `t` set `t` . `a` = `t` . `a` - ? where `t` . `a` in ( select `a` from `t` where `a` < ? )';
+
+set @@tidb_mem_quota_query=default;
+set global tidb_mem_oom_action=default;
+
+
+# TestTableLockPrivilege
+drop table if exists t;
+drop user if exists 'testuser'@'localhost';
+create table t(a int);
+create user 'testuser'@'localhost';
+
+connect (conn1, localhost, testuser,,);
+--error 1044
+LOCK TABLE executor__executor.t WRITE;
+
+connection default;
+GRANT LOCK TABLES ON executor__executor.* to 'testuser'@'localhost';
+
+connection conn1;
+--error 1142
+LOCK TABLE executor__executor.t WRITE;
+
+connection default;
+REVOKE ALL ON executor__executor.* FROM 'testuser'@'localhost';
+GRANT SELECT ON executor__executor.* to 'testuser'@'localhost';
+
+connection conn1;
+--error 1044
+LOCK TABLE executor__executor.t WRITE;
+
+connection default;
+GRANT LOCK TABLES ON executor__executor.* to 'testuser'@'localhost';
+
+connection conn1;
+LOCK TABLE executor__executor.t WRITE;
+
+connection default;
+drop database if exists test2;
+create database test2;
+create table test2.t2(a int);
+
+connection conn1;
+--error 1044
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+
+connection default;
+GRANT LOCK TABLES ON test2.* to 'testuser'@'localhost';
+
+connection conn1;
+--error 1142
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+
+connection default;
+GRANT SELECT ON test2.* to 'testuser'@'localhost';
+
+connection conn1;
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+
+connection default;
+--replace_regex /server: .*session: .*/server: <server> session: <session>/
+--error 8020
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+
+disconnect conn1;
+unlock tables;
+drop user 'testuser'@'localhost';

@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "enforcempp_test",
+    timeout = "short",
+    srcs = [
+        "enforce_mpp_test.go",
+        "main_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    shard_count = 12,
+    deps = [
+        "//pkg/domain",
+        "//pkg/parser/model",
+        "//pkg/planner/core/internal",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/testkit",
+        "//pkg/testkit/external",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/collate",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

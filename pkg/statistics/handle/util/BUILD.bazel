@@ -1,0 +1,50 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "util",
+    srcs = [
+        "auto_analyze_proc_id_generator.go",
+        "ddl_event.go",
+        "lease_getter.go",
+        "pool.go",
+        "table_info.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/util",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/table",
+        "//pkg/util",
+        "//pkg/util/chunk",
+        "//pkg/util/intest",
+        "//pkg/util/sqlexec",
+        "//pkg/util/sqlexec/mock",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_tiancaiamao_gp//:gp",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "util_test",
+    timeout = "short",
+    srcs = ["ddl_event_test.go"],
+    embed = [":util"],
+    flaky = True,
+    deps = [
+        "//pkg/parser/model",
+        "@com_github_stretchr_testify//require",
+    ],
+)

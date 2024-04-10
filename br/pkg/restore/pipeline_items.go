@@ -8,13 +8,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -151,11 +153,26 @@ type CreatedTable struct {
 	OldTable    *metautil.Table
 }
 
+func DefaultOutputTableChan() chan *CreatedTable {
+	return make(chan *CreatedTable, defaultChannelSize)
+}
+
 // TableWithRange is a CreatedTable that has been bind to some of key ranges.
 type TableWithRange struct {
 	CreatedTable
 
+	// Range has been rewrited by rewrite rules.
 	Range []rtree.Range
+}
+
+type TableIDWithFiles struct {
+	TableID int64
+
+	Files []*backuppb.File
+	// RewriteRules is the rewrite rules for the specify table.
+	// because these rules belongs to the *one table*.
+	// we can hold them here.
+	RewriteRules *RewriteRules
 }
 
 // Exhaust drains all remaining errors in the channel, into a slice of errors.
@@ -183,8 +200,25 @@ type BatchSender interface {
 	Close()
 }
 
+// TiKVRestorer is the minimal methods required for restoring.
+// It contains the primitive APIs extract from `restore.Client`, so some of arguments may seem redundant.
+// Maybe TODO: make a better abstraction?
+type TiKVRestorer interface {
+	// SplitRanges split regions implicated by the ranges and rewrite rules.
+	// After spliting, it also scatters the fresh regions.
+	SplitRanges(ctx context.Context,
+		ranges []rtree.Range,
+		updateCh glue.Progress,
+		isRawKv bool) error
+	// RestoreSSTFiles import the files to the TiKV.
+	RestoreSSTFiles(ctx context.Context,
+		tableIDWithFiles []TableIDWithFiles,
+		updateCh glue.Progress) error
+}
+
 type tikvSender struct {
-	client   *Client
+	client TiKVRestorer
+
 	updateCh glue.Progress
 
 	sink TableSink
@@ -209,9 +243,10 @@ func (b *tikvSender) RestoreBatch(ranges DrainResult) {
 // NewTiKVSender make a sender that send restore requests to TiKV.
 func NewTiKVSender(
 	ctx context.Context,
-	cli *Client,
+	cli TiKVRestorer,
 	updateCh glue.Progress,
 	splitConcurrency uint,
+	granularity string,
 ) (BatchSender, error) {
 	inCh := make(chan DrainResult, defaultChannelSize)
 	midCh := make(chan drainResultAndDone, defaultChannelSize)
@@ -226,7 +261,17 @@ func NewTiKVSender(
 
 	sender.wg.Add(2)
 	go sender.splitWorker(ctx, inCh, midCh, splitConcurrency)
-	go sender.restoreWorker(ctx, midCh)
+	if granularity == string(CoarseGrained) {
+		outCh := make(chan drainResultAndDone, defaultChannelSize)
+		// block on splitting and scattering regions.
+		// in coarse-grained mode, wait all regions are split and scattered is
+		// no longer a time-consuming operation, then we can batch download files
+		// as much as enough and reduce the time of blocking restore.
+		go sender.blockPipelineWorker(ctx, midCh, outCh)
+		go sender.restoreWorker(ctx, outCh)
+	} else {
+		go sender.restoreWorker(ctx, midCh)
+	}
 	return sender, nil
 }
 
@@ -241,6 +286,26 @@ type drainResultAndDone struct {
 	done   func()
 }
 
+func (b *tikvSender) blockPipelineWorker(ctx context.Context,
+	inCh <-chan drainResultAndDone,
+	outCh chan<- drainResultAndDone,
+) {
+	defer close(outCh)
+	res := make([]drainResultAndDone, 0, defaultChannelSize)
+	for dr := range inCh {
+		res = append(res, dr)
+	}
+
+	for _, dr := range res {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			outCh <- dr
+		}
+	}
+}
+
 func (b *tikvSender) splitWorker(ctx context.Context,
 	ranges <-chan DrainResult,
 	next chan<- drainResultAndDone,
@@ -252,9 +317,9 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 		b.wg.Done()
 		if err := eg.Wait(); err != nil {
 			b.sink.EmitError(err)
-			return
 		}
 		close(next)
+		log.Info("TiKV Sender: split worker exits.")
 	}()
 
 	start := time.Now()
@@ -263,10 +328,10 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 		summary.CollectDuration("split region", elapsed)
 	}()
 
-	pool := utils.NewWorkerPool(concurrency, "split")
+	pool := util.NewWorkerPool(concurrency, "split")
 	for {
 		select {
-		case <-ctx.Done():
+		case <-ectx.Done():
 			return
 		case result, ok := <-ranges:
 			if !ok {
@@ -289,7 +354,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 			// hence the checksum would fail.
 			done := b.registerTableIsRestoring(result.TablesToSend)
 			pool.ApplyOnErrorGroup(eg, func() error {
-				err := SplitRanges(ectx, b.client, result.Ranges, result.RewriteRules, b.updateCh, false)
+				err := b.client.SplitRanges(ectx, result.Ranges, b.updateCh, false)
 				if err != nil {
 					log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
 					return err
@@ -338,28 +403,30 @@ func (b *tikvSender) waitTablesDone(ts []CreatedTable) {
 func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResultAndDone) {
 	eg, ectx := errgroup.WithContext(ctx)
 	defer func() {
-		log.Debug("restore worker closed")
+		log.Info("TiKV Sender: restore worker prepare to close.")
 		if err := eg.Wait(); err != nil {
 			b.sink.EmitError(err)
-			return
 		}
-		b.wg.Done()
 		b.sink.Close()
+		b.wg.Done()
+		log.Info("TiKV Sender: restore worker exits.")
 	}()
 	for {
 		select {
-		case <-ctx.Done():
+		case <-ectx.Done():
 			return
 		case r, ok := <-ranges:
 			if !ok {
 				return
 			}
+
 			files := r.result.Files()
-			// There has been a worker in the `RestoreFiles` procedure.
+			// There has been a worker in the `RestoreSSTFiles` procedure.
 			// Spawning a raw goroutine won't make too many requests to TiKV.
 			eg.Go(func() error {
-				e := b.client.RestoreFiles(ectx, files, r.result.RewriteRules, b.updateCh)
+				e := b.client.RestoreSSTFiles(ectx, files, b.updateCh)
 				if e != nil {
+					log.Error("restore batch meet error", logutil.ShortError(e), zapTableIDWithFiles(files))
 					r.done()
 					return e
 				}

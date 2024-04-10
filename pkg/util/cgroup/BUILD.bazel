@@ -1,0 +1,76 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cgroup",
+    srcs = [
+        "cgroup.go",
+        "cgroup_cpu.go",
+        "cgroup_cpu_linux.go",
+        "cgroup_cpu_unsupport.go",
+        "cgroup_memory.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/cgroup",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_cockroachdb_errors//:errors",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ] + select({
+        "@io_bazel_rules_go//go/platform:aix": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:android": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:darwin": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:dragonfly": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:freebsd": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:illumos": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:ios": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:js": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:linux": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:netbsd": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:openbsd": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:plan9": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:solaris": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "@io_bazel_rules_go//go/platform:windows": [
+            "@com_github_pingcap_failpoint//:failpoint",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+go_test(
+    name = "cgroup_test",
+    timeout = "short",
+    srcs = [
+        "cgroup_cpu_test.go",
+        "cgroup_mock_test.go",
+    ],
+    embed = [":cgroup"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

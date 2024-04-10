@@ -1,0 +1,37 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "glue",
+    srcs = [
+        "console_glue.go",
+        "glue.go",
+        "progressing.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/glue",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/utils",
+        "//pkg/ddl",
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "@com_github_fatih_color//:color",
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_vbauerster_mpb_v7//:mpb",
+        "@com_github_vbauerster_mpb_v7//decor",
+        "@org_golang_x_term//:term",
+    ],
+)
+
+go_test(
+    name = "glue_test",
+    timeout = "short",
+    srcs = ["console_glue_test.go"],
+    flaky = True,
+    deps = [
+        ":glue",
+        "@com_github_fatih_color//:color",
+        "@com_github_stretchr_testify//require",
+    ],
+)

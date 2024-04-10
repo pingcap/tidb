@@ -1,0 +1,457 @@
+# TestExplainMemTablePredicate
+desc format='brief' select * from METRICS_SCHEMA.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ;
+desc format='brief' select * from METRICS_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ;
+desc format='brief' select * from information_schema.cluster_log where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+desc format='brief' select * from information_schema.cluster_log where level in ('warn','error') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+desc format='brief' select * from information_schema.cluster_log where type in ('high_cpu_1','high_memory_1') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+desc format='brief' select * from information_schema.slow_query;
+desc format='brief' select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+set @@time_zone = '+00:00';
+desc format='brief' select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+set @@time_zone = default;
+
+# TestExplainClusterTable
+desc format='brief' select * from information_schema.cluster_config where type in ('tikv', 'tidb');
+desc format='brief' select * from information_schema.cluster_config where instance='192.168.1.7:2379';
+desc format='brief' select * from information_schema.cluster_config where type='tidb' and instance='192.168.1.7:2379';
+
+# TestInspectionResultTable
+desc format='brief' select * from information_schema.inspection_result where rule = 'ddl' and rule = 'config';
+desc format='brief' select * from information_schema.inspection_result where rule in ('ddl', 'config');
+desc format='brief' select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool');
+desc format='brief' select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool') and rule in ('ddl', 'config');
+
+# TestInspectionRuleTable
+desc format='brief' select * from information_schema.inspection_rules where type='inspection';
+desc format='brief' select * from information_schema.inspection_rules where type='inspection' or type='summary';
+desc format='brief' select * from information_schema.inspection_rules where type='inspection' and type='summary';
+
+# TestSavedPlanPanicPlanCache
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+create table t(a int, b int, c int generated always as (a+b) stored);
+insert into t(a,b) values(1,1);
+begin;
+update t set b = 2 where a = 1;
+prepare stmt from 'select b from t where a > ?';
+set @p = 0;
+execute stmt using @p;
+set @p = 1;
+execute stmt using @p;
+-- error 3105
+insert into t(a,b,c) values(3,3,3);
+rollback;
+set tidb_enable_prepared_plan_cache=default;
+
+# TestExplainTableStorage
+desc format='brief' select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';
+desc format='brief' select * from information_schema.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata';
+desc format='brief' select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata';
+
+# TestInspectionSummaryTable
+desc format='brief' select * from information_schema.inspection_summary where rule='ddl';
+desc format='brief' select * from information_schema.inspection_summary where 'ddl'=rule or rule='config';
+desc format='brief' select * from information_schema.inspection_summary where 'ddl'=rule or rule='config' or rule='slow_query';
+desc format='brief' select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1');
+desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query');
+desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name='metric_name1';
+desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name in ('metric_name1', 'metric_name2');
+desc format='brief' select * from information_schema.inspection_summary where rule='ddl' and metrics_name in ('metric_name1', 'metric_name2');
+desc format='brief' select * from information_schema.inspection_summary where rule='ddl' and metrics_name='metric_NAME3';
+desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'config') and rule in ('slow_query', 'config');
+desc format='brief' select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and rule in ('ddl', 'config') and rule in ('slow_query', 'config') and quantile in (0.80, 0.90);
+desc format='brief' select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name1') and metrics_name in ('metric_name1', 'metric_name3');
+
+# TestExplainTiFlashSystemTables
+desc format='brief' select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '192.168.1.7:3930';
+desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '192.168.1.7:3930';
+desc format='brief' select * from information_schema.TIFLASH_TABLES where TIDB_DATABASE = 'test';
+desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIDB_DATABASE = 'test';
+desc format='brief' select * from information_schema.TIFLASH_TABLES where TIDB_TABLE = 't';
+desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIDB_TABLE = 't';
+desc format='brief' select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '192.168.1.7:3930' and TIDB_DATABASE = 'test' and TIDB_TABLE = 't';
+desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '192.168.1.7:3930' and TIDB_DATABASE = 'test' and TIDB_TABLE = 't';
+
+# TestSetOperations4PlanCache
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+drop table if exists t1, t2;
+CREATE TABLE `t1` (a int);
+CREATE TABLE `t2` (a int);
+insert into t1 values(1), (2);
+insert into t2 values(1), (3);
+prepare stmt from 'select * from t1 where a > ? union select * from t2 where a > ?;';
+set @a=0, @b=1;
+--sorted_result
+execute stmt using @a, @b;
+--sorted_result
+execute stmt using @b, @a;
+select @@last_plan_from_cache;
+--sorted_result
+execute stmt using @b, @b;
+select @@last_plan_from_cache;
+--sorted_result
+execute stmt using @a, @a;
+select @@last_plan_from_cache;
+prepare stmt from 'select * from t1 where a > ? union all select * from t2 where a > ?;';
+set @a=0, @b=1;
+--sorted_result
+execute stmt using @a, @b;
+--sorted_result
+execute stmt using @b, @a;
+select @@last_plan_from_cache;
+--sorted_result
+execute stmt using @b, @b;
+select @@last_plan_from_cache;
+--sorted_result
+execute stmt using @a, @a;
+select @@last_plan_from_cache;
+prepare stmt from 'select * from t1 where a > ? except select * from t2 where a > ?;';
+set @a=0, @b=1;
+--sorted_result
+execute stmt using @a, @a;
+--sorted_result
+execute stmt using @b, @a;
+select @@last_plan_from_cache;
+--sorted_result
+execute stmt using @b, @b;
+select @@last_plan_from_cache;
+--sorted_result
+execute stmt using @a, @b;
+select @@last_plan_from_cache;
+prepare stmt from 'select * from t1 where a > ? union select * from t2 where a > ?;';
+set @a=0, @b=1;
+--sorted_result
+execute stmt using @a, @a;
+--sorted_result
+execute stmt using @b, @a;
+select @@last_plan_from_cache;
+--sorted_result
+execute stmt using @b, @b;
+select @@last_plan_from_cache;
+--sorted_result
+execute stmt using @a, @b;
+select @@last_plan_from_cache;
+prepare stmt from 'select * from t1 union all select * from t1 intersect select * from t2;';
+--sorted_result
+execute stmt;
+prepare stmt from '(select * from t1 union all select * from t1) intersect select * from t2;';
+--sorted_result
+execute stmt;
+prepare stmt from '(select * from t1 union all select * from t1 intersect select * from t2) order by a limit 2;';
+--sorted_result
+execute stmt;
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+
+# TestHint4PlanCache
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+drop table if exists t;
+create table t(a int, index idx_a(a));
+prepare stmt from 'select * from t;';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+prepare stmt from 'select /*+ IGNORE_PLAN_CACHE() */ * from t;';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+
+# TestInvisibleIndex4PlanCache
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+drop table if exists t;
+CREATE TABLE t(c1 INT, index idx_c(c1));
+prepare stmt from 'select * from t use index(idx_c) where c1 > 1;';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+ALTER TABLE t ALTER INDEX idx_c INVISIBLE;
+-- error 1176
+select * from t use index(idx_c) where c1 > 1;
+-- error 1176
+execute stmt;
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+
+# TestCTE4PlanCache
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+prepare stmt from 'with recursive cte1 as (select ? c1 union all select c1 + 1 c1 from cte1 where c1 < ?) select * from cte1;';
+set @a=5, @b=4, @c=2, @d=1;
+--sorted_result
+execute stmt using @d, @a;
+--sorted_result
+execute stmt using @d, @b;
+select @@last_plan_from_cache;
+--sorted_result
+execute stmt using @c, @b;
+select @@last_plan_from_cache;
+prepare stmt from 'with recursive cte1 as (select 1 c1 union all select 2 c1 union all select c1 + 1 c1 from cte1 where c1 < ?) select * from cte1 order by c1;';
+set @a=10, @b=2;
+execute stmt using @a;
+execute stmt using @b;
+select @@last_plan_from_cache;
+prepare stmt from 'with recursive cte1 as (select 1 c1 union all select 2 c1 union all select c1 + 1 c1 from cte1 where c1 < ? union all select c1 + ? c1 from cte1 where c1 < ?) select * from cte1 order by c1;';
+set @a=1, @b=2, @c=3, @d=4, @e=5;
+--sorted_result
+execute stmt using @c, @b, @e;
+--sorted_result
+execute stmt using @b, @a, @d;
+select @@last_plan_from_cache;
+drop table if exists t1;
+create table t1(a int);
+insert into t1 values(1);
+insert into t1 values(2);
+prepare stmt from 'SELECT * FROM t1 dt WHERE EXISTS(WITH RECURSIVE qn AS (SELECT a*? AS b UNION ALL SELECT b+? FROM qn WHERE b=?) SELECT * FROM qn WHERE b=a);';
+show warnings;
+set @a=1, @b=2, @c=3, @d=4, @e=5, @f=0;
+--sorted_result
+execute stmt using @f, @a, @f;
+--sorted_result
+execute stmt using @a, @b, @a;
+select @@last_plan_from_cache;
+--sorted_result
+execute stmt using @a, @b, @a;
+prepare stmt from 'with recursive c(p) as (select ?), cte(a, b) as (select 1, 1 union select a+?, 1 from cte, c where a < ?)  select * from cte order by 1, 2;';
+show warnings;
+--sorted_result
+execute stmt using @a, @a, @e;
+--sorted_result
+execute stmt using @b, @b, @c;
+select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+
+# TestValidity4PlanCache
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+drop table if exists t;
+create table t(a int);
+prepare stmt from 'select * from t;';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+drop database if exists plan_cache;
+create database plan_cache;
+use plan_cache;
+create table t(a int);
+insert into t values(1);
+execute stmt;
+select @@last_plan_from_cache;
+execute stmt;
+select @@last_plan_from_cache;
+prepare stmt from 'select * from t;';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+execute stmt;
+select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+
+# TestListPartition4PlanCache
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+set @@session.tidb_enable_list_partition=1;
+drop table if exists t;
+create table t(a int, b int) PARTITION BY LIST (a) ( PARTITION p0 VALUES IN (1, 2, 3), PARTITION p1 VALUES IN (4, 5, 6));
+set @@tidb_partition_prune_mode='static';
+prepare stmt from 'select * from t;';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+set @@session.tidb_enable_list_partition=default;
+set @@tidb_partition_prune_mode=default;
+
+# TestIssue28792
+drop table if exists t12, t97;
+CREATE TABLE t12(a INT, b INT);
+CREATE TABLE t97(a INT, b INT UNIQUE NOT NULL);
+EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 on t12.b = t97.b;
+EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 use index () on t12.b = t97.b;
+
+# TestMoreSessions4PlanCache
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+drop table if exists t;
+create table t(a int);
+prepare stmt from 'select * from t;';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+
+connect (conn1, localhost, root,, executor__explainfor);
+set tidb_enable_prepared_plan_cache=1;
+-- error 8111
+execute stmt;
+prepare stmt from 'select * from t;';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+connection default;
+
+execute stmt;
+select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+
+# TestSelectView4PlanCache
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+drop view if exists view1, view2, view3, view4;
+drop table if exists view_t;
+create table view_t (a int,b int);
+insert into view_t values(1,2);
+create definer='root'@'localhost' view view1 as select * from view_t;
+create definer='root'@'localhost' view view2(c,d) as select * from view_t;
+create definer='root'@'localhost' view view3(c,d) as select a,b from view_t;
+create definer='root'@'localhost' view view4 as select * from (select * from (select * from view_t) tb1) tb;
+prepare stmt1 from 'select * from view1;';
+execute stmt1;
+execute stmt1;
+select @@last_plan_from_cache;
+prepare stmt2 from 'select * from view2;';
+execute stmt2;
+execute stmt2;
+select @@last_plan_from_cache;
+prepare stmt3 from 'select * from view3;';
+execute stmt3;
+execute stmt3;
+select @@last_plan_from_cache;
+prepare stmt4 from 'select * from view4;';
+execute stmt4;
+execute stmt4;
+select @@last_plan_from_cache;
+drop table view_t;
+create table view_t(c int,d int);
+-- error 1356
+execute stmt1;
+-- error 1356
+execute stmt2;
+-- error 1356
+execute stmt3;
+drop table view_t;
+create table view_t(a int,b int,c int);
+insert into view_t values(1,2,3);
+execute stmt1;
+select @@last_plan_from_cache;
+execute stmt1;
+select @@last_plan_from_cache;
+execute stmt2;
+select @@last_plan_from_cache;
+execute stmt2;
+select @@last_plan_from_cache;
+execute stmt3;
+select @@last_plan_from_cache;
+execute stmt3;
+select @@last_plan_from_cache;
+execute stmt4;
+select @@last_plan_from_cache;
+execute stmt4;
+select @@last_plan_from_cache;
+alter table view_t drop column a;
+alter table view_t add column a int after b;
+update view_t set a=1;
+execute stmt1;
+select @@last_plan_from_cache;
+execute stmt1;
+select @@last_plan_from_cache;
+execute stmt2;
+select @@last_plan_from_cache;
+execute stmt2;
+select @@last_plan_from_cache;
+execute stmt3;
+select @@last_plan_from_cache;
+execute stmt3;
+select @@last_plan_from_cache;
+execute stmt4;
+select @@last_plan_from_cache;
+execute stmt4;
+select @@last_plan_from_cache;
+drop table view_t;
+drop view view1,view2,view3,view4;
+set @@tidb_enable_window_function = 1;
+drop table if exists t;
+create table t(a int, b int);
+insert into t values (1,1),(1,2),(2,1),(2,2);
+create definer='root'@'localhost' view v as select a, first_value(a) over(rows between 1 preceding and 1 following), last_value(a) over(rows between 1 preceding and 1 following) from t;
+prepare stmt from 'select * from v;';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+drop view v;
+set @@tidb_enable_window_function = default;
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+
+# TestIgnorePlanCacheWithPrepare
+drop table if exists t;
+create table t(a int, index idx_a(a));
+drop table if exists r;
+create table r(a int);
+prepare stmt from 'select * from t;';
+create binding for select * from t using select /*+ use_index(t, idx_a) */ * from t;
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+execute stmt;
+select @@last_plan_from_binding;
+create binding for select * from t using select /*+ ignore_plan_cache() */ * from t;
+execute stmt;
+select @@last_plan_from_cache;
+execute stmt;
+select @@last_plan_from_binding;
+create binding for select * from t using select /*+ use_index(t, idx_a) */ * from t;
+execute stmt;
+select @@last_plan_from_cache;
+execute stmt;
+select @@last_plan_from_binding;
+prepare stmt_join from 'select * from t, r where r.a = t.a;';
+create binding for select * from t, r where r.a = t.a using select /*+ straight_join() */* from t, r where r.a = t.a;
+execute stmt_join;
+execute stmt_join;
+select @@last_plan_from_cache;
+execute stmt_join;
+select @@last_plan_from_binding;
+create binding for select * from t, r where r.a = t.a using select /*+ ignore_plan_cache() */* from t, r where r.a = t.a;
+execute stmt_join;
+select @@last_plan_from_cache;
+execute stmt_join;
+select @@last_plan_from_binding;
+create binding for select * from t, r where r.a = t.a using select /*+ straight_join() */* from t, r where r.a = t.a;
+execute stmt_join;
+select @@last_plan_from_cache;
+execute stmt_join;
+select @@last_plan_from_binding;
+
+
+# TestExplainMemTablePredicatePushDown
+create database s1;
+drop table if exists t;
+create table t(a int);
+drop table if exists r;
+create table r(a int);
+desc format='brief' select * from information_schema.tables where table_name='t';
+desc format='brief' select * from information_schema.tables where lower(table_name)='t';
+desc format='brief' select * from information_schema.tables where upper(table_name)=upper('t');
+
+desc format='brief' select * from information_schema.REFERENTIAL_CONSTRAINTS where table_name='t';
+desc format='brief' select * from information_schema.KEY_COLUMN_USAGE where table_name='t';
+desc format='brief' select * from information_schema.STATISTICS where table_name='t';
+desc format='brief' select * from information_schema.STATISTICS where table_name='t' and table_name='r';
+desc format='brief' select * from information_schema.STATISTICS where table_name='t' or table_name='r';
+desc format='brief' select * from information_schema.tables where table_schema='t';
+desc format='brief' select * from information_schema.KEY_COLUMN_USAGE where table_schema='s1';
+desc format='brief' select * from information_schema.STATISTICS where table_schema='s1';
+desc format='brief' select * from information_schema.STATISTICS where table_schema='s1' and table_schema='test';
+desc format='brief' select * from information_schema.STATISTICS where table_name='s1' and table_schema='test';
+desc format='brief' select * from information_schema.STATISTICS where table_schema='s1' or table_schema='test';
+desc format='brief' SELECT column_name FROM information_schema.statistics WHERE index_name = 'idx1' AND table_schema = DATABASE () AND table_name = 't' ORDER BY seq_in_index;
+desc format='brief' SELECT table_comment FROM information_schema.tables WHERE table_schema = DATABASE () AND table_name = 't';
+desc format='brief' SELECT * FROM information_schema.referential_constraints rc JOIN information_schema.key_column_usage fk USING (constraint_schema, constraint_name) WHERE fk.referenced_column_name != 't' AND fk.table_schema = DATABASE () AND fk.table_name = 't' AND rc.constraint_schema = DATABASE () AND rc.table_name = 't';

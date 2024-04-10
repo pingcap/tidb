@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testutil",
+    srcs = [
+        "agg.go",
+        "limit.go",
+        "sort.go",
+        "testutil.go",
+        "window.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/internal/testutil",
+    visibility = ["//pkg/executor:__subpackages__"],
+    deps = [
+        "//pkg/executor/internal/exec",
+        "//pkg/expression",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core",
+        "//pkg/planner/property",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/memory",
+        "//pkg/util/mock",
+        "//pkg/util/stringutil",
+    ],
+)

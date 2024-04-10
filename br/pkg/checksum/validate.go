@@ -33,7 +33,7 @@ func FastChecksum(
 	errCh := make(chan error)
 	go func() {
 		reader := metautil.NewMetaReader(backupMeta, storage, cipher)
-		if err := reader.ReadSchemasFiles(ctx, ch); err != nil {
+		if err := reader.ReadSchemasFiles(ctx, ch, metautil.SkipStats); err != nil {
 			errCh <- errors.Trace(err)
 		}
 		close(ch)
@@ -54,6 +54,10 @@ func FastChecksum(
 		checksum := uint64(0)
 		totalKvs := uint64(0)
 		totalBytes := uint64(0)
+		if tbl.Info == nil {
+			// empty database
+			continue
+		}
 		for _, file := range tbl.Files {
 			checksum ^= file.Crc64Xor
 			totalKvs += file.TotalKvs

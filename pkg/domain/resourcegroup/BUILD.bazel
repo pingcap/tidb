@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "resourcegroup",
+    srcs = ["runaway.go"],
+    importpath = "github.com/pingcap/tidb/pkg/domain/resourcegroup",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/metrics",
+        "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/generic",
+        "//pkg/util/logutil",
+        "@com_github_jellydator_ttlcache_v3//:ttlcache",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+        "@com_github_tikv_pd_client//resource_group/controller",
+        "@org_uber_go_zap//:zap",
+    ],
+)

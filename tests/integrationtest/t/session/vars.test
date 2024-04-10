@@ -1,0 +1,147 @@
+# TestEnableLegacyInstanceScope
+set tidb_enable_legacy_instance_scope = 1;
+--enable_warnings
+set tidb_general_log = 1;
+--disable_warnings
+set tidb_enable_legacy_instance_scope = 0;
+-- error 1229
+set tidb_general_log = 1;
+set tidb_enable_legacy_instance_scope = default;
+
+# TestSetPDClientDynamicOption
+select @@tidb_tso_client_batch_max_wait_time;
+set global tidb_tso_client_batch_max_wait_time = 0.5;
+select @@tidb_tso_client_batch_max_wait_time;
+set global tidb_tso_client_batch_max_wait_time = 1;
+select @@tidb_tso_client_batch_max_wait_time;
+set global tidb_tso_client_batch_max_wait_time = 1.5;
+select @@tidb_tso_client_batch_max_wait_time;
+set global tidb_tso_client_batch_max_wait_time = 10;
+select @@tidb_tso_client_batch_max_wait_time;
+-- error 1229
+set tidb_tso_client_batch_max_wait_time = 0;
+--enable_warnings
+set global tidb_tso_client_batch_max_wait_time = -1;
+select @@tidb_tso_client_batch_max_wait_time;
+set global tidb_tso_client_batch_max_wait_time = -0.1;
+select @@tidb_tso_client_batch_max_wait_time;
+set global tidb_tso_client_batch_max_wait_time = 10.1;
+select @@tidb_tso_client_batch_max_wait_time;
+set global tidb_tso_client_batch_max_wait_time = 11;
+--disable_warnings
+select @@tidb_tso_client_batch_max_wait_time;
+select @@tidb_enable_tso_follower_proxy;
+set global tidb_enable_tso_follower_proxy = on;
+select @@tidb_enable_tso_follower_proxy;
+set global tidb_enable_tso_follower_proxy = off;
+select @@tidb_enable_tso_follower_proxy;
+select @@pd_enable_follower_handle_region;
+set global pd_enable_follower_handle_region = on;
+select @@pd_enable_follower_handle_region;
+set global pd_enable_follower_handle_region = off;
+select @@pd_enable_follower_handle_region;
+-- error 1229
+set tidb_tso_client_batch_max_wait_time = 0;
+set global tidb_enable_tso_follower_proxy = default;
+set global tidb_tso_client_batch_max_wait_time = default;
+
+# TestSetVarHint
+SELECT /*+ SET_VAR(sql_mode=ALLOW_INVALID_DATES) */ @@sql_mode;
+SELECT @@sql_mode;
+SELECT /*+ SET_VAR(tmp_table_size=1024) */ @@tmp_table_size;
+SELECT @@tmp_table_size;
+SELECT /*+ SET_VAR(range_alloc_block_size=4294967295) */ @@range_alloc_block_size;
+SELECT @@range_alloc_block_size;
+SELECT /*+ SET_VAR(max_execution_time=1) */ @@max_execution_time;
+SELECT @@max_execution_time;
+SELECT /*+ SET_VAR(tikv_client_read_timeout=10) */ @@tikv_client_read_timeout;
+SELECT @@tikv_client_read_timeout;
+set @@tikv_client_read_timeout = 5;
+SELECT /*+ set_var(tikv_client_read_timeout=1) */ @@tikv_client_read_timeout;
+SELECT @@tikv_client_read_timeout;
+SELECT /*+ set_var(tikv_client_read_timeout=xyz) */ @@tikv_client_read_timeout;
+SELECT /*+ set_var(tikv_client_read_timeout='-10') */ @@tikv_client_read_timeout;
+prepare stmt01 from 'select /*+ set_var(tikv_client_read_timeout=1) */ @@tikv_client_read_timeout';
+execute stmt01;
+SELECT @@tikv_client_read_timeout;
+SELECT /*+ SET_VAR(time_zone='+12:00') */ @@time_zone;
+SELECT @@time_zone;
+SELECT /*+ SET_VAR(join_buffer_size=128) */ @@join_buffer_size;
+SELECT @@join_buffer_size;
+SELECT /*+ SET_VAR(max_length_for_sort_data=4) */ @@max_length_for_sort_data;
+SELECT @@max_length_for_sort_data;
+SELECT /*+ SET_VAR(max_error_count=0) */ @@max_error_count;
+SELECT @@max_error_count;
+SELECT /*+ SET_VAR(sql_buffer_result=ON) */ @@sql_buffer_result;
+SELECT @@sql_buffer_result;
+SELECT /*+ SET_VAR(max_heap_table_size=16384) */ @@max_heap_table_size;
+SELECT @@max_heap_table_size;
+SELECT /*+ SET_VAR(tmp_table_size=16384) */ @@tmp_table_size;
+SELECT @@tmp_table_size;
+SELECT /*+ SET_VAR(div_precision_increment=0) */ @@div_precision_increment;
+SELECT @@div_precision_increment;
+SELECT /*+ SET_VAR(sql_auto_is_null=1) */ @@sql_auto_is_null;
+SELECT @@sql_auto_is_null;
+SELECT /*+ SET_VAR(sort_buffer_size=32768) */ @@sort_buffer_size;
+SELECT @@sort_buffer_size;
+SELECT /*+ SET_VAR(max_join_size=1) */ @@max_join_size;
+SELECT @@max_join_size;
+SELECT /*+ SET_VAR(max_seeks_for_key=1) */ @@max_seeks_for_key;
+SELECT @@max_seeks_for_key;
+SELECT /*+ SET_VAR(max_sort_length=4) */ @@max_sort_length;
+SELECT @@max_sort_length;
+SELECT /*+ SET_VAR(bulk_insert_buffer_size=0) */ @@bulk_insert_buffer_size;
+SELECT @@bulk_insert_buffer_size;
+SELECT /*+ SET_VAR(sql_big_selects=0) */ @@sql_big_selects;
+SELECT @@sql_big_selects;
+SELECT /*+ SET_VAR(read_rnd_buffer_size=1) */ @@read_rnd_buffer_size;
+SELECT @@read_rnd_buffer_size;
+SELECT /*+ SET_VAR(unique_checks=0) */ @@unique_checks;
+SELECT @@unique_checks;
+SELECT /*+ SET_VAR(read_buffer_size=8192) */ @@read_buffer_size;
+SELECT @@read_buffer_size;
+SELECT /*+ SET_VAR(default_tmp_storage_engine='CSV') */ @@default_tmp_storage_engine;
+SELECT @@default_tmp_storage_engine;
+SELECT /*+ SET_VAR(optimizer_search_depth=1) */ @@optimizer_search_depth;
+SELECT @@optimizer_search_depth;
+SELECT /*+ SET_VAR(max_points_in_geometry=3) */ @@max_points_in_geometry;
+SELECT @@max_points_in_geometry;
+SELECT /*+ SET_VAR(updatable_views_with_limit=0) */ @@updatable_views_with_limit;
+SELECT @@updatable_views_with_limit;
+SELECT /*+ SET_VAR(optimizer_prune_level=0) */ @@optimizer_prune_level;
+SELECT @@optimizer_prune_level;
+SELECT /*+ SET_VAR(group_concat_max_len=4) */ @@group_concat_max_len;
+SELECT @@group_concat_max_len;
+SELECT /*+ SET_VAR(eq_range_index_dive_limit=0) */ @@eq_range_index_dive_limit;
+SELECT @@eq_range_index_dive_limit;
+SELECT /*+ SET_VAR(sql_safe_updates=1) */ @@sql_safe_updates;
+SELECT @@sql_safe_updates;
+SELECT /*+ SET_VAR(end_markers_in_json=1) */ @@end_markers_in_json;
+SELECT @@end_markers_in_json;
+SELECT /*+ SET_VAR(windowing_use_high_precision=OFF) */ @@windowing_use_high_precision;
+SELECT @@windowing_use_high_precision;
+SELECT /*+ SET_VAR(sql_safe_updates = 1) SET_VAR(max_heap_table_size = 1G) */ 1;
+SELECT /*+ SET_VAR(collation_server = 'utf8') */ 1;
+SELECT /*+ SET_VAR(max_size = 1G) */ 1;
+SELECT /*+ SET_VAR(group_concat_max_len = 1024) SET_VAR(group_concat_max_len = 2048) */ 1;
+
+# TestGetSysVariables
+select @@warning_count;
+select @@session.warning_count;
+select @@local.warning_count;
+-- error 1238
+select @@global.warning_count;
+select @@max_connections;
+select @@global.max_connections;
+-- error 1238
+select @@session.max_connections;
+-- error 1238
+select @@local.max_connections;
+select @@performance_schema_max_mutex_classes;
+select @@global.performance_schema_max_mutex_classes;
+# For issue 19524, test
+select @@session.performance_schema_max_mutex_classes;
+select @@local.performance_schema_max_mutex_classes;
+-- error 1238
+select @@global.last_insert_id;
+

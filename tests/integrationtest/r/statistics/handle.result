@@ -1,0 +1,81 @@
+set @@tidb_partition_prune_mode='dynamic';
+drop table if exists t;
+create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);
+alter table t add index idx((a+5));
+analyze table t;
+drop table if exists t1;
+create table t1 (a int, b int as (a+1) virtual, c int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);
+alter table t1 add index idx((a+5));
+analyze table t1;
+set @@tidb_partition_prune_mode=default;
+set @@tidb_partition_prune_mode='static';
+drop table if exists t;
+truncate table mysql.stats_fm_sketch;
+create table t(a int, index(a));
+insert into t values (1), (2), (3);
+analyze table t;
+select count(*) from mysql.stats_fm_sketch;
+count(*)
+0
+create table tp(a int, index(a)) partition by hash(a) partitions 3;
+insert into tp values (1), (2), (3);
+analyze table tp;
+select count(*) from mysql.stats_fm_sketch;
+count(*)
+6
+set @@tidb_partition_prune_mode='dynamic';
+analyze table t;
+select count(*) from mysql.stats_fm_sketch;
+count(*)
+6
+analyze table tp;
+select count(*) from mysql.stats_fm_sketch;
+count(*)
+6
+insert into t values (10), (20), (30), (12), (23), (23), (4344);
+analyze table tp;
+select count(*) from mysql.stats_fm_sketch;
+count(*)
+6
+set @@tidb_partition_prune_mode=default;
+set session tidb_enable_extended_stats = on;
+drop table if exists t;
+create table t(a int, b int, c int);
+alter table t add stats_extended s1 correlation(a,a);
+Error 1105 (HY000): Cannot create extended statistics on duplicate column names 'a'
+alter table t add stats_extended s1 correlation(a,b);
+alter table t add stats_extended s1 correlation(a,c);
+Error 1105 (HY000): extended statistics 's1' for the specified table already exists
+alter table t add stats_extended s2 correlation(a,b);
+Error 1105 (HY000): extended statistics 's2' with same type on same columns already exists
+alter table t add stats_extended s2 correlation(b,a);
+Error 1105 (HY000): extended statistics 's2' with same type on same columns already exists
+alter table t add stats_extended s2 correlation(a,c);
+set session tidb_enable_extended_stats = default;
+select @@tidb_config like '%index-usage-sync-lease%';
+@@tidb_config like '%index-usage-sync-lease%'
+0
+set session tidb_enable_extended_stats = on;
+drop table if exists t1, t2;
+create table t1(a int, b int, c int) partition by range(a) (partition p0 values less than (5), partition p1 values less than (10));
+create table t2(a int, b int, c int) partition by hash(a) partitions 4;
+alter table t1 add stats_extended s1 correlation(b,c);
+Error 1105 (HY000): Extended statistics on partitioned tables are not supported now
+alter table t2 add stats_extended s1 correlation(b,c);
+Error 1105 (HY000): Extended statistics on partitioned tables are not supported now
+set session tidb_enable_extended_stats = default;
+drop table if exists t;
+create table t(a int primary key, b int, c int, d int);
+alter table t add stats_extended s1 correlation(b,c);
+Error 1105 (HY000): Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF
+alter table t drop stats_extended s1;
+Error 1105 (HY000): Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF
+admin reload stats_extended;
+Error 1105 (HY000): Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF
+set session tidb_enable_extended_stats = on;
+drop table if exists t;
+create table t(a int, b int);
+insert into t values(1,1),(2,2),(3,3);
+alter table t add stats_extended s1 correlation(a,b);
+analyze table t;
+set session tidb_enable_extended_stats = default;

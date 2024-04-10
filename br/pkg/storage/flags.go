@@ -14,6 +14,12 @@ func DefineFlags(flags *pflag.FlagSet) {
 	defineAzblobFlags(flags)
 }
 
+// HiddenFlagsForStream hidden flags for stream cmd.
+func HiddenFlagsForStream(flags *pflag.FlagSet) {
+	hiddenGCSFlags(flags)
+	hiddenAzblobFlags(flags)
+}
+
 // ParseFromFlags obtains the backend options from the flag set.
 func (options *BackendOptions) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err := options.S3.parseFromFlags(flags); err != nil {

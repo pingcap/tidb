@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mock",
+    srcs = ["mock.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/topsql/collector/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser",
+        "//pkg/util/hack",
+        "//pkg/util/logutil",
+        "//pkg/util/topsql/collector",
+        "//pkg/util/topsql/stmtstats",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)

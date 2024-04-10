@@ -1,0 +1,51 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pdutil",
+    srcs = [
+        "pd.go",
+        "utils.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/pdutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/errors",
+        "//br/pkg/httputil",
+        "//pkg/store/pdtypes",
+        "//pkg/tablecodec",
+        "//pkg/util/codec",
+        "@com_github_coreos_go_semver//semver",
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//retry",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "pdutil_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "pd_serial_test.go",
+    ],
+    embed = [":pdutil"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//pkg/store/mockstore/unistore",
+        "//pkg/testkit/testsetup",
+        "@com_github_coreos_go_semver//semver",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//http",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

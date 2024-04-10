@@ -1,0 +1,10 @@
+# TestSetVariables
+set tidb_cost_model_version=2;
+set @@tidb_opt_tiflash_concurrency_factor = 0;
+SHOW WARNINGS;
+select @@tidb_opt_tiflash_concurrency_factor;
+set @@tidb_allow_mpp = 0;
+-- error 1231
+set @@tidb_enforce_mpp = 1;
+set @@tidb_allow_mpp = 1; set @@tidb_enforce_mpp = 1;
+set @@tidb_allow_mpp = 0;

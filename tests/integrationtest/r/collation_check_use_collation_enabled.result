@@ -1,0 +1,197 @@
+set tidb_cost_model_version=1;
+CREATE TABLE `t` (
+`a` char(10) DEFAULT NULL
+);
+CREATE TABLE `t1` (
+`a` char(10) COLLATE utf8mb4_general_ci DEFAULT NULL
+);
+insert into t values ("A");
+insert into t1 values ("a");
+select a as a_col from t where t.a = all (select a collate utf8mb4_general_ci from t1);
+a_col
+A
+select a as a_col from t where t.a != any (select a collate utf8mb4_general_ci from t1);
+a_col
+select a as a_col from t where t.a <= all (select a collate utf8mb4_general_ci from t1);
+a_col
+A
+select a as a_col from t where t.a <= any (select a collate utf8mb4_general_ci from t1);
+a_col
+A
+select a as a_col from t where t.a = (select a collate utf8mb4_general_ci from t1);
+a_col
+A
+drop table if exists t;
+create table t(a enum('a', 'b'), b varchar(20));
+insert into t values ("a", "b");
+select * from t where a in (a);
+a	b
+a	b
+drop table if exists t;
+create table t(a enum('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
+insert into t values ("b", "c");
+insert into t values ("B", "b");
+select * from t where 'B' collate utf8mb4_general_ci in (a);
+a	b
+b	c
+b	b
+select * from t where 'B' collate utf8mb4_bin in (a);
+a	b
+select * from t where 'B' collate utf8mb4_bin in (a, b);
+a	b
+select * from t where 'B' collate utf8mb4_bin in (a, "a", 1);
+a	b
+select * from t where 'B' collate utf8mb4_bin in (a, "B", 1);
+a	b
+b	c
+b	b
+select * from t where 1 in (a);
+a	b
+select * from t where 2 in (a);
+a	b
+b	c
+b	b
+select * from t where 1 in (a, 0);
+a	b
+select * from t where a between 1 and 2;
+a	b
+b	c
+b	b
+select * from t where a between 1 and "a";
+a	b
+select * from t where a between "a" and "b";
+a	b
+b	c
+b	b
+select * from t where 2 between a and "c";
+a	b
+select * from t where 2 between a and 3;
+a	b
+b	c
+b	b
+select * from t where "b" between a and a;
+a	b
+b	c
+b	b
+select * from t where "b" collate utf8mb4_bin between a and a;
+a	b
+b	c
+b	b
+select * from t where "b" between a and 3;
+a	b
+drop table if exists t;
+create table t(a set('a', 'b'), b varchar(20));
+insert into t values ("a", "b");
+select * from t where a in (a);
+a	b
+a	b
+drop table if exists t;
+create table t(a set('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
+insert into t values ("b", "c");
+insert into t values ("B", "b");
+select * from t where 'B' collate utf8mb4_general_ci in (a);
+a	b
+b	c
+b	b
+select * from t where 'B' collate utf8mb4_bin in (a);
+a	b
+select * from t where 'B' collate utf8mb4_bin in (a, b);
+a	b
+select * from t where 'B' collate utf8mb4_bin in (a, "a", 1);
+a	b
+select * from t where 'B' collate utf8mb4_bin in (a, "B", 1);
+a	b
+b	c
+b	b
+select * from t where 1 in (a);
+a	b
+select * from t where 2 in (a);
+a	b
+b	c
+b	b
+select * from t where 1 in (a, 0);
+a	b
+select * from t where a between 1 and 2;
+a	b
+b	c
+b	b
+select * from t where a between 1 and "a";
+a	b
+select * from t where a between "a" and "b";
+a	b
+b	c
+b	b
+select * from t where 2 between a and "c";
+a	b
+select * from t where 2 between a and 3;
+a	b
+b	c
+b	b
+select * from t where "b" between a and a;
+a	b
+b	c
+b	b
+select * from t where "b" collate utf8mb4_bin between a and a;
+a	b
+b	c
+b	b
+select * from t where "b" between a and 3;
+a	b
+drop table if exists tbl_2;
+create table tbl_2 ( col_20 bigint not null , col_21 smallint not null , col_22 decimal(24,10) default null , col_23 tinyint default 71 not null , col_24 bigint not null , col_25 tinyint default 18 , col_26 varchar(330) collate utf8_bin not null , col_27 char(77) collate                    utf8mb4_unicode_ci , col_28 char(46) collate utf8_general_ci not null , col_29 smallint unsigned not null , primary key idx_13 ( col_27(5) ) , key idx_14 ( col_24 ) , unique key idx_15 ( col_23,col_21,col_28,col_29,col_24 ) ) collate utf8_bin ;
+insert ignore into tbl_2 values ( 5888267793391993829,5371,94.63,-109,5728076076919247337,89,'WUicqUTgdGJcjbC','SapBPqczTWWSN','xUSwH',49462 );
+select col_25 from tbl_2 where ( tbl_2.col_27 > 'nSWYrpTH' or not( tbl_2.col_27 between 'CsWIuxlSjU' and 'SfwoyjUEzgg' ) ) and ( tbl_2.col_23 <= -95);
+col_25
+89
+select col_25 from tbl_2 use index(primary) where ( tbl_2.col_27 > 'nSWYrpTH' or not( tbl_2.col_27 between 'CsWIuxlSjU' and 'SfwoyjUEzgg' ) ) and ( tbl_2.col_23 <= -95);
+col_25
+89
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a char(20));
+create table t2(b binary(20), c binary(20));
+insert into t1 value('-1');
+insert into t2 value(0x2D31, 0x67);
+insert into t2 value(0x2D31, 0x73);
+select a from t1, t2 where t1.a between t2.b and t2.c;
+a
+select a from t1, t2 where cast(t1.a as binary(20)) between t2.b and t2.c;
+a
+-1
+-1
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a char(20)) collate utf8mb4_general_ci;
+create table t2(b binary(20), c char(20)) collate utf8mb4_general_ci;
+insert into t1 values ('a');
+insert into t2 values (0x0, 'A');
+select * from t1, t2 where t1.a between t2.b and t2.c;
+a	b	c
+insert into t1 values ('-1');
+insert into t2 values (0x2d31, '');
+select * from t1, t2 where t1.a in (t2.b, 3);
+a	b	c
+drop table if exists t0;
+drop table if exists t1;
+CREATE TABLE t0(c0 BOOL, c1 INT);
+CREATE TABLE t1 LIKE t0;
+CREATE VIEW v0(c0) AS SELECT IS_IPV4(t0.c1) FROM t0, t1;
+INSERT INTO t0(c0, c1) VALUES (true, 0);
+INSERT INTO t1(c0, c1) VALUES (true, 2);
+SELECT v0.c0 FROM v0;
+c0
+0
+SELECT (v0.c0)NOT LIKE(BINARY v0.c0) FROM v0;
+(v0.c0)NOT LIKE(BINARY v0.c0)
+0
+SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
+c0
+desc format='brief' SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
+id	estRows	task	access object	operator info
+Projection	80000000.00	root		is_ipv4(cast(collation_check_use_collation.t0.c1, var_string(20)))->Column#7
+└─HashJoin	80000000.00	root		CARTESIAN inner join
+  ├─Selection(Build)	8000.00	root		not(like(cast(is_ipv4(cast(collation_check_use_collation.t0.c1, var_string(20))), var_string(20)), cast(is_ipv4(cast(collation_check_use_collation.t0.c1, var_string(20))), binary(1)), 92))
+  │ └─TableReader	10000.00	root		data:TableFullScan
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t0	keep order:false, stats:pseudo
+  └─TableReader(Probe)	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

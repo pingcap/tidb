@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "copr_test_test",
+    timeout = "short",
+    srcs = [
+        "coprocessor_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/kv",
+        "//pkg/store/copr",
+        "//pkg/store/mockstore",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -1,0 +1,267 @@
+{
+	"meta":
+	[
+		{
+			"name": "database",
+			"type": "String"
+		},
+		{
+			"name": "table",
+			"type": "String"
+		},
+		{
+			"name": "tidb_database",
+			"type": "String"
+		},
+		{
+			"name": "tidb_table",
+			"type": "String"
+		},
+		{
+			"name": "table_id",
+			"type": "Int64"
+		},
+		{
+			"name": "is_tombstone",
+			"type": "UInt64"
+		},
+		{
+			"name": "segment_count",
+			"type": "UInt64"
+		},
+		{
+			"name": "total_rows",
+			"type": "UInt64"
+		},
+		{
+			"name": "total_size",
+			"type": "UInt64"
+		},
+		{
+			"name": "total_delete_ranges",
+			"type": "UInt64"
+		},
+		{
+			"name": "delta_rate_rows",
+			"type": "Float64"
+		},
+		{
+			"name": "delta_rate_segments",
+			"type": "Float64"
+		},
+		{
+			"name": "delta_placed_rate",
+			"type": "Float64"
+		},
+		{
+			"name": "delta_cache_size",
+			"type": "UInt64"
+		},
+		{
+			"name": "delta_cache_rate",
+			"type": "Float64"
+		},
+		{
+			"name": "delta_cache_wasted_rate",
+			"type": "Float64"
+		},
+		{
+			"name": "delta_index_size",
+			"type": "UInt64"
+		},
+		{
+			"name": "avg_segment_rows",
+			"type": "Float64"
+		},
+		{
+			"name": "avg_segment_size",
+			"type": "Float64"
+		},
+		{
+			"name": "delta_count",
+			"type": "UInt64"
+		},
+		{
+			"name": "total_delta_rows",
+			"type": "UInt64"
+		},
+		{
+			"name": "total_delta_size",
+			"type": "UInt64"
+		},
+		{
+			"name": "avg_delta_rows",
+			"type": "Float64"
+		},
+		{
+			"name": "avg_delta_size",
+			"type": "Float64"
+		},
+		{
+			"name": "avg_delta_delete_ranges",
+			"type": "Float64"
+		},
+		{
+			"name": "stable_count",
+			"type": "UInt64"
+		},
+		{
+			"name": "total_stable_rows",
+			"type": "UInt64"
+		},
+		{
+			"name": "total_stable_size",
+			"type": "UInt64"
+		},
+		{
+			"name": "total_stable_size_on_disk",
+			"type": "UInt64"
+		},
+		{
+			"name": "avg_stable_rows",
+			"type": "Float64"
+		},
+		{
+			"name": "avg_stable_size",
+			"type": "Float64"
+		},
+		{
+			"name": "total_pack_count_in_delta",
+			"type": "UInt64"
+		},
+		{
+			"name": "avg_pack_count_in_delta",
+			"type": "Float64"
+		},
+		{
+			"name": "avg_pack_rows_in_delta",
+			"type": "Float64"
+		},
+		{
+			"name": "avg_pack_size_in_delta",
+			"type": "Float64"
+		},
+		{
+			"name": "total_pack_count_in_stable",
+			"type": "UInt64"
+		},
+		{
+			"name": "avg_pack_count_in_stable",
+			"type": "Float64"
+		},
+		{
+			"name": "avg_pack_rows_in_stable",
+			"type": "Float64"
+		},
+		{
+			"name": "avg_pack_size_in_stable",
+			"type": "Float64"
+		},
+		{
+			"name": "storage_stable_num_snapshots",
+			"type": "UInt64"
+		},
+		{
+			"name": "storage_stable_oldest_snapshot_lifetime",
+			"type": "Float64"
+		},
+		{
+			"name": "storage_stable_oldest_snapshot_thread_id",
+			"type": "UInt64"
+		},
+		{
+			"name": "storage_stable_oldest_snapshot_tracing_id",
+			"type": "String"
+		},
+		{
+			"name": "storage_stable_num_pages",
+			"type": "UInt64"
+		},
+		{
+			"name": "storage_stable_num_normal_pages",
+			"type": "UInt64"
+		},
+		{
+			"name": "storage_stable_max_page_id",
+			"type": "UInt64"
+		},
+		{
+			"name": "storage_delta_num_snapshots",
+			"type": "UInt64"
+		},
+		{
+			"name": "storage_delta_oldest_snapshot_lifetime",
+			"type": "Float64"
+		},
+		{
+			"name": "storage_delta_oldest_snapshot_thread_id",
+			"type": "UInt64"
+		},
+		{
+			"name": "storage_delta_oldest_snapshot_tracing_id",
+			"type": "String"
+		},
+		{
+			"name": "storage_delta_num_pages",
+			"type": "UInt64"
+		},
+		{
+			"name": "storage_delta_num_normal_pages",
+			"type": "UInt64"
+		},
+		{
+			"name": "storage_delta_max_page_id",
+			"type": "UInt64"
+		},
+		{
+			"name": "storage_meta_num_snapshots",
+			"type": "UInt64"
+		},
+		{
+			"name": "storage_meta_oldest_snapshot_lifetime",
+			"type": "Float64"
+		},
+		{
+			"name": "storage_meta_oldest_snapshot_thread_id",
+			"type": "UInt64"
+		},
+		{
+			"name": "storage_meta_oldest_snapshot_tracing_id",
+			"type": "String"
+		},
+		{
+			"name": "storage_meta_num_pages",
+			"type": "UInt64"
+		},
+		{
+			"name": "storage_meta_num_normal_pages",
+			"type": "UInt64"
+		},
+		{
+			"name": "storage_meta_max_page_id",
+			"type": "UInt64"
+		},
+		{
+			"name": "background_tasks_length",
+			"type": "UInt64"
+		}
+	],
+
+	"data":
+	[
+		["db_1", "t_10", "mysql", "tables_priv", "10", "0", "1", "0", "0", "0", null, 0, null, "0", null, null, "0", 0, 0, "0", "0", "0", null, null, null, "0", "0", "0", "0", null, null, "0", null, null, null, "0", null, null, null, "0", 0, "0", "", "0", "0", "0", "0", 0, "0", "", "0", "0", "0", "0", 0, "0", "", "0", "0", "0", "0"],
+		["db_1", "t_8", "mysql", "db", "8", "0", "1", "0", "0", "0", null, 0, null, "0", null, null, "0", 0, 0, "0", "0", "0", null, null, null, "0", "0", "0", "0", null, null, "0", null, null, null, "0", null, null, null, "0", 0, "0", "", "0", "0", "0", "0", 0, "0", "", "0", "0", "0", "0", 0, "0", "", "0", "0", "0", "0"],
+		["db_2", "t_70", "test", "segment", "70", "0", "1", "102000", "169873868", "0", 0, 0, null, "0", null, null, "0", 102000, 169873868, "0", "0", "0", null, null, null, "1", "102000", "169873868", "43867622", 102000, 169873868, "0", null, null, null, "13", 13, 7846.153846153846, 13067220.615384616, "0", 0, "0", "", "0", "0", "0", "0", 0, "0", "", "0", "0", "0", "0", 0, "0", "", "0", "0", "0", "0"]
+	],
+
+	"rows": 3,
+
+	"rows_before_limit_at_least": 3,
+
+	"statistics":
+	{
+		"elapsed": 0.000217,
+		"rows_read": 3,
+		"bytes_read": 19346
+	}
+}

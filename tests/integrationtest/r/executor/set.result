@@ -1,0 +1,467 @@
+set @@global.tidb_max_delta_schema_count= -1;
+show warnings;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_max_delta_schema_count value: '-1'
+select @@global.tidb_max_delta_schema_count;
+@@global.tidb_max_delta_schema_count
+100
+set @@global.tidb_max_delta_schema_count= 9223372036854775807;
+show warnings;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_max_delta_schema_count value: '9223372036854775807'
+select @@global.tidb_max_delta_schema_count;
+@@global.tidb_max_delta_schema_count
+16384
+set @@global.tidb_max_delta_schema_count= invalid_val;
+Error 1232 (42000): Incorrect argument type to variable 'tidb_max_delta_schema_count'
+set @@global.tidb_max_delta_schema_count= 2048;
+select @@global.tidb_max_delta_schema_count;
+@@global.tidb_max_delta_schema_count
+2048
+set @@global.tidb_max_delta_schema_count= default;
+SELECT @@query_cache_type;
+@@query_cache_type
+OFF
+SHOW VARIABLES LIKE 'query_cache_type';
+Variable_name	Value
+query_cache_type	OFF
+SET query_cache_type=2;
+SELECT @@query_cache_type;
+@@query_cache_type
+DEMAND
+SET GLOBAL tidb_enable_noop_variables = OFF;
+SELECT @@global.tidb_enable_noop_variables;
+@@global.tidb_enable_noop_variables
+OFF
+SELECT @@query_cache_type;
+@@query_cache_type
+DEMAND
+SHOW WARNINGS;
+Level	Code	Message
+Warning	8145	variable query_cache_type has no effect in TiDB
+SHOW VARIABLES LIKE 'query_cache_type';
+Variable_name	Value
+SET query_cache_type = OFF;
+SHOW WARNINGS;
+Level	Code	Message
+Warning	8144	setting query_cache_type has no effect in TiDB
+SELECT @@query_cache_type;
+@@query_cache_type
+OFF
+SET GLOBAL tidb_enable_noop_variables = 2;
+Error 1231 (42000): Variable 'tidb_enable_noop_variables' can't be set to the value of '2'
+SET GLOBAL tidb_enable_noop_variables = 'warn';
+Error 1231 (42000): Variable 'tidb_enable_noop_variables' can't be set to the value of 'warn'
+SET GLOBAL tidb_enable_noop_variables = ON;
+SET GLOBAL tidb_enable_noop_variables = default;
+SET query_cache_type = default;
+show VARIABLES like 'character_set_%';
+Variable_name	Value
+character_set_client	utf8mb4
+character_set_connection	utf8mb4
+character_set_database	utf8mb4
+character_set_filesystem	binary
+character_set_results	utf8mb4
+character_set_server	utf8mb4
+character_set_system	utf8
+character_sets_dir	/usr/local/mysql-5.6.25-osx10.8-x86_64/share/charsets/
+SET NAMES latin1;
+show VARIABLES like 'character_set_%';
+Variable_name	Value
+character_set_client	latin1
+character_set_connection	latin1
+character_set_database	utf8mb4
+character_set_filesystem	binary
+character_set_results	latin1
+character_set_server	utf8mb4
+character_set_system	utf8
+character_sets_dir	/usr/local/mysql-5.6.25-osx10.8-x86_64/share/charsets/
+SET NAMES default;
+show VARIABLES like 'character_set_%';
+Variable_name	Value
+character_set_client	utf8mb4
+character_set_connection	utf8mb4
+character_set_database	utf8mb4
+character_set_filesystem	binary
+character_set_results	utf8mb4
+character_set_server	utf8mb4
+character_set_system	utf8
+character_sets_dir	/usr/local/mysql-5.6.25-osx10.8-x86_64/share/charsets/
+SET NAMES binary;
+show VARIABLES like 'character_set_%';
+Variable_name	Value
+character_set_client	binary
+character_set_connection	binary
+character_set_database	utf8mb4
+character_set_filesystem	binary
+character_set_results	binary
+character_set_server	utf8mb4
+character_set_system	utf8
+character_sets_dir	/usr/local/mysql-5.6.25-osx10.8-x86_64/share/charsets/
+SET NAMES utf8;
+show VARIABLES like 'character_set_%';
+Variable_name	Value
+character_set_client	utf8
+character_set_connection	utf8
+character_set_database	utf8mb4
+character_set_filesystem	binary
+character_set_results	utf8
+character_set_server	utf8mb4
+character_set_system	utf8
+character_sets_dir	/usr/local/mysql-5.6.25-osx10.8-x86_64/share/charsets/
+SET CHARACTER SET latin1;
+show VARIABLES like 'character_set_%';
+Variable_name	Value
+character_set_client	latin1
+character_set_connection	utf8mb4
+character_set_database	utf8mb4
+character_set_filesystem	binary
+character_set_results	latin1
+character_set_server	utf8mb4
+character_set_system	utf8
+character_sets_dir	/usr/local/mysql-5.6.25-osx10.8-x86_64/share/charsets/
+SET CHARACTER SET default;
+show VARIABLES like 'character_set_%';
+Variable_name	Value
+character_set_client	utf8mb4
+character_set_connection	utf8mb4
+character_set_database	utf8mb4
+character_set_filesystem	binary
+character_set_results	utf8mb4
+character_set_server	utf8mb4
+character_set_system	utf8
+character_sets_dir	/usr/local/mysql-5.6.25-osx10.8-x86_64/share/charsets/
+set names default;
+select @@global.max_connections;
+@@global.max_connections
+0
+select @@max_connections;
+@@max_connections
+0
+set @@global.max_connections=100;
+select @@global.max_connections;
+@@global.max_connections
+100
+select @@max_connections;
+@@max_connections
+100
+set @@global.max_connections=0;
+select @@invalid;
+Error 1193 (HY000): Unknown system variable 'invalid'
+select @@global.invalid;
+Error 1193 (HY000): Unknown system variable 'invalid'
+set @@global.max_connections=default;
+SELECT @@default_storage_engine;
+@@default_storage_engine
+InnoDB
+SET GLOBAL default_storage_engine = 'somethingweird';
+SET default_storage_engine = 'MyISAM';
+SELECT @@default_storage_engine;
+@@default_storage_engine
+MyISAM
+SET default_storage_engine = DEFAULT;
+SELECT @@default_storage_engine;
+@@default_storage_engine
+somethingweird
+SET @@SESSION.default_storage_engine = @@GLOBAL.default_storage_engine;
+SELECT @@default_storage_engine;
+@@default_storage_engine
+somethingweird
+SET GLOBAL default_storage_engine = 'somethingweird2';
+SET default_storage_engine = @@GLOBAL.default_storage_engine;
+SELECT @@default_storage_engine;
+@@default_storage_engine
+somethingweird2
+SET default_storage_engine = DEFAULT;
+SET GLOBAL default_storage_engine = DEFAULT;
+SELECT @@SESSION.default_storage_engine, @@GLOBAL.default_storage_engine;
+@@SESSION.default_storage_engine	@@GLOBAL.default_storage_engine
+somethingweird2	InnoDB
+SET GLOBAL sql_mode = 'DEFAULT';
+Error 1105 (HY000): ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'DEFAULT'
+SET GLOBAL sql_mode = DEFAULT;
+set @@SESSION.default_storage_engine=default;
+SET GLOBAL default_storage_engine=default;
+SET GLOBAL tidb_restricted_read_only = ON;
+SELECT @@GLOBAL.tidb_super_read_only;
+@@GLOBAL.tidb_super_read_only
+1
+SET GLOBAL tidb_super_read_only = OFF;
+Error 1105 (HY000): can't turn off tidb_super_read_only when tidb_restricted_read_only is on
+SET GLOBAL tidb_restricted_read_only = OFF;
+SELECT @@GLOBAL.tidb_restricted_read_only;
+@@GLOBAL.tidb_restricted_read_only
+0
+SELECT @@GLOBAL.tidb_super_read_only;
+@@GLOBAL.tidb_super_read_only
+1
+SET GLOBAL tidb_super_read_only = OFF;
+SELECT @@GLOBAL.tidb_super_read_only;
+@@GLOBAL.tidb_super_read_only
+0
+SET GLOBAL tidb_super_read_only = default;
+SET GLOBAL tidb_restricted_read_only = default;
+SET tidb_enable_global_temporary_table = 1;
+SET tidb_slow_log_masking = 1;
+SET GLOBAL tidb_enable_global_temporary_table = 1;
+SET GLOBAL tidb_slow_log_masking = 1;
+SELECT @@tidb_slow_log_masking;
+Error 8136 (HY000): option 'tidb_slow_log_masking' is no longer supported. Reason: use tidb_redact_log instead
+SELECT @@tidb_enable_global_temporary_table;
+Error 8136 (HY000): option 'tidb_enable_global_temporary_table' is no longer supported. Reason: temporary table support is now always enabled
+SET tidb_enable_global_temporary_table = default;
+SET tidb_slow_log_masking = default;
+SET GLOBAL tidb_enable_global_temporary_table = default;
+SET GLOBAL tidb_slow_log_masking = default;
+select @@global.tidb_session_plan_cache_size;
+@@global.tidb_session_plan_cache_size
+100
+SET GLOBAL tidb_session_plan_cache_size = 0;
+show warnings;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_session_plan_cache_size value: '0'
+select @@global.tidb_session_plan_cache_size;
+@@global.tidb_session_plan_cache_size
+1
+SET GLOBAL tidb_session_plan_cache_size = 2;
+select @@global.tidb_session_plan_cache_size;
+@@global.tidb_session_plan_cache_size
+2
+select @@session.tidb_session_plan_cache_size;
+@@session.tidb_session_plan_cache_size
+100
+SET SESSION tidb_session_plan_cache_size = 0;
+show warnings;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_session_plan_cache_size value: '0'
+select @@session.tidb_session_plan_cache_size;
+@@session.tidb_session_plan_cache_size
+1
+SET SESSION tidb_session_plan_cache_size = 2;
+select @@session.tidb_session_plan_cache_size;
+@@session.tidb_session_plan_cache_size
+2
+SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = -0.1;
+show warnings;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_prepared_plan_cache_memory_guard_ratio value: '-0.1'
+select @@global.tidb_prepared_plan_cache_memory_guard_ratio;
+@@global.tidb_prepared_plan_cache_memory_guard_ratio
+0
+SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = 2.2;
+show warnings;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_prepared_plan_cache_memory_guard_ratio value: '2.2'
+select @@global.tidb_prepared_plan_cache_memory_guard_ratio;
+@@global.tidb_prepared_plan_cache_memory_guard_ratio
+1
+SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = 0.5;
+select @@global.tidb_prepared_plan_cache_memory_guard_ratio;
+@@global.tidb_prepared_plan_cache_memory_guard_ratio
+0.5
+SET GLOBAL tidb_enable_prepared_plan_cache = 0;
+select @@global.tidb_enable_prepared_plan_cache;
+@@global.tidb_enable_prepared_plan_cache
+0
+SET GLOBAL tidb_enable_prepared_plan_cache = 1;
+select @@global.tidb_enable_prepared_plan_cache;
+@@global.tidb_enable_prepared_plan_cache
+1
+SET GLOBAL tidb_enable_prepared_plan_cache = 0;
+select @@global.tidb_enable_prepared_plan_cache;
+@@global.tidb_enable_prepared_plan_cache
+0
+SET GLOBAL tidb_enable_prepared_plan_cache = default;
+SET GLOBAL tidb_prepared_plan_cache_memory_guard_ratio = default;
+SET SESSION tidb_session_plan_cache_size = default;
+SET GLOBAL tidb_session_plan_cache_size = default;
+set tidb_enable_legacy_instance_scope = 1;
+set tidb_general_log = 1;
+show warnings;
+Level	Code	Message
+Warning	8142	modifying tidb_general_log will require SET GLOBAL in a future version of TiDB
+set tidb_enable_legacy_instance_scope = 0;
+set tidb_general_log = 1;
+Error 1229 (HY000): Variable 'tidb_general_log' is a GLOBAL variable and should be set with SET GLOBAL
+set tidb_enable_legacy_instance_scope = default;
+set tidb_general_log = default;
+set global tidb_gc_max_wait_time = 1000;
+set global tidb_gc_life_time = "72h";
+set global tidb_gc_life_time = "24h";
+set global tidb_gc_life_time = "10m";
+set global tidb_gc_max_wait_time = 86400;
+set global tidb_gc_life_time = "72h";
+set global tidb_gc_max_wait_time = 1000;
+set global tidb_gc_life_time = default;
+set global tidb_gc_max_wait_time = default;
+select @@tiflash_fine_grained_shuffle_stream_count;
+@@tiflash_fine_grained_shuffle_stream_count
+0
+set @@tiflash_fine_grained_shuffle_stream_count = 0;
+select @@tiflash_fine_grained_shuffle_stream_count;
+@@tiflash_fine_grained_shuffle_stream_count
+0
+set @@tiflash_fine_grained_shuffle_stream_count = -2;
+select @@tiflash_fine_grained_shuffle_stream_count;
+@@tiflash_fine_grained_shuffle_stream_count
+-1
+set @@tiflash_fine_grained_shuffle_stream_count = 0;
+select @@tiflash_fine_grained_shuffle_stream_count;
+@@tiflash_fine_grained_shuffle_stream_count
+0
+set @@tiflash_fine_grained_shuffle_stream_count = 1024;
+select @@tiflash_fine_grained_shuffle_stream_count;
+@@tiflash_fine_grained_shuffle_stream_count
+1024
+set @@tiflash_fine_grained_shuffle_stream_count = 1025;
+select @@tiflash_fine_grained_shuffle_stream_count;
+@@tiflash_fine_grained_shuffle_stream_count
+1024
+select @@tiflash_fine_grained_shuffle_batch_size;
+@@tiflash_fine_grained_shuffle_batch_size
+8192
+set @@tiflash_fine_grained_shuffle_batch_size = 0;
+select @@tiflash_fine_grained_shuffle_batch_size;
+@@tiflash_fine_grained_shuffle_batch_size
+1
+set @@tiflash_fine_grained_shuffle_batch_size = -1;
+select @@tiflash_fine_grained_shuffle_batch_size;
+@@tiflash_fine_grained_shuffle_batch_size
+1
+set @@tiflash_fine_grained_shuffle_batch_size = 18446744073709551615;
+select @@tiflash_fine_grained_shuffle_batch_size;
+@@tiflash_fine_grained_shuffle_batch_size
+18446744073709551615
+set global tiflash_fine_grained_shuffle_stream_count = -1;
+set global tiflash_fine_grained_shuffle_batch_size = 8192;
+set @@tiflash_fine_grained_shuffle_batch_size = default;
+set @@tiflash_fine_grained_shuffle_stream_count = default;
+set global tiflash_fine_grained_shuffle_stream_count = default;
+set global tiflash_fine_grained_shuffle_batch_size = default;
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+select @@session.tiflash_fastscan;
+@@session.tiflash_fastscan
+0
+select @@global.tiflash_fastscan;
+@@global.tiflash_fastscan
+0
+set @@tiflash_fastscan=ON;
+select @@session.tiflash_fastscan;
+@@session.tiflash_fastscan
+1
+set global tiflash_fastscan=OFF;
+select @@global.tiflash_fastscan;
+@@global.tiflash_fastscan
+0
+set global tiflash_fastscan=default;
+set @@tiflash_fastscan=default;
+select @@session.tidb_enable_prepared_plan_cache_memory_monitor;
+@@session.tidb_enable_prepared_plan_cache_memory_monitor
+1
+select @@global.tidb_enable_prepared_plan_cache_memory_monitor;
+@@global.tidb_enable_prepared_plan_cache_memory_monitor
+1
+set @@session.tidb_enable_prepared_plan_cache_memory_monitor=OFF;
+select @@session.tidb_enable_prepared_plan_cache_memory_monitor;
+@@session.tidb_enable_prepared_plan_cache_memory_monitor
+0
+set @@session.tidb_enable_prepared_plan_cache_memory_monitor=1;
+select @@session.tidb_enable_prepared_plan_cache_memory_monitor;
+@@session.tidb_enable_prepared_plan_cache_memory_monitor
+1
+set @@global.tidb_enable_prepared_plan_cache_memory_monitor=off;
+select @@global.tidb_enable_prepared_plan_cache_memory_monitor;
+@@global.tidb_enable_prepared_plan_cache_memory_monitor
+0
+set @@session.tidb_enable_prepared_plan_cache_memory_monitor=default;
+set @@global.tidb_enable_prepared_plan_cache_memory_monitor=default;
+set @@tidb_enable_reuse_chunk=ON;
+select @@session.tidb_enable_reuse_chunk;
+@@session.tidb_enable_reuse_chunk
+1
+set GLOBAL tidb_enable_reuse_chunk=ON;
+select @@global.tidb_enable_reuse_chunk;
+@@global.tidb_enable_reuse_chunk
+1
+set @@tidb_enable_reuse_chunk=OFF;
+select @@session.tidb_enable_reuse_chunk;
+@@session.tidb_enable_reuse_chunk
+0
+set GLOBAL tidb_enable_reuse_chunk=OFF;
+select @@global.tidb_enable_reuse_chunk;
+@@global.tidb_enable_reuse_chunk
+0
+set @@tidb_enable_reuse_chunk=s;
+Error 1231 (42000): Variable 'tidb_enable_reuse_chunk' can't be set to the value of 's'
+set @@tidb_enable_reuse_chunk=default;
+set GLOBAL tidb_enable_reuse_chunk=default;
+select @@session.mpp_version;
+@@session.mpp_version
+UNSPECIFIED
+SET SESSION mpp_version = -1;
+select @@session.mpp_version;
+@@session.mpp_version
+-1
+SET SESSION mpp_version = 0;
+select @@session.mpp_version;
+@@session.mpp_version
+0
+SET SESSION mpp_version = 1;
+select @@session.mpp_version;
+@@session.mpp_version
+1
+SET SESSION mpp_version = 2;
+select @@session.mpp_version;
+@@session.mpp_version
+2
+SET SESSION mpp_version = unspecified;
+select @@session.mpp_version;
+@@session.mpp_version
+unspecified
+SET SESSION mpp_version = 3;
+Error 1105 (HY000): incorrect value: 3. mpp_version options: -1 (unspecified), 0, 1, 2
+SET GLOBAL mpp_version = 1;
+select @@global.mpp_version;
+@@global.mpp_version
+1
+SET GLOBAL mpp_version = -1;
+select @@global.mpp_version;
+@@global.mpp_version
+-1
+SET SESSION mpp_version = default;
+set global mpp_version = default;
+SET SESSION mpp_exchange_compression_mode = 123;
+Error 1105 (HY000): incorrect value: `123`. mpp_exchange_compression_mode options: NONE, FAST, HIGH_COMPRESSION, UNSPECIFIED
+select @@session.mpp_exchange_compression_mode;
+@@session.mpp_exchange_compression_mode
+UNSPECIFIED
+SET SESSION mpp_exchange_compression_mode = none;
+select @@session.mpp_exchange_compression_mode;
+@@session.mpp_exchange_compression_mode
+none
+SET SESSION mpp_exchange_compression_mode = fast;
+select @@session.mpp_exchange_compression_mode;
+@@session.mpp_exchange_compression_mode
+fast
+SET SESSION mpp_exchange_compression_mode = HIGH_COMPRESSION;
+select @@session.mpp_exchange_compression_mode;
+@@session.mpp_exchange_compression_mode
+HIGH_COMPRESSION
+SET GLOBAL mpp_exchange_compression_mode = none;
+select @@global.mpp_exchange_compression_mode;
+@@global.mpp_exchange_compression_mode
+none
+SET mpp_version = 0;
+SET mpp_exchange_compression_mode = unspecified;
+SET mpp_version = 0;
+SET mpp_exchange_compression_mode = HIGH_COMPRESSION;
+SET mpp_version = default;
+SET mpp_exchange_compression_mode = default;
+set @@global.mpp_exchange_compression_mode = default;
+set @@global.tidb_enable_tiflash_pipeline_model = 1;
+show warnings;
+Level	Code	Message
+Warning	1681	tidb_enable_tiflash_pipeline_model is deprecated and will be removed in a future release.
+set @@global.tidb_enable_tiflash_pipeline_model = default;

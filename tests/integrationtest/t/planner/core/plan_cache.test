@@ -1,0 +1,1658 @@
+# TestIssue43311
+drop table if exists t;
+create table t (id int, value decimal(7,4), c1 int, c2 int);
+insert into t values (1,1.9285,54,28), (1,1.9286,54,28);
+set session tidb_enable_non_prepared_plan_cache=0;
+select * from t where value = 54 / 28;
+set session tidb_enable_non_prepared_plan_cache=1;
+select * from t where value = 54 / 28;
+select * from t where value = 54 / 28;
+prepare st from 'select * from t where value = ? / ?';
+set @a=54, @b=28;
+execute st using @a, @b;
+execute st using @a, @b;
+set session tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestIssue44830
+set @@tidb_opt_fix_control = "44830:ON";
+drop table if exists t, t1;
+create table t (a int, primary key(a));
+create table t1 (a int, b int, primary key(a, b));
+insert into t values (1), (2), (3);
+insert into t1 values (1, 1), (2, 2), (3, 3);
+set @a=1, @b=2, @c=3;
+prepare st from 'select * from t where 1=1 and a in (?, ?, ?)';
+--sorted_result
+execute st using @a, @b, @c;
+--sorted_result
+execute st using @a, @b, @c;
+select @@last_plan_from_cache;
+--sorted_result
+execute st using @a, @b, @b;
+select @@last_plan_from_cache;
+--sorted_result
+execute st using @b, @b, @b;
+select @@last_plan_from_cache;
+--sorted_result
+execute st using @a, @b, @c;
+--sorted_result
+execute st using @a, @b, @b;
+--sorted_result
+execute st using @a, @b, @b;
+select @@last_plan_from_cache;
+prepare st from 'select * from t1 where 1=1 and (a, b) in ((?, ?), (?, ?), (?, ?))';
+--sorted_result
+execute st using @a, @a, @b, @b, @c, @c;
+--sorted_result
+execute st using @a, @a, @b, @b, @c, @c;
+select @@last_plan_from_cache;
+--sorted_result
+execute st using @a, @a, @b, @b, @b, @b;
+select @@last_plan_from_cache;
+--sorted_result
+execute st using @b, @b, @b, @b, @b, @b;
+select @@last_plan_from_cache;
+--sorted_result
+execute st using @b, @b, @b, @b, @c, @c;
+select @@last_plan_from_cache;
+--sorted_result
+execute st using @a, @a, @a, @a, @a, @a;
+--sorted_result
+execute st using @a, @a, @a, @a, @a, @a;
+select @@last_plan_from_cache;
+--sorted_result
+execute st using @a, @a, @b, @b, @b, @b;
+execute st using @a, @a, @b, @b, @b, @b;
+select @@last_plan_from_cache;
+set @@tidb_opt_fix_control = DEFAULT;
+
+
+# TestIssue44830NonPrep
+set @@tidb_enable_non_prepared_plan_cache=1;
+set @@tidb_opt_fix_control = "44830:ON";
+drop table if exists t1;
+create table t1 (a int, b int, primary key(a, b));
+insert into t1 values (1, 1), (2, 2), (3, 3);
+set @a=1, @b=2, @c=3;
+--sorted_result
+select * from t1 where 1=1 and (a, b) in ((1, 1), (2, 2), (3, 3));
+--sorted_result
+select * from t1 where 1=1 and (a, b) in ((1, 1), (2, 2), (3, 3));
+select @@last_plan_from_cache;
+--sorted_result
+select * from t1 where 1=1 and (a, b) in ((1, 1), (2, 2), (2, 2));
+select @@last_plan_from_cache;
+--sorted_result
+select * from t1 where 1=1 and (a, b) in ((2, 2), (2, 2), (2, 2));
+select @@last_plan_from_cache;
+--sorted_result
+select * from t1 where 1=1 and (a, b) in ((1, 1), (1, 1), (1, 1));
+--sorted_result
+select * from t1 where 1=1 and (a, b) in ((1, 1), (1, 1), (1, 1));
+select @@last_plan_from_cache;
+set @@tidb_enable_non_prepared_plan_cache=DEFAULT;
+set @@tidb_opt_fix_control = DEFAULT;
+
+
+# TestPlanCacheUnsafeRange
+drop table if exists t, t1;
+create table t (a int unsigned, key(a));
+prepare st from 'select a from t use index(a) where a<?';
+set @a=10;
+execute st using @a;
+execute st using @a;
+select @@last_plan_from_cache;
+set @a=-10;
+execute st using @a;
+select @@last_plan_from_cache;
+set @a=10;
+execute st using @a;
+execute st using @a;
+select @@last_plan_from_cache;
+create table t1 (a enum('1', '2'), key(a));
+prepare st from 'select a from t1 use index(a) where a=?';
+set @a='1';
+execute st using @a;
+execute st using @a;
+select @@last_plan_from_cache;
+set @a='x';
+execute st using @a;
+select @@last_plan_from_cache;
+set @a='1';
+execute st using @a;
+execute st using @a;
+select @@last_plan_from_cache;
+
+
+# TestIssue43405
+drop table if exists t;
+create table t (a int);
+insert into t values (1), (2), (3), (4);
+prepare st from 'select * from t where a!=? and a in (?, ?, ?)';
+set @a=1, @b=2, @c=3, @d=4;
+--enable_warnings
+execute st using @a, @a, @a, @a;
+execute st using @a, @a, @b, @c;
+execute st using @a, @b, @c, @d;
+--disable_warnings
+CREATE TABLE UK_SIGNED_19384 (
+    COL1 decimal(37,4) unsigned DEFAULT NULL COMMENT 'WITH DEFAULT',
+    COL2 varchar(20) COLLATE utf8mb4_bin DEFAULT NULL,
+    COL4 datetime DEFAULT NULL,
+    COL3 bigint DEFAULT NULL,
+    COL5 float DEFAULT NULL,
+    UNIQUE KEY UK_COL1 (COL1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+INSERT INTO UK_SIGNED_19384 VALUES
+  (729024465529090.5423,'劗驻胭毤橰亀讁陶ĉ突錌ͳ河碡祁聓兕锻觰俆','4075-07-11 12:02:57',6021562653572886552,1.93349e38),
+  (492790234219503.0846,'硴皡箒嫹璞玚囑蚂身囈軔獰髴囥慍廂頚禌浖蕐','1193-09-27 12:13:40',1836453747944153034,-2.67982e38),
+  (471841432147994.4981,'豻貐裝濂婝蒙蘦镢県蟎髓蓼窘搴熾臐哥递泒執','1618-01-24 05:06:44',6669616052974883820,9.38232e37);
+prepare stmt from 'select/*+ tidb_inlj(t1) */ t1.col1 from UK_SIGNED_19384 t1 join UK_SIGNED_19384 t2 on t1.col1 = t2.col1 where t1. col1 != ? and t2. col1 in (?, ?, ?)';
+set @a=999999999999999999999999999999999.9999, @b=999999999999999999999999999999999.9999, @c=999999999999999999999999999999999.9999, @d=999999999999999999999999999999999.9999;
+--sorted_result
+execute stmt using @a,@b,@c,@d;
+set @a=895769331208356.9029, @b=471841432147994.4981, @c=729024465529090.5423, @d=492790234219503.0846;
+--sorted_result
+execute stmt using @a,@b,@c,@d;
+
+
+# TestIssue40296
+drop table if exists IDT_MULTI15880STROBJSTROBJ;
+CREATE TABLE IDT_MULTI15880STROBJSTROBJ (
+  COL1 enum('aa','bb','cc','dd','ff','gg','kk','ll','mm','ee') DEFAULT NULL,
+  COL2 decimal(20,0) DEFAULT NULL,
+  COL3 date DEFAULT NULL,
+  KEY U_M_COL4 (COL1,COL2),
+  KEY U_M_COL5 (COL3,COL2));
+insert into IDT_MULTI15880STROBJSTROBJ values("ee", -9605492323393070105, "0850-03-15");
+set session tidb_enable_non_prepared_plan_cache=on;
+select * from IDT_MULTI15880STROBJSTROBJ where col1 in ("dd", "dd") or col2 = 9923875910817805958 or col3 = "9994-11-11";
+select * from IDT_MULTI15880STROBJSTROBJ where col1 in ("aa", "aa") or col2 = -9605492323393070105 or col3 = "0005-06-22";
+select @@last_plan_from_cache;
+set session tidb_enable_non_prepared_plan_cache=default;
+
+
+# TestIssue43522
+CREATE TABLE UK_SIGNED_19385 (
+  COL1 decimal(37,4) unsigned DEFAULT '101.0000' COMMENT 'WITH DEFAULT',
+  COL2 varchar(20) DEFAULT NULL,
+  COL4 datetime DEFAULT NULL,
+  COL3 bigint(20) DEFAULT NULL,
+  COL5 float DEFAULT NULL,
+  UNIQUE KEY UK_COL1 (COL1) /*!80000 INVISIBLE */);
+INSERT INTO UK_SIGNED_19385 VALUES (999999999999999999999999999999999.9999,'苊檷鞤寰抿逿詸叟艟俆錟什姂庋鴪鎅枀礰扚匝','8618-02-11 03:30:03',7016504421081900731,2.77465e38);
+select * from UK_SIGNED_19385 where col1 = 999999999999999999999999999999999.9999 and
+    col1 * 999999999999999999999999999999999.9999 between 999999999999999999999999999999999.9999 and
+    999999999999999999999999999999999.9999;
+
+
+# TestIssue43520
+# TODO: fix https://github.com/pingcap/tidb/issues/47693
+# CREATE TABLE IDT_20290 (
+#   COL1 mediumtext DEFAULT NULL,
+#   COL2 decimal(52,7) DEFAULT NULL,
+#   COL3 datetime DEFAULT NULL,
+#   KEY U_M_COL (COL1(10),COL2,COL3) /*!80000 INVISIBLE */);
+# INSERT INTO IDT_20290 VALUES
+#   ('',210255309400.4264137,'4273-04-17 17:26:51'),
+#   (NULL,952470120213.2538798,'7087-08-19 21:38:49'),
+#   ('俦',486763966102.1656494,'8846-06-12 12:02:13'),
+#   ('憁',610644171405.5953911,'2529-07-19 17:24:49'),
+#   ('顜',-359717183823.5275069,'2599-04-01 00:12:08'),
+#   ('塼',466512908211.1135111,'1477-10-20 07:14:51'),
+#   ('宻',-564216096745.0427987,'7071-11-20 13:38:24'),
+#   ('網',-483373421083.4724254,'2910-02-19 18:29:17'),
+#   ('顥',164020607693.9988781,'2820-10-12 17:38:44'),
+#   ('谪',25949740494.3937876,'6527-05-30 22:58:37');
+# -- error 1690
+# select * from IDT_20290 where col2 * 049015787697063065230692384394107598316198958.1850509 >= 659971401668884663953087553591534913868320924.5040396 and col2 = 869042976700631943559871054704914143535627349.9659934;
+
+
+# TestIssue14875
+drop table if exists t;
+create table t(a varchar(8) not null, b varchar(8) not null);
+insert into t values('1','1');
+prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t2.b = '1' and t2.b = ?";
+set @a = '1';
+execute stmt using @a;
+set @a = '2';
+execute stmt using @a;
+prepare stmt from "select count(1) from t t1, t t2 where t1.a = t2.a and t1.a > ?";
+set @a = '1';
+execute stmt using @a;
+set @a = '0';
+execute stmt using @a;
+
+
+# TestIssue14871
+drop table if exists t;
+create table t(a varchar(8), b varchar(8));
+insert into t values('1','1');
+prepare stmt from "select count(1) from t t1 left join t t2 on t1.a = t2.a where t2.b = ? and t2.b = ?";
+set @p0 = '1', @p1 = '2';
+execute stmt using @p0, @p1;
+set @p0 = '1', @p1 = '1';
+execute stmt using @p0, @p1;
+
+
+# TestNonPreparedPlanCacheDMLHints
+drop table if exists t;
+create table t (a int);
+set @@tidb_enable_non_prepared_plan_cache=1;
+set @@tidb_enable_non_prepared_plan_cache_for_dml=1;
+insert into t values (1);
+insert into t values (1);
+select @@last_plan_from_cache;
+update t set a=1;
+update t set a=1;
+select @@last_plan_from_cache;
+delete from t where a=1;
+delete from t where a=1;
+select @@last_plan_from_cache;
+insert /*+ ignore_plan_cache() */ into t values (1);
+insert /*+ ignore_plan_cache() */ into t values (1);
+select @@last_plan_from_cache;
+update /*+ ignore_plan_cache() */ t set a=1;
+update /*+ ignore_plan_cache() */ t set a=1;
+select @@last_plan_from_cache;
+delete /*+ ignore_plan_cache() */ from t where a=1;
+delete /*+ ignore_plan_cache() */ from t where a=1;
+select @@last_plan_from_cache;
+insert into t values (1);
+select @@last_plan_from_cache;
+update t set a=1;
+select @@last_plan_from_cache;
+delete from t where a=1;
+select @@last_plan_from_cache;
+set @@tidb_enable_non_prepared_plan_cache=DEFAULT;
+set @@tidb_enable_non_prepared_plan_cache_for_dml=DEFAULT;
+
+
+# TestNonPreparedPlanCacheJSONFilter
+drop table if exists t;
+create table t(a int, b json);
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a<1;
+select * from t where a<2;
+select @@last_plan_from_cache;
+select * from t where b<1;
+select * from t where b<2;
+select @@last_plan_from_cache;
+select b from t where a<1;
+select b from t where a<2;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheEnumFilter
+drop table if exists t;
+create table t(a int, b enum('1', '2', '3'));
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a<1;
+select * from t where a<2;
+select @@last_plan_from_cache;
+select * from t where b='1';
+select * from t where b='2';
+select @@last_plan_from_cache;
+select b from t where a<1;
+select b from t where a<2;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheDateFormat
+drop table if exists t1;
+set tidb_enable_non_prepared_plan_cache=1;
+create table t1 (s1 char(20) character set latin1);
+insert into t1 values (date_format('2004-02-02','%M'));
+select * from t1;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheNullValue
+drop table if exists t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a=1;
+select * from t where a=2;
+select @@last_plan_from_cache;
+select * from t where a=null;
+select @@last_plan_from_cache;
+select * from t where a=2;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheInListChange
+drop table if exists t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a in (1, 2, 3);
+select * from t where a in (2, 3, 4);
+select @@last_plan_from_cache;
+select * from t where a in (2, 3, 4, 5);
+select @@last_plan_from_cache;
+select * from t where a in (1, 2, 3, 4);
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheMemoryTable
+set tidb_enable_non_prepared_plan_cache=1;
+select data_type from INFORMATION_SCHEMA.columns where table_name = 'v';
+select data_type from INFORMATION_SCHEMA.columns where table_name = 'v';
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheTooManyConsts
+drop table if exists t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198);
+select * from t where a in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198);
+select @@last_plan_from_cache;
+select * from t where a in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199);
+select * from t where a in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199);
+select @@last_plan_from_cache;
+select * from t where a in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200);
+select * from t where a in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200);
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheSchemaChange
+drop table if exists t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a=1;
+select * from t where a=1;
+select @@last_plan_from_cache;
+alter table t add index idx_a(a);
+select * from t where a=1;
+select @@last_plan_from_cache;
+select * from t where a=1;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedCacheWithPreparedCache
+drop table if exists t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=1;
+prepare st from 'select * from t where a=1';
+execute st;
+execute st;
+select @@last_plan_from_cache;
+select * from t where a=1;
+select @@last_plan_from_cache;
+select * from t where a=1;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheSwitch
+drop table if exists t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a=1;
+select * from t where a=1;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=0;
+select * from t where a=1;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheSwitch2
+drop table if exists t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=0;
+set tidb_enable_prepared_plan_cache=0;
+select * from t where a<1;
+select * from t where a<2;
+select @@last_plan_from_cache;
+prepare st from 'select * from t where a<?';
+set @a=1;
+execute st using @a;
+set @a=2;
+execute st using @a;
+select @@last_plan_from_cache;
+drop table t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=0;
+set tidb_enable_prepared_plan_cache=1;
+select * from t where a<1;
+select * from t where a<2;
+select @@last_plan_from_cache;
+prepare st from 'select * from t where a<?';
+set @a=1;
+execute st using @a;
+set @a=2;
+execute st using @a;
+select @@last_plan_from_cache;
+drop table t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=1;
+set tidb_enable_prepared_plan_cache=0;
+select * from t where a<1;
+select * from t where a<2;
+select @@last_plan_from_cache;
+prepare st from 'select * from t where a<?';
+set @a=1;
+execute st using @a;
+set @a=2;
+execute st using @a;
+select @@last_plan_from_cache;
+drop table t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=1;
+set tidb_enable_prepared_plan_cache=1;
+select * from t where a<1;
+select * from t where a<2;
+select @@last_plan_from_cache;
+prepare st from 'select * from t where a<?';
+set @a=1;
+execute st using @a;
+set @a=2;
+execute st using @a;
+select @@last_plan_from_cache;
+drop table t;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+set tidb_enable_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheUnknownSchema
+drop table if exists tt;
+create table tt(a char(2) primary key, b char(2));
+set tidb_enable_non_prepared_plan_cache=1;
+-- error 1051
+select tt.* from tt tmp where a='aa';
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheReason
+drop table if exists t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=1;
+explain format = 'plan_cache' select * from t where a=1;
+explain format = 'plan_cache' select * from t where a=1;
+select @@last_plan_from_cache;
+--enable_warnings
+explain format = 'plan_cache' select * from (select * from t) tx;
+--disable_warnings
+set tidb_enable_non_prepared_plan_cache=0;
+--enable_warnings
+explain format = 'plan_cache' select * from t where a+1=1;
+explain format = 'plan_cache' select * from t t1, t t2;
+explain format = 'plan_cache' select * from t where a in (select a from t);
+--disable_warnings
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheSysSchema
+set tidb_enable_non_prepared_plan_cache=1;
+--enable_warnings
+explain format='plan_cache' select address from PERFORMANCE_SCHEMA.tikv_profile_cpu;
+use PERFORMANCE_SCHEMA;
+explain format='plan_cache' select address from tikv_profile_cpu;
+--disable_warnings
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+use planner__core__plan_cache;
+
+# TestNonPreparedPlanCacheSQLMode
+drop table if exists t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a=1;
+select * from t where a=1;
+select @@last_plan_from_cache;
+set @@sql_mode='';
+select * from t where a=1;
+select @@last_plan_from_cache;
+select * from t where a=1;
+select @@last_plan_from_cache;
+set @@sql_mode=DEFAULT;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestPreparedPlanCacheLargePlan
+drop table if exists t;
+create table t(a int, b int, c varchar(2048));
+prepare st from 'select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b';
+execute st;
+execute st;
+select @@last_plan_from_cache;
+prepare st from 'select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b union all select * from t, t t1 where t1.c=space(2048) and t.c=space(2048) and t.a=t1.b';
+execute st;
+execute st;
+select @@last_plan_from_cache;
+set tidb_plan_cache_max_plan_size=1073741824;
+execute st;
+execute st;
+select @@last_plan_from_cache;
+
+
+# TestPreparedPlanCacheLongInList
+drop table if exists t;
+create table t(a int, b int);
+prepare st_199 from 'select * from t where a in (0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198)';
+execute st_199;
+execute st_199;
+select @@last_plan_from_cache;
+prepare st_201 from 'select * from t where a in (0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200)';
+execute st_201;
+execute st_201;
+select @@last_plan_from_cache;
+prepare st_99_100 from 'select * from t where a in (0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98) and b in (0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99)';
+execute st_99_100;
+execute st_99_100;
+select @@last_plan_from_cache;
+prepare st_100_101 from 'select * from t where a in (0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99) and b in (0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100)';
+execute st_100_101;
+execute st_100_101;
+select @@last_plan_from_cache;
+
+
+# TestPreparedPlanCacheStats
+drop table if exists t;
+create table t(a int);
+insert into t values (2);
+prepare st from 'select * from t where a=?';
+set @a=1;
+execute st using @a;
+execute st using @a;
+select @@last_plan_from_cache;
+analyze table t;
+set tidb_plan_cache_invalidation_on_fresh_stats = 0;
+execute st using @a;
+select @@last_plan_from_cache;
+set tidb_plan_cache_invalidation_on_fresh_stats = 1;
+execute st using @a;
+select @@last_plan_from_cache;
+execute st using @a;
+select @@last_plan_from_cache;
+set tidb_plan_cache_invalidation_on_fresh_stats = DEFAULT;
+
+
+# TestNonPreparedPlanCacheStats
+drop table if exists t;
+create table t(a int);
+insert into t values (2);
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a=1;
+select * from t where a=1;
+select @@last_plan_from_cache;
+analyze table t;
+select * from t where a=1;
+select @@last_plan_from_cache;
+select * from t where a=1;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheHints
+drop table if exists t;
+create table t(a int, index(a));
+set tidb_enable_non_prepared_plan_cache=1;
+select /*+ use_index(t, a) */ * from t where a=1;
+select /*+ use_index(t, a) */ * from t where a=1;
+select @@last_plan_from_cache;
+select * from t where a=1;
+select * from t where a=1;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheParamInit
+drop table if exists tx;
+create table tx(a double, b int);
+set tidb_enable_non_prepared_plan_cache=1;
+insert into tx values (3.0, 3);
+select json_object('k', a) = json_object('k', b) from tx;
+select json_object('k', a) = json_object('k', b) from tx;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheBinding
+drop table if exists t;
+create table t(a int, index(a));
+set tidb_enable_non_prepared_plan_cache=1;
+create binding for select * from t where a=1 using select /*+ use_index(t, a) */ * from t where a=1;
+select * from t where a=1;
+select * from t where a=1;
+select @@last_plan_from_cache;
+drop binding for select * from t where a=1;
+select * from t where a=1;
+select * from t where a=1;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheFastPointGet
+drop table if exists t;
+create table t (a int primary key, b int, unique key(b));
+set tidb_enable_non_prepared_plan_cache=1;
+explain format='brief' select a from t where a in (1, 2);
+select a from t where a in (1, 2);
+select a from t where a in (1, 2);
+select @@last_plan_from_cache;
+explain format='brief' select b from t where b = 1;
+select b from t where b = 1;
+select b from t where b = 1;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheSetOperations
+drop table if exists t;
+create table t (a int);
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t union select * from t;
+select * from t union select * from t;
+select @@last_plan_from_cache;
+select * from t union distinct select * from t;
+select * from t union distinct select * from t;
+select @@last_plan_from_cache;
+select * from t union all select * from t;
+select * from t union all select * from t;
+select @@last_plan_from_cache;
+select * from t except select * from t;
+select * from t except select * from t;
+select @@last_plan_from_cache;
+select * from t intersect select * from t;
+select * from t intersect select * from t;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheSpecialTables
+drop table if exists t;
+create table t (a int);
+create definer='root'@'localhost' view t_v as select * from t;
+create table t_p (a int) partition by hash(a) partitions 4;
+analyze table t_p;
+create temporary table t_t (a int);
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t_v;
+select * from t_v;
+select @@last_plan_from_cache;
+select * from t_p;
+select * from t_p;
+select @@last_plan_from_cache;
+select * from t_t;
+select * from t_t;
+select @@last_plan_from_cache;
+with t_cte as (select * from t) select * from t_cte;
+with t_cte as (select * from t) select * from t_cte;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanParameterType
+drop table if exists t;
+create table t (a int, key(a));
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a=1;
+select * from t where a=1;
+select @@last_plan_from_cache;
+select * from t where a=1.1;
+select @@last_plan_from_cache;
+--enable_warnings
+explain format = 'plan_cache' select * from t where a=1.1;
+--disable_warnings
+select * from t where a='1';
+select @@last_plan_from_cache;
+--enable_warnings
+explain format = 'plan_cache' select * from t where a='1';
+--disable_warnings
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestIssue43852
+drop table if exists t6;
+create table t6 (a date, b date, key(a));
+insert into t6 values ('2023-01-21', '2023-01-05');
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t6 where a in (2015, '8');
+select * from t6 where a in (2009, '2023-01-21');
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheSelectLimit
+drop table if exists t;
+create table t(a int, index(a));
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a=1;
+select * from t where a=1;
+select @@last_plan_from_cache;
+set @@session.sql_select_limit=1;
+select * from t where a=1;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+set @@session.sql_select_limit=DEFAULT;
+
+
+# TestIssue41626
+drop table if exists t;
+create table t (a year);
+insert into t values (2000);
+prepare st from 'select * from t where a<?';
+set @a=12;
+--enable_warnings
+execute st using @a;
+--disable_warnings
+
+
+# TestInsertStmtHint
+drop table if exists t;
+create table t (a int);
+prepare st from 'insert into t values (1)';
+execute st;
+execute st;
+select @@last_plan_from_cache;
+prepare st from 'insert into t select * from t';
+execute st;
+execute st;
+select @@last_plan_from_cache;
+prepare st from 'insert /*+ ignore_plan_cache() */ into t select * from t';
+execute st;
+execute st;
+select @@last_plan_from_cache;
+
+
+# TestLongInsertStmt
+drop table if exists t;
+create table t (a int);
+prepare inert200 from 'insert into t values (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1)';
+execute inert200;
+execute inert200;
+select @@last_plan_from_cache;
+--enable_warnings;
+prepare inert201 from 'insert into t values (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1)';
+--disable_warnings;
+execute inert201;
+execute inert201;
+select @@last_plan_from_cache;
+
+
+# TestIssue38710
+drop table if exists UK_NO_PRECISION_19392;
+CREATE TABLE `UK_NO_PRECISION_19392` (
+  `COL1` bit(1) DEFAULT NULL,
+  `COL2` varchar(20) COLLATE utf8mb4_bin DEFAULT NULL,
+  `COL4` datetime DEFAULT NULL,
+  `COL3` bigint DEFAULT NULL,
+  `COL5` float DEFAULT NULL,
+  UNIQUE KEY `UK_COL1` (`COL1`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+INSERT INTO `UK_NO_PRECISION_19392` VALUES (0x00,'缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈','9294-12-26 06:50:40',-3088380202191555887,-3.33294e38),(NULL,'仲膩蕦圓猴洠飌镂喵疎偌嫺荂踖Ƕ藨蜿諪軁笞','1746-08-30 18:04:04',-4016793239832666288,-2.52633e38),(0x01,'冑溜畁脊乤纊繳蟥哅稐奺躁悼貘飗昹槐速玃沮','1272-01-19 23:03:27',-8014797887128775012,1.48868e38);
+;
+prepare stmt from 'select * from UK_NO_PRECISION_19392 where col1 between ? and ? or col3 = ? or col2 in (?, ?, ?);';
+set @a=0x01, @b=0x01, @c=-3088380202191555887, @d="缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈", @e="缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈", @f="缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈";
+execute stmt using @a,@b,@c,@d,@e,@f;
+set @a=NULL, @b=NULL, @c=-4016793239832666288, @d="缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈", @e="仲膩蕦圓猴洠飌镂喵疎偌嫺荂踖Ƕ藨蜿諪軁笞", @f="缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈";
+execute stmt using @a,@b,@c,@d,@e,@f;
+select @@last_plan_from_cache;
+execute stmt using @a,@b,@c,@d,@e,@f;
+select @@last_plan_from_cache;
+set @a=0x01, @b=0x01, @c=-3088380202191555887, @d="缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈", @e="缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈", @f="缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈";
+execute stmt using @a,@b,@c,@d,@e,@f;
+select @@last_plan_from_cache;
+
+
+# TestPlanCacheDiagInfo
+drop table if exists t;
+create table t (a int, b int, key(a), key(b));
+--enable_warnings
+prepare stmt from 'select /*+ ignore_plan_cache() */ * from t';
+prepare stmt from 'select * from t order by ?';
+prepare stmt from 'select * from t where a=?';
+set @a='123';
+execute stmt using @a;
+prepare stmt from 'select * from t where a=? and a=?';
+set @a=1, @b=1;
+execute stmt using @a, @b;
+--disable_warnings
+
+
+# TestIssue40225
+drop table if exists t;
+create table t (a int, key(a));
+prepare st from 'select * from t where a<?';
+set @a='1';
+--enable_warnings
+execute st using @a;
+--disable_warnings
+create binding for select * from t where a<1 using select /*+ ignore_plan_cache() */ * from t where a<1;
+--enable_warnings
+execute st using @a;
+--disable_warnings
+prepare st from 'select * from t where a>?';
+set @a=1;
+execute st using @a;
+execute st using @a;
+select @@last_plan_from_cache;
+create binding for select * from t where a>1 using select /*+ ignore_plan_cache() */ * from t where a>1;
+execute st using @a;
+select @@last_plan_from_cache;
+execute st using @a;
+select @@last_plan_from_binding;
+
+
+# TestIssue38335
+CREATE TABLE PK_LP9463 (
+  COL1 mediumint NOT NULL DEFAULT '77' COMMENT 'NUMERIC PK',
+  COL2 varchar(20) COLLATE utf8mb4_bin DEFAULT NULL,
+  COL4 datetime DEFAULT NULL,
+  COL3 bigint DEFAULT NULL,
+  COL5 float DEFAULT NULL,
+  PRIMARY KEY (COL1));
+
+INSERT INTO PK_LP9463 VALUES (-7415279,'笚綷想摻癫梒偆荈湩窐曋繾鏫蘌憬稁渣½隨苆','1001-11-02 05:11:33',-3745331437675076296,-3.21618e38),
+(-7153863,'鯷氤衡椻闍饑堀鱟垩啵緬氂哨笂序鉲秼摀巽茊','6800-06-20 23:39:12',-7871155140266310321,-3.04829e38),
+(77,'娥藨潰眤徕菗柢礥蕶浠嶲憅榩椻鍙鑜堋ᛀ暵氎','4473-09-13 01:18:59',4076508026242316746,-1.9525e38),
+(16614,'阖旕雐盬皪豧篣哙舄糗悄蟊鯴瞶珧赺潴嶽簤彉','2745-12-29 00:29:06',-4242415439257105874,2.71063e37);
+prepare stmt from 'SELECT *, rank() OVER (PARTITION BY col2 ORDER BY COL1) FROM PK_LP9463 WHERE col1 != ? AND col1 < ?';
+set @a=-8414766051197, @b=-8388608;
+--sorted_result
+execute stmt using @a,@b;
+set @a=16614, @b=16614;
+--sorted_result
+execute stmt using @a,@b;
+select @@last_plan_from_cache;
+--sorted_result
+SELECT *, rank() OVER (PARTITION BY col2 ORDER BY COL1) FROM PK_LP9463 WHERE col1 != 16614 and col1 < 16614;
+
+
+# TestIssue41032
+CREATE TABLE PK_SIGNED_10087 (
+	 COL1 mediumint(8) unsigned NOT NULL,
+	 COL2 varchar(20) DEFAULT NULL,
+	 COL4 datetime DEFAULT NULL,
+	 COL3 bigint(20) DEFAULT NULL,
+	 COL5 float DEFAULT NULL,
+	 PRIMARY KEY (COL1) );
+insert into PK_SIGNED_10087 values(0, "痥腜蟿鮤枓欜喧檕澙姭袐裄钭僇剕焍哓閲疁櫘", "0017-11-14 05:40:55", -4504684261333179273, 7.97449e37);
+prepare stmt from 'SELECT/*+ HASH_JOIN(t1, t2) */ t2.* FROM PK_SIGNED_10087 t1 JOIN PK_SIGNED_10087 t2 ON t1.col1 = t2.col1 WHERE t2.col1 >= ? AND t1.col1 >= ?;';
+set @a=0, @b=0;
+--sorted_result
+execute stmt using @a,@b;
+set @a=8950167, @b=16305982;
+execute stmt using @a,@b;
+select @@last_plan_from_cache;
+
+
+# TestSetPlanCacheLimitSwitch
+select @@session.tidb_enable_plan_cache_for_param_limit;
+select @@global.tidb_enable_plan_cache_for_param_limit;
+set @@session.tidb_enable_plan_cache_for_param_limit = OFF;
+select @@session.tidb_enable_plan_cache_for_param_limit;
+set @@session.tidb_enable_plan_cache_for_param_limit = 1;
+select @@session.tidb_enable_plan_cache_for_param_limit;
+set @@global.tidb_enable_plan_cache_for_param_limit = off;
+select @@global.tidb_enable_plan_cache_for_param_limit;
+set @@global.tidb_enable_plan_cache_for_param_limit = ON;
+select @@global.tidb_enable_plan_cache_for_param_limit;
+-- error 1231
+set @@global.tidb_enable_plan_cache_for_param_limit = '';
+-- error 1231
+set @@global.tidb_enable_plan_cache_for_param_limit = 11;
+-- error 1231
+set @@global.tidb_enable_plan_cache_for_param_limit = enabled;
+-- error 1231
+set @@global.tidb_enable_plan_cache_for_param_limit = disabled;
+-- error 1231
+set @@global.tidb_enable_plan_cache_for_param_limit = open;
+set @@global.tidb_enable_plan_cache_for_param_limit = DEFAULT;
+
+
+# TestPlanCacheLimitSwitchEffective
+drop table if exists t;
+create table t(a int, key(a));
+set @@session.tidb_enable_plan_cache_for_param_limit = OFF;
+prepare stmt from 'select * from t limit ?';
+show warnings;
+set @a = 1;
+execute stmt using @a;
+execute stmt using @a;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+set @@session.tidb_enable_plan_cache_for_param_limit = ON;
+prepare stmt from 'select * from t limit ?';
+set @@session.tidb_enable_plan_cache_for_param_limit = OFF;
+set @a = 1;
+execute stmt using @a;
+execute stmt using @a;
+select @@last_plan_from_cache;
+execute stmt using @a;
+show warnings;
+deallocate prepare stmt;
+set @@session.tidb_enable_plan_cache_for_param_limit = ON;
+prepare stmt from 'select * from t limit ?';
+set @a = 1;
+execute stmt using @a;
+execute stmt using @a;
+select @@last_plan_from_cache;
+set @@session.tidb_enable_plan_cache_for_param_limit = OFF;
+set @a = 1;
+execute stmt using @a;
+execute stmt using @a;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+
+
+# TestPlanCacheMemoryTable
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b int);
+prepare st from 'select count(*) from information_schema.COLUMNS where table_name=? and TABLE_SCHEMA = \'planner__core__plan_cache\'';
+set @a='t1';
+execute st using @a;
+set @a='t2';
+execute st using @a;
+select @@last_plan_from_cache;
+
+
+# TestSetPlanCacheSubquerySwitch
+select @@session.tidb_enable_plan_cache_for_subquery;
+select @@global.tidb_enable_plan_cache_for_subquery;
+set @@session.tidb_enable_plan_cache_for_subquery = OFF;
+select @@session.tidb_enable_plan_cache_for_subquery;
+set @@session.tidb_enable_plan_cache_for_subquery = 1;
+select @@session.tidb_enable_plan_cache_for_subquery;
+set @@global.tidb_enable_plan_cache_for_subquery = off;
+select @@global.tidb_enable_plan_cache_for_subquery;
+set @@global.tidb_enable_plan_cache_for_subquery = ON;
+select @@global.tidb_enable_plan_cache_for_subquery;
+-- error 1231
+set @@global.tidb_enable_plan_cache_for_subquery = '';
+-- error 1231
+set @@global.tidb_enable_plan_cache_for_subquery = 11;
+-- error 1231
+set @@global.tidb_enable_plan_cache_for_subquery = enabled;
+-- error 1231
+set @@global.tidb_enable_plan_cache_for_subquery = disabled;
+-- error 1231
+set @@global.tidb_enable_plan_cache_for_subquery = open;
+set @@global.tidb_enable_plan_cache_for_subquery = DEFAULT;
+
+
+# TestPlanCacheSubQuerySwitchEffective
+drop table if exists t, s;
+create table t(a int, key(a));
+create table s(a int, key(a));
+set @@session.tidb_enable_plan_cache_for_subquery = OFF;
+--enable_warnings
+prepare stmt from 'select * from t where a in (select a from s)';
+--disable_warnings
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+set @@session.tidb_enable_plan_cache_for_subquery = ON;
+prepare stmt from 'select * from t where a in (select a from s)';
+set @@session.tidb_enable_plan_cache_for_subquery = OFF;
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+--enable_warnings
+execute stmt;
+--disable_warnings
+deallocate prepare stmt;
+set @@session.tidb_enable_plan_cache_for_subquery = ON;
+prepare stmt from 'select * from t where a in (select a from s)';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+set @@session.tidb_enable_plan_cache_for_subquery = OFF;
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+deallocate prepare stmt;
+set @@session.tidb_enable_plan_cache_for_subquery = DEFAULT;
+
+
+# TestIssue41828
+CREATE TABLE IDT_MULTI15840STROBJSTROBJ (
+  COL1 enum('aa', 'zzz') DEFAULT NULL,
+  COL2 smallint(6) DEFAULT NULL,
+  COL3 date DEFAULT NULL,
+  KEY U_M_COL4 (COL1,COL2),
+  KEY U_M_COL5 (COL3,COL2));
+INSERT INTO IDT_MULTI15840STROBJSTROBJ VALUES ('zzz',1047,'6115-06-05'),('zzz',-23221,'4250-09-03'),('zzz',27138,'1568-07-30'),('zzz',-30903,'6753-08-21'),('zzz',-26875,'6117-10-10');
+prepare stmt from 'select * from IDT_MULTI15840STROBJSTROBJ where col3 <=> ? or col1 in (?, ?, ?) and col2 not between ? and ?';
+set @a="0051-12-23", @b="none", @c="none", @d="none", @e=-32757, @f=-32757;
+execute stmt using @a,@b,@c,@d,@e,@f;
+show warnings;
+set @a="9795-01-10", @b="aa", @c="aa", @d="aa", @e=31928, @f=31928;
+execute stmt using @a,@b,@c,@d,@e,@f;
+
+
+# TestNonPreparedPlanCacheDMLSwitch
+drop table if exists t;
+create table t (a int);
+set tidb_enable_non_prepared_plan_cache=1;
+set tidb_enable_non_prepared_plan_cache_for_dml=0;
+insert into t values (1);
+insert into t values (1);
+select @@last_plan_from_cache;
+select a from t where a < 2 for update;
+select a from t where a < 2 for update;
+select @@last_plan_from_cache;
+set @x:=1;
+set @x:=1;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache_for_dml=1;
+insert into t values (1);
+insert into t values (1);
+select @@last_plan_from_cache;
+select a from t where a < 2 for update;
+select a from t where a < 2 for update;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+set tidb_enable_non_prepared_plan_cache_for_dml=DEFAULT;
+
+
+# TestNonPreparedPlanCacheUnderscoreCharset
+drop table if exists t;
+create table t (a varchar(10), b int);
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a = _utf8'a';
+select * from t where a = _utf8'a';
+select @@last_plan_from_cache;
+select * from t where a = _latin1'a';
+select * from t where a = _latin1'a';
+select @@last_plan_from_cache;
+select * from t where a = N'a';
+select * from t where a = N'a';
+select @@last_plan_from_cache;
+select * from t where a = 'a';
+select * from t where a = 'a';
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheGroupBy
+drop table if exists t;
+create table t(a int, b int, index(a));
+set tidb_enable_non_prepared_plan_cache=1;
+select sum(b) from t group by a+1;
+select sum(b) from t group by a+1;
+select @@last_plan_from_cache;
+select sum(b) from t group by a+2;
+select @@last_plan_from_cache;
+select sum(b) from t group by a+2;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheExplain
+drop table if exists t;
+create table t(a int, index(a));
+set tidb_enable_non_prepared_plan_cache=1;
+explain format = 'row' select * from t;
+select @@last_plan_from_cache;
+explain format = 'brief' select * from t;
+select @@last_plan_from_cache;
+explain format = 'dot' select * from t;
+select @@last_plan_from_cache;
+explain format = 'tidb_json' select * from t;
+select @@last_plan_from_cache;
+explain format = 'verbose' select * from t;
+select @@last_plan_from_cache;
+explain format = 'cost_trace' select * from t;
+select @@last_plan_from_cache;
+--enable_warnings
+explain format = 'row' select * from t limit 1;
+explain format = 'brief' select * from t limit 1;
+explain format = 'dot' select * from t limit 1;
+explain format = 'tidb_json' select * from t limit 1;
+explain format = 'verbose' select * from t limit 1;
+explain format = 'cost_trace' select * from t limit 1;
+--disable_warnings
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestIssue42150
+drop table if exists t, t1, t2;
+CREATE TABLE `t1` (`c_int` int(11) NOT NULL,  `c_str` varchar(40) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,  `c_datetime` datetime DEFAULT NULL,  `c_timestamp` timestamp NULL DEFAULT NULL,  `c_double` double DEFAULT NULL,  `c_decimal` decimal(12,6) DEFAULT NULL,  `c_enum` enum('blue','green','red','yellow','white','orange','purple') NOT NULL,  PRIMARY KEY (`c_int`,`c_enum`) /*T![clustered_index] CLUSTERED */,  KEY `c_decimal` (`c_decimal`),  UNIQUE KEY `c_datetime` (`c_datetime`),  UNIQUE KEY `c_timestamp` (`c_timestamp`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE TABLE `t2` (`c_int` int(11) NOT NULL,  `c_str` varchar(40) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,  `c_datetime` datetime DEFAULT NULL,  `c_timestamp` timestamp NULL DEFAULT NULL,  `c_double` double DEFAULT NULL,  `c_decimal` decimal(12,6) DEFAULT NULL,  `c_enum` enum('blue','green','red','yellow','white','orange','purple') NOT NULL,  PRIMARY KEY (`c_int`,`c_enum`) /*T![clustered_index] CLUSTERED */,  KEY `c_decimal` (`c_decimal`),  UNIQUE KEY `c_datetime` (`c_datetime`),  UNIQUE KEY `c_timestamp` (`c_timestamp`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+create table t (a int, b int, primary key(a), key(b));
+set @v0 = 'nice hellman', @v1 = 'flamboyant booth', @v2 = 'quirky brahmagupta';
+prepare stmt16 from 'select * from t1 where c_enum in (select c_enum from t2 where t1.c_str in (?, ?, ?))';
+execute stmt16 using @v0, @v1, @v2;
+execute stmt16 using @v0, @v1, @v2;
+select @@last_plan_from_cache;
+prepare stmt from 'select c_enum from t1';
+execute stmt;
+execute stmt;
+select @@last_plan_from_cache;
+prepare st from 'select a from t use index(b)';
+execute st;
+execute st;
+select @@last_plan_from_cache;
+
+
+# TestNonPreparedPlanCacheDML
+set tidb_enable_non_prepared_plan_cache=1;
+set tidb_enable_non_prepared_plan_cache_for_dml=1;
+drop table if exists t;
+create table t (a int default 0, b int default 0);
+select a from t for update;
+select a from t for update;
+select @@last_plan_from_cache;
+select a from t where a<10 for update;
+select a from t where a<10 for update;
+select @@last_plan_from_cache;
+insert into t values (1, 1);
+insert into t values (1, 1);
+select @@last_plan_from_cache;
+insert into t (a, b) values (1, 1);
+insert into t (a, b) values (1, 1);
+select @@last_plan_from_cache;
+insert into t (a) values (1);
+insert into t (a) values (1);
+select @@last_plan_from_cache;
+insert into t (b) values (1);
+insert into t (b) values (1);
+select @@last_plan_from_cache;
+insert into t select * from t;
+insert into t select * from t;
+select @@last_plan_from_cache;
+insert into t select * from t where a>10;
+insert into t select * from t where a>10;
+select @@last_plan_from_cache;
+update t set a=1;
+update t set a=1;
+select @@last_plan_from_cache;
+update t set a=1 where a>10;
+update t set a=1 where a>10;
+select @@last_plan_from_cache;
+update t set a=1, b=1;
+update t set a=1, b=1;
+select @@last_plan_from_cache;
+update t set a=a+1 where a>10;
+update t set a=a+1 where a>10;
+select @@last_plan_from_cache;
+delete from t;
+delete from t;
+select @@last_plan_from_cache;
+delete from t where a>10;
+delete from t where a>10;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+set tidb_enable_non_prepared_plan_cache_for_dml=DEFAULT;
+
+
+# TestNonPreparedPlanCacheMultiStmt
+set tidb_enable_non_prepared_plan_cache=1;
+set tidb_enable_non_prepared_plan_cache_for_dml=1;
+drop table if exists t;
+create table t (a int);
+update t set a=1 where a<10;
+update t set a=2 where a<12;
+select @@last_plan_from_cache;
+
+## multi-stmt SQL cannot hit the cache
+update t set a=1 where a<10; update t set a=2 where a<12;
+update t set a=1 where a<10; update t set a=2 where a<12;
+select @@last_plan_from_cache;
+update t set a=2 where a<12;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+set tidb_enable_non_prepared_plan_cache_for_dml=DEFAULT;
+
+
+# TestNonPreparedPlanCacheJoin
+set tidb_enable_non_prepared_plan_cache=1;
+drop table if exists t1, t2, t3, t4;
+create table t1 (a int, b int, c int);
+create table t2 (a int, b int, c int);
+create table t3 (a int, b int, c int);
+create table t4 (a int, x int);
+select * from t1, t2 where t1.a=t2.a and t1.b<10;
+select * from t1, t2 where t1.a=t2.a and t1.b<10;
+select @@last_plan_from_cache;
+select * from t1, t2;
+select * from t1, t2;
+select @@last_plan_from_cache;
+select * from t1, t2 where t1.a<t2.a and t2.c=10;
+select * from t1, t2 where t1.a<t2.a and t2.c=10;
+select @@last_plan_from_cache;
+select * from t1 tx, t1 ty;
+select * from t1 tx, t1 ty;
+select @@last_plan_from_cache;
+select * from t1 tx, t1 ty where tx.a=ty.a;
+select * from t1 tx, t1 ty where tx.a=ty.a;
+select @@last_plan_from_cache;
+select * from t1 inner join t2;
+select * from t1 inner join t2;
+select @@last_plan_from_cache;
+select * from t1 inner join t2 on t1.a=t2.a;
+select * from t1 inner join t2 on t1.a=t2.a;
+select @@last_plan_from_cache;
+select * from t1 inner join t2 on t1.a=t2.a and t2.c<10;
+select * from t1 inner join t2 on t1.a=t2.a and t2.c<10;
+select @@last_plan_from_cache;
+select * from t1 left join t2 on t1.a=t2.a;
+select * from t1 left join t2 on t1.a=t2.a;
+select @@last_plan_from_cache;
+select * from t1 left join t2 on t1.a=t2.a and t2.c<10;
+select * from t1 left join t2 on t1.a=t2.a and t2.c<10;
+select @@last_plan_from_cache;
+select * from t1, t4 where t1.a=t4.a and t4.x=10;
+select * from t1, t4 where t1.a=t4.a and t4.x=10;
+select @@last_plan_from_cache;
+select * from t1 inner join t4 on t1.a=t4.a and t4.x=10;
+select * from t1 inner join t4 on t1.a=t4.a and t4.x=10;
+select @@last_plan_from_cache;
+select * from t1, t2, t3;
+select * from t1, t2, t3;
+select @@last_plan_from_cache;
+select * from t1, t2, t1 tx;
+select * from t1, t2, t1 tx;
+select @@last_plan_from_cache;
+select * from t1, (select * from t2) t2;
+select * from t1, (select * from t2) t2;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheAggSort
+set tidb_enable_non_prepared_plan_cache=1;
+set sql_mode='';
+drop table if exists t;
+create table t (a int, b int);
+select count(*) from t;
+select count(*) from t;
+select @@last_plan_from_cache;
+select max(b) from t group by a;
+select max(b) from t group by a;
+select @@last_plan_from_cache;
+select count(*), a from t group by a, b;
+select count(*), a from t group by a, b;
+select @@last_plan_from_cache;
+select a from t order by a;
+select a from t order by a;
+select @@last_plan_from_cache;
+select a, b, a+b from t order by a, b;
+select a, b, a+b from t order by a, b;
+select @@last_plan_from_cache;
+select sum(b) from t group by a+1;
+select sum(b) from t group by a+1;
+select @@last_plan_from_cache;
+select count(*) from t group by a+b;
+select count(*) from t group by a+b;
+select @@last_plan_from_cache;
+select a, b, count(*) from t group by 1;
+select a, b, count(*) from t group by 1;
+select @@last_plan_from_cache;
+select a, b, count(*) from t group by 1, a;
+select a, b, count(*) from t group by 1, a;
+select @@last_plan_from_cache;
+select a, b, count(*) from t group by a having b < 1;
+select a, b, count(*) from t group by a having b < 1;
+select @@last_plan_from_cache;
+select a from t order by a+1;
+select a from t order by a+1;
+select @@last_plan_from_cache;
+select a, b, a+b from t order by a + b;
+select a, b, a+b from t order by a + b;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+set sql_mode=DEFAULT;
+
+
+# TestNonPreparedPlanCacheOrder
+set tidb_enable_non_prepared_plan_cache=1;
+drop table if exists t;
+create table t (a int, b int);
+select a from t order by a;
+select a from t order by a;
+select @@last_plan_from_cache;
+select a from t order by a asc;
+select a from t order by a asc;
+select @@last_plan_from_cache;
+select a from t order by a desc;
+select a from t order by a desc;
+select @@last_plan_from_cache;
+select a from t order by a,b desc;
+select a from t order by a,b desc;
+select @@last_plan_from_cache;
+select a from t order by 1;
+select a from t order by 1;
+select @@last_plan_from_cache;
+select a from t order by a, 1;
+select a from t order by a, 1;
+select @@last_plan_from_cache;
+select a from t order by a+1,b-2;
+select a from t order by a+1,b-2;
+select @@last_plan_from_cache;
+select a from t order by a desc, b+2;
+select a from t order by a desc, b+2;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestNonPreparedPlanCacheUnicode
+set tidb_enable_non_prepared_plan_cache=1;
+drop table if exists t1;
+create table t1 (a varchar(10) character set latin1, b int);
+insert into t1 values ('a',1);
+select concat(a, if(b>10, N'x', N'y')) from t1;
+select concat(a, if(b>10, N'x', N'y')) from t1;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestIssue45253
+set tidb_enable_non_prepared_plan_cache=1;
+drop table if exists t1;
+CREATE TABLE t1 (c1 INT);
+INSERT INTO t1 VALUES (1);
+SELECT c1 FROM t1 WHERE TO_BASE64('牵');
+SELECT c1 FROM t1 WHERE TO_BASE64('牵');
+select @@last_plan_from_cache;
+SELECT c1 FROM t1 WHERE TO_BASE64('哈');
+select @@last_plan_from_cache;
+SELECT c1 FROM t1 WHERE TO_BASE64('');
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestIssue45378
+set tidb_enable_non_prepared_plan_cache=1;
+drop table if exists t1;
+CREATE TABLE t1(c1 INT);
+INSERT INTO t1 VALUES (1);
+SELECT c1 FROM t1 WHERE UNHEX(2038330881);
+SELECT c1 FROM t1 WHERE UNHEX(2038330881);
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+
+# TestIssue46159
+drop table if exists t;
+create table t (a varchar(10), key(a(5)));
+prepare st from 'select a from t use index(a) where a=?';
+set @a='a';
+execute st using @a;
+--enable_warnings
+execute st using @a;
+--disable_warnings
+
+
+# TestIssue47008
+set @@time_zone='UTC';
+set @@collation_connection='utf8_general_ci';
+prepare s from 'select DATE_FORMAT("2020-01-01","%W") = "wednesday"';
+--sorted_result
+execute s;
+set @@collation_connection='utf8_bin';
+--sorted_result
+execute s;
+select @@last_plan_from_cache;
+set @@time_zone=DEFAULT;
+set @@collation_connection=DEFAULT;
+
+
+# TestNonPreparedPlanCacheBuiltinFuncs
+set tidb_enable_non_prepared_plan_cache=1;
+drop table if exists t;
+create table t (a int, b varchar(32), c datetime, key(a));
+select * from t where mod(a, 5) < 2;
+select * from t where mod(a, 5) < 2;
+select @@last_plan_from_cache;
+select * from t where c < now();
+select * from t where c < now();
+select @@last_plan_from_cache;
+select date_format(c, '%Y-%m-%d') from t where a < 10;
+select date_format(c, '%Y-%m-%d') from t where a < 10;
+select @@last_plan_from_cache;
+select str_to_date(b, '%Y-%m-%d') from t where a < 10;
+select str_to_date(b, '%Y-%m-%d') from t where a < 10;
+select @@last_plan_from_cache;
+select * from t where a-2 < 20;
+select * from t where a-2 < 20;
+select @@last_plan_from_cache;
+select * from t where a+b > 100;
+select * from t where a+b > 100;
+select @@last_plan_from_cache;
+select * from t where -a > 10;
+select * from t where -a > 10;
+select @@last_plan_from_cache;
+select * from t where a < 1 and b like '%abc%';
+select * from t where a < 1 and b like '%abc%';
+select @@last_plan_from_cache;
+select database() from t;
+select database() from t;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=DEFAULT;
+
+# TestPlanCacheSizeSwitch
+select @@tidb_prepared_plan_cache_size;
+select @@tidb_session_plan_cache_size;
+set @@tidb_prepared_plan_cache_size = 200;
+select @@tidb_prepared_plan_cache_size;
+select @@tidb_session_plan_cache_size;
+set @@tidb_session_plan_cache_size = 300;
+select @@tidb_prepared_plan_cache_size;
+select @@tidb_session_plan_cache_size;
+
+set global tidb_prepared_plan_cache_size = 400;
+connect (conn1, localhost, root,,);
+select @@tidb_prepared_plan_cache_size;
+select @@tidb_session_plan_cache_size;
+disconnect conn1;
+
+set global tidb_session_plan_cache_size = 500;
+connect (conn1, localhost, root,,);
+select @@tidb_prepared_plan_cache_size;
+select @@tidb_session_plan_cache_size;
+disconnect conn1;
+
+set global tidb_prepared_plan_cache_size = default;
+set global tidb_session_plan_cache_size = default;
+set @@tidb_session_plan_cache_size = default;
+set @@tidb_prepared_plan_cache_size = default;
+
+# TestNonPreparedPlanCacheWithExplain
+drop table if exists t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a=1;
+explain select * from t where a=2;
+select @@last_plan_from_cache;
+explain format=verbose select * from t where a=2;
+select @@last_plan_from_cache;
+--replace_column 5 <access_object> 6 <execution_info> 7 <operator_info> 8 <memory> 9 <disk>
+explain analyze select * from t where a=2;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=default;
+
+# TestPlanCacheGeneratedCols
+drop table if exists t1, t2, t3, t4;
+set @@tidb_opt_fix_control = "45798:on";
+create table t1 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))));
+create table t2 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))) virtual);
+create table t3 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))) stored);
+create table t4 (a int, info json, index zips( (CAST(info->'$.zipcode' AS UNSIGNED ARRAY))));
+set @a=1;
+set @b=2;
+prepare s1 from 'select * from t1 where a=?';
+show warnings;
+execute s1 using @a;
+execute s1 using @b;
+select @@last_plan_from_cache;
+prepare s1 from 'select * from t2 where a=?';
+show warnings;
+execute s1 using @a;
+execute s1 using @b;
+select @@last_plan_from_cache;
+prepare s1 from 'select * from t3 where a=?';
+show warnings;
+execute s1 using @a;
+execute s1 using @b;
+select @@last_plan_from_cache;
+prepare s1 from 'select * from t4 where a=?';
+show warnings;
+execute s1 using @a;
+execute s1 using @b;
+select @@last_plan_from_cache;
+
+set @@tidb_opt_fix_control = default;
+
+# TestPlanCacheGeneratedCols2
+drop table if exists t1, t2;
+set @@tidb_opt_fix_control = "45798:on";
+CREATE TABLE t1 (
+  ipk varbinary(255) NOT NULL,
+  i_id varchar(45) DEFAULT NULL,
+  i_set_id varchar(45) DEFAULT NULL,
+  p_id varchar(45) DEFAULT NULL,
+  p_set_id varchar(45) DEFAULT NULL,
+  m_id bigint(20) DEFAULT NULL,
+  m_i_id varchar(127) DEFAULT NULL,
+  m_i_set_id varchar(127) DEFAULT NULL,
+  d json DEFAULT NULL,
+  p_sources json DEFAULT NULL,
+  nslc json DEFAULT NULL,
+  cl json DEFAULT NULL,
+  fii json DEFAULT NULL,
+  fpi json DEFAULT NULL,
+  PRIMARY KEY (ipk) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY i_id (i_id),
+  KEY d ((cast(d as char(253) array))),
+  KEY m_i_id (m_i_id),
+  KEY m_i_set_id (m_i_set_id),
+  KEY fpi ((cast(fpi as unsigned array))),
+  KEY nslc ((cast(nslc as char(1000) array))),
+  KEY cl ((cast(cl as char(3000) array))),
+  KEY fii ((cast(fii as unsigned array))),
+  KEY m_id (m_id),
+  KEY i_set_id (i_set_id),
+  KEY m_i_and_m_id (m_i_id,m_id));
+CREATE TABLE t2 (
+  ipk varbinary(255) NOT NULL,
+  created_time bigint(20) DEFAULT NULL,
+  arrival_time bigint(20) DEFAULT NULL,
+  updated_time bigint(20) DEFAULT NULL,
+  timestamp_data json DEFAULT NULL,
+  PRIMARY KEY (ipk) /*T![clustered_index] CLUSTERED */);
+prepare stmt from 'select *
+    from ( t1 left outer join t2 on ( t1 . ipk = t2 . ipk ) )
+    where ( t1 . i_id = ? )';
+show warnings;
+set @a='a', @b='b';
+execute stmt using @a;
+execute stmt using @b;
+select @@last_plan_from_cache;
+
+set @@tidb_opt_fix_control = default;
+
+# TestPlanCacheExprBlacklistCompatibility
+drop table if exists t;
+create table t (a int);
+prepare st from 'select * from t where mod(a, 2)=1';
+execute st;
+execute st;
+select @@last_plan_from_cache;
+insert into mysql.expr_pushdown_blacklist(name) values('mod');
+admin reload expr_pushdown_blacklist;
+execute st;
+select @@last_plan_from_cache;
+execute st;
+select @@last_plan_from_cache;
+
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+
+# TestNonPreparedPlanCacheFieldNames
+drop table if exists t, tt;
+create table t(a int, index(a));
+create table tt(a varchar(10));
+set tidb_enable_non_prepared_plan_cache=1;
+select a+1 from t where a<10;
+select @@last_plan_from_cache;
+select a+1 from t where a<20;
+select @@last_plan_from_cache;
+select a+2 from t where a<30;
+select @@last_plan_from_cache;
+select a+2 from t where a<40;
+select @@last_plan_from_cache;
+select a,a+1 from t where a<30;
+select @@last_plan_from_cache;
+select a,a+1 from t where a<40;
+select @@last_plan_from_cache;
+select a+'123' from tt where a='1';
+select @@last_plan_from_cache;
+select a+'123' from tt where a='2';
+select @@last_plan_from_cache;
+select 1 from t where a<10;
+select @@last_plan_from_cache;
+select 1 from t where a<20;
+select @@last_plan_from_cache;
+select 2 from t where a<10;
+select @@last_plan_from_cache;
+select 2 from t where a<20;
+select @@last_plan_from_cache;
+select 1,2 from t where a<10;
+select @@last_plan_from_cache;
+select 1,2 from t where a<20;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=default;
+
+# TestIssue48165
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+prepare s from "select * from t where tidb_parse_tso(a) > unix_timestamp()";
+execute s;
+
+# TestNonPreparedPlanCacheBuiltinFuncs
+drop table if exists t;
+set tidb_enable_non_prepared_plan_cache=1;
+create table t (a int, b varchar(32), c datetime, key(a));
+
+## normal builtin functions can be supported
+select * from t where mod(a, 5) < 2;
+select * from t where mod(a, 5) < 2;
+select @@last_plan_from_cache;
+select * from t where c < now();
+select * from t where c < now();
+select @@last_plan_from_cache;
+select date_format(c, '%Y-%m-%d') from t where a < 10;
+select date_format(c, '%Y-%m-%d') from t where a < 10;
+select @@last_plan_from_cache;
+select str_to_date(b, '%Y-%m-%d') from t where a < 10;
+select str_to_date(b, '%Y-%m-%d') from t where a < 10;
+select @@last_plan_from_cache;
+select * from t where a-2 < 20;
+select * from t where a-2 < 20;
+select @@last_plan_from_cache;
+select * from t where a+b > 100;
+select * from t where a+b > 100;
+select @@last_plan_from_cache;
+
+## '-' cannot support
+select * from t where -a > 10;
+select * from t where -a > 10;
+select @@last_plan_from_cache;
+## LIKE
+select * from t where a < 1 and b like '%abc%';
+select * from t where a < 1 and b like '%abc%';
+select @@last_plan_from_cache;
+select database() from t;
+select database() from t;
+select @@last_plan_from_cache;
+set tidb_enable_non_prepared_plan_cache=default;
+
+# TestIssue45086
+drop table if exists t;
+CREATE TABLE t (a int(11) DEFAULT NULL, b date DEFAULT NULL);
+INSERT INTO t VALUES (1, current_date());
+PREPARE stmt FROM 'SELECT a FROM t WHERE b=current_date()';
+EXECUTE stmt;

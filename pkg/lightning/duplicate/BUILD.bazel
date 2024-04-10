@@ -1,0 +1,38 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "duplicate",
+    srcs = [
+        "detector.go",
+        "internal.go",
+        "worker.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/lightning/duplicate",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/lightning/log",
+        "//pkg/util/codec",
+        "//pkg/util/extsort",
+        "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_sync//errgroup",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "duplicate_test",
+    timeout = "short",
+    srcs = [
+        "detector_test.go",
+        "internal_test.go",
+        "worker_test.go",
+    ],
+    embed = [":duplicate"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//pkg/lightning/log",
+        "//pkg/util/extsort",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "partition_test",
+    timeout = "short",
+    srcs = [
+        "integration_partition_test.go",
+        "main_test.go",
+        "partition_pruner_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    shard_count = 7,
+    deps = [
+        "//pkg/config",
+        "//pkg/planner/core/internal",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

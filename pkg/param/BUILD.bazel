@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "param",
+    srcs = ["binary_params.go"],
+    importpath = "github.com/pingcap/tidb/pkg/param",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/errno",
+        "//pkg/expression",
+        "//pkg/parser/mysql",
+        "//pkg/types",
+        "//pkg/util/dbterror",
+        "//pkg/util/hack",
+    ],
+)

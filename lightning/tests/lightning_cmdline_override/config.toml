@@ -1,0 +1,18 @@
+[lightning]
+check-requirements = false
+file = "/tmp/xyzxyzxyz"
+level = "xyzxyzxyz"
+
+[tikv-importer]
+backend = "local"
+
+[mydumper]
+data-source-dir = "xyzxyzxyz"
+
+[tidb]
+host = "xyzxyzxyz"
+port = 12345678
+user = "xyzxyzxyz"
+status-port = 12345678
+pd-addr = "xyzxyzxyz"
+

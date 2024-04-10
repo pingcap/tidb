@@ -1,0 +1,31 @@
+drop table if exists t;
+create table t(a int, b int, c int, d int, e int, index ia(a), index ib(b), index ic(c), index id(d), index ie(e));
+explain select * from t where a = 10 and b = 20 and c > 30 and d is null and e in (0, 100);
+id	estRows	task	access object	operator info
+IndexLookUp_11	0.00	root		
+├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:[10,10], keep order:false, stats:pseudo
+└─Selection_10(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_intersection.t.b, 20), gt(planner__core__indexmerge_intersection.t.c, 30), in(planner__core__indexmerge_intersection.t.e, 0, 100), isnull(planner__core__indexmerge_intersection.t.d)
+  └─TableRowIDScan_9	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select /*+ use_index_merge(t, ia, ib, ic, id, ie) */ * from t where a = 10 and b = 20 and c > 30 and d is null and e in (0, 100);
+id	estRows	task	access object	operator info
+IndexMerge_11	0.00	root		type: intersection
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:[10,10], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[20,20], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	3333.33	cop[tikv]	table:t, index:ic(c)	range:(30,+inf], keep order:false, stats:pseudo
+├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t, index:id(d)	range:[NULL,NULL], keep order:false, stats:pseudo
+├─IndexRangeScan_9(Build)	20.00	cop[tikv]	table:t, index:ie(e)	range:[0,0], [100,100], keep order:false, stats:pseudo
+└─TableRowIDScan_10(Probe)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+create global binding for
+select * from t where a = 10 and b = 20 and c > 30 and d is null and e in (0, 100)
+using
+select /*+ use_index_merge(t, ia, ib, ic, id, ie) */ * from t where a = 10 and b = 20 and c > 30 and d is null and e in (0, 100)
+;
+explain select * from t where a = 10 and b = 20 and c > 30 and d is null and e in (0, 100);
+id	estRows	task	access object	operator info
+IndexMerge_11	0.00	root		type: intersection
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:[10,10], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[20,20], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	3333.33	cop[tikv]	table:t, index:ic(c)	range:(30,+inf], keep order:false, stats:pseudo
+├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t, index:id(d)	range:[NULL,NULL], keep order:false, stats:pseudo
+├─IndexRangeScan_9(Build)	20.00	cop[tikv]	table:t, index:ie(e)	range:[0,0], [100,100], keep order:false, stats:pseudo
+└─TableRowIDScan_10(Probe)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo

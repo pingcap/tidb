@@ -15,6 +15,7 @@
 package ddltest
 
 import (
+	goctx "context"
 	"fmt"
 	"reflect"
 	"sync"
@@ -23,19 +24,19 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	goctx "golang.org/x/net/context"
 )
 
 // After add column finished, check the records in the table.
-func (s *ddlSuite) checkAddColumn(t *testing.T, rowID int64, defaultVal interface{}, updatedVal interface{}) {
+func (s *ddlSuite) checkAddColumn(t *testing.T, rowID int64, defaultVal any, updatedVal any) {
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := sessiontxn.NewTxn(goctx.Background(), ctx)
 	require.NoError(t, err)
 
 	tbl := s.getTable(t, "test_column")
@@ -83,9 +84,9 @@ func (s *ddlSuite) checkAddColumn(t *testing.T, rowID int64, defaultVal interfac
 	require.Greater(t, deleteCount, int64(0))
 }
 
-func (s *ddlSuite) checkDropColumn(t *testing.T, rowID int64, alterColumn *table.Column, updateDefault interface{}) {
+func (s *ddlSuite) checkDropColumn(t *testing.T, rowID int64, alterColumn *table.Column, updateDefault any) {
 	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
+	err := sessiontxn.NewTxn(goctx.Background(), ctx)
 	require.NoError(t, err)
 
 	tbl := s.getTable(t, "test_column")
@@ -139,7 +140,7 @@ func TestColumn(t *testing.T) {
 		Query      string
 		ColumnName string
 		Add        bool
-		Default    interface{}
+		Default    any
 	}{
 		{"alter table test_column add column c3 int default -1", "c3", true, int64(-1)},
 		{"alter table test_column drop column c3", "c3", false, nil},

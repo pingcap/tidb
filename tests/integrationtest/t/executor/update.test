@@ -1,0 +1,698 @@
+# TestUpdateGenColInTxn
+drop table if exists t;
+create table t(a bigint, b bigint as (a+1));
+begin;
+insert into t(a) values(1);
+-- error 3105
+update t set b=6 where b=2;
+commit;
+select * from t;
+
+# TestUpdateWithAutoidSchema
+drop table if exists t1, t2, t3;
+create table t1(id int primary key auto_increment, n int);
+create table t2(id int primary key, n float auto_increment, key I_n(n));
+create table t3(id int primary key, n double auto_increment, key I_n(n));
+insert into t1 set n = 1;
+select * from t1 where id = 1;
+update t1 set id = id+1;
+select * from t1 where id = 2;
+insert into t1 set n = 2;
+select * from t1 where id = 3;
+update t1 set id = id + '1.1' where id = 3;
+select * from t1 where id = 4;
+insert into t1 set n = 3;
+select * from t1 where id = 5;
+update t1 set id = id + '0.5' where id = 5;
+select * from t1 where id = 6;
+insert into t1 set n = 4;
+select * from t1 where id = 7;
+insert into t2 set id = 1;
+select * from t2 where id = 1;
+update t2 set n = n+1;
+select * from t2 where id = 1;
+insert into t2 set id = 2;
+select * from t2 where id = 2;
+update t2 set n = n + '2.2';
+select * from t2 where id = 2;
+insert into t2 set id = 3;
+select * from t2 where id = 3;
+update t2 set n = n + '0.5' where id = 3;
+select * from t2 where id = 3;
+insert into t2 set id = 4;
+select * from t2 where id = 4;
+insert into t3 set id = 1;
+select * from t3 where id = 1;
+update t3 set n = n+1;
+select * from t3 where id = 1;
+insert into t3 set id = 2;
+select * from t3 where id = 2;
+update t3 set n = n + '3.3';
+select * from t3 where id = 2;
+insert into t3 set id = 3;
+select * from t3 where id = 3;
+update t3 set n = n + '0.5' where id = 3;
+select * from t3 where id = 3;
+insert into t3 set id = 4;
+select * from t3 where id = 4;
+
+# TestUpdateMultiDatabaseTable
+drop table if exists t;
+drop database if exists test2;
+create database test2;
+create table t(a int, b int generated always  as (a+1) virtual);
+create table test2.t(a int, b int generated always  as (a+1) virtual);
+update t, test2.t set executor__update.t.a=1;
+drop database test2;
+
+# TestUpdateSwapColumnValues
+drop table if exists t1, t2;
+create table t1 (c_str varchar(40));
+create table t2 (c_str varchar(40));
+insert into t1 values ('Alice');
+insert into t2 values ('Bob');
+select t1.c_str, t2.c_str from t1, t2 where t1.c_str <= t2.c_str;
+update t1, t2 set t1.c_str = t2.c_str, t2.c_str = t1.c_str where t1.c_str <= t2.c_str;
+select t1.c_str, t2.c_str from t1, t2 where t1.c_str <= t2.c_str;
+drop table if exists t;
+create table t (a int, b int);
+insert into t values(1, 2);
+select * from t;
+update t set a=b, b=a;
+select * from t;
+drop table if exists t;
+create table t (a int, b int);
+insert into t values (1,3);
+select * from t;
+update t set a=b, b=a;
+select * from t;
+drop table if exists t;
+create table t (a int, b int, c int as (-a) virtual, d int as (-b) stored);
+insert into t(a, b) values (10, 11), (20, 22);
+select * from t;
+update t set a=b, b=a;
+select * from t;
+update t set b=30, a=b;
+select * from t;
+
+# TestMultiUpdateOnSameTable
+drop table if exists t;
+create table t(x int, y int);
+insert into t values();
+update t t1, t t2 set t2.y=1, t1.x=2;
+select * from t;
+update t t1, t t2 set t1.x=t2.y, t2.y=t1.x;
+select * from t;
+
+## Update generated columns
+drop table if exists t;
+create table t(x int, y int, z int as (x+10) stored, w int as (y-10) virtual);
+insert into t(x, y) values(1, 2), (3, 4);
+update t t1, t t2 set t2.y=1, t1.x=2 where t1.x=1;
+select * from t;
+update t t1, t t2 set t1.x=5, t2.y=t1.x where t1.x=3;
+select * from t;
+drop table if exists t;
+create table t(a int, b int, c int as (a+b) stored);
+insert into t(a, b) values (1, 2);
+update t t1, t t2 set t2.a=3;
+select * from t;
+update t t1, t t2 set t1.a=4, t2.b=5;
+select * from t;
+
+## Update primary keys
+drop table if exists t;
+create table t (a int primary key);
+insert into t values (1), (2);
+update t set a=a+2;
+select * from t;
+update t m, t n set m.a = n.a+10 where m.a=n.a;
+select * from t;
+drop table if exists t;
+create table t (a int primary key, b int);
+insert into t values (1,3), (2,4);
+-- error 1706
+update t m, t n set m.a = n.a+10, n.b = m.b+1 where m.a=n.a;
+drop table if exists t;
+create table t (a int, b int, c int, primary key(a, b));
+insert into t values (1,3,5), (2,4,6);
+update t m, t n set m.a = n.a+10, m.b = n.b+10 where m.a=n.a;
+select * from t;
+update t m, t n, t q set q.c=m.a+n.b, n.c = m.a+1, m.c = n.b+1 where m.b=n.b AND m.a=q.a;
+select * from t;
+-- error 1706
+update t m, t n, t q set m.a = m.a+1, n.c = n.c-1, q.c = q.a+q.b where m.b=n.b and n.b=q.b;
+
+# TestUpdateClusterIndex
+set tidb_enable_clustered_index = on;
+drop table if exists t;
+create table t(id varchar(200) primary key, v int);
+insert into t(id, v) values ('abc', 233);
+select id, v from t where id = 'abc';
+update t set id = 'dfg' where id = 'abc';
+select * from t;
+update t set id = 'aaa', v = 333 where id = 'dfg';
+select * from t where id = 'aaa';
+update t set v = 222 where id = 'aaa';
+select * from t where id = 'aaa';
+insert into t(id, v) values ('bbb', 111);
+-- error 1062
+update t set id = 'bbb' where id = 'aaa';
+drop table if exists ut3pk;
+create table ut3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3));
+insert into ut3pk(id1, id2, v, id3) values ('aaa', 'bbb', 233, 111);
+select id1, id2, id3, v from ut3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+update ut3pk set id1 = 'abc', id2 = 'bbb2', id3 = 222, v = 555 where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+select id1, id2, id3, v from ut3pk where id1 = 'abc' and id2 = 'bbb2' and id3 = 222;
+select id1, id2, id3, v from ut3pk;
+update ut3pk set v = 666 where id1 = 'abc' and id2 = 'bbb2' and id3 = 222;
+select id1, id2, id3, v from ut3pk;
+insert into ut3pk(id1, id2, id3, v) values ('abc', 'bbb3', 222, 777);
+-- error 1062
+update ut3pk set id2 = 'bbb3' where id1 = 'abc' and id2 = 'bbb2' and id3 = 222;
+drop table if exists ut1pku;
+create table ut1pku(id varchar(200) primary key, uk int, v int, unique key ukk(uk));
+insert into ut1pku(id, uk, v) values('a', 1, 2), ('b', 2, 3);
+select * from ut1pku;
+update ut1pku set uk = 3 where id = 'a';
+select * from ut1pku;
+-- error 1062
+update ut1pku set uk = 2 where id = 'a';
+select * from ut1pku;
+drop table if exists t;
+create table t(a char(10) primary key, b char(10));
+insert into t values('a', 'b');
+update t set a='c' where t.a='a' and b='b';
+select * from t;
+drop table if exists s;
+create table s (a int, b int, c int, primary key (a, b));
+insert s values (3, 3, 3), (5, 5, 5);
+update s set c = 10 where a = 3;
+select * from s;
+set tidb_enable_clustered_index = default;
+
+# TestDeleteClusterIndex
+set tidb_enable_clustered_index = on;
+drop table if exists t;
+create table t(id varchar(200) primary key, v int);
+insert into t(id, v) values ('abc', 233);
+delete from t where id = 'abc';
+select * from t;
+select * from t where id = 'abc';
+drop table if exists it3pk;
+create table it3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3));
+insert into it3pk(id1, id2, v, id3) values ('aaa', 'bbb', 233, 111);
+delete from it3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+select * from it3pk;
+select * from it3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+insert into it3pk(id1, id2, v, id3) values ('aaa', 'bbb', 433, 111);
+select * from it3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111;
+drop table if exists dt3pku;
+create table dt3pku(id varchar(200) primary key, uk int, v int, unique key uuk(uk));
+insert into dt3pku(id, uk, v) values('a', 1, 2);
+delete from dt3pku where id = 'a';
+select * from dt3pku;
+insert into dt3pku(id, uk, v) values('a', 1, 2);
+drop table if exists s1;
+create table s1 (a int, b int, c int, primary key (a, b));
+insert s1 values (3, 3, 3), (5, 5, 5);
+delete from s1 where a = 3;
+select * from s1;
+set tidb_enable_clustered_index = default;
+
+# TestReplaceClusterIndex
+set tidb_enable_clustered_index = on;
+drop table if exists rt1pk;
+create table rt1pk(id varchar(200) primary key, v int);
+replace into rt1pk(id, v) values('abc', 1);
+select * from rt1pk;
+replace into rt1pk(id, v) values('bbb', 233), ('abc', 2);
+select * from rt1pk;
+drop table if exists rt3pk;
+create table rt3pk(id1 timestamp, id2 time, v int, id3 year, primary key(id1, id2, id3));
+replace into rt3pk(id1, id2,id3, v) values('2018-01-01 11:11:11', '22:22:22', '2019', 1);
+select * from rt3pk;
+replace into rt3pk(id1, id2, id3, v) values('2018-01-01 11:11:11', '22:22:22', '2019', 2);
+select * from rt3pk;
+drop table if exists rt1pk1u;
+create table rt1pk1u(id varchar(200) primary key, uk int, v int, unique key uuk(uk));
+replace into rt1pk1u(id, uk, v) values("abc", 2, 1);
+select * from rt1pk1u;
+replace into rt1pk1u(id, uk, v) values("aaa", 2, 11);
+select * from rt1pk1u;
+set tidb_enable_clustered_index = default;
+
+# TestOutOfRangeWithUnsigned
+drop table if exists t;
+create table t(ts int(10) unsigned NULL DEFAULT NULL);
+insert into t values(1);
+-- error 1690
+update t set ts = IF(ts < (0 - ts), 1,1) where ts>0;
+
+# TestIssue23553
+drop table if exists tt;
+create table tt (m0 varchar(64), status tinyint not null);
+insert into tt values('1',0),('1',0),('1',0);
+update tt a inner join (select m0 from tt where status!=1 group by m0 having count(*)>1) b on a.m0=b.m0 set a.status=1;
+
+# TestUpdateUnsignedWithOverflow
+# see issue https://github.com/pingcap/tidb/issues/47816
+drop table if exists t1;
+create table t1(id int, a int unsigned);
+set sql_mode='';
+insert into t1 values(1, 10), (2, 20);
+update t1 set a='-1' where id=1;
+update t1 set a='1000000000000000000' where id=2;
+select id, a from t1 order by id asc;
+set sql_mode=default;
+
+# TestIssue21447
+drop table if exists t1;
+create table t1(id int primary key, name varchar(40));
+insert into t1 values(1, 'abc');
+
+begin pessimistic;
+
+connect (conn1, localhost, root,, executor__update);
+begin pessimistic;
+--enable_info
+update t1 set name='xyz' where id=1;
+--disable_info
+select * from t1 where id = 1;
+commit;
+disconnect conn1;
+
+--enable_info
+update t1 set name='xyz' where id=1;
+--disable_info
+select * from t1 where id = 1;
+select * from t1 where id = 1 for update;
+select * from t1 where id in (1, 2);
+select * from t1 where id in (1, 2) for update;
+commit;
+
+# TestUpdate
+drop table if exists update_test;
+create table update_test(id int not null default 1, name varchar(255), PRIMARY KEY(id));
+insert INTO update_test VALUES (1, "hello");
+insert into update_test values (2, "hello");
+--enable_info
+UPDATE update_test SET name = "abc" where id > 0;
+--disable_info
+
+## select data
+begin;
+SELECT * from update_test limit 2;
+commit;
+
+--enable_info
+UPDATE update_test SET name = "foo";
+--disable_info
+
+## table option is auto-increment
+begin;
+drop table if exists update_test;
+commit;
+begin;
+create table update_test(id int not null auto_increment, name varchar(255), primary key(id));
+insert into update_test(name) values ('aa');
+--enable_info
+update update_test set id = 8 where name = 'aa';
+--disable_info
+insert into update_test(name) values ('bb');
+commit;
+begin;
+select * from update_test;
+commit;
+begin;
+drop table if exists update_test;
+commit;
+begin;
+create table update_test(id int not null auto_increment, name varchar(255), index(id));
+insert into update_test(name) values ('aa');
+-- error 1048
+update update_test set id = null where name = 'aa';
+
+drop table update_test;
+create table update_test(id int);
+begin;
+insert into update_test(id) values (1);
+--enable_info
+update update_test set id = 2 where id = 1 limit 1;
+--disable_info
+select * from update_test;
+commit;
+
+## Test that in a transaction, when a constraint failed in an update statement, the record is not inserted.
+drop table if exists update_unique;
+create table update_unique (id int primary key, name int unique);
+insert update_unique values (1, 1), (2, 2);
+begin;
+-- error 1062
+update update_unique set name = 1 where id = 2;
+commit;
+select * from update_unique;
+
+## test update ignore for pimary key
+drop table if exists t;
+create table t(a bigint, primary key (a));
+insert into t values (1);
+insert into t values (2);
+--enable_info
+update ignore t set a = 1 where a = 2;
+--disable_info
+SHOW WARNINGS;
+select * from t;
+
+## test update ignore for truncate as warning
+update ignore t set a = 1 where a = (select '2a');
+SHOW WARNINGS;
+
+update ignore t set a = 42 where a = 2;
+select * from t;
+
+## test update ignore for unique key
+drop table if exists t;
+create table t(a bigint, unique key I_uniq (a));
+insert into t values (1);
+insert into t values (2);
+--enable_info
+update ignore t set a = 1 where a = 2;
+--disable_info
+SHOW WARNINGS;
+select * from t;
+
+## test issue21965
+drop table if exists t;
+set @@session.tidb_enable_list_partition = ON;
+create table t (a int) partition by list (a) (partition p0 values in (0,1));
+analyze table t;
+insert ignore into t values (1);
+--enable_info
+update ignore t set a=2 where a=1;
+--disable_info
+drop table if exists t;
+create table t (a int key) partition by list (a) (partition p0 values in (0,1));
+insert ignore into t values (1);
+--enable_info
+update ignore t set a=2 where a=1;
+--disable_info
+set @@session.tidb_enable_list_partition = default;
+
+drop table if exists t;
+create table t(id integer auto_increment, t1 datetime, t2 datetime, primary key (id));
+insert into t(t1, t2) values('2000-10-01 01:01:01', '2017-01-01 10:10:10');
+select * from t;
+--enable_info
+update t set t1 = '2017-10-01 10:10:11', t2 = date_add(t1, INTERVAL 10 MINUTE) where id = 1;
+--disable_info
+select * from t;
+
+## for issue #5132
+drop table if exists tt1;
+CREATE TABLE `tt1` (`a` int(11) NOT NULL,`b` varchar(32) DEFAULT NULL,`c` varchar(32) DEFAULT NULL,PRIMARY KEY (`a`),UNIQUE KEY `b_idx` (`b`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+insert into tt1 values(1, 'a', 'a');
+insert into tt1 values(2, 'd', 'b');
+select * from tt1;
+--enable_info
+update tt1 set a=5 where c='b';
+--disable_info
+select * from tt1;
+
+## Automatic Updating for TIMESTAMP
+drop table if exists tsup;
+CREATE TABLE `tsup` (`a` int,`ts` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,KEY `idx` (`ts`));
+set @@sql_mode='';
+insert into tsup values(1, '0000-00-00 00:00:00');
+--enable_info
+update tsup set a=5;
+--disable_info
+select t1.ts = t2.ts from (select ts from tsup use index (idx)) as t1, (select ts from tsup use index ()) as t2;
+update tsup set ts='2019-01-01';
+select ts from tsup;
+set @@sql_mode=default;
+
+## issue 5532
+drop table if exists decimals;
+create table decimals (a decimal(20, 0) not null);
+insert into decimals values (201);
+## A warning rather than data truncated error.
+--enable_info
+update decimals set a = a + 1.23;
+--disable_info
+show warnings;
+select * from decimals;
+
+drop table t;
+CREATE TABLE `t` (	`c1` year DEFAULT NULL, `c2` year DEFAULT NULL, `c3` date DEFAULT NULL, `c4` datetime DEFAULT NULL,	KEY `idx` (`c1`,`c2`));
+UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2;
+-- error 1288
+update (select * from t) t set c1 = 1111111;
+
+## test update ignore for bad null error
+drop table if exists t;
+create table t (i int not null default 10);
+insert into t values (1);
+--enable_info
+update ignore t set i = null;
+--disable_info
+SHOW WARNINGS;
+select * from t;
+
+## issue 7237, update subquery table should be forbidden
+drop table t;
+create table t (k int, v int);
+-- error 1288
+update t, (select * from t) as b set b.k = t.k;
+update t, (select * from t) as b set t.k = b.k;
+
+## issue 8045
+drop table if exists t1;
+CREATE TABLE t1 (c1 float);
+INSERT INTO t1 SET c1 = 1;
+--enable_info
+UPDATE t1 SET c1 = 1.2 WHERE c1=1;
+--disable_info
+
+## issue 8119
+drop table if exists t;
+create table t (c1 float(1,1));
+insert into t values (0.0);
+-- error 1264
+update t set c1 = 2.0;
+
+drop table if exists t;
+create table t(a datetime not null, b datetime);
+insert into t value('1999-12-12', '1999-12-13');
+set @@sql_mode='';
+select * from t;
+update t set a = '';
+select * from t;
+update t set b = '';
+select * from t;
+set @@sql_mode=default;
+
+drop view if exists v;
+create view v as select * from t;
+-- error 1288
+update v set a = '2000-11-11';
+drop view v;
+
+drop sequence if exists seq;
+create sequence seq;
+-- error 1054
+update seq set minvalue=1;
+drop sequence seq;
+
+drop table if exists t1, t2;
+create table t1(a int, b int, c int, d int, e int, index idx(a));
+create table t2(a int, b int, c int);
+update t1 join t2 on t1.a=t2.a set t1.a=1 where t2.b=1 and t2.c=2;
+
+## Assign `DEFAULT` in `UPDATE` statement
+drop table if exists t1, t2;
+create table t1 (a int default 1, b int default 2);
+insert into t1 values (10, 10), (20, 20);
+update t1 set a=default where b=10;
+select * from t1;
+update t1 set a=30, b=default where a=20;
+select * from t1;
+update t1 set a=default, b=default where a=30;
+select * from t1;
+insert into t1 values (40, 40);
+update t1 set a=default, b=default;
+select * from t1;
+update t1 set a=default(b), b=default(a);
+select * from t1;
+## With generated columns
+create table t2 (a int default 1, b int generated always as (-a) virtual, c int generated always as (-a) stored);
+insert into t2 values (10, default, default), (20, default, default);
+update t2 set b=default;
+select * from t2;
+update t2 set a=30, b=default where a=10;
+select * from t2;
+update t2 set c=default, a=40 where c=-20;
+select * from t2;
+update t2 set a=default, b=default, c=default where b=-30;
+select * from t2;
+update t2 set a=default(a), b=default, c=default;
+select * from t2;
+## Same as in MySQL 8.0.27, but still weird behavior: a=default(b) => NULL
+update t2 set a=default(b), b=default, c=default;
+select * from t2;
+-- error 3105
+update t2 set b=default(a);
+update t2 set a=default(a), c=default(c);
+select * from t2;
+## Same as in MySQL 8.0.27, but still weird behavior: a=default(b) => NULL
+update t2 set a=default(b), b=default(b);
+select * from t2;
+update t2 set a=default(a), c=default(c);
+select * from t2;
+## Allowed in MySQL, but should probably not be allowed.
+-- error 3105
+update t2 set a=default(a), c=default(a);
+drop table t1, t2;
+
+# TestUpdateSelect
+drop table if exists msg, detail;
+create table msg (id varchar(8), b int, status int, primary key (id, b));
+insert msg values ('abc', 1, 1);
+create table detail (id varchar(8), start varchar(8), status int, index idx_start(start));
+insert detail values ('abc', '123', 2);
+--enable_info
+UPDATE msg SET msg.status = (SELECT detail.status FROM detail WHERE msg.id = detail.id);
+--disable_info
+admin check table msg;
+
+# TestUpdateDelete
+drop table if exists ttt;
+CREATE TABLE ttt (id bigint(20) NOT NULL, host varchar(30) NOT NULL, PRIMARY KEY (id), UNIQUE KEY i_host (host));
+insert into ttt values (8,8),(9,9);
+begin;
+--enable_info
+update ttt set id = 0, host='9' where id = 9 limit 1;
+--disable_info
+delete from ttt where id = 0 limit 1;
+select * from ttt use index (i_host) order by host;
+--enable_info
+update ttt set id = 0, host='8' where id = 8 limit 1;
+--disable_info
+delete from ttt where id = 0 limit 1;
+select * from ttt use index (i_host) order by host;
+commit;
+admin check table ttt;
+drop table ttt;
+
+# TestUpdateAffectRowCnt
+drop table if exists a;
+create table a(id int auto_increment, a int default null, primary key(id));
+insert into a values (1, 1001), (2, 1001), (10001, 1), (3, 1);
+--enable_info
+update a set id = id*10 where a = 1001;
+--disable_info
+drop table a;
+create table a ( a bigint, b bigint);
+insert into a values (1, 1001), (2, 1001), (10001, 1), (3, 1);
+--enable_info
+update a set a = a*10 where b = 1001;
+--disable_info
+
+# TestMultipleTableUpdate
+drop table if exists items, month;
+CREATE TABLE items (id int, price TEXT);
+--enable_info
+insert into items values (11, "items_price_11"), (12, "items_price_12"), (13, "items_price_13");
+--disable_info
+CREATE TABLE month (mid int, mprice TEXT);
+--enable_info
+insert into month values (11, "month_price_11"), (22, "month_price_22"), (13, "month_price_13");
+UPDATE items, month  SET items.price=month.mprice WHERE items.id=month.mid;
+--disable_info
+begin;
+SELECT * FROM items;
+commit;
+
+## Single-table syntax but with multiple tables
+--enable_info
+UPDATE items join month on items.id=month.mid SET items.price=month.mid;
+--disable_info
+begin;
+SELECT * FROM items;
+commit;
+
+## JoinTable with alias table name.
+--enable_info
+UPDATE items T0 join month T1 on T0.id=T1.mid SET T0.price=T1.mprice;
+--disable_info
+begin;
+SELECT * FROM items;
+commit;
+
+## fix https://github.com/pingcap/tidb/issues/369
+DROP TABLE IF EXISTS t1, t2;
+create table t1 (c int);
+create table t2 (c varchar(256));
+insert into t1 values (1), (2);
+insert into t2 values ("a"), ("b");
+--enable_info
+update t1, t2 set t1.c = 10, t2.c = "abc";
+--disable_info
+
+## fix https://github.com/pingcap/tidb/issues/376
+DROP TABLE IF EXISTS t1, t2;
+create table t1 (c1 int);
+create table t2 (c2 int);
+insert into t1 values (1), (2);
+insert into t2 values (1), (2);
+--enable_info
+update t1, t2 set t1.c1 = 10, t2.c2 = 2 where t2.c2 = 1;
+--disable_info
+select * from t1;
+
+## test https://github.com/pingcap/tidb/issues/3604
+drop table if exists t;
+create table t (a int, b int);
+--enable_info
+insert into t values(1, 1), (2, 2), (3, 3);
+update t m, t n set m.a = m.a + 1;
+--disable_info
+select * from t;
+--enable_info
+update t m, t n set n.a = n.a - 1, n.b = n.b + 1;
+--disable_info
+select * from t;
+
+# TestUpdateCastOnlyModifiedValues for issue #4514.
+drop table if exists update_modified;
+create table update_modified (col_1 int, col_2 enum('a', 'b'));
+set SQL_MODE='';
+insert into update_modified values (0, 3);
+SELECT * FROM update_modified;
+set SQL_MODE=STRICT_ALL_TABLES;
+--enable_info
+update update_modified set col_1 = 1;
+--disable_info
+SELECT * FROM update_modified;
+-- error 1265
+update update_modified set col_1 = 2, col_2 = 'c';
+SELECT * FROM update_modified;
+--enable_info
+update update_modified set col_1 = 3, col_2 = 'a';
+--disable_info
+SELECT * FROM update_modified;
+
+## Test update a field with different column type.
+drop table if exists update_with_diff_type;
+CREATE TABLE update_with_diff_type (a int, b JSON);
+INSERT INTO update_with_diff_type VALUES(3, '{"a": "测试"}');
+--enable_info
+UPDATE update_with_diff_type SET a = '300';
+--disable_info
+SELECT a FROM update_with_diff_type;
+--enable_info
+UPDATE update_with_diff_type SET b = '{"a":   "\\u6d4b\\u8bd5"}';
+--disable_info
+SELECT b FROM update_with_diff_type;
+set SQL_MODE=default;
+

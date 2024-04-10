@@ -17,20 +17,21 @@
 
 ## Documentation
 
-[Chinese Document](https://docs.pingcap.com/zh/tidb/v4.0/backup-and-restore-tool)
+[Chinese Document](https://docs.pingcap.com/zh/tidb/stable/backup-and-restore-overview)
 
-[English Document](https://docs.pingcap.com/tidb/v4.0/backup-and-restore-tool)
+[English Document](https://docs.pingcap.com/tidb/stable/backup-and-restore-overview)
 
-[Backup SQL Statement](https://docs.pingcap.com/tidb/v4.0/sql-statement-backup)
+[Backup SQL Statement](https://docs.pingcap.com/tidb/stable/sql-statement-backup)
 
-[Restore SQL Statement](https://docs.pingcap.com/tidb/v4.0/sql-statement-restore)
+[Restore SQL Statement](https://docs.pingcap.com/tidb/stable/sql-statement-restore)
 
 ## Building
 
 To build binary and run test:
 
 ```bash
-$ make
+$ cd ../tidb
+$ make build_br
 $ make test
 ```
 
@@ -100,7 +101,7 @@ tiup bench tpcc --warehouses 1 prepare
 mysql --host 127.0.0.1 --port 4000 -E -e "SELECT COUNT(*) FROM test.order_line" -u root -p
 
 # Build br.
-make build
+make build_br
 
 # Backup TPC-C test data.
 bin/br backup table --db test \
@@ -125,7 +126,7 @@ mysql --host 127.0.0.1 -P4000 -E -e "SELECT COUNT(*) FROM test.order_line" -uroo
 
 ## Compatibility test
 
-See [COMPATBILE_TEST](./COMPATIBLE_TEST.md)
+See [COMPATBILE_TEST](./COMPATIBILITY_TEST.md)
 
 ## Contributing
 

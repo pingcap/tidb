@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "util",
+    srcs = [
+        "exclude.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/build/linter/util",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//build",
+        "@co_honnef_go_tools//analysis/report",
+        "@org_golang_x_tools//go/analysis",
+        "@org_golang_x_tools//go/loader",
+    ],
+)
+
+go_test(
+    name = "util_test",
+    timeout = "short",
+    srcs = ["exclude_test.go"],
+    embed = [":util"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

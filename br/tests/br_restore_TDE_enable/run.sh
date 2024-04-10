@@ -18,6 +18,7 @@ set -eux
 DB="$TEST_NAME"
 TABLE="usertable"
 DB_COUNT=3
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 # start Minio KMS service
 # curl -sSL --tlsv1.2 \
@@ -84,7 +85,7 @@ bin/mc config --config-dir "$TEST_DIR/$TEST_NAME"  \
 # Fill in the database
 for i in $(seq $DB_COUNT); do
     run_sql "CREATE DATABASE $DB${i};"
-    go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
+    go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
 done
 
 bin/mc mb --config-dir "$TEST_DIR/$TEST_NAME" minio/mybucket
@@ -107,7 +108,7 @@ for p in $(seq 2); do
       --s3.sse AES256
     
 # ensure the tikv data file are encrypted
-bin/tikv-ctl --config=tests/config/tikv.toml encryption-meta dump-file | grep "Aes256Ctr"
+tikv-ctl --config=$CUR/../config/tikv.toml encryption-meta dump-file | grep "Aes256Ctr"
 
 
   for i in $(seq $DB_COUNT); do

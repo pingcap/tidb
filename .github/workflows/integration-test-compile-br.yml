@@ -1,0 +1,77 @@
+name: BR & Lightning
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - "release-[0-9].[0-9]*"
+    paths:
+      - "br/**"
+      - "!**.html"
+      - "!**.md"
+      - "!CNAME"
+      - "!LICENSE"
+      - "!br/docs/**"
+      - "!br/tests/**"
+      - "!br/docker/**"
+  #change trigger policy
+  pull_request:
+    types:
+      - labeled # <--
+    branches:
+      - master
+      - "release-[0-9].[0-9]*"
+    paths:
+      - "br/**"
+      - "!**.html"
+      - "!**.md"
+      - "!CNAME"
+      - "!LICENSE"
+      - "!br/docs/**"
+      - "!br/tests/**"
+      - "!br/docker/**"
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read  #  to fetch code (actions/checkout)
+
+jobs:
+  compile:
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    name: Compile for ${{ matrix.os }}
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest,  ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v2.1.0
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run build
+        run: make build_tools
+
+  compile-freebsd:
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    name: Compile for FreeBSD job
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2.1.0
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Compile for FreeBSD
+        run: GOOS=freebsd make build_tools

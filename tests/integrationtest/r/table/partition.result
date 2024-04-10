@@ -1,0 +1,571 @@
+drop table if exists partition_basic;
+CREATE TABLE partition_basic (id int(11), unique index(id))
+PARTITION BY RANGE COLUMNS ( id ) (
+PARTITION p0 VALUES LESS THAN (6),
+PARTITION p1 VALUES LESS THAN (11),
+PARTITION p2 VALUES LESS THAN (16),
+PARTITION p3 VALUES LESS THAN (21)
+);
+insert into partition_basic values(0);
+insert into partition_basic values(2) on duplicate key update id = 1;
+update partition_basic set id = 7 where id = 0;
+select * from partition_basic where id = 7;
+id
+7
+select * from partition_basic partition (p1);
+id
+7
+select * from partition_basic partition (p5);
+Error 1735 (HY000): Unknown partition 'p5' in table 'partition_basic'
+update partition_basic set id = 666 where id = 7;
+Error 1526 (HY000): Table has no partition for value from column_list
+update partition_basic set id = 9 where id = 7;
+delete from partition_basic where id = 7;
+delete from partition_basic where id = 9;
+drop table partition_basic;
+drop table if exists t_month_data_monitor;
+CREATE TABLE t_month_data_monitor (
+id int(20) NOT NULL AUTO_INCREMENT,
+data_date date NOT NULL,
+PRIMARY KEY (id, data_date)
+) PARTITION BY RANGE COLUMNS(data_date) (
+PARTITION p20190401 VALUES LESS THAN ('2019-04-02'),
+PARTITION p20190402 VALUES LESS THAN ('2019-04-03')
+);
+INSERT INTO t_month_data_monitor VALUES (4, '2019-04-04');
+Error 1526 (HY000): Table has no partition for value from column_list
+drop table if exists t_range_locate;
+CREATE TABLE t_range_locate (
+id int(20) NOT NULL AUTO_INCREMENT,
+data_date date NOT NULL,
+PRIMARY KEY (id, data_date)
+) PARTITION BY RANGE(id) (
+PARTITION p0 VALUES LESS THAN (1024),
+PARTITION p1 VALUES LESS THAN (4096)
+);
+INSERT INTO t_range_locate VALUES (5000, '2019-04-04');
+Error 1526 (HY000): Table has no partition for value 5000
+drop table if exists t_extra;
+CREATE TABLE t_extra (
+id int(20) NOT NULL AUTO_INCREMENT,
+x int(10) not null,
+PRIMARY KEY (id, x)
+) PARTITION BY RANGE(id) (
+PARTITION p0 VALUES LESS THAN (1024),
+PARTITION p1 VALUES LESS THAN (4096)
+);
+INSERT INTO t_extra VALUES (1000, 1000), (2000, 2000);
+begin;
+select * from t_extra where id = 1000 for update;
+id	x
+1000	1000
+commit;
+drop table if exists t_a, t_b;
+CREATE TABLE t_a (
+id int(20),
+data_date date
+) partition by hash(id) partitions 10;
+CREATE TABLE t_b (
+id int(20),
+data_date date
+) PARTITION BY RANGE(id) (
+PARTITION p0 VALUES LESS THAN (2),
+PARTITION p1 VALUES LESS THAN (4),
+PARTITION p2 VALUES LESS THAN (6)
+);
+INSERT INTO t_a VALUES (1, '2020-08-25'), (2, '2020-08-25'), (3, '2020-08-25'), (4, '2020-08-25'), (5, '2020-08-25');
+INSERT INTO t_b VALUES (1, '2020-08-25'), (2, '2020-08-25'), (3, '2020-08-25'), (4, '2020-08-25'), (5, '2020-08-25');
+update t_a, t_b set t_a.data_date = '2020-08-24',  t_a.data_date = '2020-08-23', t_a.id = t_a.id + t_b.id where t_a.id = t_b.id;
+select id from t_a order by id;
+id
+2
+4
+6
+8
+10
+drop table if exists t_hash_locate, t_range;
+CREATE TABLE t_hash_locate (
+id int(20),
+data_date date
+) partition by hash(id) partitions 10;
+CREATE TABLE t_range (
+id int(10) NOT NULL,
+data_date date,
+PRIMARY KEY (id)
+) PARTITION BY RANGE(id) (
+PARTITION p0 VALUES LESS THAN (1),
+PARTITION p1 VALUES LESS THAN (2),
+PARTITION p2 VALUES LESS THAN (4)
+);
+INSERT INTO t_hash_locate VALUES (), (), (), ();
+SELECT count(*) FROM t_hash_locate PARTITION (p0);
+count(*)
+4
+INSERT INTO t_range VALUES (-1, NULL), (1, NULL), (2, NULL), (3, NULL);
+SELECT count(*) FROM t_range PARTITION (p0);
+count(*)
+1
+SELECT count(*) FROM t_range PARTITION (p1);
+count(*)
+1
+SELECT count(*) FROM t_range PARTITION (p2);
+count(*)
+2
+INSERT INTO t_range VALUES (4, NULL);
+Error 1526 (HY000): Table has no partition for value 4
+SET @@time_zone = 'Asia/Shanghai';
+drop table if exists timezone_test;
+CREATE TABLE timezone_test (
+id int(11) NOT NULL,
+creation_dt timestamp DEFAULT CURRENT_TIMESTAMP ) PARTITION BY RANGE ( UNIX_TIMESTAMP(`creation_dt`) )
+( PARTITION p5 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:10:00') ),
+PARTITION p6 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:15:00') ),
+PARTITION p7 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:20:00') ),
+PARTITION p8 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:25:00') ),
+PARTITION p9 VALUES LESS THAN (MAXVALUE) );
+SHOW CREATE TABLE timezone_test;
+Table	Create Table
+timezone_test	CREATE TABLE `timezone_test` (
+  `id` int(11) NOT NULL,
+  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (UNIX_TIMESTAMP(`creation_dt`))
+(PARTITION `p5` VALUES LESS THAN (1578035400),
+ PARTITION `p6` VALUES LESS THAN (1578035700),
+ PARTITION `p7` VALUES LESS THAN (1578036000),
+ PARTITION `p8` VALUES LESS THAN (1578036300),
+ PARTITION `p9` VALUES LESS THAN (MAXVALUE))
+DROP TABLE timezone_test;
+SET @@time_zone = 'UTC';
+CREATE TABLE timezone_test (
+id int(11) NOT NULL,
+creation_dt timestamp DEFAULT CURRENT_TIMESTAMP ) PARTITION BY RANGE ( UNIX_TIMESTAMP(`creation_dt`) )
+( PARTITION p5 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:10:00') ),
+PARTITION p6 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:15:00') ),
+PARTITION p7 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:20:00') ),
+PARTITION p8 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:25:00') ),
+PARTITION p9 VALUES LESS THAN (MAXVALUE) );
+SHOW CREATE TABLE timezone_test;
+Table	Create Table
+timezone_test	CREATE TABLE `timezone_test` (
+  `id` int(11) NOT NULL,
+  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (UNIX_TIMESTAMP(`creation_dt`))
+(PARTITION `p5` VALUES LESS THAN (1578064200),
+ PARTITION `p6` VALUES LESS THAN (1578064500),
+ PARTITION `p7` VALUES LESS THAN (1578064800),
+ PARTITION `p8` VALUES LESS THAN (1578065100),
+ PARTITION `p9` VALUES LESS THAN (MAXVALUE))
+SET @@time_zone = 'Asia/Shanghai';
+INSERT INTO timezone_test VALUES (1,'2020-01-03 15:16:59');
+SELECT * FROM timezone_test PARTITION (p5);
+id	creation_dt
+1	2020-01-03 15:16:59
+SELECT * FROM timezone_test PARTITION (p6);
+id	creation_dt
+SELECT * FROM timezone_test PARTITION (p7);
+id	creation_dt
+SELECT * FROM timezone_test PARTITION (p8);
+id	creation_dt
+SELECT * FROM timezone_test PARTITION (p9);
+id	creation_dt
+SET @@time_zone = 'UTC';
+INSERT INTO timezone_test VALUES (1,'2020-01-03 15:16:59');
+SELECT * FROM timezone_test PARTITION (p5);
+id	creation_dt
+1	2020-01-03 07:16:59
+SELECT * FROM timezone_test PARTITION (p6);
+id	creation_dt
+SELECT * FROM timezone_test PARTITION (p7);
+id	creation_dt
+1	2020-01-03 15:16:59
+SELECT * FROM timezone_test PARTITION (p8);
+id	creation_dt
+SELECT * FROM timezone_test PARTITION (p9);
+id	creation_dt
+set @@time_zone = DEFAULT;
+drop table if exists t7;
+create table t7 (a int) partition by range (mod((select * from t), 5)) (partition p1 values less than (1));
+Error 1564 (HY000): This partition function is not allowed
+create table t7 (a int) partition by range (1 + (select * from t)) (partition p1 values less than (1));
+Error 1564 (HY000): This partition function is not allowed
+create table t7 (a int) partition by range (a + row(1, 2, 3)) (partition p1 values less than (1));
+Error 1564 (HY000): This partition function is not allowed
+create table t7 (a int) partition by range (-(select * from t)) (partition p1 values less than (1));
+Error 1564 (HY000): This partition function is not allowed
+drop table if exists t2;
+drop table if exists tu;
+CREATE TABLE tu (c1 BIGINT UNSIGNED) PARTITION BY RANGE(c1 - 10) (
+PARTITION p0 VALUES LESS THAN (-5),
+PARTITION p1 VALUES LESS THAN (0),
+PARTITION p2 VALUES LESS THAN (5),
+PARTITION p3 VALUES LESS THAN (10),
+PARTITION p4 VALUES LESS THAN (MAXVALUE));
+Error 1563 (HY000): Partition constant is out of partition function domain
+SET @@sql_mode='NO_UNSIGNED_SUBTRACTION';
+create table t2 (a bigint unsigned) partition by range (a) (
+partition p1 values less than (0),
+partition p2 values less than (1),
+partition p3 values less than (18446744073709551614),
+partition p4 values less than (18446744073709551615),
+partition p5 values less than maxvalue);
+insert into t2 values(10);
+CREATE TABLE tu (c1 BIGINT UNSIGNED) PARTITION BY RANGE(c1 - 10) (
+PARTITION p0 VALUES LESS THAN (-5),
+PARTITION p1 VALUES LESS THAN (0),
+PARTITION p2 VALUES LESS THAN (5),
+PARTITION p3 VALUES LESS THAN (10),
+PARTITION p4 VALUES LESS THAN (MAXVALUE));
+Error 1563 (HY000): Partition constant is out of partition function domain
+drop table if exists tu;
+drop table if exists t2;
+set sql_mode = DEFAULT;
+drop table if exists t_uint;
+create table t_uint (id bigint unsigned) partition by range (id) (
+partition p0 values less than (4294967293),
+partition p1 values less than (4294967296),
+partition p2 values less than (484467440737095),
+partition p3 values less than (18446744073709551614));
+insert into t_uint values (1);
+insert into t_uint values (4294967294);
+insert into t_uint values (4294967295);
+insert into t_uint values (18446744073709551613);
+select * from t_uint where id > 484467440737095;
+id
+18446744073709551613
+select * from t_uint where id = 4294967295;
+id
+4294967295
+select * from t_uint where id < 4294967294;
+id
+1
+select * from t_uint where id >= 4294967293 order by id;
+id
+4294967294
+4294967295
+18446744073709551613
+create table t_int (id bigint signed) partition by range (id) (
+partition p0 values less than (-4294967293),
+partition p1 values less than (-12345),
+partition p2 values less than (0),
+partition p3 values less than (484467440737095),
+partition p4 values less than (9223372036854775806));
+insert into t_int values (-9223372036854775803);
+insert into t_int values (-429496729312);
+insert into t_int values (-1);
+insert into t_int values (4294967295);
+insert into t_int values (9223372036854775805);
+select * from t_int where id > 484467440737095;
+id
+9223372036854775805
+select * from t_int where id = 4294967295;
+id
+4294967295
+select * from t_int where id = -4294967294;
+id
+select * from t_int where id < -12345 order by id desc;
+id
+-429496729312
+-9223372036854775803
+drop table if exists t1, t2, t3;
+create table t1 (a int, b tinyint)  partition by range (a) (    partition p0 values less than (10),    partition p1 values less than (20),    partition p2 values less than (30),    partition p3 values less than (40),    partition p4 values less than MAXVALUE);
+insert into t1 values(NULL, NULL), (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (10, 10), (11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (20, 20), (21, 21), (22, 22), (23, 23), (24, 24), (25, 25), (30, 30), (31, 31), (32, 32), (33, 33), (34, 34), (35, 35), (36, 36), (40, 40), (50, 50), (80, 80), (90, 90), (100, 100);
+create table t2 (a int, b bigint) partition by hash(a) partitions 10;
+insert into t2 values (NULL, NULL), (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (17, 17), (18, 18), (19, 19), (20, 20), (21, 21), (22, 22), (23, 23);
+select /*+ HASH_JOIN(t1, t2) */ * from t1 partition (p0) left join t2 partition (p1) on t1.a = t2.a where t1.a = 6 order by t1.a, t1.b, t2.a, t2.b;
+a	b	a	b
+6	6	NULL	NULL
+select /*+ HASH_JOIN(t1, t2) */ * from t2 partition (p1) left join t1 partition (p0) on t2.a = t1.a where t2.a = 6 order by t1.a, t1.b, t2.a, t2.b;
+a	b	a	b
+select * from t2 partition (p1) where t2.a = 6;
+a	b
+drop tables if exists t4;
+CREATE TABLE t4(
+a bit(1) DEFAULT NULL,
+b int(11) DEFAULT NULL
+) PARTITION BY HASH(a)
+PARTITIONS 3;
+INSERT INTO t4 VALUES(0, 0);
+INSERT INTO t4 VALUES(1, 1);
+SELECT * FROM t4 WHERE a = 1;
+a	b
+	1
+drop tables if exists t4;
+drop tables if exists t_21574;
+create table t_21574 (`key` int, `table` int) partition by range columns (`key`) (partition p0 values less than (10));
+drop table t_21574;
+create table t_21574 (`key` int, `table` int) partition by list columns (`key`) (partition p0 values in (10));
+drop table t_21574;
+create table t_21574 (`key` int, `table` int) partition by list columns (`key`,`table`) (partition p0 values in ((1,1)));
+drop tables if exists t_24746;
+create table t_24746 (a int, b varchar(60), c int, primary key(a)) partition by range(a) (partition p0 values less than (5),partition p1 values less than (10), partition p2 values less than maxvalue);
+insert into t_24746 partition (p1) values(4,'ERROR, not matching partition p1',4);
+Error 1748 (HY000): Found a row not matching the given partition set
+insert into t_24746 partition (p0) values(4,'OK, first row in correct partition',4);
+insert into t_24746 partition (p0) values(4,'DUPLICATE, in p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to write to p1';
+Error 1748 (HY000): Found a row not matching the given partition set
+insert into t_24746 partition (p1) values(4,'ERROR, not allowed to read from partition p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to read from p0!';
+Error 1748 (HY000): Found a row not matching the given partition set
+drop table t_24746;
+drop table if exists tkey1, tkey_string, tkey_string2, tkey_json, tkey_linear, tkey_algorithm1, tkey_algorithm2, tkey_algorithm3;
+drop table if exists tkey_subpartition1, tkey10, tkey11, tkey12, tkey12_2, tkey13, tkey14, tkey15, tkey16;
+CREATE TABLE tkey1 (col1 INT NOT NULL, col2 DATE NOT NULL,col3 INT NOT NULL, col4 INT NOT NULL, UNIQUE KEY (col3)) PARTITION BY KEY(col3)(PARTITION `p0`,PARTITION `p1`,PARTITION `p2`,PARTITION `p3`);
+show create table tkey1;
+Table	Create Table
+tkey1	CREATE TABLE `tkey1` (
+  `col1` int(11) NOT NULL,
+  `col2` date NOT NULL,
+  `col3` int(11) NOT NULL,
+  `col4` int(11) NOT NULL,
+  UNIQUE KEY `col3` (`col3`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY (`col3`) PARTITIONS 4
+create table tkey_string(
+id5 BLOB not null,
+id6 TEXT not null,
+name varchar(16)
+) PARTITION BY KEY(id5) partitions 4;
+Error 1659 (HY000): Field 'id5' is of a not allowed type for this type of partitioning
+create table tkey_string2(
+id5 BLOB not null,
+id6 TEXT not null,
+name varchar(16)
+) PARTITION BY KEY(id6) partitions 4;
+Error 1659 (HY000): Field 'id6' is of a not allowed type for this type of partitioning
+CREATE TABLE tkey_json (c1 JSON) PARTITION BY KEY(c1) partitions 4;
+Error 1659 (HY000): Field 'c1' is of a not allowed type for this type of partitioning
+CREATE TABLE tkey_linear (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY LINEAR KEY(col3) PARTITIONS 5;
+Level	Code	Message
+Warning	8200	LINEAR KEY is not supported, using non-linear KEY instead
+CREATE TABLE tkey_algorithm1 (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY KEY ALGORITHM=1 (col3) PARTITIONS 5;
+CREATE TABLE tkey_algorithm2 (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY KEY ALGORITHM=2 (col3) PARTITIONS 5;
+CREATE TABLE tkey_algorithm3 (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY KEY ALGORITHM=3 (col3) PARTITIONS 5;
+Error 1149 (42000): You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use
+CREATE TABLE tkey_subpartition1 (a INT not null,b VARCHAR(12) not null,c CHAR(14) not null,primary key (a, b, c)) PARTITION BY KEY (a) SUBPARTITION BY KEY(b) SUBPARTITIONS 2;
+Error 1500 (HY000): It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning
+CREATE TABLE tkey_subpartition1 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))PARTITION BY RANGE(JYRQ)
+SUBPARTITION BY KEY(KHH) SUBPARTITIONS 2
+(PARTITION p0 VALUES LESS THAN (8),
+PARTITION p1 VALUES LESS THAN (16),
+PARTITION p2 VALUES LESS THAN MAXVALUE);
+Level	Code	Message
+Warning	8200	Unsupported subpartitioning, only using RANGE partitioning
+CREATE TABLE tkey10 (`col1` int, `col2` char(5),`col3` date)/*!50100 PARTITION BY KEY (col3) PARTITIONS 5 */;
+show create table tkey10;
+Table	Create Table
+tkey10	CREATE TABLE `tkey10` (
+  `col1` int(11) DEFAULT NULL,
+  `col2` char(5) DEFAULT NULL,
+  `col3` date DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY (`col3`) PARTITIONS 5
+CREATE TABLE tkey11 (`col1` int, `col2` char(5),`col3` date)/*!50100 PARTITION BY KEY (col1) PARTITIONS 4
+(PARTITION `pp0`,
+PARTITION `pp1`,
+PARTITION `pp2`,
+PARTITION `pp3`)
+*/;
+show create table tkey11;
+Table	Create Table
+tkey11	CREATE TABLE `tkey11` (
+  `col1` int(11) DEFAULT NULL,
+  `col2` char(5) DEFAULT NULL,
+  `col3` date DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY (`col1`)
+(PARTITION `pp0`,
+ PARTITION `pp1`,
+ PARTITION `pp2`,
+ PARTITION `pp3`)
+CREATE TABLE tkey12 (`col1` int, `col2` char(5),`col3` date)PARTITION BY KEY (col1)
+(PARTITION `pp0` comment 'huaian',
+PARTITION `pp1` comment 'nanjing',
+PARTITION `pp2` comment 'zhenjiang',
+PARTITION `pp3` comment 'suzhou');
+show create table tkey12;
+Table	Create Table
+tkey12	CREATE TABLE `tkey12` (
+  `col1` int(11) DEFAULT NULL,
+  `col2` char(5) DEFAULT NULL,
+  `col3` date DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY (`col1`)
+(PARTITION `pp0` COMMENT 'huaian',
+ PARTITION `pp1` COMMENT 'nanjing',
+ PARTITION `pp2` COMMENT 'zhenjiang',
+ PARTITION `pp3` COMMENT 'suzhou')
+drop placement policy if exists fivereplicas;
+CREATE PLACEMENT POLICY fivereplicas FOLLOWERS=4;
+CREATE TABLE tkey13 (`col1` int, `col2` char(5),`col3` date) placement policy fivereplicas
+PARTITION BY KEY (col1) PARTITIONS 4;
+show create table tkey13;
+Table	Create Table
+tkey13	CREATE TABLE `tkey13` (
+  `col1` int(11) DEFAULT NULL,
+  `col2` char(5) DEFAULT NULL,
+  `col3` date DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`fivereplicas` */
+PARTITION BY KEY (`col1`) PARTITIONS 4
+CREATE TABLE tkey14 (`col1` int, `col2` int,`col3` int, col4 int)
+PARTITION BY KEY (col3) PARTITIONS 4;
+INSERT INTO tkey14 values(20,1,1,1),(1,2,NULL,2),(3,3,3,3),(3,3,NULL,3),(4,4,4,4),(5,5,5,5),(6,6,null,6),(7,7,7,7),(8,8,8,8),(9,9,9,9),(10,10,10,5),(11,11,11,6),(12,12,12,12),(13,13,13,13),(14,14,null,14);
+SELECT count(*) FROM tkey14 WHERE col3 = NULL;
+count(*)
+0
+SELECT count(*) FROM tkey14 WHERE col3 IS NULL;
+count(*)
+4
+EXPLAIN format="brief" SELECT count(*) FROM tkey14 WHERE col3 IS NULL;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:count(Column#8)->Column#6
+└─TableReader	1.00	root	partition:p1	data:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#8
+    └─Selection	10.00	cop[tikv]		isnull(table__partition.tkey14.col3)
+      └─TableFullScan	10000.00	cop[tikv]	table:tkey14	keep order:false, stats:pseudo
+CREATE TABLE tkey15 (`col1` int, col2 DATE NOT NULL,col3 VARCHAR(12), col4 int)
+PARTITION BY KEY (col3) PARTITIONS 4;
+INSERT INTO tkey15 VALUES(1, '2023-02-22', 'linpin', 1), (2, '2023-02-22', NULL, 2), (3, '2023-02-22', 'anqila', 3), (4, '2023-02-22', NULL, 4);
+EXPLAIN format="brief" SELECT count(*) FROM tkey15 WHERE col3 IS NULL;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:count(Column#8)->Column#6
+└─TableReader	1.00	root	partition:p1	data:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#8
+    └─Selection	10.00	cop[tikv]		isnull(table__partition.tkey15.col3)
+      └─TableFullScan	10000.00	cop[tikv]	table:tkey15	keep order:false, stats:pseudo
+CREATE TABLE tkey12_2 (col1 INT, col2 INT ,col3 INT ,col4 INT , UNIQUE KEY(col2, col3)) PARTITION BY KEY(col2, col3) PARTITIONS 4;
+INSERT INTO tkey12_2 values(20,1,1,1),(1,2,NULL,2),(3,3,3,3),(3,3,NULL,3),(4,4,4,4),(5,5,5,5), (6,6,null,6),(7,7,7,7),(8,8,8,8),(9,9,9,9),(10,10,10,5),(11,11,11,6),(12,12,12,12),(13,13,13,13),(14,14,null,14);
+EXPLAIN format="brief" SELECT * FROM tkey12_2 WHERE col2 = 2 and col3 IS NULL;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root	partition:p2	
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:tkey12_2, index:col2(col2, col3)	range:[2 NULL,2 NULL], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tkey12_2	keep order:false, stats:pseudo
+SELECT * FROM tkey12_2 WHERE col2 = 2 and col3 IS NULL;
+col1	col2	col3	col4
+1	2	NULL	2
+EXPLAIN format="brief" SELECT * FROM tkey12_2 WHERE col2 = 2;
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root	partition:all	
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, index:col2(col2, col3)	range:[2,2], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2	keep order:false, stats:pseudo
+SELECT * FROM tkey12_2 WHERE col2 = 2;
+col1	col2	col3	col4
+1	2	NULL	2
+EXPLAIN format="brief" SELECT * FROM tkey12_2 WHERE col2 = 2;
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root	partition:all	
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, index:col2(col2, col3)	range:[2,2], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2	keep order:false, stats:pseudo
+SELECT * FROM tkey12_2 WHERE col2 IS NULL;
+col1	col2	col3	col4
+EXPLAIN format="brief" SELECT * FROM tkey12_2 WHERE col2 IS NULL;
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root	partition:all	
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, index:col2(col2, col3)	range:[NULL,NULL], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2	keep order:false, stats:pseudo
+select PARTITION_NAME,PARTITION_ORDINAL_POSITION,PARTITION_METHOD,PARTITION_EXPRESSION FROM information_schema.partitions where TABLE_NAME = 'tkey12_2';
+PARTITION_NAME	PARTITION_ORDINAL_POSITION	PARTITION_METHOD	PARTITION_EXPRESSION
+p0	1	KEY	`col2`,`col3`
+p1	2	KEY	`col2`,`col3`
+p2	3	KEY	`col2`,`col3`
+p3	4	KEY	`col2`,`col3`
+create table tkey16 (a int) partition by key (a) partitions 12;
+insert into tkey16 values (0), (1), (2), (3);
+insert into tkey16 select a + 4 from tkey16;
+insert into tkey16 select a + 8 from tkey16;
+select count(*) from information_schema.partitions where TABLE_NAME="tkey16" and TABLE_SCHEMA="table__partition";
+count(*)
+12
+drop table if exists tkey29, tkey30, tkey31;
+CREATE TABLE tkey29 (col1 INT NOT NULL,col2 DATE NOT NULL,col3 VARCHAR(12) NOT NULL,col4 INT NOT NULL,UNIQUE KEY (col3)) CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY KEY(col3) PARTITIONS 4;
+INSERT INTO tkey29 VALUES(1, '2023-02-22', 'linpin', 1), (1, '2023-02-22', 'linpin ', 5);
+Error 1062 (23000): Duplicate entry 'linpin ' for key 'tkey29.col3'
+INSERT INTO tkey29 VALUES(3, '2023-02-22', 'abc', 1), (4, '2023-02-22', 'ABC ', 5);
+CREATE TABLE tkey30 (col1 INT NOT NULL,col2 DATE NOT NULL,col3 VARCHAR(12) NOT NULL,col4 INT NOT NULL,UNIQUE KEY (col3)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci PARTITION BY KEY(col3) PARTITIONS 4;
+INSERT INTO tkey30 VALUES(1, '2023-02-22', 'linpin', 1), (1, '2023-02-22', 'LINPIN', 5);
+Error 1062 (23000): Duplicate entry 'LINPIN' for key 'tkey30.col3'
+INSERT INTO tkey30 VALUES(1, '2023-02-22', 'linpin', 1), (1, '2023-02-22', 'LINPIN ', 5);
+Error 1062 (23000): Duplicate entry 'LINPIN ' for key 'tkey30.col3'
+CREATE TABLE tkey31 (col1 INT NOT NULL,col2 DATE NOT NULL,col3 VARCHAR(12) NOT NULL,col4 INT NOT NULL,UNIQUE KEY (col3)) CHARSET=gbk COLLATE=gbk_chinese_ci PARTITION BY KEY(col3) PARTITIONS 4;
+INSERT INTO tkey31 VALUES(1, '2023-02-22', '刘德华', 1), (1, '2023-02-22', '刘德华 ', 5);
+Error 1062 (23000): Duplicate entry '刘德华 ' for key 'tkey31.col3'
+INSERT INTO tkey31 VALUES(1, '2023-02-22', '刘德华', 1), (5, '2023-02-22', '张学友', 5),(6, '2023-02-22', '艾伦', 6), (7, '2023-02-22', '宁采臣', 7);
+SELECT * FROM tkey31 partition(p0);
+col1	col2	col3	col4
+1	2023-02-22	刘德华	1
+SELECT * FROM tkey31 partition(p1);
+col1	col2	col3	col4
+6	2023-02-22	艾伦	6
+SELECT * FROM tkey31 partition(p2);
+col1	col2	col3	col4
+5	2023-02-22	张学友	5
+SELECT * FROM tkey31 partition(p3);
+col1	col2	col3	col4
+7	2023-02-22	宁采臣	7
+set tidb_enable_list_partition=on;
+drop tables if exists t_31721;
+CREATE TABLE `t_31721` (`COL1` char(1) NOT NULL) CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY LIST COLUMNS(`COL1`) (PARTITION `P0` VALUES IN ('1'),PARTITION `P1` VALUES IN ('2'),PARTITION `P2` VALUES IN ('3'));
+insert into t_31721 values ('1');
+select * from t_31721 partition(p0, p1) where col1 != 2;
+COL1
+1
+set tidb_enable_list_partition=default;
+drop table if exists tkey14, tkey15, tkey16, tkey17;
+CREATE TABLE tkey14 (
+col1 INT NOT NULL,col2 INT NOT NULL,col3 INT NOT NULL,col4 INT NOT NULL,primary KEY (col1,col3)
+)PARTITION BY KEY(col3) PARTITIONS 4;
+INSERT INTO tkey14 values(1,1,1,1),(1,1,2,2),(3,3,3,3),(3,3,4,3),(4,4,4,4),(5,5,5,5),(6,6,6,6),(7,7,7,7),(8,8,8,8),(9,9,9,9),(10,10,10,5),(11,11,11,6),(12,12,12,12),(13,13,13,13),(14,14,14,14);
+CREATE TABLE tkey15 (
+col1 INT NOT NULL,col2 INT NOT NULL,col3 INT NOT NULL,col4 INT NOT NULL,primary KEY (col1,col3)
+);
+INSERT INTO tkey15 values (20,20,20,20);
+CREATE TABLE tkey16 (
+col1 INT NOT NULL,col2 INT NOT NULL,col3 INT NOT NULL,col4 INT NOT NULL,primary KEY (col1,col3)
+)PARTITION BY KEY(col3) PARTITIONS 4;
+INSERT INTO tkey16 values(1,1,1,1),(1,1,2,2),(3,3,3,3),(3,3,4,3),(4,4,4,4),(5,5,5,5),(6,6,6,6),(7,7,7,7),(8,8,8,8),(9,9,9,9),(10,10,10,5),(11,11,11,6),(12,12,12,12),(13,13,13,13),(14,14,14,14);
+ALTER TABLE tkey14 ADD PARTITION PARTITIONS 1;
+ALTER TABLE tkey14 DROP PARTITION p4;
+Error 1512 (HY000): DROP PARTITION can only be used on RANGE/LIST partitions
+ALTER TABLE tkey14 TRUNCATE PARTITION p3;
+SELECT COUNT(*) FROM tkey14 partition(p3);
+COUNT(*)
+0
+ALTER TABLE tkey16 COALESCE PARTITION 2;
+ALTER TABLE tkey14 ANALYZE PARTITION p3;
+ALTER TABLE tkey14 CHECK PARTITION p2;
+Error 8200 (HY000): Unsupported check partition
+ALTER TABLE tkey14 OPTIMIZE PARTITION p2;
+Error 8200 (HY000): Unsupported optimize partition
+ALTER TABLE tkey14 REBUILD PARTITION p2;
+Error 8200 (HY000): Unsupported rebuild partition
+ALTER TABLE tkey14 EXCHANGE PARTITION p3 WITH TABLE tkey15;
+Error 8200 (HY000): Unsupported partition type of table tkey14 when exchanging partition
+ALTER TABLE tkey16 REORGANIZE PARTITION;
+Error 8200 (HY000): Unsupported reorganize partition
+ALTER TABLE tkey16 REORGANIZE PARTITION p0 INTO (PARTITION p0,PARTITION p1);
+Error 8200 (HY000): Unsupported reorganize partition
+ALTER TABLE tkey16 REORGANIZE PARTITION p0 INTO (PARTITION p0);
+Error 8200 (HY000): Unsupported reorganize partition
+ALTER TABLE tkey16 REORGANIZE PARTITION p0 INTO (PARTITION p4);
+Error 8200 (HY000): Unsupported reorganize partition
+ALTER TABLE tkey15 PARTITION BY KEY(col3) PARTITIONS 4;
+ALTER TABLE tkey16 REMOVE PARTITIONING;
+CREATE TABLE tkey17 (id INT NOT NULL PRIMARY KEY,name VARCHAR(20))PARTITION BY KEY()PARTITIONS 2;
+drop tables if exists t_44966;
+create table t_44966 (a bigint unsigned) partition by range (a) (partition p0 values less than (10));
+insert into t_44966 values (0xffffffffffffffff);
+Error 1526 (HY000): Table has no partition for value 18446744073709551615
+drop tables if exists t_44966;
+create table t_44966 (a bigint unsigned) partition by list (a) (partition p0 values in (1,2));
+insert into t_44966 values (0xffffffffffffffff);
+Error 1526 (HY000): Table has no partition for value 18446744073709551615
+drop table if exists t;
+create table t (a int) partition by range(a) (partition p0 values less than (0), partition p1M values less than (1000000));
+insert into t values (-1),(0),(1);
+alter table t partition by range(a) (partition p0 values less than (0), partition p1M values less than (1000000));
+alter table t remove partitioning;
+select * from t;
+a
+-1
+0
+1

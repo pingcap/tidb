@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "asciicheck",
+    srcs = ["analysis.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/asciicheck",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//build/linter/util",
+        "@com_github_tdakkota_asciicheck//:asciicheck",
+    ],
+)

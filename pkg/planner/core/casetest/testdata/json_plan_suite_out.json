@@ -1,0 +1,165 @@
+[
+  {
+    "Name": "TestJSONPlanInExplain",
+    "Cases": [
+      {
+        "SQL": "explain format = tidb_json update t2 set id = 1 where id =2",
+        "JSONPlan": [
+          {
+            "id": "Update_4",
+            "estRows": "N/A",
+            "taskType": "root",
+            "operatorInfo": "N/A",
+            "subOperators": [
+              {
+                "id": "IndexReader_7",
+                "estRows": "10.00",
+                "taskType": "root",
+                "operatorInfo": "index:IndexRangeScan_6",
+                "subOperators": [
+                  {
+                    "id": "IndexRangeScan_6",
+                    "estRows": "10.00",
+                    "taskType": "cop[tikv]",
+                    "accessObject": "table:t2, index:id(id)",
+                    "operatorInfo": "range:[2,2], keep order:false, stats:pseudo"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "SQL": "explain format = tidb_json insert into t1 values(1)",
+        "JSONPlan": [
+          {
+            "id": "Insert_1",
+            "estRows": "N/A",
+            "taskType": "root",
+            "operatorInfo": "N/A"
+          }
+        ]
+      },
+      {
+        "SQL": "explain format = tidb_json select count(*) from t1",
+        "JSONPlan": [
+          {
+            "id": "HashAgg_12",
+            "estRows": "1.00",
+            "taskType": "root",
+            "operatorInfo": "funcs:count(Column#5)->Column#3",
+            "subOperators": [
+              {
+                "id": "TableReader_13",
+                "estRows": "1.00",
+                "taskType": "root",
+                "operatorInfo": "data:HashAgg_5",
+                "subOperators": [
+                  {
+                    "id": "HashAgg_5",
+                    "estRows": "1.00",
+                    "taskType": "cop[tikv]",
+                    "operatorInfo": "funcs:count(test.t1._tidb_rowid)->Column#5",
+                    "subOperators": [
+                      {
+                        "id": "TableFullScan_10",
+                        "estRows": "10000.00",
+                        "taskType": "cop[tikv]",
+                        "accessObject": "table:t1",
+                        "operatorInfo": "keep order:false, stats:pseudo"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "SQL": "explain format = tidb_json select * from t1",
+        "JSONPlan": [
+          {
+            "id": "IndexReader_7",
+            "estRows": "10000.00",
+            "taskType": "root",
+            "operatorInfo": "index:IndexFullScan_6",
+            "subOperators": [
+              {
+                "id": "IndexFullScan_6",
+                "estRows": "10000.00",
+                "taskType": "cop[tikv]",
+                "accessObject": "table:t1, index:id(id)",
+                "operatorInfo": "keep order:false, stats:pseudo"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "SQL": "explain analyze format = tidb_json select * from t1, t2 where t1.id = t2.id",
+        "JSONPlan": [
+          {
+            "id": "MergeJoin_8",
+            "estRows": "12487.50",
+            "actRows": "0",
+            "taskType": "root",
+            "executeInfo": "time:3.5ms, loops:1",
+            "operatorInfo": "inner join, left key:test.t1.id, right key:test.t2.id",
+            "memoryInfo": "760 Bytes",
+            "diskInfo": "0 Bytes",
+            "subOperators": [
+              {
+                "id": "IndexReader_36(Build)",
+                "estRows": "9990.00",
+                "actRows": "0",
+                "taskType": "root",
+                "executeInfo": "time:3.47ms, loops:1, cop_task: {num: 1, max: 3.38ms, proc_keys: 0, tot_proc: 3ms, rpc_num: 1, rpc_time: 3.34ms, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}",
+                "operatorInfo": "index:IndexFullScan_35",
+                "memoryInfo": "171 Bytes",
+                "diskInfo": "N/A",
+                "subOperators": [
+                  {
+                    "id": "IndexFullScan_35",
+                    "estRows": "9990.00",
+                    "actRows": "0",
+                    "taskType": "cop[tikv]",
+                    "accessObject": "table:t2, index:id(id)",
+                    "executeInfo": "tikv_task:{time:3.3ms, loops:0}",
+                    "operatorInfo": "keep order:true, stats:pseudo",
+                    "memoryInfo": "N/A",
+                    "diskInfo": "N/A"
+                  }
+                ]
+              },
+              {
+                "id": "IndexReader_34(Probe)",
+                "estRows": "9990.00",
+                "actRows": "0",
+                "taskType": "root",
+                "executeInfo": "time:14µs, loops:1, cop_task: {num: 1, max: 772.9µs, proc_keys: 0, rpc_num: 1, rpc_time: 735.7µs, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}",
+                "operatorInfo": "index:IndexFullScan_33",
+                "memoryInfo": "166 Bytes",
+                "diskInfo": "N/A",
+                "subOperators": [
+                  {
+                    "id": "IndexFullScan_33",
+                    "estRows": "9990.00",
+                    "actRows": "0",
+                    "taskType": "cop[tikv]",
+                    "accessObject": "table:t1, index:id(id)",
+                    "executeInfo": "tikv_task:{time:168.4µs, loops:0}",
+                    "operatorInfo": "keep order:true, stats:pseudo",
+                    "memoryInfo": "N/A",
+                    "diskInfo": "N/A"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

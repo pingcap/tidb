@@ -1,0 +1,434 @@
+# TestShowCreateTableAutoRandom
+drop table if exists auto_random_tbl1;
+create table auto_random_tbl1 (a bigint primary key auto_random(3), b varchar(255));
+show create table `auto_random_tbl1`;
+drop table if exists auto_random_tbl2;
+create table auto_random_tbl2 (a bigint auto_random primary key, b char);
+show create table auto_random_tbl2;
+drop table if exists auto_random_tbl3;
+create table auto_random_tbl3 (a bigint /*T![auto_rand] auto_random */ primary key);
+show create table auto_random_tbl3;
+drop table if exists auto_random_tbl4;
+create table auto_random_tbl4 (a bigint primary key auto_random(5), b varchar(255)) auto_random_base = 100;
+show create table `auto_random_tbl4`;
+drop table if exists auto_random_tbl5;
+create table auto_random_tbl5 (a bigint auto_random primary key, b char) auto_random_base 50;
+show create table auto_random_tbl5;
+drop table if exists auto_random_tbl6;
+create table auto_random_tbl6 (a bigint /*T![auto_rand] auto_random */ primary key) auto_random_base 200;
+show create table auto_random_tbl6;
+drop table if exists auto_random_tbl7;
+create table auto_random_tbl7 (a bigint primary key auto_random(4, 32), b varchar(255));
+show create table auto_random_tbl7;
+
+# TestAutoIdCache
+drop table if exists t;
+create table t(a int auto_increment key) auto_id_cache = 10;
+show create table t;
+drop table if exists t;
+create table t(a int auto_increment unique, b int key) auto_id_cache 100;
+show create table t;
+drop table if exists t;
+create table t(a int key) auto_id_cache 5;
+show create table t;
+
+# TestIssue19507
+drop table if exists t2;
+CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));
+SHOW INDEX IN t2;
+CREATE INDEX t2_b_c_index ON t2 (b, c);
+CREATE INDEX t2_c_b_index ON t2 (c, b);
+SHOW INDEX IN t2;
+
+# TestShowViewWithWindowFunction
+drop table if exists test1;
+CREATE TABLE `test1` (`id` int(0) NOT NULL,`num` int(0) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+create or replace view test1_v as(select id,row_number() over (partition by num) from test1);
+desc test1_v;
+
+# TestShowTTLOption
+drop table if exists t;
+create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR;
+show create table t;
+drop table if exists t;
+create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR ttl_enable = 'OFF';
+show create table t;
+drop table if exists t;
+create table t (created_at datetime) TTL = created_at + INTERVAL 3.14159 HOUR_MINUTE;
+show create table t;
+drop table if exists t;
+create table t (created_at datetime) TTL = created_at + INTERVAL "15:20" HOUR_MINUTE;
+show create table t;
+drop table if exists t;
+create table t (created_at datetime) TTL = created_at + INTERVAL 100 YEAR TTL_JOB_INTERVAL = '1d';
+show create table t;
+
+# TestShowHistogramsInFlight
+show histograms_in_flight;
+
+# TestShowOpenTables
+show open tables;
+show open tables in executor__show;
+
+# TestShowCreateViewDefiner
+create or replace view v1 as select 1;
+show create view v1;
+drop view v1;
+
+# TestShowCreateTable
+drop database if exists test1;
+drop database if exists test2;
+drop table if exists t, t1;
+create table t1(a int,b int);
+drop view if exists v1;
+create or replace definer=`root`@`127.0.0.1` view v1 as select * from t1;
+show create table v1;
+show create view v1;
+drop view v1;
+drop table t1;
+drop view if exists v;
+create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;
+show create view v;
+drop view if exists v;
+drop table if exists t1;
+create table t1(a int,b int);
+create or replace definer=`root`@`127.0.0.1` view v1 as select avg(a),t1.* from t1 group by a;
+show create view v1;
+drop view v1;
+create or replace definer=`root`@`127.0.0.1` view v1 as select a+b, t1.* , a as c from t1;
+show create view v1;
+drop table t1;
+drop view v1;
+create table t(c int, b int as (c + 1))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+show create table `t`;
+drop table t;
+create table t(c int, b int as (c + 1) not null)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+show create table `t`;
+drop table t;
+create table t ( a char(10) charset utf8 collate utf8_bin, b char(10) as (rtrim(a)));
+show create table `t`;
+drop table t;
+drop table if exists different_charset;
+create table different_charset(ch1 varchar(10) charset utf8, ch2 varchar(10) charset binary);
+show create table different_charset;
+drop table if exists t;
+create table `t` (
+`a` timestamp not null default current_timestamp,
+`b` timestamp(3) default current_timestamp(3),
+`c` datetime default current_timestamp,
+`d` datetime(4) default current_timestamp(4),
+`e` varchar(20) default 'cUrrent_tImestamp',
+`f` datetime(2) default current_timestamp(2) on update current_timestamp(2),
+`g` timestamp(2) default current_timestamp(2) on update current_timestamp(2),
+`h` date default current_date );
+show create table `t`;
+drop table t;
+create table t (a int, b int) shard_row_id_bits = 4 pre_split_regions=3;
+show create table `t`;
+drop table t;
+drop table if exists t1;
+create table t1(c int unsigned default 0);
+show create table `t1`;
+drop table t1;
+CREATE TABLE `log` (`LOG_ID` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,`ROUND_ID` bigint(20) UNSIGNED NOT NULL,`USER_ID` int(10) UNSIGNED NOT NULL,`USER_IP` int(10) UNSIGNED DEFAULT NULL,`END_TIME` datetime NOT NULL,`USER_TYPE` int(11) DEFAULT NULL,`APP_ID` int(11) DEFAULT NULL,PRIMARY KEY (`LOG_ID`,`END_TIME`) NONCLUSTERED,KEY `IDX_EndTime` (`END_TIME`),KEY `IDX_RoundId` (`ROUND_ID`),KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488 PARTITION BY RANGE ( month(`end_time`) ) (PARTITION `p1` VALUES LESS THAN (2),PARTITION `p2` VALUES LESS THAN (3),PARTITION `p3` VALUES LESS THAN (4),PARTITION `p4` VALUES LESS THAN (5),PARTITION `p5` VALUES LESS THAN (6),PARTITION `p6` VALUES LESS THAN (7),PARTITION `p7` VALUES LESS THAN (8),PARTITION `p8` VALUES LESS THAN (9),PARTITION `p9` VALUES LESS THAN (10),PARTITION `p10` VALUES LESS THAN (11),PARTITION `p11` VALUES LESS THAN (12),PARTITION `p12` VALUES LESS THAN (MAXVALUE));
+show create table log;
+create table ttt4(a varchar(123) default null collate utf8mb4_unicode_ci)engine=innodb default charset=utf8mb4 collate=utf8mb4_unicode_ci;
+show create table `ttt4`;
+create table ttt5(a varchar(123) default null)engine=innodb default charset=utf8mb4 collate=utf8mb4_bin;
+show create table `ttt5`;
+drop table if exists t;
+create table t(a int, b real);
+alter table t add index expr_idx((a*b+1));
+show create table t;
+drop sequence if exists seq;
+create sequence seq;
+show create table seq;
+drop table if exists binary_collate;
+create table binary_collate(a varchar(10)) default collate=binary;
+show create table binary_collate;
+drop table if exists binary_collate;
+create table binary_collate(a varchar(10)) default charset=binary collate=binary;
+show create table binary_collate;
+drop table if exists binary_collate;
+create table binary_collate(a varchar(10)) default charset=utf8mb4 collate=utf8mb4_bin;
+show create table binary_collate;
+drop table if exists default_num;
+create table default_num(a int default 11);
+show create table default_num;
+drop table if exists default_varchar;
+create table default_varchar(a varchar(10) default "haha");
+show create table default_varchar;
+drop table if exists default_sequence;
+create table default_sequence(a int default nextval(seq));
+show create table default_sequence;
+set @@foreign_key_checks=0;
+DROP TABLE IF EXISTS parent, child;
+CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id));
+CREATE TABLE parent ( id INT NOT NULL PRIMARY KEY auto_increment );
+show create table child;
+DROP TABLE child;
+CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE RESTRICT ON UPDATE CASCADE);
+show create table child;
+create database test1;
+create database test2;
+create table test1.t1 (id int key, b int, index(b));
+create table test2.t2 (id int key, b int, foreign key fk(b) references test1.t1(id));
+show create table test2.t2;
+drop table if exists t;
+create table t(a int, b char(10) as ('a'));
+show create table t;
+drop table if exists t;
+create table t(a int, b char(10) as (_utf8'a'));
+show create table t;
+set @@session.tidb_enable_list_partition = ON;
+DROP TABLE IF EXISTS t;
+create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);
+show create table t;
+DROP TABLE IF EXISTS t;
+create table t (id int, name varchar(10), unique index idx (id)) partition by list columns (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);
+show create table t;
+DROP TABLE IF EXISTS t;
+create table t (id int, name varchar(10), unique index idx (id, name)) partition by list columns (id, name) (
+    	partition p0 values in ((3, '1'), (5, '5')),
+    	partition p1 values in ((1, '1')));
+show create table t;
+DROP TABLE IF EXISTS t;
+create table t (id int primary key, v varchar(255) not null, key idx_v (v) comment 'foo\'bar');
+show create table t;
+CREATE TABLE `thash` (
+  `id` bigint unsigned NOT NULL,
+  `data` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+)
+PARTITION BY HASH (`id`)
+(PARTITION pEven COMMENT = "Even ids",
+ PARTITION pOdd COMMENT = "Odd ids");
+show create table `thash`;
+drop table if exists `thash`;
+CREATE TABLE `thash` (
+  `id` bigint unsigned NOT NULL,
+  `data` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+)
+PARTITION BY HASH (`id`);
+show create table `thash`;
+drop table if exists t;
+create table t(a int primary key, b varchar(20) default '\\');
+show create table t;
+drop table if exists t;
+create table t(a set('a', 'b') charset binary,b enum('a', 'b') charset ascii);
+show create table t;
+drop table if exists t;
+create table t(a bit default (rand()));
+show create table t;
+drop table if exists t;
+-- error 1654
+create table t (a varchar(255) character set ascii) partition by range columns (a) (partition p values less than (0xff));
+create table t (a varchar(255) character set ascii) partition by range columns (a) (partition p values less than (0x7f));
+show create table t;
+set @@session.tidb_enable_list_partition = default;
+set @@foreign_key_checks=default;
+
+# TestShowErrors
+create table if not exists show_errors (a int);
+-- error 1050
+create table show_errors (a int);
+show errors;
+select 1;
+-- error 1064
+create invalid;
+show errors;
+
+# TestIssue3641
+connect (conn1, localhost, root,,);
+-- error 1046
+show tables;
+-- error 1046
+show tables;
+connection default;
+disconnect conn1;
+
+# TestShowSlow
+# The test result is volatile, because
+# 1. Slow queries is stored in domain, which may be affected by other tests.
+# 2. Collecting slow queries is a asynchronous process, check immediately may not get the expected result.
+# 3. Make slow query like "select sleep(1)" would slow the CI.
+# So, we just cover the code but do not check the result.
+--disable_result_log
+admin show slow recent 3;
+admin show slow top 3;
+admin show slow top internal 3;
+admin show slow top all 3;
+--enable_result_log
+
+# TestShowCreateStmtIgnoreLocalTemporaryTables
+drop table if exists v1;
+drop view if exists v1;
+drop sequence if exists seq1;
+drop table if exists seq1;
+
+## SHOW CREATE VIEW ignores local temporary table with the same name
+create view v1 as select 1;
+create temporary table v1 (a int);
+show create table v1;
+drop view v1;
+-- error 1146
+show create view v1;
+
+## SHOW CREATE SEQUENCE ignores local temporary table with the same name
+drop view if exists seq1;
+create sequence seq1;
+create temporary table seq1 (a int);
+show create sequence seq1;
+drop sequence seq1;
+-- error 1146
+show create sequence seq1;
+
+# TestShowBuiltin
+show builtins;
+
+# TestShowPerformanceSchema
+# for Issue 19231
+# Ideally we should create a new performance_schema table here with indices that we run the tests on.
+# However, its not possible to create a new performance_schema table since its a special in memory table.
+# Instead the test below uses the default index on the table.
+SHOW INDEX FROM performance_schema.events_statements_summary_by_digest;
+
+# TestShowTemporaryTable
+drop table if exists t1, t3, t4, t5, t6, t7;
+create global temporary table t1 (id int) on commit delete rows;
+create global temporary table t3 (i int primary key, j int) on commit delete rows;
+
+## For issue https://github.com/pingcap/tidb/issues/24752
+show create table t1;
+
+## No panic, fix issue https://github.com/pingcap/tidb/issues/24788
+show create table t3;
+
+## Verify that the `show create table` result can be used to build the table.
+CREATE GLOBAL TEMPORARY TABLE `t4` (
+  `i` int(11) NOT NULL,
+  `j` int(11) DEFAULT NULL,
+  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS;
+
+## Cover auto increment column.
+CREATE GLOBAL TEMPORARY TABLE t5 (
+	id int(11) NOT NULL AUTO_INCREMENT,
+	b int(11) NOT NULL,
+	pad varbinary(255) DEFAULT NULL,
+	PRIMARY KEY (id),
+	KEY b (b)) ON COMMIT DELETE ROWS;
+show create table t5;
+create temporary table t6 (i int primary key, j int);
+show create table t6;
+create temporary table t7 (i int primary key auto_increment, j int);
+begin;
+insert into t7 (j) values (14);
+insert into t7 (j) values (24);
+select * from t7;
+show create table t7;
+commit;
+
+# TestShowCachedTable
+drop table if exists t1;
+create table t1 (id int);
+alter table t1 cache;
+show create table t1;
+select create_options from information_schema.tables where table_schema = 'executor__show' and table_name = 't1';
+alter table t1 nocache;
+show create table t1;
+select create_options from information_schema.tables where table_schema = 'executor__show' and table_name = 't1';
+
+# TestShowDatabasesLike
+DROP DATABASE IF EXISTS `TEST_$1`;
+DROP DATABASE IF EXISTS `test_$2`;
+CREATE DATABASE `TEST_$1`;
+CREATE DATABASE `test_$2`;
+SHOW DATABASES LIKE 'TEST_$%';
+SHOW DATABASES LIKE 'test_$%';
+
+# TestShowCollationsLike
+SHOW COLLATION LIKE 'UTF8MB4_BI%';
+SHOW COLLATION LIKE 'utf8mb4_bi%';
+
+# TestShowDatabasesInfoSchemaFirst
+drop user if exists 'show';
+drop database if exists AAAA;
+drop database if exists BBBB;
+create user 'show'@'%';
+
+connect (conn1, localhost, show,,);
+show databases;
+
+connection default;
+create database AAAA;
+create database BBBB;
+grant select on AAAA.* to 'show'@'%';
+grant select on BBBB.* to 'show'@'%';
+
+connection conn1;
+show databases;
+
+connection default;
+disconnect conn1;
+drop user 'show'@'%';
+drop database AAAA;
+drop database BBBB;
+
+# TestShowTableStatusLike
+DROP table IF EXISTS `T1`;
+CREATE table `T1` (a int);
+## ignore create time
+-- replace_column 12 1
+SHOW table status LIKE 't1';
+DROP table IF EXISTS `Li_1`;
+DROP table IF EXISTS `li_2`;
+CREATE table `Li_1` (a int);
+CREATE table `li_2` (a int);
+-- replace_column 12 1
+SHOW table status LIKE 'li%';
+
+# TestShowPasswordVariable
+SET GLOBAL authentication_ldap_sasl_bind_root_pwd = '';
+show variables like 'authentication_ldap_sasl_bind_root_pwd';
+SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_sasl_bind_root_pwd';
+SET GLOBAL authentication_ldap_sasl_bind_root_pwd = password;
+show variables like 'authentication_ldap_sasl_bind_root_pwd';
+SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_sasl_bind_root_pwd';
+SET GLOBAL authentication_ldap_simple_bind_root_pwd = '';
+show variables like 'authentication_ldap_simple_bind_root_pwd';
+SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_simple_bind_root_pwd';
+SET GLOBAL authentication_ldap_simple_bind_root_pwd = password;
+show variables like 'authentication_ldap_simple_bind_root_pwd';
+SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_simple_bind_root_pwd';
+SET GLOBAL authentication_ldap_simple_bind_root_pwd = default;
+SET GLOBAL authentication_ldap_sasl_bind_root_pwd = default;
+
+# TestShowForNewCollations
+show collation;
+select * from information_schema.COLLATIONS;
+show character set like '%utf8mb4%';
+select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
+set @@session.default_collation_for_utf8mb4='utf8mb4_0900_ai_ci';
+show variables like 'default_collation_for_utf8mb4';
+show collation;
+select * from information_schema.COLLATIONS;
+show character set like '%utf8mb4%';
+select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
+set @@session.default_collation_for_utf8mb4=default;
+
+# TestShowPreSplitRegionsForAutoRandomTables
+DROP TABLE IF EXISTS `t`;
+CREATE TABLE `t` (a BIGINT PRIMARY KEY AUTO_RANDOM(2), b INT) PRE_SPLIT_REGIONS=4;
+SHOW CREATE TABLE `t`;

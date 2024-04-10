@@ -1,0 +1,52 @@
+# TestCompactUnknownTable
+drop table if exists bar, foo;
+connect (conn1, localhost, root,,);
+connection conn1;
+-- error 1046
+alter table test compact tiflash replica;
+-- error 1146
+alter table executor__compact_table.foo compact tiflash replica;
+use executor__compact_table;
+-- error 1146
+alter table bar compact;
+connection default;
+disconnect conn1;
+
+# TestCompactTableNoTiFlashReplica
+drop table if exists t;
+create table t(a int);
+alter table t compact tiflash replica;
+show warnings;
+alter table executor__compact_table.t compact;
+show warnings;
+connect (conn1, localhost, root,, executor__compact_table);
+connection conn1;
+alter table executor__compact_table.t compact;
+show warnings;
+connection default;
+disconnect conn1;
+
+# TestCompactTableNoPartition
+drop table if exists t;
+create table t(a int);
+-- error 1105
+alter table t compact partition p1,p2 tiflash replica;
+
+# TestCompactTablePartitionInvalid
+drop table if exists t;
+CREATE TABLE t  (
+	id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+	fname VARCHAR(25) NOT NULL,
+	lname VARCHAR(25) NOT NULL,
+	store_id INT NOT NULL,
+	department_id INT NOT NULL
+)
+PARTITION BY RANGE(id)  (
+	PARTITION p0 VALUES LESS THAN (5),
+	PARTITION p1 VALUES LESS THAN (10),
+	PARTITION p2 VALUES LESS THAN (15),
+	PARTITION p3 VALUES LESS THAN MAXVALUE
+);
+-- error 1735
+alter table t compact partition p1,p2,p4 tiflash replica;
+

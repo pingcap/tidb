@@ -1,0 +1,47 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "rtree",
+    srcs = [
+        "logging.go",
+        "rtree.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/rtree",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/logutil",
+        "//pkg/kv",
+        "//pkg/tablecodec",
+        "//pkg/util/redact",
+        "@com_github_google_btree//:btree",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)
+
+go_test(
+    name = "rtree_test",
+    timeout = "short",
+    srcs = [
+        "logging_test.go",
+        "main_test.go",
+        "merge_fuzz_test.go",
+        "rtree_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 4,
+    deps = [
+        ":rtree",
+        "//pkg/kv",
+        "//pkg/tablecodec",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)

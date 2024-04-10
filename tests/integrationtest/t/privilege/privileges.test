@@ -1,0 +1,846 @@
+# TestSelectViewSecurity
+CREATE TABLE viewsecurity(c int);
+CREATE USER 'selectusr'@'localhost';
+GRANT CREATE VIEW ON privilege__privileges.* TO  'selectusr'@'localhost';
+GRANT SELECT ON privilege__privileges.viewsecurity TO  'selectusr'@'localhost';
+
+connect (conn1,localhost,selectusr,,privilege__privileges);
+connection conn1;
+SELECT * FROM privilege__privileges.viewsecurity;
+CREATE ALGORITHM = UNDEFINED SQL SECURITY DEFINER VIEW privilege__privileges.selectviewsecurity as select * FROM privilege__privileges.viewsecurity;
+
+connection default;
+SELECT * FROM privilege__privileges.selectviewsecurity;
+REVOKE Select ON privilege__privileges.viewsecurity FROM  'selectusr'@'localhost';
+
+connection conn1;
+--error ErrViewInvalid
+select * from privilege__privileges.selectviewsecurity;
+disconnect conn1;
+connection default;
+
+
+# TestTableNotExistNoPermissions
+CREATE USER 'testnotexist'@'localhost';
+CREATE DATABASE IF NOT EXISTS privilege__privileges;
+CREATE TABLE privilege__privileges.t1 (a int);
+connect (testnotexist,localhost,testnotexist,,);
+connection testnotexist;
+--error 1142
+SELECT * FROM privilege__privileges.t1;
+--error 1142
+SELECT * FROM dbnotexists.t1;
+--error 1142
+SHOW CREATE TABLE privilege__privileges.t1;
+--error 1142
+SHOW CREATE TABLE dbnotexists.t1;
+--error 1142
+DELETE FROM privilege__privileges.t1 WHERE a=0;
+--error 1142
+DELETE FROM dbnotexists.t1 WHERE a=0;
+--error 1142
+DELETE FROM privilege__privileges.t1;
+--error 1142
+DELETE FROM dbnotexists.t1;
+disconnect testnotexist;
+connection default;
+drop table t1;
+
+# TestGrantRoutine
+drop user if exists u1;
+CREATE USER u1;
+CREATE TABLE routine_table (a int);
+GRANT CREATE ROUTINE on privilege__privileges.* to u1;
+GRANT CREATE ROUTINE on *.* to u1;
+GRANT ALTER ROUTINE on privilege__privileges.* to u1;
+GRANT ALTER ROUTINE on *.* to u1;
+SHOW GRANTS FOR u1;
+DROP USER u1;
+
+# TestPlacementPolicyStmt
+drop placement policy if exists x;
+CREATE USER super_user, placement_user, empty_user;
+GRANT ALL ON *.* TO super_user;
+GRANT PLACEMENT_ADMIN ON *.* TO placement_user;
+connect (empty_user, localhost,empty_user,,);
+connection empty_user;
+--error 1227
+create placement policy x PRIMARY_REGION="cn-east-1" REGIONS="cn-east-1";
+--error 1227
+drop placement policy if exists x;
+disconnect empty_user;
+
+connect (super_user, localhost,super_user,,privilege__privileges);
+connection super_user;
+create placement policy x PRIMARY_REGION="cn-east-1" REGIONS="cn-east-1";
+drop placement policy if exists x;
+disconnect super_user;
+
+connect (placement_user, localhost,placement_user,,);
+connection placement_user;
+create placement policy x PRIMARY_REGION="cn-east-1" REGIONS="cn-east-1";
+drop placement policy if exists x;
+disconnect placement_user;
+connection default;
+drop user placement_user;
+
+# TestResourceGroupAdminDynamicPriv
+CREATE USER resource_group_user;
+# This should be the default value in the future, so we do not need to set if for testing?
+set @@global.tidb_enable_resource_control = 1;
+
+connect (resource_group_user,localhost,resource_group_user,,);
+connection resource_group_user;
+--error 1227
+CREATE RESOURCE GROUP test RU_PER_SEC = 666;
+
+connection default;
+GRANT RESOURCE_GROUP_ADMIN ON *.* TO resource_group_user;
+SHOW GRANTS FOR resource_group_user;
+
+connection resource_group_user;
+CREATE RESOURCE GROUP test RU_PER_SEC = 666;
+CREATE RESOURCE GROUP test2 RU_PER_SEC = 999;
+ALTER RESOURCE GROUP test2 RU_PER_SEC = 1000;
+DROP RESOURCE GROUP test2;
+
+connection default;
+REVOKE RESOURCE_GROUP_ADMIN ON *.* FROM resource_group_user;
+
+connection resource_group_user;
+--error 1227
+ALTER RESOURCE GROUP test RU_PER_SEC = 667;
+--error 1227
+DROP RESOURCE GROUP test;
+disconnect resource_group_user;
+connection default;
+
+# TestGrantReferences
+CREATE SCHEMA IF NOT EXISTS privilege__privileges;
+USE privilege__privileges;
+CREATE TABLE reftest (a int);
+CREATE USER referencesUser;
+GRANT REFERENCES ON *.* TO referencesUser;
+GRANT REFERENCES ON privilege__privileges.* TO referencesUser;
+GRANT REFERENCES ON privilege__privileges.reftest TO referencesUser;
+SHOW GRANTS FOR referencesUser;
+DROP USER referencesUser;
+
+# TestShowGrants
+create database if not exists privilege__privileges;
+create database if not exists privilege__privileges_test1;
+CREATE TABLE IF NOT EXISTS privilege__privileges.test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));
+
+CREATE USER 'show'@'localhost' identified by '123';
+GRANT Index ON *.* TO  'show'@'localhost';
+GRANT Select ON *.* TO  'show'@'localhost';
+GRANT Update ON *.* TO  'show'@'localhost';
+GRANT ALL ON *.* TO  'show'@'localhost';
+GRANT ALL ON *.* TO 'show'@'localhost' WITH GRANT OPTION;
+REVOKE GRANT OPTION ON *.* FROM 'show'@'localhost';
+GRANT Select ON privilege__privileges.* TO  'show'@'localhost';
+GRANT Index ON privilege__privileges_test1.* TO  'show'@'localhost';
+GRANT Delete ON privilege__privileges_test1.* TO  'show'@'localhost';
+GRANT ALL ON privilege__privileges_test1.* TO  'show'@'localhost';
+GRANT Update ON privilege__privileges.test TO  'show'@'localhost';
+REVOKE SELECT ON privilege__privileges.* FROM 'show'@'localhost';
+GRANT Select ON privilege__privileges.test TO  'show'@'localhost';
+REVOKE ALL PRIVILEGES ON *.* FROM 'show'@'localhost';
+REVOKE ALL ON privilege__privileges_test1.* FROM 'show'@'localhost';
+REVOKE UPDATE, SELECT on privilege__privileges.test FROM 'show'@'localhost';
+DROP USER 'show'@'localhost';
+CREATE ROLE 'r1', 'r2';
+GRANT SELECT ON privilege__privileges.* TO 'r1';
+GRANT INSERT, UPDATE ON privilege__privileges.* TO 'r2';
+CREATE USER 'testrole'@'localhost' IDENTIFIED BY 'u1pass';
+GRANT 'r1', 'r2' TO 'testrole'@'localhost';
+GRANT DELETE ON privilege__privileges.* TO 'testrole'@'localhost';
+GRANT INSERT, DELETE ON privilege__privileges.test TO 'r2';
+create table privilege__privileges.b (id int);
+GRANT UPDATE ON privilege__privileges.b TO 'testrole'@'localhost';
+DROP ROLE 'r1', 'r2';
+DROP USER 'testrole'@'localhost';
+CREATE ROLE 'r1', 'r2';
+GRANT SELECT ON privilege__privileges.* TO 'r2';
+CREATE USER 'testrole'@'localhost' IDENTIFIED BY 'u1pass';
+GRANT 'r1' TO 'testrole'@'localhost';
+GRANT 'r2' TO 'r1';
+
+
+
+# TestDBNameCaseSensitivityInTableLevel
+CREATE USER test_user1;
+grant select on metrics_schema.up to test_user1;
+
+
+# TestSetGlobal
+CREATE USER setglobal_a@localhost;
+CREATE USER setglobal_b@localhost;
+GRANT SUPER ON *.* to setglobal_a@localhost;
+
+connect (setglobala,localhost,setglobal_a,,);
+connection setglobala;
+set global innodb_commit_concurrency=16;
+disconnect setglobala;
+
+connect (setglobalb,localhost,setglobal_b,,);
+connection setglobalb;
+--error ErrSpecificAccessDenied
+set global innodb_commit_concurrency=16;
+disconnect setglobalb;
+connection default;
+
+
+--echo # TestCheckPointGetDBPrivilege
+CREATE USER 'tester'@'localhost';
+GRANT SELECT,UPDATE ON privilege__privileges2.* TO  'tester'@'localhost';
+create database if not exists privilege__privileges;
+create table privilege__privileges.t(id int, v int, primary key(id));
+insert into privilege__privileges.t(id, v) values(1, 1);
+
+connect (tester,localhost,tester,,);
+--error ErrTableaccessDenied
+select * from privilege__privileges.t where id = 1;
+--error ErrTableaccessDenied
+update privilege__privileges.t set v = 2 where id = 1;
+disconnect tester;
+DROP USER 'tester'@'localhost';
+
+# TestGrantLockTables
+CREATE DATABASE if not exists privilege__privileges;
+USE privilege__privileges;
+CREATE TABLE lock_tables_table (a int);
+CREATE USER lock_tables_user;
+GRANT LOCK TABLES ON *.* TO lock_tables_user;
+GRANT LOCK TABLES ON privilege__privileges.* TO lock_tables_user;
+SHOW GRANTS FOR lock_tables_user;
+DROP USER lock_tables_user;
+
+# TestSelectIntoNoPermissions
+CREATE USER 'nofile'@'localhost';
+connect (nofile,localhost,nofile,,);
+connection nofile;
+--error ErrSpecificAccessDenied
+select 1 into outfile '/tmp/doesntmatter-no-permissions';
+disconnect nofile;
+connection default;
+
+
+# TestRevokePrivileges
+drop user if exists u4, 'hasgrant', 'withoutgrant';
+CREATE USER 'hasgrant';
+CREATE USER 'withoutgrant';
+GRANT ALL ON *.* TO 'hasgrant';
+GRANT ALL ON mysql.* TO 'withoutgrant';
+connect (hasgrant,localhost,hasgrant,,);
+connection hasgrant;
+--error 8121
+REVOKE SELECT ON mysql.* FROM 'withoutgrant';
+
+connection default;
+GRANT ALL ON *.* TO 'hasgrant' WITH GRANT OPTION;
+
+connection hasgrant;
+REVOKE SELECT ON mysql.* FROM 'withoutgrant';
+REVOKE ALL ON mysql.* FROM withoutgrant;
+disconnect hasgrant;
+connection default;
+
+CREATE USER u4;
+GRANT ALL ON *.* TO u4 WITH GRANT OPTION;
+connect (u4,localhost,u4,,);
+connection u4;
+REVOKE ALL ON *.* FROM CURRENT_USER();
+disconnect u4;
+connection default;
+
+
+# TestRevokeSecondSyntax
+drop user if exists ss1;
+create user ss1;
+revoke all privileges, grant option from ss1;
+show grants for ss1;
+
+
+
+--echo # TestCheckExchangePartitionDBPrivilege
+CREATE USER 'tester'@'localhost';
+GRANT SELECT ON privilege__privileges.* TO  'tester'@'localhost';
+create table pt (a varchar(3)) partition by range columns (a) (
+		partition p0 values less than ('3'),
+		partition p1 values less than ('6')
+	);
+create table nt (a varchar(3));
+connect (tester,localhost,tester,,privilege__privileges);
+connection tester;
+-- error 1142
+alter table pt exchange partition p0 with table nt;
+-- error 1142
+alter table pt exchange partition p0 with table nt;
+-- error 1142
+alter table pt exchange partition p0 with table nt;
+
+connection default;
+GRANT CREATE ON privilege__privileges.* TO  'tester'@'localhost';
+GRANT ALTER ON privilege__privileges.* TO  'tester'@'localhost';
+GRANT INSERT ON privilege__privileges.* TO  'tester'@'localhost';
+GRANT DROP ON privilege__privileges.* TO  'tester'@'localhost';
+
+connection tester;
+alter table pt exchange partition p0 with table nt;
+disconnect tester;
+connection default;
+
+
+# TestImportIntoPrivilegeNegativeCase
+CREATE USER 'test_import_into'@'localhost';
+GRANT SELECT ON privilege__privileges.* TO 'test_import_into'@'localhost';
+CREATE TABLE IF NOT EXISTS t(a int);
+connect (test_import_into,localhost,test_import_into,,privilege__privileges);
+connection test_import_into;
+--error ErrTableaccessDenied
+IMPORT INTO t FROM '/file.csv';
+
+connection default;
+GRANT SELECT on *.* to 'test_import_into'@'localhost';
+connection test_import_into;
+--error ErrTableaccessDenied
+IMPORT INTO t FROM '/file.csv';
+
+connection default;
+GRANT UPDATE on *.* to 'test_import_into'@'localhost';
+connection test_import_into;
+--error ErrTableaccessDenied
+IMPORT INTO t FROM '/file.csv';
+
+connection default;
+GRANT INSERT on *.* to 'test_import_into'@'localhost';
+connection test_import_into;
+--error ErrTableaccessDenied
+IMPORT INTO t FROM '/file.csv';
+
+connection default;
+GRANT DELETE on *.* to 'test_import_into'@'localhost';
+connection test_import_into;
+--error ErrTableaccessDenied
+IMPORT INTO t FROM '/file.csv';
+
+connection default;
+GRANT ALTER on *.* to 'test_import_into'@'localhost';
+connection test_import_into;
+--error ErrSpecificAccessDenied
+IMPORT INTO t FROM '/file.csv';
+
+connection default;
+DROP USER 'test_import_into'@'localhost';
+CREATE USER 'test_import_into'@'localhost';
+GRANT FILE on *.* to 'test_import_into'@'localhost';
+connection test_import_into;
+--error ErrTableaccessDenied
+IMPORT INTO t FROM '/file.csv';
+disconnect test_import_into;
+connection default;
+
+
+# TestCheckPreparePrivileges
+drop table if exists t;
+create user u1;
+create table t (a int);
+insert into t values(1);
+
+connect (u1,localhost,u1,,);
+connection u1;
+--error 1142
+prepare s from 'select * from privilege__privileges.t';
+--error 8111
+execute s;
+
+connection default;
+grant SELECT ON privilege__privileges.t TO  'u1'@'%';
+
+connection u1;
+prepare s from 'select * from privilege__privileges.t';
+execute s;
+disconnect u1;
+connection default;
+
+
+# TestCreateDropUser
+drop user if exists tcd1, tcd2, tcd3, usr1;
+drop resource group if exists rg1;
+CREATE USER tcd1, tcd2;
+GRANT ALL ON *.* to tcd2 WITH GRANT OPTION;
+
+
+connect (tcd1,localhost,tcd1,,);
+connection tcd1;
+--error ErrSpecificAccessDenied
+CREATE USER acdc;
+--error ErrSpecificAccessDenied
+DROP USER tcd2;
+
+connect (tcd2,localhost,tcd2,,);
+connection tcd2;
+DROP USER tcd1;
+CREATE USER tcd1;
+GRANT tcd2 TO tcd1;
+
+connection tcd1;
+SET ROLE tcd2;
+CREATE USER tcd3;
+DROP USER tcd3;
+
+CREATE USER usr1;
+SELECT User_attributes FROM mysql.user WHERE User = "usr1";
+DROP USER usr1;
+
+# In the future this value should be on by default.
+# set global tidb_enable_resource_control = 'on';
+
+CREATE RESOURCE GROUP rg1 ru_per_sec=1000;
+CREATE USER usr1 RESOURCE GROUP rg1;
+SELECT User_attributes FROM mysql.user WHERE User = "usr1";
+DROP USER usr1;
+
+disconnect tcd1;
+disconnect tcd2;
+connection default;
+drop resource group rg1;
+
+
+
+# TestIssue22946
+create database privilege__privileges_db1;
+create database privilege__privileges_db2;
+create table a(id int);
+create table privilege__privileges_db1.a(id int primary key,name varchar(20));
+create table privilege__privileges_db2.b(id int primary key,address varchar(50));
+CREATE USER 'delTest'@'localhost';
+grant all on privilege__privileges_db1.* to delTest@'localhost';
+grant all on privilege__privileges_db2.* to delTest@'localhost';
+grant select on privilege__privileges.* to delTest@'localhost';
+
+connect (delTest,localhost,delTest,,);
+connection delTest;
+delete from privilege__privileges_db1.a as A where exists(select 1 from privilege__privileges_db2.b as B where A.id = B.id);
+--error ErrTableaccessDenied
+delete from privilege__privileges.a as A;
+disconnect delTest;
+connection default;
+
+
+# TestSecurityEnhancedModeStatusVars
+# Without TiKV the status var list does not include tidb_gc_leader_desc
+# So we can only test that the dynamic privilege is grantable.
+# We will have to use an integration test to run SHOW STATUS LIKE 'tidb_gc_leader_desc'
+# and verify if it appears.
+CREATE USER unostatus, ustatus;
+GRANT RESTRICTED_STATUS_ADMIN ON *.* to ustatus;
+connect (unostatus,localhost,unostatus,,);
+disconnect unostatus;
+
+
+# TestRoleAdminSecurity
+CREATE USER 'ar1'@'localhost';
+CREATE USER 'ar2'@'localhost';
+GRANT ALL ON *.* to ar1@localhost;
+
+connect (ar1,localhost,ar1,,);
+connection ar1;
+create role r_test1@localhost;
+disconnect ar1;
+
+connect (ar2,localhost,ar2,,);
+connection ar2;
+--error ErrSpecificAccessDenied
+create role r_test2@localhost;
+disconnect ar2;
+
+connection default;
+drop user 'ar1'@'localhost';
+drop user 'ar2'@'localhost';
+
+
+# TestIssue28675
+DROP VIEW IF EXISTS privilege__privileges.v;
+create user test_user;
+create view privilege__privileges.v as select 1;
+grant show view on privilege__privileges.v to test_user;
+
+connect (conn1,localhost,test_user,,privilege__privileges);
+connection conn1;
+select count(*) from information_schema.columns where table_schema='privilege__privileges' and table_name='v';
+--error ER_TABLEACCESS_DENIED_ERROR
+desc privilege__privileges.v;
+--error ER_TABLEACCESS_DENIED_ERROR
+explain privilege__privileges.v;
+
+connection default;
+grant update on privilege__privileges.v to test_user;
+grant select on privilege__privileges.v to test_user;
+
+connection conn1;
+select count(*) from information_schema.columns where table_schema='privilege__privileges' and table_name='v';
+select count(*) from information_schema.columns where table_schema='privilege__privileges' and table_name='V';
+select privileges from information_schema.columns where table_schema='privilege__privileges' and table_name='v';
+select privileges from information_schema.columns where table_schema='privilege__privileges' and table_name='V';
+desc privilege__privileges.v;
+explain privilege__privileges.v;
+disconnect conn1;
+
+
+# TestIncorrectUsageDBGrant
+CREATE USER ucorrect1, ucorrect2;
+CREATE TABLE privilege__privileges.trigger_table (a int);
+GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON privilege__privileges.* TO ucorrect1;
+GRANT TRIGGER ON privilege__privileges.trigger_table TO ucorrect2;
+DROP TABLE privilege__privileges.trigger_table;
+--error ErrCantCreateUserWithGrant
+GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON privilege__privileges.* TO uincorrect;
+
+# TestShowColumnGrants
+CREATE USER 'column'@'%';
+CREATE TABLE column_table (a int, b int, c int);
+GRANT Select(a),Update(a,b),Insert(c) ON privilege__privileges.column_table TO  'column'@'%';
+connect (show_column_grants,localhost,column,,);
+connection show_column_grants;
+SHOW GRANTS;
+disconnect show_column_grants;
+connection default;
+
+# TestFieldList
+CREATE USER 'tableaccess'@'localhost';
+CREATE TABLE fieldlistt1 (a int);
+connect (field_list,localhost,tableaccess,,);
+--error ErrTableaccessDenied
+desc privilege__privileges.fieldlistt1;
+disconnect field_list;
+connection default;
+
+# TestReplaceAndInsertOnDuplicate
+CREATE USER tr_insert;
+CREATE USER tr_update;
+CREATE USER tr_delete;
+CREATE TABLE t1 (a int primary key, b int);
+GRANT INSERT ON t1 TO tr_insert;
+GRANT UPDATE ON t1 TO tr_update;
+GRANT DELETE ON t1 TO tr_delete;
+connect (tr_insert,localhost,tr_insert,,privilege__privileges);
+connection tr_insert;
+# REPLACE requires INSERT + DELETE privileges, having INSERT alone is insufficient.
+--error ErrTableaccessDenied
+REPLACE INTO t1 VALUES (1, 2);
+# INSERT ON DUPLICATE requires INSERT + UPDATE privileges, having INSERT alone is insufficient.
+--error ErrTableaccessDenied
+INSERT INTO t1 VALUES (3, 4) ON DUPLICATE KEY UPDATE b = 5;
+# Plain INSERT should work.
+INSERT INTO t1 VALUES (6, 7);
+disconnect tr_insert;
+
+# Also check that having DELETE alone is insufficient for REPLACE.
+connect (tr_delete,localhost,tr_delete,,privilege__privileges);
+connection tr_delete;
+--error ErrTableaccessDenied
+REPLACE INTO t1 VALUES (8, 9);
+disconnect tr_delete;
+
+# Also check that having UPDATE alone is insufficient for INSERT ON DUPLICATE.
+connect (tr_update,localhost,tr_update,,privilege__privileges);
+connection tr_update;
+--error ErrTableaccessDenied
+INSERT INTO t1 VALUES (10, 11) ON DUPLICATE KEY UPDATE b = 12;
+disconnect tr_update;
+connection default;
+
+
+# TestGrantPlacementAdminDynamicPriv
+CREATE DATABASE placement_db;
+USE placement_db;
+CREATE TABLE placement_table (a int);
+CREATE USER placement_user;
+GRANT PLACEMENT_ADMIN ON *.* TO placement_user;
+SHOW GRANTS FOR placement_user;
+DROP USER placement_user;
+DROP DATABASE placement_db;
+
+
+# TestAlterUserStmt
+CREATE USER superuser2, nobodyuser2, nobodyuser3, nobodyuser4, nobodyuser5, semuser1, semuser2, semuser3, semuser4;
+GRANT ALL ON *.* TO superuser2;
+GRANT CREATE USER ON *.* TO nobodyuser2;
+GRANT SYSTEM_USER ON *.* TO nobodyuser4;
+GRANT UPDATE ON mysql.user TO nobodyuser5, semuser1;
+GRANT RESTRICTED_TABLES_ADMIN ON *.* TO semuser1;
+GRANT RESTRICTED_USER_ADMIN ON *.* TO semuser1, semuser2, semuser3;
+GRANT SYSTEM_USER ON *.* to semuser3;
+# This should be the default value in the future.
+# set global tidb_enable_resource_control = 'on';
+CREATE RESOURCE GROUP rg1 ru_per_sec=1000;
+ALTER USER 'semuser1' RESOURCE GROUP rg1;
+SELECT User_attributes FROM mysql.user WHERE User = "semuser1";
+ALTER USER 'semuser1' COMMENT 'comment1';
+SELECT User_attributes FROM mysql.user WHERE User = "semuser1";
+
+connect (superuser2,localhost,superuser2,,);
+connection superuser2;
+ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword';
+ALTER USER 'nobodyuser2' IDENTIFIED BY '';
+disconnect superuser2;
+
+connect (nobodyuser2,localhost,nobodyuser2,,);
+connection nobodyuser2;
+ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword';
+ALTER USER 'nobodyuser2' IDENTIFIED BY '';
+ALTER USER 'nobodyuser3' IDENTIFIED BY '';
+--error 1227
+ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
+--error 1227
+ALTER USER 'superuser2' IDENTIFIED BY 'newpassword';
+disconnect nobodyuser2;
+
+connect (nobodyuser3,localhost,nobodyuser3,,);
+connection nobodyuser3;
+ALTER USER 'nobodyuser3' IDENTIFIED BY '';
+--error 1227
+ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
+--error 1227
+ALTER USER 'superuser2' IDENTIFIED BY 'newpassword';
+disconnect nobodyuser3;
+
+connect (nobodyuser5,localhost,nobodyuser5,,);
+connection nobodyuser5;
+ALTER USER 'nobodyuser2' IDENTIFIED BY '';
+ALTER USER 'nobodyuser3' IDENTIFIED BY '';
+--error 1227
+ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
+disconnect nobodyuser5;
+
+connect (semuser1,localhost,semuser1,,);
+connection semuser1;
+ALTER USER 'semuser1' IDENTIFIED BY '';
+ALTER USER 'semuser2' IDENTIFIED BY '';
+ALTER USER 'semuser3' IDENTIFIED BY '';
+disconnect semuser1;
+connection default;
+
+
+# TestRenameUser
+DROP USER IF EXISTS 'ru1'@'localhost';
+DROP USER IF EXISTS ru3;
+DROP USER IF EXISTS ru6@localhost;
+CREATE USER 'ru1'@'localhost';
+CREATE USER ru3;
+CREATE USER ru6@localhost;
+
+connect (ru1,localhost,ru1,,);
+connection ru1;
+--error 1227
+RENAME USER ru3 TO ru4;
+connection default;
+GRANT UPDATE ON mysql.user TO 'ru1'@'localhost';
+connection ru1;
+--error 1227
+RENAME USER ru3 TO ru4;
+connection default;
+GRANT CREATE USER ON *.* TO 'ru1'@'localhost';
+connection ru1;
+RENAME USER ru3 TO ru4;
+RENAME USER 'ru4'@'%' TO 'ru3'@'localhost';
+RENAME USER 'ru3'@'localhost' TO 'ru3'@'%';
+connection default;
+--error 1396
+RENAME USER ru3 TO ru1@localhost;
+connection ru1;
+--error 1396
+RENAME USER ru4 TO ru5@localhost;
+--error 1396
+RENAME USER ru3 TO ru3;
+--error 1396
+RENAME USER ru3 TO ru5@localhost, ru4 TO ru7;
+--error 1396
+RENAME USER ru3 TO ru5@localhost, ru6@localhost TO ru1@localhost;
+RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost;
+--error 1470
+RENAME USER 'ru6@localhost' TO '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost';
+--error 1470
+RENAME USER 'ru6@localhost' TO 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X';
+connection default;
+DROP USER ru6@localhost;
+DROP USER ru3;
+DROP USER 'ru1'@'localhost';
+disconnect ru1;
+
+# TestClusterConfigInfoschema
+CREATE USER ccnobody, ccconfig, ccprocess;
+GRANT CONFIG ON *.* TO ccconfig;
+GRANT Process ON *.* TO ccprocess;
+connect (ccnobody,localhost,ccnobody,,);
+connection ccnobody;
+SHOW GRANTS;
+-- error 1227
+SELECT * FROM information_schema.cluster_config;
+-- error 1227
+SELECT * FROM information_schema.cluster_hardware;
+-- error 1227
+SELECT * FROM information_schema.cluster_info;
+-- error 1227
+SELECT * FROM information_schema.cluster_load;
+-- error 1227
+SELECT * FROM information_schema.cluster_systeminfo;
+-- error 1227
+SELECT * FROM information_schema.cluster_log WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%';
+disconnect ccnobody;
+
+connect (ccconfig,localhost,ccconfig,,);
+connection ccconfig;
+SHOW GRANTS;
+SELECT * FROM information_schema.cluster_config limit 0;
+SELECT * FROM information_schema.cluster_HARDWARE limit 0;
+-- error 1227
+SELECT * FROM information_schema.cluster_INFO;
+-- error 1227
+SELECT * FROM information_schema.cluster_LOAD;
+-- error 1227
+SELECT * FROM information_schema.cluster_SYSTEMINFO;
+-- error 1227
+SELECT * FROM information_schema.cluster_LOG WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%';
+disconnect ccconfig;
+
+connect (ccprocess,localhost,ccprocess,,);
+connection ccprocess;
+SHOW GRANTS;
+SELECT * FROM information_schema.CLUSTER_info limit 0;
+SELECT * FROM information_schema.CLUSTER_load limit 0;
+SELECT * FROM information_schema.CLUSTER_systeminfo limit 0;
+SELECT * FROM information_schema.CLUSTER_log WHERE time BETWEEN '1970-07-13 00:00:00' AND '1970-07-13 02:00:00' AND message like '%';
+-- error 1227
+SELECT * FROM information_schema.CLUSTER_config;
+-- error 1227
+SELECT * FROM information_schema.CLUSTER_hardware;
+disconnect ccprocess;
+connection default;
+
+
+# TestSetPasswdStmt
+CREATE USER 'superuser';
+CREATE USER 'nobodyuser';
+GRANT ALL ON *.* TO 'superuser';
+connect (superuser,localhost,superuser,,);
+connection superuser;
+SET PASSWORD for 'nobodyuser' = 'newpassword';
+SET PASSWORD for 'nobodyuser' = '';
+disconnect superuser;
+
+connect (nobodyuser,localhost,nobodyuser,,);
+connection nobodyuser;
+--error 1044
+SET PASSWORD for 'superuser' = 'newpassword';
+disconnect nobodyuser;
+connection default;
+
+
+# TestShowGrantsWithRolesAndDynamicPrivs
+CREATE ROLE tsg_r1;
+CREATE USER tsg_u1, tsg_u2;
+GRANT CONNECTION_ADMIN, ROLE_ADMIN, SYSTEM_VARIABLES_ADMIN, PROCESS ON *.* TO tsg_r1;
+GRANT CONNECTION_ADMIN ON *.* TO tsg_u1 WITH GRANT OPTION;
+GRANT CONNECTION_ADMIN ON *.* TO tsg_u2 WITH GRANT OPTION;
+GRANT ROLE_ADMIN ON *.* TO tsg_u1;
+GRANT ROLE_ADMIN ON *.* TO tsg_u2;
+GRANT ROLE_ADMIN ON *.* TO tsg_r1 WITH GRANT OPTION;
+GRANT CONFIG ON *.* TO tsg_r1;
+GRANT tsg_r1 TO tsg_u1, tsg_u2;
+SET DEFAULT ROLE tsg_r1 TO tsg_u1;
+
+connect (tsg_u1,localhost,tsg_u1,,);
+connection tsg_u1;
+SHOW GRANTS;
+SHOW GRANTS FOR CURRENT_USER();
+SHOW GRANTS FOR 'tsg_u1';
+disconnect tsg_u1;
+
+connect (tsg_u2,localhost,tsg_u2,,);
+connection tsg_u2;
+SHOW GRANTS;
+SHOW GRANTS FOR CURRENT_USER();
+SHOW GRANTS FOR 'tsg_u2';
+SET ROLE tsg_r1;
+SHOW GRANTS;
+SHOW GRANTS FOR CURRENT_USER();
+SHOW GRANTS FOR 'tsg_u2';
+disconnect tsg_u2;
+connection default;
+
+
+# TestGetEncodedPassword
+CREATE USER 'test_encode_u'@'localhost' identified by 'root';
+select authentication_string from mysql.user where user='test_encode_u';
+
+
+# TestShowGrantsForCurrentUserUsingRole
+DROP USER IF EXISTS joe, engineering, notgranted, otherrole, delete_stuff_privilege;
+CREATE USER joe;
+CREATE ROLE engineering;
+CREATE ROLE admins;
+CREATE ROLE notgranted;
+CREATE ROLE otherrole;
+GRANT INSERT ON test.* TO engineering;
+GRANT DELETE ON test.* TO admins;
+GRANT SELECT on test.* to joe;
+GRANT engineering TO joe;
+GRANT admins TO joe;
+SET DEFAULT ROLE admins TO joe;
+GRANT otherrole TO joe;
+GRANT UPDATE ON role.* TO otherrole;
+GRANT SELECT ON mysql.user TO otherrole;
+CREATE ROLE delete_stuff_privilege;
+GRANT DELETE ON mysql.user TO delete_stuff_privilege;
+GRANT delete_stuff_privilege TO otherrole;
+
+connect (joe,localhost,joe,,);
+connection joe;
+-- error 3530
+SHOW GRANTS FOR CURRENT_USER() USING notgranted;
+SHOW GRANTS FOR current_user() USING otherrole;
+SHOW GRANTS FOR joe USING otherrole;
+disconnect joe;
+connection default;
+
+set global tidb_enable_resource_control = default;
+
+# TestAdmin
+create table privilege__privileges.admin(a int, KEY idx_a (`a`));
+create user without_super;
+connect (without_super,localhost,without_super,,);
+connection without_super;
+-- error 8121
+admin set bdr role primary;
+-- error 8121
+admin show bdr role;
+-- error 8121
+admin unset bdr role;
+-- error 8121
+admin cancel ddl jobs 10;
+-- error 8121
+admin pause ddl jobs 10;
+-- error 8121
+admin resume ddl jobs 10;
+-- error 8121
+admin checksum table privilege__privileges.admin;
+-- error 8121
+admin check table privilege__privileges.admin;
+-- error 8121
+admin check index privilege__privileges.admin idx_a;
+-- error 8121
+admin show ddl jobs;
+-- error 8121
+admin show ddl job queries 10;
+-- error 8121
+ADMIN SHOW privilege__privileges.admin NEXT_ROW_ID;
+-- error 8121
+ADMIN SHOW SLOW RECENT 3;
+-- error 8121
+ADMIN SHOW SLOW TOP ALL 3;
+
+disconnect without_super;
+connection default;

@@ -1,0 +1,280 @@
+# TestDatabase
+create database xxx;
+drop database xxx;
+drop database if exists xxx;
+create database xxx;
+create database if not exists xxx;
+drop database if exists xxx;
+create schema xxx;
+drop schema xxx;
+drop schema if exists xxx;
+create schema xxx;
+create schema if not exists xxx;
+drop schema if exists xxx;
+
+# TestIndexMaxLength
+drop table if exists t;
+-- error 1071
+create table t (c1 varchar(3073), index(c1)) charset = ascii;
+create table t (c1 varchar(3073)) charset = ascii;
+-- error 1071
+create index idx_c1 on t(c1) ;
+drop table t;
+-- error 1071
+create table t (c1 varchar(3072), c2 varchar(1), index(c1, c2)) charset = ascii;
+-- error 1071
+create table t (c1 varchar(3072), c2 char(1), index(c1, c2)) charset = ascii;
+-- error 1071
+create table t (c1 varchar(3072), c2 char, index(c1, c2)) charset = ascii;
+-- error 1071
+create table t (c1 varchar(3072), c2 date, index(c1, c2)) charset = ascii;
+-- error 1071
+create table t (c1 varchar(3069), c2 timestamp(1), index(c1, c2)) charset = ascii;
+create table t (c1 varchar(3068), c2 bit(26), index(c1, c2)) charset = ascii;
+drop table t;
+create table t (c1 varchar(3068), c2 bit(32), index(c1, c2)) charset = ascii;
+drop table t;
+-- error 1071
+create table t (c1 varchar(3068), c2 bit(33), index(c1, c2)) charset = ascii;
+create table t (c1 varchar(3072), c2 varchar(1)) charset = ascii;
+-- error 1071
+create index idx_c1_c2 on t(c1, c2);
+drop table t;
+create table t (c1 varchar(3072), c2 char(1)) charset = ascii;
+-- error 1071
+create index idx_c1_c2 on t(c1, c2);
+drop table t;
+create table t (c1 varchar(3072), c2 char) charset = ascii;
+-- error 1071
+create index idx_c1_c2 on t(c1, c2);
+drop table t;
+create table t (c1 varchar(3072), c2 date) charset = ascii;
+-- error 1071
+create index idx_c1_c2 on t(c1, c2);
+drop table t;
+create table t (c1 varchar(3069), c2 timestamp(1)) charset = ascii;
+-- error 1071
+create index idx_c1_c2 on t(c1, c2);
+drop table t;
+-- error 1071
+create table t (a varchar(3073) primary key) charset=binary;
+create table t (a varchar(3072) primary key) charset=binary;
+drop table if exists t;
+-- error 1071
+create table t (a varchar(3073) primary key) charset=latin1;
+create table t (a varchar(3072) primary key) charset=latin1;
+drop table if exists t;
+-- error 1071
+create table t (a varchar(1025) primary key) charset=utf8;
+create table t (a varchar(1024) primary key) charset=utf8;
+drop table if exists t;
+-- error 1071
+create table t (a varchar(769) primary key) charset=utf8mb4;
+create table t (a varchar(768) primary key) charset=utf8mb4;
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b tinyint, index idx(a(3072), b));
+create table t (a blob(10000), b tinyint, index idx(a(3071), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b smallint, index idx(a(3071), b));
+create table t (a blob(10000), b smallint, index idx(a(3070), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b mediumint, index idx(a(3070), b));
+create table t (a blob(10000), b mediumint, index idx(a(3069), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b int, index idx(a(3069), b));
+create table t (a blob(10000), b int, index idx(a(3068), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b integer, index idx(a(3069), b));
+create table t (a blob(10000), b integer, index idx(a(3068), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b bigint, index idx(a(3065), b));
+create table t (a blob(10000), b bigint, index idx(a(3064), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b float, index idx(a(3069), b));
+create table t (a blob(10000), b float, index idx(a(3068), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b float(24), index idx(a(3069), b));
+create table t (a blob(10000), b float(24), index idx(a(3068), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b float(25), index idx(a(3065), b));
+create table t (a blob(10000), b float(25), index idx(a(3064), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b decimal(9), index idx(a(3069), b));
+create table t (a blob(10000), b decimal(9), index idx(a(3068), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b decimal(10), index idx(a(3068), b));
+create table t (a blob(10000), b decimal(10), index idx(a(3067), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b decimal(17), index idx(a(3065), b));
+create table t (a blob(10000), b decimal(17), index idx(a(3064), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b year, index idx(a(3072), b));
+create table t (a blob(10000), b year, index idx(a(3071), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b date, index idx(a(3070), b));
+create table t (a blob(10000), b date, index idx(a(3069), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b time, index idx(a(3070), b));
+create table t (a blob(10000), b time, index idx(a(3069), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b datetime, index idx(a(3065), b));
+create table t (a blob(10000), b datetime, index idx(a(3064), b));
+drop table if exists t;
+-- error 1071
+create table t (a blob(10000), b timestamp, index idx(a(3069), b));
+create table t (a blob(10000), b timestamp, index idx(a(3068), b));
+drop table if exists t;
+
+# TestMultiStmts
+drop table if exists t1; create table t1(id int ); insert into t1 values (1);
+select * from t1;
+
+# TestDecimal
+drop table if exists t;
+create table t (a decimal unique);
+insert t values ('100');
+-- error 1062
+insert t values ('1e2');
+
+# TestParser
+# test for https://github.com/pingcap/tidb/pull/177
+drop table if exists t1, t2;
+CREATE TABLE `t1` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;
+CREATE TABLE `t2` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;
+INSERT INTO t1 VALUES (1,1,1);
+INSERT INTO t2 VALUES (1,1,1);
+PREPARE my_stmt FROM "SELECT t1.b, count(*) FROM t1 group by t1.b having count(*) > ALL (SELECT COUNT(*) FROM t2 WHERE t2.a=1 GROUP By t2.b)";
+EXECUTE my_stmt;
+EXECUTE my_stmt;
+deallocate prepare my_stmt;
+drop table t1,t2;
+
+# TestOnDuplicate
+# test for https://github.com/pingcap/tidb/pull/454
+drop table if exists t;
+drop table if exists t1;
+create table t1 (c1 int, c2 int, c3 int);
+insert into t1 set c1=1, c2=2, c3=1;
+create table t (c1 int, c2 int, c3 int, primary key (c1));
+insert into t set c1=1, c2=4;
+insert into t select * from t1 limit 1 on duplicate key update c3=3333;
+
+# TestReplace
+# https://github.com/pingcap/tidb/pull/456
+drop table if exists t;
+drop table if exists t1;
+create table t1 (c1 int, c2 int, c3 int);
+replace into t1 set c1=1, c2=2, c3=1;
+create table t (c1 int, c2 int, c3 int, primary key (c1));
+replace into t set c1=1, c2=4;
+replace into t select * from t1 limit 1;
+
+# TestDelete
+connect (conn1, localhost, root,, session__common);
+connection conn1;
+create database session__common1;
+use session__common1;
+create table t (F1 VARCHAR(30));
+insert into t (F1) values ('1'), ('4');
+connection default;
+drop table if exists t;
+create table t (F1 VARCHAR(30));
+insert into t (F1) values ('1'), ('2');
+delete m1 from t m2,t m1 where m1.F1>1;
+select * from t;
+drop table if exists t;
+create table t (F1 VARCHAR(30));
+insert into t (F1) values ('1'), ('2');
+delete m1 from t m1,t m2 where true and m1.F1<2;
+select * from t;
+drop table if exists t;
+create table t (F1 VARCHAR(30));
+insert into t (F1) values ('1'), ('2');
+delete m1 from t m1,t m2 where false;
+select * from t;
+drop table if exists t;
+create table t (F1 VARCHAR(30));
+insert into t (F1) values ('1'), ('2');
+delete m1, m2 from t m1,t m2 where m1.F1>m2.F1;
+select * from t;
+drop table if exists t;
+create table t (F1 VARCHAR(30));
+insert into t (F1) values ('1'), ('2');
+delete session__common1.t from session__common1.t inner join session__common.t where session__common1.t.F1 > session__common.t.F1;
+connection conn1;
+select * from t;
+disconnect conn1;
+
+# TestSet
+# Test for https://github.com/pingcap/tidb/issues/1114
+set @tmp = 0;
+set @tmp := @tmp + 1;
+select @tmp;
+select @tmp1 = 1, @tmp2 := 2;
+select @tmp1 := 11, @tmp2;
+drop table if exists t;
+create table t (c int);
+insert into t values (1),(2);
+update t set c = 3 WHERE c = @var:= 1;
+select * from t;
+select @tmp := count(*) from t;
+select @tmp := c-2 from t where c=3;
+
+# TestMySQLTypes
+select 0x01 + 1, x'4D7953514C' = "MySQL";
+select 0b01 + 1, 0b01000001 = "A";
+
+# TestIssue986
+drop table if exists address;
+CREATE TABLE address (
+ 		id bigint(20) NOT NULL AUTO_INCREMENT,
+ 		PRIMARY KEY (id));
+insert into address values ('10');
+
+# TestCast
+select cast(0.5 as unsigned);
+select cast(-0.5 as signed);
+select hex(cast(0x10 as binary(2)));
+# test for issue: https://github.com/pingcap/tidb/issues/34539
+select cast('0000-00-00' as TIME);
+--enable_warnings
+select cast('1234x' as TIME);
+--disable_warnings
+select cast('a' as TIME);
+select cast('' as TIME);
+select cast('1234xxxxxxx' as TIME);
+select cast('1234xxxxxxxx' as TIME);
+select cast('-1234xxxxxxx' as TIME);
+select cast('-1234xxxxxxxx' as TIME);
+
+# TestCaseInsensitive
+drop table if exists T;
+create table T (a text, B int);
+insert t (A, b) values ('aaa', 1);
+select * from t;
+select A, b from t;
+select a as A from t where A > 0;
+update T set b = B + 1;
+update T set B = b + 1;
+select b from T;
+
+# TestISColumns
+--replace_column 1 1
+select count(ORDINAL_POSITION) from INFORMATION_SCHEMA.COLUMNS;
+SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4';

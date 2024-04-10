@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "addindextest3_test",
+    timeout = "long",
+    srcs = [
+        "functional_test.go",
+        "main_test.go",
+        "operator_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/ddl",
+        "//pkg/ddl/copr",
+        "//pkg/ddl/ingest",
+        "//pkg/disttask/operator",
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/table",
+        "//pkg/table/tables",
+        "//pkg/testkit",
+        "//pkg/util/chunk",
+        "//tests/realtikvtest",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_golang_x_sync//errgroup",
+    ],
+)

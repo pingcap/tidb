@@ -1,0 +1,7 @@
+[conflict]
+precheck-conflict-before-import = true
+max-record-rows = 50
+
+[tikv-importer]
+on-duplicate = "replace"
+add-index-by-sql = true

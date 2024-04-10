@@ -1,0 +1,900 @@
+desc format='brief' select * from METRICS_SCHEMA.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ;
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:tidb_query_duration	PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s
+desc format='brief' select * from METRICS_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ;
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:up	PromQL:up{}, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s
+desc format='brief' select * from information_schema.cluster_log where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:CLUSTER_LOG	start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13
+desc format='brief' select * from information_schema.cluster_log where level in ('warn','error') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:CLUSTER_LOG	start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, log_levels:["error","warn"]
+desc format='brief' select * from information_schema.cluster_log where type in ('high_cpu_1','high_memory_1') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:CLUSTER_LOG	start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, node_types:["high_cpu_1","high_memory_1"]
+desc format='brief' select * from information_schema.slow_query;
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:SLOW_QUERY	only search in the current 'tidb-slow.log' file
+desc format='brief' select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:SLOW_QUERY	start_time:2019-12-23 16:10:13.000000, end_time:2019-12-23 16:30:13.000000
+set @@time_zone = '+00:00';
+desc format='brief' select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:SLOW_QUERY	start_time:2019-12-23 16:10:13.000000, end_time:2019-12-23 16:30:13.000000
+set @@time_zone = default;
+desc format='brief' select * from information_schema.cluster_config where type in ('tikv', 'tidb');
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:CLUSTER_CONFIG	node_types:["tidb","tikv"]
+desc format='brief' select * from information_schema.cluster_config where instance='192.168.1.7:2379';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:CLUSTER_CONFIG	instances:["192.168.1.7:2379"]
+desc format='brief' select * from information_schema.cluster_config where type='tidb' and instance='192.168.1.7:2379';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:CLUSTER_CONFIG	node_types:["tidb"], instances:["192.168.1.7:2379"]
+desc format='brief' select * from information_schema.inspection_result where rule = 'ddl' and rule = 'config';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:INSPECTION_RESULT	skip_inspection:true
+desc format='brief' select * from information_schema.inspection_result where rule in ('ddl', 'config');
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:INSPECTION_RESULT	rules:["config","ddl"], items:[]
+desc format='brief' select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool');
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:INSPECTION_RESULT	rules:[], items:["ddl.lease","raftstore.threadpool"]
+desc format='brief' select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool') and rule in ('ddl', 'config');
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:INSPECTION_RESULT	rules:["config","ddl"], items:["ddl.lease","raftstore.threadpool"]
+desc format='brief' select * from information_schema.inspection_rules where type='inspection';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:INSPECTION_RULES	node_types:["inspection"]
+desc format='brief' select * from information_schema.inspection_rules where type='inspection' or type='summary';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:INSPECTION_RULES	node_types:["inspection","summary"]
+desc format='brief' select * from information_schema.inspection_rules where type='inspection' and type='summary';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:INSPECTION_RULES	skip_request: true
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+create table t(a int, b int, c int generated always as (a+b) stored);
+insert into t(a,b) values(1,1);
+begin;
+update t set b = 2 where a = 1;
+prepare stmt from 'select b from t where a > ?';
+set @p = 0;
+execute stmt using @p;
+b
+2
+set @p = 1;
+execute stmt using @p;
+b
+insert into t(a,b,c) values(3,3,3);
+Error 3105 (HY000): The value specified for generated column 'c' in table 't' is not allowed.
+rollback;
+set tidb_enable_prepared_plan_cache=default;
+desc format='brief' select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TABLE_STORAGE_STATS	schema:["information_schema"]
+desc format='brief' select * from information_schema.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TABLE_STORAGE_STATS	table:["schemata"]
+desc format='brief' select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TABLE_STORAGE_STATS	schema:["information_schema"], table:["schemata"]
+desc format='brief' select * from information_schema.inspection_summary where rule='ddl';
+id	estRows	task	access object	operator info
+Selection	8000.00	root		eq(Column#1, "ddl")
+└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["ddl"]
+desc format='brief' select * from information_schema.inspection_summary where 'ddl'=rule or rule='config';
+id	estRows	task	access object	operator info
+Selection	8000.00	root		or(eq("ddl", Column#1), eq(Column#1, "config"))
+└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["config","ddl"]
+desc format='brief' select * from information_schema.inspection_summary where 'ddl'=rule or rule='config' or rule='slow_query';
+id	estRows	task	access object	operator info
+Selection	8000.00	root		or(eq("ddl", Column#1), or(eq(Column#1, "config"), eq(Column#1, "slow_query")))
+└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["config","ddl","slow_query"]
+desc format='brief' select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1');
+id	estRows	task	access object	operator info
+Selection	8000.00	root		or(eq(Column#1, "config"), eq(Column#1, "slow_query")), or(eq(Column#3, "metric_name3"), eq(Column#3, "metric_name1"))
+└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["config","slow_query"], metric_names:["metric_name1","metric_name3"]
+desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query');
+id	estRows	task	access object	operator info
+Selection	8000.00	root		in(Column#1, "ddl", "slow_query")
+└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["ddl","slow_query"]
+desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name='metric_name1';
+id	estRows	task	access object	operator info
+Selection	8000.00	root		eq(Column#3, "metric_name1"), in(Column#1, "ddl", "slow_query")
+└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["ddl","slow_query"], metric_names:["metric_name1"]
+desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name in ('metric_name1', 'metric_name2');
+id	estRows	task	access object	operator info
+Selection	8000.00	root		in(Column#1, "ddl", "slow_query"), in(Column#3, "metric_name1", "metric_name2")
+└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["ddl","slow_query"], metric_names:["metric_name1","metric_name2"]
+desc format='brief' select * from information_schema.inspection_summary where rule='ddl' and metrics_name in ('metric_name1', 'metric_name2');
+id	estRows	task	access object	operator info
+Selection	8000.00	root		eq(Column#1, "ddl"), in(Column#3, "metric_name1", "metric_name2")
+└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["ddl"], metric_names:["metric_name1","metric_name2"]
+desc format='brief' select * from information_schema.inspection_summary where rule='ddl' and metrics_name='metric_NAME3';
+id	estRows	task	access object	operator info
+Selection	8000.00	root		eq(Column#1, "ddl"), eq(Column#3, "metric_NAME3")
+└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["ddl"], metric_names:["metric_name3"]
+desc format='brief' select * from information_schema.inspection_summary where rule in ('ddl', 'config') and rule in ('slow_query', 'config');
+id	estRows	task	access object	operator info
+Selection	8000.00	root		in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config")
+└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["config"]
+desc format='brief' select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and rule in ('ddl', 'config') and rule in ('slow_query', 'config') and quantile in (0.80, 0.90);
+id	estRows	task	access object	operator info
+Selection	8000.00	root		in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name4")
+└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	rules:["config"], metric_names:["metric_name4"], quantiles:[0.800000,0.900000]
+desc format='brief' select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name1') and metrics_name in ('metric_name1', 'metric_name3');
+id	estRows	task	access object	operator info
+Selection	8000.00	root		in(Column#3, "metric_name1", "metric_name3"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name1"), in(Column#3, "metric_name5", "metric_name4")
+└─MemTableScan	10000.00	root	table:INSPECTION_SUMMARY	skip_inspection: true
+desc format='brief' select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '192.168.1.7:3930';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TIFLASH_TABLES	tiflash_instances:["192.168.1.7:3930"]
+desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '192.168.1.7:3930';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TIFLASH_SEGMENTS	tiflash_instances:["192.168.1.7:3930"]
+desc format='brief' select * from information_schema.TIFLASH_TABLES where TIDB_DATABASE = 'test';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TIFLASH_TABLES	tidb_databases:["test"]
+desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIDB_DATABASE = 'test';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TIFLASH_SEGMENTS	tidb_databases:["test"]
+desc format='brief' select * from information_schema.TIFLASH_TABLES where TIDB_TABLE = 't';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TIFLASH_TABLES	tidb_tables:["t"]
+desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIDB_TABLE = 't';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TIFLASH_SEGMENTS	tidb_tables:["t"]
+desc format='brief' select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '192.168.1.7:3930' and TIDB_DATABASE = 'test' and TIDB_TABLE = 't';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TIFLASH_TABLES	tiflash_instances:["192.168.1.7:3930"], tidb_databases:["test"], tidb_tables:["t"]
+desc format='brief' select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '192.168.1.7:3930' and TIDB_DATABASE = 'test' and TIDB_TABLE = 't';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TIFLASH_SEGMENTS	tiflash_instances:["192.168.1.7:3930"], tidb_databases:["test"], tidb_tables:["t"]
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+drop table if exists t1, t2;
+CREATE TABLE `t1` (a int);
+CREATE TABLE `t2` (a int);
+insert into t1 values(1), (2);
+insert into t2 values(1), (3);
+prepare stmt from 'select * from t1 where a > ? union select * from t2 where a > ?;';
+set @a=0, @b=1;
+execute stmt using @a, @b;
+a
+1
+2
+3
+execute stmt using @b, @a;
+a
+1
+2
+3
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt using @b, @b;
+a
+2
+3
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt using @a, @a;
+a
+1
+2
+3
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+prepare stmt from 'select * from t1 where a > ? union all select * from t2 where a > ?;';
+set @a=0, @b=1;
+execute stmt using @a, @b;
+a
+1
+2
+3
+execute stmt using @b, @a;
+a
+1
+2
+3
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt using @b, @b;
+a
+2
+3
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt using @a, @a;
+a
+1
+1
+2
+3
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+prepare stmt from 'select * from t1 where a > ? except select * from t2 where a > ?;';
+set @a=0, @b=1;
+execute stmt using @a, @a;
+a
+2
+execute stmt using @b, @a;
+a
+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt using @b, @b;
+a
+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt using @a, @b;
+a
+1
+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+prepare stmt from 'select * from t1 where a > ? union select * from t2 where a > ?;';
+set @a=0, @b=1;
+execute stmt using @a, @a;
+a
+1
+2
+3
+execute stmt using @b, @a;
+a
+1
+2
+3
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt using @b, @b;
+a
+2
+3
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt using @a, @b;
+a
+1
+2
+3
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+prepare stmt from 'select * from t1 union all select * from t1 intersect select * from t2;';
+execute stmt;
+a
+1
+1
+2
+prepare stmt from '(select * from t1 union all select * from t1) intersect select * from t2;';
+execute stmt;
+a
+1
+prepare stmt from '(select * from t1 union all select * from t1 intersect select * from t2) order by a limit 2;';
+execute stmt;
+a
+1
+1
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+drop table if exists t;
+create table t(a int, index idx_a(a));
+prepare stmt from 'select * from t;';
+execute stmt;
+a
+execute stmt;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+prepare stmt from 'select /*+ IGNORE_PLAN_CACHE() */ * from t;';
+execute stmt;
+a
+execute stmt;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+drop table if exists t;
+CREATE TABLE t(c1 INT, index idx_c(c1));
+prepare stmt from 'select * from t use index(idx_c) where c1 > 1;';
+execute stmt;
+c1
+execute stmt;
+c1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+ALTER TABLE t ALTER INDEX idx_c INVISIBLE;
+select * from t use index(idx_c) where c1 > 1;
+Error 1176 (42000): Key 'idx_c' doesn't exist in table 't'
+execute stmt;
+Error 1176 (42000): Key 'idx_c' doesn't exist in table 't'
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+prepare stmt from 'with recursive cte1 as (select ? c1 union all select c1 + 1 c1 from cte1 where c1 < ?) select * from cte1;';
+set @a=5, @b=4, @c=2, @d=1;
+execute stmt using @d, @a;
+c1
+1
+2
+3
+4
+5
+execute stmt using @d, @b;
+c1
+1
+2
+3
+4
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt using @c, @b;
+c1
+2
+3
+4
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+prepare stmt from 'with recursive cte1 as (select 1 c1 union all select 2 c1 union all select c1 + 1 c1 from cte1 where c1 < ?) select * from cte1 order by c1;';
+set @a=10, @b=2;
+execute stmt using @a;
+c1
+1
+2
+2
+3
+3
+4
+4
+5
+5
+6
+6
+7
+7
+8
+8
+9
+9
+10
+10
+execute stmt using @b;
+c1
+1
+2
+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+prepare stmt from 'with recursive cte1 as (select 1 c1 union all select 2 c1 union all select c1 + 1 c1 from cte1 where c1 < ? union all select c1 + ? c1 from cte1 where c1 < ?) select * from cte1 order by c1;';
+set @a=1, @b=2, @c=3, @d=4, @e=5;
+execute stmt using @c, @b, @e;
+c1
+1
+2
+2
+3
+3
+3
+4
+4
+5
+5
+5
+6
+6
+execute stmt using @b, @a, @d;
+c1
+1
+2
+2
+2
+3
+3
+3
+4
+4
+4
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+drop table if exists t1;
+create table t1(a int);
+insert into t1 values(1);
+insert into t1 values(2);
+prepare stmt from 'SELECT * FROM t1 dt WHERE EXISTS(WITH RECURSIVE qn AS (SELECT a*? AS b UNION ALL SELECT b+? FROM qn WHERE b=?) SELECT * FROM qn WHERE b=a);';
+show warnings;
+Level	Code	Message
+Warning	1105	skip prepared plan-cache: find table executor__explainfor.qn failed: [schema:1146]Table 'executor__explainfor.qn' doesn't exist
+set @a=1, @b=2, @c=3, @d=4, @e=5, @f=0;
+execute stmt using @f, @a, @f;
+a
+1
+execute stmt using @a, @b, @a;
+a
+1
+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt using @a, @b, @a;
+a
+1
+2
+prepare stmt from 'with recursive c(p) as (select ?), cte(a, b) as (select 1, 1 union select a+?, 1 from cte, c where a < ?)  select * from cte order by 1, 2;';
+show warnings;
+Level	Code	Message
+Warning	1105	skip prepared plan-cache: find table executor__explainfor.cte failed: [schema:1146]Table 'executor__explainfor.cte' doesn't exist
+execute stmt using @a, @a, @e;
+a	b
+1	1
+2	1
+3	1
+4	1
+5	1
+execute stmt using @b, @b, @c;
+a	b
+1	1
+3	1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+drop table if exists t;
+create table t(a int);
+prepare stmt from 'select * from t;';
+execute stmt;
+a
+execute stmt;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+drop database if exists plan_cache;
+create database plan_cache;
+use plan_cache;
+create table t(a int);
+insert into t values(1);
+execute stmt;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+prepare stmt from 'select * from t;';
+execute stmt;
+a
+1
+execute stmt;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+set @@session.tidb_enable_list_partition=1;
+drop table if exists t;
+create table t(a int, b int) PARTITION BY LIST (a) ( PARTITION p0 VALUES IN (1, 2, 3), PARTITION p1 VALUES IN (4, 5, 6));
+set @@tidb_partition_prune_mode='static';
+prepare stmt from 'select * from t;';
+execute stmt;
+a	b
+execute stmt;
+a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+set @@session.tidb_enable_list_partition=default;
+set @@tidb_partition_prune_mode=default;
+drop table if exists t12, t97;
+CREATE TABLE t12(a INT, b INT);
+CREATE TABLE t97(a INT, b INT UNIQUE NOT NULL);
+EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 on t12.b = t97.b;
+id	estRows	task	access object	operator info
+TableReader_7	10000.00	root		data:TableFullScan_6
+└─TableFullScan_6	10000.00	cop[tikv]	table:t12	keep order:false, stats:pseudo
+EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 use index () on t12.b = t97.b;
+id	estRows	task	access object	operator info
+TableReader_7	10000.00	root		data:TableFullScan_6
+└─TableFullScan_6	10000.00	cop[tikv]	table:t12	keep order:false, stats:pseudo
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+drop table if exists t;
+create table t(a int);
+prepare stmt from 'select * from t;';
+execute stmt;
+a
+execute stmt;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set tidb_enable_prepared_plan_cache=1;
+execute stmt;
+Error 8111 (HY000): Prepared statement not found
+prepare stmt from 'select * from t;';
+execute stmt;
+a
+execute stmt;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+drop view if exists view1, view2, view3, view4;
+drop table if exists view_t;
+create table view_t (a int,b int);
+insert into view_t values(1,2);
+create definer='root'@'localhost' view view1 as select * from view_t;
+create definer='root'@'localhost' view view2(c,d) as select * from view_t;
+create definer='root'@'localhost' view view3(c,d) as select a,b from view_t;
+create definer='root'@'localhost' view view4 as select * from (select * from (select * from view_t) tb1) tb;
+prepare stmt1 from 'select * from view1;';
+execute stmt1;
+a	b
+1	2
+execute stmt1;
+a	b
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+prepare stmt2 from 'select * from view2;';
+execute stmt2;
+c	d
+1	2
+execute stmt2;
+c	d
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+prepare stmt3 from 'select * from view3;';
+execute stmt3;
+c	d
+1	2
+execute stmt3;
+c	d
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+prepare stmt4 from 'select * from view4;';
+execute stmt4;
+a	b
+1	2
+execute stmt4;
+a	b
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+drop table view_t;
+create table view_t(c int,d int);
+execute stmt1;
+Error 1356 (HY000): View 'plan_cache.view1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+execute stmt2;
+Error 1356 (HY000): View 'plan_cache.view2' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+execute stmt3;
+Error 1356 (HY000): View 'plan_cache.view3' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+drop table view_t;
+create table view_t(a int,b int,c int);
+insert into view_t values(1,2,3);
+execute stmt1;
+a	b
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt1;
+a	b
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt2;
+c	d
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt2;
+c	d
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt3;
+c	d
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt3;
+c	d
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt4;
+a	b
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt4;
+a	b
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+alter table view_t drop column a;
+alter table view_t add column a int after b;
+update view_t set a=1;
+execute stmt1;
+a	b
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt1;
+a	b
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt2;
+c	d
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt2;
+c	d
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt3;
+c	d
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt3;
+c	d
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt4;
+a	b
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt4;
+a	b
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+drop table view_t;
+drop view view1,view2,view3,view4;
+set @@tidb_enable_window_function = 1;
+drop table if exists t;
+create table t(a int, b int);
+insert into t values (1,1),(1,2),(2,1),(2,2);
+create definer='root'@'localhost' view v as select a, first_value(a) over(rows between 1 preceding and 1 following), last_value(a) over(rows between 1 preceding and 1 following) from t;
+prepare stmt from 'select * from v;';
+execute stmt;
+a	first_value(a) over(rows between 1 preceding and 1 following)	last_value(a) over(rows between 1 preceding and 1 following)
+1	1	1
+1	1	2
+2	1	2
+2	2	2
+execute stmt;
+a	first_value(a) over(rows between 1 preceding and 1 following)	last_value(a) over(rows between 1 preceding and 1 following)
+1	1	1
+1	1	2
+2	1	2
+2	2	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+drop view v;
+set @@tidb_enable_window_function = default;
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+drop table if exists t;
+create table t(a int, index idx_a(a));
+drop table if exists r;
+create table r(a int);
+prepare stmt from 'select * from t;';
+create binding for select * from t using select /*+ use_index(t, idx_a) */ * from t;
+execute stmt;
+a
+execute stmt;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt;
+a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+create binding for select * from t using select /*+ ignore_plan_cache() */ * from t;
+execute stmt;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt;
+a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+create binding for select * from t using select /*+ use_index(t, idx_a) */ * from t;
+execute stmt;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt;
+a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+prepare stmt_join from 'select * from t, r where r.a = t.a;';
+create binding for select * from t, r where r.a = t.a using select /*+ straight_join() */* from t, r where r.a = t.a;
+execute stmt_join;
+a	a
+execute stmt_join;
+a	a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt_join;
+a	a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+create binding for select * from t, r where r.a = t.a using select /*+ ignore_plan_cache() */* from t, r where r.a = t.a;
+execute stmt_join;
+a	a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt_join;
+a	a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+create binding for select * from t, r where r.a = t.a using select /*+ straight_join() */* from t, r where r.a = t.a;
+execute stmt_join;
+a	a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+execute stmt_join;
+a	a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+create database s1;
+drop table if exists t;
+create table t(a int);
+drop table if exists r;
+create table r(a int);
+desc format='brief' select * from information_schema.tables where table_name='t';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TABLES	table_name:["t"]
+desc format='brief' select * from information_schema.tables where lower(table_name)='t';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TABLES	table_name:["t"]
+desc format='brief' select * from information_schema.tables where upper(table_name)=upper('t');
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TABLES	table_name:["T"]
+desc format='brief' select * from information_schema.REFERENTIAL_CONSTRAINTS where table_name='t';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:REFERENTIAL_CONSTRAINTS	table_name:["t"]
+desc format='brief' select * from information_schema.KEY_COLUMN_USAGE where table_name='t';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:KEY_COLUMN_USAGE	table_name:["t"]
+desc format='brief' select * from information_schema.STATISTICS where table_name='t';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:STATISTICS	table_name:["t"]
+desc format='brief' select * from information_schema.STATISTICS where table_name='t' and table_name='r';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:STATISTICS	skip_request:true
+desc format='brief' select * from information_schema.STATISTICS where table_name='t' or table_name='r';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:STATISTICS	table_name:["r","t"]
+desc format='brief' select * from information_schema.tables where table_schema='t';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TABLES	table_schema:["t"]
+desc format='brief' select * from information_schema.KEY_COLUMN_USAGE where table_schema='s1';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:KEY_COLUMN_USAGE	table_schema:["s1"]
+desc format='brief' select * from information_schema.STATISTICS where table_schema='s1';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:STATISTICS	table_schema:["s1"]
+desc format='brief' select * from information_schema.STATISTICS where table_schema='s1' and table_schema='test';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:STATISTICS	skip_request:true
+desc format='brief' select * from information_schema.STATISTICS where table_name='s1' and table_schema='test';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:STATISTICS	table_name:["s1"], table_schema:["test"]
+desc format='brief' select * from information_schema.STATISTICS where table_schema='s1' or table_schema='test';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:STATISTICS	table_schema:["s1","test"]
+desc format='brief' SELECT column_name FROM information_schema.statistics WHERE index_name = 'idx1' AND table_schema = DATABASE () AND table_name = 't' ORDER BY seq_in_index;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		Column#8->Column#19
+└─Sort	8000.00	root		Column#7
+  └─Selection	8000.00	root		eq(Column#6, "idx1")
+    └─MemTableScan	10000.00	root	table:STATISTICS	table_name:["t"], table_schema:["plan_cache"]
+desc format='brief' SELECT table_comment FROM information_schema.tables WHERE table_schema = DATABASE () AND table_name = 't';
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:TABLES	table_name:["t"], table_schema:["plan_cache"]
+desc format='brief' SELECT * FROM information_schema.referential_constraints rc JOIN information_schema.key_column_usage fk USING (constraint_schema, constraint_name) WHERE fk.referenced_column_name != 't' AND fk.table_schema = DATABASE () AND fk.table_name = 't' AND rc.constraint_schema = DATABASE () AND rc.table_name = 't';
+id	estRows	task	access object	operator info
+Projection	8000.00	root		Column#2, Column#3, Column#1, Column#4, Column#5, Column#6, Column#7, Column#8, Column#9, Column#10, Column#11, Column#12, Column#15, Column#16, Column#17, Column#18, Column#19, Column#20, Column#21, Column#22, Column#23
+└─HashJoin	8000.00	root		inner join, equal:[eq(Column#3, Column#14)]
+  ├─Selection(Build)	8000.00	root		eq("plan_cache", Column#13), ne(Column#23, "t")
+  │ └─MemTableScan	10000.00	root	table:KEY_COLUMN_USAGE	table_name:["t"], table_schema:["plan_cache"]
+  └─Selection(Probe)	8000.00	root		eq(Column#2, "plan_cache")
+    └─MemTableScan	10000.00	root	table:REFERENTIAL_CONSTRAINTS	table_name:["t"]

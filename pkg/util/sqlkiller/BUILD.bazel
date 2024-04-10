@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "sqlkiller",
+    srcs = ["sqlkiller.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/sqlkiller",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)

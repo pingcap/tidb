@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "memtest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "mem_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    deps = [
+        "//pkg/config",
+        "//pkg/meta/autoid",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

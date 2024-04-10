@@ -1,0 +1,181 @@
+drop table if exists queries_identifier, queries_program, queries_channel, t, t1, t2, t3, t4;
+CREATE TABLE `queries_identifier` (
+`id` int(11) NOT NULL AUTO_INCREMENT,
+`name` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE `queries_program` (
+`id` int(11) NOT NULL AUTO_INCREMENT,
+`identifier_id` int(11) NOT NULL,
+PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+UNIQUE KEY `identifier_id` (`identifier_id`),
+CONSTRAINT `queries_program_identifier_id_70ff12a6_fk_queries_identifier_id` FOREIGN KEY (`identifier_id`) REFERENCES `planner__core__rule_join_reorder`.`queries_identifier` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE `queries_channel` (
+`id` int(11) NOT NULL AUTO_INCREMENT,
+`identifier_id` int(11) NOT NULL,
+PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+UNIQUE KEY `identifier_id` (`identifier_id`),
+CONSTRAINT `queries_channel_identifier_id_06ac3513_fk_queries_identifier_id` FOREIGN KEY (`identifier_id`) REFERENCES `planner__core__rule_join_reorder`.`queries_identifier` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+INSERT  INTO queries_identifier(`id`, `name`) values(13, 'i1'), (14, 'i2'), (15, 'i3');
+INSERT  INTO queries_program(`id`, `identifier_id`) values(8, 13), (9, 14);
+INSERT  INTO queries_channel(`id`, `identifier_id`) values(5, 13);
+create table t(a int);
+create table t1(a int, b int);
+create table t2(a int, b int, c int);
+create table t3(a int, b int);
+create table t4(a int, b int);
+SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;
+id	name
+13	i1
+SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` RIGHT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;
+id	name
+13	i1
+explain format = 'brief' SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;
+id	estRows	task	access object	operator info
+Sort	2.50	root		planner__core__rule_join_reorder.queries_identifier.id
+└─Projection	2.50	root		planner__core__rule_join_reorder.queries_identifier.id, planner__core__rule_join_reorder.queries_identifier.name
+  └─Selection	2.50	root		or(and(eq(planner__core__rule_join_reorder.queries_channel.id, 5), eq(planner__core__rule_join_reorder.queries_program.id, 9)), eq(planner__core__rule_join_reorder.queries_program.id, 8))
+    └─IndexJoin	3.12	root		left outer join, inner:IndexReader, outer key:planner__core__rule_join_reorder.queries_identifier.id, inner key:planner__core__rule_join_reorder.queries_channel.identifier_id, equal cond:eq(planner__core__rule_join_reorder.queries_identifier.id, planner__core__rule_join_reorder.queries_channel.identifier_id)
+      ├─IndexHashJoin(Build)	2.50	root		inner join, inner:TableReader, outer key:planner__core__rule_join_reorder.queries_program.identifier_id, inner key:planner__core__rule_join_reorder.queries_identifier.id, equal cond:eq(planner__core__rule_join_reorder.queries_program.identifier_id, planner__core__rule_join_reorder.queries_identifier.id)
+      │ ├─Batch_Point_Get(Build)	2.00	root	table:queries_program	handle:[8 9], keep order:false, desc:false
+      │ └─TableReader(Probe)	2.00	root		data:TableRangeScan
+      │   └─TableRangeScan	2.00	cop[tikv]	table:queries_identifier	range: decided by [planner__core__rule_join_reorder.queries_program.identifier_id], keep order:false, stats:pseudo
+      └─IndexReader(Probe)	2.50	root		index:IndexRangeScan
+        └─IndexRangeScan	2.50	cop[tikv]	table:queries_channel, index:identifier_id(identifier_id)	range: decided by [eq(planner__core__rule_join_reorder.queries_channel.identifier_id, planner__core__rule_join_reorder.queries_identifier.id)], keep order:false, stats:pseudo
+explain format='brief' select * from t left join t1 on t.a=t1.a inner join t2 on t.a=t2.a and t2.c = 100 left join t3 on t2.a=t3.a and t3.b > 1 left join t4 on t2.a = t4.a where (t2.b > 100 or t.a > 10 or t1.b < 10);
+id	estRows	task	access object	operator info
+Projection	19.51	root		planner__core__rule_join_reorder.t.a, planner__core__rule_join_reorder.t1.a, planner__core__rule_join_reorder.t1.b, planner__core__rule_join_reorder.t2.a, planner__core__rule_join_reorder.t2.b, planner__core__rule_join_reorder.t2.c, planner__core__rule_join_reorder.t3.a, planner__core__rule_join_reorder.t3.b, planner__core__rule_join_reorder.t4.a, planner__core__rule_join_reorder.t4.b
+└─Selection	19.51	root		or(gt(planner__core__rule_join_reorder.t2.b, 100), or(gt(planner__core__rule_join_reorder.t.a, 10), lt(planner__core__rule_join_reorder.t1.b, 10))), or(gt(planner__core__rule_join_reorder.t2.b, 100), or(gt(planner__core__rule_join_reorder.t2.a, 10), lt(planner__core__rule_join_reorder.t1.b, 10)))
+  └─HashJoin	24.39	root		left outer join, equal:[eq(planner__core__rule_join_reorder.t2.a, planner__core__rule_join_reorder.t4.a)]
+    ├─HashJoin(Build)	19.51	root		left outer join, equal:[eq(planner__core__rule_join_reorder.t.a, planner__core__rule_join_reorder.t1.a)]
+    │ ├─HashJoin(Build)	15.61	root		inner join, equal:[eq(planner__core__rule_join_reorder.t2.a, planner__core__rule_join_reorder.t.a)]
+    │ │ ├─HashJoin(Build)	12.49	root		left outer join, equal:[eq(planner__core__rule_join_reorder.t2.a, planner__core__rule_join_reorder.t3.a)]
+    │ │ │ ├─TableReader(Build)	9.99	root		data:Selection
+    │ │ │ │ └─Selection	9.99	cop[tikv]		eq(planner__core__rule_join_reorder.t2.c, 100), not(isnull(planner__core__rule_join_reorder.t2.a))
+    │ │ │ │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    │ │ │ └─TableReader(Probe)	3330.00	root		data:Selection
+    │ │ │   └─Selection	3330.00	cop[tikv]		gt(planner__core__rule_join_reorder.t3.b, 1), not(isnull(planner__core__rule_join_reorder.t3.a))
+    │ │ │     └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+    │ │ └─TableReader(Probe)	9990.00	root		data:Selection
+    │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__rule_join_reorder.t.a))
+    │ │     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+    │ └─TableReader(Probe)	9990.00	root		data:Selection
+    │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__rule_join_reorder.t1.a))
+    │     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableReader(Probe)	9990.00	root		data:Selection
+      └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__rule_join_reorder.t4.a))
+        └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+drop table if exists t1, t2, t3;
+CREATE TABLE `t1` (`data_status` tinyint(1) DEFAULT '0',`part` tinyint(255) unsigned DEFAULT NULL);
+CREATE TABLE `t2` (`id` bigint(20) NOT NULL AUTO_INCREMENT,`routing_rule_switch` tinyint(1) DEFAULT '0',PRIMARY KEY (`id`));
+CREATE TABLE `t3` (`fk_id` bigint(20) DEFAULT NULL,`offer_pbu_id` varchar(255) DEFAULT NULL ,`market_id` smallint(6) DEFAULT NULL ,`te_partition` tinyint(255) DEFAULT NULL ,UNIQUE KEY `t_pbu_partition_id` (`offer_pbu_id`,`market_id`,`te_partition`));
+insert into t1 values(1,1);
+insert into t2 values(1,0);
+insert into t3 values(8,'a',3,6);
+SELECT tt.market_id,
+tt.offer_pbu_id
+FROM   t3 tt
+RIGHT JOIN (SELECT pp.offer_pbu_id,
+pp.market_id,
+t.partition_no
+FROM   (SELECT p.offer_pbu_id,
+p.market_id
+FROM   t3 p
+INNER JOIN t2 e
+ON p.fk_id = e.id
+AND e.routing_rule_switch = 1) pp,
+(SELECT part AS partition_no
+FROM   t1) t) o
+ON tt.market_id = o.market_id
+AND tt.offer_pbu_id = o.offer_pbu_id
+AND tt.te_partition = o.partition_no;
+market_id	offer_pbu_id
+explain format=brief
+SELECT tt.market_id,
+tt.offer_pbu_id
+FROM   t3 tt
+RIGHT JOIN (SELECT pp.offer_pbu_id,
+pp.market_id,
+t.partition_no
+FROM   (SELECT p.offer_pbu_id,
+p.market_id
+FROM   t3 p
+INNER JOIN t2 e
+ON p.fk_id = e.id
+AND e.routing_rule_switch = 1) pp,
+(SELECT part AS partition_no
+FROM   t1) t) o
+ON tt.market_id = o.market_id
+AND tt.offer_pbu_id = o.offer_pbu_id
+AND tt.te_partition = o.partition_no;
+id	estRows	task	access object	operator info
+Projection	155781.72	root		planner__core__rule_join_reorder.t3.market_id, planner__core__rule_join_reorder.t3.offer_pbu_id
+└─HashJoin	155781.72	root		right outer join, equal:[eq(planner__core__rule_join_reorder.t3.market_id, planner__core__rule_join_reorder.t3.market_id) eq(planner__core__rule_join_reorder.t3.offer_pbu_id, planner__core__rule_join_reorder.t3.offer_pbu_id) eq(planner__core__rule_join_reorder.t3.te_partition, planner__core__rule_join_reorder.t1.part)]
+  ├─IndexReader(Build)	9970.03	root		index:Selection
+  │ └─Selection	9970.03	cop[tikv]		not(isnull(planner__core__rule_join_reorder.t3.market_id)), not(isnull(planner__core__rule_join_reorder.t3.te_partition))
+  │   └─IndexFullScan	9990.00	cop[tikv]	table:tt, index:t_pbu_partition_id(offer_pbu_id, market_id, te_partition)	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	125000.00	root		CARTESIAN inner join
+    ├─HashJoin(Build)	12.50	root		inner join, equal:[eq(planner__core__rule_join_reorder.t2.id, planner__core__rule_join_reorder.t3.fk_id)]
+    │ ├─TableReader(Build)	10.00	root		data:Selection
+    │ │ └─Selection	10.00	cop[tikv]		eq(planner__core__rule_join_reorder.t2.routing_rule_switch, 1)
+    │ │   └─TableFullScan	10000.00	cop[tikv]	table:e	keep order:false, stats:pseudo
+    │ └─TableReader(Probe)	9990.00	root		data:Selection
+    │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__rule_join_reorder.t3.fk_id))
+    │     └─TableFullScan	10000.00	cop[tikv]	table:p	keep order:false, stats:pseudo
+    └─TableReader(Probe)	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t, t1, t2, t3;
+create table t(a int, b int, key(a));
+create table t1(a int, b int, key(a));
+create table t2(a int, b int, key(a));
+create table t3(a int, b int, key(a));
+select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+a	b	a	b	a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+create global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b using select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+a	b	a	b	a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+show global bindings where original_sql like '%planner__core__rule_join_reorder%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from ( `planner__core__rule_join_reorder` . `t1` join `planner__core__rule_join_reorder` . `t2` on `t1` . `a` = `t2` . `a` ) join `planner__core__rule_join_reorder` . `t3` on `t2` . `b` = `t3` . `b`	SELECT /*+ straight_join()*/ * FROM (`planner__core__rule_join_reorder`.`t1` JOIN `planner__core__rule_join_reorder`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `planner__core__rule_join_reorder`.`t3` ON `t2`.`b` = `t3`.`b`	planner__core__rule_join_reorder	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	07450843a30e0679fcc588369b6a6c5247d1a004fbad485c759177227f45c21f	
+drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+a	b	a	b	a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+show global bindings where original_sql like '%planner__core__rule_join_reorder%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+create global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b using select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+a	b	a	b	a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+show global bindings where original_sql like '%planner__core__rule_join_reorder%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from ( `planner__core__rule_join_reorder` . `t1` join `planner__core__rule_join_reorder` . `t2` on `t1` . `a` = `t2` . `a` ) join `planner__core__rule_join_reorder` . `t3` on `t2` . `b` = `t3` . `b`	SELECT /*+ leading(`t3`)*/ * FROM (`planner__core__rule_join_reorder`.`t1` JOIN `planner__core__rule_join_reorder`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `planner__core__rule_join_reorder`.`t3` ON `t2`.`b` = `t3`.`b`	planner__core__rule_join_reorder	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	07450843a30e0679fcc588369b6a6c5247d1a004fbad485c759177227f45c21f	
+drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b;
+a	b	a	b	a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+show global bindings where original_sql like '%planner__core__rule_join_reorder%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+create global binding for select * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b using select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b;
+select * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b;
+a	b	a	b	a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+show global bindings where original_sql like '%planner__core__rule_join_reorder%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from ( `planner__core__rule_join_reorder` . `t1` join `planner__core__rule_join_reorder` . `t2` on `t1` . `a` = `t2` . `a` ) left join `planner__core__rule_join_reorder` . `t3` on `t2` . `b` = `t3` . `b`	SELECT /*+ leading(`t2`)*/ * FROM (`planner__core__rule_join_reorder`.`t1` JOIN `planner__core__rule_join_reorder`.`t2` ON `t1`.`a` = `t2`.`a`) LEFT JOIN `planner__core__rule_join_reorder`.`t3` ON `t2`.`b` = `t3`.`b`	planner__core__rule_join_reorder	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	18f83ecaecd781fb67bd8b3e4a82b3c1cdb21813134712c735a56708b87f1709	

@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "metrics",
+    srcs = ["metrics.go"],
+    importpath = "github.com/pingcap/tidb/pkg/ttl/metrics",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/metrics",
+        "@com_github_prometheus_client_golang//prometheus",
+    ],
+)
+
+go_test(
+    name = "metrics_test",
+    timeout = "short",
+    srcs = ["metrics_test.go"],
+    embed = [":metrics"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

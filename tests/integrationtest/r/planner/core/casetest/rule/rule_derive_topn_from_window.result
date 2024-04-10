@@ -1,0 +1,332 @@
+set tidb_opt_derive_topn=1;
+drop table if exists t;
+create table t(a int, b int, c int, primary key(b,a));
+drop table if exists tt;
+create table tt(a int, b int, c int, primary key(b,a) nonclustered);
+drop table if exists ti;
+create table ti(a int, b int, c int unique);
+drop table if exists td;
+create table td(a int, b int as (a+1) stored, primary key(b,a));
+explain format = 'brief' select * from (select rank() over () as rank_order from t) DT where rank_order <= 3 -- rank not supported in pattern yet;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		Column#6
+└─Selection	8000.00	root		le(Column#6, 3)
+  └─Window	10000.00	root		rank()->Column#6 over()
+    └─IndexReader	10000.00	root		index:IndexFullScan
+      └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+explain format = 'brief' select * from (select b, row_number() over () as rownumber from t) DT where rownumber <= 3 and b > 5 -- pattern is not applicable with complex filter on top of window;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		gt(planner__core__casetest__rule__rule_derive_topn_from_window.t.b, 5), le(Column#6, 3)
+└─Window	10000.00	root		row_number()->Column#6 over(rows between current row and current row)
+  └─IndexReader	10000.00	root		index:IndexFullScan
+    └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+explain format = 'brief' select * from (select b, row_number() over () as rownumber from t) DT where rownumber > 3  -- pattern is not applicable with filter is not < or <=;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		gt(Column#6, 3)
+└─Window	10000.00	root		row_number()->Column#6 over(rows between current row and current row)
+  └─IndexReader	10000.00	root		index:IndexFullScan
+    └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+explain format = 'brief' select * from (select a,b, row_number() over () as rownumber from t) DT where  a > b  -- pattern is not applicable with filter is not < or <=;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		gt(planner__core__casetest__rule__rule_derive_topn_from_window.t.a, planner__core__casetest__rule__rule_derive_topn_from_window.t.b)
+└─Window	10000.00	root		row_number()->Column#6 over(rows between current row and current row)
+  └─IndexReader	10000.00	root		index:IndexFullScan
+    └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+explain format = 'brief' select * from (select a,b, row_number() over () as rownumber from t) DT where  a <= 3 -- pattern is not applicable with filter is not on row number;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		le(planner__core__casetest__rule__rule_derive_topn_from_window.t.a, 3)
+└─Window	10000.00	root		row_number()->Column#6 over(rows between current row and current row)
+  └─IndexReader	10000.00	root		index:IndexFullScan
+    └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+explain format = 'brief' select * from (select a,b, row_number() over () as rownumber from t) DT where 3 >= rownumber  -- pattern is not applicable with filter is not < or <=;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		ge(3, Column#6)
+└─Window	10000.00	root		row_number()->Column#6 over(rows between current row and current row)
+  └─IndexReader	10000.00	root		index:IndexFullScan
+    └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+explain format = 'brief' select * from (select a,b, row_number() over () as rownumber from t) DT where rownumber <= -4   -- pattern is not applicable with filter constant negative;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		le(Column#6, -4)
+└─Window	10000.00	root		row_number()->Column#6 over(rows between current row and current row)
+  └─IndexReader	10000.00	root		index:IndexFullScan
+    └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+explain format = 'brief' select * from (select row_number() over () as rownumber from t) DT where rownumber <= 3 and rownumber >= 2 -- pattern is not applicable with complex filter;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		Column#6
+└─Selection	8000.00	root		ge(Column#6, 2), le(Column#6, 3)
+  └─Window	10000.00	root		row_number()->Column#6 over(rows between current row and current row)
+    └─IndexReader	10000.00	root		index:IndexFullScan
+      └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+explain format = 'brief' select row_number() over (partition by a) from t -- pattern missing filter on row number;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#6->Column#7
+└─Shuffle	10000.00	root		execution info: concurrency:5, data sources:[IndexReader]
+  └─Window	10000.00	root		row_number()->Column#6 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
+    └─Sort	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.t.a
+      └─ShuffleReceiver	10000.00	root		
+        └─IndexReader	10000.00	root		index:IndexFullScan
+          └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+explain format = 'brief' select * from (select row_number() over () as rownumber1, row_number() over (partition by a) as rownumber2 from t) DT where rownumber1 <= 3 -- pattern not applicable with multiple window functions;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		Column#8, Column#7
+└─Selection	8000.00	root		le(Column#8, 3)
+  └─Window	10000.00	root		row_number()->Column#8 over(rows between current row and current row)
+    └─Shuffle	10000.00	root		execution info: concurrency:5, data sources:[IndexReader]
+      └─Window	10000.00	root		row_number()->Column#7 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
+        └─Sort	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.t.a
+          └─ShuffleReceiver	10000.00	root		
+            └─IndexReader	10000.00	root		index:IndexFullScan
+              └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+explain format = 'brief' select * from (select row_number() over (partition by a) as rownumber from t) DT where rownumber <= 3 -- pattern is not applicable with partition by not prefix of PK;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		Column#6
+└─Selection	8000.00	root		le(Column#6, 3)
+  └─Shuffle	10000.00	root		execution info: concurrency:5, data sources:[IndexReader]
+    └─Window	10000.00	root		row_number()->Column#6 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
+      └─Sort	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.t.a
+        └─ShuffleReceiver	10000.00	root		
+          └─IndexReader	10000.00	root		index:IndexFullScan
+            └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+explain format = 'brief' select * from (select row_number() over (partition by a) as rownumber from tt) DT where rownumber <= 3 -- pattern is not applicable with no clustered index on table;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		Column#6
+└─Selection	8000.00	root		le(Column#6, 3)
+  └─Shuffle	10000.00	root		execution info: concurrency:5, data sources:[IndexReader]
+    └─Window	10000.00	root		row_number()->Column#6 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.tt.a rows between current row and current row)
+      └─Sort	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.tt.a
+        └─ShuffleReceiver	10000.00	root		
+          └─IndexReader	10000.00	root		index:IndexFullScan
+            └─IndexFullScan	10000.00	cop[tikv]	table:tt, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+explain format = 'brief' select * from (select row_number() over (partition by a) as rownumber from ti) DT where rownumber <= 3 -- pattern is not applicable. ti clustered on 'c' and partition by 'a';
+id	estRows	task	access object	operator info
+Projection	8000.00	root		Column#6
+└─Selection	8000.00	root		le(Column#6, 3)
+  └─Shuffle	10000.00	root		execution info: concurrency:5, data sources:[TableReader]
+    └─Window	10000.00	root		row_number()->Column#6 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.ti.a rows between current row and current row)
+      └─Sort	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.ti.a
+        └─ShuffleReceiver	10000.00	root		
+          └─TableReader	10000.00	root		data:TableFullScan
+            └─TableFullScan	10000.00	cop[tikv]	table:ti	keep order:false, stats:pseudo
+explain format = 'brief' select * from (select a, row_number() over (partition by c) as rownumber from ti) DT where rownumber <= 1 -- pattern is applicable. ti clustered on 'c' and partition by 'c' - not supported yet;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.ti.a, Column#6
+└─Selection	8000.00	root		le(Column#6, 1)
+  └─Window	10000.00	root		row_number()->Column#6 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.ti.c rows between current row and current row)
+    └─Projection	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.ti.a, planner__core__casetest__rule__rule_derive_topn_from_window.ti.c
+      └─IndexLookUp	10000.00	root		
+        ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:ti, index:c(c)	keep order:true, stats:pseudo
+        └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:ti	keep order:false, stats:pseudo
+explain format = 'brief' with agg_t as (select count(*) cnt, a from t group by a) select * from (select row_number() over () as rownumber from agg_t) DT where rownumber <= 3 -- pattern on non-data source;
+id	estRows	task	access object	operator info
+Projection	6400.00	root		Column#14
+└─Selection	6400.00	root		le(Column#14, 3)
+  └─Window	8000.00	root		row_number()->Column#14 over(rows between current row and current row)
+    └─HashAgg	8000.00	root		group by:planner__core__casetest__rule__rule_derive_topn_from_window.t.a, funcs:count(Column#18)->Column#16
+      └─IndexReader	8000.00	root		index:HashAgg
+        └─HashAgg	8000.00	cop[tikv]		group by:planner__core__casetest__rule__rule_derive_topn_from_window.t.a, funcs:count(1)->Column#18
+          └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+explain format = 'brief' select * from (select row_number() over (partition by a+1) as rownumber from td) DT where rownumber <= 1 -- pattern is not applicable with expression in partition by;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		Column#6
+└─Selection	8000.00	root		le(Column#6, 1)
+  └─Shuffle	10000.00	root		execution info: concurrency:5, data sources:[Projection]
+    └─Window	10000.00	root		row_number()->Column#6 over(partition by Column#5 rows between current row and current row)
+      └─Sort	10000.00	root		Column#5
+        └─ShuffleReceiver	10000.00	root		
+          └─Projection	10000.00	root		plus(planner__core__casetest__rule__rule_derive_topn_from_window.td.a, 1)->Column#5
+            └─IndexReader	10000.00	root		index:IndexFullScan
+              └─IndexFullScan	10000.00	cop[tikv]	table:td, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+set tidb_opt_derive_topn=1;
+drop table if exists t;
+create table t(a int, b int, primary key(b,a));
+drop table if exists tt;
+create table tt(a int, b int, c int, primary key(b,a) nonclustered);
+drop table if exists ti;
+create table ti(a int, b int, c int unique);
+drop table if exists customer;
+create table customer(primary_key VARBINARY(1024), secondary_key VARBINARY(1024), c_timestamp BIGINT, value MEDIUMBLOB, PRIMARY KEY (primary_key, secondary_key, c_timestamp) clustered);
+drop table if exists td;
+create table td(a int, b int as (a+1) stored, primary key(b,a));
+insert into t values(1,1);
+insert into t values(2,1);
+insert into t values(3,2);
+insert into t values(4,2);
+insert into t values(5,2);
+insert into tt select *,55 from t;
+insert into ti select *,a from t;
+insert into td(a) select a from t;
+explain format = 'brief' select * from (select a,b, row_number() over (order by a) as rownumber from t) DT where rownumber <= 3.5  -- pattern is applicable with N rounded down to an integer. No partition by;
+id	estRows	task	access object	operator info
+Selection	2.40	root		le(Column#5, 3)
+└─Window	3.00	root		row_number()->Column#5 over(order by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
+  └─TopN	3.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.t.a, offset:0, count:3
+    └─IndexReader	3.00	root		index:TopN
+      └─TopN	3.00	cop[tikv]		planner__core__casetest__rule__rule_derive_topn_from_window.t.a, offset:0, count:3
+        └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+select * from (select a,b, row_number() over (order by a) as rownumber from t) DT where rownumber <= 3.5  -- pattern is applicable with N rounded down to an integer. No partition by;
+a	b	rownumber
+1	1	1
+2	1	2
+3	2	3
+explain format = 'brief' select * from (select row_number() over (order by a) as rownumber from t) DT where rownumber <= 3 -- pattern is applicable. No partition by;
+id	estRows	task	access object	operator info
+Projection	2.40	root		Column#5
+└─Selection	2.40	root		le(Column#5, 3)
+  └─Window	3.00	root		row_number()->Column#5 over(order by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
+    └─TopN	3.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.t.a, offset:0, count:3
+      └─IndexReader	3.00	root		index:TopN
+        └─TopN	3.00	cop[tikv]		planner__core__casetest__rule__rule_derive_topn_from_window.t.a, offset:0, count:3
+          └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+select * from (select row_number() over (order by a) as rownumber from t) DT where rownumber <= 3 -- pattern is applicable. No partition by;
+rownumber
+1
+2
+3
+explain format = 'brief' select * from (select row_number() over (order by a) as rownumber from t) DT where rownumber < 3 -- pattern is applicable. No partition by;
+id	estRows	task	access object	operator info
+Projection	1.60	root		Column#5
+└─Selection	1.60	root		lt(Column#5, 3)
+  └─Window	2.00	root		row_number()->Column#5 over(order by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
+    └─TopN	2.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.t.a, offset:0, count:2
+      └─IndexReader	2.00	root		index:TopN
+        └─TopN	2.00	cop[tikv]		planner__core__casetest__rule__rule_derive_topn_from_window.t.a, offset:0, count:2
+          └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+select * from (select row_number() over (order by a) as rownumber from t) DT where rownumber < 3 -- pattern is applicable. No partition by;
+rownumber
+1
+2
+explain format = 'brief' select * from (select row_number() over(rows between 1 preceding and 1 following) as rownumber from t) DT where rownumber <= 3 -- pattern is applicable. No partition by;
+id	estRows	task	access object	operator info
+Projection	2.40	root		Column#5
+└─Selection	2.40	root		le(Column#5, 3)
+  └─Window	3.00	root		row_number()->Column#5 over(rows between current row and current row)
+    └─Limit	3.00	root		offset:0, count:3
+      └─TableReader	3.00	root		data:Limit
+        └─Limit	3.00	cop[tikv]		offset:0, count:3
+          └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from (select row_number() over(rows between 1 preceding and 1 following) as rownumber from t) DT where rownumber <= 3 -- pattern is applicable. No partition by;
+rownumber
+1
+2
+3
+explain format = 'brief' select * from (select a,row_number() over (order by a desc) as rownumber,b from t) DT where rownumber <= 3 -- pattern is applicable. Order by desc. No partition by;
+id	estRows	task	access object	operator info
+Projection	2.40	root		planner__core__casetest__rule__rule_derive_topn_from_window.t.a, Column#5, planner__core__casetest__rule__rule_derive_topn_from_window.t.b
+└─Selection	2.40	root		le(Column#5, 3)
+  └─Window	3.00	root		row_number()->Column#5 over(order by planner__core__casetest__rule__rule_derive_topn_from_window.t.a desc rows between current row and current row)
+    └─TopN	3.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.t.a:desc, offset:0, count:3
+      └─IndexReader	3.00	root		index:TopN
+        └─TopN	3.00	cop[tikv]		planner__core__casetest__rule__rule_derive_topn_from_window.t.a:desc, offset:0, count:3
+          └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+select * from (select a,row_number() over (order by a desc) as rownumber,b from t) DT where rownumber <= 3 -- pattern is applicable. Order by desc. No partition by;
+a	rownumber	b
+5	1	2
+4	2	2
+3	3	2
+explain format = 'brief' select count(*) from (select * from (select a,row_number() over (order by b) as rownumber,b from t) DT1 where rownumber <= 1) DT2  -- pattern is applicable. Window has column a + row_number;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:count(1)->Column#6
+└─Selection	0.80	root		le(Column#5, 1)
+  └─Window	1.00	root		row_number()->Column#5 over(order by planner__core__casetest__rule__rule_derive_topn_from_window.t.b rows between current row and current row)
+    └─Limit	1.00	root		offset:0, count:1
+      └─IndexReader	1.00	root		index:Limit
+        └─Limit	1.00	cop[tikv]		offset:0, count:1
+          └─IndexFullScan	1.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:true, stats:pseudo
+select count(*) from (select * from (select a,row_number() over (order by b) as rownumber,b from t) DT1 where rownumber <= 1) DT2  -- pattern is applicable. Window has column a + row_number;
+count(*)
+1
+explain format = 'brief' select * from (select row_number() over (partition by b) as rownumber from t) DT where rownumber <= 1 -- pattern is applicable with partition by prefix of primary key;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		Column#5
+└─Selection	8000.00	root		le(Column#5, 1)
+  └─Window	10000.00	root		row_number()->Column#5 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.b rows between current row and current row)
+    └─IndexReader	10000.00	root		index:IndexFullScan
+      └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:true, stats:pseudo
+select * from (select row_number() over (partition by b) as rownumber from t) DT where rownumber <= 1 -- pattern is applicable with partition by prefix of primary key;
+rownumber
+1
+1
+explain format = 'brief' select * from (select row_number() over (partition by b order by a) as rownumber from t) DT where rownumber <= 1 -- pattern is applicable with order by, partition by prefix;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		Column#5
+└─Selection	8000.00	root		le(Column#5, 1)
+  └─Window	10000.00	root		row_number()->Column#5 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.b order by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
+    └─IndexReader	10000.00	root		index:IndexFullScan
+      └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:true, stats:pseudo
+select * from (select row_number() over (partition by b order by a) as rownumber from t) DT where rownumber <= 1 -- pattern is applicable with order by, partition by prefix;
+rownumber
+1
+1
+explain format = 'brief' select * from (select row_number() over (partition by b) as rownumber from t where a >= 2) DT where rownumber <= 3 order by rownumber  -- pattern is applicable with partition by prefix and filter on data source;
+id	estRows	task	access object	operator info
+Sort	2666.67	root		Column#5
+└─Projection	2666.67	root		Column#5
+  └─Selection	2666.67	root		le(Column#5, 3)
+    └─Window	3333.33	root		row_number()->Column#5 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.t.b rows between current row and current row)
+      └─IndexReader	3333.33	root		index:Selection
+        └─Selection	3333.33	cop[tikv]		ge(planner__core__casetest__rule__rule_derive_topn_from_window.t.a, 2)
+          └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:true, stats:pseudo
+select * from (select row_number() over (partition by b) as rownumber from t where a >= 2) DT where rownumber <= 3 order by rownumber  -- pattern is applicable with partition by prefix and filter on data source;
+rownumber
+1
+1
+2
+3
+explain format = 'brief' select * from (select row_number() over () as rownumber from tt) DT where rownumber <= 3 -- pattern is applicable with no partition on a non-clustered table;
+id	estRows	task	access object	operator info
+Projection	2.40	root		Column#6
+└─Selection	2.40	root		le(Column#6, 3)
+  └─Window	3.00	root		row_number()->Column#6 over(rows between current row and current row)
+    └─Limit	3.00	root		offset:0, count:3
+      └─IndexReader	3.00	root		index:Limit
+        └─Limit	3.00	cop[tikv]		offset:0, count:3
+          └─IndexFullScan	3.00	cop[tikv]	table:tt, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+select * from (select row_number() over () as rownumber from tt) DT where rownumber <= 3 -- pattern is applicable with no partition on a non-clustered table;
+rownumber
+1
+2
+3
+explain format = 'brief' select * from (select *, row_number() over (partition by primary_key, secondary_key order by c_timestamp) as rownum from customer where primary_key = 0x002 and secondary_key >= 0x001 and c_timestamp >= 1661883508511000000) as nested where rownum <= 10 order by secondary_key desc;
+id	estRows	task	access object	operator info
+Sort	0.89	root		planner__core__casetest__rule__rule_derive_topn_from_window.customer.secondary_key:desc
+└─Selection	0.89	root		le(Column#6, 10)
+  └─Window	1.11	root		row_number()->Column#6 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.customer.primary_key, planner__core__casetest__rule__rule_derive_topn_from_window.customer.secondary_key order by planner__core__casetest__rule__rule_derive_topn_from_window.customer.c_timestamp rows between current row and current row)
+    └─Sort	1.11	root		planner__core__casetest__rule__rule_derive_topn_from_window.customer.primary_key, planner__core__casetest__rule__rule_derive_topn_from_window.customer.secondary_key, planner__core__casetest__rule__rule_derive_topn_from_window.customer.c_timestamp
+      └─TableReader	1.11	root		data:TopN
+        └─TopN	1.11	cop[tikv]		partition by planner__core__casetest__rule__rule_derive_topn_from_window.customer.primary_key, planner__core__casetest__rule__rule_derive_topn_from_window.customer.secondary_key order by planner__core__casetest__rule__rule_derive_topn_from_window.customer.c_timestamp, offset:0, count:10
+          └─Selection	1.11	cop[tikv]		ge(planner__core__casetest__rule__rule_derive_topn_from_window.customer.c_timestamp, 1661883508511000000)
+            └─TableRangeScan	33.33	cop[tikv]	table:customer	range:["\x00\x02" "\x00\x01","\x00\x02" +inf], keep order:false, stats:pseudo
+select * from (select *, row_number() over (partition by primary_key, secondary_key order by c_timestamp) as rownum from customer where primary_key = 0x002 and secondary_key >= 0x001 and c_timestamp >= 1661883508511000000) as nested where rownum <= 10 order by secondary_key desc;
+primary_key	secondary_key	c_timestamp	value	rownum
+explain format = 'brief' select * from (select row_number() over (partition by b) as rownumber from td) DT where rownumber <= 1 -- pattern is applicable with partition by prefix of primary key;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		Column#5
+└─Selection	8000.00	root		le(Column#5, 1)
+  └─Window	10000.00	root		row_number()->Column#5 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.td.b rows between current row and current row)
+    └─IndexReader	10000.00	root		index:IndexFullScan
+      └─IndexFullScan	10000.00	cop[tikv]	table:td, index:PRIMARY(b, a)	keep order:true, stats:pseudo
+select * from (select row_number() over (partition by b) as rownumber from td) DT where rownumber <= 1 -- pattern is applicable with partition by prefix of primary key;
+rownumber
+1
+1
+1
+1
+1
+set tidb_opt_derive_topn=0;
+drop table if exists t;
+create table t(a int, b int, primary key(b,a));
+explain format = 'brief' select * from (select a,b, row_number() over (order by a) as rownumber from t) DT where rownumber <= 3.5  -- pattern is applicable but flag is turned off and rule not applied.;
+id	estRows	task	access object	operator info
+Selection	8000.00	root		le(Column#5, 3)
+└─Window	10000.00	root		row_number()->Column#5 over(order by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
+  └─Sort	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.t.a
+    └─IndexReader	10000.00	root		index:IndexFullScan
+      └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo
+explain format = 'brief' select * from (select row_number() over (order by a) as rownumber from t) DT where rownumber <= 3 -- pattern is applicable but flag is turned off and rule not applied.;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		Column#5
+└─Selection	8000.00	root		le(Column#5, 3)
+  └─Window	10000.00	root		row_number()->Column#5 over(order by planner__core__casetest__rule__rule_derive_topn_from_window.t.a rows between current row and current row)
+    └─Sort	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.t.a
+      └─IndexReader	10000.00	root		index:IndexFullScan
+        └─IndexFullScan	10000.00	cop[tikv]	table:t, index:PRIMARY(b, a)	keep order:false, stats:pseudo

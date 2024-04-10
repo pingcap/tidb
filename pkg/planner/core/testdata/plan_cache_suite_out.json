@@ -1,0 +1,570 @@
+[
+  {
+    "Name": "TestPlanCacheMVIndexManually",
+    "Cases": [
+      {
+        "SQL": "CREATE TABLE person (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,name VARCHAR(255) NOT NULL,address_info JSON,city VARCHAR(64) AS (JSON_UNQUOTE(JSON_EXTRACT(address_info, '$.city'))) STORED,\n    KEY (city)\n)",
+        "Result": null
+      },
+      {
+        "SQL": "INSERT INTO person (id, name, address_info) values (1, 'name', '{\"city\":\"beijing\"}')",
+        "Result": null
+      },
+      {
+        "SQL": "INSERT INTO person (id, name, address_info) values (2, 'name2', '{\"city\":\"shanghai\"}')",
+        "Result": null
+      },
+      {
+        "SQL": "prepare st from 'SELECT name, id FROM person WHERE city = ?'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a='beijing'",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": [
+          "name 1"
+        ]
+      },
+      {
+        "SQL": "set @a='shanghai'",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": [
+          "name2 2"
+        ]
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "CREATE TABLE `sgc` (`j1` JSON DEFAULT NULL,`j2` JSON DEFAULT NULL,`a` int(11) GENERATED ALWAYS AS (JSON_EXTRACT(`j1`, \"$.a\")) STORED,`b` int(2) GENERATED ALWAYS AS (JSON_CONTAINS(j2, '1')) STORED,KEY `idx_a` (`a`),KEY `idx_b` (`b`),KEY `idx_a_b` (`a`,`b`))",
+        "Result": null
+      },
+      {
+        "SQL": "insert into sgc (j1, j2) values ('{\"a\":1}', '[1,2]')",
+        "Result": null
+      },
+      {
+        "SQL": "insert into sgc (j1, j2) values ('{\"a\":2}', '[1,2]')",
+        "Result": null
+      },
+      {
+        "SQL": "prepare st from 'SELECT a FROM sgc where a < ?'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=2",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "prepare st from 'SELECT a FROM sgc where a < ? and b < ?'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1, @b=1",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a,@b",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=2, @b=2",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a,@b",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "set @a=3, @b=3",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a,@b",
+        "Result": [
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "DROP TABLE IF EXISTS sgc1,\n                     sgc2;",
+        "Result": null
+      },
+      {
+        "SQL": "CREATE TABLE `sgc1` (\n`j1` JSON,\n`j2` JSON,\n`a` INT AS (JSON_EXTRACT(j1, \"$.a\")) STORED,\n`b` VARCHAR(20) AS (JSON_KEYS(j2)) STORED,\nKEY `idx_a` (`a`),\nKEY `idx_b` (`b`),\nKEY `idx_a_b` (`a`, `b`)\n);",
+        "Result": null
+      },
+      {
+        "SQL": "CREATE TABLE `sgc2` (\n`j1` JSON,\n`j2` JSON,\n`a` INT AS (JSON_EXTRACT(j1, \"$.a\")) STORED,\n`b` VARCHAR(20) AS (JSON_KEYS(j2)) STORED,\nKEY `idx_a` (`a`),\nKEY `idx_b` (`b`),\nKEY `idx_a_b` (`a`, `b`)\n);",
+        "Result": null
+      },
+      {
+        "SQL": "INSERT INTO sgc1(j1, j2)\nVALUES ('{\"a\": 1}', '{\"1\": \"1\"}'),\n       ('{\"a\": 1}', '{\"1\": \"1\"}'),\n       ('{\"a\": 1}', '{\"1\": \"1\"}'),\n       ('{\"a\": 1}', '{\"1\": \"1\"}'),\n       ('{\"a\": 1}', '{\"1\": \"1\"}');",
+        "Result": null
+      },
+      {
+        "SQL": "INSERT INTO sgc2(j1, j2)\nVALUES ('{\"a\": 1}', '{\"1\": \"1\"}');",
+        "Result": null
+      },
+      {
+        "SQL": "prepare st from 'SELECT * from sgc1 join sgc2 on sgc1.a=sgc2.a where sgc1.a=?'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": [
+          "{\"a\": 1} {\"1\": \"1\"} 1 [\"1\"] {\"a\": 1} {\"1\": \"1\"} 1 [\"1\"]",
+          "{\"a\": 1} {\"1\": \"1\"} 1 [\"1\"] {\"a\": 1} {\"1\": \"1\"} 1 [\"1\"]",
+          "{\"a\": 1} {\"1\": \"1\"} 1 [\"1\"] {\"a\": 1} {\"1\": \"1\"} 1 [\"1\"]",
+          "{\"a\": 1} {\"1\": \"1\"} 1 [\"1\"] {\"a\": 1} {\"1\": \"1\"} 1 [\"1\"]",
+          "{\"a\": 1} {\"1\": \"1\"} 1 [\"1\"] {\"a\": 1} {\"1\": \"1\"} 1 [\"1\"]"
+        ]
+      },
+      {
+        "SQL": "set @a=2",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "CREATE TABLE t1(a INT, b INT AS (a+1) VIRTUAL, c INT AS (b+1) VIRTUAL, d INT AS (c+1) VIRTUAL, KEY(b), INDEX IDX(c, d))",
+        "Result": null
+      },
+      {
+        "SQL": "INSERT INTO t1 (a) VALUES (0);",
+        "Result": null
+      },
+      {
+        "SQL": "INSERT INTO t1 (a) VALUES (1);",
+        "Result": null
+      },
+      {
+        "SQL": "prepare st from 'SELECT b FROM t1 WHERE b=?'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "set @a=2",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "prepare st from 'SELECT c FROM t1 WHERE c=? AND d=?'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=2, @b=3",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a,@b",
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "set @a=3, @b=4",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a,@b",
+        "Result": [
+          "3"
+        ]
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "DROP TABLE IF EXISTS person;",
+        "Result": null
+      },
+      {
+        "SQL": "CREATE TABLE person (\nid INT NOT NULL AUTO_INCREMENT PRIMARY KEY,\nname VARCHAR(255) NOT NULL,\naddress_info JSON,\ncity_no INT AS (JSON_EXTRACT(address_info, '$.city_no')) VIRTUAL,\nKEY(city_no));",
+        "Result": null
+      },
+      {
+        "SQL": "INSERT INTO person (name, address_info) VALUES (\"John\", CAST('{\"city_no\": 1}' AS JSON));\n",
+        "Result": null
+      },
+      {
+        "SQL": "prepare st from 'SELECT name FROM person where city_no=?;'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=0",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": [
+          "John"
+        ]
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "CREATE TABLE tu (a INT, b INT, c INT GENERATED ALWAYS AS (a + b) VIRTUAL, primary key (a), unique key uk(c));\n",
+        "Result": null
+      },
+      {
+        "SQL": "INSERT INTO tu(a, b) VALUES(1, 2);\n",
+        "Result": null
+      },
+      {
+        "SQL": "INSERT INTO tu(a, b) VALUES(2, 3);\n",
+        "Result": null
+      },
+      {
+        "SQL": "prepare st from 'SELECT * FROM tu WHERE c = ?'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=3",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": [
+          "1 2 3"
+        ]
+      },
+      {
+        "SQL": "set @a=4",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "set @a=5",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": [
+          "2 3 5"
+        ]
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "drop table if exists t1",
+        "Result": null
+      },
+      {
+        "SQL": "CREATE TABLE t1 (j4 json ,KEY mv_idx_binary (((CAST(j4->'$[*]' AS BINARY(10) ARRAY))), (json_depth(j4)), (json_valid(j4))) USING BTREE)",
+        "Result": null
+      },
+      {
+        "SQL": "INSERT INTO t1 VALUES ('[\"foobar\"]');\n",
+        "Result": null
+      },
+      {
+        "SQL": "prepare st from 'SELECT * FROM t1 WHERE ? MEMBER OF (j4->\"$[*]\")'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a='foobar'",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": [
+          "[\"foobar\"]"
+        ]
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": [
+          "[\"foobar\"]"
+        ]
+      },
+      {
+        "SQL": "drop table if exists t1",
+        "Result": null
+      },
+      {
+        "SQL": "CREATE TABLE t1 (id INT NOT NULL KEY AUTO_INCREMENT, f1 JSON);\n",
+        "Result": null
+      },
+      {
+        "SQL": "INSERT INTO t1(f1) VALUES(CAST('[13.33,13.21]' AS JSON));\n",
+        "Result": null
+      },
+      {
+        "SQL": "prepare st from 'SELECT * FROM t1 WHERE ? MEMBER OF (f1->\"$[*]\")'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=13.33",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": [
+          "1 [13.33, 13.21]"
+        ]
+      },
+      {
+        "SQL": "set @a=13.21",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a",
+        "Result": [
+          "1 [13.33, 13.21]"
+        ]
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "drop table if exists tx",
+        "Result": null
+      },
+      {
+        "SQL": "create table tx (a json, b json, c json, d int, key ka ((cast(a as signed array))), key kb ((cast(b as signed array))))",
+        "Result": null
+      },
+      {
+        "SQL": "prepare st from 'select /*+ use_index_merge(tx, ka, kb) */ * from tx where (? member of (a)) and (json_contains(b, ?))'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1, @b='[1,2]'",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "show warnings",
+        "Result": [
+          "Warning 1105 skip prepared plan-cache: json_contains function with immutable parameters can affect index selection"
+        ]
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "prepare st from 'select /*+ use_index_merge(tx, ka, kb) */ * from tx where (? member of (a)) and (json_overlaps(b, ?))'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1, @b='[1,2]'",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "show warnings",
+        "Result": [
+          "Warning 1105 skip prepared plan-cache: json_overlaps function with immutable parameters can affect index selection"
+        ]
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "0"
+        ]
+      },
+      {
+        "SQL": "prepare st from 'select /*+ use_index_merge(tx, ka, kb) */ * from tx where (? member of (a)) and (d = 1 or json_overlaps(b, ?))'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1, @b='[1,2]'",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "show warnings",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "prepare st from 'select /*+ use_index_merge(tx, ka) */ * from tx where (? member of (a)) and (json_overlaps(c, ?))'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1, @c='[1,2]'",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "show warnings",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "prepare st from 'select /*+ use_index_merge(tx, ka) */ * from tx where (? member of (a)) and (json_contains(c, ?))'",
+        "Result": null
+      },
+      {
+        "SQL": "set @a=1, @c='[1,2]'",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "show warnings",
+        "Result": null
+      },
+      {
+        "SQL": "execute st using @a, @b",
+        "Result": null
+      },
+      {
+        "SQL": "select @@last_plan_from_cache",
+        "Result": [
+          "1"
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "conn_ip_example_lib",
+    srcs = ["conn_ip_example.go"],
+    importpath = "github.com/pingcap/tidb/pkg/plugin/conn_ip_example",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/plugin",
+        "//pkg/sessionctx/variable",
+    ],
+)
+
+go_test(
+    name = "conn_ip_example_test",
+    timeout = "short",
+    srcs = [
+        "conn_ip_example_test.go",
+        "main_test.go",
+    ],
+    embed = [":conn_ip_example_lib"],
+    flaky = True,
+    deps = [
+        "//pkg/plugin",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

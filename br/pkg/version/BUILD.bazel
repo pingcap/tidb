@@ -1,0 +1,40 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "version",
+    srcs = ["version.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/version",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/errors",
+        "//br/pkg/logutil",
+        "//br/pkg/version/build",
+        "//pkg/parser/model",
+        "//pkg/util/dbutil",
+        "//pkg/util/engine",
+        "@com_github_coreos_go_semver//semver",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_pd_client//:client",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "version_test",
+    timeout = "short",
+    srcs = ["version_test.go"],
+    embed = [":version"],
+    flaky = True,
+    shard_count = 10,
+    deps = [
+        "//br/pkg/version/build",
+        "//pkg/parser/model",
+        "@com_github_coreos_go_semver//semver",
+        "@com_github_data_dog_go_sqlmock//:go-sqlmock",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//:client",
+    ],
+)

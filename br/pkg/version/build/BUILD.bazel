@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "build",
+    srcs = ["info.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/version/build",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/util/israce",
+        "//pkg/util/versioninfo",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "build_test",
+    timeout = "short",
+    srcs = ["info_test.go"],
+    embed = [":build"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

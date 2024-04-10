@@ -7,8 +7,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	kvconfig "github.com/pingcap/tidb/br/pkg/config"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -65,21 +68,30 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 
 	// Restore raw does not need domain.
 	needDomain := false
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
 
+	// need retrieve these configs from tikv if not set in command.
+	kvConfigs := &kvconfig.KVConfig{
+		MergeRegionSize:     cfg.MergeSmallRegionSizeBytes,
+		MergeRegionKeyCount: cfg.MergeSmallRegionKeyCount,
+	}
+
+	if !kvConfigs.MergeRegionSize.Modified || !kvConfigs.MergeRegionKeyCount.Modified {
+		// according to https://github.com/pingcap/tidb/issues/34167.
+		// we should get the real config from tikv to adapt the dynamic region.
+		httpCli := httputil.NewClient(mgr.GetTLSConfig())
+		mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
+	}
+
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	// sometimes we have pooled the connections.
 	// sending heartbeats in idle times is useful.
 	keepaliveCfg.PermitWithoutStream = true
-	client, err := restore.NewRestoreClient(g, mgr.GetPDClient(), mgr.GetStorage(), mgr.GetTLSConfig(), keepaliveCfg, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer client.Close()
+	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
@@ -87,13 +99,18 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		client.EnableOnline()
 	}
 	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
+	err = client.Init(g, mgr.GetStorage())
+	defer client.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	u, s, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, s, reader); err != nil {
+	if err = client.InitBackupMeta(c, backupMeta, u, reader, true); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -114,8 +131,8 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	}
 	summary.CollectInt("restore files", len(files))
 
-	ranges, _, err := restore.MergeFileRanges(
-		files, cfg.MergeSmallRegionKeyCount, cfg.MergeSmallRegionKeyCount)
+	ranges, _, err := restore.MergeAndRewriteFileRanges(
+		files, nil, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -130,13 +147,12 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		!cfg.LogProgress)
 
 	// RawKV restore does not need to rewrite keys.
-	rewrite := &restore.RewriteRules{}
-	err = restore.SplitRanges(ctx, client, ranges, rewrite, updateCh, true)
+	err = restore.SplitRanges(ctx, client, ranges, updateCh, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	restoreSchedulers, err := restorePreWork(ctx, client, mgr)
+	restoreSchedulers, _, err := restorePreWork(ctx, client, mgr, true)
 	if err != nil {
 		return errors.Trace(err)
 	}

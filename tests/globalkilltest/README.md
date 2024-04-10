@@ -24,7 +24,7 @@ Usage: ./run-tests.sh [options]
     --tidb_status_port <port>: First TiDB server status listening port. port ~ port+2 will be used.
                                Defaults to "8000".
 
-    --pd <pd-client-path>: PD client path, ip:port list seperated by comma.
+    --pd <pd-client-path>: PD client path, ip:port list separated by comma.
                            Defaults to "127.0.0.1:2379".
 
     --pd_proxy_port <port>: PD proxy port. PD proxy is used to simulate lost connection between TiDB and PD.
@@ -47,8 +47,22 @@ Usage: ./run-tests.sh [options]
 ## Prerequisite
 1. Build TiDB binary for test. See [Makefile](https://github.com/pingcap/tidb/blob/master/tests/globalkilltest/Makefile) for detail.
 
-2. Establish a cluster with PD & TiKV, and provide PD client path by `--pd=ip:port[,ip:port]`.
+2. Prepare `pd-server` and `tikv-server` to setup a cluster for tests. You can download the binaries by `TiUP`
 
+```bash
+cd tests/globalkilltest
+mkdir -p bin
+tiup install pd:nightly tikv:nightly
+cp ~/.tiup/components/pd/$(ls ~/.tiup/components/pd | tail -1)/pd-server bin/
+cp ~/.tiup/components/tikv/$(ls ~/.tiup/components/tikv | tail -1)/tikv-server bin/
+```
+
+Alternatively, if you have Docker environment, you can run `up.sh`, which will prepare binaries & run `make` for you:
+
+```sh
+cd tests/globalkilltest
+./up.sh
+```
 
 ## Test Scenarios
 
@@ -73,8 +87,6 @@ Usage: ./run-tests.sh [options]
 
 * Execute `SELECT SLEEP(x)` as payload, and kill the query before `x` expired. If the query had no error and elapsed less than `x`, the test is PASSED.
 
-* Run a embedded [tcp proxy](https://github.com/inetaf/tcpproxy) before PD. Stop & restart the proxy to simulate connection between TiDB and PD lost & restored.
-
 
 ## Usage
 
@@ -85,10 +97,8 @@ In Integration Test after commit and before merge, run these commands under TiDB
 ```sh
 cd tests/globalkilltest
 make
-./run-tests.sh --pd=<pd client path>
+./run-tests.sh
 ```
-
-Again, before testing, establish a cluster with PD & TiKV and provide `pd client path` by `--pd=<pd client path>`.
 
 ### Manual Test
 

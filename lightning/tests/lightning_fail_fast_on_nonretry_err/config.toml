@@ -1,0 +1,12 @@
+[mydumper.csv]
+separator = ','
+delimiter = '"'
+header = false
+not-null = false
+null = '\N'
+backslash-escape = true
+trim-last-separator = false
+
+[tikv-importer]
+send-kv-pairs=10
+region-split-size = 1024

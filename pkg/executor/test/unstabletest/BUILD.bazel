@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "unstabletest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "memory_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/meta/autoid",
+        "//pkg/testkit",
+        "//pkg/util",
+        "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/memory",
+        "//pkg/util/skip",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

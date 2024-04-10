@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "contextimpl",
+    srcs = ["table.go"],
+    importpath = "github.com/pingcap/tidb/pkg/table/contextimpl",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression/context",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/table/context",
+        "//pkg/util/tableutil",
+    ],
+)

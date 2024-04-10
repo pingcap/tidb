@@ -1,0 +1,435 @@
+drop table if exists t;
+CREATE TABLE t(a int, b int, c int);
+INSERT INTO t VALUES (1, 2, 3), (NULL, 2, 3  ), (1, NULL, 3),(1, 2,   NULL),(NULL, 2, 3+1), (1, NULL, 3+1), (1, 2+1, NULL),(NULL, 2, 3-1), (1, NULL, 3-1), (1, 2-1, NULL);
+SELECT * FROM t WHERE (a,b,c) <= (1,2,3) order by b;
+a	b	c
+1	1	NULL
+1	2	3
+SELECT * FROM t WHERE (a,b,c) > (1,2,3) order by b;
+a	b	c
+1	3	NULL
+drop table if exists t1;
+create table t1(
+a varchar(10) default 'def',
+b varchar(10),
+c int default '10',
+d double default '3.14',
+e datetime default '20180101',
+f datetime default current_timestamp,
+g date default current_date);
+insert into t1(a, b, c, d) values ('1', '1', 1, 1);
+set @@timestamp = 1321009871;
+set @@time_zone = '+00:00';
+select
+default(a) as defa,
+default(b) as defb,
+default(c) as defc,
+default(d) as defd,
+default(e) as defe,
+default(f) as deff,
+default(g) as defg
+from t1;
+defa	defb	defc	defd	defe	deff	defg
+def	NULL	10	3.14	2018-01-01 00:00:00	2011-11-11 11:11:11	2011-11-11
+select default(x) from t1;
+Error 1054 (42S22): Unknown column 'x' in 'field list'
+select default(a0) from (select a as a0 from t1) as t0;
+default(a0)
+def
+select default(a0) from (select a+1 as a0 from t1) as t0;
+Error 1364 (HY000): Field 'a0' doesn't have a default value
+create table t2(a varchar(10), b varchar(10));
+insert into t2 values ('1', '1');
+select default(a) from t1, t2;
+Error 1052 (23000): Column 'a' in field list is ambiguous
+select default(t1.a) from t1, t2;
+default(t1.a)
+def
+create table t3(
+a datetime default current_timestamp,
+b timestamp default current_timestamp,
+c timestamp(6) default current_timestamp(6),
+d varchar(20) default 'current_timestamp');
+insert into t3 values ();
+select
+default(a) as defa,
+default(b) as defb,
+default(c) as defc,
+default(d) as defd
+from t3;
+defa	defb	defc	defd
+2011-11-11 11:11:11	2011-11-11 11:11:11	2011-11-11 11:11:11.000000	current_timestamp
+create table t4(a int default 1, b varchar(5));
+insert into t4 values (0, 'B'), (1, 'B'), (2, 'B');
+create table t5(d int default 0, e varchar(5));
+insert into t5 values (5, 'B');
+select a from t4 where a > (select default(d) from t5 where t4.b = t5.e);
+a
+1
+2
+select a from t4 where a > (select default(a) from t5 where t4.b = t5.e);
+a
+2
+prepare stmt from 'select default(a) from t1';
+execute stmt;
+default(a)
+def
+alter table t1 modify a varchar(10) default 'DEF';
+execute stmt;
+default(a)
+DEF
+update t1 set c = c + default(c);
+select c from t1;
+c
+11
+create table t6(a int default -1, b int);
+insert into t6 values (0, 0), (1, 1), (2, 2);
+create table t7(a int default 1, b int);
+insert into t7 values (0, 0), (1, 1), (2, 2);
+select a from t6 where a > (select default(a) from t7 where t6.a = t7.a);
+a
+2
+select a, default(a) from t6 where a > (select default(a) from t7 where t6.a = t7.a);
+a	default(a)
+2	-1
+create table t8(a int default 1, b int default -1);
+insert into t8 values (0, 0), (1, 1);
+select a, a from t8 order by default(a);
+a	a
+0	0
+1	1
+select a from t8 order by default(b);
+a
+0
+1
+select a from t8 order by default(b) * a;
+a
+1
+0
+set @@time_zone = DEFAULT;
+set @@timestamp = DEFAULT;
+drop table if exists t;
+drop table if exists s;
+create table t(a int, b int);
+create table s(a int, b int);
+insert into t values(1, null), (2, null);
+select a != any (select a from s) from t;
+a != any (select a from s)
+0
+0
+select b != any (select a from s) from t;
+b != any (select a from s)
+0
+0
+select a = all (select a from s) from t;
+a = all (select a from s)
+1
+1
+select b = all (select a from s) from t;
+b = all (select a from s)
+1
+1
+select * from t where a != any (select a from s);
+a	b
+select * from t where b != any (select a from s);
+a	b
+select * from t where a = all (select a from s);
+a	b
+1	NULL
+2	NULL
+select * from t where b = all (select a from s);
+a	b
+1	NULL
+2	NULL
+select b != any (select a from t t2) from t t1;
+b != any (select a from t t2)
+NULL
+NULL
+select b = all (select a from t t2) from t t1;
+b = all (select a from t t2)
+NULL
+NULL
+select * from t t1 where b != any (select a from t t2);
+a	b
+select * from t t1 where b = all (select a from t t2);
+a	b
+delete from t where a = 2;
+select b != any (select a from t t2) from t t1;
+b != any (select a from t t2)
+NULL
+select b = all (select a from t t2) from t t1;
+b = all (select a from t t2)
+NULL
+select * from t t1 where b != any (select a from t t2);
+a	b
+select * from t t1 where b = all (select a from t t2);
+a	b
+insert into t values(null, 1);
+select b != any (select a from t t2) from t t1;
+b != any (select a from t t2)
+NULL
+NULL
+select b = all (select a from t t2) from t t1;
+b = all (select a from t t2)
+NULL
+NULL
+select * from t t1 where b != any (select a from t t2);
+a	b
+select * from t t1 where b = all (select a from t t2);
+a	b
+delete from t where b = 1;
+insert into t values(null, 2);
+select b != any (select a from t t2) from t t1;
+b != any (select a from t t2)
+NULL
+1
+select b = all (select a from t t2) from t t1;
+b = all (select a from t t2)
+NULL
+0
+select * from t t1 where b != any (select a from t t2);
+a	b
+NULL	2
+select * from t t1 where b = all (select a from t t2);
+a	b
+DROP TABLE IF EXISTS `t`;
+CREATE TABLE `t` (  `a` int(11) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+INSERT INTO `t` VALUES (1);
+DROP TABLE IF EXISTS `table_40_utf8_4`;
+CREATE TABLE `table_40_utf8_4` (`col_tinyint_key_unsigned` tinyint(4) DEFAULT NULL,  `col_bit64_key_signed` bit(64) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+INSERT INTO `table_40_utf8_4` VALUES (31, -18);
+select count(1) from table_40_utf8_4 where ( select count(1) from t where table_40_utf8_4.col_bit64_key_signed!=table_40_utf8_4.col_tinyint_key_unsigned);
+count(1)
+1
+drop table if exists t;
+create table t(a int, b int);
+select t1.a, (select max(t2.b) from t t2) from t t1;
+a	(select max(t2.b) from t t2)
+select t1.a, (select t2.a, max(t2.b) from t t2) from t t1;
+Error 8123 (HY000): In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'a'; this is incompatible with sql_mode=only_full_group_by
+select 0 like 'a string';
+0 like 'a string'
+0
+select 0.0 like 'a string';
+0.0 like 'a string'
+0
+select 0 like '0.00';
+0 like '0.00'
+0
+select cast("2011-5-3" as datetime) like "2011-05-03";
+cast("2011-5-3" as datetime) like "2011-05-03"
+0
+select 1 like '1';
+1 like '1'
+1
+select 0 like '0';
+0 like '0'
+1
+select 0.00 like '0.00';
+0.00 like '0.00'
+1
+drop table if exists t1;
+create table t1(a int, b bigint unsigned);
+insert into t1 (a, b) values (1,4572794622775114594), (2,18196094287899841997),(3,11120436154190595086);
+select (case t1.a when 0 then 0 else t1.b end), cast(t1.b as signed)  from t1;
+(case t1.a when 0 then 0 else t1.b end)	cast(t1.b as signed)
+4572794622775114594	4572794622775114594
+18196094287899841997	-250649785809709619
+11120436154190595086	-7326307919518956530
+drop table if exists t;
+create table t(x bigint unsigned);
+insert into t values( 9999999703771440633);
+select ifnull(max(x), 0) from t;
+ifnull(max(x), 0)
+9999999703771440633
+drop table if exists t1, t2, t3, t4;
+CREATE TABLE t1(c1 int, c2 int);
+CREATE TABLE t2(c1 int, c2 int);
+CREATE TABLE t3(c1 int, c2 int);
+CREATE TABLE t4(c1 int, c2 int);
+INSERT INTO t1 VALUES (0, 0), (NULL, NULL);
+INSERT INTO t2 VALUES (0, 0), (NULL, NULL);
+INSERT INTO t3 VALUES (1, 2);
+SELECT * FROM t2 WHERE (SELECT c1, c2 FROM t2 LIMIT 1) = ANY (SELECT c1, c2 FROM t1);
+c1	c2
+0	0
+NULL	NULL
+SELECT * FROM t2 WHERE (SELECT c1 FROM t2 LIMIT 1) = ANY (SELECT c1 FROM t1);
+c1	c2
+0	0
+NULL	NULL
+SELECT * FROM t2 WHERE (SELECT c1, c2 FROM t2 order by c1 LIMIT 1) = ANY (SELECT c1, c2 FROM t1);
+c1	c2
+SELECT * FROM t3 WHERE (SELECT c1 FROM t3 LIMIT 1) != ALL(SELECT c1 FROM t4);
+c1	c2
+1	2
+SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);
+c1	c2
+1	2
+INSERT INTO t4 VALUES (1, 3);
+SELECT * FROM t3 WHERE (SELECT c1 FROM t3 LIMIT 1) != ALL(SELECT c1 FROM t4);
+c1	c2
+SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);
+c1	c2
+1	2
+INSERT INTO t4 VALUES (1, 2);
+SELECT * FROM t3 WHERE (SELECT c1 FROM t3 LIMIT 1) != ALL(SELECT c1 FROM t4);
+c1	c2
+SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);
+c1	c2
+drop table if exists t;
+create table t(a time);
+insert into t values("23:22:22");
+select * from t where a between "23:22:22" and "23:22:22";
+a
+23:22:22
+drop table if exists t1,t2;
+create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci);
+create table t2 (c_int int, c_str varchar(40) character set utf8 collate utf8_unicode_ci);
+select * from t1 where c_str < any (select c_str from t2 where c_int between 6 and 9);
+Error 1267 (HY000): Illegal mix of collations (utf8_general_ci,IMPLICIT) and (utf8_unicode_ci,IMPLICIT) for operation '<'
+drop table if exists t1;
+create table t1(a char(10) charset latin1 collate latin1_bin, c char(10) collate utf8mb4_general_ci);
+insert into t1 values ('a', 'B');
+insert into t1 values ('c', 'D');
+select * from t1 where a between 'B' and c;
+a	c
+c	D
+explain select * from t1 where 'a' between 'g' and 'f';
+id	estRows	task	access object	operator info
+TableDual_6	0.00	root		rows:0
+select * from t1 where a between 'B' collate utf8mb4_general_ci and c collate utf8mb4_unicode_ci;
+Error 1270 (HY000): Illegal mix of collations (latin1_bin,IMPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT) for operation 'BETWEEN'
+DROP TABLE if exists t1, t2, source;
+CREATE TABLE t1(a INTEGER PRIMARY KEY);
+CREATE TABLE t2(a INTEGER);
+CREATE TABLE source (b INTEGER);
+INSERT INTO t1 VALUES (1);
+INSERT INTO t2 VALUES (1);
+INSERT INTO source VALUES (1),(1);
+INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);
+Error 1242 (21000): Subquery returns more than 1 row
+INSERT INTO t2 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);
+DROP TABLE if exists t1, t2, source;
+DROP TABLE if exists t1;
+CREATE TABLE t1(cnotnull tinyint not null, cnull tinyint null);
+INSERT INTO t1 VALUES(1, 1);
+select CAST(IFNULL(cnull, '1') AS DATE), CAST(IFNULL(cnotnull, '1') AS DATE) from t1;
+CAST(IFNULL(cnull, '1') AS DATE)	CAST(IFNULL(cnotnull, '1') AS DATE)
+NULL	NULL
+explain format="brief" select IFNULL(cnotnull, '1') from t1;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		cast(planner__core__expression_rewriter.t1.cnotnull, varchar(4) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)->Column#4
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+DROP TABLE if exists t0;
+DROP VIEW if exists t0;
+CREATE TABLE t0(c0 TEXT(328) );
+CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT 'c' FROM t0;
+INSERT INTO t0 VALUES (-12);
+SELECT v0.c0 AS c0 FROM  v0 NATURAL RIGHT JOIN t0  WHERE (1 !=((v0.c0)REGEXP(-7)));
+c0
+SELECT COUNT(v0.c0) AS c0 FROM v0 WHERE EXISTS(SELECT v0.c0 AS c0 FROM v0 NATURAL RIGHT JOIN t0  WHERE (1 !=((v0.c0)REGEXP(-7))));
+c0
+0
+DROP TABLE if exists t1;
+DROP TABLE if exists t2;
+DROP TABLE if exists t;
+create table t1(a int);
+create table t2(a int);
+create table t(a int);
+select * from t where  exists ( select a from ( select a from t1 union all select a from t2) u where t.a=u.a);
+a
+drop table if exists t, t1;
+create table t(a int not null, b int not null);
+select ifnull(a,b) from t;
+ifnull(a,b)
+drop table if exists t;
+create table t(e int not null, b int);
+insert into t values(1, 1);
+create table t1(e int not null, b int);
+insert into t1 values(1, 1);
+select b from t where ifnull(e, b);
+b
+1
+select b from t1 where ifnull(e, b);
+b
+1
+drop table if exists t1, t2;
+create table t1 (c_int int, c_str varchar(40), c_datetime datetime, primary key(c_int));
+create table t2 (c_int int, c_str varchar(40), c_datetime datetime, primary key (c_datetime)) partition by range (to_days(c_datetime)) ( partition p0 values less than (to_days('2020-02-01')), partition p1 values less than (to_days('2020-04-01')), partition p2 values less than (to_days('2020-06-01')), partition p3 values less than maxvalue);
+insert into t1 (c_int, c_str, c_datetime) values (1, 'xenodochial bassi', '2020-04-29 03:22:51'), (2, 'epic wiles', '2020-01-02 23:29:51'), (3, 'silly burnell', '2020-02-25 07:43:07');
+insert into t2 (c_int, c_str, c_datetime) values (1, 'trusting matsumoto', '2020-01-07 00:57:18'), (2, 'pedantic boyd', '2020-06-08 23:12:16'), (null, 'strange hypatia', '2020-05-23 17:45:27');
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+c_int	c_str	c_datetime
+2	epic wiles	2020-01-02 23:29:51
+3	silly burnell	2020-02-25 07:43:07
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+c_int	c_str	c_datetime
+2	epic wiles	2020-01-02 23:29:51
+3	silly burnell	2020-02-25 07:43:07
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+c_int	c_str	c_datetime
+2	epic wiles	2020-01-02 23:29:51
+3	silly burnell	2020-02-25 07:43:07
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+c_int	c_str	c_datetime
+2	epic wiles	2020-01-02 23:29:51
+3	silly burnell	2020-02-25 07:43:07
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+c_int	c_str	c_datetime
+2	epic wiles	2020-01-02 23:29:51
+3	silly burnell	2020-02-25 07:43:07
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+c_int	c_str	c_datetime
+2	epic wiles	2020-01-02 23:29:51
+3	silly burnell	2020-02-25 07:43:07
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+c_int	c_str	c_datetime
+2	epic wiles	2020-01-02 23:29:51
+3	silly burnell	2020-02-25 07:43:07
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+c_int	c_str	c_datetime
+2	epic wiles	2020-01-02 23:29:51
+3	silly burnell	2020-02-25 07:43:07
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+c_int	c_str	c_datetime
+2	epic wiles	2020-01-02 23:29:51
+3	silly burnell	2020-02-25 07:43:07
+select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
+c_int	c_str	c_datetime
+2	epic wiles	2020-01-02 23:29:51
+3	silly burnell	2020-02-25 07:43:07
+set @a = 'xx';
+select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
+COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+select collation(_utf8mb4'12345');
+collation(_utf8mb4'12345')
+utf8mb4_bin
+select collation(_utf8mb4'xxx' collate utf8mb4_general_ci);
+collation(_utf8mb4'xxx' collate utf8mb4_general_ci)
+utf8mb4_general_ci
+select collation(_utf8mb4'@a');
+collation(_utf8mb4'@a')
+utf8mb4_bin
+select collation(_utf8mb4'@a' collate utf8mb4_general_ci);
+collation(_utf8mb4'@a' collate utf8mb4_general_ci)
+utf8mb4_general_ci
+set @@session.default_collation_for_utf8mb4='utf8mb4_0900_ai_ci';
+select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
+COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+select collation(_utf8mb4'12345');
+collation(_utf8mb4'12345')
+utf8mb4_0900_ai_ci
+select collation(_utf8mb4'12345' collate utf8mb4_general_ci);
+collation(_utf8mb4'12345' collate utf8mb4_general_ci)
+utf8mb4_general_ci
+select collation(_utf8mb4'@a');
+collation(_utf8mb4'@a')
+utf8mb4_0900_ai_ci
+select collation(_utf8mb4'@a' collate utf8mb4_general_ci);
+collation(_utf8mb4'@a' collate utf8mb4_general_ci)
+utf8mb4_general_ci
+set @@session.default_collation_for_utf8mb4=default;

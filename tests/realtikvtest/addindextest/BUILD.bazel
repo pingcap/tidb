@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "addindextest_test",
+    timeout = "long",
+    srcs = [
+        "add_index_test.go",
+        "concurrent_ddl_test.go",
+        "failpoints_test.go",
+        "main_test.go",
+        "multi_schema_change_test.go",
+        "pitr_test.go",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/testkit",
+        "//tests/realtikvtest",
+        "//tests/realtikvtest/addindextestutil",
+        "@com_github_stretchr_testify//require",
+    ],
+)

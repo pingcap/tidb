@@ -1,0 +1,11 @@
+[
+  {
+    "name": "TestPushDerivedTopnFlash",
+    "cases": [
+      "select * from (select row_number() over (order by b) as rownumber from t) DT where rownumber <= 1 -- applicable with no partition by",
+      "select * from (select row_number() over (partition by b) as rownumber from t) DT where rownumber <= 1 -- applicable with partition by but no push down to tiflash",
+      "select * from (select row_number() over (partition by b order by a) as rownumber from t) DT where rownumber <= 1 -- applicable with partition by and order by but no push down to tiflash",
+      "select * from (select row_number() over (partition by a) as rownumber from t) DT where rownumber <= 3 -- pattern is not applicable with partition by not prefix of PK"
+    ]
+  }
+]

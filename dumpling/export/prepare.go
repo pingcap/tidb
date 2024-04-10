@@ -10,16 +10,16 @@ import (
 	"text/template"
 
 	"github.com/pingcap/errors"
-
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 const (
-	outputFileTemplateSchema = "schema"
-	outputFileTemplateTable  = "table"
-	outputFileTemplateView   = "view"
-	outputFileTemplateData   = "data"
-	outputFileTemplatePolicy = "placement-policy"
+	outputFileTemplateSchema   = "schema"
+	outputFileTemplateTable    = "table"
+	outputFileTemplateView     = "view"
+	outputFileTemplateSequence = "sequence"
+	outputFileTemplateData     = "data"
+	outputFileTemplatePolicy   = "placement-policy"
 
 	defaultOutputFileTemplateBase = `
 		{{- define "objectName" -}}
@@ -90,7 +90,7 @@ func prepareDumpingDatabases(tctx *tcontext.Context, conf *Config, db *sql.Conn)
 	if len(conf.Databases) == 0 {
 		return databases, nil
 	}
-	dbMap := make(map[string]interface{}, len(databases))
+	dbMap := make(map[string]any, len(databases))
 	for _, database := range databases {
 		dbMap[database] = struct{}{}
 	}

@@ -1,0 +1,480 @@
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2, t3;
+CREATE TABLE t1 (i INT PRIMARY KEY);
+CREATE TABLE t2 (i INT, FOREIGN KEY (i) REFERENCES t1 (i));
+INSERT INTO t1 VALUES (1),(3);
+INSERT IGNORE INTO t2 VALUES (1), (null), (1), (2),(3),(4);
+Level	Code	Message
+Warning	1452	Cannot add or update a child row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`i`) REFERENCES `t1` (`i`))
+Warning	1452	Cannot add or update a child row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`i`) REFERENCES `t1` (`i`))
+select * from t2 order by i;
+i
+NULL
+1
+1
+3
+drop table t1,t2;
+CREATE TABLE t1 (i INT, index(i));
+CREATE TABLE t2 (i INT, FOREIGN KEY (i) REFERENCES t1 (i));
+INSERT INTO t1 VALUES (1),(3);
+INSERT IGNORE INTO t2 VALUES (1), (null), (1), (2), (3), (2);
+Level	Code	Message
+Warning	1452	Cannot add or update a child row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`i`) REFERENCES `t1` (`i`))
+Warning	1452	Cannot add or update a child row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`i`) REFERENCES `t1` (`i`))
+select * from t2 order by i;
+i
+NULL
+1
+1
+3
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2, t3;
+create table t1 (id int, a int, b int,  primary key (id));
+create table t2 (id int, a int, b int,  primary key (id));
+create table t3 (b int,  a int, id int, primary key (a), foreign key (a) references t1(id),  foreign key (b) references t2(id));
+insert into t1 (id, a, b) values (1, 11, 111), (2, 22, 222);
+insert into t2 (id, a, b) values (2, 22, 222);
+insert into t3 (id, a, b) values (1, 1, 1);
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`executor__foreign_key`.`t3`, CONSTRAINT `fk_2` FOREIGN KEY (`b`) REFERENCES `t2` (`id`))
+insert into t3 (id, a, b) values (2, 3, 2);
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`executor__foreign_key`.`t3`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))
+insert into t3 (id, a, b) values (0, 1, 2);
+insert into t3 (id, a, b) values (1, 2, 2);
+update t3 set a=3 where a=1;
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`executor__foreign_key`.`t3`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))
+update t3 set b=4 where id=1;
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`executor__foreign_key`.`t3`, CONSTRAINT `fk_2` FOREIGN KEY (`b`) REFERENCES `t2` (`id`))
+drop table if exists t3,t2,t1;
+create table t1 (id int, a int, b int,  primary key (id));
+create table t2 (b int,  a int, id int, primary key (a), foreign key (a) references t1(id));
+create table t3 (b int,  a int, id int, primary key (a), foreign key (a) references t1(id));
+insert into t1 (id, a, b) values (1, 1, 1);
+insert into t2 (id, a, b) values (1, 1, 1);
+insert into t3 (id, a, b) values (1, 1, 1);
+update t1 set id=2 where id = 1;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))
+update t1 set a=2 where id = 1;
+update t1 set b=2 where id = 1;
+drop table if exists t3,t2,t1;
+create table t1 (id int, a int, b int,  primary key (id));
+create table t2 (b int,  a int, id int, primary key (a), foreign key (a) references t1(id));
+create table t3 (b int,  a int, id int, primary key (a), foreign key (a) references t1(id));
+insert into t1 (id, a, b) values (1, 1, 1);
+insert into t2 (id, a, b) values (1, 1, 1);
+insert into t3 (id, a, b) values (1, 1, 1);
+delete from t1 where a=1;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))
+delete from t2 where id=1;
+delete from t1 where a=1;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__foreign_key`.`t3`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`id`))
+delete from t3 where id=1;
+delete from t1 where id=1;
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2, t3;
+create table t1 (id int auto_increment key, b int, index(b));
+create table t2 (id int, b int, foreign key fk(b) references t1(b) on update set null);
+insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);
+insert into t1 (b) select id from t1;
+insert into t1 (b) select id from t1;
+insert into t1 (b) select id from t1;
+insert into t1 (b) select id from t1;
+insert into t1 (b) select id from t1;
+insert into t1 (b) select id from t1;
+insert into t1 (b) select id from t1;
+insert into t1 (b) select id from t1;
+insert into t1 (b) select id from t1;
+insert into t1 (b) select id from t1;
+insert into t1 (b) select id from t1;
+insert into t1 (b) select id from t1;
+select count(*) from t1;
+count(*)
+32768
+insert into t2 select * from t1;
+update t1 set b=b+100000000;
+select count(*) from t2 where b is null;
+count(*)
+32768
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;
+set @@global.tidb_enable_foreign_key=0;
+drop table if exists t1, t2, t3;
+create table t1 (id int key, leader int, leader2 int, index(leader), index(leader2), constraint fk foreign key (leader) references t1(id) ON DELETE CASCADE ON UPDATE SET NULL);
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `id` int(11) NOT NULL,
+  `leader` int(11) DEFAULT NULL,
+  `leader2` int(11) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `leader` (`leader`),
+  KEY `leader2` (`leader2`),
+  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+set @@global.tidb_enable_foreign_key=1;
+alter table t1 add constraint fk2 foreign key (leader2) references t1 (id);
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `id` int(11) NOT NULL,
+  `leader` int(11) DEFAULT NULL,
+  `leader2` int(11) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `leader` (`leader`),
+  KEY `leader2` (`leader2`),
+  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */,
+  CONSTRAINT `fk2` FOREIGN KEY (`leader2`) REFERENCES `t1` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t1;
+create table t1 (id int key, leader int, leader2 int, index(leader), index(leader2), constraint fk foreign key (leader) references t1(id) /* FOREIGN KEY INVALID */);
+set @@foreign_key_checks=default;
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2, t3;
+create table t1 (id bit(10), index(id));
+create table t2 (id int key, b bit(10), constraint fk foreign key (b) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);
+insert into t1 values (b'01'), (b'10');
+insert into t2 values (1, b'01'), (2, b'10');
+delete from t1 where id = b'01';
+update t1 set id = b'110' where id = b'10';
+select cast(id as unsigned) from t1;
+cast(id as unsigned)
+6
+select id, cast(b as unsigned) from t2;
+id	cast(b as unsigned)
+2	6
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2, t3;
+create table t1 (id int key);
+create table t2 (id int key, a int, b int, foreign key fk_1 (a) references t1(id) ON DELETE SET NULL ON UPDATE SET NULL, foreign key fk_2 (b) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);
+insert into t1 values (1), (2), (3);
+insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3);
+update t1 set id=id+10 where id in (1, 3);
+select * from t1 order by id;
+id
+2
+11
+13
+select * from t2 order by id;
+id	a	b
+1	NULL	11
+2	2	2
+3	NULL	13
+delete from t1 where id = 2;
+select * from t1 order by id;
+id
+11
+13
+select * from t2 order by id;
+id	a	b
+1	NULL	11
+3	NULL	13
+drop table t1,t2;
+create table t1 (id int, b int, index(id), foreign key fk_2 (b) references t1(id) ON UPDATE CASCADE);
+insert into t1 values (1, 1), (2, 2), (3, 3);
+update t1 set id=id+10 where id > 1;
+select * from t1 order by id;
+id	b
+1	1
+12	12
+13	13
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2, t3;
+create table t1 (id int key, a int, index (a));
+create table t2 (id int key, a int, index (a), constraint fk_1 foreign key (a) references t1(a));
+replace into t1 values (1, 1);
+replace into t2 values (1, 1);
+replace into t2 (id) values (2);
+replace into t2 values (1, 2);
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`a`))
+replace into t1 values (1, 2);
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`a`))
+alter table t2 drop foreign key fk_1;
+alter table t2 add constraint fk_1 foreign key (a) references t1(a) on delete cascade;
+replace into t1 values (1, 2);
+select id, a from t1;
+id	a
+1	2
+select * from t2;
+id	a
+2	NULL
+alter table t2 drop foreign key fk_1;
+alter table t2 add constraint fk_1 foreign key (a) references t1(a) on delete set null;
+delete from t2;
+delete from t1;
+replace into t1 values (1, 1);
+replace into t2 values (1, 1);
+replace into t1 values (1, 2);
+select id, a from t1;
+id	a
+1	2
+select id, a from t2;
+id	a
+1	NULL
+drop table t1,t2;
+create table t1 (id int key, name varchar(10), leader int,  index(leader), foreign key (leader) references t1(id) ON DELETE CASCADE);
+replace into t1 values (1, 'boss', null), (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1);
+replace into t1 values (100, 'l2_a1', 10), (101, 'l2_a2', 10), (102, 'l2_a3', 10);
+replace into t1 values (110, 'l2_b1', 11), (111, 'l2_b2', 11), (112, 'l2_b3', 11);
+replace into t1 values (120, 'l2_c1', 12), (121, 'l2_c2', 12), (122, 'l2_c3', 12);
+replace into t1 values (1000,'l3_a1', 100);
+replace into t1 values (1, 'new-boss', null);
+select id from t1 order by id;
+id
+1
+set @@foreign_key_checks=default;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2, t3;
+create table t1 (a int, b int, index(a, b));
+create table t2 (a int, b int, index(a, b), constraint fk foreign key(a, b) references t1(a, b));
+select CONSTRAINT_NAME, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_SCHEMA, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME from INFORMATION_SCHEMA.KEY_COLUMN_USAGE where CONSTRAINT_SCHEMA='test' and TABLE_NAME='t2' and REFERENCED_TABLE_SCHEMA is not null and REFERENCED_COLUMN_NAME is not null;
+CONSTRAINT_NAME	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
+set @@foreign_key_checks=default;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2, t3;
+create table t1 (a int, b int as (a+1) virtual, index(b));
+create table t2 (a int, b int, constraint fk foreign key(b) references t1(b));
+Error 3733 (HY000): Foreign key 'fk' uses virtual column 'b' which is not supported.
+drop table t1;
+create table t1 (a int key);
+create table t2 (a int, c int as (a+1) virtual, constraint fk foreign key(c) references t1(a));
+Error 3733 (HY000): Foreign key 'fk' uses virtual column 'c' which is not supported.
+drop table if exists t1,t2,t3;
+create table t1 (a int, b int as (a) stored, index(b));
+create table t2 (a int, b int, constraint fk foreign key(b) references t1(b) on delete cascade on update cascade);
+insert into t1 (a) values (1),(2);
+insert into t2 (a) values (1),(2);
+update t2 set b=a;
+insert into t2 values (1,1),(2,2);
+insert into t2 values (3,3);
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`b`) ON DELETE CASCADE ON UPDATE CASCADE)
+select * from t2 order by a;
+a	b
+1	1
+1	1
+2	2
+2	2
+update t1 set a=a+10 where a=1;
+select * from t1 order by a;
+a	b
+2	2
+11	11
+select * from t2 order by a;
+a	b
+1	11
+1	11
+2	2
+2	2
+delete from t1 where a=2;
+select * from t1 order by a;
+a	b
+11	11
+select * from t2 order by a;
+a	b
+1	11
+1	11
+drop table if exists t1,t2,t3;
+create table t1 (a int, b int as (a) stored, index(b));
+create table t2 (a int, b int as (a) stored, constraint fk foreign key(b) references t1(b) on update cascade);
+Error 3104 (HY000): Cannot define foreign key with ON UPDATE CASCADE clause on a generated column.
+create table t2 (a int, b int as (a) stored, constraint fk foreign key(b) references t1(b) on delete set null);
+Error 3104 (HY000): Cannot define foreign key with ON DELETE SET NULL clause on a generated column.
+create table t2 (a int, b int as (a) stored, constraint fk foreign key(b) references t1(b));
+insert into t1 (a) values (1),(2);
+insert into t2 (a) values (1),(2);
+insert into t2 (a) values (3);
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`b`))
+select * from t2 order by a;
+a	b
+1	1
+2	2
+delete from t1 where b=1;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`b`))
+update t1 set a=a+10 where a=1;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`b`))
+alter table t2 drop foreign key fk;
+alter table t2 add foreign key fk (b) references t1(b) on delete cascade;
+delete from t1 where a=1;
+select * from t1 order by a;
+a	b
+2	2
+select * from t2 order by a;
+a	b
+2	2
+set @@foreign_key_checks=default;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2, t3;
+create table t1 (a int, b int, index idx1 (b), index idx2 ((b*2)));
+create table t2 (a int, b int, index((b*2)), constraint fk foreign key(b) references t1(b));
+insert into t1 values (1,1),(2,2);
+insert into t2 values (1,1),(2,2);
+insert into t2 values (3,3);
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`b`))
+update t1 set b=b+10 where b=1;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`b`))
+delete from t1 where b=1;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`b`))
+alter table t1 drop index idx1;
+Error 1553 (HY000): Cannot drop index 'idx1': needed in a foreign key constraint
+alter table t2 drop index fk;
+Error 1553 (HY000): Cannot drop index 'fk': needed in a foreign key constraint
+alter table t2 drop foreign key fk;
+alter table t2 add foreign key fk (b) references t1(b) on delete set null on update cascade;
+update t1 set b=b+10 where b=1;
+delete from t1 where b=2;
+select * from t1 order by a;
+a	b
+1	11
+select * from t2 order by a;
+a	b
+1	11
+2	NULL
+admin check table t1;
+admin check table t2;
+set @@foreign_key_checks=default;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2, t3;
+create table t1 (id int primary key, a json, b int generated always as (a->'$.id') stored, index idx1(b), index idx2((cast(a ->'$.data' as signed array))));
+create table t2 (id int, b int, constraint fk foreign key(b) references t1(b));
+insert into t1 (id, a) values (1, '{"id": "1", "data": [1,11,111]}');
+insert into t1 (id, a) values (2, '{"id": "2", "data": [2,22,222]}');
+insert into t2 values (1,1),(2,2);
+insert into t2 values (3,3);
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`b`))
+update t1 set a='{"id": "10", "data": [1,11,111]}' where id=1;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`b`))
+delete from t1 where id=1;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__foreign_key`.`t2`, CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `t1` (`b`))
+alter table t2 drop foreign key fk;
+alter table t2 add foreign key fk (b) references t1(b) on delete set null on update cascade;
+update t1 set a='{"id": "10", "data": [1,11,111]}' where id=1;
+delete from t1 where id=2;
+select id,b from t1 order by id;
+id	b
+1	10
+select id,b from t2 order by id;
+id	b
+1	10
+2	NULL
+admin check table t1;
+admin check table t2;
+set @@foreign_key_checks=default;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2, t3;
+create table t1 (t timestamp, index(t));
+create table t2 (t timestamp, foreign key (t) references t1(t) on delete cascade);
+set @@time_zone='+8:00';
+insert into t1 values ('2023-01-28 10:29:16');
+insert into t2 values ('2023-01-28 10:29:16');
+set @@time_zone='+6:00';
+delete from t1;
+select * from t1;
+t
+select * from t2;
+t
+set @@time_zone=default;
+set @@foreign_key_checks=default;
+drop table t1, t2;
+set @@foreign_key_checks=1;
+drop table if exists a, b;
+create table b (  id int(11) NOT NULL AUTO_INCREMENT,  f int(11) NOT NULL,  PRIMARY KEY (id));
+create table a (  id int(11) NOT NULL AUTO_INCREMENT,  b_id int(11) NOT NULL,  PRIMARY KEY (id),  CONSTRAINT fk_b_id FOREIGN KEY (b_id) REFERENCES b (id) ON DELETE CASCADE);
+insert b(id,f) values(1,1);
+insert a(id,b_id) values(1,1);
+update b set id=1,f=2 where id=1;
+set @@foreign_key_checks=default;
+drop table if exists a, b;
+drop table if exists t1;
+set @@foreign_key_checks=1;
+create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid));
+insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz');
+insert into t1 (name) select name from t1;
+insert into t1 (name) select name from t1;
+insert into t1 (name) select name from t1;
+insert into t1 (name) select name from t1;
+insert into t1 (name) select name from t1;
+insert into t1 (name) select name from t1;
+insert into t1 (name) select name from t1;
+insert into t1 (name) select name from t1;
+select count(*) from t1;
+count(*)
+256
+update t1 set pid=1 where id>1;
+alter table t1 add foreign key (pid) references t1 (id) on update cascade;
+select sum(id) from t1;
+sum(id)
+32896
+SET GLOBAL tidb_mem_oom_action='CANCEL';
+set @@tidb_mem_quota_query=40960;
+update t1 set id=id+100000 where id=1;
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+select id,pid from t1 where id = 1;
+id	pid
+1	NULL
+set @@foreign_key_checks=0;
+update t1 set id=id+100000 where id=1;
+select id,pid from t1 where id<3 or pid is null order by id;
+id	pid
+2	1
+100001	NULL
+SET GLOBAL tidb_mem_oom_action = DEFAULT;
+set @@tidb_mem_quota_query=DEFAULT;
+set @@foreign_key_checks=DEFAULT;
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2;
+create table t1 (id int key);
+create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);
+insert into t1 values (1), (2), (3);
+insert into t2 values (1), (2), (3);
+lock table t2 read;
+set @@foreign_key_checks=1;
+delete from t1 where id = 1;
+Error 8020 (HY000): Table 't2' was locked in READ by server: <server> session: <session>
+unlock tables;
+delete from t1 where id = 1;
+select * from t1 order by id;
+id
+2
+3
+select * from t2 order by id;
+id
+2
+3
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+create database executor__foreign_key_other_schema;
+use executor__foreign_key_other_schema;
+drop table if exists users;
+CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);
+use executor__foreign_key;
+drop table if exists orders;
+CREATE TABLE orders (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, doc JSON, FOREIGN KEY fk_user_id (user_id) REFERENCES executor__foreign_key_other_schema.users(id));
+alter table orders modify user_id int null;
+show create table orders;
+Table	Create Table
+orders	CREATE TABLE `orders` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) DEFAULT NULL,
+  `doc` json DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `fk_user_id` (`user_id`),
+  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id`) REFERENCES `executor__foreign_key_other_schema`.`users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists orders;
+drop database executor__foreign_key_other_schema;
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;

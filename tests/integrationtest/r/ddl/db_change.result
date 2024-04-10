@@ -1,0 +1,35 @@
+drop database if exists ddl__db_change2;
+create database ddl__db_change2 default charset utf8 default collate utf8_bin;
+use ddl__db_change2;
+create table t (
+c1 varchar(64),
+c2 enum('N','Y') not null default 'N',
+c3 timestamp on update current_timestamp,
+c4 int primary key,
+unique key idx2 (c2, c3));
+insert into t values('a', 'N', '2017-07-01', 8);
+drop stats t;
+insert into t values('a', 'A', '2018-09-19', 9);
+Error 1265 (01000): Data truncated for column 'c2' at row 1
+alter table t change c2 c2 enum('N') DEFAULT 'N';
+alter table t change c2 c2 int default 0;
+alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A';
+insert into t values('a', 'A', '2018-09-20', 10);
+insert into t (c1, c3, c4) values('a', '2018-09-21', 11);
+select c4, c2 from t order by c4 asc;
+c4	c2
+8	N
+10	A
+11	A
+update t set c2='N' where c4 = 10;
+select c2 from t where c4 = 10;
+c2
+N
+drop database ddl__db_change2;
+use ddl__db_change;
+drop table if exists t;
+create table t(a int, b int, index idx((a+b)));
+alter table t rename column b to b2;
+Error 3837 (HY000): Column 'b' has an expression index dependency and cannot be dropped or renamed
+alter table t drop column b;
+Error 3837 (HY000): Column 'b' has an expression index dependency and cannot be dropped or renamed

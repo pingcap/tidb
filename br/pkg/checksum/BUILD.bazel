@@ -1,0 +1,55 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "checksum",
+    srcs = [
+        "executor.go",
+        "validate.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/checksum",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/errors",
+        "//br/pkg/metautil",
+        "//br/pkg/storage",
+        "//br/pkg/summary",
+        "//br/pkg/utils",
+        "//pkg/distsql",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/sessionctx/variable",
+        "//pkg/tablecodec",
+        "//pkg/util/ranger",
+        "@com_github_gogo_protobuf//proto",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "checksum_test",
+    timeout = "short",
+    srcs = [
+        "executor_test.go",
+        "main_test.go",
+    ],
+    embed = [":checksum"],
+    flaky = True,
+    deps = [
+        "//br/pkg/metautil",
+        "//br/pkg/mock",
+        "//pkg/distsql",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

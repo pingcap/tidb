@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "multivaluedindex_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "multi_valued_index_test.go",
+    ],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//pkg/config",
+        "//pkg/errno",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/sessiontxn",
+        "//pkg/table",
+        "//pkg/tablecodec",
+        "//pkg/testkit",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/codec",
+        "//pkg/util/timeutil",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

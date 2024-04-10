@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "planner",
+    srcs = ["optimize.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/bindinfo",
+        "//pkg/domain",
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/metrics",
+        "//pkg/parser/ast",
+        "//pkg/planner/cascades",
+        "//pkg/planner/context",
+        "//pkg/planner/core",
+        "//pkg/planner/util/debugtrace",
+        "//pkg/privilege",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+        "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/hint",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "//pkg/util/topsql",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)

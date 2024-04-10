@@ -1,0 +1,338 @@
+drop table if exists t1, t2, t3, t4;
+create table t1 (id1 int ,id2 char(10) ,id3 text,id4 blob,id5 json,id6 varchar(1000),id7 varchar(1001), PRIMARY KEY (`id1`) clustered,key id2(id2));
+insert into t1 (id1,id2)values(1,1);
+insert into t1 (id1,id2)values(2,2),(3,3);
+create table t2 (id1 int ,id2 char(10) ,id3 text,id4 blob,id5 json,id6 varchar(1000),PRIMARY KEY (`id1`) clustered,key id2(id2));
+insert into t2 (id1,id2)values(1,1);
+insert into t2 (id1,id2)values(2,2),(3,3);
+explain format='brief' select t1.id1 from t1,t2 where t1.id2 > '1' and t2.id2 > '1';
+id	estRows	task	access object	operator info
+HashJoin	11111111.11	root		CARTESIAN inner join
+├─IndexReader(Build)	3333.33	root		index:IndexRangeScan
+│ └─IndexRangeScan	3333.33	cop[tikv]	table:t2, index:id2(id2)	range:("1",+inf], keep order:false, stats:pseudo
+└─IndexReader(Probe)	3333.33	root		index:IndexRangeScan
+  └─IndexRangeScan	3333.33	cop[tikv]	table:t1, index:id2(id2)	range:("1",+inf], keep order:false, stats:pseudo
+select t1.id1 from t1,t2 where t1.id2 > '1' and t2.id2 > '1';
+id1
+2
+2
+3
+3
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+1
+select t1.id1,t1.id2 from t1,t2 where t1.id2 > '1' and t2.id2 > '1' ;
+id1	id2
+2	2
+2	2
+3	3
+3	3
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+1
+select t1.id1,t1.id3 from t1,t2 where t1.id2 > '1' and t2.id2 > '1' ;
+id1	id3
+2	NULL
+2	NULL
+3	NULL
+3	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select t1.id1,t1.id4 from t1,t2 where t1.id2 > '1' and t2.id2 > '1' ;
+id1	id4
+2	NULL
+2	NULL
+3	NULL
+3	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select t1.id1,t1.id5 from t1,t2 where t1.id2 > '1' and t2.id2 > '1' ;
+id1	id5
+2	NULL
+2	NULL
+3	NULL
+3	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select t1.id1,t1.id6 from t1,t2 where t1.id2 > '1' and t2.id2 > '1' ;
+id1	id6
+2	NULL
+2	NULL
+3	NULL
+3	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+1
+select t1.id1,t1.id7 from t1,t2 where t1.id2 > '1' and t2.id2 > '1' ;
+id1	id7
+2	NULL
+2	NULL
+3	NULL
+3	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+explain format='brief' select t1.id1 from t1,t2 where t1.id2 > '1'and t1.id1 = t2.id1;
+id	estRows	task	access object	operator info
+MergeJoin	4166.67	root		inner join, left key:executor__chunk_reuse.t1.id1, right key:executor__chunk_reuse.t2.id1
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+└─TableReader(Probe)	3333.33	root		data:Selection
+  └─Selection	3333.33	cop[tikv]		gt(executor__chunk_reuse.t1.id2, "1")
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+select t1.id1 from t1,t2 where t1.id2 > '1' and t1.id1 = t2.id1;
+id1
+2
+3
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+1
+select t1.id1 ,t1.id3 from t1,t2 where t1.id2 > '1' and t1.id1 = t2.id1;
+id1	id3
+2	NULL
+3	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select t1.id1 ,t1.id4 from t1,t2 where t1.id2 > '1' and t1.id1 = t2.id1;
+id1	id4
+2	NULL
+3	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select t1.id1 ,t1.id5 from t1,t2 where t1.id2 > '1' and t1.id1 = t2.id1;
+id1	id5
+2	NULL
+3	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select t1.id1 ,t1.id6 from t1,t2 where t1.id2 > '1' and t1.id1 = t2.id1;
+id1	id6
+2	NULL
+3	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+1
+select t1.id1 ,t1.id7 from t1,t2 where t1.id2 > '1' and t1.id1 = t2.id1;
+id1	id7
+2	NULL
+3	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+explain format='brief' select t1.id1 from t1,t2 where t1.id1 = 1 and t2.id1 = 1;
+id	estRows	task	access object	operator info
+HashJoin	1.00	root		CARTESIAN inner join
+├─Point_Get(Build)	1.00	root	table:t2	handle:1
+└─Point_Get(Probe)	1.00	root	table:t1	handle:1
+select t1.id1 from t1,t2 where t1.id1 = 1 and t2.id1 = 1;
+id1
+1
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+1
+select t1.id1,t1.id2 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
+id1	id2
+1	1
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+1
+select t1.id1,t1.id3 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
+id1	id3
+1	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select t1.id1,t1.id4 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
+id1	id4
+1	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select t1.id1,t1.id5 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
+id1	id5
+1	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select t1.id1,t1.id6 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
+id1	id6
+1	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+1
+select t1.id1,t1.id7 from t1,t2 where t1.id1 = 1 and t2.id1 = 1 ;
+id1	id7
+1	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+explain format='brief' select t1.id1,t1.id6 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2' ;
+id	estRows	task	access object	operator info
+HashJoin	100.00	root		CARTESIAN inner join
+├─IndexLookUp(Build)	10.00	root		
+│ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2, index:id2(id2)	range:["2","2"], keep order:false, stats:pseudo
+│ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexLookUp(Probe)	10.00	root		
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:id2(id2)	range:["1","1"], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select t1.id1,t1.id6 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';
+id1	id6	id6
+1	NULL	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+1
+select t1.id1,t1.id3 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';
+id1	id3	id6
+1	NULL	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select t1.id1,t1.id4 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';
+id1	id4	id6
+1	NULL	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select t1.id1,t1.id5 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';
+id1	id5	id6
+1	NULL	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select t1.id1,t1.id7 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';
+id1	id7	id6
+1	NULL	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select t1.id1,t1.id6 ,t2.id3  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2';
+id1	id6	id3
+1	NULL	NULL
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+create table t3 (id1 int ,id2 char(10),id8 int ,id3 text,id4 blob,id5 json,id6 varchar(1000),id7 varchar(1001), PRIMARY KEY (`id1`) clustered,key id2(id2),key id8(id8));
+insert into t3 (id1,id2,id8)values(1,1,1),(2,2,2),(3,3,3);
+explain format='brief' select id1 from t3 where id2 > '3' or id8 < 10 union (select id1 from t3 where id2 > '4' or id8 < 7);
+id	estRows	task	access object	operator info
+HashAgg	8878.22	root		group by:Column#17, funcs:firstrow(Column#17)->Column#17
+└─Union	11097.78	root		
+  ├─Projection	5548.89	root		executor__chunk_reuse.t3.id1->Column#17
+  │ └─IndexMerge	5548.89	root		type: union
+  │   ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t3, index:id2(id2)	range:("3",+inf], keep order:false, stats:pseudo
+  │   ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t3, index:id8(id8)	range:[-inf,10), keep order:false, stats:pseudo
+  │   └─TableRowIDScan(Probe)	5548.89	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  └─Projection	5548.89	root		executor__chunk_reuse.t3.id1->Column#17
+    └─IndexMerge	5548.89	root		type: union
+      ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t3, index:id2(id2)	range:("4",+inf], keep order:false, stats:pseudo
+      ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t3, index:id8(id8)	range:[-inf,7), keep order:false, stats:pseudo
+      └─TableRowIDScan(Probe)	5548.89	cop[tikv]	table:t3	keep order:false, stats:pseudo
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id1 from t3 where id2 > '4' or id8 < 7);
+id1
+1
+2
+3
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+1
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id3 from t3 where id2 > '4' or id8 < 7);
+id1
+NULL
+1
+2
+3
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id4 from t3 where id2 > '4' or id8 < 7);
+id1
+NULL
+1
+2
+3
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id5 from t3 where id2 > '4' or id8 < 7);
+id1
+NULL
+1
+2
+3
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id6 from t3 where id2 > '4' or id8 < 7);
+id1
+NULL
+1
+2
+3
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+1
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id7 from t3 where id2 > '4' or id8 < 7);
+id1
+NULL
+1
+2
+3
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+set tidb_enable_clustered_index = OFF;
+create table t4 (id1 int ,id2 char(10),id8 int ,id3 text,id4 blob,id5 json,id6 varchar(1000),id7 varchar(1001), PRIMARY KEY (`id1`),key id2(id2),key id8(id8,id2));
+insert into t4 (id1,id2,id8)values(1,1,1),(2,2,2),(3,3,3);
+explain format='brief' select id2 from t4 where id2 > '3' union (select id2 from t4 where id2 > '4');
+id	estRows	task	access object	operator info
+HashAgg	5333.33	root		group by:Column#19, funcs:firstrow(Column#19)->Column#19
+└─Union	6666.67	root		
+  ├─IndexReader	3333.33	root		index:IndexRangeScan
+  │ └─IndexRangeScan	3333.33	cop[tikv]	table:t4, index:id2(id2)	range:("3",+inf], keep order:false, stats:pseudo
+  └─IndexReader	3333.33	root		index:IndexRangeScan
+    └─IndexRangeScan	3333.33	cop[tikv]	table:t4, index:id2(id2)	range:("4",+inf], keep order:false, stats:pseudo
+select id2 from t4 where id2 > '3' union (select id2 from t4 where id2 > '4');
+id2
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+1
+select id1 from t3 where id2 > '3' or id8 < 10 union (select CHAR_LENGTH(id3) from t3 where id2 > '4' or id8 < 7);
+id1
+NULL
+1
+2
+3
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select id1 from t3 where id2 > '3' or id8 < 10 union (select CHAR_LENGTH(id2) from t3 where id2 > '4' or id8 < 7);
+id1
+1
+2
+3
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+1
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id2 from t3 where id2 > '4' or id8 < 7 and id3 is null);
+id1
+1
+2
+3
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+select id1 from t3 where id2 > '3' or id8 < 10 union (select id2 from t3 where id2 > '4' or id8 < 7 and char_length(id3) > 0);
+id1
+1
+2
+3
+select @@last_sql_use_alloc;
+@@last_sql_use_alloc
+0
+set tidb_enable_clustered_index = default;

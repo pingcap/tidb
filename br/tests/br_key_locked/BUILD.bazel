@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "br_key_locked_lib",
+    srcs = [
+        "codec.go",
+        "locker.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/tests/br_key_locked",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//br/pkg/httputil",
+        "//br/pkg/task",
+        "//pkg/config",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/store/driver",
+        "//pkg/tablecodec",
+        "//pkg/util/codec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+        "@com_github_tikv_pd_client//:client",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "br_key_locked",
+    embed = [":br_key_locked_lib"],
+    visibility = ["//visibility:public"],
+)

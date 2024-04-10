@@ -10,26 +10,26 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-
-	dbconfig "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/store/helper"
+	dbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	pd "github.com/tikv/pd/client/http"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
 )
 
 const (
 	orderByTiDBRowID = "ORDER BY `_tidb_rowid`"
+	snapshotVar      = "tidb_snapshot"
 )
 
 type listTableType int
@@ -174,6 +174,60 @@ func ShowCreateView(tctx *tcontext.Context, db *BaseConn, database, view string)
 	return createTableSQL.String(), createViewSQL.String(), nil
 }
 
+// ShowCreateSequence constructs the create sequence SQL for a specified sequence
+// returns (createSequenceSQL, error)
+func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence string, conf *Config) (string, error) {
+	var oneRow [2]string
+	handleOneRow := func(rows *sql.Rows) error {
+		return rows.Scan(&oneRow[0], &oneRow[1])
+	}
+	var (
+		createSequenceSQL  strings.Builder
+		nextNotCachedValue int64
+	)
+	query := fmt.Sprintf("SHOW CREATE SEQUENCE `%s`.`%s`", escapeString(database), escapeString(sequence))
+	err := db.QuerySQL(tctx, handleOneRow, func() {
+		oneRow[0], oneRow[1] = "", ""
+	}, query)
+	if err != nil {
+		return "", err
+	}
+	createSequenceSQL.WriteString(oneRow[1])
+	createSequenceSQL.WriteString(";\n")
+
+	switch conf.ServerInfo.ServerType {
+	case version.ServerTypeTiDB:
+		// Get next not allocated auto increment id of the whole cluster
+		query := fmt.Sprintf("SHOW TABLE `%s`.`%s` NEXT_ROW_ID", escapeString(database), escapeString(sequence))
+		results, err := db.QuerySQLWithColumns(tctx, []string{"NEXT_GLOBAL_ROW_ID", "ID_TYPE"}, query)
+		if err != nil {
+			return "", err
+		}
+		for _, oneRow := range results {
+			nextGlobalRowID, idType := oneRow[0], oneRow[1]
+			if idType == "SEQUENCE" {
+				nextNotCachedValue, _ = strconv.ParseInt(nextGlobalRowID, 10, 64)
+			}
+		}
+		fmt.Fprintf(&createSequenceSQL, "SELECT SETVAL(`%s`,%d);\n", escapeString(sequence), nextNotCachedValue)
+	case version.ServerTypeMariaDB:
+		var oneRow1 string
+		handleOneRow1 := func(rows *sql.Rows) error {
+			return rows.Scan(&oneRow1)
+		}
+		query := fmt.Sprintf("SELECT NEXT_NOT_CACHED_VALUE FROM `%s`.`%s`", escapeString(database), escapeString(sequence))
+		err := db.QuerySQL(tctx, handleOneRow1, func() {
+			oneRow1 = ""
+		}, query)
+		if err != nil {
+			return "", err
+		}
+		nextNotCachedValue, _ = strconv.ParseInt(oneRow1, 10, 64)
+		fmt.Fprintf(&createSequenceSQL, "SELECT SETVAL(`%s`,%d);\n", escapeString(sequence), nextNotCachedValue)
+	}
+	return createSequenceSQL.String(), nil
+}
+
 // SetCharset builds the set charset SQLs
 func SetCharset(w *strings.Builder, characterSet, collationConnection string) {
 	w.WriteString("SET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;\n")
@@ -307,6 +361,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 	return dbTables, nil
 }
 
+// ListAllPlacementPolicyNames returns all placement policy names.
 func ListAllPlacementPolicyNames(tctx *tcontext.Context, db *BaseConn) ([]string, error) {
 	var policyList []string
 	var policy string
@@ -588,7 +643,7 @@ func ShowMasterStatus(db *sql.Conn) ([]string, error) {
 		}
 		fieldNum := len(cols)
 		oneRow = make([]string, fieldNum)
-		addr := make([]interface{}, fieldNum)
+		addr := make([]any, fieldNum)
 		for i := range oneRow {
 			addr[i] = &oneRow[i]
 		}
@@ -608,14 +663,13 @@ func GetSpecifiedColumnValueAndClose(rows *sql.Rows, columnName string) ([]strin
 		return []string{}, nil
 	}
 	defer rows.Close()
-	columnName = strings.ToUpper(columnName)
 	var strs []string
 	columns, _ := rows.Columns()
-	addr := make([]interface{}, len(columns))
+	addr := make([]any, len(columns))
 	oneRow := make([]sql.NullString, len(columns))
 	fieldIndex := -1
 	for i, col := range columns {
-		if strings.ToUpper(col) == columnName {
+		if strings.EqualFold(col, columnName) {
 			fieldIndex = i
 		}
 		addr[i] = &oneRow[i]
@@ -646,13 +700,13 @@ func GetSpecifiedColumnValuesAndClose(rows *sql.Rows, columnName ...string) ([][
 	if err != nil {
 		return strs, errors.Trace(err)
 	}
-	addr := make([]interface{}, len(columns))
+	addr := make([]any, len(columns))
 	oneRow := make([]sql.NullString, len(columns))
 	fieldIndexMp := make(map[int]int)
 	for i, col := range columns {
 		addr[i] = &oneRow[i]
 		for j, name := range columnName {
-			if strings.ToUpper(col) == name {
+			if strings.EqualFold(col, name) {
 				fieldIndexMp[i] = j
 			}
 		}
@@ -724,7 +778,9 @@ func getTiDBConfig(db *sql.Conn) (dbconfig.Config, error) {
 func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	conn, err := db.Conn(context.Background())
 	if err == nil {
-		defer conn.Close()
+		defer func() {
+			_ = conn.Close()
+		}()
 		tidbConfig, err := getTiDBConfig(conn)
 		if err == nil {
 			return tidbConfig.Store == "tikv", nil
@@ -778,10 +834,10 @@ func isUnknownSystemVariableErr(err error) bool {
 
 // resetDBWithSessionParams will return a new sql.DB as a replacement for input `db` with new session parameters.
 // If returned error is nil, the input `db` will be closed.
-func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, params map[string]interface{}) (*sql.DB, error) {
-	support := make(map[string]interface{})
+func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, cfg *mysql.Config, params map[string]any) (*sql.DB, error) {
+	support := make(map[string]any)
 	for k, v := range params {
-		var pv interface{}
+		var pv any
 		if str, ok := v.(string); ok {
 			if pvi, err := strconv.ParseInt(str, 10, 64); err == nil {
 				pv = pvi
@@ -796,7 +852,9 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, pa
 		s := fmt.Sprintf("SET SESSION %s = ?", k)
 		_, err := db.ExecContext(tctx, s, pv)
 		if err != nil {
-			if isUnknownSystemVariableErr(err) {
+			if k == snapshotVar {
+				err = errors.Annotate(err, "fail to set snapshot for tidb, please set --consistency=none/--consistency=lock or fix snapshot problem")
+			} else if isUnknownSystemVariableErr(err) {
 				tctx.L().Info("session variable is not supported by db", zap.String("variable", k), zap.Reflect("value", v))
 				continue
 			}
@@ -804,6 +862,10 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, pa
 		}
 
 		support[k] = pv
+	}
+
+	if cfg.Params == nil {
+		cfg.Params = make(map[string]string)
 	}
 
 	for k, v := range support {
@@ -815,14 +877,24 @@ func resetDBWithSessionParams(tctx *tcontext.Context, db *sql.DB, dsn string, pa
 		} else {
 			s = fmt.Sprintf("%v", v)
 		}
-		dsn += fmt.Sprintf("&%s=%s", k, url.QueryEscape(s))
+		cfg.Params[k] = s
 	}
+	failpoint.Inject("SkipResetDB", func(_ failpoint.Value) {
+		failpoint.Return(db, nil)
+	})
 
-	newDB, err := sql.Open("mysql", dsn)
-	if err == nil {
-		db.Close()
+	db.Close()
+	c, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return newDB, errors.Trace(err)
+	newDB := sql.OpenDB(c)
+	// ping to make sure all session parameters are set correctly
+	err = newDB.PingContext(tctx)
+	if err != nil {
+		newDB.Close()
+	}
+	return newDB, nil
 }
 
 func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead bool) (*sql.Conn, error) {
@@ -1021,7 +1093,7 @@ func buildOrderByClauseString(handleColNames []string) string {
 	return fmt.Sprintf("ORDER BY %s", strings.Join(quotaCols, separator))
 }
 
-func buildLockTablesSQL(allTables DatabaseTables, blockList map[string]map[string]interface{}) string {
+func buildLockTablesSQL(allTables DatabaseTables, blockList map[string]map[string]any) string {
 	// ,``.`` READ has 11 bytes, "LOCK TABLE" has 10 bytes
 	estimatedCap := len(allTables)*11 + 10
 	s := bytes.NewBuffer(make([]byte, 0, estimatedCap))
@@ -1067,7 +1139,7 @@ func simpleQuery(conn *sql.Conn, query string, handleOneRow func(*sql.Rows) erro
 	return simpleQueryWithArgs(context.Background(), conn, handleOneRow, query)
 }
 
-func simpleQueryWithArgs(ctx context.Context, conn *sql.Conn, handleOneRow func(*sql.Rows) error, query string, args ...interface{}) error {
+func simpleQueryWithArgs(ctx context.Context, conn *sql.Conn, handleOneRow func(*sql.Rows) error, query string, args ...any) error {
 	var (
 		rows *sql.Rows
 		err  error
@@ -1158,7 +1230,7 @@ func detectEstimateRows(tctx *tcontext.Context, db *BaseConn, query string, fiel
 		if err != nil {
 			return errors.Trace(err)
 		}
-		addr := make([]interface{}, len(columns))
+		addr := make([]any, len(columns))
 		oneRow = make([]sql.NullString, len(columns))
 		fieldIndex = -1
 	found:
@@ -1393,19 +1465,19 @@ func GetDBInfo(db *sql.Conn, tables map[string]map[string]struct{}) ([]*model.DB
 
 // GetRegionInfos get region info including regionID, start key, end key from database sql interface.
 // start key, end key includes information to help split table
-func GetRegionInfos(db *sql.Conn) (*helper.RegionsInfo, error) {
+func GetRegionInfos(db *sql.Conn) (*pd.RegionsInfo, error) {
 	const tableRegionSQL = "SELECT REGION_ID,START_KEY,END_KEY FROM INFORMATION_SCHEMA.TIKV_REGION_STATUS ORDER BY START_KEY;"
 	var (
 		regionID         int64
 		startKey, endKey string
 	)
-	regionsInfo := &helper.RegionsInfo{Regions: make([]helper.RegionInfo, 0)}
+	regionsInfo := &pd.RegionsInfo{Regions: make([]pd.RegionInfo, 0)}
 	err := simpleQuery(db, tableRegionSQL, func(rows *sql.Rows) error {
 		err := rows.Scan(&regionID, &startKey, &endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		regionsInfo.Regions = append(regionsInfo.Regions, helper.RegionInfo{
+		regionsInfo.Regions = append(regionsInfo.Regions, pd.RegionInfo{
 			ID:       regionID,
 			StartKey: startKey,
 			EndKey:   endKey,
@@ -1452,7 +1524,7 @@ func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[strin
 	if err = rows.Close(); err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
-	if rows.Err() != nil {
+	if err = rows.Err(); err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
 	return charsetAndDefaultCollation, err

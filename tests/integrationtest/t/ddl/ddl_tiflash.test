@@ -1,0 +1,26 @@
+# TestAlterDatabaseErrorGrammar
+-- error 8200
+ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b';
+-- error 8200
+ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2;
+-- error 8200
+ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2;
+-- error 8200
+ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b';
+
+# TestTiFlashBatchAddVariables
+set SESSION tidb_batch_pending_tiflash_count=5;
+set GLOBAL tidb_batch_pending_tiflash_count=6;
+show session variables where Variable_name='tidb_batch_pending_tiflash_count' and Value='5';
+show global variables where Variable_name='tidb_batch_pending_tiflash_count' and Value='6';
+show global variables where Variable_name='tidb_batch_pending_tiflash_count' and Value='1.5';
+-- error 1232
+set GLOBAL tidb_batch_pending_tiflash_count=1.5;
+show global variables where Variable_name='tidb_batch_pending_tiflash_count' and Value='6';
+connect (conn1, localhost, root,, ddl__ddl_tiflash);
+connection conn1;
+show session variables where Variable_name='tidb_batch_pending_tiflash_count' and Value='6';
+connection default;
+disconnect conn1;
+set global tidb_batch_pending_tiflash_count = default;
+set session tidb_batch_pending_tiflash_count = default;

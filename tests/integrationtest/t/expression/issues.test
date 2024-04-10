@@ -1,0 +1,2163 @@
+# TestIssue19654
+drop table if exists t1, t2;
+create table t1 (b enum('a', 'b'));
+insert into t1 values ('a');
+create table t2 (b enum('b','a') not null, unique(b));
+insert into t2 values ('a');
+select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;
+drop table if exists t1, t2;
+create table t1 (b set('a', 'b'));
+insert into t1 values ('a');
+create table t2 (b set('b','a') not null, unique(b));
+insert into t2 values ('a');
+select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;
+drop table if exists t1, t2;
+create table t1 (b enum('a', 'b'));
+insert into t1 values ('a');
+create table t2 (b set('b','a') not null, unique(b));
+insert into t2 values ('a');
+select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;
+drop table if exists t1, t2;
+create table t1 (b char(10));
+insert into t1 values ('a');
+create table t2 (b enum('b','a') not null, unique(b));
+insert into t2 values ('a');
+select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;
+drop table if exists t1, t2;
+create table t1 (b char(10));
+insert into t1 values ('a');
+create table t2 (b set('b','a') not null, unique(b));
+insert into t2 values ('a');
+select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;
+
+# TestIssue19387
+drop table if exists t;
+create table t(a decimal(16, 2));
+select sum(case when 1 then a end) from t group by a;
+show create table t;
+
+# TestIssue20118
+drop table if exists t;
+create table t(a tinyint, b bit(63));
+--enable_warnings
+insert ignore into t values(599999999, -1);
+--disable_warnings
+select hex(a), hex(b) from t;
+
+# TestIssue24900
+drop table if exists t;
+create table t(b bit(16));
+--enable_warnings
+insert ignore into t values(0x3635313836),(0x333830);
+--disable_warnings
+select hex(b) from t;
+
+# TestIssue9123
+drop table if exists t;
+create table t(a char(32) not null, b float default '0') engine=innodb default charset=utf8mb4;
+insert into t value('0a6f9d012f98467f8e671e9870044528', 208.867);
+select concat_ws( ',', b) from t where a = '0a6f9d012f98467f8e671e9870044528';
+
+# TestIssue4356
+drop table if exists t;
+CREATE TABLE t (b BIT(8));
+INSERT INTO t SET b = b'11111111';
+INSERT INTO t SET b = b'1010';
+INSERT INTO t SET b = b'0101';
+SELECT b+0, BIN(b), OCT(b), HEX(b) FROM t;
+
+# TestIssue4436
+drop table if exists t;
+create table t(a char(20));
+-- error 1115
+select convert(a using a) from t;
+
+# TestIssue31603
+drop table if exists t1;
+create table t1(c1 varbinary(100));
+insert into t1 values('abc');
+select 1 from t1 where char_length(c1) = 10;
+
+# TestIssue11648
+drop table if exists t;
+create table t (id int NOT NULL DEFAULT 8);
+SET sql_mode = '';
+--enable_warnings
+insert into t values (1), (NULL), (2);
+--disable_warnings
+select * from t;
+set @@sql_mode=default;
+
+# TestIssue31640
+drop table if exists t;
+create table t(a json);
+insert into t values ('"a"'), ('"B"'), ('"c"'), ('"D"'), ('{"a": 1}'), ('1'), ('{"b": 2}'), ('[1, 2]'), ('[3, 4]');
+select min(a) from t;
+select max(a) from t;
+select min(a collate utf8mb4_bin) from t;
+select max(a collate utf8mb4_bin) from t;
+select min(a collate utf8mb4_unicode_ci) from t;
+select max(a collate utf8mb4_unicode_ci) from t;
+
+# TestIssue36279
+SET timestamp=UNIX_TIMESTAMP('2011-11-01 17:48:00');
+SELECT cast(cast('12:12:12' as time) as datetime(6));
+drop table if exists t;
+create table t (tm time(6));
+insert into t values('23:59:59');
+SELECT cast(tm as datetime(6)) from t;
+
+# TestIssue34998
+drop table if exists `PK_S_MULTI_43`;
+CREATE TABLE `PK_S_MULTI_43`(`COL1` time(2) NOT NULL, `COL2` time(2) NOT NULL, `COL3` time(2) DEFAULT NULL, PRIMARY KEY(`COL1`,`COL2`));
+insert into PK_S_MULTI_43(col1, col2) values('-512:37:22.00', '-512:37:22.00');
+select extract(day_microsecond from '-512:37:22.00');
+select extract(day_microsecond from col1) from PK_S_MULTI_43;
+
+# TestIssue36358
+drop table if exists t;
+create table t(c datetime(6));
+insert into t values('2001-01-01 02:03:04.050607');
+select extract(day_microsecond from cast('2001-01-01 02:03:04.050607' as datetime(6))) from t;
+select extract(day_microsecond from c) from t;
+
+# TestIssue35184
+drop table if exists ft;
+create table ft (tint int, tdou double, tdec decimal(22,9),tchar char(44));
+insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234');
+insert into ft values(1234567890,123467890.123456789,123467890.123456789,'123467890.123456789');
+SELECT FROM_UNIXTIME(tchar) from ft;
+drop table if exists ft;
+create table ft (tint int, tdou double, tdec decimal(22,9),tchar varchar(44));
+insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234');
+insert into ft values(1234567890,123467890.123456789,123467890.123456789,'123467890.123456789');
+SELECT FROM_UNIXTIME(tchar) from ft;
+drop table if exists ft;
+create table ft (tint int, tdou double, tdec decimal(22,9),tchar blob);
+insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234');
+insert into ft values(1234567890,123467890.123456789,123467890.123456789,'123467890.123456789');
+SELECT FROM_UNIXTIME(tchar) from ft;
+drop table if exists ft;
+create table ft (tint int, tdou double, tdec decimal(22,9),tchar tinyblob);
+insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234');
+insert into ft values(1234567890,123467890.123456789,123467890.123456789,'123467890.123456789');
+SELECT FROM_UNIXTIME(tchar) from ft;
+drop table if exists ft;
+create table ft (tint int, tdou double, tdec decimal(22,9),tchar mediumblob);
+insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234');
+insert into ft values(1234567890,123467890.123456789,123467890.123456789,'123467890.123456789');
+SELECT FROM_UNIXTIME(tchar) from ft;
+drop table if exists ft;
+create table ft (tint int, tdou double, tdec decimal(22,9),tchar longblob);
+insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234');
+insert into ft values(1234567890,123467890.123456789,123467890.123456789,'123467890.123456789');
+SELECT FROM_UNIXTIME(tchar) from ft;
+truncate table ft;
+insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234000000000000000000100111111111');
+--enable_warnings
+SELECT FROM_UNIXTIME(tchar) from ft;
+--disable_warnings
+truncate table ft;
+insert into ft values(1234567890,123467890.1234,123467890.1234,'11111123467890.1234');
+SELECT FROM_UNIXTIME(tchar) from ft;
+drop table if exists ft;
+create table ft (tint int, tdou double, tdec decimal(22,9),tchar char(44));
+insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234');
+SELECT FROM_UNIXTIME(tchar) from ft where FROM_UNIXTIME(tchar)= '1973-11-30 08:38:10.123400' ;
+SELECT FROM_UNIXTIME(cast(tchar as decimal(44,1))) from ft where FROM_UNIXTIME(tchar)= '1973-11-30 08:38:10.123400' ;
+SELECT FROM_UNIXTIME(tchar,'%Y%m%d') from ft where FROM_UNIXTIME(tchar)= '1973-11-30 08:38:10.123400' ;
+
+# TestFix38127
+drop table if exists t;
+create table t(dou double, varc varchar(100));
+insert into t values (1.23e23, '111111111111111111111111111111111111111111111111111111111111111111111111111');
+select from_unixtime(dou) from t;
+select from_unixtime(varc) from t;
+select from_unixtime(dou, '%Y-%m-%d') from t;
+select from_unixtime(varc, '%Y-%m-%d') from t;
+
+# TestIssue39146
+drop table if exists `sun`;
+CREATE TABLE `sun` ( `dest` varchar(10) DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into sun values('20231020');
+set @@sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+set @@tidb_enable_vectorized_expression = on;
+select str_to_date(substr(dest,1,6),'%H%i%s') from sun;
+set @@tidb_enable_vectorized_expression = off;
+select str_to_date(substr(dest,1,6),'%H%i%s') from sun;
+set @@sql_mode=default;
+
+# TestIssue40536
+drop table if exists `6bf9e76d-ab44-4031-8a07-418b10741580`, `8919f3f4-25be-4a1a-904a-bb5e863d8fc8`;
+CREATE TABLE `6bf9e76d-ab44-4031-8a07-418b10741580` (
+  `e0b5f703-6cfe-49b4-bc21-16a6455e43a7` set('7','va','ung60','ow','1g','gxwz5','uhnh','k','5la1','q8d9c','1f') NOT NULL DEFAULT '7,1g,uhnh,5la1,q8d9c',
+  `fbc3527f-9617-4b9d-a5dc-4be31c00d8a5` datetime DEFAULT '6449-09-28 14:39:04',
+  PRIMARY KEY (`e0b5f703-6cfe-49b4-bc21-16a6455e43a7`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin;
+CREATE TABLE `8919f3f4-25be-4a1a-904a-bb5e863d8fc8` (
+  `9804d5f2-cbc7-43b7-b241-ea2656dc941a` enum('s951','36d','ua65','49yru','6l2em','4ea','jf2d2','vprsc','3yl7n','hz','ov') DEFAULT '4ea',
+  `323cdbcb-0c14-4362-90ab-ea42caaed6a5` year(4) NOT NULL DEFAULT '1983',
+  `b9b70f39-1a02-4114-9d7d-fa6259c1b691` time DEFAULT '20:18:04',
+  PRIMARY KEY (`323cdbcb-0c14-4362-90ab-ea42caaed6a5`) /*T![clustered_index] CLUSTERED */,
+  KEY `a704d6bb-772b-44ea-8cb0-6f7491c1aaa6` (`323cdbcb-0c14-4362-90ab-ea42caaed6a5`,`9804d5f2-cbc7-43b7-b241-ea2656dc941a`)
+) ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin;
+delete from `6bf9e76d-ab44-4031-8a07-418b10741580` where not( `6bf9e76d-ab44-4031-8a07-418b10741580`.`e0b5f703-6cfe-49b4-bc21-16a6455e43a7` in ( select `9804d5f2-cbc7-43b7-b241-ea2656dc941a` from `8919f3f4-25be-4a1a-904a-bb5e863d8fc8` where `6bf9e76d-ab44-4031-8a07-418b10741580`.`e0b5f703-6cfe-49b4-bc21-16a6455e43a7` in ( '1f' ) and `6bf9e76d-ab44-4031-8a07-418b10741580`.`e0b5f703-6cfe-49b4-bc21-16a6455e43a7` in ( '1g' ,'va' ,'uhnh' ) ) ) and not( IsNull( `6bf9e76d-ab44-4031-8a07-418b10741580`.`e0b5f703-6cfe-49b4-bc21-16a6455e43a7` ) );
+
+# TestAesDecryptionVecEvalWithZeroChunk, Issue43063
+drop table if exists test;
+create table test (name1 blob,name2 blob);
+insert into test values(aes_encrypt('a', 'x'), aes_encrypt('b', 'x'));
+SELECT * FROM test WHERE CAST(AES_DECRYPT(name1, 'x') AS CHAR) = '00' AND CAST(AES_DECRYPT(name2, 'x') AS CHAR) = '1';
+
+
+# TestIfFunctionWithNull, Issue43805
+drop table if exists ordres;
+CREATE TABLE orders (id bigint(20) unsigned NOT NULL ,account_id bigint(20) unsigned NOT NULL DEFAULT '0' ,loan bigint(20) unsigned NOT NULL DEFAULT '0' ,stage_num int(20) unsigned NOT NULL DEFAULT '0' ,apply_time bigint(20) unsigned NOT NULL DEFAULT '0' ,PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,KEY idx_orders_account_id (account_id),KEY idx_orders_apply_time (apply_time));
+insert into orders values (20, 210802010000721168, 20000 , 2 , 1682484268727), (22, 210802010000721168, 35100 , 4 , 1650885615002);
+select min(if(apply_to_now_days <= 30,loan,null)) as min, max(if(apply_to_now_days <= 720,loan,null)) as max from (select loan, datediff(from_unixtime(unix_timestamp('2023-05-18 18:43:43') + 18000), from_unixtime(apply_time/1000 + 18000)) as apply_to_now_days from orders) t1;
+
+# TestIssue41733
+drop table if exists t_tiny, t_small, t_medium, t_int, t_big;
+create table t_tiny (c0 TINYINT UNSIGNED);
+--enable_warnings
+INSERT IGNORE INTO t_tiny(c0) VALUES (1E9);
+--disable_warnings
+select * from t_tiny;
+create table t_small (c0 SMALLINT UNSIGNED);
+--enable_warnings
+INSERT IGNORE INTO t_small(c0) VALUES (1E9);
+--disable_warnings
+select * from t_small;
+create table t_medium (c0 MEDIUMINT UNSIGNED);
+--enable_warnings
+INSERT IGNORE INTO t_medium(c0) VALUES (1E9);
+--disable_warnings
+select * from t_medium;
+create table t_int (c0 INT UNSIGNED);
+--enable_warnings
+INSERT IGNORE INTO t_int(c0) VALUES (1E20);
+--disable_warnings
+select * from t_int;
+create table t_big (c0 BIGINT UNSIGNED);
+--enable_warnings
+INSERT IGNORE INTO t_big(c0) VALUES (1E20);
+--disable_warnings
+select * from t_big;
+
+# TestInPredicate4UnsignedInt, TestIssue6661
+drop table if exists t;
+CREATE TABLE t (a bigint unsigned,key (a));
+INSERT INTO t VALUES (0), (4), (5), (6), (7), (8), (9223372036854775810), (18446744073709551614), (18446744073709551615);
+SELECT a FROM t WHERE a NOT IN (-1, -2, 18446744073709551615);
+SELECT a FROM t WHERE a NOT IN (-1, -2, 4, 9223372036854775810);
+SELECT a FROM t WHERE a NOT IN (-1, -2, 0, 4, 18446744073709551614);
+
+# TestIssue4473
+drop table if exists t1;
+create table t1 (some_id smallint(5) unsigned,key (some_id) );
+insert into t1 values (1),(2);
+select some_id from t1 where some_id not in(2,-1);
+
+# TestIssue9732
+select monthname(str_to_date(null, '%m')), monthname(str_to_date(null, '%m')), monthname(str_to_date(1, '%m')), monthname(str_to_date(0, '%m'));
+select str_to_date(1, '%m');
+select str_to_date(01, '%d');
+select str_to_date(2019, '%Y');
+select str_to_date('5,2019','%m,%Y');
+select str_to_date('01,2019','%d,%Y');
+select str_to_date('01,5','%d,%m');
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+select str_to_date(1, '%m');
+select str_to_date(01, '%d');
+select str_to_date(2019, '%Y');
+select str_to_date('5,2019','%m,%Y');
+select str_to_date('01,2019','%d,%Y');
+select str_to_date('01,5','%d,%m');
+set @@sql_mode=default;
+
+# TestIssue10156
+drop table if exists t1, t2;
+CREATE TABLE `t1` (`period_name` varchar(24) DEFAULT NULL ,`period_id` bigint(20) DEFAULT NULL ,`starttime` bigint(20) DEFAULT NULL);
+CREATE TABLE `t2` (`bussid` bigint(20) DEFAULT NULL,`ct` bigint(20) DEFAULT NULL);
+select
+    a.period_name,
+    b.date8
+from
+    (select * from t1) a
+left join
+    (select bussid,date(from_unixtime(ct)) date8 from t2) b
+on
+    a.period_id = b.bussid
+where
+    datediff(b.date8, date(from_unixtime(a.starttime))) >= 0;
+
+# TestIssue9727
+SELECT "1900-01-01 00:00:00" + INTERVAL "100000000:214748364700" MINUTE_SECOND;
+SELECT "1900-01-01 00:00:00" + INTERVAL 1 << 37 SECOND;
+SELECT "1900-01-01 00:00:00" + INTERVAL 1 << 31 MINUTE;
+SELECT "1900-01-01 00:00:00" + INTERVAL 1 << 38 SECOND;
+SELECT "1900-01-01 00:00:00" + INTERVAL 1 << 33 MINUTE;
+SELECT "1900-01-01 00:00:00" + INTERVAL 1 << 30 HOUR;
+SELECT "1900-01-01 00:00:00" + INTERVAL "1000000000:214748364700" MINUTE_SECOND;
+SELECT 19000101000000 + INTERVAL "100000000:214748364700" MINUTE_SECOND;
+SELECT 19000101000000 + INTERVAL 1 << 37 SECOND;
+SELECT 19000101000000 + INTERVAL 1 << 31 MINUTE;
+SELECT "8895-03-27 22:11:40" - INTERVAL "100000000:214748364700" MINUTE_SECOND;
+SELECT "6255-04-08 15:04:32" - INTERVAL 1 << 37 SECOND;
+SELECT "5983-01-24 02:08:00" - INTERVAL 1 << 31 MINUTE;
+SELECT "9999-01-01 00:00:00" - INTERVAL 1 << 39 SECOND;
+SELECT "9999-01-01 00:00:00" - INTERVAL 1 << 33 MINUTE;
+SELECT "9999-01-01 00:00:00" - INTERVAL 1 << 30 HOUR;
+SELECT "9999-01-01 00:00:00" - INTERVAL "10000000000:214748364700" MINUTE_SECOND;
+SELECT 88950327221140 - INTERVAL "100000000:214748364700" MINUTE_SECOND ;
+SELECT 62550408150432 - INTERVAL 1 << 37 SECOND;
+SELECT 59830124020800 - INTERVAL 1 << 31 MINUTE;
+SELECT 10000101000000 + INTERVAL "111111111111111111" MICROSECOND;
+SELECT 10000101000000 + INTERVAL "111111111111.111111" SECOND;
+SELECT 10000101000000 + INTERVAL "111111111111.111111111" SECOND;
+SELECT 10000101000000 + INTERVAL "111111111111.111" SECOND;
+SELECT 10000101000000 + INTERVAL "111111111111." SECOND;
+SELECT 10000101000000 + INTERVAL "111111111111111111.5" MICROSECOND;
+SELECT 10000101000000 + INTERVAL "111111111111111112.5" MICROSECOND;
+SELECT 10000101000000 + INTERVAL "111111111111111111.500000" MICROSECOND;
+SELECT 10000101000000 + INTERVAL "111111111111111111.50000000" MICROSECOND;
+SELECT 10000101000000 + INTERVAL "111111111111111111.6" MICROSECOND;
+SELECT 10000101000000 + INTERVAL "111111111111111111.499999" MICROSECOND;
+SELECT 10000101000000 + INTERVAL "111111111111111111.499999999999" MICROSECOND;
+
+# TestIssue30253
+SELECT INTERVAL 1.123456789e3 SECOND + "1900-01-01 00:00:00";
+SELECT INTERVAL 1 Year + 19000101000000;
+select interval 6 month + date("1900-01-01");
+select interval "5:2" MINUTE_SECOND + "1900-01-01";
+
+# TestIssue10181
+drop table if exists t;
+create table t(a bigint unsigned primary key);
+insert into t values(9223372036854775807), (18446744073709551615);
+select * from t where a > 9223372036854775807-0.5 order by a;
+
+# TestIssue16973
+drop table if exists t1, t2;
+create table t1(id varchar(36) not null primary key, org_id varchar(36) not null, status tinyint default 1 not null, ns varchar(36) default '' not null);
+create table t2(id varchar(36) not null primary key, order_id varchar(36) not null, begin_time timestamp(3) default CURRENT_TIMESTAMP(3) not null);
+create index idx_oid on t2(order_id);
+insert into t1 value (1,1,1,'a');
+insert into t1 value (2,1,2,'a');
+insert into t1 value (3,1,3,'a');
+insert into t2 value (1,2,date'2020-05-08');
+explain format = 'brief' SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;
+SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;
+
+# TestIssue10675
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+select * from t where a < -184467440737095516167.1;
+select * from t where a > -184467440737095516167.1;
+select * from t where a < 184467440737095516167.1;
+select * from t where a > 184467440737095516167.1;
+
+# TestIssue11647
+drop table if exists t;
+create table t(b bit(1));
+insert into t values(b'1');
+select count(*) from t where b = 1;
+select count(*) from t where b = '1';
+select count(*) from t where b = b'1';
+drop table if exists t;
+create table t(b bit(63));
+# Not 64, because the behavior of mysql is amazing. I have no idea to fix it.
+insert into t values(b'111111111111111111111111111111111111111111111111111111111111111');
+select count(*) from t where b = 9223372036854775807;
+select count(*) from t where b = '9223372036854775807';
+select count(*) from t where b = b'111111111111111111111111111111111111111111111111111111111111111';
+
+# TestIssue11594
+drop table if exists t1;
+CREATE TABLE t1 (v bigint(20) UNSIGNED NOT NULL);
+INSERT INTO t1 VALUES (1), (2);
+SELECT SUM(IF(v > 1, v, -v)) FROM t1;
+SELECT sum(IFNULL(cast(null+rand() as unsigned), -v)) FROM t1;
+SELECT sum(COALESCE(cast(null+rand() as unsigned), -v)) FROM t1;
+SELECT sum(COALESCE(cast(null+rand() as unsigned), v)) FROM t1;
+
+# TestIssue11309
+drop table if exists t;
+CREATE TABLE t (a decimal(6,3),b double(6,3),c float(6,3));
+INSERT INTO t VALUES (1.100,1.100,1.100);
+SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL a MINUTE_SECOND) FROM t;
+SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL b MINUTE_SECOND) FROM t;
+SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL c MINUTE_SECOND) FROM t;
+drop table if exists t;
+CREATE TABLE t (a decimal(11,7),b double(11,7),c float(11,7));
+INSERT INTO t VALUES (123.9999999,123.9999999,123.9999999),(-123.9999999,-123.9999999,-123.9999999);
+SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL a MINUTE_SECOND) FROM t;
+SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL b MINUTE_SECOND) FROM t;
+SELECT DATE_ADD('2003-11-18 07:25:13',INTERVAL c MINUTE_SECOND) FROM t;
+
+# TestIssue11319
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 MINUTE_MICROSECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 SECOND_MICROSECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 HOUR_MICROSECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 DAY_MICROSECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 SECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 HOUR_SECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 DAY_SECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 MINUTE_SECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 MINUTE);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 DAY_MINUTE);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 HOUR_MINUTE);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 DAY_HOUR);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL -2.2 YEAR_MONTH);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MINUTE_MICROSECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 SECOND_MICROSECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_MICROSECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_MICROSECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 SECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_SECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_SECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MINUTE_SECOND);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MINUTE);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_MINUTE);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_MINUTE);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 DAY_HOUR);
+SELECT DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 YEAR_MONTH);
+
+# TestIssue12301
+drop table if exists t;
+create table t (d decimal(19, 0), i bigint(11));
+insert into t values (123456789012, 123456789012);
+select * from t where d = i;
+
+# TestIssue15315
+select '0-3261554956'+0.0;
+select cast('0-1234' as real);
+
+# TestValuesForBinaryLiteral, TestIssue15310
+drop table if exists testValuesBinary;
+create table testValuesBinary(id int primary key auto_increment, a bit(1));
+insert into testValuesBinary values(1,1);
+insert into testValuesBinary values(1,1) on duplicate key update id = values(id),a = values(a);
+select a=0 from testValuesBinary;
+insert into testValuesBinary values(1,0) on duplicate key update id = values(id),a = values(a);
+select a=0 from testValuesBinary;
+drop table testValuesBinary;
+
+# TestIssue14159
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (v VARCHAR(100));
+INSERT INTO t VALUES ('3289742893213123732904809');
+SELECT * FROM t WHERE v;
+
+# TestIssue14146
+drop table if exists tt;
+create table tt(a varchar(10));
+insert into tt values(NULL);
+analyze table tt;
+select * from tt;
+
+# TestIssue15346
+select collation(format_bytes(1024)) != 'binary';
+select collation(format_nano_time(234)) != 'binary';
+
+# TestJoinOnDifferentCollations, TestIssue34500
+drop table if exists t;
+create table t (a char(10) charset gbk collate gbk_chinese_ci, b time);
+insert into t values ('08:00:00', '08:00:00');
+select t1.a, t2.b from t as t1 right join t as t2 on t1.a = t2.b;
+
+# TestIssue20071
+drop table if exists table_30_utf8_4, t;
+create table t(a int);
+insert into t values(1);
+create table table_30_utf8_4 ( `pk` int primary key, `col_int_key_unsigned` int unsigned , `col_int_key_signed` int, `col_float_key_signed` float  , `col_float_key_unsigned` float unsigned) character set utf8 partition by hash(pk) partitions 4;
+insert ignore into table_30_utf8_4 values (0,91, 10, 14,19.0495);
+alter table table_30_utf8_4 add column a int as (col_int_key_signed * 2);
+SELECT count(1) AS val FROM table_30_utf8_4 WHERE table_30_utf8_4.col_int_key_unsigned!=table_30_utf8_4.a OR (SELECT count(1) AS val FROM t WHERE table_30_utf8_4.col_float_key_signed!=table_30_utf8_4.col_float_key_unsigned )!=7984764426240273913;
+select a from table_30_utf8_4 order by a;
+
+# TestIssue17791
+drop table if exists t1;
+CREATE TABLE t1 ( id INT NOT NULL PRIMARY KEY auto_increment, pad VARCHAR(10) NOT NULL, expr varchar(100) AS (NOT 1 BETWEEN -5 AND 5));
+INSERT INTO t1 (pad) VALUES ('a'), ('b');
+SELECT id, pad, expr, NOT 1 BETWEEN -5 AND 5 as expr_in_select FROM t1;
+
+# TestIssue15986
+drop table if exists t0;
+CREATE TABLE t0(c0 int);
+INSERT INTO t0 VALUES (0);
+SELECT t0.c0 FROM t0 WHERE CHAR(204355900);
+SELECT t0.c0 FROM t0 WHERE not CHAR(204355900);
+SELECT t0.c0 FROM t0 WHERE '.0';
+SELECT t0.c0 FROM t0 WHERE not '.0';
+select * from t0 where '.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000009';
+select * from t0 where not '.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000009';
+select * from t0 where '.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000009';
+select * from t0 where not '.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000009';
+
+# TestIssue1223
+drop table if exists testjson;
+CREATE TABLE testjson (j json DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+INSERT INTO testjson SET j='{"test":3}';
+INSERT INTO testjson SET j='{"test":0}';
+insert into testjson set j='{"test":"0"}';
+insert into testjson set j='{"test":0.0}';
+INSERT INTO testjson SET j='{"test":"aaabbb"}';
+INSERT INTO testjson SET j='{"test":3.1415}';
+INSERT INTO testjson SET j='{"test":[]}';
+INSERT INTO testjson SET j='{"test":[1,2]}';
+INSERT INTO testjson SET j='{"test":["b","c"]}';
+INSERT INTO testjson SET j='{"test":{"ke":"val"}}';
+insert into testjson set j='{"test":"2015-07-27 09:43:47"}';
+insert into testjson set j='{"test":"0000-00-00 00:00:00"}';
+insert into testjson set j='{"test":"0778"}';
+insert into testjson set j='{"test":"0000"}';
+insert into testjson set j='{"test":null}';
+insert into testjson set j=null;
+insert into testjson set j='{"test":[null]}';
+insert into testjson set j='{"test":true}';
+insert into testjson set j='{"test":false}';
+insert into testjson set j='""';
+insert into testjson set j='null';
+insert into testjson set j='0';
+insert into testjson set j='"0"';
+SELECT * FROM testjson WHERE JSON_EXTRACT(j,'$.test');
+select * from testjson where j;
+insert into mysql.expr_pushdown_blacklist values('json_extract','tikv','');
+admin reload expr_pushdown_blacklist;
+SELECT * FROM testjson WHERE JSON_EXTRACT(j,'$.test');
+select * from testjson where j;
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+
+# TestIssue15743
+drop table if exists t0;
+CREATE TABLE t0(c0 int);
+INSERT INTO t0 VALUES (1);
+SELECT * FROM t0 WHERE 1 AND 0.4;
+
+# TestIssue15725
+drop table if exists t;
+create table t(a int);
+insert into t values(2);
+select * from t where (not not a) = a;
+select * from t where (not not not not a) = a;
+
+# TestIssue15790
+drop table if exists t0;
+CREATE TABLE t0(c0 INT);
+INSERT INTO t0(c0) VALUES (0);
+SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION SELECT * FROM t0;
+SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION all SELECT * FROM t0;
+
+# TestIssue15990
+drop table if exists t0;
+CREATE TABLE t0(c0 TEXT(10));
+INSERT INTO t0(c0) VALUES (1);
+SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;
+CREATE INDEX i0 ON t0(c0(10));
+SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;
+
+# TestIssue15992
+drop table if exists t0;
+CREATE TABLE t0(c0 INT, c1 INT AS (c0));
+CREATE INDEX i0 ON t0(c1);
+SELECT t0.c0 FROM t0 UNION ALL SELECT 0 FROM t0;
+
+# TestIssue16419
+drop table if exists t0, t1;
+CREATE TABLE t0(c0 INT);
+CREATE TABLE t1(c0 INT);
+SELECT * FROM t1 NATURAL LEFT JOIN t0 WHERE NOT t1.c0;
+
+# TestIssue16029
+drop table if exists t0,t1;
+CREATE TABLE t0(c0 INT);
+CREATE TABLE t1(c0 INT);
+INSERT INTO t0 VALUES (NULL), (1);
+INSERT INTO t1 VALUES (0);
+SELECT t0.c0 FROM t0 JOIN t1 ON (t0.c0 REGEXP 1) | t1.c0  WHERE BINARY STRCMP(t1.c0, t0.c0);
+
+# TestIssue16426
+drop table if exists t;
+create table t (a int);
+insert into t values (42);
+select a from t where a/10000;
+select a from t where a/100000;
+select a from t where a/1000000;
+select a from t where a/10000000;
+
+# TestIssue20121
+drop table if exists t;
+create table t(a datetime, b year);
+insert into t values('2000-05-03 16:44:44', 2018);
+insert into t values('2020-10-01 11:11:11', 2000);
+insert into t values('2020-10-01 11:11:11', 2070);
+insert into t values('2020-10-01 11:11:11', 1999);
+select * from t where t.a < t.b;
+select * from t where t.a > t.b;
+drop table if exists tt;
+create table tt(a date, b year);
+insert into tt values('2019-11-11', 2000);
+insert into tt values('2019-11-11', 2020);
+insert into tt values('2019-11-11', 2022);
+select * from tt where tt.a > tt.b;
+select * from tt where tt.a < tt.b;
+drop table if exists ttt;
+create table ttt(a timestamp, b year);
+insert into ttt values('2019-11-11 11:11:11', 2019);
+insert into ttt values('2019-11-11 11:11:11', 2000);
+insert into ttt values('2019-11-11 11:11:11', 2022);
+select * from ttt where ttt.a > ttt.b;
+select * from ttt where ttt.a < ttt.b;
+
+# TestIssue16779
+drop table if exists t0, t1;
+create table t0 (c0 int);
+create table t1 (c0 int);
+SELECT * FROM t1 LEFT JOIN t0 ON TRUE WHERE BINARY EXPORT_SET(0, 0, 0 COLLATE 'binary', t0.c0, 0 COLLATE 'binary');
+
+# TestIssue17045
+drop table if exists t;
+create table t(a int,b varchar(20),c datetime,d double,e int,f int as(a+b),key(a),key(b),key(c),key(d),key(e),key(f));
+insert into t(a,b,e) values(null,"5",null);
+insert into t(a,b,e) values("5",null,null);
+select /*+ use_index_merge(t)*/ * from t where t.e=5 or t.a=5;
+
+# TestIssue17098
+drop table if exists t1, t2;
+create table t1(a char) collate utf8mb4_bin;
+create table t2(a char) collate utf8mb4_bin;
+insert into t1 values('a');
+insert into t2 values('a');
+select collation(t1.a) from t1 union select collation(t2.a) from t2;
+
+# TestIssue17115
+select collation(user());
+select collation(compress('abc'));
+
+# TestIssue17287
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t;
+set @@tidb_enable_vectorized_expression = false;
+create table t(a datetime);
+insert into t values(from_unixtime(1589873945)), (from_unixtime(1589873946));
+prepare stmt7 from 'SELECT unix_timestamp(a) FROM t WHERE a = from_unixtime(?);';
+set @val1 = 1589873945;
+set @val2 = 1589873946;
+execute stmt7 using @val1;
+execute stmt7 using @val2;
+
+# TestIssue17898
+drop table if exists t0;
+create table t0(a char(10), b int as ((a)));
+insert into t0(a) values("0.5");
+select * from t0;
+
+# TestIssue18515
+drop table if exists t;
+create table t(a int, b json, c int AS (JSON_EXTRACT(b, '$.population')), key(c));
+select /*+ TIDB_INLJ(t2) */ t1.a, t1.c, t2.a from t t1, t t2 where t1.c=t2.c;
+
+# TestIssue20223
+drop table if exists t;
+CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT,type tinyint(4) NOT NULL,create_time int(11) NOT NULL,PRIMARY KEY (id));
+insert into t values (4, 2, 1598584933);
+select from_unixtime(create_time,'%Y-%m-%d') as t_day,count(*) as cnt from t where `type` = 1 group by t_day union all select from_unixtime(create_time,'%Y-%m-%d') as t_day,count(*) as cnt from t where `type` = 2 group by t_day;
+
+# TestIssue18525
+drop table if exists t1;
+create table t1 (col0 BLOB, col1 CHAR(74), col2 DATE UNIQUE);
+insert into t1 values ('l', '7a34bc7d-6786-461b-92d3-fd0a6cd88f39', '1000-01-03');
+insert into t1 values ('l', NULL, '1000-01-04');
+insert into t1 values ('b', NULL, '1000-01-02');
+select INTERVAL( ( CONVERT( -11752 USING utf8 ) ), 6558853612195285496, `col1`) from t1;
+
+# TestIssue18850
+drop table if exists t, t1;
+create table t(a int, b enum('A', 'B'));
+create table t1(a1 int, b1 enum('B', 'A'));
+insert into t values (1, 'A');
+insert into t1 values (1, 'A');
+select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.b = t1.b1;
+drop table t, t1;
+create table t(a int, b set('A', 'B'));
+create table t1(a1 int, b1 set('B', 'A'));
+insert into t values (1, 'A');
+insert into t1 values (1, 'A');
+select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.b = t1.b1;
+
+# TestIssue19504
+drop table if exists t1;
+create table t1 (c_int int, primary key (c_int));
+insert into t1 values (1), (2), (3);
+drop table if exists t2;
+create table t2 (c_int int, primary key (c_int));
+insert into t2 values (1);
+select (select count(c_int) from t2 where c_int = t1.c_int) c1, (select count(1) from t2 where c_int = t1.c_int) c2 from t1;
+select (select count(c_int*c_int) from t2 where c_int = t1.c_int) c1, (select count(1) from t2 where c_int = t1.c_int) c2 from t1;
+
+# TestIssue17767
+drop table if exists t0;
+CREATE TABLE t0(c0 INTEGER AS (NULL) NOT NULL, c1 INT);
+CREATE INDEX i0 ON t0(c0, c1);
+INSERT IGNORE INTO t0(c1) VALUES (0);
+SELECT * FROM t0;
+begin;
+INSERT IGNORE INTO t0(c1) VALUES (0);
+SELECT * FROM t0;
+rollback;
+
+# TestIssue19596
+drop table if exists t;
+create table t (a int) partition by range(a) (PARTITION p0 VALUES LESS THAN (10));
+-- error 1054
+alter table t add partition (partition p1 values less than (a));
+select * from t;
+drop table if exists t;
+-- error 1054
+create table t (a int) partition by range(a) (PARTITION p0 VALUES LESS THAN (a));
+
+# TestIssue17476
+DROP TABLE IF EXISTS `table_float`;
+DROP TABLE IF EXISTS `table_int_float_varchar`;
+CREATE TABLE `table_float` (`id_1` int(16) NOT NULL AUTO_INCREMENT,`col_float_1` float DEFAULT NULL,PRIMARY KEY (`id_1`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=97635;
+CREATE TABLE `table_int_float_varchar` (`id_6` int(16) NOT NULL AUTO_INCREMENT,`col_int_6` int(16) DEFAULT NULL,`col_float_6` float DEFAULT NULL,`col_varchar_6` varchar(511) DEFAULT NULL,PRIMARY KEY (`id_6`),KEY `vhyen` (`id_6`,`col_int_6`,`col_float_6`,`col_varchar_6`(1)),KEY `zzylq` (`id_6`,`col_int_6`,`col_float_6`,`col_varchar_6`(1))) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=90818;
+INSERT INTO `table_float` VALUES (1,NULL),(2,0.1),(3,0),(4,-0.1),(5,-0.1),(6,NULL),(7,0.5),(8,0),(9,0),(10,NULL),(11,1),(12,1.5),(13,NULL),(14,NULL);
+INSERT INTO `table_int_float_varchar` VALUES (1,0,0.1,'true'),(2,-1,1.5,'2020-02-02 02:02:00'),(3,NULL,1.5,NULL),(4,65535,0.1,'true'),(5,NULL,0.1,'1'),(6,-1,1.5,'2020-02-02 02:02:00'),(7,-1,NULL,''),(8,NULL,-0.1,NULL),(9,NULL,-0.1,'1'),(10,-1,NULL,''),(11,NULL,1.5,'false'),(12,-1,0,NULL),(13,0,-0.1,NULL),(14,-1,NULL,'-0'),(15,65535,-1,'1'),(16,NULL,0.5,NULL),(17,-1,NULL,NULL);
+select count(*) from table_float
+ JOIN table_int_float_varchar AS tmp3 ON (tmp3.col_varchar_6 AND NULL)
+ IS NULL WHERE col_int_6=0;
+SELECT count(*) FROM (table_float JOIN table_int_float_varchar AS tmp3 ON (tmp3.col_varchar_6 AND NULL) IS NULL);
+SELECT * FROM (table_int_float_varchar AS tmp3) WHERE (col_varchar_6 AND NULL) IS NULL AND col_int_6=0;
+
+# TestIssue14349
+drop table if exists papers;
+create table papers(title text, content longtext);
+insert into papers values('title', 'content');
+select to_base64(title), to_base64(content) from papers;
+set tidb_enable_vectorized_expression = 0;
+select to_base64(title), to_base64(content) from papers;
+set tidb_enable_vectorized_expression = 1;
+
+# TestIssue20180
+drop table if exists t, t1;
+create table t(a enum('a', 'b'), b tinyint);
+create table t1(c varchar(20));
+insert into t values('b', 0);
+insert into t1 values('b');
+select * from t, t1 where t.a= t1.c;
+select * from t, t1 where t.b= t1.c;
+select * from t, t1 where t.a = t1.c and t.b= t1.c;
+drop table if exists t;
+create table t(a enum('a','b'));
+insert into t values('b');
+select * from t where a > 1  and a = "b";
+
+# TestIssue11755
+drop table if exists lt;
+create table lt (d decimal(10, 4));
+insert into lt values(0.2),(0.2);
+select LEAD(d,1,1) OVER(), LAG(d,1,1) OVER() from lt;
+
+# TestIssue20369
+drop table if exists t;
+create table t(a int);
+insert into t values (1);
+insert into t select values(a) from t;
+select * from t;
+
+# TestIssue20730
+DROP TABLE IF EXISTS tmp;
+CREATE TABLE tmp (id int(11) NOT NULL,value int(1) NOT NULL,PRIMARY KEY (id));
+INSERT INTO tmp VALUES (1, 1),(2,2),(3,3),(4,4),(5,5);
+SET @sum := 10;
+SELECT @sum := IF(@sum=20,4,@sum + tmp.value) sum FROM tmp ORDER BY tmp.id;
+
+# TestIssue20860
+drop table if exists t;
+create table t(id int primary key, c int, d timestamp null default null);
+insert into t values(1, 2, '2038-01-18 20:20:30');
+-- error 1292
+update t set d = adddate(d, interval 1 day) where id < 10;
+
+# TestIssue15847
+drop view if exists t15847;
+CREATE VIEW t15847(c0) AS SELECT NULL;
+SELECT * FROM t15847 WHERE (NOT (IF(t15847.c0, NULL, NULL)));
+drop view if exists t15847;
+
+# TestIssue10462
+select json_array(true);
+select json_array(1=2);
+select json_array(1!=2);
+select json_array(1<2);
+select json_array(1<=2);
+select json_array(1>2);
+select json_array(1>=2);
+select json_object(true, null <=> null);
+select json_object(false, 1 and 2);
+select json_object(false, 1 and 0);
+select json_object(false, 1 or 0);
+select json_object(false, 1 xor 0);
+select json_object(false, 1 xor 1);
+select json_object(false, not 1);
+select json_array(null and 1);
+select json_array(null and 0);
+select json_array(null or 1);
+select json_array(null or 0);
+select json_array(1.15 or 0);
+select json_array('abc' or 0);
+select json_array('1abc' or 0);
+select json_array(null is true);
+select json_array(null is null);
+select json_array(1 in (1, 2));
+select json_array(0 in (1, 2));
+select json_array(0 not in (1, 2));
+select json_array(1 between 0 and 2);
+select json_array(1 not between 0 and 2);
+select json_array('123' like '123');
+select json_array('abcdef' rlike 'a.*c.*');
+select json_array(is_ipv4('127.0.0.1'));
+select json_array(is_ipv6('1a6b:8888:ff66:77ee:0000:1234:5678:bcde'));
+
+# TestIssue17868
+drop table if exists t7;
+create table t7 (col0 SMALLINT, col1 VARBINARY(1), col2 DATE, col3 BIGINT, col4 BINARY(166));
+insert into t7 values ('32767', '', '1000-01-03', '-0', '11101011');
+select col2 = 1 from t7;
+select col2 != 1 from t7;
+
+# TestIssue21619
+select CAST("9223372036854775808" as json);
+select json_type(CAST("9223372036854775808" as json));
+select CAST(9223372036854775808 as json);
+select json_type(CAST(9223372036854775808 as json));
+select CAST(-9223372036854775808 as json);
+select json_type(CAST(-9223372036854775808 as json));
+
+# TestIssue10467
+drop table if exists tx2;
+create table tx2 (col json);
+insert into tx2 values (json_array("3")),(json_array("3")),(json_array("3")),(json_array("3"));
+insert into tx2 values (json_array(3.0));
+insert into tx2 values (json_array(3));
+insert into tx2 values (json_array(3.0));
+insert into tx2 values (json_array(-3));
+insert into tx2 values (json_array(-3.0));
+insert into tx2 values (json_array(922337203685477580));
+insert into tx2 values (json_array(922337203685477581)),(json_array(922337203685477581)),(json_array(922337203685477581)),(json_array(922337203685477581)),(json_array(922337203685477581));
+# TODO: in MySQL these values will hash the same because the first is stored as JSON type DECIMAL.
+# Currently TiDB does not support JSON type DECIMAL.
+# See: https://github.com/pingcap/tidb/issues/9988
+# insert into tx2 values (json_array(9223372036854775808.0));
+# insert into tx2 values (json_array(9223372036854775808));
+#
+# ordering by a JSON col is not supported in MySQL, and the order is a bit questionable in TiDB.
+# sort by count for test result stability.
+select col, count(1) c from tx2 group by col order by c desc;
+
+
+# TestIssue12205
+drop table if exists t12205;
+create table t12205(
+    `col_varchar_64` varchar(64) DEFAULT NULL,
+    `col_varchar_64_key` varchar(64) DEFAULT NULL
+);
+insert into t12205 values('-1038024704','-527892480');
+--enable_warnings
+select SEC_TO_TIME( ( `col_varchar_64` & `col_varchar_64_key` ) ),`col_varchar_64` & `col_varchar_64_key` from t12205;
+--disable_warnings
+
+# TestIssue21677
+drop table if exists t;
+create table t(1e int);
+insert into t values (1);
+select t.1e from expression__issues.t;
+drop table if exists t;
+create table t(99e int, r10 int);
+insert into t values (1, 10), (2, 2);
+select 99e+r10 from t;
+select .78$123;
+-- error 1064
+select .78$421+1;
+select t. `r10` > 3 from t;
+select * from t where t. `r10` > 3;
+
+# TestIssue29417
+drop table if exists t1;
+create table t1 (f1 decimal(5,5));
+insert into t1 values (-0.12345);
+select concat(f1) from t1;
+
+# TestIssue12206
+drop table if exists t12206;
+create table t12206(
+    `col_tinyint_unsigned` tinyint(3) unsigned DEFAULT NULL,
+    `col_double_unsigned` double unsigned DEFAULT NULL,
+    `col_year_key` year(4) DEFAULT NULL
+);
+insert into t12206 values(73,0,0000);
+--enable_warnings
+SELECT TIME_FORMAT( `col_tinyint_unsigned`, ( IFNULL( `col_double_unsigned`, `col_year_key` ) ) ) AS field1 FROM `t12206`;
+--disable_warnings
+
+# TestIssue12209
+drop table if exists t12209;
+create table t12209(a bigint(20));
+insert into t12209 values(1);
+select  `a` DIV ( ROUND( ( SCHEMA() ), '1978-05-18 03:35:52.043591' ) ) from `t12209`;
+
+# TestIssue22098
+drop table if exists ta, tb;
+CREATE TABLE `ta` (  `k` varchar(32) NOT NULL DEFAULT ' ',  `c0` varchar(32) NOT NULL DEFAULT ' ',  `c` varchar(18) NOT NULL DEFAULT ' ',  `e0` varchar(1) NOT NULL DEFAULT ' ',  PRIMARY KEY (`k`,`c0`,`c`),  KEY `idx` (`c`,`e0`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE TABLE `tb` (  `k` varchar(32) NOT NULL DEFAULT ' ',  `e` int(11) NOT NULL DEFAULT '0',  `i` int(11) NOT NULL DEFAULT '0',  `s` varchar(1) NOT NULL DEFAULT ' ',  `c` varchar(50) NOT NULL DEFAULT ' ',  PRIMARY KEY (`k`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+prepare stmt from "select a.* from ta a left join tb b on a.k = b.k where (a.k <> '000000' and ((b.s = ? and i = ? ) or (b.s = ? and e = ?) or (b.s not in(?, ?))) and b.c like '%1%') or (a.c <> '000000' and a.k = '000000')";
+set @a=3;set @b=20200414;set @c='a';set @d=20200414;set @e=3;set @f='a';
+execute stmt using @a,@b,@c,@d,@e,@f;
+
+# TestIssue22717
+drop table if exists t;
+create table t(
+	a enum('a','','c'),
+   b enum('0','1','2'),
+   c set('a','','c'),
+   d set('0','1','2')
+);
+insert into t values(1,1,1,1),(2,2,2,2),(3,3,3,3);
+set @@sql_mode = '';
+insert into t values('','','','');
+select * from t;
+select a from t where a;
+select b from t where b;
+select c from t where c;
+select d from t where d;
+set @@sql_mode=default;
+
+# TestIssue23262
+drop table if exists t;
+create table t(a year);
+insert into t values(2002);
+select * from t where a=2;
+select * from t where a='2';
+
+# TestClusteredIndexCorCol, TestIssue23076
+drop table if exists t1, t2;
+create table t1  (c_int int, c_str varchar(40), primary key (c_int, c_str) clustered, key(c_int) );
+create table t2  like t1 ;
+insert into t1 values (1, 'crazy lumiere'), (10, 'goofy mestorf');
+insert into t2 select * from t1 ;
+select (select t2.c_str from t2 where t2.c_str = t1.c_str and t2.c_int = 10 order by t2.c_str limit 1) x from t1;
+
+# TestIssue23623
+drop table if exists t1;
+create table t1(c1 int);
+insert into t1 values(-2147483648), (-2147483648), (null);
+select count(*) from t1 where c1 > (select sum(c1) from t1);
+
+# TestIssue23925
+drop table if exists t;
+create table t(a int primary key, b set('Alice','Bob') DEFAULT NULL);
+insert into t value(1,'Bob');
+select max(b) + 0 from t group by a;
+drop table if exists t;
+create table t(a int, b set('Alice','Bob') DEFAULT NULL);
+insert into t value(1,'Bob');
+select max(b) + 0 from t group by a;
+
+# TestIssue23889
+drop table if exists test_decimal,test_t;
+create table test_decimal(col_decimal decimal(10,0));
+insert into test_decimal values(null),(8);
+create table test_t(a int(11), b decimal(32,0));
+insert into test_t values(1,4),(2,4),(5,4),(7,4),(9,4);
+SELECT ( test_decimal . `col_decimal` , test_decimal . `col_decimal` )  IN ( select * from test_t ) as field1 FROM  test_decimal;
+
+# TestIssue37414
+drop table if exists foo, bar;
+create table foo(a decimal(65,0));
+create table bar(a decimal(65,0), b decimal(65,0));
+insert into bar values(0,0),(1,1),(2,2);
+insert into foo select if(b>0, if(a/b>1, 1, 2), null) from bar;
+
+# TestIssue25591
+drop table if exists t1_1, t2_1;
+CREATE TABLE `t1_1` (`col1` double DEFAULT NULL, `col2` double DEFAULT NULL);
+CREATE TABLE `t2_1` (`col1` varchar(20) DEFAULT NULL, `col2` double DEFAULT NULL);
+insert into t1_1 values(12.991, null), (12.991, null);
+insert into t2_1(col2) values(87), (-9.183), (-9.183);
+set @@tidb_enable_vectorized_expression  = false;
+select t1.col1, t2.col1, t2.col2 from t1_1 t1 inner join  t2_1 t2 on t1.col1 not in (1,t2.col1,t2.col2) order by 1,2,3;
+set @@tidb_enable_vectorized_expression  = true;
+select t1.col1, t2.col1, t2.col2 from t1_1 t1 inner join  t2_1 t2 on t1.col1 not in (1,t2.col1,t2.col2) order by 1,2,3;
+
+# TestIssue25526
+drop table if exists tbl_6, tbl_17;
+create table tbl_6 (col_31 year, index(col_31));
+create table tbl_17 (col_102 int, col_105 int);
+replace into tbl_17 (col_102, col_105) values (9999, 0);
+select tbl_6.col_31 from tbl_6 where col_31 in (select col_102 from tbl_17 where tbl_17.col_102 = 9999 and tbl_17.col_105 = 0);
+
+# TestIssue24953
+drop table if exists tbl_0,tbl_9;
+CREATE TABLE `tbl_9` (
+  `col_54` mediumint NOT NULL DEFAULT '2412996',
+  `col_55` int NOT NULL,
+  `col_56` bigint unsigned NOT NULL,
+  `col_57` varchar(108) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  PRIMARY KEY (`col_57`(3),`col_55`,`col_56`,`col_54`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE TABLE `tbl_0` (
+  `col_76` bigint(20) unsigned DEFAULT NULL,
+  `col_1` time NOT NULL DEFAULT '13:11:28',
+  `col_2` datetime DEFAULT '1990-07-29 00:00:00',
+  `col_3` date NOT NULL DEFAULT '1976-09-16',
+  `col_4` date DEFAULT NULL,
+  `col_143` varbinary(208) DEFAULT 'lXRTXUkTeWaJ',
+  KEY `idx_0` (`col_2`,`col_1`,`col_76`,`col_4`,`col_3`),
+  PRIMARY KEY (`col_1`,`col_3`) /*T![clustered_index] NONCLUSTERED */,
+  KEY `idx_2` (`col_1`,`col_4`,`col_76`,`col_3`),
+  KEY `idx_3` (`col_4`,`col_76`,`col_3`,`col_2`,`col_1`),
+  UNIQUE KEY `idx_4` (`col_76`,`col_3`,`col_1`,`col_4`),
+  KEY `idx_5` (`col_3`,`col_4`,`col_76`,`col_2`),
+  KEY `idx_6` (`col_2`),
+  KEY `idx_7` (`col_76`,`col_3`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into tbl_9 values (-5765442,-597990898,384599625723370089,"ZdfkUJiHcOfi");
+(select col_76,col_1,col_143,col_2 from tbl_0) union (select   col_54,col_57,col_55,col_56 from tbl_9);
+
+# TestIssue26958
+drop table if exists t1;
+create table t1 (c_int int not null);
+insert into t1 values (1), (2), (3),(1),(2),(3);
+drop table if exists t2;
+create table t2 (c_int int not null);
+insert into t2 values (1), (2), (3),(1),(2),(3);
+select  (select count(distinct c_int) from t2 where c_int >= t1.c_int) c1,  (select count(distinct c_int) from t2 where c_int >= t1.c_int) c2 from t1 group by c_int;
+
+# TestIssue27233
+drop table if exists t;
+CREATE TABLE `t` (
+  `COL1` tinyint(45) NOT NULL,
+  `COL2` tinyint(45) NOT NULL,
+  PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into t values(122,100),(124,-22),(124,34),(127,103);
+SELECT col2 FROM t AS T1 WHERE ( SELECT count(DISTINCT COL1, COL2) FROM t AS T2 WHERE T2.COL1 > T1.COL1  ) > 2 ;
+
+# TestIssue27236
+select extract(hour_second from "-838:59:59.00");
+drop table if exists t;
+create table t(c1 varchar(100));
+insert into t values('-838:59:59.00'), ('700:59:59.00');
+select extract(hour_second from c1) from t order by c1;
+
+# TestIssue26977
+select a + 1 as f from (select cast(0xfffffffffffffff0 as unsigned) as a union select cast(1 as unsigned)) t having f != 2;
+
+# TestIssue27610
+drop table if exists PK_TCOLLATION3966STROBJSTROBJ;
+CREATE TABLE `PK_TCOLLATION3966STROBJSTROBJ` (
+  `COL1` enum('ll','aa','bb','cc','dd','ee') COLLATE utf8_general_ci NOT NULL,
+  `COL2` varchar(20) COLLATE utf8_general_ci DEFAULT NULL,
+  PRIMARY KEY (`COL1`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+insert into PK_TCOLLATION3966STROBJSTROBJ values("ee", "tttt");
+SELECT col1, COL2 FROM PK_TCOLLATION3966STROBJSTROBJ WHERE COL1 IN ('notexist','6') and col2 not in ("abcd");
+
+# TestIssue28804
+drop table if exists perf_offline_day;
+CREATE TABLE perf_offline_day (
+uuid varchar(50),
+ts timestamp NOT NULL,
+user_id varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+platform varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+host_id bigint(20) DEFAULT NULL,
+PRIMARY KEY (uuid,ts) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+PARTITION BY RANGE ( UNIX_TIMESTAMP(ts) ) (
+PARTITION p20210906 VALUES LESS THAN (1630944000),
+PARTITION p20210907 VALUES LESS THAN (1631030400),
+PARTITION p20210908 VALUES LESS THAN (1631116800),
+PARTITION p20210909 VALUES LESS THAN (1631203200)
+);
+set @@tidb_partition_prune_mode = 'static';
+INSERT INTO `perf_offline_day` VALUES ('dd082c8a-3bab-4431-943a-348fe0592abd','2021-09-08 13:00:07','Xg9C8zq81jGNbugM', 'pc', 12345);
+SELECT cast(floor(hour(ts) / 4) as char) as win_start FROM perf_offline_day partition (p20210907, p20210908) GROUP BY win_start;
+
+# TestIssue28643
+drop table if exists t;
+create table t(a time(4));
+insert into t values("-838:59:59.000000");
+insert into t values("838:59:59.000000");
+set tidb_enable_vectorized_expression = on;
+select hour(a) from t;
+set tidb_enable_vectorized_expression = off;
+select hour(a) from t;
+set tidb_enable_vectorized_expression = default;
+
+# TestIssue27831
+drop table if exists t;
+create table t(a enum("a", "b"), b enum("a", "b"), c bool);
+insert into t values("a", "a", 1);
+select * from t t1 right join t t2 on t1.a=t2.b and t1.a= t2.c;
+drop table if exists t;
+create table t(a enum("a", "b"), b enum("a", "b"), c bool, d int, index idx(d));
+insert into t values("a", "a", 1, 1);
+select /*+ inl_hash_join(t1) */  * from t t1 right join t t2 on t1.a=t2.b and t1.a= t2.c and t1.d=t2.d;
+
+# TestIssue29434
+drop table if exists t1;
+create table t1(c1 datetime);
+insert into t1 values('2021-12-12 10:10:10.000');
+set tidb_enable_vectorized_expression = on;
+select greatest(c1, '99999999999999') from t1;
+select least(c1, '99999999999999') from t1;
+set tidb_enable_vectorized_expression = off;
+select greatest(c1, '99999999999999') from t1;
+select least(c1, '99999999999999') from t1;
+set tidb_enable_vectorized_expression = default;
+
+# TestIssue29244
+drop table if exists t;
+create table t(a time(4));
+insert into t values("-700:10:10.123456111");
+insert into t values("700:10:10.123456111");
+set tidb_enable_vectorized_expression = on;
+select microsecond(a) from t;
+set tidb_enable_vectorized_expression = off;
+select microsecond(a) from t;
+set tidb_enable_vectorized_expression = default;
+
+# TestIssue29755
+set tidb_enable_vectorized_expression = on;
+select char(123, NULL, 123);
+select char(NULL, 123, 123);
+set tidb_enable_vectorized_expression = off;
+select char(123, NULL, 123);
+select char(NULL, 123, 123);
+set tidb_enable_vectorized_expression = default;
+
+# TestIssue30101
+drop table if exists t1;
+create table t1(c1 bigint unsigned, c2 bigint unsigned);
+insert into t1 values(9223372036854775808, 9223372036854775809);
+select greatest(c1, c2) from t1;
+
+# TestIssue30326
+drop table if exists t;
+create table t(a int);
+insert into t values(1),(1),(2),(2);
+set tidb_window_concurrency = 1;
+-- error 1242
+select (FIRST_VALUE(1) over (partition by v.a)) as c3 from (select a from t where t.a = (select a from t t2 where t.a = t2.a)) as v;
+
+# TestIssue30174
+drop table if exists t1,t2;
+CREATE TABLE `t1` (
+  `c1` enum('Alice','Bob','Charlie','David') NOT NULL,
+  `c2` blob NOT NULL,
+  PRIMARY KEY (`c2`(5)),
+  UNIQUE KEY `idx_89` (`c1`)
+);
+CREATE TABLE `t2` (
+  `c1` enum('Alice','Bob','Charlie','David') NOT NULL DEFAULT 'Alice',
+  `c2` set('Alice','Bob','Charlie','David') NOT NULL DEFAULT 'David',
+  `c3` enum('Alice','Bob','Charlie','David') NOT NULL,
+  PRIMARY KEY (`c3`,`c2`)
+);
+insert into t1 values('Charlie','');
+insert into t2 values('Charlie','Charlie','Alice');
+select * from t2 where c3 in (select c2 from t1);
+select * from t2 where c2 in (select c2 from t1);
+
+# TestIssue29708
+drop table if exists t1;
+CREATE TABLE t1 (a text)character set utf8 ;
+-- error 1301
+INSERT INTO t1 VALUES  (REPEAT(0125,200000000));
+select * from t1;
+insert into t1 (a) values ('a'),('b');
+-- error 1301
+insert into t1 select REPEAT(a,200000000) from t1;
+select a from t1 order by a;
+-- error 1301
+insert into t1 values  (cast("a" as binary(4294967295)));
+select a from t1 order by a;
+--enable_warnings
+INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));
+--disable_warnings
+select a from t1 order by a;
+
+# TestIssue32488
+drop table if exists t;
+create table t(a varchar(32)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+insert into t values('ʞ'), ('İ'), ('ß');
+set @@tidb_enable_vectorized_expression = false;
+select binary upper(a), lower(a) from t order by upper(a);
+select distinct upper(a), lower(a) from t order by upper(a);
+set @@tidb_enable_vectorized_expression = true;
+select binary upper(a), lower(a) from t order by upper(a);
+select distinct upper(a), lower(a) from t order by upper(a);
+set @@tidb_enable_vectorized_expression = default;
+
+# TestIssue33397
+drop table if exists t;
+create table t(a varchar(32)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+insert into t values(''), ('');
+set @@tidb_enable_vectorized_expression = true;
+select compress(a) from t;
+set @@tidb_enable_vectorized_expression = false;
+select compress(a) from t;
+set @@tidb_enable_vectorized_expression = default;
+
+# TestIssue34659
+drop table if exists t;
+create table t(a varchar(32));
+insert into t values(date_add(cast('00:00:00' as time), interval 1.1 second));
+select * from t;
+select cast(date_add(cast('00:00:00' as time), interval 1.1 second) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1.1 microsecond) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1000000 microsecond) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1.1111119 second) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1.0 second) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1.1 second_microsecond) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1111111 second_microsecond) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1.1 minute_microsecond) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1111111 minute_microsecond) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1.1 minute_second) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1111111 minute_second) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1.1 hour_microsecond) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1111111 hour_microsecond) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1.1 hour_second) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1111111 hour_second) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1.1 hour_minute) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1.1 day_microsecond) as char);
+select cast(date_add(cast('00:00:00' as time), interval 1111111 day_microsecond) as char);
+
+# TestIssue31799
+drop table if exists t;
+create table t(i int, c varchar(32));
+insert into t values(1, date_add(cast('2001-01-01 00:00:00' as datetime), interval 1 second));
+insert into t values(2, date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1 second));
+insert into t values(3, date_add(cast('2001-01-01 00:00:00' as datetime), interval 1.1 second));
+insert into t values(4, date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1.1 second));
+insert into t values(5, date_add(cast('00:00:00' as time), interval 1.1 second));
+select c from t order by i;
+
+# TestIssue31867
+set time_zone = '+00:00';
+drop table if exists t;
+create table t(ts timestamp(6) not null default current_timestamp(6) on update current_timestamp(6));
+insert into t values('1970-01-01 01:00:01.000000');
+insert into t values('1970-01-01 01:00:01.000001');
+insert into t values('1971-01-01 01:00:00.000000');
+insert into t values('1971-01-01 01:00:00.000001');
+insert into t values('2001-01-01 00:00:00.000000');
+insert into t values('2001-01-01 00:00:00.000001');
+insert into t values('2001-01-01 01:00:00.000000');
+insert into t values('2001-01-01 01:00:00.000001');
+select date_add(ts, interval 1 minute) from t order by ts;
+select date_sub(ts, interval 1 minute) from t order by ts;
+set time_zone = default;
+
+# TestIssue31600
+set time_zone = '+00:00';
+drop table if exists t;
+create table t (tm_fsp0 time(0), tm_fsp1 time(1), tm_fsp3 time(3),tm_fsp6 time(6), d date, dt_fsp0 datetime(0), dt_fsp1 datetime(1), dt_fsp3 datetime(3), dt_fsp6 datetime(6));
+insert into t values(null, '12:12:01.1', '12:12:02.123', '12:12:03.123456', '20221212', null, '2020/12/11 12:12:11.1', '2020/12/12 12:12:12.123', '2020/12/13 12:12:13.123456');
+insert into t values('12:12:00', null, '12:12:02.123', '12:12:03.123456', '20221212', '2020/12/10 12:12:10', null, '2020/12/12 12:12:12.123', '2020/12/13 12:12:13.123456');
+insert into t values('12:12:00', '12:12:01.1', null, '12:12:03.123456', '20221212', '2020/12/10 12:12:10', '2020/12/11 12:12:11.1', null, '2020/12/13 12:12:13.123456');
+insert into t values('12:12:00', '12:12:01.1', '12:12:02.123', null, '20221212', '2020/12/10 12:12:10', '2020/12/11 12:12:11.1', '2020/12/12 12:12:12.123', null);
+select coalesce(null, tm_fsp0, tm_fsp1, tm_fsp3, tm_fsp6) from t;
+select coalesce(tm_fsp1, tm_fsp0, tm_fsp3) from t;
+select coalesce(tm_fsp3, tm_fsp0) from t;
+select coalesce(tm_fsp6) from t;
+select coalesce(null, dt_fsp0, dt_fsp1, dt_fsp3, dt_fsp6) from t;
+select coalesce(dt_fsp0, dt_fsp1, dt_fsp3) from t;
+select coalesce(dt_fsp3, dt_fsp0) from t;
+select coalesce(dt_fsp6) from t;
+select coalesce(null, d) from t;
+set time_zone = default;
+
+# TestIssue31569
+drop table if exists t;
+create table t (c int primary key, c2 enum('a', 'b'));
+set session sql_mode = '';
+insert into t values(4, 'a');
+--enable_warnings
+insert into t values(4, 0) on duplicate key update c=values(c), c2=values(c2);
+insert into t values(4, 'a') on duplicate key update c=values(c), c2=values(c2);
+--disable_warnings
+set @@sql_mode=default;
+
+# TestIssue38736
+drop table if exists t0, t1;
+CREATE TABLE t0(c0 BOOL, c1 INT);
+CREATE TABLE t1 LIKE t0;
+CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT IS_IPV4(t0.c1) FROM t0, t1;
+INSERT INTO t0(c0, c1) VALUES (true, 0);
+INSERT INTO t1(c0, c1) VALUES (true, 2);
+SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
+SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0) or v0.c0 > 0;
+
+# TestIssue30264
+# compare Time/Int/Int as string type, return string type
+select greatest(time '21:00', year(date'20220101'), 23);
+# compare Time/Date/Int as string type, return string type
+select greatest(time '21:00', date'891001', 120000);
+# compare Time/Date/Int as string type, return string type
+select greatest(time '20:00', date'101001', 120101);
+# compare Date/String/Int as Date type, return string type
+select greatest(date'101001', '19990329', 120101);
+# compare Time/Date as DateTime type, return DateTime type
+select greatest(time '20:00', date'691231');
+# compare Date/Date as DateTime type, return DateTime type
+select greatest(date '120301', date'691231');
+# compare Time/Time as Time type, return Time type
+select greatest(time '203001', time '2230');
+# compare DateTime/DateTime as DateTime type, return DateTime type
+select greatest(timestamp '2021-01-31 00:00:01', timestamp '2021-12-31 12:00:00');
+# compare Time/DateTime as DateTime type, return DateTime type
+select greatest(time '00:00:01', timestamp '2069-12-31 12:00:00');
+# compare Date/DateTime as DateTime type, return DateTime type
+select greatest(date '21000101', timestamp '2069-12-31 12:00:00');
+# compare JSON/JSON, return JSON type
+select greatest(cast('1' as JSON), cast('2' as JSON));
+# Original 30264 Issue
+select greatest(time '20:00:00', 120000);
+select greatest(date '2005-05-05', 20010101, 20040404, 20030303);
+select greatest(date '1995-05-05', 19910101, 20050505, 19930303);
+drop table if exists t1,t2;
+CREATE TABLE `t1` (a datetime, b date, c time);
+insert into t1 values(timestamp'2021-01-31 00:00:01', '2069-12-31', '20:00:01');
+set tidb_enable_vectorized_expression = on;
+# compare Time/Int/Int as string type, return string type
+select greatest(c, year(date'20220101'), 23) from t1;
+# compare Time/Date/Int as string type, return string type
+select greatest(c, date'891001', 120000) from t1;
+# compare Time/Date/Int as string type, return string type
+select greatest(c, date'101001', 120101) from t1;
+# compare Date/String/Int as Date type, return string type
+select greatest(b, '19990329', 120101) from t1;
+# compare Time/Date as DateTime type, return DateTime type
+select greatest(time '20:00', b) from t1;
+# compare Date/Date as Date type, return Date type
+select greatest(date '120301', b) from t1;
+# compare Time/Time as Time type, return Time type
+select greatest(c, time '2230') from t1;
+# compare DateTime/DateTime as DateTime type, return DateTime type
+select greatest(a, timestamp '2021-12-31 12:00:00') from t1;
+# compare Time/DateTime as DateTime type, return DateTime type
+select greatest(c, timestamp '2069-12-31 12:00:00') from t1;
+# compare Date/DateTime as DateTime type, return DateTime type
+select greatest(date '21000101', a) from t1;
+# compare JSON/JSON, return JSON type
+select greatest(cast(a as JSON), cast('3' as JSON)) from t1;
+set tidb_enable_vectorized_expression = default;
+
+# TestIssue17727
+set tidb_enable_prepared_plan_cache=ON;
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY auto_increment, a timestamp NOT NULL);
+INSERT INTO t1 VALUES (null, '2020-05-30 20:30:00');
+PREPARE mystmt FROM 'SELECT * FROM t1 WHERE UNIX_TIMESTAMP(a) >= ?';
+SET @a=1590868800;
+EXECUTE mystmt USING @a;
+select @@last_plan_from_cache;
+SET @a=1590868801;
+EXECUTE mystmt USING @a;
+select @@last_plan_from_cache;
+prepare stmt from 'select unix_timestamp(?)';
+set @a = '2020-05-30 20:30:00';
+execute stmt using @a;
+select @@last_plan_from_cache;
+set @a = '2020-06-12 13:47:58';
+execute stmt using @a;
+select @@last_plan_from_cache;
+
+# TestIssue17891
+drop table if exists t;
+set sql_mode=default;
+create table t(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_bin default 'a,b ');
+drop table if exists test;
+create table test(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_general_ci default 'a,B ,C');
+
+# TestIssue31174
+drop table if exists t;
+create table t(a char(4) collate utf8_general_ci primary key /*T![clustered_index] clustered */);
+insert into t values('`?');
+explain format='brief' select * from t where a like '`%';
+select * from t where a like '`%';
+drop table if exists t;
+create table t(a char(4) collate binary primary key /*T![clustered_index] clustered */);
+insert into t values('`?');
+explain format='brief' select * from t where a like '`%';
+select * from t where a like '`%';
+
+# TestIssue20268
+drop table if exists t;
+CREATE TABLE `t` (   `a` enum('a','b') DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+insert into t values('a');
+select * from t where a = 'A';
+
+# TestIssue16668
+drop table if exists tx;
+CREATE TABLE `tx` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL);
+insert into tx values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+select count(distinct(b)) from tx;
+
+# TestIssue27091
+drop table if exists tx;
+CREATE TABLE `tx` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL, `c` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL);
+insert into tx values (1, 'a', 'a'), (2, 'A ', 'a '), (3, 'A', 'A'), (4, 'a ', 'A ');
+select count(distinct b) from tx;
+select count(distinct c) from tx;
+select count(distinct b, c) from tx where a < 3;
+select approx_count_distinct(b) from tx;
+select approx_count_distinct(c) from tx;
+select approx_count_distinct(b, c) from tx where a < 3;
+
+# TestIssue17176
+drop table if exists t;
+-- error 1291
+create table t(a enum('a', 'a ')) charset utf8 collate utf8_bin;
+-- error 1291
+create table t(a enum('a', 'Á')) charset utf8 collate utf8_general_ci;
+-- error 1291
+create table t(a enum('a', 'a ')) charset utf8mb4 collate utf8mb4_bin;
+create table t(a enum('a', 'A')) charset utf8 collate utf8_bin;
+drop table if exists t3;
+create table t3(a enum('a', 'A')) charset utf8mb4 collate utf8mb4_bin;
+
+# TestIssue18638
+drop table if exists t;
+create table t(a varchar(10) collate utf8mb4_bin, b varchar(10) collate utf8mb4_general_ci);
+insert into t (a, b) values ('a', 'A');
+select * from t t1, t t2 where t1.a = t2.b collate utf8mb4_general_ci;
+select * from t t1 left join t t2 on t1.a = t2.b collate utf8mb4_general_ci;
+
+# TestIssue18662
+# TODO: fix https://github.com/pingcap/tidb/issues/47688
+# drop table if exists t;
+# create table t(a varchar(10) collate utf8mb4_bin, b varchar(10) collate utf8mb4_general_ci);
+# insert into t (a, b) values ('a', 'A');
+# select * from t where field('A', a collate utf8mb4_general_ci, b) > 1;
+# select * from t where field('A', a, b collate utf8mb4_general_ci) > 1;
+# select * from t where field('A' collate utf8mb4_general_ci, a, b) > 1;
+# select * from t where field('A', a, b) > 1;
+
+# TestIssue19116
+set names utf8mb4 collate utf8mb4_general_ci;
+select collation(concat(1 collate `binary`));
+select coercibility(concat(1 collate `binary`));
+select collation(concat(NULL,NULL));
+select coercibility(concat(NULL,NULL));
+select collation(concat(1,1));
+select coercibility(concat(1,1));
+select collation(1);
+select coercibility(1);
+select coercibility(1=1);
+drop table if exists t;
+create table t(a datetime);
+insert into t values ('2020-02-02');
+select collation(concat(unix_timestamp(a))) from t;
+select coercibility(concat(unix_timestamp(a))) from t;
+set names default;
+
+# TestIssue17063
+drop table if exists t;
+create table t(a char, b char) collate utf8mb4_general_ci;
+insert into t values('a', 'b');
+insert into t values('a', 'B');
+select * from t where if(a='x', a, b) = 'b';
+select collation(if(a='x', a, b)) from t;
+select coercibility(if(a='x', a, b)) from t;
+select collation(lag(b, 1, 'B') over w) from t window w as (order by b);
+select coercibility(lag(b, 1, 'B') over w) from t window w as (order by b);
+
+# TestIssue11177
+--enable_warnings
+SELECT 'lvuleck' BETWEEN '2008-09-16 22:23:50' AND 0;
+SELECT 'aa' BETWEEN 'bb' AND 0;
+select 1 between 0 and b'110';
+select 'b' between 'a' and b'110';
+--disable_warnings
+
+# TestIssue19804
+drop table if exists t;
+create table t(a set('a', 'b', 'c'));
+-- error 1291
+alter table t change a a set('a', 'b', 'c', 'c');
+drop table if exists t;
+create table t(a enum('a', 'b', 'c'));
+-- error 1291
+alter table t change a a enum('a', 'b', 'c', 'c');
+drop table if exists t;
+create table t(a set('a', 'b', 'c'));
+alter table t change a a set('a', 'b', 'c', 'd');
+insert into t values('d');
+-- error 1265
+alter table t change a a set('a', 'b', 'c', 'e', 'f');
+
+# TestIssue20209
+set @@character_set_client=utf8mb4;
+set @@collation_connection=utf8_bin;
+CREATE VIEW tview_1 AS SELECT 'a' AS `id`;
+set @@character_set_client=default;
+set @@collation_connection=default;
+
+# TestIssue18949
+drop table if exists t;
+create table t(a enum('a ', 'b\t', ' c '), b set('a ', 'b\t', ' c '));
+show create table t;
+alter table t change a aa enum('a   ', 'b\t', ' c ');
+show create table t;
+
+# TestIssue20608
+select '䇇Հ' collate utf8mb4_bin like '___Հ';
+
+# TestIssue20161
+drop table if exists t;
+create table t(raw JSON);
+insert into t(raw) values('["a","ab"]'), ('["a"]'), (null);
+SELECT JSON_SEARCH(raw,'one','c') FROM t;
+
+# TestIssue20876
+drop table if exists t;
+CREATE TABLE `t` (  `a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL,  `b` char(20) COLLATE utf8mb4_general_ci NOT NULL,  `c` int(11) NOT NULL,  PRIMARY KEY (`a`,`b`,`c`),  KEY `idx` (`a`));
+insert into t values ('#', 'C', 10), ('$', 'c', 20), ('$', 'c', 30), ('a', 'a', 10), ('A', 'A', 30);
+analyze table t;
+select * from t where a='#';
+
+# TestIssue23805
+CREATE TABLE `tbl_5` (  `col_25` time NOT NULL DEFAULT '05:35:58',  `col_26` blob NOT NULL,  `col_27` double NOT NULL,  `col_28` char(83) CHARACTER SET utf8 COLLATE utf8_bin NOT NULL,  `col_29` timestamp NOT NULL,  `col_30` varchar(36) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'ywzIn',  `col_31` binary(85) DEFAULT 'OIstcXsGmAyc',  `col_32` datetime NOT NULL DEFAULT '2024-08-02 00:00:00',  PRIMARY KEY (`col_26`(3),`col_27`) /*T![clustered_index] CLUSTERED */,  UNIQUE KEY `idx_10` (`col_26`(5)));
+insert ignore into tbl_5 set col_28 = 'ZmZIdSnq' , col_25 = '18:50:52.00' on duplicate key update col_26 = 'y';
+
+# TestIssue26662
+drop table if exists t1;
+create table t1(a varchar(36) NOT NULL) ENGINE = InnoDB DEFAULT CHARSET = utf8 COLLATE = utf8_general_ci;
+set names utf8;
+select t2.b from (select t1.a as b from t1 union all select t1.a as b from t1) t2 where case when (t2.b is not null) then t2.b else '' end > '1234567';
+set names default;
+
+# TestIssue30245
+-- error 1267
+select case 1 when 1 then 'a' collate utf8mb4_unicode_ci else 'b' collate utf8mb4_general_ci end;
+-- error 1267
+select case when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci end;
+-- error 1270
+select case 1 when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci else 'b' collate utf8mb4_bin end;
+
+# TestIssue24502
+drop table if exists t0,t1;
+create table t0(col1 varchar(255));
+create table t1(col1 int(11));
+insert into t0 values("\\9jM\\M");
+insert into t1 values(0);
+insert into t1 values(null);
+insert into t1 values(null);
+select t0.col1, t1.col1 from t0 left join t1 on t0.col1 not like t0.col1;
+select 'a' like '\\a';
+select 'a' like '+a' escape '+';
+
+# TestIssue17233
+drop table if exists table_int;
+CREATE TABLE table_int (
+	  id_0 int(16) NOT NULL AUTO_INCREMENT,
+	  col_int_0 int(16) DEFAULT NULL,
+	  PRIMARY KEY (id_0),
+	  KEY fvclc (id_0,col_int_0));
+INSERT INTO table_int VALUES (1,NULL),(2,NULL),(3,65535),(4,1),(5,0),(6,NULL),(7,-1),(8,65535),(9,NULL),(10,65535),(11,-1),(12,0),(13,-1),(14,1),(15,65535),(16,0),(17,1),(18,0),(19,0);
+drop table if exists table_varchar;
+CREATE TABLE table_varchar (
+	  id_2 int(16) NOT NULL AUTO_INCREMENT,
+	  col_varchar_2 varchar(511) DEFAULT NULL,
+	  PRIMARY KEY (id_2));
+INSERT INTO table_varchar VALUES (1,''),(2,''),(3,''),(4,''),(5,''),(6,''),(7,''),(8,''),(9,''),(10,''),(11,''),(12,'');
+drop table if exists table_int_float_varchar;
+CREATE TABLE table_int_float_varchar (
+	  id_6 int(16) NOT NULL AUTO_INCREMENT,
+	  col_int_6 int(16) NOT NULL,
+	  col_float_6 float DEFAULT NULL,
+	  col_varchar_6 varchar(511) DEFAULT NULL,
+	  PRIMARY KEY (id_6,col_int_6)
+	)
+	PARTITION BY RANGE ( col_int_6 ) (
+	  PARTITION p0 VALUES LESS THAN (1),
+	  PARTITION p2 VALUES LESS THAN (1000),
+	  PARTITION p3 VALUES LESS THAN (10000),
+	  PARTITION p5 VALUES LESS THAN (1000000),
+	  PARTITION p7 VALUES LESS THAN (100000000),
+	  PARTITION p9 VALUES LESS THAN (10000000000),
+	  PARTITION p10 VALUES LESS THAN (100000000000),
+	  PARTITION pn VALUES LESS THAN (MAXVALUE));
+INSERT INTO table_int_float_varchar VALUES (1,-1,0.1,'0000-00-00 00:00:00'),(2,0,0,NULL),(3,-1,1,NULL),(4,0,NULL,NULL),(7,0,0.5,NULL),(8,0,0,NULL),(10,-1,0,'-1'),(5,1,-0.1,NULL),(6,1,0.1,NULL),(9,65535,0,'1');
+drop table if exists table_float;
+CREATE TABLE table_float (
+	  id_1 int(16) NOT NULL AUTO_INCREMENT,
+	  col_float_1 float DEFAULT NULL,
+	  PRIMARY KEY (id_1),
+	  KEY zbjus (id_1,col_float_1));
+INSERT INTO table_float VALUES (1,NULL),(2,-0.1),(3,-1),(4,NULL),(5,-0.1),(6,0),(7,0),(8,-1),(9,NULL),(10,NULL),(11,0.1),(12,-1);
+drop view if exists view_4;
+CREATE DEFINER='root'@'127.0.0.1' VIEW view_4 (col_1, col_2, col_3, col_4, col_5, col_6, col_7, col_8, col_9, col_10) AS
+    SELECT /*+ USE_INDEX(table_int fvclc, fvclc)*/
+        tmp1.id_6 AS col_1,
+        tmp1.col_int_6 AS col_2,
+        tmp1.col_float_6 AS col_3,
+        tmp1.col_varchar_6 AS col_4,
+        tmp2.id_2 AS col_5,
+        tmp2.col_varchar_2 AS col_6,
+        tmp3.id_0 AS col_7,
+        tmp3.col_int_0 AS col_8,
+        tmp4.id_1 AS col_9,
+        tmp4.col_float_1 AS col_10
+    FROM ((
+            expression__issues.table_int_float_varchar AS tmp1 LEFT JOIN
+            expression__issues.table_varchar AS tmp2 ON ((NULL<=tmp2.col_varchar_2)) IS NULL
+        ) JOIN
+        expression__issues.table_int AS tmp3 ON (1.117853833115198e-03!=tmp1.col_int_6))
+    JOIN
+        expression__issues.table_float AS tmp4 ON !((1900370398268920328=0e+00)) WHERE ((''<='{Gm~PcZNb') OR (tmp2.id_2 OR tmp3.col_int_0)) ORDER BY col_1,col_2,col_3,col_4,col_5,col_6,col_7,col_8,col_9,col_10 LIMIT 20580,5;
+drop view if exists view_10;
+CREATE DEFINER='root'@'127.0.0.1' VIEW view_10 (col_1, col_2) AS
+    SELECT  table_int.id_0 AS col_1,
+            table_int.col_int_0 AS col_2
+    FROM expression__issues.table_int
+    WHERE
+        ((-1e+00=1) OR (0e+00>=table_int.col_int_0))
+    ORDER BY col_1,col_2
+    LIMIT 5,9;
+SELECT col_1 FROM expression__issues.view_10;
+SELECT col_1 FROM expression__issues.view_4;
+SELECT view_10.col_1 FROM view_4 JOIN view_10;
+
+# TestIssue17989
+drop table if exists t;
+create table t(a int, b tinyint as(a+1), c int as(b+1));
+set sql_mode='';
+insert into t(a) values(2000);
+create index idx on t(c);
+select c from t;
+admin check table t;
+set @@sql_mode=default;
+
+# TestIssue18652
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 ( `pk` int not null primary key auto_increment, `col_smallint_key_signed` smallint  , key (`col_smallint_key_signed`));
+INSERT INTO `t1` VALUES (1,0),(2,NULL),(3,NULL),(4,0),(5,0),(6,NULL),(7,NULL),(8,0),(9,0),(10,0);
+SELECT * FROM t1 WHERE ( LOG( `col_smallint_key_signed`, -8297584758403770424 ) ) DIV 1;
+
+# TestIssue19045
+drop table if exists t, t1, t2;
+CREATE TABLE t (
+  id int(11) NOT NULL AUTO_INCREMENT,
+  a char(10) DEFAULT NULL,
+  PRIMARY KEY (id)
+);
+CREATE TABLE t1 (
+  id int(11) NOT NULL AUTO_INCREMENT,
+  a char(10) DEFAULT NULL,
+  b char(10) DEFAULT NULL,
+  c char(10) DEFAULT NULL,
+  PRIMARY KEY (id)
+);
+CREATE TABLE t2 (
+  id int(11) NOT NULL AUTO_INCREMENT,
+  a char(10) DEFAULT NULL,
+  b char(10) DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY b (b)
+);
+insert into t1(a,b,c) values('hs4_0004', "04", "101"), ('a01', "01", "101"),('a011', "02", "101");
+insert into t2(a,b) values("02","03");
+insert into t(a) values('101'),('101');
+select  ( SELECT t1.a FROM  t1,  t2 WHERE t1.b = t2.a AND  t2.b = '03' AND t1.c = a.a) invode from t a ;
+
+# TestIssue19315
+drop table if exists t, t1;
+CREATE TABLE `t` (`a` bit(10) DEFAULT NULL,`b` int(11) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+INSERT INTO `t` VALUES (_binary '\0',1),(_binary '\0',2),(_binary '\0',5),(_binary '\0',4),(_binary '\0',2),(_binary '\0	',4);
+CREATE TABLE `t1` (`a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+INSERT INTO `t1` VALUES (1,1),(1,5),(2,3),(2,4),(3,3);
+select * from t where t.b > (select min(t1.b) from t1 where t1.a > t.a);
+
+# TestIssue21290
+drop table if exists t1;
+create table t1(a date);
+insert into t1 values (20100202);
+select a in ('2020-02-02', 20100202) from t1;
+
+# TestIssue20128
+drop table if exists t;
+create table t(b enum('a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z') DEFAULT NULL, c decimal(40,20));
+insert into t values('z', 19.18040000000000000000);
+insert into t values('z', 26.18040000000000000000);
+insert into t values('z', 25.18040000000000000000);
+select * from t where t.b > t.c;
+select * from t where t.b < t.c;
+
+# TestIssue44196
+## decimal
+drop table if exists t1;
+CREATE TABLE t1 (c1 INT);
+INSERT INTO t1 VALUES (1), (null);
+SELECT IFNULL(c1, 0.0) from t1;
+SELECT if(c1 is not null, c1, 0.0) from t1;
+SELECT case when c1 is not null then c1 else 0.0 end from t1;
+## datetime
+drop table if exists t1;
+CREATE TABLE t1 (v1 datetime(3), v2 datetime(4));
+INSERT INTO t1 VALUES ('2020-01-01 11:11:11.123', null), (null, '2020-01-01 11:11:11.1234');
+SELECT IFNULL(v1, v2) from t1;
+SELECT if(v1 is not null, v1, v2) from t1;
+SELECT case when v1 is not null then v1 else v2 end from t1;
+## timestamp
+drop table if exists t1;
+CREATE TABLE t1 (v1 timestamp(3), v2 timestamp(4));
+INSERT INTO t1 VALUES ('2020-01-01 11:11:11.123', null), (null, '2020-01-01 11:11:11.1234');
+SELECT IFNULL(v1, v2) from t1;
+SELECT if(v1 is not null, v1, v2) from t1;
+SELECT case when v1 is not null then v1 else v2 end from t1;
+## duration
+drop table if exists t1;
+CREATE TABLE t1 (v1 time(3), v2 time(4));
+INSERT INTO t1 VALUES ('11:11:11.123', null), (null, '11:11:11.1234');
+SELECT IFNULL(v1, v2) from t1;
+SELECT if(v1 is not null, v1, v2) from t1;
+SELECT case when v1 is not null then v1 else v2 end from t1;
+## others
+drop table if exists t1;
+CREATE TABLE t1 (var_fld int(11) DEFAULT '0' );
+INSERT INTO t1 VALUES (4500), (6000);
+SELECT IF ( var_fld  > 5000, ( 00001 / var_fld ) , 5000 ) if_var FROM t1;
+SELECT CASE WHEN var_fld  > 5000 THEN ( 1 / var_fld ) ELSE 5000 END case_var FROM t1;
+SELECT CASE var_fld  > 5000 WHEN TRUE THEN ( 1 / var_fld ) ELSE 5000 END case_var FROM t1;
+
+# TestIssue45410
+drop table if exists t1;
+CREATE TABLE t1 (c1 TINYINT(1) UNSIGNED NOT NULL);
+INSERT INTO t1 VALUES (0);
+SELECT c1>=CAST('-787360724' AS TIME) FROM t1;
+
+# TestIssue29513
+-- sorted_result
+select '123' union select cast(45678 as char);
+-- sorted_result
+select '123' union select cast(45678 as char(2));
+drop table if exists t;
+create table t(a int);
+insert into t values(45678);
+-- sorted_result
+select '123' union select cast(a as char) from t;
+-- sorted_result
+select '123' union select cast(a as char(2)) from t;
+
+# TestIssue28739
+SET time_zone='Europe/Vilnius';
+SELECT UNIX_TIMESTAMP('2020-03-29 03:45:00');
+SELECT FROM_UNIXTIME(UNIX_TIMESTAMP('2020-03-29 03:45:00'));
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (dt DATETIME NULL);
+INSERT INTO t VALUES ('2021-10-31 02:30:00'), ('2021-03-28 02:30:00'), ('2020-10-04 02:15:00'), ('2020-03-29 03:45:00'), (NULL);
+-- sorted_result
+SELECT dt, UNIX_TIMESTAMP(dt) FROM t;
+SET time_zone=default;
+
+# TestIssue40015
+DROP TABLE IF EXISTS test;
+CREATE TABLE test ( c1 varchar(20));
+INSERT INTO test VALUES (101111),(11100),(101111),(101111);
+set tidb_enable_vectorized_expression = true;
+-- sorted_result
+SELECT DATE_ADD(c1, INTERVAL 1 DAY_HOUR) from test;
+set tidb_enable_vectorized_expression = default;
+
+# TestIssue9325
+drop table if exists t;
+create table t(a timestamp) partition by range(unix_timestamp(a)) (partition p0 values less than(unix_timestamp('2019-02-16 14:20:00')), partition p1 values less than (maxvalue));
+insert into t values('2019-02-16 14:19:59'), ('2019-02-16 14:20:01');
+-- sorted_result
+select * from t where a between timestamp'2019-02-16 14:19:00' and timestamp'2019-02-16 14:21:00';
+drop table if exists t;
+create table t(a timestamp);
+insert into t values('2019-02-16 14:19:59'), ('2019-02-16 14:20:01');
+-- sorted_result
+select * from t where a < timestamp'2019-02-16 14:21:00';
+
+# TestIssue16505
+drop table if exists t;
+CREATE TABLE t(c varchar(100), index idx(c(100)));
+INSERT INTO t VALUES (NULL),('1'),('0'),(''),('aaabbb'),('0abc'),('123e456'),('0.0001deadsfeww');
+-- sorted_result
+select * from t where c;
+-- sorted_result
+select /*+ USE_INDEX(t, idx) */ * from t where c;
+-- sorted_result
+select /*+ IGNORE_INDEX(t, idx) */* from t where c;
+
+# TestIssue17726
+drop table if exists t0;
+create table t0 (c1 DATE, c2 TIME, c3 DATETIME, c4 TIMESTAMP);
+insert into t0 values ('1000-01-01', '-838:59:59', '1000-01-01 00:00:00', '1970-01-01 08:00:01');
+insert into t0 values ('9999-12-31', '838:59:59', '9999-12-31 23:59:59', '2038-01-19 11:14:07');
+select avg(c1), avg(c2), avg(c3), avg(c4) from t0;
+
+# TestIssue18674
+select -1.0 % -1.0;
+drop table if exists t1;
+create table t1(`pk` int primary key,`col_float_key_signed` float  ,key (`col_float_key_signed`));
+insert into t1 values (0, null), (1, 0), (2, -0), (3, 1), (-1,-1);
+-- sorted_result
+select * from t1 where ( `col_float_key_signed` % `col_float_key_signed`) IS FALSE;
+-- sorted_result
+select  `col_float_key_signed` , `col_float_key_signed` % `col_float_key_signed` from t1;
+-- sorted_result
+select  `col_float_key_signed` , (`col_float_key_signed` % `col_float_key_signed`) IS FALSE from t1;
+
+# TestRailsFKUsage
+# issue https://github.com/pingcap/tidb/issues/26111
+drop table if exists author_addresses, authors;
+CREATE TABLE author_addresses (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE authors (
+	id bigint(20) NOT NULL AUTO_INCREMENT,
+	name varchar(255) NOT NULL,
+	author_address_id bigint(20) DEFAULT NULL,
+	author_address_extra_id bigint(20) DEFAULT NULL,
+	organization_id varchar(255) DEFAULT NULL,
+	owned_essay_id varchar(255) DEFAULT NULL,
+	PRIMARY KEY (id),
+	KEY index_authors_on_author_address_id (author_address_id),
+	KEY index_authors_on_author_address_extra_id (author_address_extra_id),
+	CONSTRAINT fk_rails_94423a17a3 FOREIGN KEY (author_address_id) REFERENCES author_addresses (id) ON UPDATE CASCADE ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+SELECT fk.referenced_table_name AS 'to_table',
+  fk.referenced_column_name AS 'primary_key',
+  fk.column_name AS 'column',
+  fk.constraint_name AS 'name',
+  rc.update_rule AS 'on_update',
+  rc.delete_rule AS 'on_delete'
+FROM information_schema.referential_constraints rc
+JOIN information_schema.key_column_usage fk
+USING (constraint_schema, constraint_name)
+WHERE fk.referenced_column_name IS NOT NULL
+  AND fk.table_schema = database()
+  AND fk.table_name = 'authors';
+
+# TestIssue4954
+drop table if exists t;
+CREATE TABLE t (a CHAR(5) CHARACTER SET latin1);
+INSERT INTO t VALUES ('oe');
+INSERT INTO t VALUES (0xf6);
+SELECT * FROM t WHERE a= 'oe';
+SELECT HEX(a) FROM t WHERE a= 0xf6;
+
+# TestIssue4006
+drop table if exists tb;
+create table tb(id int auto_increment primary key, v varchar(32));
+insert into tb(v) (select v from tb);
+SELECT * FROM tb;
+insert into tb(v) values('hello');
+insert into tb(v) (select v from tb);
+SELECT * FROM tb;
+
+# TestIssue5111
+drop table if exists t;
+create table t(c varchar(32));
+insert into t values('1e649'),('-1e649');
+# TODO: fix https://github.com/pingcap/tidb/issues/47692
+# --enable_warnings
+SELECT * FROM t where c < 1;
+SELECT * FROM t where c > 1;
+# --disable_warnings
+
+# TestIssue5293
+drop table if exists t;
+create table t(a int);
+insert t values (1);
+select * from t where cast(a as binary);
+
+# TestIssue16351
+drop table if exists t2;
+create table t2(a int, b varchar(20));
+insert into t2 values(1,"1111"),(2,"2222"),(3,"3333"),(4,"4444"),(5,"5555"),(6,"6666"),(7,"7777"),(8,"8888"),(9,"9999"),(10,"0000");
+select (@j := case when substr(t2.b,1,3)=@i then 1 else @j+1 end) from t2, (select @j := 0, @i := "0") tt limit 10;
+
+# TestIssue23479
+select b'10000000' DIV 10;
+select cast(b'10000000' as unsigned) / 10;
+select b'10000000' / 10;
+
+# TestIssue42622
+drop table if exists t0;
+create table t0 (c0 int);
+select * from (select (92 / 4) as c4) as subq_0 where exists (
+  select 1 as c0
+  union all
+  select 1 as c0 from (t0 as ref_88) where (subq_0.c4) >= (subq_0.c4)
+);
+
+# TestIssue41986
+drop table if exists poi_clearing_time_topic;
+CREATE TABLE poi_clearing_time_topic (effective_date datetime DEFAULT NULL , clearing_time int(11) DEFAULT NULL);
+insert into poi_clearing_time_topic values ('2023:08:25', 1);
+# shouldn't report they can't find column error and return the right result.
+SELECT GROUP_CONCAT(effective_date order by stlmnt_hour DESC) FROM ( SELECT (COALESCE(pct.clearing_time, 0)/3600000) AS stlmnt_hour ,COALESCE(pct.effective_date, '1970-01-01 08:00:00') AS effective_date FROM poi_clearing_time_topic pct ORDER BY pct.effective_date DESC ) a;
+
+# TestIssue10804
+SELECT @@information_schema_stats_expiry;
+/*!80000 SET SESSION information_schema_stats_expiry=0 */;
+SELECT @@information_schema_stats_expiry;
+SELECT @@GLOBAL.information_schema_stats_expiry;
+/*!80000 SET GLOBAL information_schema_stats_expiry=0 */;
+SELECT @@GLOBAL.information_schema_stats_expiry;
+set @@SESSION.information_schema_stats_expiry=default;
+set @@GLOBAL.information_schema_stats_expiry=default;
+
+# TestIssue11333
+drop table if exists t;
+drop table if exists t1;
+create table t(col1 decimal);
+ insert into t values(0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);
+select * from t;
+create table t1(col1 decimal(65,30));
+ insert into t1 values(0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);
+select * from t1;
+select 0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000;
+select 0.0000000000000000000000000000000000000000000000000000000000000000000000012;
+select 0.000000000000000000000000000000000000000000000000000000000000000000000001;
+
+# TestIssue19892
+drop table if exists dd;
+CREATE TABLE dd(a date, b datetime, c timestamp);
+
+## check NO_ZERO_DATE
+SET sql_mode='';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('0000-00-00');
+SHOW WARNINGS;
+SELECT a FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+UPDATE dd SET b = '0000-00-00';
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('0000-00-00 20:00:00');
+SHOW WARNINGS;
+SELECT c FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 20:00:00');
+UPDATE dd SET c = '0000-00-00 20:00:00';
+SHOW WARNINGS;
+SELECT c FROM dd;
+SET sql_mode='NO_ZERO_DATE';
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('0000-0-00');
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-10-01');
+UPDATE dd SET a = '0000-00-00';
+SHOW WARNINGS;
+SELECT a FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+UPDATE dd SET c = '0000-00-00 10:00:00';
+SHOW WARNINGS;
+SELECT c FROM dd;
+SET sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES';
+TRUNCATE TABLE dd;
+-- error 1292
+INSERT INTO dd(c) VALUES ('0000-00-00 20:00:00');
+INSERT IGNORE INTO dd(c) VALUES ('0000-00-00 20:00:00');
+SHOW WARNINGS;
+SELECT c FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+-- error 1292
+UPDATE dd SET b = '0000-00-00';
+UPDATE IGNORE dd SET b = '0000-00-00';
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+-- error 1292
+UPDATE dd SET c = '0000-00-00 00:00:00';
+UPDATE IGNORE dd SET c = '0000-00-00 00:00:00';
+SHOW WARNINGS;
+SELECT c FROM dd;
+
+## check NO_ZERO_IN_DATE
+SET sql_mode='';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-01-00');
+SHOW WARNINGS;
+SELECT a FROM dd;
+INSERT INTO dd(a) values('2000-00-01');
+SHOW WARNINGS;
+SELECT a FROM dd;
+INSERT INTO dd(a) values('0-01-02');
+SHOW WARNINGS;
+SELECT a FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-01-02');
+UPDATE dd SET b = '2000-00-02';
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-01-02 20:00:00');
+UPDATE dd SET c = '0000-01-02 20:00:00';
+SHOW WARNINGS;
+SELECT c FROM dd;
+SET sql_mode='NO_ZERO_IN_DATE';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-01-00');
+SHOW WARNINGS;
+SELECT a FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-01-02');
+UPDATE dd SET a = '2000-00-02';
+SHOW WARNINGS;
+SELECT a FROM dd;
+UPDATE dd SET b = '2000-01-0';
+SHOW WARNINGS;
+SELECT b FROM dd;
+UPDATE dd SET b = '0-01-02';
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-01-02 20:00:00');
+UPDATE dd SET c = '2000-00-02 20:00:00';
+SHOW WARNINGS;
+SELECT c FROM dd;
+SET sql_mode='NO_ZERO_IN_DATE,STRICT_TRANS_TABLES';
+TRUNCATE TABLE dd;
+-- error 1292
+INSERT INTO dd(b) VALUES ('2000-01-00');
+INSERT IGNORE INTO dd(b) VALUES ('2000-00-01');
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) VALUES ('2000-01-02');
+-- error 1292
+UPDATE dd SET b = '2000-01-00';
+UPDATE IGNORE dd SET b = '2000-01-0';
+SHOW WARNINGS;
+SELECT b FROM dd;
+UPDATE dd SET b = '0000-1-2';
+SELECT b FROM dd;
+-- error 1292
+UPDATE dd SET c = '0000-01-05';
+UPDATE IGNORE dd SET c = '0000-01-5';
+SHOW WARNINGS;
+SELECT c FROM dd;
+TRUNCATE TABLE dd;
+-- error 1292
+INSERT INTO dd(c) VALUES ('2000-01-00 20:00:00');
+INSERT INTO dd(c) VALUES ('2000-01-02');
+-- error 1292
+UPDATE dd SET c = '2000-01-00 20:00:00';
+UPDATE IGNORE dd SET b = '2000-01-00';
+SHOW WARNINGS;
+SELECT b FROM dd;
+
+## check !NO_ZERO_DATE
+SET sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('0000-00-00');
+SHOW WARNINGS;
+SELECT a FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+UPDATE dd SET b = '0000-00-00';
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('0000-00-00 00:00:00');
+SHOW WARNINGS;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+UPDATE dd SET c = '0000-00-00 00:00:00';
+SHOW WARNINGS;
+SELECT c FROM dd;
+TRUNCATE TABLE dd;
+-- error 1292
+INSERT INTO dd(b) VALUES ('2000-01-00');
+INSERT IGNORE INTO dd(b) VALUES ('2000-00-01');
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) VALUES ('2000-01-02');
+-- error 1292
+UPDATE dd SET b = '2000-01-00';
+UPDATE IGNORE dd SET b = '2000-01-0';
+SHOW WARNINGS;
+SELECT b FROM dd;
+UPDATE dd SET b = '0000-1-2';
+SELECT b FROM dd;
+-- error 1292
+UPDATE dd SET c = '0000-01-05';
+UPDATE IGNORE dd SET c = '0000-01-5';
+SHOW WARNINGS;
+SELECT c FROM dd;
+TRUNCATE TABLE dd;
+-- error 1292
+INSERT INTO dd(c) VALUES ('2000-01-00 20:00:00');
+INSERT INTO dd(c) VALUES ('2000-01-02');
+-- error 1292
+UPDATE dd SET c = '2000-01-00 20:00:00';
+UPDATE IGNORE dd SET b = '2000-01-00';
+SHOW WARNINGS;
+SELECT b FROM dd;
+
+## check !NO_ZERO_IN_DATE
+SET sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-00-10');
+SHOW WARNINGS;
+SELECT a FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+UPDATE dd SET b = '2000-00-10';
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+-- error 1292
+UPDATE dd SET c = '2000-00-10 00:00:00';
+UPDATE IGNORE dd SET c = '2000-01-00 00:00:00';
+SHOW WARNINGS;
+SELECT c FROM dd;
+
+drop table if exists table_20220419;
+CREATE TABLE table_20220419 (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  lastLoginDate datetime NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+set sql_mode='';
+insert into table_20220419 values(1,'0000-00-00 00:00:00');
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+-- error 1292
+insert into table_20220419(lastLoginDate) select lastLoginDate from table_20220419;
+set sql_mode=default;
+
+# TestIssue49015
+drop table if exists test.t;
+create table test.t (a varchar(10), b tinyint(1));
+insert into test.t values ("abc", 1);
+select * from test.t where (a, b) in (('a', 1), (null, 0));
+update test.t set b = 0 where (a, b) in (('a', 1), (null, 0));
+SHOW WARNINGS;
+
+# TestIssue49986
+drop table if exists test.t;
+create table if not exists test.ast (i varchar(20));
+create table if not exists test.acc (j varchar(20), k varchar(20), l varchar(20), m varchar(20));
+explain format='brief' with t as(select i, (case when b.j = '20001' then b.l else b.k end) an from test.ast a inner join test.acc b on (a.i = b.m) and a.i = 'astp2019121731703151'), t1 as (select i, group_concat(an order by an separator '; ') an from t group by i) select * from t1;

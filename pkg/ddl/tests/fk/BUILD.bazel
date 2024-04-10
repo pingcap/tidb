@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "fk_test",
+    timeout = "short",
+    srcs = [
+        "foreign_key_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    shard_count = 17,
+    deps = [
+        "//pkg/config",
+        "//pkg/ddl",
+        "//pkg/domain",
+        "//pkg/infoschema",
+        "//pkg/meta",
+        "//pkg/meta/autoid",
+        "//pkg/parser/auth",
+        "//pkg/parser/model",
+        "//pkg/sessiontxn",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/dbterror",
+        "//pkg/util/dbterror/plannererrors",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
