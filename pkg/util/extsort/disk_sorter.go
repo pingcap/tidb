@@ -1392,6 +1392,9 @@ func (w *diskSorterWriter) flush() error {
 	slices.SortFunc(w.kvs, func(a, b keyValue) int {
 		return bytes.Compare(a.key, b.key)
 	})
+
+	// To dedup keys before write them into the SST file.
+	// NOTE: keys should be sorted and deduped when construct one SST file.
 	var lastKey []byte
 	for _, kv := range w.kvs {
 		if bytes.Equal(lastKey, kv.key) {

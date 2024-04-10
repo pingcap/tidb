@@ -1368,9 +1368,13 @@ var errorUnorderedSSTInsertion = errors.New("inserting KVs into SST without orde
 
 type sstWriter struct {
 	*sstMeta
-	writer  *sstable.Writer
+	writer *sstable.Writer
+
+	// To dedup keys before write them into the SST file.
+	// NOTE: keys should be sorted and deduped when construct one SST file.
 	lastKey []byte
-	logger  log.Logger
+
+	logger log.Logger
 }
 
 func newSSTWriter(path string, blockSize int) (*sstable.Writer, error) {
