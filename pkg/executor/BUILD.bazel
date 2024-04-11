@@ -132,6 +132,7 @@ go_library(
         "//pkg/expression/aggregation",
         "//pkg/expression/context",
         "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/log",
