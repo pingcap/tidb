@@ -425,8 +425,8 @@ func getTaskPlanCost(t Task, pop *coreusage.PhysicalOptimizeOp) (float64, bool, 
 	switch t.(type) {
 	case *RootTask:
 		taskType = property.RootTaskType
-	case *copTask: // no need to know whether the task is single-read or double-read, so both CopSingleReadTaskType and CopDoubleReadTaskType are OK
-		cop := t.(*copTask)
+	case *CopTask: // no need to know whether the task is single-read or double-read, so both CopSingleReadTaskType and CopDoubleReadTaskType are OK
+		cop := t.(*CopTask)
 		if cop.indexPlan != nil && cop.tablePlan != nil { // handle IndexLookup specially
 			taskType = property.CopMultiReadTaskType
 			// keep compatible with the old cost interface, for CopMultiReadTask, the cost is idxCost + tblCost.
@@ -481,7 +481,7 @@ func getTaskPlanCost(t Task, pop *coreusage.PhysicalOptimizeOp) (float64, bool, 
 		// It's a very special case for index merge case.
 		// t.plan() == nil in index merge COP case, it means indexPlanFinished is false in other words.
 		cost := 0.0
-		copTsk := t.(*copTask)
+		copTsk := t.(*CopTask)
 		for _, partialScan := range copTsk.idxMergePartPlans {
 			partialCost, err := getPlanCost(partialScan, taskType, coreusage.NewDefaultPlanCostOption().WithOptimizeTracer(pop))
 			if err != nil {
@@ -1610,7 +1610,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	})
 	path := candidate.path
 	scans := make([]PhysicalPlan, 0, len(path.PartialIndexPaths))
-	cop := &copTask{
+	cop := &CopTask{
 		indexPlanFinished: false,
 		tblColHists:       ds.TblColHists,
 	}
@@ -2019,7 +2019,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	}
 	path := candidate.path
 	is := ds.getOriginalPhysicalIndexScan(prop, path, candidate.isMatchProp, candidate.path.IsSingleScan)
-	cop := &copTask{
+	cop := &CopTask{
 		indexPlan:   is,
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
@@ -2204,7 +2204,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSource, path *util.AccessPath, finalStats *property.StatsInfo) {
+func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSource, path *util.AccessPath, finalStats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
@@ -2477,7 +2477,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		// prop.TaskTp is cop related, just return invalidTask.
 		return invalidTask, nil
 	}
-	copTask := &copTask{
+	copTask := &CopTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
@@ -2711,7 +2711,7 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *MppTask, stats
 	return mpp
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
+func (ts *PhysicalTableScan) addPushedDownSelection(copTask *CopTask, stats *property.StatsInfo) {
 	ts.filterCondition, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
 	ts.filterCondition, newRootConds = expression.PushDownExprs(GetPushDownCtx(ts.SCtx()), ts.filterCondition, ts.StoreType)

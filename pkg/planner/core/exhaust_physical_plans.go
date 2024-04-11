@@ -1075,7 +1075,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
 		ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 	}
-	copTask := &copTask{
+	copTask := &CopTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
@@ -1237,7 +1237,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.getPKIsHandleCol(),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	cop := &copTask{
+	cop := &CopTask{
 		indexPlan:   is,
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
