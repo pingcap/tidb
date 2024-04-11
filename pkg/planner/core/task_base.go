@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
