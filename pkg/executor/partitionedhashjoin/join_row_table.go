@@ -15,7 +15,8 @@
 package partitionedhashjoin
 
 import (
-	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"hash/fnv"
 	"sync/atomic"
 	"unsafe"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
@@ -125,12 +127,23 @@ type JoinTableMeta struct {
 	keyMode keyMode
 	// offset to rowData, -1 for variable length, non-inlined key
 	rowDataOffset int
-
-	nullMapColumnStartOffset int
 }
 
 func (meta *JoinTableMeta) getSerializedKeyLength(rowStart uintptr) uint64 {
 	return *(*uint64)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr+meta.nullMapLength))
+}
+
+func (meta *JoinTableMeta) getKeyBytes(rowStart uintptr) []byte {
+	switch meta.keyMode {
+	case OneInt64:
+		return hack.GetBytesFromPtr(unsafe.Add(unsafe.Pointer(rowStart), meta.nullMapLength+SizeOfNextPtr), sizeOfUInt64)
+	case FixedSerializedKey:
+		return hack.GetBytesFromPtr(unsafe.Add(unsafe.Pointer(rowStart), meta.nullMapLength+SizeOfNextPtr), meta.joinKeysLength)
+	case VariableSerializedKey:
+		return hack.GetBytesFromPtr(unsafe.Add(unsafe.Pointer(rowStart), meta.nullMapLength+SizeOfNextPtr+SizeOfLengthField), int(meta.getSerializedKeyLength(rowStart)))
+	default:
+		panic("unknown key match type")
+	}
 }
 
 func (meta *JoinTableMeta) advanceToRowData(rowStart uintptr) uintptr {
@@ -143,8 +156,8 @@ func (meta *JoinTableMeta) advanceToRowData(rowStart uintptr) uintptr {
 }
 
 func (meta *JoinTableMeta) isColumnNull(rowStart uintptr, columnIndex int) bool {
-	byteIndex := (columnIndex + meta.nullMapColumnStartOffset) / 8
-	bitIndex := (columnIndex + meta.nullMapColumnStartOffset) % 8
+	byteIndex := (columnIndex + meta.colOffsetInNullMap) / 8
+	bitIndex := (columnIndex + meta.colOffsetInNullMap) % 8
 	return *(*uint8)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr+byteIndex))&(uint8(1)<<(7-bitIndex)) != uint8(0)
 }
 
@@ -162,6 +175,18 @@ func (meta *JoinTableMeta) isCurrentRowUsed(rowStart uintptr) bool {
 type rowTable struct {
 	meta     *JoinTableMeta
 	segments []*rowTableSegment
+}
+
+// used for test
+func (rt *rowTable) getRowStart(rowIndex int) uintptr {
+	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
+		if rowIndex >= len(rt.segments[segIndex].rowLocations) {
+			rowIndex -= len(rt.segments[segIndex].rowLocations)
+		} else {
+			return rt.segments[segIndex].rowLocations[rowIndex]
+		}
+	}
+	panic("should not reach here")
 }
 
 type keyProp struct {
@@ -350,7 +375,7 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		}
 	}
 	if needUsedFlag {
-		meta.nullMapColumnStartOffset = 1
+		meta.colOffsetInNullMap = 1
 		// the total row length should be larger than 4 byte since the smallest unit of atomic.LoadXXX is UInt32
 		if len(columnsNeedToBeSaved) > 0 {
 			// the smallest length of a column is 4 byte, so the total row length is enough
@@ -366,7 +391,7 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 			}
 		}
 	} else {
-		meta.nullMapColumnStartOffset = 0
+		meta.colOffsetInNullMap = 0
 		meta.nullMapLength = (len(columnsNeedToBeSaved) + 7) / 8
 	}
 	meta.rowDataOffset = -1
@@ -409,6 +434,22 @@ type rowTableBuilder struct {
 	startPosInRawData [][]uint64
 }
 
+func createRowTableBuilder(buildKeyIndex []int, buildSchema *expression.Schema, meta *JoinTableMeta, partitionNumber int, hasNullableKey bool, hasFilter bool, keepFilteredRows bool) *rowTableBuilder {
+	builder := &rowTableBuilder{
+		buildKeyIndex:       buildKeyIndex,
+		buildSchema:         buildSchema,
+		rowColumnsOrder:     meta.rowColumnsOrder,
+		columnsSize:         meta.columnsSize,
+		crrntSizeOfRowTable: make([]int64, partitionNumber),
+		startPosInRawData:   make([][]uint64, partitionNumber),
+		hasNullableKey:      hasNullableKey,
+		hasFilter:           hasFilter,
+		keepFilteredRows:    keepFilteredRows,
+	}
+	builder.initBuffer()
+	return builder
+}
+
 func (b *rowTableBuilder) initBuffer() {
 	b.serializedKeyVectorBuffer = make([][]byte, chunk.InitialCapacity)
 	b.partIdxVector = make([]int, 0, chunk.InitialCapacity)
@@ -428,6 +469,44 @@ func (b *rowTableBuilder) initBuffer() {
 	}
 }
 
+func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Context, hashJoinCtx *PartitionedHashJoinCtx, rowTables []*rowTable) error {
+	b.ResetBuffer(chk)
+	var err error
+	if b.hasFilter {
+		b.filterVector, err = expression.VectorizedFilter(hashJoinCtx.SessCtx.GetExprCtx().GetEvalCtx(), hashJoinCtx.SessCtx.GetSessionVars().EnableVectorizedExpression, hashJoinCtx.BuildFilter, chunk.NewIterator4Chunk(chk), b.filterVector)
+		if err != nil {
+			return err
+		}
+	}
+	// split partition
+	for index, colIdx := range b.buildKeyIndex {
+		err := codec.SerializeKeys(typeCtx, chk, b.buildSchema.Columns[colIdx].RetType, colIdx, b.usedRows, b.filterVector, b.nullKeyVector, hashJoinCtx.hashTableMeta.serializeModes[index], b.serializedKeyVectorBuffer)
+		if err != nil {
+			return err
+		}
+	}
+
+	h := fnv.New64()
+	fakePartIndex := 0
+	for logicalRowIndex, physicalRowIndex := range b.usedRows {
+		if (b.filterVector != nil && !b.filterVector[physicalRowIndex]) || (b.nullKeyVector != nil && b.nullKeyVector[physicalRowIndex]) {
+			b.hashValue[logicalRowIndex] = uint64(fakePartIndex)
+			b.partIdxVector[logicalRowIndex] = fakePartIndex
+			fakePartIndex = (fakePartIndex + 1) % hashJoinCtx.PartitionNumber
+			continue
+		}
+		h.Write(b.serializedKeyVectorBuffer[logicalRowIndex])
+		hash := h.Sum64()
+		b.hashValue[logicalRowIndex] = hash
+		b.partIdxVector[logicalRowIndex] = int(hash % uint64(hashJoinCtx.PartitionNumber))
+		h.Reset()
+	}
+
+	// 2. build rowtable
+	b.appendToRowTable(chk, rowTables, hashJoinCtx.hashTableMeta)
+	return nil
+}
+
 func resizeSlice[T int | uint64 | bool](s []T, newSize int) []T {
 	if cap(s) >= newSize {
 		s = s[:newSize]
@@ -445,7 +524,7 @@ func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) {
 	if b.usedRows == nil {
 		b.selRows = resizeSlice(b.selRows, logicalRows)
 		for i := 0; i < logicalRows; i++ {
-			b.selRows = append(b.selRows, i)
+			b.selRows[i] = i
 		}
 		b.usedRows = b.selRows
 	}
@@ -457,7 +536,7 @@ func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) {
 	if b.hasNullableKey {
 		b.nullKeyVector = resizeSlice(b.nullKeyVector, physicalRows)
 		for i := 0; i < physicalRows; i++ {
-			b.nullKeyVector = append(b.nullKeyVector, false)
+			b.nullKeyVector[i] = false
 		}
 	}
 	if cap(b.serializedKeyVectorBuffer) >= logicalRows {
@@ -490,7 +569,7 @@ func (builder *rowTableBuilder) appendRemainingRowLocations(rowTables []*rowTabl
 	}
 }
 
-func (builder *rowTableBuilder) appendToRowTable(typeCtx types.Context, chk *chunk.Chunk, rowTables []*rowTable, rowTableMeta *JoinTableMeta) {
+func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*rowTable, rowTableMeta *JoinTableMeta) {
 	fakeAddrByte := make([]byte, 8)
 	for logicalRowIndex, physicalRowIndex := range builder.usedRows {
 		needInsertedToHashTable := (!builder.hasFilter || builder.filterVector[physicalRowIndex]) && (!builder.hasNullableKey || !builder.nullKeyVector[physicalRowIndex])
@@ -575,8 +654,3 @@ func (rt *rowTable) validKeyCount() uint64 {
 	}
 	return ret
 }
-
-// func (rt *rowTable) insert(typeCtx types.Context, chk *chunk.Chunk, builder *rowTableBuilder) error {
-// 	builder.appendToRowTable(typeCtx, chk, rt.meta)
-// 	return nil
-// }
