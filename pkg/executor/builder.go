@@ -4510,6 +4510,8 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	defer func() {
 		if r := recover(); r != nil {
 			err = util.GetRecoverError(r)
+		}
+		if err != nil {
 			terror.Log(exec.Close(childExec))
 		}
 	}()
