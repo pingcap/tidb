@@ -684,7 +684,7 @@ func TestWriteRowsRecordOneError(t *testing.T) {
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
 		WillReturnError(dupErr)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.conflict_records_v2.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.conflict_records.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), dupErr.Error(), 0, "(2)").
 		WillReturnResult(driver.ResultNoRows)
 
