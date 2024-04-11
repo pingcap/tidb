@@ -1806,42 +1806,18 @@ type partCoverStruct struct {
 	pointGetExplain []string
 }
 
-func TestPartitionVarcharSinglePKFullCover(t *testing.T) {
+type partSQL struct {
+	partSQL             string
+	canUseBatchPointGet bool
+}
+
+func testPartitionFullCover(t *testing.T, tableDefSQL []partCoverStruct, partitionSQL []partSQL, useStringPK bool) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	seed := time.Now().UnixNano()
-	//seed = 1712865461907063000
 	t.Logf("seed: %d", seed)
 	seededRand := rand.New(rand.NewSource(seed))
-	tableDefSQL := []partCoverStruct{
-		// Note: some partitioning functions does not work with bigint!
-		{
-			[]string{"a varchar(255) primary key", "b varchar(255)", "c text"},
-			[]string{"key(b)"},
-			[]string{"clustered index:PRIMARY(a)"},
-		},
-		{
-			[]string{"a varchar(255) primary key", "b varchar(255)", "c text"},
-			[]string{"key (b)"},
-			[]string{"clustered index:PRIMARY(a)"},
-		},
-		{
-			[]string{"a varchar(255)", "b varchar(255)", "c text"},
-			[]string{"key (b)", "unique index a(a)"},
-			[]string{"index:a"},
-		},
-		{
-			[]string{"a varchar(255)", "b varchar(255)", "c text"},
-			[]string{"key (b)"},
-			nil,
-		},
-		{
-			[]string{"a varchar(255)", "b varchar(255)", "c text"},
-			[]string{"key (b)", "key (a)"},
-			nil,
-		},
-	}
 	/* TODO:
 	- KEY partitioning on a single column, varchar column types
 	- KEY partitioning on multiple columns NOT SUPPORTED!
@@ -1855,26 +1831,19 @@ func TestPartitionVarcharSinglePKFullCover(t *testing.T) {
 	- RANGE COLUMNS partitioning on a single column, datetime, varchar
 	- RANGE COLUMNS partitioning on multiple columns NOT SUPPORTED!
 	*/
-	partitionSQL := []struct {
-		partSQL             string
-		canUseBatchPointGet bool
-	}{
-		{
-			"partition by range columns (a) (partition p0 values less than ('k'), partition p1 values less than ('x'))",
-			false,
-		},
-		{
-			"partition by key (a) partitions 7",
-			false,
-		},
-	}
 	rows := 1000
 	rowData := make(map[any]string, rows)
 	ids := make([]any, 0, rows)
+	maxRange := 2000000
+	maxID := maxRange + 500000
 	for i := 0; i < rows; i++ {
-		var id string
+		var id any
 		for createNew := true; createNew; _, createNew = rowData[id] {
-			id = randString(seededRand, 1, 20)
+			if useStringPK {
+				id = randString(seededRand, 1, 20)
+			} else {
+				id = seededRand.Intn(maxID)
+			}
 		}
 		rowData[id] = randString(seededRand, 1, 20)
 		ids = append(ids, id)
@@ -1900,13 +1869,23 @@ func TestPartitionVarcharSinglePKFullCover(t *testing.T) {
 			// TODO: optimize by batching/bigger transactions/prepared stmt
 			sql := "INSERT INTO tNorm (a, b, c) VALUES "
 			for j := 0; i+j < len(rowData) && j < batchSize; j++ {
-				if ids[i+j].(string) >= "t" {
-					continue
+				if useStringPK {
+					if ids[i+j].(string) >= "t" {
+						continue
+					}
+					if sql[len(sql)-1] == ')' {
+						sql += ","
+					}
+					sql += "('" + ids[i+j].(string) + "', '" + rowData[ids[i+j]] + "', '" + filler + "')"
+				} else {
+					if ids[i+j].(int) >= maxRange {
+						continue
+					}
+					if sql[len(sql)-1] == ')' {
+						sql += ","
+					}
+					sql += "(" + strconv.Itoa(ids[i+j].(int)) + ", '" + rowData[ids[i+j].(int)] + "', '" + filler + "')"
 				}
-				if sql[len(sql)-1] == ')' {
-					sql += ","
-				}
-				sql += "('" + ids[i+j].(string) + "', '" + rowData[ids[i+j]] + "', '" + filler + "')"
 			}
 			if sql[len(sql)-1] == ')' {
 				tk.MustExec(sql)
@@ -1944,20 +1923,62 @@ func TestPartitionVarcharSinglePKFullCover(t *testing.T) {
 	}
 }
 
+func TestPartitionVarcharFullCover(t *testing.T) {
+	tableDefSQL := []partCoverStruct{
+		// Note: some partitioning functions does not work with bigint!
+		{
+			[]string{"a varchar(255) primary key", "b varchar(255)", "c text"},
+			[]string{"key(b)"},
+			[]string{"clustered index:PRIMARY(a)"},
+		},
+		{
+			[]string{"a varchar(255) primary key", "b varchar(255)", "c text"},
+			[]string{"key (b)"},
+			[]string{"clustered index:PRIMARY(a)"},
+		},
+		{
+			[]string{"a varchar(255)", "b varchar(255)", "c text"},
+			[]string{"key (b)", "unique index a(a)"},
+			[]string{"index:a"},
+		},
+		{
+			[]string{"a varchar(255)", "b varchar(255)", "c text"},
+			[]string{"key (b)"},
+			nil,
+		},
+		{
+			[]string{"a varchar(255)", "b varchar(255)", "c text"},
+			[]string{"key (b)", "key (a)"},
+			nil,
+		},
+	}
+	/* TODO:
+	   - KEY partitioning on a single column, varchar column types
+	   - KEY partitioning on multiple columns NOT SUPPORTED!
+	   (LIST needs its own tailored test, due to each value needs to be
+	   defined).
+	   - LIST partitioning on a single column
+	   - LIST partitioning on an expression (one or more columns) NOT SUPPORTED?
+	   - LIST COLUMNS partitioning on a single column, varchar
+	   - LIST COLUMNS partitioning on multiple columns NOT SUPPORTED!
+	   - RANGE partitioning on other expressions or multiple columns NOT SUPPORTED?
+	   - RANGE COLUMNS partitioning on a single column, datetime, varchar
+	   - RANGE COLUMNS partitioning on multiple columns NOT SUPPORTED!
+	*/
+	partitionSQL := []partSQL{
+		{
+			"partition by range columns (a) (partition p0 values less than ('k'), partition p1 values less than ('x'))",
+			false,
+		},
+		{
+			"partition by key (a) partitions 7",
+			false,
+		},
+	}
+	testPartitionFullCover(t, tableDefSQL, partitionSQL, true)
+}
+
 func TestPartitionIntFullCover(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	seed := time.Now().UnixNano()
-	//seed = 1710854203824599000
-	//seed = 1712349497788283000
-	//seed = 1712320419599937000
-	//seed = 1712859709189901000
-	//seed = 1712860656573279000
-	//seed = 1712861900096081000
-	//seed = 1712861944771493000
-	t.Logf("seed: %d", seed)
-	seededRand := rand.New(rand.NewSource(seed))
 	tableDefSQL := []partCoverStruct{
 		// Note: some partitioning functions does not work with bigint!
 		{
@@ -2005,10 +2026,7 @@ func TestPartitionIntFullCover(t *testing.T) {
 	- RANGE COLUMNS partitioning on multiple columns NOT SUPPORTED!
 	*/
 	maxRange := 2000000
-	partitionSQL := []struct {
-		partSQL             string
-		canUseBatchPointGet bool
-	}{
+	partitionSQL := []partSQL{
 		{
 			"partition by range (a) (partition p0 values less than (1000000), partition p1 values less than (" + strconv.Itoa(maxRange) + "))",
 			true,
@@ -2031,81 +2049,7 @@ func TestPartitionIntFullCover(t *testing.T) {
 			false,
 		},
 	}
-	rows := 1000
-	rowData := make(map[any]string, rows)
-	ids := make([]any, 0, rows)
-	maxID := maxRange + 500000
-	for i := 0; i < rows; i++ {
-		var id int
-		for createNew := true; createNew; _, createNew = rowData[id] {
-			id = seededRand.Intn(maxID)
-		}
-		rowData[id] = randString(seededRand, 1, 20)
-		ids = append(ids, id)
-	}
-	filler := strings.Repeat("Filler", 1024/6)
-
-	for i, testTbl := range tableDefSQL {
-		cols := testTbl.columns
-		keys := testTbl.keys
-		seededRand.Shuffle(len(cols), func(i, j int) { cols[i], cols[j] = cols[j], cols[i] })
-		seededRand.Shuffle(len(keys), func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
-		tblDef := "(" +
-			strings.Join(cols, ",\n")
-		if len(keys) > 0 {
-			tblDef += ",\n" + strings.Join(keys, ",\n")
-		}
-		tblDef += ")"
-
-		// Get the non-partitioned results to compare with the partitioned tables ones.
-		tk.MustExec("CREATE TABLE tNorm " + tblDef)
-		batchSize := 10
-		for i := 0; i < len(ids); i += batchSize {
-			// TODO: optimize by batching/bigger transactions/prepared stmt
-			sql := "INSERT INTO tNorm (a, b, c) VALUES "
-			for j := 0; i+j < len(rowData) && j < batchSize; j++ {
-				if ids[i+j].(int) > maxRange {
-					continue
-				}
-				if sql[len(sql)-1] == ')' {
-					sql += ","
-				}
-				sql += "(" + strconv.Itoa(ids[i+j].(int)) + ", '" + rowData[ids[i+j].(int)] + "', '" + filler + "')"
-			}
-			if sql[len(sql)-1] == ')' {
-				tk.MustExec(sql)
-			}
-		}
-		for j, part := range partitionSQL {
-			currTest := fmt.Sprintf("t: %d, p:%d", i, j)
-			comment := "/* " + currTest + " */"
-			tk.MustExec("CREATE TABLE t " + tblDef + " " + part.partSQL + " " + comment)
-			tk.MustExec("insert into t select * from tNorm " + comment)
-			// Don't require global stats for using dynamic prune mode
-			tk.MustExec(`set tidb_opt_fix_control='44262:ON' ` + comment)
-
-			/* TODO:
-			- Batch point get (fast plan)
-			  x Via PK/Handle
-			  x Via Index
-			x Table scan
-			- Table Reader (what plan is that? Is always relying on Table scan?)
-			x Index lookup
-			- Index Reader (what plan is that? Is it always relying on Index Lookup?)
-			*/
-
-			// Possible variations:
-			// - static/dynamic tidb_partition_prune_mode
-
-			preparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest)
-			nonPreparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest)
-			preparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet)
-			nonpreparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet && testTbl.pointGetExplain != nil)
-
-			tk.MustExec("drop table t")
-		}
-		tk.MustExec("DROP TABLE tNorm")
-	}
+	testPartitionFullCover(t, tableDefSQL, partitionSQL, false)
 }
 
 func getIdStr(id any) string {
