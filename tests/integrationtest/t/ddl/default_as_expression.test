@@ -12,7 +12,6 @@ create table t5 (c int(10), c1 date default (date_format(now(),_utf8mb4'%Y-%m-%d
 create table t6 (c int(10), c1 varchar(256) default (date_format(now(),'%b %d %Y %h:%i %p')));
 -- error 3770
 create table t7 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H:%i:%s %p')));
--- error 1674
 alter table t0 add column c2 date default (date_format(now(),'%Y-%m'));
 # insert records
 SET @x := NOW();
@@ -91,8 +90,6 @@ create table t1 (c int(10), c1 varchar(256) default (REPLACE(UPPER('dfdkj-kjkl-d
 alter table t add column c2 varchar(32) default (REPLACE(UPPER(UUID()), '-', ''));
 -- error 1674
 alter table t add column c3 int default (UPPER(UUID()));
-# Alter support "REPLACE(UPPER('dfdkj-kjkl-d'), '-', '')", we need to support this DDL.
--- error 1674
 alter table t add column c4 int default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', ''));
 
 # insert records
@@ -143,10 +140,9 @@ set session sql_mode=@sqlMode;
 create table t6 (c int(10), c1 varchar(32) default (str_to_date(upper('1980-01-01'),'%Y-%m-%d')));
 -- error 3770
 create table t6 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01',upper('%Y-%m-%d'))));
-# TODO: We need to support it.
--- error 1674
+-- error 0,1292
+alter table t0 add column c3 datetime default (str_to_date('1980-01-01','%Y-%m-%d'));
 alter table t0 add column c3 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d'));
--- error 1674
 alter table t0 add column c4 int default (str_to_date('1980-01-01','%Y-%m-%d'));
 
 # insert records
@@ -216,6 +212,7 @@ create table t2 (c int(10), c1 varchar(256) default (upper(substring_index('fjks
 create table t2 (c int(10), c1 varchar(256) default (upper(substring_index(user(),'x',1))));
 -- error 1674
 alter table t add column c2 varchar(32) default (upper(substring_index(user(),'@',1)));
+# We don't support "upper(substring_index('fjks@jkkl','@',1))", so we return an error as (upper(substring_index(user(),'@',1))).
 -- error 1674
 alter table t add column c3 int default (upper(substring_index('fjks@jkkl','@',1)));
 -- error 1292
