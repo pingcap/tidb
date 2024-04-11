@@ -1806,6 +1806,143 @@ type partCoverStruct struct {
 	pointGetExplain []string
 }
 
+func TestPartitionVarcharSinglePKFullCover(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	seed := time.Now().UnixNano()
+	t.Logf("seed: %d", seed)
+	seededRand := rand.New(rand.NewSource(seed))
+	tableDefSQL := []partCoverStruct{
+		// Note: some partitioning functions does not work with bigint!
+		{
+			[]string{"a varchar(255) primary key auto_increment", "b varchar(255)", "c text"},
+			[]string{"key(b)"},
+			[]string{"handle:"},
+		},
+		{
+			[]string{"a varchar(255) primary key", "b varchar(255)", "c text"},
+			[]string{"key (b)"},
+			[]string{"handle:"},
+		},
+		{
+			[]string{"a varchar(255)", "b varchar(255)", "c text"},
+			[]string{"key (b)", "unique index a(a)"},
+			[]string{"index:a"},
+		},
+		{
+			[]string{"a varchar(255)", "b varchar(255)", "c text"},
+			[]string{"key (b)"},
+			nil,
+		},
+		{
+			[]string{"a varchar(255)", "b varchar(255)", "c text"},
+			[]string{"key (b)", "key (a)"},
+			nil,
+		},
+	}
+	/* TODO:
+	- KEY partitioning on a single column, varchar column types
+	- KEY partitioning on multiple columns NOT SUPPORTED!
+	(LIST needs its own tailored test, due to each value needs to be
+	defined).
+	- LIST partitioning on a single column
+	- LIST partitioning on an expression (one or more columns) NOT SUPPORTED?
+	- LIST COLUMNS partitioning on a single column, varchar
+	- LIST COLUMNS partitioning on multiple columns NOT SUPPORTED!
+	- RANGE partitioning on other expressions or multiple columns NOT SUPPORTED?
+	- RANGE COLUMNS partitioning on a single column, datetime, varchar
+	- RANGE COLUMNS partitioning on multiple columns NOT SUPPORTED!
+	*/
+	partitionSQL := []struct {
+		partSQL             string
+		canUseBatchPointGet bool
+	}{
+		{
+			"partition by range (a) (partition p0 values less than ('m'), partition p1 values less than (maxvalue))",
+			true,
+		},
+		{
+			"partition by range columns (a) (partition p0 values less than ('k'), partition p1 values less than ('x'))",
+			false,
+		},
+		{
+			"partition by key (a) partitions 7",
+			false,
+		},
+	}
+	rows := 1000
+	rowData := make(map[int]string, rows)
+	ids := make([]int, 0, rows)
+	maxID := 2000000
+	for i := 0; i < rows; i++ {
+		var id int
+		for createNew := true; createNew; _, createNew = rowData[id] {
+			id = seededRand.Intn(maxID)
+		}
+		rowData[id] = randString(seededRand, 1, 20)
+		ids = append(ids, id)
+	}
+	filler := strings.Repeat("Filler", 1024/6)
+
+	for i, testTbl := range tableDefSQL {
+		cols := testTbl.columns
+		keys := testTbl.keys
+		seededRand.Shuffle(len(cols), func(i, j int) { cols[i], cols[j] = cols[j], cols[i] })
+		seededRand.Shuffle(len(keys), func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
+		tblDef := "(" +
+			strings.Join(cols, ",\n")
+		if len(keys) > 0 {
+			tblDef += ",\n" + strings.Join(keys, ",\n")
+		}
+		tblDef += ")"
+
+		// Get the non-partitioned results to compare with the partitioned tables ones.
+		tk.MustExec("CREATE TABLE tNorm " + tblDef)
+		batchSize := 10
+		for i := 0; i < len(ids); i += batchSize {
+			// TODO: optimize by batching/bigger transactions/prepared stmt
+			sql := "INSERT INTO tNorm (a, b, c) VALUES "
+			for j := 0; i+j < len(rowData) && j < batchSize; j++ {
+				if j > 0 {
+					sql += ","
+				}
+				sql += "(" + strconv.Itoa(ids[i+j]) + ", '" + rowData[ids[i+j]] + "', '" + filler + "')"
+			}
+			tk.MustExec(sql)
+		}
+		for j, part := range partitionSQL {
+			currTest := fmt.Sprintf("t: %d, p:%d", i, j)
+			comment := "/* " + currTest + " */"
+			tk.MustExec("CREATE TABLE t " + tblDef + " " + part.partSQL + " " + comment)
+			tk.MustExec("insert into t select * from tNorm " + comment)
+			// Don't require global stats for using dynamic prune mode
+			tk.MustExec(`set tidb_opt_fix_control='44262:ON' ` + comment)
+
+			/* TODO:
+			- Batch point get (fast plan)
+			  x Via PK/Handle
+			  x Via Index
+			x Table scan
+			- Table Reader (what plan is that? Is always relying on Table scan?)
+			x Index lookup
+			- Index Reader (what plan is that? Is it always relying on Index Lookup?)
+			*/
+
+			// Possible variations:
+			// - static/dynamic tidb_partition_prune_mode
+
+			preparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest)
+			nonPreparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest)
+			preparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet)
+			nonpreparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet && testTbl.pointGetExplain != nil)
+
+			tk.MustExec("drop table t")
+		}
+		tk.MustExec("DROP TABLE tNorm")
+	}
+}
+
 func TestPartitionIntFullCover(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1814,6 +1951,8 @@ func TestPartitionIntFullCover(t *testing.T) {
 	//seed = 1710854203824599000
 	//seed = 1712349497788283000
 	//seed = 1712320419599937000
+	//seed = 1712859709189901000
+	//seed = 1712860656573279000
 	t.Logf("seed: %d", seed)
 	seededRand := rand.New(rand.NewSource(seed))
 	tableDefSQL := []partCoverStruct{
@@ -1862,16 +2001,17 @@ func TestPartitionIntFullCover(t *testing.T) {
 	- RANGE COLUMNS partitioning on a single column, datetime, varchar
 	- RANGE COLUMNS partitioning on multiple columns NOT SUPPORTED!
 	*/
+	maxRange := 2000000
 	partitionSQL := []struct {
 		partSQL             string
 		canUseBatchPointGet bool
 	}{
 		{
-			"partition by range (a) (partition p0 values less than (1000000), partition p1 values less than (2000000))",
+			"partition by range (a) (partition p0 values less than (1000000), partition p1 values less than (" + strconv.Itoa(maxRange) + "))",
 			true,
 		},
 		{
-			"partition by range (floor(a*0.5)*2) (partition p0 values less than (1000000), partition p1 values less than (2000000))",
+			"partition by range (floor(a*0.5)*2) (partition p0 values less than (1000000), partition p1 values less than (" + strconv.Itoa(maxRange) + "))",
 			false,
 		},
 		{
@@ -1891,7 +2031,7 @@ func TestPartitionIntFullCover(t *testing.T) {
 	rows := 1000
 	rowData := make(map[int]string, rows)
 	ids := make([]int, 0, rows)
-	maxID := 2000000
+	maxID := maxRange + 500000
 	for i := 0; i < rows; i++ {
 		var id int
 		for createNew := true; createNew; _, createNew = rowData[id] {
@@ -1916,9 +2056,22 @@ func TestPartitionIntFullCover(t *testing.T) {
 
 		// Get the non-partitioned results to compare with the partitioned tables ones.
 		tk.MustExec("CREATE TABLE tNorm " + tblDef)
-		for key := range rowData {
+		batchSize := 10
+		for i := 0; i < len(ids); i += batchSize {
 			// TODO: optimize by batching/bigger transactions/prepared stmt
-			tk.MustExec("INSERT INTO tNorm (a, b, c) VALUES(" + strconv.Itoa(key) + ", '" + rowData[key] + "', '" + filler + "')")
+			sql := "INSERT INTO tNorm (a, b, c) VALUES "
+			for j := 0; i+j < len(rowData) && j < batchSize; j++ {
+				if ids[i+j] > maxRange {
+					continue
+				}
+				if sql[len(sql)-1] == ')' {
+					sql += ","
+				}
+				sql += "(" + strconv.Itoa(ids[i+j]) + ", '" + rowData[ids[i+j]] + "', '" + filler + "')"
+			}
+			if sql[len(sql)-1] == ')' {
+				tk.MustExec(sql)
+			}
 		}
 		for j, part := range partitionSQL {
 			currTest := fmt.Sprintf("t: %d, p:%d", i, j)
@@ -1972,14 +2125,14 @@ func preparedStmtPointGet(t *testing.T, ids []int, tk *testkit.TestKit, testTbl 
 		idStr := strconv.Itoa(id)
 		tk.MustExec(`prepare stmt from '` + q + `' ` + comment)
 		tk.MustExec(`set @a := ` + idStr + " " + comment)
-		expect := getRowData(rowData, filler, cols, id)[0]
-		tk.MustQuery(`execute stmt using @a ` + comment).Check(testkit.Rows(expect))
+		expect := getRowData(rowData, filler, cols, id)
+		tk.MustQuery(`execute stmt using @a ` + comment).Check(testkit.Rows(expect...))
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		id = ids[seededRand.Intn(len(ids))]
 		idStr = strconv.Itoa(id)
 		tk.MustExec(`set @a := ` + idStr)
-		expect = getRowData(rowData, filler, cols, id)[0]
-		tk.MustQuery(`execute stmt using @a ` + comment).Check(testkit.Rows(expect))
+		expect = getRowData(rowData, filler, cols, id)
+		tk.MustQuery(`execute stmt using @a ` + comment).Check(testkit.Rows(expect...))
 		require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		tkProcess := tk.Session().ShowProcess()
 		ps := []*util.ProcessInfo{tkProcess}
@@ -1996,9 +2149,13 @@ func preparedStmtPointGet(t *testing.T, ids []int, tk *testkit.TestKit, testTbl 
 }
 
 func getRowData(rowData map[int]string, filler string, cols []string, id ...int) []string {
+	maxRange := 2000000
 	ret := make([]string, 0, len(id))
 	dup := make(map[int]struct{}, len(id))
 	for i := range id {
+		if id[i] >= maxRange {
+			continue
+		}
 		if _, ok := dup[id[i]]; ok {
 			continue
 		}
@@ -2025,8 +2182,7 @@ func getRowData(rowData map[int]string, filler string, cols []string, id ...int)
 	return ret
 }
 
-func preparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, pointGetExplain []string, seededRand *rand.Rand, rowData map[int]string, filler, currTest string, canUseBatchPointGet bool) {
-	// Test prepared statements
+func getRandCols(seededRand *rand.Rand) ([]string, bool) {
 	allCols := []string{"a", "b", "c", "space(1)"}
 	seededRand.Shuffle(len(allCols), func(i, j int) {
 		allCols[i], allCols[j] = allCols[j], allCols[i]
@@ -2039,6 +2195,12 @@ func preparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, poi
 			break
 		}
 	}
+	return cols, hasSpaceCol
+}
+
+func preparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, pointGetExplain []string, seededRand *rand.Rand, rowData map[int]string, filler, currTest string, canUseBatchPointGet bool) {
+	// Test prepared statements
+	cols, hasSpaceCol := getRandCols(seededRand)
 	queries := []struct {
 		sql               string
 		usesBatchPointGet bool
@@ -2092,20 +2254,14 @@ func preparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, poi
 		expect = getRowData(rowData, filler, cols, a2, b2, c2)
 		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(expect...))
 		if !tk.Session().GetSessionVars().FoundInPlanCache {
-			// Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized
-			// Warning 1105 skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, Handles length diff
 			warn := tk.MustQuery("show warnings " + comment)
-			if a == b || a == c || b == c {
-				// previous plan removed at least one of the duplicate
-				// argument.
-				require.Equal(t, "Warning", warn.Rows()[0][0])
-				require.Equal(t, "1105", warn.Rows()[0][1])
-				require.Equal(t, "skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, Handles length diff", warn.Rows()[0][2])
-			} else {
-				warn.CheckContain("Warning 1105 skip ")
-				require.False(t, q.usesBatchPointGet && canUseBatchPointGet,
-					fmt.Sprintf("Not found in cache, should mean that one of these is false, q.usesBatchPointGet (%v) canUseBatchPointGet (%v)", q.usesBatchPointGet, canUseBatchPointGet))
-			}
+			// previous plan removed at least one of the duplicate
+			// argument.
+			require.Equal(t, "Warning", warn.Rows()[0][0])
+			require.Equal(t, "1105", warn.Rows()[0][1])
+			// skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, Handles length diff
+			// skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, IndexValue length diff
+			warn.MultiCheckContain([]string{"skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, ", " length diff"})
 		}
 		tk.MustExec(`deallocate prepare stmt`)
 	}
@@ -2118,25 +2274,32 @@ func nonPreparedStmtPointGet(t *testing.T, ids []int, tk *testkit.TestKit, testT
 	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
 	id := ids[seededRand.Intn(len(ids))]
 	idStr := strconv.Itoa(id)
-	tk.MustQuery(`select a,b,c from t where a = ` + idStr).Check(testkit.Rows(idStr + " " + rowData[id] + " " + filler))
+	cols, hasSpaceCol := getRandCols(seededRand)
+	sql := `select ` + strings.Join(cols, ",") + ` from t where a = `
+	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, id)...))
+	prevId := id
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	id = ids[seededRand.Intn(len(ids))]
 	idStr = strconv.Itoa(id)
-	tk.MustQuery(`select a,b,c from t where a = ` + idStr).Check(testkit.Rows(idStr + " " + rowData[id] + " " + filler))
-	require.Equal(t, usePlanCache, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, id)...))
+	if usePlanCache != tk.Session().GetSessionVars().FoundInPlanCache {
+		require.Equal(t, usePlanCache || hasSpaceCol, tk.Session().GetSessionVars().FoundInPlanCache, fmt.Sprintf("id: %d, prev id: %d", id, prevId))
+	}
 	id = ids[seededRand.Intn(len(ids))]
 	idStr = strconv.Itoa(id)
-	tk.MustQuery(`select a,b,c from t where a = ` + idStr).Check(testkit.Rows(idStr + " " + rowData[id] + " " + filler))
-	require.Equal(t, usePlanCache, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, id)...))
+	if usePlanCache || hasSpaceCol != tk.Session().GetSessionVars().FoundInPlanCache {
+		require.Equal(t, usePlanCache || hasSpaceCol, tk.Session().GetSessionVars().FoundInPlanCache)
+	}
 	id = ids[seededRand.Intn(len(ids))]
 	idStr = strconv.Itoa(id)
-	tk.MustQuery(`select a,b,c from t where a = ` + idStr).Check(testkit.Rows(idStr + " " + rowData[id] + " " + filler))
-	require.Equal(t, usePlanCache, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, id)...))
+	require.Equal(t, usePlanCache || hasSpaceCol, tk.Session().GetSessionVars().FoundInPlanCache)
 	if usePlanCache {
 		tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`)
 		id = ids[seededRand.Intn(len(ids))]
 		idStr = strconv.Itoa(id)
-		tk.MustQuery(`select a,b,c from t where a = ` + idStr).Check(testkit.Rows(idStr + " " + rowData[id] + " " + filler))
+		tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, id)...))
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	}
 }
@@ -2145,6 +2308,7 @@ func nonpreparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, 
 	// Test prepared statements
 	usePlanCache := len(pointGetExplain) == 0
 	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
+	// TODO: Fix columns
 	queries := []struct {
 		sql               string
 		usesBatchPointGet bool
@@ -2178,7 +2342,6 @@ func nonpreparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, 
 		// TODO: Test corner cases, where:
 		// - No values matching a partition
 		// - some values does not match any partition
-		// - duplicate values
 		a, b, c := ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))]
 		query := fmt.Sprintf(q.sql+" %s", a, b, c, comment)
 		tk.MustQuery(query).Sort().Check(testkit.Rows(getRowData(rowData, filler, []string{"a", "b", "c"}, a, b, c)...))
@@ -2188,12 +2351,8 @@ func nonpreparedStmtBatchPointGet(t *testing.T, ids []int, tk *testkit.TestKit, 
 		tk.MustQuery(query).Sort().Check(testkit.Rows(getRowData(rowData, filler, []string{"a", "b", "c"}, a, b, c)...))
 		if q.canUsePlanCache && usePlanCache && !tk.Session().GetSessionVars().FoundInPlanCache {
 			tk.MustQuery("show warnings " + comment).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
-			//} else {
-			// TODO: still check warnings?
 		}
 		res := tk.MustQuery(fmt.Sprintf("explain %s", query))
-		//if q.usesBatchPointGet && len(pointGetExplain) > 0 && canUseBatchPointGet {
-		// WASHERE: how to use q.usesBatchPointGet???
 		if len(pointGetExplain) > 0 && canUseBatchPointGet && q.usesBatchPointGet {
 			res.MultiCheckContain(
 				append([]string{"Batch_Point_Get"}, pointGetExplain...))
