@@ -98,6 +98,11 @@ func TestKey(t *testing.T) {
 	buildKeyTypes = []*types.FieldType{stringTp, intTp}
 	probeKeyTypes = []*types.FieldType{stringTp, intTp}
 	testFunc(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes)
+	buildKeyIndex = []int{2, 0, 1}
+	buildTypes = []*types.FieldType{stringTp, intTp, binaryStringTp, uintTp}
+	buildKeyTypes = []*types.FieldType{stringTp, intTp, binaryStringTp}
+	probeKeyTypes = []*types.FieldType{stringTp, intTp, binaryStringTp}
+	testFunc(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes)
 }
 
 func TestKeepRows(t *testing.T) {
@@ -118,6 +123,56 @@ func TestKeepRows(t *testing.T) {
 	}
 	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, 1, true, false, true)
 	chk := chunk.GenRandomChunks(buildTypes, 2049)
+	hashJoinCtx := &PartitionedHashJoinCtx{
+		SessCtx:         mock.NewContext(),
+		PartitionNumber: 1,
+		hashTableMeta:   meta,
+	}
+	rowTables := make([]*rowTable, hashJoinCtx.PartitionNumber)
+	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, rowTables)
+	builder.appendRemainingRowLocations(rowTables)
+	require.NoError(t, err, "processOneChunk returns error")
+	// all rows should be converted to row format, even for the rows that contains null key
+	require.Equal(t, uint64(2049), rowTables[0].rowCount())
+	validJoinKeyRowIndex := 0
+	for i := 0; i < chk.NumRows(); i++ {
+		if (builder.filterVector != nil && !builder.filterVector[i]) || (builder.nullKeyVector != nil && builder.nullKeyVector[i]) {
+			continue
+		}
+		validKeyPos := rowTables[0].getValidJoinKeyPos(validJoinKeyRowIndex)
+		require.Equal(t, i, validKeyPos, "valid key pos not match, index = "+strconv.Itoa(i))
+		validJoinKeyRowIndex++
+	}
+	validKeyPos := rowTables[0].getValidJoinKeyPos(validJoinKeyRowIndex)
+	require.Equal(t, -1, validKeyPos, "validKeyPos must be -1 at the end of test")
+}
+
+func TestChunkWithSel(t *testing.T) {
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	uintTp := types.NewFieldType(mysql.TypeLonglong)
+	uintTp.AddFlag(mysql.UnsignedFlag)
+	buildKeyIndex := []int{0}
+	buildTypes := []*types.FieldType{intTp, uintTp, uintTp}
+	buildKeyTypes := []*types.FieldType{intTp}
+	probeKeyTypes := []*types.FieldType{intTp}
+
+	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, []int{}, false)
+	buildSchema := &expression.Schema{}
+	for _, tp := range buildTypes {
+		buildSchema.Append(&expression.Column{
+			RetType: tp,
+		})
+	}
+	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, 1, true, false, true)
+	chk := chunk.GenRandomChunks(buildTypes, 2049)
+	sel := make([]int, 0, 2049)
+	for i := 0; i < chk.NumRows(); i++ {
+		if i%3 == 0 {
+			continue
+		}
+		sel = append(sel, i)
+	}
+	chk.SetSel(sel)
 	hashJoinCtx := &PartitionedHashJoinCtx{
 		SessCtx:         mock.NewContext(),
 		PartitionNumber: 1,
