@@ -16,6 +16,7 @@ go_library(
         "@com_github_google_btree//:btree",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",
+        "@com_github_pkg_errors//:errors",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],

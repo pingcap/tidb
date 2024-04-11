@@ -47,7 +47,7 @@ backupv2_size=`grep "backup-data-size" "${BACKUPMETAV2_LOG}" | grep -oP '\[\K[^\
 echo "backup meta v2 backup size is ${backupv2_size}"
 export GO_FAILPOINTS=""
 
-if [[ "$(wc -l <$PROGRESS_FILE)" == "1" ]] && [[ $(grep -c "range" $PROGRESS_FILE) == "1" ]];
+if [[ "$(wc -l <$PROGRESS_FILE)" == "1" ]] && [[ $(grep -c "region" $PROGRESS_FILE) == "1" ]];
 then
   echo "use the correct progress unit"
 else
