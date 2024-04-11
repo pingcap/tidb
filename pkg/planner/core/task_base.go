@@ -178,6 +178,7 @@ func (t *MppTask) MemoryUsage() (sum int64) {
 	return
 }
 
+// ConvertToRootTaskImpl implements Task interface.
 func (t *MppTask) ConvertToRootTaskImpl(ctx PlanContext) *RootTask {
 	// In disaggregated-tiflash mode, need to consider generated column.
 	tryExpandVirtualColumn(t.p)
