@@ -57,7 +57,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+<<<<<<< HEAD
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
+=======
+	"github.com/pingcap/tidb/pkg/parser/terror"
+>>>>>>> 31b3440dc75 (executor: fix goroutine leak when builder panic (#52471))
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -4506,11 +4510,20 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	canReorderHandles bool,
 	memTracker *memory.Tracker,
 	interruptSignal *atomic.Value,
-) (exec.Executor, error) {
-	childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+) (executor exec.Executor, err error) {
+	var childExec exec.Executor
+	childExec, err = builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = util.GetRecoverError(r)
+		}
+		if err != nil {
+			terror.Log(exec.Close(childExec))
+		}
+	}()
 
 	e := &ProjectionExec{
 		BaseExecutor:     exec.NewBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
@@ -4525,9 +4538,16 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	if int64(v.StatsCount()) < int64(builder.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
+	failpoint.Inject("buildProjectionForIndexJoinPanic", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			panic("buildProjectionForIndexJoinPanic")
+		}
+	})
 	err = e.open(ctx)
-
-	return e, err
+	if err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 // buildRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
