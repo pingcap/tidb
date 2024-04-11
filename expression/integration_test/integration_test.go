@@ -8025,3 +8025,23 @@ func TestIssue50850(t *testing.T) {
 		testkit.Rows("01", "31", "34", "5D", "65", "A5", "A6", "B1", "D5", "FF"))
 	tk.MustExec("drop table if exists t3;")
 }
+
+func TestIssue51765(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id varbinary(16))")
+	tk.MustExec("create table t1(id char(16) charset utf8mb4 collate utf8mb4_general_ci)")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec(`insert into t1 values ("Hello World")`)
+
+	tk.MustQuery("select collation(ifnull(concat(NULL), '~'))").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(ifnull(concat(NULL),ifnull(concat(NULL),'~')))").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(ifnull(concat(id),'~')) from t;").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(ifnull(concat(NULL),ifnull(concat(id),'~'))) from t;").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(ifnull(concat(id),ifnull(concat(id),'~'))) from t;").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(ifnull(concat(NULL),id)) from t1;").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(ifnull(concat(NULL),ifnull(concat(NULL),id))) from t1;").Check(testkit.Rows("utf8mb4_general_ci"))
+}
