@@ -15,11 +15,20 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 var (
 	_ Task = &RootTask{}
+	_ Task = &MppTask{}
 )
 
 // Task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -103,4 +112,114 @@ func (t *RootTask) MemoryUsage() (sum int64) {
 		sum += t.p.MemoryUsage()
 	}
 	return sum
+}
+
+// MppTask can not :
+// 1. keep order
+// 2. support double read
+// 3. consider virtual columns.
+// 4. TODO: partition prune after close
+type MppTask struct {
+	p PhysicalPlan
+
+	partTp   property.MPPPartitionType
+	hashCols []*property.MPPPartitionColumn
+
+	// rootTaskConds record filters of TableScan that cannot be pushed down to TiFlash.
+
+	// For logical plan like: HashAgg -> Selection -> TableScan, if filters in Selection cannot be pushed to TiFlash.
+	// Planner will generate physical plan like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> PhysicalTableScan(cop tiflash)
+	// Because planner will make mppTask invalid directly then use copTask directly.
+
+	// But in DisaggregatedTiFlash mode, cop and batchCop protocol is disabled, so we have to consider this situation for mppTask.
+	// When generating PhysicalTableScan, if prop.TaskTp is RootTaskType, mppTask will be converted to rootTask,
+	// and filters in rootTaskConds will be added in a Selection which will be executed in TiDB.
+	// So physical plan be like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> ExchangeSender -> PhysicalTableScan(mpp tiflash)
+	rootTaskConds []expression.Expression
+	tblColHists   *statistics.HistColl
+}
+
+// Count implements Task interface.
+func (t *MppTask) Count() float64 {
+	return t.p.StatsInfo().RowCount
+}
+
+// Copy implements Task interface.
+func (t *MppTask) Copy() Task {
+	nt := *t
+	return &nt
+}
+
+// Plan implements Task interface.
+func (t *MppTask) Plan() PhysicalPlan {
+	return t.p
+}
+
+// Invalid implements Task interface.
+func (t *MppTask) Invalid() bool {
+	return t.p == nil
+}
+
+// ConvertToRootTask implements Task interface.
+func (t *MppTask) ConvertToRootTask(ctx PlanContext) *RootTask {
+	return t.Copy().(*MppTask).ConvertToRootTaskImpl(ctx)
+}
+
+// MemoryUsage return the memory usage of mppTask
+func (t *MppTask) MemoryUsage() (sum int64) {
+	if t == nil {
+		return
+	}
+
+	sum = size.SizeOfInterface + size.SizeOfInt + size.SizeOfSlice + int64(cap(t.hashCols))*size.SizeOfPointer
+	if t.p != nil {
+		sum += t.p.MemoryUsage()
+	}
+	return
+}
+
+// ConvertToRootTaskImpl implements Task interface.
+func (t *MppTask) ConvertToRootTaskImpl(ctx PlanContext) *RootTask {
+	// In disaggregated-tiflash mode, need to consider generated column.
+	tryExpandVirtualColumn(t.p)
+	sender := PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_PassThrough,
+	}.Init(ctx, t.p.StatsInfo())
+	sender.SetChildren(t.p)
+
+	p := PhysicalTableReader{
+		tablePlan: sender,
+		StoreType: kv.TiFlash,
+	}.Init(ctx, t.p.QueryBlockOffset())
+	p.SetStats(t.p.StatsInfo())
+	collectPartitionInfosFromMPPPlan(p, t.p)
+	rt := &RootTask{}
+	rt.SetPlan(p)
+
+	if len(t.rootTaskConds) > 0 {
+		// Some Filter cannot be pushed down to TiFlash, need to add Selection in rootTask,
+		// so this Selection will be executed in TiDB.
+		_, isTableScan := t.p.(*PhysicalTableScan)
+		_, isSelection := t.p.(*PhysicalSelection)
+		if isSelection {
+			_, isTableScan = t.p.Children()[0].(*PhysicalTableScan)
+		}
+		if !isTableScan {
+			// Need to make sure oriTaskPlan is TableScan, because rootTaskConds is part of TableScan.FilterCondition.
+			// It's only for TableScan. This is ensured by converting mppTask to rootTask just after TableScan is built,
+			// so no other operators are added into this mppTask.
+			logutil.BgLogger().Error("expect Selection or TableScan for mppTask.p", zap.String("mppTask.p", t.p.TP()))
+			return invalidTask
+		}
+		selectivity, _, err := cardinality.Selectivity(ctx, t.tblColHists, t.rootTaskConds, nil)
+		if err != nil {
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			selectivity = SelectionFactor
+		}
+		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.GetPlan().StatsInfo().Scale(selectivity), rt.GetPlan().QueryBlockOffset())
+		sel.fromDataSource = true
+		sel.SetChildren(rt.GetPlan())
+		rt.SetPlan(sel)
+	}
+	return rt
 }

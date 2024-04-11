@@ -276,7 +276,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(
 		}
 
 		// Optimize by shuffle executor to running in parallel manner.
-		if _, isMpp := curTask.(*mppTask); !isMpp && prop.IsSortItemEmpty() {
+		if _, isMpp := curTask.(*MppTask); !isMpp && prop.IsSortItemEmpty() {
 			// Currently, we do not regard shuffled plan as a new plan.
 			curTask = optimizeByShuffle(curTask, p.Plan.SCtx())
 		}
@@ -357,7 +357,7 @@ func (p *LogicalSequence) iterateChildPlan(
 		if childTask != nil && childTask.Invalid() {
 			return nil, 0, nil, nil
 		}
-		_, isMpp := childTask.(*mppTask)
+		_, isMpp := childTask.(*MppTask)
 		if !isMpp && prop.IsFlashProp() {
 			break
 		}
@@ -382,7 +382,7 @@ func (p *LogicalSequence) iterateChildPlan(
 		return nil, 0, nil, nil
 	}
 
-	if _, ok := lastChildTask.(*mppTask); !ok && lastChildProp.CTEProducerStatus == property.AllCTECanMpp {
+	if _, ok := lastChildTask.(*MppTask); !ok && lastChildProp.CTEProducerStatus == property.AllCTECanMpp {
 		return nil, 0, nil, nil
 	}
 
@@ -472,7 +472,7 @@ func getTaskPlanCost(t Task, pop *coreusage.PhysicalOptimizeOp) (float64, bool, 
 				indexPartialCost += partialCost
 			}
 		}
-	case *mppTask:
+	case *MppTask:
 		taskType = property.MppTaskType
 	default:
 		return 0, false, errors.New("unknown task type")
@@ -2443,7 +2443,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			return invalidTask, nil
 		}
 		// ********************************** future deprecated end **************************/
-		mppTask := &mppTask{
+		mppTask := &MppTask{
 			p:           ts,
 			partTp:      property.AnyType,
 			tblColHists: ds.TblColHists,
@@ -2695,7 +2695,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	return rTsk
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats *property.StatsInfo) *mppTask {
+func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *MppTask, stats *property.StatsInfo) *MppTask {
 	filterCondition, rootTaskConds := SplitSelCondsWithVirtualColumn(ts.filterCondition)
 	var newRootConds []expression.Expression
 	filterCondition, newRootConds = expression.PushDownExprs(GetPushDownCtx(ts.SCtx()), filterCondition, ts.StoreType)
@@ -2852,7 +2852,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, counter *Plan
 		if prop.MPPPartitionTp != property.AnyType {
 			return invalidTask, 1, nil
 		}
-		t = &mppTask{
+		t = &MppTask{
 			p:           pcte,
 			partTp:      prop.MPPPartitionTp,
 			hashCols:    prop.MPPPartitionCols,
