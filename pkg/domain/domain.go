@@ -2235,9 +2235,20 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
 	// Wait for the stats worker to finish the initialization.
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
-	<-do.StatsHandle().InitStatsDone
-	do.wg.Run(func() { do.autoAnalyzeWorker(owner) }, "autoAnalyzeWorker")
-	do.wg.Run(func() { do.analyzeJobsCleanupWorker(owner) }, "analyzeJobsCleanupWorker")
+	do.wg.Run(
+		func() {
+			<-do.StatsHandle().InitStatsDone
+			do.autoAnalyzeWorker(owner)
+		},
+		"autoAnalyzeWorker",
+	)
+	do.wg.Run(
+		func() {
+			<-do.StatsHandle().InitStatsDone
+			do.analyzeJobsCleanupWorker(owner)
+		},
+		"analyzeJobsCleanupWorker",
+	)
 	return nil
 }
 
