@@ -46,6 +46,25 @@ func ExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) 
 	return
 }
 
+// ProjectionExpressionsToPBList converts PhysicalProjection's expressions to tipb.Expr list for new plan.
+// It doesn't check type for top level column expression, since top level column expression doesn't imply any executions
+func ProjectionExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
+	pc := PbConverter{client: client, ctx: ctx}
+	for _, expr := range exprs {
+		var v *tipb.Expr
+		if column, ok := expr.(*Column); ok {
+			v = pc.columnToPBExpr(column, false)
+		} else {
+			v = pc.ExprToPB(expr)
+		}
+		if v == nil {
+			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
+		}
+		pbExpr = append(pbExpr, v)
+	}
+	return
+}
+
 // PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
@@ -69,7 +88,7 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	case *CorrelatedColumn:
 		return pc.conOrCorColToPBExpr(expr)
 	case *Column:
-		return pc.columnToPBExpr(x)
+		return pc.columnToPBExpr(x, true)
 	case *ScalarFunction:
 		return pc.scalarFuncToPBExpr(x)
 	}
@@ -190,20 +209,22 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 	return ft1
 }
 
-func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
+func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr {
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
-	switch column.GetType().GetType() {
-	case mysql.TypeBit:
-		if !IsPushDownEnabled(ast.TypeStr(column.GetType().GetType()), kv.TiKV) {
+	if checkType {
+		switch column.GetType().GetType() {
+		case mysql.TypeBit:
+			if !IsPushDownEnabled(ast.TypeStr(column.GetType().GetType()), kv.TiKV) {
+				return nil
+			}
+		case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 			return nil
-		}
-	case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
-		return nil
-	case mysql.TypeEnum:
-		if !IsPushDownEnabled("enum", kv.UnSpecified) {
-			return nil
+		case mysql.TypeEnum:
+			if !IsPushDownEnabled("enum", kv.UnSpecified) {
+				return nil
+			}
 		}
 	}
 
