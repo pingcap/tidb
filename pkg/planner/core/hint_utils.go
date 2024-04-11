@@ -38,17 +38,17 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
 		return nil
 	}
-	for _, op := range selectPlan {
-		p := op.Origin.(PhysicalPlan)
-		hints = genHintsFromSingle(p, nodeTp, op.StoreType, hints)
+	for _, fop := range selectPlan {
+		p := fop.Origin.(PhysicalPlan)
+		hints = genHintsFromSingle(p, nodeTp, fop.StoreType, hints)
 	}
 	for _, cte := range flat.CTEs {
-		for i, op := range cte {
-			if i == 0 || !op.IsRoot {
+		for i, fop := range cte {
+			if i == 0 || !fop.IsRoot {
 				continue
 			}
-			p := op.Origin.(PhysicalPlan)
-			hints = genHintsFromSingle(p, nodeTp, op.StoreType, hints)
+			p := fop.Origin.(PhysicalPlan)
+			hints = genHintsFromSingle(p, nodeTp, fop.StoreType, hints)
 		}
 	}
 	return h.RemoveDuplicatedHints(hints)

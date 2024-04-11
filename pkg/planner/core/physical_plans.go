@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -256,7 +257,7 @@ func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, st
 	return reader
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalTableReader)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
@@ -275,13 +276,13 @@ func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
-// SetChildren overrides PhysicalPlan SetChildren interface.
+// SetChildren overrides op.PhysicalPlan SetChildren interface.
 func (p *PhysicalTableReader) SetChildren(children ...PhysicalPlan) {
 	p.tablePlan = children[0]
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
@@ -289,7 +290,7 @@ func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 	return corCols
 }
 
-// BuildPlanTrace implements PhysicalPlan interface.
+// BuildPlanTrace implements op.PhysicalPlan interface.
 func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
 	rp := p.basePhysicalPlan.BuildPlanTrace()
 	if p.tablePlan != nil {
@@ -298,8 +299,9 @@ func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
 	return rp
 }
 
-func (p *PhysicalTableReader) appendChildCandidate(op *physicalOptimizeOp) {
-	p.basePhysicalPlan.appendChildCandidate(op)
+// AppendChildCandidate implements PhysicalPlan interface.
+func (p *PhysicalTableReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+	p.basePhysicalPlan.AppendChildCandidate(op)
 	appendChildCandidate(p, p.tablePlan, op)
 }
 
@@ -318,7 +320,7 @@ type PhysicalIndexReader struct {
 	PlanPartInfo PhysPlanPartInfo
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalIndexReader) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalIndexReader)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
@@ -336,7 +338,7 @@ func (p *PhysicalIndexReader) Clone() (PhysicalPlan, error) {
 	return cloned, err
 }
 
-// SetSchema overrides PhysicalPlan SetSchema interface.
+// SetSchema overrides op.PhysicalPlan SetSchema interface.
 func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
 		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
@@ -351,13 +353,13 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	}
 }
 
-// SetChildren overrides PhysicalPlan SetChildren interface.
+// SetChildren overrides op.PhysicalPlan SetChildren interface.
 func (p *PhysicalIndexReader) SetChildren(children ...PhysicalPlan) {
 	p.indexPlan = children[0]
 	p.SetSchema(nil)
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.IndexPlans {
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
@@ -365,7 +367,7 @@ func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 	return corCols
 }
 
-// BuildPlanTrace implements PhysicalPlan interface.
+// BuildPlanTrace implements op.PhysicalPlan interface.
 func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
 	rp := p.basePhysicalPlan.BuildPlanTrace()
 	if p.indexPlan != nil {
@@ -374,8 +376,9 @@ func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
 	return rp
 }
 
-func (p *PhysicalIndexReader) appendChildCandidate(op *physicalOptimizeOp) {
-	p.basePhysicalPlan.appendChildCandidate(op)
+// AppendChildCandidate implements PhysicalPlan interface.
+func (p *PhysicalIndexReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+	p.basePhysicalPlan.AppendChildCandidate(op)
 	if p.indexPlan != nil {
 		appendChildCandidate(p, p.indexPlan, op)
 	}
@@ -457,7 +460,7 @@ type PhysicalIndexLookUpReader struct {
 	keepOrder   bool
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalIndexLookUpReader)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
@@ -492,7 +495,7 @@ func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
@@ -513,7 +516,7 @@ func (p *PhysicalIndexLookUpReader) GetAvgTableRowSize() float64 {
 	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 }
 
-// BuildPlanTrace implements PhysicalPlan interface.
+// BuildPlanTrace implements op.PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) BuildPlanTrace() *tracing.PlanTrace {
 	rp := p.basePhysicalPlan.BuildPlanTrace()
 	if p.indexPlan != nil {
@@ -525,8 +528,9 @@ func (p *PhysicalIndexLookUpReader) BuildPlanTrace() *tracing.PlanTrace {
 	return rp
 }
 
-func (p *PhysicalIndexLookUpReader) appendChildCandidate(op *physicalOptimizeOp) {
-	p.basePhysicalPlan.appendChildCandidate(op)
+// AppendChildCandidate implements PhysicalPlan interface.
+func (p *PhysicalIndexLookUpReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+	p.basePhysicalPlan.AppendChildCandidate(op)
 	if p.indexPlan != nil {
 		appendChildCandidate(p, p.indexPlan, op)
 	}
@@ -606,7 +610,7 @@ func (p *PhysicalIndexMergeReader) GetAvgTableRowSize() float64 {
 	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.TablePlans[len(p.TablePlans)-1]), p.Schema().Columns, false, false)
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
@@ -622,7 +626,7 @@ func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expressio
 	return corCols
 }
 
-// BuildPlanTrace implements PhysicalPlan interface.
+// BuildPlanTrace implements op.PhysicalPlan interface.
 func (p *PhysicalIndexMergeReader) BuildPlanTrace() *tracing.PlanTrace {
 	rp := p.basePhysicalPlan.BuildPlanTrace()
 	if p.tablePlan != nil {
@@ -634,8 +638,9 @@ func (p *PhysicalIndexMergeReader) BuildPlanTrace() *tracing.PlanTrace {
 	return rp
 }
 
-func (p *PhysicalIndexMergeReader) appendChildCandidate(op *physicalOptimizeOp) {
-	p.basePhysicalPlan.appendChildCandidate(op)
+// AppendChildCandidate implements PhysicalPlan interface.
+func (p *PhysicalIndexMergeReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+	p.basePhysicalPlan.AppendChildCandidate(op)
 	if p.tablePlan != nil {
 		appendChildCandidate(p, p.tablePlan, op)
 	}
@@ -731,7 +736,7 @@ type PhysicalIndexScan struct {
 	usedStatsInfo *stmtctx.UsedStatsInfoForTable
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalIndexScan) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalIndexScan)
 	*cloned = *p
@@ -759,7 +764,7 @@ func (p *PhysicalIndexScan) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalIndexScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.AccessCondition))
 	for _, expr := range p.AccessCondition {
@@ -913,7 +918,7 @@ type PhysicalTableScan struct {
 	maxWaitTimeMs     int
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	clonedScan := new(PhysicalTableScan)
 	*clonedScan = *ts
@@ -940,7 +945,7 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	return clonedScan, nil
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (ts *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(ts.AccessCondition)+len(ts.LateMaterializationFilterCondition))
 	for _, expr := range ts.AccessCondition {
@@ -1077,7 +1082,7 @@ type PhysicalProjection struct {
 	AvoidColumnEvaluator bool
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalProjection) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalProjection)
 	*cloned = *p
@@ -1090,7 +1095,7 @@ func (p *PhysicalProjection) Clone() (PhysicalPlan, error) {
 	return cloned, err
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Exprs))
 	for _, expr := range p.Exprs {
@@ -1127,7 +1132,7 @@ func (lt *PhysicalTopN) GetPartitionBy() []property.SortItem {
 	return lt.PartitionBy
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (lt *PhysicalTopN) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalTopN)
 	*cloned = *lt
@@ -1147,7 +1152,7 @@ func (lt *PhysicalTopN) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (lt *PhysicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(lt.ByItems))
 	for _, item := range lt.ByItems {
@@ -1181,7 +1186,7 @@ type PhysicalApply struct {
 	OuterSchema []*expression.CorrelatedColumn
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (la *PhysicalApply) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalApply)
 	base, err := la.PhysicalHashJoin.Clone()
@@ -1198,7 +1203,7 @@ func (la *PhysicalApply) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (la *PhysicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.PhysicalHashJoin.ExtractCorrelatedCols()
 	for i := len(corCols) - 1; i >= 0; i-- {
@@ -1276,7 +1281,7 @@ func (p *basePhysicalJoin) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalJoi
 	return cloned, nil
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *basePhysicalJoin) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
 	for _, fun := range p.LeftConditions {
@@ -1358,7 +1363,7 @@ type PhysicalHashJoin struct {
 	runtimeFilterList []*RuntimeFilter
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalHashJoin) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalHashJoin)
 	base, err := p.basePhysicalJoin.cloneWithSelf(cloned)
@@ -1381,7 +1386,7 @@ func (p *PhysicalHashJoin) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalHashJoin) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.EqualConditions)+len(p.NAEqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
 	for _, fun := range p.EqualConditions {
@@ -1459,7 +1464,7 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 type PhysicalIndexJoin struct {
 	basePhysicalJoin
 
-	innerTask task
+	innerTask Task
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges ranger.MutableRanges
@@ -1579,7 +1584,7 @@ type PhysicalExchangeReceiver struct {
 	IsCTEReader bool
 }
 
-// Clone implment PhysicalPlan interface.
+// Clone implment op.PhysicalPlan interface.
 func (p *PhysicalExchangeReceiver) Clone() (PhysicalPlan, error) {
 	np := new(PhysicalExchangeReceiver)
 	base, err := p.basePhysicalPlan.cloneWithSelf(np)
@@ -1637,7 +1642,7 @@ func (p PhysicalExpand) Init(ctx PlanContext, stats *property.StatsInfo, offset 
 	return &p
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalExpand) Clone() (PhysicalPlan, error) {
 	if len(p.LevelExprs) > 0 {
 		return p.cloneV2()
@@ -1706,7 +1711,7 @@ type PhysicalExchangeSender struct {
 	CompressionMode kv.ExchangeCompressionMode
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
 	np := new(PhysicalExchangeSender)
 	base, err := p.basePhysicalPlan.cloneWithSelf(np)
@@ -1734,7 +1739,7 @@ func (p *PhysicalExchangeSender) MemoryUsage() (sum int64) {
 	return
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalMergeJoin) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalMergeJoin)
 	base, err := p.basePhysicalJoin.cloneWithSelf(cloned)
@@ -1794,7 +1799,7 @@ func (p *PhysicalLimit) GetPartitionBy() []property.SortItem {
 	return p.PartitionBy
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalLimit)
 	*cloned = *p
@@ -1827,7 +1832,7 @@ type PhysicalUnionAll struct {
 	mpp bool
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalUnionAll) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalUnionAll)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
@@ -1927,7 +1932,7 @@ func (p *basePhysicalAgg) getAggFuncCostFactor(isMPP bool) (factor float64) {
 	return
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *basePhysicalAgg) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.GroupByItems)+len(p.AggFuncs))
 	for _, expr := range p.GroupByItems {
@@ -1970,7 +1975,7 @@ func (p *PhysicalHashAgg) getPointer() *basePhysicalAgg {
 	return &p.basePhysicalAgg
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalHashAgg) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalHashAgg)
 	base, err := p.basePhysicalAgg.cloneWithSelf(cloned)
@@ -2018,7 +2023,7 @@ func (p *PhysicalStreamAgg) getPointer() *basePhysicalAgg {
 	return &p.basePhysicalAgg
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalStreamAgg) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalStreamAgg)
 	base, err := p.basePhysicalAgg.cloneWithSelf(cloned)
@@ -2048,7 +2053,7 @@ type PhysicalSort struct {
 	IsPartialSort bool
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (ls *PhysicalSort) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalSort)
 	cloned.IsPartialSort = ls.IsPartialSort
@@ -2063,7 +2068,7 @@ func (ls *PhysicalSort) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (ls *PhysicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(ls.ByItems))
 	for _, item := range ls.ByItems {
@@ -2121,7 +2126,7 @@ type PhysicalUnionScan struct {
 	HandleCols HandleCols
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalUnionScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0)
 	for _, cond := range p.Conditions {
@@ -2178,7 +2183,7 @@ type PhysicalSelection struct {
 	// hasRFConditions bool
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalSelection) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalSelection)
 	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
@@ -2190,7 +2195,7 @@ func (p *PhysicalSelection) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Conditions))
 	for _, cond := range p.Conditions {
@@ -2217,7 +2222,7 @@ type PhysicalMaxOneRow struct {
 	basePhysicalPlan
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalMaxOneRow) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalMaxOneRow)
 	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
@@ -2284,7 +2289,7 @@ type PhysicalWindow struct {
 	storeTp kv.StoreType
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.WindowFuncDescs))
 	for _, windowFunc := range p.WindowFuncDescs {
@@ -2307,7 +2312,7 @@ func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 	return corCols
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalWindow) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalWindow)
 	*cloned = *p
@@ -2419,7 +2424,7 @@ type PhysicalShuffleReceiverStub struct {
 
 	// Receiver points to `executor.shuffleReceiver`.
 	Receiver unsafe.Pointer
-	// DataSource is the PhysicalPlan of the Receiver.
+	// DataSource is the op.PhysicalPlan of the Receiver.
 	DataSource PhysicalPlan
 }
 
@@ -2504,7 +2509,7 @@ func BuildMergeJoinPlan(ctx PlanContext, joinType JoinType, leftKeys, rightKeys 
 	return PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(ctx, nil, 0)
 }
 
-// SafeClone clones this PhysicalPlan and handles its panic.
+// SafeClone clones this op.PhysicalPlan and handles its panic.
 func SafeClone(v PhysicalPlan) (_ PhysicalPlan, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -2579,7 +2584,7 @@ type PhysicalCTETable struct {
 	IDForStorage int
 }
 
-// ExtractCorrelatedCols implements PhysicalPlan interface.
+// ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := ExtractCorrelatedCols4PhysicalPlan(p.SeedPlan)
 	if p.RecurPlan != nil {
@@ -2608,7 +2613,7 @@ func (p *PhysicalCTE) ExplainID() fmt.Stringer {
 	})
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalCTE) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalCTE)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
@@ -2751,7 +2756,7 @@ func (p *PhysicalCTEStorage) MemoryUsage() (sum int64) {
 	return
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalCTEStorage) Clone() (PhysicalPlan, error) {
 	cloned, err := (*PhysicalCTE)(p).Clone()
 	if err != nil {
@@ -2760,7 +2765,7 @@ func (p *PhysicalCTEStorage) Clone() (PhysicalPlan, error) {
 	return (*PhysicalCTEStorage)(cloned.(*PhysicalCTE)), nil
 }
 
-func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOptimizeOp) {
+func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *coreusage.PhysicalOptimizeOp) {
 	candidate := &tracing.CandidatePlanTrace{
 		PlanTrace: &tracing.PlanTrace{
 			ID:          pp.ID(),
@@ -2769,9 +2774,9 @@ func appendChildCandidate(origin PhysicalPlan, pp PhysicalPlan, op *physicalOpti
 			// TODO: trace the cost
 		},
 	}
-	op.tracer.AppendCandidate(candidate)
-	pp.appendChildCandidate(op)
-	op.tracer.Candidates[origin.ID()].AppendChildrenID(pp.ID())
+	op.AppendCandidate(candidate)
+	pp.AppendChildCandidate(op)
+	op.GetTracer().Candidates[origin.ID()].AppendChildrenID(pp.ID())
 }
 
 // PhysicalSequence is the physical representation of LogicalSequence. Used to mark the CTE producers in the plan tree.
@@ -2806,7 +2811,7 @@ func (*PhysicalSequence) ExplainInfo() string {
 	return res
 }
 
-// Clone implements PhysicalPlan interface.
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalSequence) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalSequence)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
