@@ -81,6 +81,8 @@ func TestInit(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(7, 1))
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_records_v2.*").
 		WillReturnResult(sqlmock.NewResult(7, 1))
+	mock.ExpectExec("CREATE OR REPLACE VIEW `lightning_errors`\\.conflict_view.*").
+		WillReturnResult(sqlmock.NewResult(7, 1))
 	err = em.Init(ctx)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
