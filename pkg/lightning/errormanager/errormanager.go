@@ -958,7 +958,7 @@ func (em *ErrorManager) Output() string {
 		{Name: "#", WidthMax: 6},
 		{Name: "Error Type", WidthMax: 20},
 		{Name: "Error Count", WidthMax: 12},
-		{Name: "Error Data Table", WidthMax: 42},
+		{Name: "Error Data Table", WidthMax: 44},
 	})
 	t.SetRowPainter(func(table.Row) text.Colors {
 		return text.Colors{text.FgRed}
