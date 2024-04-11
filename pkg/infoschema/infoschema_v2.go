@@ -526,9 +526,10 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 
 	partInfo := tbl.Meta().GetPartitionInfo()
 	var def *model.PartitionDefinition
-	for _, pdef := range partInfo.Definitions {
+	for i := 0; i < len(partInfo.Definitions); i++ {
+		pdef := &partInfo.Definitions[i]
 		if pdef.ID == partitionID {
-			def = &pdef
+			def = pdef
 			break
 		}
 	}
