@@ -112,7 +112,7 @@ const (
 			error       text NOT NULL,
 			row_id 	    bigint NOT NULL COMMENT 'the row id of the conflicted row',
 			row_data    text NOT NULL COMMENT 'the row data of the conflicted row',
-			INDEX (task_id, table_name)
+			KEY (task_id, table_name)
 		);
 	`
 
