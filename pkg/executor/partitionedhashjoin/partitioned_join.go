@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"hash/fnv"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -40,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -345,58 +343,19 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 		}
 	}()
 	partitionNumber := w.HashJoinCtx.PartitionNumber
-	hashTableMeta := w.HashJoinCtx.hashTableMeta
+	hashJoinCtx := w.HashJoinCtx
+	hashTableMeta := hashJoinCtx.hashTableMeta
 	w.rowTables = make([]*rowTable, partitionNumber)
 
-	builder := &rowTableBuilder{
-		buildKeyIndex:       w.BuildKeyColIdx,
-		buildSchema:         w.BuildSideExec.Schema(),
-		rowColumnsOrder:     w.HashJoinCtx.hashTableMeta.rowColumnsOrder,
-		columnsSize:         w.HashJoinCtx.hashTableMeta.columnsSize,
-		crrntSizeOfRowTable: make([]int64, partitionNumber),
-		startPosInRawData:   make([][]uint64, partitionNumber),
-		hasNullableKey:      w.HasNullableKey,
-		hasFilter:           w.HashJoinCtx.BuildFilter != nil,
-		keepFilteredRows:    w.HashJoinCtx.needScanRowTableAfterProbeDone,
-	}
-	builder.initBuffer()
+	builder := createRowTableBuilder(w.BuildKeyColIdx, w.BuildSideExec.Schema(), hashTableMeta, partitionNumber, w.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
 	for chk := range srcChkCh {
 		start := time.Now()
-		builder.ResetBuffer(chk)
-		if w.HashJoinCtx.BuildFilter != nil {
-			builder.filterVector, err = expression.VectorizedFilter(w.HashJoinCtx.SessCtx.GetExprCtx().GetEvalCtx(), w.HashJoinCtx.SessCtx.GetSessionVars().EnableVectorizedExpression, w.HashJoinCtx.BuildFilter, chunk.NewIterator4Chunk(chk), builder.filterVector)
-			if err != nil {
-				return err
-			}
-		}
-		// split partition
-		for index, colIdx := range builder.buildKeyIndex {
-			err := codec.SerializeKeys(typeCtx, chk, builder.buildSchema.Columns[colIdx].RetType, colIdx, builder.usedRows, builder.filterVector, builder.nullKeyVector, hashTableMeta.serializeModes[index], builder.serializedKeyVectorBuffer)
-			if err != nil {
-				return err
-			}
-		}
-
-		h := fnv.New64()
-		fakePartIndex := 0
-		for logicalRowIndex, physicalRowIndex := range builder.usedRows {
-			if (builder.filterVector != nil && !builder.filterVector[physicalRowIndex]) || (builder.nullKeyVector != nil && builder.nullKeyVector[physicalRowIndex]) {
-				builder.hashValue[logicalRowIndex] = uint64(fakePartIndex)
-				builder.partIdxVector[logicalRowIndex] = fakePartIndex
-				fakePartIndex = (fakePartIndex + 1) % partitionNumber
-				continue
-			}
-			h.Write(builder.serializedKeyVectorBuffer[logicalRowIndex])
-			hash := h.Sum64()
-			builder.hashValue[logicalRowIndex] = hash
-			builder.partIdxVector[logicalRowIndex] = int(hash % uint64(partitionNumber))
-			h.Reset()
-		}
-
-		// 2. build rowtable
-		builder.appendToRowTable(typeCtx, chk, w.rowTables, hashTableMeta)
+		err = builder.processOneChunk(chk, typeCtx, w.HashJoinCtx, w.rowTables)
 		cost += int64(time.Since(start))
+		if err != nil {
+			return err
+		}
 	}
 	start := time.Now()
 	builder.appendRemainingRowLocations(w.rowTables)
