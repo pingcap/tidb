@@ -104,6 +104,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		return errors.Trace(err)
 	}
 
+	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
 	for i := 0; i < len(stmt.dbName); i++ {
 		_, ok := is.TableByID(stmt.tbls[i].Meta().ID)
@@ -114,21 +115,21 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			}
 			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
 			stmt.tbls[i] = tblByName
-			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().TableVersion
+			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().SchemaVersion
 		}
 		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
 		if err != nil {
 			schemaNotMatch = true
 			continue
 		}
-		if stmt.tbls[i].Meta().TableVersion != newTbl.Meta().TableVersion {
+		if stmt.tbls[i].Meta().SchemaVersion != newTbl.Meta().SchemaVersion {
 			schemaNotMatch = true
 		}
 		stmt.tbls[i] = newTbl
-		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().TableVersion
+		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().SchemaVersion
 	}
 
-	// step 3: check schema version
+	// step 4: check schema version
 	if schemaNotMatch || stmt.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
@@ -151,7 +152,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmt.SchemaVersion = is.SchemaMetaVersion()
 	}
 
-	// step 4: handle expiration
+	// step 5: handle expiration
 	// If the lastUpdateTime less than expiredTimeStamp4PC,
 	// it means other sessions have executed 'admin flush instance plan_cache'.
 	// So we need to clear the current session's plan cache.

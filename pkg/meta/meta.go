@@ -942,7 +942,7 @@ func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 		return errors.Trace(err)
 	}
 
-	tableInfo.TableVersion++
+	tableInfo.SchemaVersion++
 
 	data, err := json.Marshal(tableInfo)
 	if err != nil {

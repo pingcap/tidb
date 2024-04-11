@@ -279,7 +279,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	do := GetDomain(sctx)
 
 	// Retrieve all tables
-	pairs, err := ExtractTableNames(ctx, sctx, execStmts, dbName)
+	pairs, err := extractTableNames(ctx, sctx, execStmts, dbName)
 	if err != nil {
 		return errors.AddStack(fmt.Errorf("plan replayer: invalid SQL text, err: %v", err))
 	}
@@ -754,8 +754,8 @@ func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanR
 	return err
 }
 
-// ExtractTableNames extracts table names from the given stmts.
-func ExtractTableNames(ctx context.Context, sctx sessionctx.Context,
+// extractTableNames extracts table names from the given stmts.
+func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 	execStmts []ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,

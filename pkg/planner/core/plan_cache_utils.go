@@ -17,8 +17,6 @@ package core
 import (
 	"cmp"
 	"context"
-	"fmt"
-	"hash/fnv"
 	"math"
 	"slices"
 	"sort"
@@ -208,7 +206,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		}
 		dbName = append(dbName, db.Name)
 		tbls = append(tbls, tbl)
-		relateVersion[id] = tbl.Meta().TableVersion
+		relateVersion[id] = tbl.Meta().SchemaVersion
 	}
 
 	preparedObj := &PlanCacheStmt{
@@ -267,7 +265,7 @@ type planCacheKey struct {
 	hash        []byte
 }
 
-func hashInt64Uint64Map(m map[int64]uint64) uint64 {
+func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 	keys := make([]int64, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -276,12 +274,12 @@ func hashInt64Uint64Map(m map[int64]uint64) uint64 {
 		return keys[i] < keys[j]
 	})
 
-	h := fnv.New64a()
 	for _, k := range keys {
 		v := m[k]
-		_, _ = fmt.Fprintf(h, "%d:%d", k, v)
+		b = codec.EncodeInt(b, k)
+		b = codec.EncodeUint(b, v)
 	}
-	return h.Sum64()
+	return b
 }
 
 // Hash implements Key interface.
@@ -294,7 +292,7 @@ func (key *planCacheKey) Hash() []byte {
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
-		key.hash = codec.EncodeUint(key.hash, hashInt64Uint64Map(key.tblVersionMap))
+		key.hash = hashInt64Uint64Map(key.hash, key.tblVersionMap)
 		key.hash = codec.EncodeInt(key.hash, key.lastUpdatedSchemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
@@ -516,6 +514,8 @@ type PlanCacheStmt struct {
 
 	// below fields are for PointGet short path
 	SchemaVersion int64
+
+	// RelateVersion stores the true cache plan table schema version, since each table schema can be updated separately in transaction.
 	RelateVersion map[int64]uint64
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
