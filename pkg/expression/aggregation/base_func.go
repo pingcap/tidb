@@ -96,7 +96,7 @@ func (a *baseFuncDesc) TypeInfer(ctx expression.BuildContext) error {
 	case ast.AggFuncSum:
 		a.typeInfer4Sum()
 	case ast.AggFuncAvg:
-		a.typeInfer4Avg(ctx.GetSessionVars().GetDivPrecisionIncrement())
+		a.typeInfer4Avg(ctx.GetEvalCtx().GetDivPrecisionIncrement())
 	case ast.AggFuncGroupConcat:
 		a.typeInfer4GroupConcat(ctx)
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow,

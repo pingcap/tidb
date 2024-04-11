@@ -258,3 +258,8 @@ func (p *StalenessTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snaps
 
 // OnLocalTemporaryTableCreated will not be called for StalenessTxnContextProvider
 func (p *StalenessTxnContextProvider) OnLocalTemporaryTableCreated() {}
+
+// SetOptionsBeforeCommit sets the options before commit, because stale read txn is read only, no need to set options.
+func (p *StalenessTxnContextProvider) SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error {
+	return nil
+}

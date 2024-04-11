@@ -236,7 +236,7 @@ func TestConstantFolding(t *testing.T) {
 		{
 			condition: func(ctx BuildContext) Expression {
 				expr := newFunction(ctx, ast.ConcatWS, newColumn(0), NewNull())
-				ctx.GetSessionVars().StmtCtx.InNullRejectCheck = true
+				ctx.SetInNullRejectCheck(true)
 				return expr
 			},
 			result: "concat_ws(cast(Column#0, var_string(20)), <nil>)",
