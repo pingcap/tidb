@@ -51,7 +51,7 @@ func AsSctx(pctx PlanContext) (sessionctx.Context, error) {
 
 func enforceProperty(p *property.PhysicalProperty, tsk Task, ctx PlanContext) Task {
 	if p.TaskTp == property.MppTaskType {
-		mpp, ok := tsk.(*mppTask)
+		mpp, ok := tsk.(*MppTask)
 		if !ok || mpp.Invalid() {
 			return invalidTask
 		}
