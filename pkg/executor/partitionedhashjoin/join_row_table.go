@@ -186,7 +186,20 @@ func (rt *rowTable) getRowStart(rowIndex int) uintptr {
 			return rt.segments[segIndex].rowLocations[rowIndex]
 		}
 	}
-	panic("should not reach here")
+	return 0
+}
+
+func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
+	startOffset := 0
+	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
+		if rowIndex >= len(rt.segments[segIndex].validJoinKeyPos) {
+			rowIndex -= len(rt.segments[segIndex].validJoinKeyPos)
+			startOffset += len(rt.segments[segIndex].rowLocations)
+		} else {
+			return startOffset + rt.segments[segIndex].validJoinKeyPos[rowIndex]
+		}
+	}
+	return -1
 }
 
 type keyProp struct {
