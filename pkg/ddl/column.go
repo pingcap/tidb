@@ -1948,6 +1948,7 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (any, error) {
 	var err error
 	odValue := col.GetDefaultValue()
+	logutil.BgLogger().Info(fmt.Sprintf("112------default val: %v \n", odValue))
 	if odValue == nil && mysql.HasNotNullFlag(col.GetFlag()) {
 		switch col.GetType() {
 		// Just use enum field's first element for OriginDefaultValue.
@@ -1978,6 +1979,20 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 			odValue = types.NewTime(types.FromGoTime(t.UTC()), col.GetType(), col.GetDecimal()).String()
 		} else if col.GetType() == mysql.TypeDatetime {
 			odValue = types.NewTime(types.FromGoTime(t), col.GetType(), col.GetDecimal()).String()
+		}
+		return odValue, nil
+	}
+
+	if col.DefaultIsExpr {
+		oldValue := strings.ToLower(odValue.(string))
+		// It's checked in getFuncCallDefaultValue.
+		if strings.Contains(oldValue, fmt.Sprintf("%s(%s(),", ast.DateFormat, ast.Now)) || strings.Contains(oldValue, ast.StrToDate) {
+			odValue, err = table.GetColDefaultValue(ctx.GetExprCtx(), col)
+			if err != nil {
+				return nil, types.ErrInvalidDefault.GenWithStackByArgs(col.Name)
+			}
+		} else {
+			return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction.GenWithStackByArgs())
 		}
 	}
 	return odValue, nil
