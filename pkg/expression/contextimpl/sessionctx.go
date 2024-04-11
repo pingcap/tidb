@@ -194,8 +194,12 @@ func (ctx *SessionEvalContext) SQLMode() mysql.SQLMode {
 }
 
 // TypeCtx returns the types.Context
-func (ctx *SessionEvalContext) TypeCtx() types.Context {
-	return ctx.sctx.GetSessionVars().StmtCtx.TypeCtx()
+func (ctx *SessionEvalContext) TypeCtx() (tc types.Context) {
+	tc = ctx.sctx.GetSessionVars().StmtCtx.TypeCtx()
+	if intest.InTest {
+		exprctx.AssertLocationWithSessionVars(tc.Location(), ctx.sctx.GetSessionVars())
+	}
+	return
 }
 
 // ErrCtx returns the errctx.Context
