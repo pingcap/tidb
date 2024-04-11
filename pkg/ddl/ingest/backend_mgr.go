@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -48,18 +47,12 @@ type BackendCtxMgr interface {
 	) (BackendCtx, error)
 	Unregister(jobID int64)
 	Load(jobID int64) (BackendCtx, bool)
-
-	MarkJobProcessing(jobID int64) (ok bool)
-	MarkJobFinish()
 }
 
 type litBackendCtxMgr struct {
 	generic.SyncMap[int64, *litBackendCtx]
-	memRoot         MemRoot
-	diskRoot        DiskRoot
-	processingJobID int64
-	lastLoggingTime time.Time
-	mu              sync.Mutex
+	memRoot  MemRoot
+	diskRoot DiskRoot
 }
 
 func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
@@ -78,30 +71,6 @@ func newLitBackendCtxMgr(path string, memQuota uint64) BackendCtxMgr {
 		logutil.BgLogger().Warn("ingest backfill may not be available", zap.String("category", "ddl-ingest"), zap.Error(err))
 	}
 	return mgr
-}
-
-// MarkJobProcessing marks ingest backfill is processing.
-func (m *litBackendCtxMgr) MarkJobProcessing(jobID int64) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.processingJobID == 0 || m.processingJobID == jobID {
-		m.processingJobID = jobID
-		return true
-	}
-	if time.Since(m.lastLoggingTime) > 1*time.Minute {
-		logutil.BgLogger().Info("ingest backfill worker is already in used by another DDL job",
-			zap.String("category", "ddl-ingest"),
-			zap.Int64("processing job ID", m.processingJobID))
-		m.lastLoggingTime = time.Now()
-	}
-	return false
-}
-
-// MarkJobFinish marks ingest backfill is finished.
-func (m *litBackendCtxMgr) MarkJobFinish() {
-	m.mu.Lock()
-	m.processingJobID = 0
-	m.mu.Unlock()
 }
 
 // CheckAvailable checks if the ingest backfill is available.
