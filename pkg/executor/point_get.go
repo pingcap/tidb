@@ -17,6 +17,8 @@ package executor
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -148,6 +150,8 @@ type PointGetExecutor struct {
 	lock             bool
 	lockWaitTime     int64
 	rowDecoder       *rowcodec.ChunkDecoder
+	// datumDecoder is only used to decode datum, which can be used to calculate row checksum.
+	datumDecoder *rowcodec.DatumMapDecoder
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -392,11 +396,70 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 
+	err = fillRowChecksum(e.BaseExecutor.Ctx(), e.Schema(), val, req, e.datumDecoder, nil)
+	if err != nil {
+		return err
+	}
+
 	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex,
 		e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), req)
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+func shouldFillRowChecksum(schema *expression.Schema) (int, bool) {
+	for idx, col := range schema.Columns {
+		if col.ID == model.ExtraRowChecksumID {
+			return idx, true
+		}
+	}
+	return 0, false
+}
+
+func fillRowChecksum(
+	sctx sessionctx.Context, schema *expression.Schema, val []byte,
+	req *chunk.Chunk, decoder *rowcodec.DatumMapDecoder, buf []byte,
+) error {
+	if decoder == nil {
+		return nil
+	}
+	targetIndex, ok := shouldFillRowChecksum(schema)
+	if !ok {
+		return nil
+	}
+
+	datums, err := decoder.DecodeToDatumMap(val, nil)
+	if err != nil {
+		return err
+	}
+
+	colData := make([]rowcodec.ColData, len(datums))
+	for idx, datum := range datums {
+		column := &model.ColumnInfo{
+			ID:        schema.Columns[idx].ID,
+			FieldType: *schema.Columns[idx].RetType,
+		}
+		colData[idx] = rowcodec.ColData{
+			ColumnInfo: column,
+			Datum:      &datum,
+		}
+	}
+	row := rowcodec.RowData{
+		Cols: colData,
+		Data: buf,
+	}
+	if !sort.IsSorted(row) {
+		sort.Sort(row)
+	}
+	checksum, err := row.Checksum(sctx.GetSessionVars().StmtCtx.TimeZone())
+	if err != nil {
+		return err
+	}
+
+	result := strconv.FormatUint(uint64(checksum), 10)
+	req.AppendString(targetIndex, result)
 	return nil
 }
 
