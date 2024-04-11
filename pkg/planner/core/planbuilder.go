@@ -1555,7 +1555,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		}
 	}
 
-	cop := &copTask{
+	cop := &CopTask{
 		indexPlan:        is,
 		tablePlan:        ts,
 		tblColHists:      is.StatsInfo().HistColl,
