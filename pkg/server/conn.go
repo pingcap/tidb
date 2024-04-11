@@ -1139,9 +1139,15 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
-				var startTS uint64
-				if ctx := cc.getCtx(); ctx != nil && ctx.GetSessionVars() != nil && ctx.GetSessionVars().TxnCtx != nil {
-					startTS = ctx.GetSessionVars().TxnCtx.StartTS
+				var timestamp uint64
+				if ctx := cc.getCtx(); ctx != nil && ctx.GetSessionVars() != nil {
+					if ctx.GetSessionVars().TxnCtx != nil {
+						timestamp = ctx.GetSessionVars().TxnCtx.StartTS
+					}
+					if timestamp == 0 && ctx.GetSessionVars().StmtCtx != nil && ctx.GetSessionVars().StmtCtx.StaleReadTs > 0 {
+						// for state-read query.
+						timestamp = ctx.GetSessionVars().StmtCtx.StaleReadTs
+					}
 				}
 				logutil.Logger(ctx).Info("command dispatched failed",
 					zap.String("connInfo", cc.String()),
@@ -1149,7 +1155,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					zap.String("status", cc.SessionStatusToString()),
 					zap.Stringer("sql", getLastStmtInConn{cc}),
 					zap.String("txn_mode", txnMode),
-					zap.Uint64("timestamp", startTS),
+					zap.Uint64("timestamp", timestamp),
 					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
 				)
 			}

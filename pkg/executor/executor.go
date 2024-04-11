@@ -1993,6 +1993,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.TaskID = stmtctx.AllocateTaskID()
 	sc.CTEStorageMap = map[int]*CTEStorages{}
 	sc.IsStaleness = false
+	sc.StaleReadTs = 0
 	sc.LockTableIDs = make(map[int64]struct{})
 	sc.EnableOptimizeTrace = false
 	sc.OptimizeTracer = nil
