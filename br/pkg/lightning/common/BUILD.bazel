@@ -101,11 +101,7 @@ go_test(
     ],
     embed = [":common"],
     flaky = True,
-<<<<<<< HEAD:br/pkg/lightning/common/BUILD.bazel
-    shard_count = 21,
-=======
-    shard_count = 29,
->>>>>>> 555ce023522 (lightning: Don't log "received task config" in server mode (#52336)):pkg/lightning/common/BUILD.bazel
+    shard_count = 20,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/log",

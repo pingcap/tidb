@@ -531,38 +531,3 @@ func getSessionVariable(ctx context.Context, db *sql.DB, variable string) (value
 
 	return value, nil
 }
-<<<<<<< HEAD:br/pkg/lightning/common/util.go
-=======
-
-// IsFunctionNotExistErr checks if err is a function not exist error.
-func IsFunctionNotExistErr(err error, functionName string) bool {
-	return err != nil &&
-		(strings.Contains(err.Error(), "No database selected") ||
-			strings.Contains(err.Error(), fmt.Sprintf("%s does not exist", functionName)))
-}
-
-// IsRaftKV2 checks whether the raft-kv2 is enabled
-func IsRaftKV2(ctx context.Context, db *sql.DB) (bool, error) {
-	var (
-		getRaftKvVersionSQL       = "show config where type = 'tikv' and name = 'storage.engine'"
-		raftKv2                   = "raft-kv2"
-		tp, instance, name, value string
-	)
-
-	rows, err := db.QueryContext(ctx, getRaftKvVersionSQL)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		if err = rows.Scan(&tp, &instance, &name, &value); err != nil {
-			return false, errors.Trace(err)
-		}
-		if value == raftKv2 {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
-}
->>>>>>> 555ce023522 (lightning: Don't log "received task config" in server mode (#52336)):pkg/lightning/common/util.go
