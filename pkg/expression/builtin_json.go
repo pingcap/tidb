@@ -494,7 +494,7 @@ func (b *builtinJSONMergeSig) evalJSON(ctx EvalContext, row chunk.Row) (res type
 	// See https://dev.mysql.com/doc/refman/5.7/en/json-modification-functions.html#function_json-merge
 	if b.pbCode == tipb.ScalarFuncSig_JsonMergeSig {
 		tc := typeCtx(ctx)
-		tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("JSON_MERGE"))
+		tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("JSON_MERGE", ""))
 	}
 	return res, false, nil
 }
