@@ -73,11 +73,13 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 	// calcNeededBatchSize calculates the total batch size needed.
 	n1 := calcNeededBatchSize(alloc.base, int64(n), increment, offset, isUnsigned)
 
-	// The local rest is not enough for alloc, skip it.
+	// The local rest is not enough for alloc.
 	if uint64(alloc.base)+uint64(n1) > uint64(alloc.end) || alloc.base == 0 {
+		// consume the remain first
+		n1 = n1 - (alloc.end - alloc.base)
+
 		var newBase, newEnd int64
 		nextStep := int64(batch)
-		// Although it may skip a segment here, we still treat it as consumed.
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
@@ -88,7 +90,12 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 				return err1
 			}
 			// calcNeededBatchSize calculates the total batch size needed on new base.
-			n1 = calcNeededBatchSize(newBase, int64(n), increment, offset, isUnsigned)
+			if alloc.base == 0 {
+				alloc.base = newBase
+				alloc.end = newBase
+				n1 = calcNeededBatchSize(newBase, int64(n), increment, offset, isUnsigned)
+			}
+
 			// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
 			if nextStep < n1 {
 				nextStep = n1
@@ -107,7 +114,7 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 		if uint64(newBase) == math.MaxUint64 {
 			return 0, 0, errAutoincReadFailed
 		}
-		alloc.base, alloc.end = newBase, newEnd
+		alloc.end = newEnd
 	}
 	min = alloc.base
 	// Use uint64 n directly.
@@ -134,9 +141,11 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 		return 0, 0, errAutoincReadFailed
 	}
 
-	// The local rest is not enough for allocN, skip it.
+	// The local rest is not enough for allocN.
 	// If alloc.base is 0, the alloc may not be initialized, force fetch from remote.
 	if alloc.base+n1 > alloc.end || alloc.base == 0 {
+		n1 = n1 - (alloc.end - alloc.base)
+
 		var newBase, newEnd int64
 		nextStep := int64(batch)
 
@@ -149,7 +158,11 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 				return err1
 			}
 			// calcNeededBatchSize calculates the total batch size needed on global base.
-			n1 = calcNeededBatchSize(newBase, int64(n), increment, offset, isUnsigned)
+			if alloc.base == 0 {
+				alloc.base = newBase
+				alloc.end = newBase
+				n1 = calcNeededBatchSize(newBase, int64(n), increment, offset, isUnsigned)
+			}
 			// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
 			if nextStep < n1 {
 				nextStep = n1
@@ -168,7 +181,7 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 		if newBase == math.MaxInt64 {
 			return 0, 0, errAutoincReadFailed
 		}
-		alloc.base, alloc.end = newBase, newEnd
+		alloc.end = newEnd
 	}
 	min = alloc.base
 	alloc.base += n1
