@@ -15,7 +15,6 @@
 package core
 
 import (
-	math2 "math"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -54,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
@@ -862,51 +859,51 @@ func TryFastPlan(ctx PlanContext, node ast.Node) (p Plan) {
 	ctx.GetSessionVars().PlanID.Store(0)
 	ctx.GetSessionVars().PlanColumnID.Store(0)
 	switch x := node.(type) {
-//	case *ast.SelectStmt:
-//		defer func() {
-//			vars := ctx.GetSessionVars()
-//			if vars.SelectLimit != math2.MaxUint64 && p != nil {
-//				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("sql_select_limit is set, so point get plan is not activated"))
-//				p = nil
-//			}
-//			if vars.StmtCtx.EnableOptimizeTrace && p != nil {
-//				if vars.StmtCtx.OptimizeTracer == nil {
-//					vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
-//				}
-//				vars.StmtCtx.OptimizeTracer.SetFastPlan(p.BuildPlanTrace())
-//			}
-//		}()
-//		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
-//		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
-//		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
-//			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
-//				return
-//			}
-//			if tidbutil.IsMemDB(fp.dbName) {
-//				return nil
-//			}
-//			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
-//			p = fp
-//			return
-//		}
-//		if fp := tryPointGetPlan(ctx, x, isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
-//			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
-//				return nil
-//			}
-//			if tidbutil.IsMemDB(fp.dbName) {
-//				return nil
-//			}
-//			if fp.IsTableDual {
-//				tableDual := PhysicalTableDual{}
-//				tableDual.names = fp.outputNames
-//				tableDual.SetSchema(fp.Schema())
-//				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
-//				return
-//			}
-//			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
-//			p = fp
-//			return
-//		}
+	//	case *ast.SelectStmt:
+	//		defer func() {
+	//			vars := ctx.GetSessionVars()
+	//			if vars.SelectLimit != math2.MaxUint64 && p != nil {
+	//				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("sql_select_limit is set, so point get plan is not activated"))
+	//				p = nil
+	//			}
+	//			if vars.StmtCtx.EnableOptimizeTrace && p != nil {
+	//				if vars.StmtCtx.OptimizeTracer == nil {
+	//					vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
+	//				}
+	//				vars.StmtCtx.OptimizeTracer.SetFastPlan(p.BuildPlanTrace())
+	//			}
+	//		}()
+	//		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
+	//		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
+	//		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
+	//			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
+	//				return
+	//			}
+	//			if tidbutil.IsMemDB(fp.dbName) {
+	//				return nil
+	//			}
+	//			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
+	//			p = fp
+	//			return
+	//		}
+	//		if fp := tryPointGetPlan(ctx, x, isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
+	//			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
+	//				return nil
+	//			}
+	//			if tidbutil.IsMemDB(fp.dbName) {
+	//				return nil
+	//			}
+	//			if fp.IsTableDual {
+	//				tableDual := PhysicalTableDual{}
+	//				tableDual.names = fp.outputNames
+	//				tableDual.SetSchema(fp.Schema())
+	//				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
+	//				return
+	//			}
+	//			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
+	//			p = fp
+	//			return
+	//		}
 	case *ast.UpdateStmt:
 		return tryUpdatePointPlan(ctx, x)
 	case *ast.DeleteStmt:
