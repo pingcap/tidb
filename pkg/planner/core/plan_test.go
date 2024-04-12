@@ -535,7 +535,7 @@ func TestCopPaging(t *testing.T) {
 }
 
 func TestBuildFinalModeAggregation(t *testing.T) {
-	aggSchemaBuilder := func(sctx core.PlanContext, aggFuncs []*aggregation.AggFuncDesc) *expression.Schema {
+	aggSchemaBuilder := func(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc) *expression.Schema {
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs))...)
 		for _, agg := range aggFuncs {
 			newCol := &expression.Column{
@@ -549,7 +549,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	isFinalAggMode := func(mode aggregation.AggFunctionMode) bool {
 		return mode == aggregation.FinalMode || mode == aggregation.CompleteMode
 	}
-	checkResult := func(sctx core.PlanContext, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
+	checkResult := func(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
 		for partialIsCop := 0; partialIsCop < 2; partialIsCop++ {
 			for isMPPTask := 0; isMPPTask < 2; isMPPTask++ {
 				partial, final, _ := core.BuildFinalModeAggregation(sctx, &core.AggInfo{
