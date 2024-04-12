@@ -99,8 +99,6 @@ type BuildContext interface {
 	// Deprecated: This method is deprecated and may be removed in the future because it is coupled with statement.
 	// InInsertOrUpdate returns whether when are building an expression for insert or update statement.
 	InInsertOrUpdate() bool
-	// GetSessionVars gets the session variables.
-	GetSessionVars() *variable.SessionVars
 }
 
 // ExprContext contains full context for expression building and evaluating.
