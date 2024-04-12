@@ -1,4 +1,4 @@
-### tidb-lightning configuartion
+### tidb-lightning configuration
 [lightning]
 
 # Listening address for the HTTP server (set to empty string to disable).
@@ -63,7 +63,7 @@ max-backups = 14
 # cert-path = "/path/to/lightning.pem"
 # private key of this service.
 # key-path = "/path/to/lightning.key"
-# If set to true, lightning will redact sensitive infomation in log.
+# If set to true, lightning will redact sensitive information in log.
 # redact-info-log = false
 
 [checkpoint]

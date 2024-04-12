@@ -1,6 +1,6 @@
 # PD Configuration.
 [schedule]
-# Disbale Region Merge
+# Disable Region Merge
 max-merge-region-size = 0
 max-merge-region-keys = 0
 merge-schedule-limit = 0
