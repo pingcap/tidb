@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/vfs"
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
@@ -495,6 +496,25 @@ type Backend struct {
 
 var _ DiskUsage = (*Backend)(nil)
 var _ backend.Backend = (*Backend)(nil)
+
+// only used in tests
+type slowCreateFS struct {
+	vfs.FS
+}
+
+// WaitRMFolderChForTest is a channel for testing.
+var WaitRMFolderChForTest = make(chan struct{})
+
+func (s slowCreateFS) Create(name string) (vfs.File, error) {
+	if strings.Contains(name, "temporary") {
+		select {
+		case <-WaitRMFolderChForTest:
+		case <-time.After(1 * time.Second):
+			log.FromContext(context.Background()).Info("no one removes folder")
+		}
+	}
+	return s.FS.Create(name)
+}
 
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	dbPath := filepath.Join(storeDir, duplicateDBName)
