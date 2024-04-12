@@ -1108,7 +1108,7 @@ func TestSampleFileCompressRatio(t *testing.T) {
 	require.InDelta(t, ratio, 5000.0/float64(bf.Len()), 1e-5)
 }
 
-func TestSampleParquetDataSize(t *testing.T) {
+func testSampleParquetDataSize(t *testing.T, count int) {
 	s := newTestMydumpLoaderSuite(t)
 	store, err := storage.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
@@ -1133,8 +1133,13 @@ func TestSampleParquetDataSize(t *testing.T) {
 	t.Logf("seed: %d", seed)
 	rand.Seed(seed)
 	totalRowSize := 0
+<<<<<<< HEAD:br/pkg/lightning/mydump/loader_test.go
 	for i := 0; i < 1000; i++ {
 		kl := rand.Intn(20) + 1
+=======
+	for i := 0; i < count; i++ {
+		kl := rnd.Intn(20) + 1
+>>>>>>> 0362dc81fe8 (lightning: return 0 early on empty parquet files (#52519)):pkg/lightning/mydump/loader_test.go
 		key := make([]byte, kl)
 		kl, err = rand.Read(key)
 		require.NoError(t, err)
@@ -1166,3 +1171,19 @@ func TestSampleParquetDataSize(t *testing.T) {
 	// expected error within 10%, so delta = totalRowSize / 10
 	require.InDelta(t, totalRowSize, size, float64(totalRowSize)/10)
 }
+<<<<<<< HEAD:br/pkg/lightning/mydump/loader_test.go
+=======
+
+func TestSampleParquetDataSize(t *testing.T) {
+	t.Run("count=1000", func(t *testing.T) { testSampleParquetDataSize(t, 1000) })
+	t.Run("count=0", func(t *testing.T) { testSampleParquetDataSize(t, 0) })
+}
+
+func TestSetupOptions(t *testing.T) {
+	// those functions are only used in other components, add this to avoid they
+	// be deleted mistakenly.
+	_ = md.WithMaxScanFiles
+	_ = md.ReturnPartialResultOnError
+	_ = md.WithFileIterator
+}
+>>>>>>> 0362dc81fe8 (lightning: return 0 early on empty parquet files (#52519)):pkg/lightning/mydump/loader_test.go
