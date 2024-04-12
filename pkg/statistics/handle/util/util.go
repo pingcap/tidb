@@ -21,10 +21,8 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -233,6 +231,7 @@ func DurationToTS(d time.Duration) uint64 {
 	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
 }
 
+<<<<<<< HEAD
 // GetFullTableName returns the full table name.
 func GetFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string {
 	for _, schema := range is.AllSchemas() {
@@ -245,6 +244,8 @@ func GetFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string
 	return strconv.FormatInt(tblInfo.ID, 10)
 }
 
+=======
+>>>>>>> 69d7770335a (statistics: remove useless GetFullTableName (#52552))
 // JSONTable is used for dumping statistics.
 type JSONTable struct {
 	Columns           map[string]*JSONColumn `json:"columns"`

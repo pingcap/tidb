@@ -59,6 +59,84 @@ func NewStatsCacheImplForTest() (util.StatsCache, error) {
 
 // Update reads stats meta from store and updates the stats map.
 func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
+<<<<<<< HEAD
+=======
+	start := time.Now()
+	lastVersion := s.getLastVersion()
+	var (
+		rows []chunk.Row
+		err  error
+	)
+	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		rows, _, err = util.ExecRows(
+			sctx,
+			"SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version",
+			lastVersion,
+		)
+		return err
+	}); err != nil {
+		return errors.Trace(err)
+	}
+
+	tables := make([]*statistics.Table, 0, len(rows))
+	deletedTableIDs := make([]int64, 0, len(rows))
+
+	for _, row := range rows {
+		version := row.GetUint64(0)
+		physicalID := row.GetInt64(1)
+		modifyCount := row.GetInt64(2)
+		count := row.GetInt64(3)
+		table, ok := s.statsHandle.TableInfoByID(is, physicalID)
+		if !ok {
+			logutil.BgLogger().Debug(
+				"unknown physical ID in stats meta table, maybe it has been dropped",
+				zap.Int64("ID", physicalID),
+			)
+			deletedTableIDs = append(deletedTableIDs, physicalID)
+			continue
+		}
+		tableInfo := table.Meta()
+		// If the table is not updated, we can skip it.
+		if oldTbl, ok := s.Get(physicalID); ok &&
+			oldTbl.Version >= version &&
+			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+			continue
+		}
+		tbl, err := s.statsHandle.TableStatsFromStorage(
+			tableInfo,
+			physicalID,
+			false,
+			0,
+		)
+		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
+		if err != nil {
+			statslogutil.StatsLogger().Error(
+				"error occurred when read table stats",
+				zap.String("table", tableInfo.Name.O),
+				zap.Error(err),
+			)
+			continue
+		}
+		if tbl == nil {
+			deletedTableIDs = append(deletedTableIDs, physicalID)
+			continue
+		}
+		tbl.Version = version
+		tbl.RealtimeCount = count
+		tbl.ModifyCount = modifyCount
+		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
+		tables = append(tables, tbl)
+	}
+
+	s.UpdateStatsCache(tables, deletedTableIDs)
+	dur := time.Since(start)
+	tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
+	return nil
+}
+
+func (s *StatsCacheImpl) getLastVersion() uint64 {
+	// Get the greatest version of the stats meta table.
+>>>>>>> 69d7770335a (statistics: remove useless GetFullTableName (#52552))
 	lastVersion := s.MaxTableStatsVersion()
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
