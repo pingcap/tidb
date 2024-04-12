@@ -3281,6 +3281,25 @@ const (
 	BRIEOptionS3Provider
 	BRIEOptionS3RoleARN
 	BRIEOptionS3ExternalID
+	// TLS options
+	BRIEOptionTLSCA
+	BRIEOptionTLSCert
+	BRIEOptionTLSKey
+	// PD options
+	BRIEOptionPDAddress
+	// Azure Blob Storage options
+	BRIEOptionAZBlobAccessTier
+	BRIEOptionAZBlobAccountKey
+	BRIEOptionAZBlobAccountName
+	BRIEOptionAZBlobEncryptionKey
+	BRIEOptionAZBlobEncryptionScope
+	BRIEOptionAZBlobEndpoint
+	BRIEOptionAZBlobSASToken
+	// Google Cloud Storage options
+	BRIEOptionGCSCredentialsFile
+	BRIEOptionGCSEndpoint
+	BRIEOptionGCSPredefinedACL
+	BRIEOptionGCSStorageClass
 	// backup options
 	BRIEOptionBackupTimeAgo
 	BRIEOptionBackupTS
@@ -3419,6 +3438,36 @@ func (kind BRIEOptionType) String() string {
 		return "S3_ROLE_ARN"
 	case BRIEOptionS3ExternalID:
 		return "S3_EXTERNAL_ID"
+	case BRIEOptionTLSCA:
+		return "TLS_CA"
+	case BRIEOptionTLSCert:
+		return "TLS_CERT"
+	case BRIEOptionTLSKey:
+		return "TLS_KEY"
+	case BRIEOptionPDAddress:
+		return "PD"
+	case BRIEOptionAZBlobAccessTier:
+		return "AZBLOB_ACCESS_TIER"
+	case BRIEOptionAZBlobAccountKey:
+		return "AZBLOB_ACCOUNT_KEY"
+	case BRIEOptionAZBlobAccountName:
+		return "AZBLOB_ACCOUNT_NAME"
+	case BRIEOptionAZBlobEncryptionKey:
+		return "AZBLOB_ENCRYPTION_KEY"
+	case BRIEOptionAZBlobEncryptionScope:
+		return "AZBLOB_ENCRYPTION_SCOPE"
+	case BRIEOptionAZBlobEndpoint:
+		return "AZBLOB_ENDPOINT"
+	case BRIEOptionAZBlobSASToken:
+		return "AZBLOB_SAS_TOKEN"
+	case BRIEOptionGCSCredentialsFile:
+		return "GCS_CREDENTIALS_FILE"
+	case BRIEOptionGCSEndpoint:
+		return "GCS_ENDPOINT"
+	case BRIEOptionGCSPredefinedACL:
+		return "GCS_PREDEFINED_ACL"
+	case BRIEOptionGCSStorageClass:
+		return "GCS_STORAGE_CLASS"
 	case BRIEOptionFullBackupStorage:
 		return "FULL_BACKUP_STORAGE"
 	case BRIEOptionRestoredTS:
@@ -3457,7 +3506,7 @@ func (opt *BRIEOption) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(opt.Tp.String())
 	ctx.WritePlain(" = ")
 	switch opt.Tp {
-	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionUntilTS, BRIEOptionGCTTL,BRIEOptionS3Endpoint,BRIEOptionS3Region,BRIEOptionS3StorageClass,BRIEOptionS3ServerSideEncryption,BRIEOptionS3SSEKMSKeyId,BRIEOptionS3ACL,BRIEOptionS3Provider,BRIEOptionS3RoleARN,BRIEOptionS3ExternalID:
+	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionUntilTS, BRIEOptionGCTTL, BRIEOptionS3Endpoint, BRIEOptionS3Region, BRIEOptionS3StorageClass, BRIEOptionS3ServerSideEncryption, BRIEOptionS3SSEKMSKeyId, BRIEOptionS3ACL, BRIEOptionS3Provider, BRIEOptionS3RoleARN, BRIEOptionS3ExternalID, BRIEOptionTLSCA, BRIEOptionTLSCert, BRIEOptionTLSKey, BRIEOptionPDAddress, BRIEOptionAZBlobAccessTier, BRIEOptionAZBlobAccountKey, BRIEOptionAZBlobAccountName, BRIEOptionAZBlobEncryptionKey, BRIEOptionAZBlobEncryptionScope, BRIEOptionAZBlobEndpoint, BRIEOptionAZBlobSASToken, BRIEOptionGCSCredentialsFile, BRIEOptionGCSEndpoint, BRIEOptionGCSPredefinedACL, BRIEOptionGCSStorageClass:
 		ctx.WriteString(opt.StrValue)
 	case BRIEOptionBackupTimeAgo:
 		ctx.WritePlainf("%d ", opt.UintValue/1000)

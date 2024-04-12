@@ -348,6 +348,37 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			cfg.S3.RoleARN = opt.StrValue
 		case ast.BRIEOptionS3ExternalID:
 			cfg.S3.ExternalID = opt.StrValue
+		case ast.BRIEOptionTLSCA:
+			cfg.TLS.CA = opt.StrValue
+		case ast.BRIEOptionTLSCert:
+			cfg.TLS.Cert = opt.StrValue
+		case ast.BRIEOptionTLSKey:
+			cfg.TLS.Key = opt.StrValue
+		//TODO: RIS to format the PD address
+		// case ast.BRIEOptionPDAddress:
+		// 	cfg.PD = opt.StrValue
+		case ast.BRIEOptionAZBlobAccessTier:
+			cfg.Azblob.AccessTier = opt.StrValue
+		case ast.BRIEOptionAZBlobAccountKey:
+			cfg.Azblob.AccountKey = opt.StrValue
+		case ast.BRIEOptionAZBlobAccountName:
+			cfg.Azblob.AccountName = opt.StrValue
+		case ast.BRIEOptionAZBlobEncryptionKey:
+			cfg.Azblob.EncryptionKey = opt.StrValue
+		case ast.BRIEOptionAZBlobEncryptionScope:
+			cfg.Azblob.EncryptionScope = opt.StrValue
+		case ast.BRIEOptionAZBlobEndpoint:
+			cfg.Azblob.Endpoint = opt.StrValue
+		case ast.BRIEOptionAZBlobSASToken:
+			cfg.Azblob.SASToken = opt.StrValue
+		case ast.BRIEOptionGCSCredentialsFile:
+			cfg.GCS.CredentialsFile = opt.StrValue
+		case ast.BRIEOptionGCSEndpoint:
+			cfg.GCS.Endpoint = opt.StrValue
+		case ast.BRIEOptionGCSPredefinedACL:
+			cfg.GCS.PredefinedACL = opt.StrValue
+		case ast.BRIEOptionGCSStorageClass:
+			cfg.GCS.StorageClass = opt.StrValue	
 		}
 	}
 

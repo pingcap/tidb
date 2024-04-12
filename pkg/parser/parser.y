@@ -395,6 +395,21 @@ import (
 	s3Provider            "S3_PROVIDER"
 	s3RoleArn             "S3_ROLE_ARN"
 	s3ExternalId          "S3_EXTERNAL_ID"
+	tlsCa                 "TLS_CA"
+	tlsCert               "TLS_CERT"
+	pdkey                 "TLS_KEY"
+	pd                    "PD"
+	azblobAccessTier      "AZBLOB_ACCESS_TIER"
+	azblobAccountKey      "AZBLOB_ACCOUNT_KEY"
+	azblobAccountName     "AZBLOB_ACCOUNT_NAME"
+	azblobEncryptionKey   "AZBLOB_ENCRYPTION_KEY"
+	azblobEncryptionScope "AZBLOB_ENCRYPTION_SCOPE"
+	azblobEndpoint        "AZBLOB_ENDPOINT"
+	azblobSasToken        "AZBLOB_SAS_TOKEN"
+	gcsCredentialsFile    "GCS_CREDENTIALS_FILE"
+	gcsEndpoint           "GCS_ENDPOINT"
+	gcsPredefinedAcl      "GCS_PREDEFINED_ACL"
+	gcsStorageClass       "GCS_STORAGE_CLASS"
 	current               "CURRENT"
 	cycle                 "CYCLE"
 	data                  "DATA"
@@ -5678,6 +5693,66 @@ BRIEStringOptionName:
 	{
 		$$ = ast.BRIEOptionS3ExternalID
 	}
+|	"TLS_CA"
+	{
+		$$ = ast.BRIEOptionTLSCA
+	}
+|	"TLS_CERT"
+	{
+		$$ = ast.BRIEOptionTLSCert
+	}
+|	"TLS_KEY"
+	{
+		$$ = ast.BRIEOptionTLSKey
+	}
+|	"PD"
+	{
+		$$ = ast.BRIEOptionPDAddress
+	}
+|	"AZBLOB_ACCESS_TIER"
+	{
+		$$ = ast.BRIEOptionAZBlobAccessTier
+	}
+|	"AZBLOB_ACCOUNT_KEY"
+	{
+		$$ = ast.BRIEOptionAZBlobAccountKey
+	}
+|	"AZBLOB_ACCOUNT_NAME"
+	{
+		$$ = ast.BRIEOptionAZBlobAccountName
+	}
+|	"AZBLOB_ENCRYPTION_KEY"
+	{
+		$$ = ast.BRIEOptionAZBlobEncryptionKey
+	}
+|	"AZBLOB_ENCRYPTION_SCOPE"
+	{
+		$$ = ast.BRIEOptionAZBlobEncryptionScope
+	}
+|	"AZBLOB_ENDPOINT"
+	{
+		$$ = ast.BRIEOptionAZBlobEndpoint
+	}
+|	"AZBLOB_SAS_TOKEN"
+	{
+		$$ = ast.BRIEOptionAZBlobSASToken
+	}
+|	"GCS_CREDENTIALS_FILE"
+	{
+		$$ = ast.BRIEOptionGCSCredentialsFile
+	}
+|	"GCS_ENDPOINT"
+	{
+		$$ = ast.BRIEOptionGCSEndpoint
+	}
+|	"GCS_PREDEFINED_ACL"
+	{
+		$$ = ast.BRIEOptionGCSPredefinedACL
+	}
+|	"GCS_STORAGE_CLASS"
+	{
+		$$ = ast.BRIEOptionGCSStorageClass
+	}
 
 BRIEKeywordOptionName:
 	"BACKEND"
@@ -6924,6 +6999,21 @@ UnReservedKeyword:
 |	"S3_PROVIDER"
 |	"S3_ROLE_ARN"
 |	"S3_EXTERNAL_ID"
+|	"TLS_CA"
+|	"TLS_CERT"
+|	"TLS_KEY"
+|	"PD"
+|	"AZBLOB_ACCESS_TIER"
+|	"AZBLOB_ACCOUNT_KEY"
+|	"AZBLOB_ACCOUNT_NAME"
+|	"AZBLOB_ENCRYPTION_KEY"
+|	"AZBLOB_ENCRYPTION_SCOPE"
+|	"AZBLOB_ENDPOINT"
+|	"AZBLOB_SAS_TOKEN"
+|	"GCS_CREDENTIALS_FILE"
+|	"GCS_ENDPOINT"
+|	"GCS_PREDEFINED_ACL"
+|	"GCS_STORAGE_CLASS"
 |	"ON_DUPLICATE"
 |	"TIKV_IMPORTER"
 |	"REPLICAS"
