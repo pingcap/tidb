@@ -465,7 +465,7 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int,
 func (p *LogicalJoin) constructIndexJoin(
 	prop *property.PhysicalProperty,
 	outerIdx int,
-	innerTask Task,
+	innerTask base.Task,
 	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
 	path *util.AccessPath,
@@ -579,7 +579,7 @@ func (p *LogicalJoin) constructIndexJoin(
 func (p *LogicalJoin) constructIndexMergeJoin(
 	prop *property.PhysicalProperty,
 	outerIdx int,
-	innerTask Task,
+	innerTask base.Task,
 	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
 	path *util.AccessPath,
@@ -686,7 +686,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 func (p *LogicalJoin) constructIndexHashJoin(
 	prop *property.PhysicalProperty,
 	outerIdx int,
-	innerTask Task,
+	innerTask base.Task,
 	ranges ranger.MutableRanges,
 	keyOff2IdxOff []int,
 	path *util.AccessPath,
@@ -834,7 +834,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	newOuterJoinKeys := make([]*expression.Column, 0)
 	var ranges ranger.MutableRanges = ranger.Ranges{}
-	var innerTask, innerTask2 Task
+	var innerTask, innerTask2 base.Task
 	var helper *indexJoinBuildHelper
 	if ds.tableInfo.IsCommonHandle {
 		helper, keyOff2IdxOff = p.getIndexJoinBuildHelper(ds, innerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath }, outerJoinKeys)
@@ -1026,7 +1026,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
-) Task {
+) base.Task {
 	ds := wrapper.ds
 	// If `ds.tableInfo.GetPartitionInfo() != nil`,
 	// it means the data source is a partition table reader.
@@ -1091,7 +1091,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	ts.PlanPartInfo = copTask.physPlanPartInfo
 	selStats := ts.StatsInfo().Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
-	t := copTask.ConvertToRootTask(ds.SCtx())
+	t := copTask.ConvertToRootTask(ds.SCtx()).(*RootTask)
 	reader := t.GetPlan()
 	t.SetPlan(p.constructInnerByWrapper(wrapper, reader))
 	return t
@@ -1212,7 +1212,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	desc bool,
 	rowCount float64,
 	maxOneRow bool,
-) Task {
+) base.Task {
 	ds := wrapper.ds
 	// If `ds.tableInfo.GetPartitionInfo() != nil`,
 	// it means the data source is a partition table reader.
@@ -1379,7 +1379,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
 	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
-	t := cop.ConvertToRootTask(ds.SCtx())
+	t := cop.ConvertToRootTask(ds.SCtx()).(*RootTask)
 	reader := t.GetPlan()
 	t.SetPlan(p.constructInnerByWrapper(wrapper, reader))
 	return t
@@ -1935,7 +1935,7 @@ func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAn
 	return
 }
 
-func filterIndexJoinBySessionVars(sc PlanContext, indexJoins []base.PhysicalPlan) []base.PhysicalPlan {
+func filterIndexJoinBySessionVars(sc base.PlanContext, indexJoins []base.PhysicalPlan) []base.PhysicalPlan {
 	if sc.GetSessionVars().EnableIndexMergeJoin {
 		return indexJoins
 	}

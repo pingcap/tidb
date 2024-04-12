@@ -201,7 +201,7 @@ const (
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
-	ctx          PlanContext
+	ctx          base.PlanContext
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
@@ -445,7 +445,7 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 // PlannerSelectBlockAsName should be restored after using this builder.
 // This is The comman code pattern to use it:
 // NewPlanBuilder().Init(sctx, is, processor)
-func (b *PlanBuilder) Init(sctx PlanContext, is infoschema.InfoSchema, processor *hint.QBHintHandler) (*PlanBuilder, []ast.HintTable) {
+func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, processor *hint.QBHintHandler) (*PlanBuilder, []ast.HintTable) {
 	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&[]ast.HintTable{})
@@ -807,7 +807,7 @@ func checkHintedSQL(sql, charset, collation, db string) error {
 	return nil
 }
 
-func fetchRecordFromClusterStmtSummary(sctx PlanContext, planDigest string) ([]chunk.Row, error) {
+func fetchRecordFromClusterStmtSummary(sctx base.PlanContext, planDigest string) ([]chunk.Row, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	exec := sctx.GetSQLExecutor()
 	fields := "stmt_type, schema_name, digest_text, sample_user, prepared, query_sample_text, charset, collation, plan_hint, plan_digest"
@@ -1035,7 +1035,7 @@ func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 
 // getLatestIndexInfo gets the index info of latest schema version from given table id,
 // it returns nil if the schema version is not changed
-func getLatestIndexInfo(ctx PlanContext, id int64, startVer int64) (map[int64]*model.IndexInfo, bool, error) {
+func getLatestIndexInfo(ctx base.PlanContext, id int64, startVer int64) (map[int64]*model.IndexInfo, bool, error) {
 	dom := domain.GetDomain(ctx)
 	if dom == nil {
 		return nil, false, errors.New("domain not found for ctx")
@@ -1056,7 +1056,7 @@ func getLatestIndexInfo(ctx PlanContext, id int64, startVer int64) (map[int64]*m
 	return latestIndexes, true, nil
 }
 
-func getPossibleAccessPaths(ctx PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1235,7 +1235,7 @@ func getPossibleAccessPaths(ctx PlanContext, tableHints *hint.PlanHints, indexHi
 	return available, nil
 }
 
-func filterPathByIsolationRead(ctx PlanContext, paths []*util.AccessPath, tblName model.CIStr, dbName model.CIStr) ([]*util.AccessPath, error) {
+func filterPathByIsolationRead(ctx base.PlanContext, paths []*util.AccessPath, tblName model.CIStr, dbName model.CIStr) ([]*util.AccessPath, error) {
 	// TODO: filter paths with isolation read locations.
 	if util2.IsSysDB(dbName.L) {
 		return paths, nil
@@ -1563,7 +1563,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		extraHandleCol:   extraCol,
 		commonHandleCols: commonCols,
 	}
-	rootT := cop.ConvertToRootTask(b.ctx)
+	rootT := cop.ConvertToRootTask(b.ctx).(*RootTask)
 	if err := rootT.GetPlan().ResolveIndices(); err != nil {
 		return nil, err
 	}
@@ -1814,7 +1814,7 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 }
 
 // BuildHandleColsForAnalyze returns HandleCols for ANALYZE.
-func BuildHandleColsForAnalyze(ctx PlanContext, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) HandleCols {
+func BuildHandleColsForAnalyze(ctx base.PlanContext, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) HandleCols {
 	var handleCols HandleCols
 	switch {
 	case tblInfo.PKIsHandle:
@@ -3410,7 +3410,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 	return p, nil
 }
 
-func collectVisitInfoFromRevokeStmt(sctx PlanContext, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
+func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
 	// To use REVOKE, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
@@ -3462,7 +3462,7 @@ func collectVisitInfoFromRevokeStmt(sctx PlanContext, vi []visitInfo, stmt *ast.
 
 // appendVisitInfoIsRestrictedUser appends additional visitInfo if the user has a
 // special privilege called "RESTRICTED_USER_ADMIN". It only applies when SEM is enabled.
-func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx PlanContext, user *auth.UserIdentity, priv string) []visitInfo {
+func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx base.PlanContext, user *auth.UserIdentity, priv string) []visitInfo {
 	if !sem.IsEnabled() {
 		return visitInfo
 	}
@@ -3474,7 +3474,7 @@ func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx PlanContext, us
 	return visitInfo
 }
 
-func collectVisitInfoFromGrantStmt(sctx PlanContext, vi []visitInfo, stmt *ast.GrantStmt) ([]visitInfo, error) {
+func collectVisitInfoFromGrantStmt(sctx base.PlanContext, vi []visitInfo, stmt *ast.GrantStmt) ([]visitInfo, error) {
 	// To use GRANT, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
@@ -3533,7 +3533,7 @@ func collectVisitInfoFromGrantStmt(sctx PlanContext, vi []visitInfo, stmt *ast.G
 	return vi, nil
 }
 
-func genAuthErrForGrantStmt(sctx PlanContext, dbName string) error {
+func genAuthErrForGrantStmt(sctx base.PlanContext, dbName string) error {
 	if !strings.EqualFold(dbName, variable.PerformanceSchema) {
 		return nil
 	}
@@ -5328,7 +5328,7 @@ func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) base.Plan {
 	return p
 }
 
-func calcTSForPlanReplayer(sctx PlanContext, tsExpr ast.ExprNode) uint64 {
+func calcTSForPlanReplayer(sctx base.PlanContext, tsExpr ast.ExprNode) uint64 {
 	tsVal, err := evalAstExprWithPlanCtx(sctx, tsExpr)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)

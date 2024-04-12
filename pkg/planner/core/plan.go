@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/planner/context"
 	base2 "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
@@ -35,14 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
-// PlanContext is the context for building plan.
-type PlanContext = context.PlanContext
-
-// BuildPBContext is the context for building `*tipb.Executor`.
-type BuildPBContext = context.BuildPBContext
-
 // AsSctx converts PlanContext to sessionctx.Context.
-func AsSctx(pctx PlanContext) (sessionctx.Context, error) {
+func AsSctx(pctx base2.PlanContext) (sessionctx.Context, error) {
 	sctx, ok := pctx.(sessionctx.Context)
 	if !ok {
 		return nil, errors.New("the current PlanContext cannot be converted to sessionctx.Context")
@@ -50,7 +43,7 @@ func AsSctx(pctx PlanContext) (sessionctx.Context, error) {
 	return sctx, nil
 }
 
-func enforceProperty(p *property.PhysicalProperty, tsk Task, ctx PlanContext) Task {
+func enforceProperty(p *property.PhysicalProperty, tsk base2.Task, ctx base2.PlanContext) base2.Task {
 	if p.TaskTp == property.MppTaskType {
 		mpp, ok := tsk.(*MppTask)
 		if !ok || mpp.Invalid() {
@@ -82,7 +75,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk Task, ctx PlanContext) Ta
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
-func optimizeByShuffle(tsk Task, ctx PlanContext) Task {
+func optimizeByShuffle(tsk base2.Task, ctx base2.PlanContext) base2.Task {
 	if tsk.Plan() == nil {
 		return tsk
 	}
@@ -104,7 +97,7 @@ func optimizeByShuffle(tsk Task, ctx PlanContext) Task {
 	return tsk
 }
 
-func optimizeByShuffle4Window(pp *PhysicalWindow, ctx PlanContext) *PhysicalShuffle {
+func optimizeByShuffle4Window(pp *PhysicalWindow, ctx base2.PlanContext) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().WindowConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -143,7 +136,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx PlanContext) *PhysicalShuf
 	return shuffle
 }
 
-func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx PlanContext) *PhysicalShuffle {
+func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx base2.PlanContext) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().StreamAggConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -180,7 +173,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx PlanContext) *Physic
 	return shuffle
 }
 
-func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx PlanContext) *PhysicalShuffle {
+func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx base2.PlanContext) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().MergeJoinConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -244,7 +237,7 @@ type LogicalPlan interface {
 	// If planCounter > 0, the clock_th plan generated in this function will be returned.
 	// If planCounter = 0, the plan generated in this function will not be considered.
 	// If planCounter = -1, then we will not force plan.
-	findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *coreusage.PhysicalOptimizeOp) (Task, int64, error)
+	findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *coreusage.PhysicalOptimizeOp) (base2.Task, int64, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use
@@ -320,7 +313,7 @@ type LogicalPlan interface {
 type baseLogicalPlan struct {
 	base.Plan
 
-	taskMap map[string]Task
+	taskMap map[string]base2.Task
 	// taskMapBak forms a backlog stack of taskMap, used to roll back the taskMap.
 	taskMapBak []string
 	// taskMapBakTS stores the timestamps of logs.
@@ -532,12 +525,12 @@ func (p *baseLogicalPlan) rollBackTaskMap(ts uint64) {
 	}
 }
 
-func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) Task {
+func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) base2.Task {
 	key := prop.HashCode()
 	return p.taskMap[string(key)]
 }
 
-func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task Task) {
+func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task base2.Task) {
 	key := prop.HashCode()
 	if p.SCtx().GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		// Empty string for useless change.
@@ -604,9 +597,9 @@ func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 	}
 }
 
-func newBaseLogicalPlan(ctx PlanContext, tp string, self LogicalPlan, qbOffset int) baseLogicalPlan {
+func newBaseLogicalPlan(ctx base2.PlanContext, tp string, self LogicalPlan, qbOffset int) baseLogicalPlan {
 	return baseLogicalPlan{
-		taskMap:      make(map[string]Task),
+		taskMap:      make(map[string]base2.Task),
 		taskMapBak:   make([]string, 0, 10),
 		taskMapBakTS: make([]uint64, 0, 10),
 		Plan:         base.NewBasePlan(ctx, tp, qbOffset),
@@ -614,7 +607,7 @@ func newBaseLogicalPlan(ctx PlanContext, tp string, self LogicalPlan, qbOffset i
 	}
 }
 
-func newBasePhysicalPlan(ctx PlanContext, tp string, self base2.PhysicalPlan, offset int) basePhysicalPlan {
+func newBasePhysicalPlan(ctx base2.PlanContext, tp string, self base2.PhysicalPlan, offset int) basePhysicalPlan {
 	return basePhysicalPlan{
 		Plan: base.NewBasePlan(ctx, tp, offset),
 		self: self,

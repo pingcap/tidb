@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,7 +48,7 @@ type plannerSuite struct {
 	p    *parser.Parser
 	is   infoschema.InfoSchema
 	sctx sessionctx.Context
-	ctx  PlanContext
+	ctx  base.PlanContext
 }
 
 func (p *plannerSuite) GetParser() *parser.Parser {

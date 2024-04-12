@@ -2,13 +2,16 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "base",
-    srcs = ["plan_base.go"],
+    srcs = [
+        "plan_base.go",
+        "task_base.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/base",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
         "//pkg/kv",
-        "//pkg/planner/core",
+        "//pkg/planner/context",
         "//pkg/planner/property",
         "//pkg/planner/util/coreusage",
         "//pkg/types",

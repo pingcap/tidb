@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/paging"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // GetPlanCost returns the cost of this plan.

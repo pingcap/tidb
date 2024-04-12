@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 

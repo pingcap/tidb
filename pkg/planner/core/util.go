@@ -388,7 +388,7 @@ func extractStringFromBoolSlice(slice []bool) string {
 	return strings.Join(l, ",")
 }
 
-func tableHasDirtyContent(ctx PlanContext, tableInfo *model.TableInfo) bool {
+func tableHasDirtyContent(ctx base2.PlanContext, tableInfo *model.TableInfo) bool {
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ctx.HasDirtyContent(tableInfo.ID)
@@ -473,11 +473,11 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 }
 
 // GetPushDownCtx creates a PushDownContext from PlanContext
-func GetPushDownCtx(pctx PlanContext) expression.PushDownContext {
+func GetPushDownCtx(pctx base2.PlanContext) expression.PushDownContext {
 	return GetPushDownCtxFromBuildPBContext(pctx.GetBuildPBCtx())
 }
 
 // GetPushDownCtxFromBuildPBContext creates a PushDownContext from BuildPBContext
-func GetPushDownCtxFromBuildPBContext(bctx *BuildPBContext) expression.PushDownContext {
+func GetPushDownCtxFromBuildPBContext(bctx *base2.BuildPBContext) expression.PushDownContext {
 	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(), bctx.InExplainStmt, bctx.AppendWarning, bctx.AppendExtraWarning, bctx.GroupConcatMaxLen)
 }

@@ -97,7 +97,7 @@ func extractTableAsName(p base.PhysicalPlan) (*model.CIStr, *model.CIStr) {
 	return nil, nil
 }
 
-func getJoinHints(sctx PlanContext, joinType string, parentOffset int, nodeType h.NodeType, children ...base.PhysicalPlan) (res []*ast.TableOptimizerHint) {
+func getJoinHints(sctx base.PlanContext, joinType string, parentOffset int, nodeType h.NodeType, children ...base.PhysicalPlan) (res []*ast.TableOptimizerHint) {
 	if parentOffset == -1 {
 		return res
 	}

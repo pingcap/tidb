@@ -48,7 +48,7 @@ type expressionGroup struct {
 // predicatePushDownToTableScan is used find the selection just above the table scan
 // and try to push down the predicates to the table scan.
 // Used for TiFlash late materialization.
-func predicatePushDownToTableScan(sctx PlanContext, plan base.PhysicalPlan) base.PhysicalPlan {
+func predicatePushDownToTableScan(sctx base.PlanContext, plan base.PhysicalPlan) base.PhysicalPlan {
 	switch p := plan.(type) {
 	case *PhysicalSelection:
 		if physicalTableScan, ok := plan.Children()[0].(*PhysicalTableScan); ok && physicalTableScan.StoreType == kv.TiFlash {
@@ -104,7 +104,7 @@ func transformColumnsToCode(cols []*expression.Column, totalColumnCount int) str
 // @example: conds = [a > 1, b > 1, a > 2, c > 1, a > 3, b > 2], return = [[a > 3, a > 2, a > 1], [b > 2, b > 1], [c > 1]]
 // @note: when the selectivity of one group is larger than the threshold, we will remove it from the returned result.
 // @note: when the number of columns of one group is larger than the threshold, we will remove it from the returned result.
-func groupByColumnsSortBySelectivity(sctx PlanContext, conds []expression.Expression, physicalTableScan *PhysicalTableScan) []expressionGroup {
+func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.Expression, physicalTableScan *PhysicalTableScan) []expressionGroup {
 	// Create a map to store the groupMap of conditions keyed by the columns
 	groupMap := make(map[string][]expression.Expression)
 
@@ -205,7 +205,7 @@ func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, expr
 // @param: sctx: the session context
 // @param: physicalSelection: the PhysicalSelection containing the conditions to be pushed down
 // @param: physicalTableScan: the PhysicalTableScan to be pushed down to
-func predicatePushDownToTableScanImpl(sctx PlanContext, physicalSelection *PhysicalSelection, physicalTableScan *PhysicalTableScan) {
+func predicatePushDownToTableScanImpl(sctx base.PlanContext, physicalSelection *PhysicalSelection, physicalTableScan *PhysicalTableScan) {
 	// When the table is small, there is no need to push down the conditions.
 	if physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize || physicalTableScan.KeepOrder {
 		return

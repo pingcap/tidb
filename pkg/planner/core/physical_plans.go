@@ -816,7 +816,7 @@ func (p *PhysicalIndexScan) MemoryUsage() (sum int64) {
 // For keepOrder with partition table,
 // we need use partitionHandle to distinct two handles,
 // the `_tidb_rowid` in different partitions can have the same value.
-func AddExtraPhysTblIDColumn(sctx PlanContext, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
+func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo, schema *expression.Schema) ([]*model.ColumnInfo, *expression.Schema, bool) {
 	// Not adding the ExtraPhysTblID if already exists
 	if FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
 		return columns, schema, false
@@ -1465,7 +1465,7 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 type PhysicalIndexJoin struct {
 	basePhysicalJoin
 
-	innerTask Task
+	innerTask base.Task
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges ranger.MutableRanges
@@ -1636,7 +1636,7 @@ type PhysicalExpand struct {
 }
 
 // Init only assigns type and context.
-func (p PhysicalExpand) Init(ctx PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExpand {
+func (p PhysicalExpand) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalExpand {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeExpand, &p, offset)
 	p.childrenReqProps = props
 	p.SetStats(stats)
@@ -2500,7 +2500,7 @@ func (p *PhysicalShowDDLJobs) MemoryUsage() (sum int64) {
 }
 
 // BuildMergeJoinPlan builds a PhysicalMergeJoin from the given fields. Currently, it is only used for test purpose.
-func BuildMergeJoinPlan(ctx PlanContext, joinType JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
+func BuildMergeJoinPlan(ctx base.PlanContext, joinType JoinType, leftKeys, rightKeys []*expression.Column) *PhysicalMergeJoin {
 	baseJoin := basePhysicalJoin{
 		JoinType:      joinType,
 		DefaultValues: []types.Datum{types.NewDatum(1), types.NewDatum(1)},

@@ -82,7 +82,7 @@ const (
 // aggOrderByResolver is currently resolving expressions of order by clause
 // in aggregate function GROUP_CONCAT.
 type aggOrderByResolver struct {
-	ctx       PlanContext
+	ctx       base.PlanContext
 	err       error
 	args      []ast.ExprNode
 	exprDepth int // exprDepth is the depth of current expression in expression tree.
@@ -2379,7 +2379,7 @@ CheckReferenced:
 // getUintFromNode gets uint64 value from ast.Node.
 // For ordinary statement, node should be uint64 constant value.
 // For prepared statement, node is string. We should convert it to uint64.
-func getUintFromNode(ctx PlanContext, n ast.Node, mustInt64orUint64 bool) (uVal uint64, isNull bool, isExpectedType bool) {
+func getUintFromNode(ctx base.PlanContext, n ast.Node, mustInt64orUint64 bool) (uVal uint64, isNull bool, isExpectedType bool) {
 	var val any
 	switch v := n.(type) {
 	case *driver.ValueExpr:
@@ -2441,7 +2441,7 @@ func CheckParamTypeInt64orUint64(param *driver.ParamMarkerExpr) (bool, uint64) {
 	return false, 0
 }
 
-func extractLimitCountOffset(ctx PlanContext, limit *ast.Limit) (count uint64,
+func extractLimitCountOffset(ctx base.PlanContext, limit *ast.Limit) (count uint64,
 	offset uint64, err error) {
 	var isExpectedType bool
 	if limit.Count != nil {
@@ -3198,7 +3198,7 @@ func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.
 
 // gbyResolver resolves group by items from select fields.
 type gbyResolver struct {
-	ctx        PlanContext
+	ctx        base.PlanContext
 	fields     []*ast.SelectField
 	schema     *expression.Schema
 	names      []*types.FieldName
@@ -4426,7 +4426,7 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
 // Note: please also update getLatestVersionFromStatsTable() when logic in this function changes.
-func getStatsTable(ctx PlanContext, tblInfo *model.TableInfo, pid int64) *statistics.Table {
+func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
 	var statsTbl *statistics.Table

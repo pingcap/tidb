@@ -268,7 +268,7 @@ func CheckTableLock(ctx tablelock.TableLockReadContext, is infoschema.InfoSchema
 	return nil
 }
 
-func checkStableResultMode(sctx PlanContext) bool {
+func checkStableResultMode(sctx base.PlanContext) bool {
 	s := sctx.GetSessionVars()
 	st := s.StmtCtx
 	return s.EnableStableResultMode && (!st.InInsertStmt && !st.InUpdateStmt && !st.InDeleteStmt && !st.InLoadDataStmt)
@@ -279,7 +279,7 @@ func checkStableResultMode(sctx PlanContext) bool {
 // The returned logical plan is necessary for generating plans for Common Table Expressions (CTEs).
 func doOptimize(
 	ctx context.Context,
-	sctx PlanContext,
+	sctx base.PlanContext,
 	flag uint64,
 	logic LogicalPlan,
 ) (LogicalPlan, base.PhysicalPlan, float64, error) {
@@ -338,7 +338,7 @@ func adjustOptimizationFlags(flag uint64, logic LogicalPlan) uint64 {
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(
 	ctx context.Context,
-	sctx PlanContext,
+	sctx base.PlanContext,
 	flag uint64,
 	logic LogicalPlan,
 ) (base.PhysicalPlan, float64, error) {
@@ -353,7 +353,7 @@ func DoOptimize(
 
 // refineCETrace will adjust the content of CETrace.
 // Currently, it will (1) deduplicate trace records, (2) sort the trace records (to make it easier in the tests) and (3) fill in the table name.
-func refineCETrace(sctx PlanContext) {
+func refineCETrace(sctx base.PlanContext) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	stmtCtx.OptimizerCETrace = tracing.DedupCETrace(stmtCtx.OptimizerCETrace)
 	slices.SortFunc(stmtCtx.OptimizerCETrace, func(i, j *tracing.CETraceRecord) int {
@@ -412,7 +412,7 @@ func mergeContinuousSelections(p base.PhysicalPlan) {
 	}
 }
 
-func postOptimize(ctx context.Context, sctx PlanContext, plan base.PhysicalPlan) (base.PhysicalPlan, error) {
+func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan) (base.PhysicalPlan, error) {
 	// some cases from update optimize will require avoiding projection elimination.
 	// see comments ahead of call of DoOptimize in function of buildUpdate().
 	err := prunePhysicalColumns(sctx, plan)
@@ -433,7 +433,7 @@ func postOptimize(ctx context.Context, sctx PlanContext, plan base.PhysicalPlan)
 	return plan, nil
 }
 
-func generateRuntimeFilter(sctx PlanContext, plan base.PhysicalPlan) {
+func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 	if !sctx.GetSessionVars().IsRuntimeFilterEnabled() || sctx.GetSessionVars().InRestrictedSQL {
 		return
 	}
@@ -452,7 +452,7 @@ func generateRuntimeFilter(sctx PlanContext, plan base.PhysicalPlan) {
 // prunePhysicalColumns currently only work for MPP(HashJoin<-Exchange).
 // Here add projection instead of pruning columns directly for safety considerations.
 // And projection is cheap here for it saves the network cost and work in memory.
-func prunePhysicalColumns(sctx PlanContext, plan base.PhysicalPlan) error {
+func prunePhysicalColumns(sctx base.PlanContext, plan base.PhysicalPlan) error {
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
 		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
 			err := prunePhysicalColumnsInternal(sctx, tableReader.tablePlan)
@@ -496,7 +496,7 @@ func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) 
 	return leftCols, rightCols
 }
 
-func prunePhysicalColumnForHashJoinChild(sctx PlanContext, hashJoin *PhysicalHashJoin, joinUsedCols []*expression.Column, sender *PhysicalExchangeSender) error {
+func prunePhysicalColumnForHashJoinChild(sctx base.PlanContext, hashJoin *PhysicalHashJoin, joinUsedCols []*expression.Column, sender *PhysicalExchangeSender) error {
 	var err error
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	joinUsed := expression.GetUsedList(evalCtx, joinUsedCols, sender.Schema())
@@ -545,7 +545,7 @@ func prunePhysicalColumnForHashJoinChild(sctx PlanContext, hashJoin *PhysicalHas
 	return err
 }
 
-func prunePhysicalColumnsInternal(sctx PlanContext, plan base.PhysicalPlan) error {
+func prunePhysicalColumnsInternal(sctx base.PlanContext, plan base.PhysicalPlan) error {
 	var err error
 	switch x := plan.(type) {
 	case *PhysicalHashJoin:
@@ -597,7 +597,7 @@ func prunePhysicalColumnsInternal(sctx PlanContext, plan base.PhysicalPlan) erro
 //   - Only the filter conditions with high selectivity should be pushed down.
 //   - The filter conditions which contain heavy cost functions should not be pushed down.
 //   - Filter conditions that apply to the same column are either pushed down or not pushed down at all.
-func tryEnableLateMaterialization(sctx PlanContext, plan base.PhysicalPlan) {
+func tryEnableLateMaterialization(sctx base.PlanContext, plan base.PhysicalPlan) {
 	// check if EnableLateMaterialization is set
 	if sctx.GetSessionVars().EnableLateMaterialization && !sctx.GetSessionVars().TiFlashFastScan {
 		predicatePushDownToTableScan(sctx, plan)
@@ -727,7 +727,7 @@ func rewriteTableScanAndAggArgs(physicalTableScan *PhysicalTableScan, aggFuncs [
 // < 0: fine grained shuffle is disabled.
 // > 0: use TiFlashFineGrainedShuffleStreamCount as stream count.
 // == 0: use TiFlashMaxThreads as stream count when it's greater than 0. Otherwise set status as uninitialized.
-func handleFineGrainedShuffle(ctx context.Context, sctx PlanContext, plan base.PhysicalPlan) {
+func handleFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan) {
 	streamCount := sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount
 	if streamCount < 0 {
 		return
@@ -747,7 +747,7 @@ func handleFineGrainedShuffle(ctx context.Context, sctx PlanContext, plan base.P
 	setupFineGrainedShuffle(ctx, sctx, &streamCountInfo, &tiflashServerCountInfo, plan)
 }
 
-func setupFineGrainedShuffle(ctx context.Context, sctx PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, plan base.PhysicalPlan) {
+func setupFineGrainedShuffle(ctx context.Context, sctx base.PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, plan base.PhysicalPlan) {
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
 		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
 			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*basePhysicalPlan, 1)}
@@ -801,7 +801,7 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysical
 
 // calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers, and divide by 2
 // return false, 0 if any err happens
-func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
+func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx base.PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
 	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
 		intVal, err := strconv.Atoi(val.(string))
 		if err == nil {
@@ -838,7 +838,7 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx P
 	return false, 0
 }
 
-func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, exchangeColCount int, splitLimit uint64) (applyFlag bool, streamCount uint64) {
+func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx base.PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo, exchangeColCount int, splitLimit uint64) (applyFlag bool, streamCount uint64) {
 	switch (*streamCountInfo).itemStatus {
 	case unInitialized:
 		streamCount = 4 // assume 8c node in cluster as minimal, stream count is 8 / 2 = 4
@@ -898,7 +898,7 @@ func checkFineGrainedShuffleForJoinAgg(ctx context.Context, sctx PlanContext, st
 	return applyFlag, streamCount
 }
 
-func inferFineGrainedShuffleStreamCountForWindow(ctx context.Context, sctx PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) (streamCount uint64) {
+func inferFineGrainedShuffleStreamCountForWindow(ctx context.Context, sctx base.PlanContext, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) (streamCount uint64) {
 	switch (*streamCountInfo).itemStatus {
 	case unInitialized:
 		if (*tiflashServerCountInfo).itemStatus == failed {
@@ -944,7 +944,7 @@ func setDefaultStreamCount(streamCountInfo *tiflashClusterInfo) {
 	(*streamCountInfo).itemValue = variable.DefStreamCountWhenMaxThreadsNotSet
 }
 
-func setupFineGrainedShuffleInternal(ctx context.Context, sctx PlanContext, plan base.PhysicalPlan, helper *fineGrainedShuffleHelper, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) {
+func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan, helper *fineGrainedShuffleHelper, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) {
 	switch x := plan.(type) {
 	case *PhysicalWindow:
 		// Do not clear the plans because window executor will keep the data partition.
@@ -1079,7 +1079,7 @@ func propagateProbeParents(plan base.PhysicalPlan, probeParents []base.PhysicalP
 	}
 }
 
-func enableParallelApply(sctx PlanContext, plan base.PhysicalPlan) base.PhysicalPlan {
+func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.PhysicalPlan {
 	if !sctx.GetSessionVars().EnableParallelApply {
 		return plan
 	}
@@ -1236,7 +1236,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan base.
 }
 
 // eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.
-func eliminateUnionScanAndLock(sctx PlanContext, p base.PhysicalPlan) base.PhysicalPlan {
+func eliminateUnionScanAndLock(sctx base.PlanContext, p base.PhysicalPlan) base.PhysicalPlan {
 	var pointGet *PointGetPlan
 	var batchPointGet *BatchPointGetPlan
 	var physLock *PhysicalLock
@@ -1328,7 +1328,7 @@ func init() {
 	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
 }
 
-func disableReuseChunkIfNeeded(sctx PlanContext, plan base.PhysicalPlan) {
+func disableReuseChunkIfNeeded(sctx base.PlanContext, plan base.PhysicalPlan) {
 	if !sctx.GetSessionVars().IsAllocValid() {
 		return
 	}
@@ -1343,7 +1343,7 @@ func disableReuseChunkIfNeeded(sctx PlanContext, plan base.PhysicalPlan) {
 }
 
 // checkOverlongColType Check if read field type is long field.
-func checkOverlongColType(sctx PlanContext, plan base.PhysicalPlan) bool {
+func checkOverlongColType(sctx base.PlanContext, plan base.PhysicalPlan) bool {
 	if plan == nil {
 		return false
 	}

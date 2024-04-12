@@ -28,27 +28,10 @@ import (
 )
 
 var (
-	_ Task = &RootTask{}
-	_ Task = &MppTask{}
-	_ Task = &CopTask{}
+	_ base.Task = &RootTask{}
+	_ base.Task = &MppTask{}
+	_ base.Task = &CopTask{}
 )
-
-// Task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
-// A task may be CopTask, RootTask, MPPTaskMeta or a ParallelTask.
-type Task interface {
-	// Count returns current task's row count.
-	Count() float64
-	// Copy return a shallow copy of current task with the same pointer to p.
-	Copy() Task
-	// Plan returns current task's plan.
-	Plan() base.PhysicalPlan
-	// Invalid returns whether current task is invalid.
-	Invalid() bool
-	// ConvertToRootTask will convert current task as root type.
-	ConvertToRootTask(ctx PlanContext) *RootTask
-	// MemoryUsage returns the memory usage of current task.
-	MemoryUsage() int64
-}
 
 // ************************************* RootTask Start ******************************************
 
@@ -80,14 +63,14 @@ func (t *RootTask) SetEmpty(x bool) {
 }
 
 // Copy implements Task interface.
-func (t *RootTask) Copy() Task {
+func (t *RootTask) Copy() base.Task {
 	return &RootTask{
 		p: t.p,
 	}
 }
 
 // ConvertToRootTask implements Task interface.
-func (t *RootTask) ConvertToRootTask(_ PlanContext) *RootTask {
+func (t *RootTask) ConvertToRootTask(_ base.PlanContext) base.Task {
 	return t.Copy().(*RootTask)
 }
 
@@ -153,7 +136,7 @@ func (t *MppTask) Count() float64 {
 }
 
 // Copy implements Task interface.
-func (t *MppTask) Copy() Task {
+func (t *MppTask) Copy() base.Task {
 	nt := *t
 	return &nt
 }
@@ -169,7 +152,7 @@ func (t *MppTask) Invalid() bool {
 }
 
 // ConvertToRootTask implements Task interface.
-func (t *MppTask) ConvertToRootTask(ctx PlanContext) *RootTask {
+func (t *MppTask) ConvertToRootTask(ctx base.PlanContext) base.Task {
 	return t.Copy().(*MppTask).ConvertToRootTaskImpl(ctx)
 }
 
@@ -187,7 +170,7 @@ func (t *MppTask) MemoryUsage() (sum int64) {
 }
 
 // ConvertToRootTaskImpl implements Task interface.
-func (t *MppTask) ConvertToRootTaskImpl(ctx PlanContext) *RootTask {
+func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 	// In disaggregated-tiflash mode, need to consider generated column.
 	tryExpandVirtualColumn(t.p)
 	sender := PhysicalExchangeSender{
@@ -290,7 +273,7 @@ func (t *CopTask) Count() float64 {
 }
 
 // Copy implements Task interface.
-func (t *CopTask) Copy() Task {
+func (t *CopTask) Copy() base.Task {
 	nt := *t
 	return &nt
 }
@@ -342,12 +325,12 @@ func (t *CopTask) MemoryUsage() (sum int64) {
 }
 
 // ConvertToRootTask implements Task interface.
-func (t *CopTask) ConvertToRootTask(ctx PlanContext) *RootTask {
+func (t *CopTask) ConvertToRootTask(ctx base.PlanContext) base.Task {
 	// copy one to avoid changing itself.
 	return t.Copy().(*CopTask).convertToRootTaskImpl(ctx)
 }
 
-func (t *CopTask) convertToRootTaskImpl(ctx PlanContext) *RootTask {
+func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer

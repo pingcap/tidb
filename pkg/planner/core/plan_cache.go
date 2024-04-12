@@ -56,7 +56,7 @@ type PlanCacheKeyTestIssue46760 struct{}
 type PlanCacheKeyTestIssue47133 struct{}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
-func SetParameterValuesIntoSCtx(sctx PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
+func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
 	vars.PlanCacheParams.Reset()
 	for i, usingParam := range params {
@@ -631,7 +631,7 @@ func rebuildRange(p base.Plan) error {
 	return nil
 }
 
-func convertConstant2Datum(ctx PlanContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
+func convertConstant2Datum(ctx base.PlanContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
 	val, err := con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
@@ -649,7 +649,7 @@ func convertConstant2Datum(ctx PlanContext, con *expression.Constant, target *ty
 	return &dVal, nil
 }
 
-func buildRangeForTableScan(sctx PlanContext, ts *PhysicalTableScan) (err error) {
+func buildRangeForTableScan(sctx base.PlanContext, ts *PhysicalTableScan) (err error) {
 	if ts.Table.IsCommonHandle {
 		pk := tables.FindPrimaryIndex(ts.Table)
 		pkCols := make([]*expression.Column, 0, len(pk.Columns))
@@ -714,7 +714,7 @@ func buildRangeForTableScan(sctx PlanContext, ts *PhysicalTableScan) (err error)
 	return
 }
 
-func buildRangeForIndexScan(sctx PlanContext, is *PhysicalIndexScan) (err error) {
+func buildRangeForIndexScan(sctx base.PlanContext, is *PhysicalIndexScan) (err error) {
 	if len(is.IdxCols) == 0 {
 		if ranger.HasFullRange(is.Ranges, false) { // the original range is already a full-range.
 			is.Ranges = ranger.FullRange()
@@ -771,7 +771,7 @@ func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
-func tryCachePointPlan(_ context.Context, sctx PlanContext,
+func tryCachePointPlan(_ context.Context, sctx base.PlanContext,
 	stmt *PlanCacheStmt, p base.Plan, names types.NameSlice) error {
 	if !sctx.GetSessionVars().StmtCtx.UseCache {
 		return nil

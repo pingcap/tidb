@@ -33,14 +33,14 @@ import (
 
 // PBPlanBuilder uses to build physical plan from dag protocol buffers.
 type PBPlanBuilder struct {
-	sctx   PlanContext
+	sctx   base.PlanContext
 	tps    []*types.FieldType
 	is     infoschema.InfoSchema
 	ranges []*coprocessor.KeyRange
 }
 
 // NewPBPlanBuilder creates a new pb plan builder.
-func NewPBPlanBuilder(sctx PlanContext, is infoschema.InfoSchema, ranges []*coprocessor.KeyRange) *PBPlanBuilder {
+func NewPBPlanBuilder(sctx base.PlanContext, is infoschema.InfoSchema, ranges []*coprocessor.KeyRange) *PBPlanBuilder {
 	return &PBPlanBuilder{sctx: sctx, is: is, ranges: ranges}
 }
 

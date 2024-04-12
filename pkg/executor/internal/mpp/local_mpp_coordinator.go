@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tipb/go-tipb"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )

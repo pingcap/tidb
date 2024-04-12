@@ -197,7 +197,7 @@ type Execute struct {
 
 // Check if result of GetVar expr is BinaryLiteral
 // Because GetVar use String to represent BinaryLiteral, here we need to convert string back to BinaryLiteral.
-func isGetVarBinaryLiteral(sctx PlanContext, expr expression.Expression) (res bool) {
+func isGetVarBinaryLiteral(sctx base.PlanContext, expr expression.Expression) (res bool) {
 	scalarFunc, ok := expr.(*expression.ScalarFunction)
 	if ok && scalarFunc.FuncName.L == ast.GetVar {
 		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
@@ -1019,7 +1019,7 @@ func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
 	e.prepareOperatorInfo(flatOp.Origin, taskTp, textTreeExplainID)
 }
 
-func getRuntimeInfoStr(ctx PlanContext, p base.Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
+func getRuntimeInfoStr(ctx base.PlanContext, p base.Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
 	if runtimeStatsColl == nil {
 		runtimeStatsColl = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		if runtimeStatsColl == nil {
@@ -1050,7 +1050,7 @@ func getRuntimeInfoStr(ctx PlanContext, p base.Plan, runtimeStatsColl *execdetai
 	return
 }
 
-func getRuntimeInfo(ctx PlanContext, p base.Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (
+func getRuntimeInfo(ctx base.PlanContext, p base.Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (
 	rootStats *execdetails.RootRuntimeStats,
 	copStats *execdetails.CopRuntimeStats,
 	memTracker *memory.Tracker,
@@ -1172,7 +1172,7 @@ func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, cos
 }
 
 // BinaryPlanStrFromFlatPlan generates the compressed and encoded binary plan from a FlatPhysicalPlan.
-func BinaryPlanStrFromFlatPlan(explainCtx PlanContext, flat *FlatPhysicalPlan) string {
+func BinaryPlanStrFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan) string {
 	binary := binaryDataFromFlatPlan(explainCtx, flat)
 	if binary == nil {
 		return ""
@@ -1185,7 +1185,7 @@ func BinaryPlanStrFromFlatPlan(explainCtx PlanContext, flat *FlatPhysicalPlan) s
 	return str
 }
 
-func binaryDataFromFlatPlan(explainCtx PlanContext, flat *FlatPhysicalPlan) *tipb.ExplainData {
+func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan) *tipb.ExplainData {
 	if len(flat.Main) == 0 {
 		return nil
 	}
@@ -1210,7 +1210,7 @@ func binaryDataFromFlatPlan(explainCtx PlanContext, flat *FlatPhysicalPlan) *tip
 	return res
 }
 
-func binaryOpTreeFromFlatOps(explainCtx PlanContext, ops FlatPlanTree) *tipb.ExplainOperator {
+func binaryOpTreeFromFlatOps(explainCtx base.PlanContext, ops FlatPlanTree) *tipb.ExplainOperator {
 	s := make([]tipb.ExplainOperator, len(ops))
 	for i, op := range ops {
 		binaryOpFromFlatOp(explainCtx, op, &s[i])
@@ -1221,7 +1221,7 @@ func binaryOpTreeFromFlatOps(explainCtx PlanContext, ops FlatPlanTree) *tipb.Exp
 	return &s[0]
 }
 
-func binaryOpFromFlatOp(explainCtx PlanContext, fop *FlatOperator, out *tipb.ExplainOperator) {
+func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tipb.ExplainOperator) {
 	out.Name = fop.Origin.ExplainID().String()
 	switch fop.Label {
 	case BuildSide:

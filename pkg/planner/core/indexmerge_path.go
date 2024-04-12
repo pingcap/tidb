@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -1370,7 +1371,7 @@ func collectFilters4MVIndex(
 //	accessFilters: [x=1, (2 member of a), z=1], remainingFilters: [x+z>0], mvColOffset: 1, mvFilterMutations[(2 member of a), (1 member of a)]
 //
 // the outer usage will be: accessFilter[mvColOffset] = each element of mvFilterMutations to get the mv access filters mutation combination.
-func CollectFilters4MVIndexMutations(sctx PlanContext, filters []expression.Expression,
+func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression.Expression,
 	idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression) {
 	usedAsAccess := make([]bool, len(filters))
 	// accessFilters [x, a<json>, z]
@@ -1481,7 +1482,7 @@ const (
 // Though this function is introduced for MV index, it can also be used for normal index
 // If the return value ok is false, the type must be unspecifiedFilterTp.
 func checkAccessFilter4IdxCol(
-	sctx PlanContext,
+	sctx base.PlanContext,
 	filter expression.Expression,
 	idxCol *expression.Column,
 ) (

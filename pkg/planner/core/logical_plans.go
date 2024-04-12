@@ -1191,7 +1191,7 @@ func extractNotNullFromConds(conditions []expression.Expression, p LogicalPlan) 
 	return notnullColsUniqueIDs
 }
 
-func extractConstantCols(conditions []expression.Expression, sctx PlanContext, fds *fd.FDSet) intset.FastIntSet {
+func extractConstantCols(conditions []expression.Expression, sctx base.PlanContext, fds *fd.FDSet) intset.FastIntSet {
 	// extract constant cols
 	// eg: where a=1 and b is null and (1+c)=5.
 	// TODO: Some columns can only be determined to be constant from multiple constraints (e.g. x <= 1 AND x >= 1)
@@ -1218,7 +1218,7 @@ func extractConstantCols(conditions []expression.Expression, sctx PlanContext, f
 	return constUniqueIDs
 }
 
-func extractEquivalenceCols(conditions []expression.Expression, sctx PlanContext, fds *fd.FDSet) [][]intset.FastIntSet {
+func extractEquivalenceCols(conditions []expression.Expression, sctx base.PlanContext, fds *fd.FDSet) [][]intset.FastIntSet {
 	var equivObjsPair [][]expression.Expression
 	equivObjsPair = expression.ExtractEquivalenceColumns(equivObjsPair, conditions)
 	equivUniqueIDs := make([][]intset.FastIntSet, 0, len(equivObjsPair))
@@ -1623,7 +1623,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 }
 
 func detachCondAndBuildRangeForPath(
-	sctx PlanContext,
+	sctx base.PlanContext,
 	path *util.AccessPath,
 	conds []expression.Expression,
 	histColl *statistics.HistColl,

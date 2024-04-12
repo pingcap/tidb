@@ -50,12 +50,12 @@ import (
 )
 
 // EvalSubqueryFirstRow evaluates incorrelated subqueries once, and get first row.
-var EvalSubqueryFirstRow func(ctx context.Context, p base.PhysicalPlan, is infoschema.InfoSchema, sctx PlanContext) (row []types.Datum, err error)
+var EvalSubqueryFirstRow func(ctx context.Context, p base.PhysicalPlan, is infoschema.InfoSchema, sctx base.PlanContext) (row []types.Datum, err error)
 
 // evalAstExprWithPlanCtx evaluates ast expression with plan context.
 // Different with expression.EvalSimpleAst, it uses planner context and is more powerful to build some special expressions
 // like subquery, window function, etc.
-func evalAstExprWithPlanCtx(sctx PlanContext, expr ast.ExprNode) (types.Datum, error) {
+func evalAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode) (types.Datum, error) {
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
@@ -81,7 +81,7 @@ func evalAstExpr(ctx expression.BuildContext, expr ast.ExprNode) (types.Datum, e
 // rewriteAstExprWithPlanCtx rewrites ast expression directly.
 // Different with expression.BuildSimpleExpr, it uses planner context and is more powerful to build some special expressions
 // like subquery, window function, etc.
-func rewriteAstExprWithPlanCtx(sctx PlanContext, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error) {
+func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error) {
 	var is infoschema.InfoSchema
 	// in tests, it may be null
 	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
