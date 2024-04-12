@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -531,8 +532,8 @@ func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.Colum
 }
 
 // isPlanCacheable returns whether this plan is cacheable and the reason if not.
-func isPlanCacheable(sctx PlanContext, p Plan, paramNum, limitParamNum int, hasSubQuery bool) (cacheable bool, reason string) {
-	var pp PhysicalPlan
+func isPlanCacheable(sctx PlanContext, p operator.Plan, paramNum, limitParamNum int, hasSubQuery bool) (cacheable bool, reason string) {
+	var pp operator.PhysicalPlan
 	switch x := p.(type) {
 	case *Insert:
 		pp = x.SelectPlan
@@ -540,7 +541,7 @@ func isPlanCacheable(sctx PlanContext, p Plan, paramNum, limitParamNum int, hasS
 		pp = x.SelectPlan
 	case *Delete:
 		pp = x.SelectPlan
-	case PhysicalPlan:
+	case operator.PhysicalPlan:
 		pp = x
 	default:
 		return false, fmt.Sprintf("unexpected un-cacheable plan %v", p.ExplainID().String())
@@ -561,8 +562,8 @@ func isPlanCacheable(sctx PlanContext, p Plan, paramNum, limitParamNum int, hasS
 }
 
 // isPhysicalPlanCacheable returns whether this physical plan is cacheable and return the reason if not.
-func isPhysicalPlanCacheable(sctx PlanContext, p PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
-	var subPlans []PhysicalPlan
+func isPhysicalPlanCacheable(sctx PlanContext, p operator.PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
+	var subPlans []operator.PhysicalPlan
 	switch x := p.(type) {
 	case *PhysicalTableDual:
 		if paramNum > 0 {

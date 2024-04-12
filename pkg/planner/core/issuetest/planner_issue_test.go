@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -48,7 +49,7 @@ func TestIssue43461(t *testing.T) {
 		if ok {
 			break
 		}
-		p = p.(core.PhysicalPlan).Children()[0]
+		p = p.(operator.PhysicalPlan).Children()[0]
 	}
 	require.True(t, ok)
 

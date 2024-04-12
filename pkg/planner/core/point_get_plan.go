@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -56,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
 )
@@ -102,7 +102,7 @@ type PointGetPlan struct {
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in PhysicalPlan for details.
-	probeParents []PhysicalPlan
+	probeParents []operator.PhysicalPlan
 	// stmtHints should restore in executing context.
 	stmtHints *hint.StmtHints
 	// explicit partition selection
@@ -126,7 +126,7 @@ func (p *PointGetPlan) GetActualProbeCnt(statsColl *execdetails.RuntimeStatsColl
 }
 
 // SetProbeParents implements PhysicalPlan interface.
-func (p *PointGetPlan) SetProbeParents(probeParents []PhysicalPlan) {
+func (p *PointGetPlan) SetProbeParents(probeParents []operator.PhysicalPlan) {
 	p.probeParents = probeParents
 }
 
@@ -164,7 +164,7 @@ func (*PointGetPlan) ToPB(_ *BuildPBContext, _ kv.StoreType) (*tipb.Executor, er
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *PointGetPlan) Clone() (PhysicalPlan, error) {
+func (p *PointGetPlan) Clone() (operator.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p)
 }
 
@@ -239,15 +239,15 @@ func (p *PointGetPlan) StatsInfo() *property.StatsInfo {
 }
 
 // Children gets all the children.
-func (*PointGetPlan) Children() []PhysicalPlan {
+func (*PointGetPlan) Children() []operator.PhysicalPlan {
 	return nil
 }
 
 // SetChildren sets the children for the plan.
-func (*PointGetPlan) SetChildren(...PhysicalPlan) {}
+func (*PointGetPlan) SetChildren(...operator.PhysicalPlan) {}
 
 // SetChild sets a specific child for the plan.
-func (*PointGetPlan) SetChild(_ int, _ PhysicalPlan) {}
+func (*PointGetPlan) SetChild(_ int, _ operator.PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *PointGetPlan) ResolveIndices() error {
@@ -445,7 +445,7 @@ type BatchPointGetPlan struct {
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in PhysicalPlan for details.
-	probeParents []PhysicalPlan
+	probeParents []operator.PhysicalPlan
 	// explicit partition selection
 	PartitionNames []model.CIStr
 }
@@ -467,7 +467,7 @@ func (p *BatchPointGetPlan) GetActualProbeCnt(statsColl *execdetails.RuntimeStat
 }
 
 // SetProbeParents implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) SetProbeParents(probeParents []PhysicalPlan) {
+func (p *BatchPointGetPlan) SetProbeParents(probeParents []operator.PhysicalPlan) {
 	p.probeParents = probeParents
 }
 
@@ -482,7 +482,7 @@ func (p *BatchPointGetPlan) SetCost(cost float64) {
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) Clone() (PhysicalPlan, error) {
+func (p *BatchPointGetPlan) Clone() (operator.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p)
 }
 
@@ -555,15 +555,15 @@ func (p *BatchPointGetPlan) StatsInfo() *property.StatsInfo {
 }
 
 // Children gets all the children.
-func (*BatchPointGetPlan) Children() []PhysicalPlan {
+func (*BatchPointGetPlan) Children() []operator.PhysicalPlan {
 	return nil
 }
 
 // SetChildren sets the children for the plan.
-func (*BatchPointGetPlan) SetChildren(...PhysicalPlan) {}
+func (*BatchPointGetPlan) SetChildren(...operator.PhysicalPlan) {}
 
 // SetChild sets a specific child for the plan.
-func (*BatchPointGetPlan) SetChild(_ int, _ PhysicalPlan) {}
+func (*BatchPointGetPlan) SetChild(_ int, _ operator.PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *BatchPointGetPlan) ResolveIndices() error {
@@ -859,11 +859,11 @@ const PointPlanKey = stringutil.StringerStr("pointPlanKey")
 // PointPlanVal is used to store point plan that is pre-built for multi-statement query.
 // Save the plan in a struct so even if the point plan is nil, we don't need to try again.
 type PointPlanVal struct {
-	Plan Plan
+	Plan operator.Plan
 }
 
 // TryFastPlan tries to use the PointGetPlan for the query.
-func TryFastPlan(ctx PlanContext, node ast.Node) (p Plan) {
+func TryFastPlan(ctx PlanContext, node ast.Node) (p operator.Plan) {
 	if checkStableResultMode(ctx) {
 		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
 		return nil
@@ -1881,7 +1881,7 @@ func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
 	return false
 }
 
-func tryUpdatePointPlan(ctx PlanContext, updateStmt *ast.UpdateStmt) Plan {
+func tryUpdatePointPlan(ctx PlanContext, updateStmt *ast.UpdateStmt) operator.Plan {
 	// Avoid using the point_get when assignment_list contains the sub-query in the UPDATE.
 	if checkIfAssignmentListHasSubQuery(updateStmt.List) {
 		return nil
@@ -1916,7 +1916,7 @@ func tryUpdatePointPlan(ctx PlanContext, updateStmt *ast.UpdateStmt) Plan {
 	return nil
 }
 
-func buildPointUpdatePlan(ctx PlanContext, pointPlan PhysicalPlan, dbName string, tbl *model.TableInfo, updateStmt *ast.UpdateStmt) Plan {
+func buildPointUpdatePlan(ctx PlanContext, pointPlan operator.PhysicalPlan, dbName string, tbl *model.TableInfo, updateStmt *ast.UpdateStmt) operator.Plan {
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.UpdatePriv) != nil {
 		return nil
 	}
@@ -1972,7 +1972,7 @@ func buildPointUpdatePlan(ctx PlanContext, pointPlan PhysicalPlan, dbName string
 	return updatePlan
 }
 
-func buildOrderedList(ctx PlanContext, plan Plan, list []*ast.Assignment,
+func buildOrderedList(ctx PlanContext, plan operator.Plan, list []*ast.Assignment,
 ) (orderedList []*expression.Assignment, allAssignmentsAreConstant bool) {
 	orderedList = make([]*expression.Assignment, 0, len(list))
 	allAssignmentsAreConstant = true
@@ -2009,7 +2009,7 @@ func buildOrderedList(ctx PlanContext, plan Plan, list []*ast.Assignment,
 	return orderedList, allAssignmentsAreConstant
 }
 
-func tryDeletePointPlan(ctx PlanContext, delStmt *ast.DeleteStmt) Plan {
+func tryDeletePointPlan(ctx PlanContext, delStmt *ast.DeleteStmt) operator.Plan {
 	if delStmt.IsMultiTable {
 		return nil
 	}
@@ -2040,7 +2040,7 @@ func tryDeletePointPlan(ctx PlanContext, delStmt *ast.DeleteStmt) Plan {
 	return nil
 }
 
-func buildPointDeletePlan(ctx PlanContext, pointPlan PhysicalPlan, dbName string, tbl *model.TableInfo) Plan {
+func buildPointDeletePlan(ctx PlanContext, pointPlan operator.PhysicalPlan, dbName string, tbl *model.TableInfo) operator.Plan {
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}

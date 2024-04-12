@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -2231,7 +2231,7 @@ func extractCorColumnsBySchema4LogicalPlan(p LogicalPlan, schema *expression.Sch
 // ExtractCorColumnsBySchema4PhysicalPlan only extracts the correlated columns that match the specified schema.
 // e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is returned.
-func ExtractCorColumnsBySchema4PhysicalPlan(p PhysicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
+func ExtractCorColumnsBySchema4PhysicalPlan(p operator.PhysicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
 	corCols := ExtractCorrelatedCols4PhysicalPlan(p)
 	return ExtractCorColumnsBySchema(corCols, schema, true)
 }
@@ -2297,8 +2297,8 @@ type CTEClass struct {
 	seedPartLogicalPlan      LogicalPlan
 	recursivePartLogicalPlan LogicalPlan
 	// seedPartPhysicalPlan and recursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
-	seedPartPhysicalPlan      PhysicalPlan
-	recursivePartPhysicalPlan PhysicalPlan
+	seedPartPhysicalPlan      operator.PhysicalPlan
+	recursivePartPhysicalPlan operator.PhysicalPlan
 	// storageID for this CTE.
 	IDForStorage int
 	// optFlag is the optFlag for the whole CTE.

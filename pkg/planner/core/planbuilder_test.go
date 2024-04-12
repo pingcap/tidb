@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -205,7 +206,7 @@ func TestDeepClone(t *testing.T) {
 	byItems := []*util.ByItems{{Expr: expr}}
 	sort1 := &PhysicalSort{ByItems: byItems}
 	sort2 := &PhysicalSort{ByItems: byItems}
-	checkDeepClone := func(p1, p2 PhysicalPlan) error {
+	checkDeepClone := func(p1, p2 operator.PhysicalPlan) error {
 		whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context"}
 		return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), whiteList, nil)
 	}
@@ -251,7 +252,7 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 	// table reader
 	tableReader := &PhysicalTableReader{
 		tablePlan:  tableScan,
-		TablePlans: []PhysicalPlan{tableScan},
+		TablePlans: []operator.PhysicalPlan{tableScan},
 		StoreType:  kv.TiFlash,
 	}
 	tableReader = tableReader.Init(ctx, 0)
@@ -287,7 +288,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	// table reader
 	tableReader := &PhysicalTableReader{
 		tablePlan:  tableScan,
-		TablePlans: []PhysicalPlan{tableScan},
+		TablePlans: []operator.PhysicalPlan{tableScan},
 		StoreType:  kv.TiFlash,
 	}
 	tableReader = tableReader.Init(ctx, 0)
@@ -307,7 +308,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	// index reader
 	indexReader := &PhysicalIndexReader{
 		indexPlan:     indexScan,
-		IndexPlans:    []PhysicalPlan{indexScan},
+		IndexPlans:    []operator.PhysicalPlan{indexScan},
 		OutputColumns: []*expression.Column{col, col},
 	}
 	indexReader = indexReader.Init(ctx, 0)
@@ -315,9 +316,9 @@ func TestPhysicalPlanClone(t *testing.T) {
 
 	// index lookup
 	indexLookup := &PhysicalIndexLookUpReader{
-		IndexPlans:     []PhysicalPlan{indexReader},
+		IndexPlans:     []operator.PhysicalPlan{indexReader},
 		indexPlan:      indexScan,
-		TablePlans:     []PhysicalPlan{tableReader},
+		TablePlans:     []operator.PhysicalPlan{tableReader},
 		tablePlan:      tableScan,
 		ExtraHandleCol: col,
 		PushedLimit:    &PushedDownLimit{1, 2},
@@ -402,7 +403,7 @@ func typeName(t reflect.Type) string {
 	return tmp[len(tmp)-1]
 }
 
-func checkPhysicalPlanClone(p PhysicalPlan) error {
+func checkPhysicalPlanClone(p operator.PhysicalPlan) error {
 	cloned, err := p.Clone()
 	if err != nil {
 		return err

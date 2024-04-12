@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -155,7 +156,7 @@ type physicalSchemaProducer struct {
 	basePhysicalPlan
 }
 
-func (s *physicalSchemaProducer) cloneWithSelf(newSelf PhysicalPlan) (*physicalSchemaProducer, error) {
+func (s *physicalSchemaProducer) cloneWithSelf(newSelf operator.PhysicalPlan) (*physicalSchemaProducer, error) {
 	base, err := s.basePhysicalPlan.cloneWithSelf(newSelf)
 	if err != nil {
 		return nil, err
@@ -272,7 +273,7 @@ func buildLogicalJoinSchema(joinType JoinType, join LogicalPlan) *expression.Sch
 }
 
 // BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
-func BuildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.Schema {
+func BuildPhysicalJoinSchema(joinType JoinType, join operator.PhysicalPlan) *expression.Schema {
 	leftSchema := join.Children()[0].Schema()
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
@@ -317,8 +318,8 @@ func GetStatsInfo(i any) map[string]uint64 {
 		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419
 		return nil
 	}
-	p := i.(Plan)
-	var physicalPlan PhysicalPlan
+	p := i.(operator.Plan)
+	var physicalPlan operator.PhysicalPlan
 	switch x := p.(type) {
 	case *Insert:
 		physicalPlan = x.SelectPlan
@@ -326,7 +327,7 @@ func GetStatsInfo(i any) map[string]uint64 {
 		physicalPlan = x.SelectPlan
 	case *Delete:
 		physicalPlan = x.SelectPlan
-	case PhysicalPlan:
+	case operator.PhysicalPlan:
 		physicalPlan = x
 	}
 
@@ -402,8 +403,8 @@ func tableHasDirtyContent(ctx PlanContext, tableInfo *model.TableInfo) bool {
 	return false
 }
 
-func clonePhysicalPlan(plans []PhysicalPlan) ([]PhysicalPlan, error) {
-	cloned := make([]PhysicalPlan, 0, len(plans))
+func clonePhysicalPlan(plans []operator.PhysicalPlan) ([]operator.PhysicalPlan, error) {
+	cloned := make([]operator.PhysicalPlan, 0, len(plans))
 	for _, p := range plans {
 		c, err := p.Clone()
 		if err != nil {

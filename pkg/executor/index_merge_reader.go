@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -50,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -129,8 +129,8 @@ type IndexMergeReaderExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue // nolint:unused
 
-	partialPlans        [][]plannercore.PhysicalPlan
-	tblPlans            []plannercore.PhysicalPlan
+	partialPlans        [][]operator.PhysicalPlan
+	tblPlans            []operator.PhysicalPlan
 	partialNetDataSizes []float64
 	dataAvgRowSize      float64
 
@@ -1649,7 +1649,7 @@ type partialIndexWorker struct {
 	scannedKeys        uint64
 	pushedLimit        *plannercore.PushedDownLimit
 	dagPB              *tipb.DAGRequest
-	plan               []plannercore.PhysicalPlan
+	plan               []operator.PhysicalPlan
 }
 
 func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexMergeTableTask, err error) {
@@ -1840,7 +1840,7 @@ type indexMergeTableScanWorker struct {
 	workCh         <-chan *indexMergeTableTask
 	finished       <-chan struct{}
 	indexMergeExec *IndexMergeReaderExecutor
-	tblPlans       []plannercore.PhysicalPlan
+	tblPlans       []operator.PhysicalPlan
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker

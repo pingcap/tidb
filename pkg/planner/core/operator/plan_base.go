@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package operator
 
 import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Plan is the description of an execution flow.
@@ -49,7 +49,7 @@ type Plan interface {
 	// ReplaceExprColumns replace all the column reference in the plan's expression node.
 	ReplaceExprColumns(replace map[string]*expression.Column)
 
-	SCtx() PlanContext
+	SCtx() core.PlanContext
 
 	// StatsInfo will return the property.StatsInfo for this plan.
 	StatsInfo() *property.StatsInfo
@@ -81,10 +81,10 @@ type PhysicalPlan interface {
 
 	// Attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
-	Attach2Task(...Task) Task
+	Attach2Task(...core.Task) core.Task
 
 	// ToPB converts physical plan to tipb executor.
-	ToPB(ctx *BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error)
+	ToPB(ctx *core.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error)
 
 	// GetChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty

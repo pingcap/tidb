@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -98,7 +99,7 @@ func ExtractCorrelatedCols4LogicalPlan(p LogicalPlan) []*expression.CorrelatedCo
 
 // ExtractCorrelatedCols4PhysicalPlan recursively extracts all of the correlated columns
 // from a plan tree by calling PhysicalPlan.ExtractCorrelatedCols.
-func ExtractCorrelatedCols4PhysicalPlan(p PhysicalPlan) []*expression.CorrelatedColumn {
+func ExtractCorrelatedCols4PhysicalPlan(p operator.PhysicalPlan) []*expression.CorrelatedColumn {
 	corCols := p.ExtractCorrelatedCols()
 	for _, child := range p.Children() {
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
@@ -129,11 +130,11 @@ func ExtractCorrelatedCols4PhysicalPlan(p PhysicalPlan) []*expression.Correlated
 //	 |_ Apply_3
 //	     |_ outerSide
 //	     |_ innerSide(cor_col_3)
-func ExtractOuterApplyCorrelatedCols(p PhysicalPlan) []*expression.CorrelatedColumn {
+func ExtractOuterApplyCorrelatedCols(p operator.PhysicalPlan) []*expression.CorrelatedColumn {
 	return extractOuterApplyCorrelatedColsHelper(p, []*expression.Schema{})
 }
 
-func extractOuterApplyCorrelatedColsHelper(p PhysicalPlan, outerSchemas []*expression.Schema) []*expression.CorrelatedColumn {
+func extractOuterApplyCorrelatedColsHelper(p operator.PhysicalPlan, outerSchemas []*expression.Schema) []*expression.CorrelatedColumn {
 	if p == nil {
 		return nil
 	}
@@ -156,7 +157,7 @@ func extractOuterApplyCorrelatedColsHelper(p PhysicalPlan, outerSchemas []*expre
 
 	switch v := p.(type) {
 	case *PhysicalApply:
-		var outerPlan PhysicalPlan
+		var outerPlan operator.PhysicalPlan
 		if v.InnerChildIdx == 0 {
 			outerPlan = v.Children()[1]
 		} else {

@@ -23,12 +23,12 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -193,7 +193,7 @@ func TestResourceGroupTag(t *testing.T) {
 			if expectPlanDigest == nil {
 				info := tk.Session().ShowProcess()
 				require.NotNil(t, info)
-				p, ok := info.Plan.(plannercore.Plan)
+				p, ok := info.Plan.(operator.Plan)
 				require.True(t, ok)
 				_, expectPlanDigest = plannercore.NormalizePlan(p)
 

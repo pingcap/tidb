@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -50,9 +51,9 @@ import (
 )
 
 var (
-	_          exec.Executor     = &testutil.MockDataSource{}
-	_          core.PhysicalPlan = &testutil.MockDataPhysicalPlan{}
-	wideString                   = strings.Repeat("x", 5*1024)
+	_          exec.Executor         = &testutil.MockDataSource{}
+	_          operator.PhysicalPlan = &testutil.MockDataPhysicalPlan{}
+	wideString                       = strings.Repeat("x", 5*1024)
 )
 
 func buildHashAggExecutor(ctx sessionctx.Context, src exec.Executor, schema *expression.Schema,
@@ -80,7 +81,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schem
 	sg.SetSchema(schema)
 	sg.Init(ctx.GetPlanCtx(), nil, 0)
 
-	var tail core.PhysicalPlan = sg
+	var tail operator.PhysicalPlan = sg
 	// if data source is not sorted, we have to attach sort, to make the input of stream-agg sorted
 	if !dataSourceSorted {
 		byItems := make([]*util.ByItems, 0, len(sg.GroupByItems))
@@ -96,7 +97,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schem
 	}
 
 	var (
-		plan     core.PhysicalPlan
+		plan     operator.PhysicalPlan
 		splitter core.PartitionSplitterType = core.PartitionHashSplitterType
 	)
 	if concurrency > 1 {
@@ -105,8 +106,8 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec exec.Executor, schem
 		}
 		plan = core.PhysicalShuffle{
 			Concurrency:  concurrency,
-			Tails:        []core.PhysicalPlan{tail},
-			DataSources:  []core.PhysicalPlan{src},
+			Tails:        []operator.PhysicalPlan{tail},
+			DataSources:  []operator.PhysicalPlan{src},
 			SplitterType: splitter,
 			ByItemArrays: [][]expression.Expression{sg.GroupByItems},
 		}.Init(ctx.GetPlanCtx(), nil, 0)
@@ -315,7 +316,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 	win.SetSchema(winSchema)
 	win.Init(ctx.GetPlanCtx(), nil, 0)
 
-	var tail core.PhysicalPlan = win
+	var tail operator.PhysicalPlan = win
 	if !dataSourceSorted {
 		byItems := make([]*util.ByItems, 0, len(partitionBy))
 		for _, col := range partitionBy {
@@ -329,7 +330,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		win.SetChildren(src)
 	}
 
-	var plan core.PhysicalPlan
+	var plan operator.PhysicalPlan
 	if concurrency > 1 {
 		byItems := make([]expression.Expression, 0, len(win.PartitionBy))
 		for _, item := range win.PartitionBy {
@@ -338,8 +339,8 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 
 		plan = core.PhysicalShuffle{
 			Concurrency:  concurrency,
-			Tails:        []core.PhysicalPlan{tail},
-			DataSources:  []core.PhysicalPlan{src},
+			Tails:        []operator.PhysicalPlan{tail},
+			DataSources:  []operator.PhysicalPlan{src},
 			SplitterType: core.PartitionHashSplitterType,
 			ByItemArrays: [][]expression.Expression{byItems},
 		}.Init(ctx.GetPlanCtx(), nil, 0)

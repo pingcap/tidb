@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -57,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -204,7 +204,7 @@ type IndexReaderExecutor struct {
 	corColInAccess bool
 	idxCols        []*expression.Column
 	colLens        []int
-	plans          []plannercore.PhysicalPlan
+	plans          []operator.PhysicalPlan
 
 	memTracker *memory.Tracker
 
@@ -470,8 +470,8 @@ type IndexLookUpExecutor struct {
 	corColInIdxSide bool
 	corColInTblSide bool
 	corColInAccess  bool
-	idxPlans        []plannercore.PhysicalPlan
-	tblPlans        []plannercore.PhysicalPlan
+	idxPlans        []operator.PhysicalPlan
+	tblPlans        []operator.PhysicalPlan
 	idxCols         []*expression.Column
 	colLens         []int
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
@@ -1594,7 +1594,7 @@ func GetLackHandles(expectedHandles []kv.Handle, obtainedHandlesMap *kv.HandleMa
 	return diffHandles
 }
 
-func getPhysicalPlanIDs(plans []plannercore.PhysicalPlan) []int {
+func getPhysicalPlanIDs(plans []operator.PhysicalPlan) []int {
 	planIDs := make([]int, 0, len(plans))
 	for _, p := range plans {
 		planIDs = append(planIDs, p.ID())

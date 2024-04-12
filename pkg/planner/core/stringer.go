@@ -19,11 +19,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // ToString explains a Plan, returns description string.
-func ToString(p Plan) string {
+func ToString(p operator.Plan) string {
 	strs, _ := toString(p, []string{}, []int{})
 	return strings.Join(strs, "->")
 }
@@ -37,7 +38,7 @@ func FDToString(p LogicalPlan) string {
 	return strings.Join(strs, " >>> ")
 }
 
-func needIncludeChildrenString(plan Plan) bool {
+func needIncludeChildrenString(plan operator.Plan) bool {
 	switch x := plan.(type) {
 	case *LogicalUnionAll, *PhysicalUnionAll, *LogicalPartitionUnionAll:
 		// after https://github.com/pingcap/tidb/pull/25218, the union may contain less than 2 children,
@@ -45,7 +46,7 @@ func needIncludeChildrenString(plan Plan) bool {
 		return true
 	case LogicalPlan:
 		return len(x.Children()) > 1
-	case PhysicalPlan:
+	case operator.PhysicalPlan:
 		return len(x.Children()) > 1
 	default:
 		return false
@@ -75,7 +76,7 @@ func fdToString(in LogicalPlan, strs []string, idxs []int) ([]string, []int) {
 	return strs, idxs
 }
 
-func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
+func toString(in operator.Plan, strs []string, idxs []int) ([]string, []int) {
 	switch x := in.(type) {
 	case LogicalPlan:
 		if needIncludeChildrenString(in) {
@@ -86,7 +87,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			strs, idxs = toString(c, strs, idxs)
 		}
 	case *PhysicalExchangeReceiver: // do nothing
-	case PhysicalPlan:
+	case operator.PhysicalPlan:
 		if needIncludeChildrenString(in) {
 			idxs = append(idxs, len(strs))
 		}

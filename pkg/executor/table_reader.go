@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -50,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
@@ -161,8 +161,8 @@ type TableReaderExecutor struct {
 	// resultHandler handles the order of the result. Since (MAXInt64, MAXUint64] stores before [0, MaxInt64] physically
 	// for unsigned int.
 	resultHandler *tableResultHandler
-	plans         []plannercore.PhysicalPlan
-	tablePlan     plannercore.PhysicalPlan
+	plans         []operator.PhysicalPlan
+	tablePlan     operator.PhysicalPlan
 
 	memTracker       *memory.Tracker
 	selectResultHook // for testing

@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -67,7 +68,7 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 		tk.MustExec(tt)
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(core.Plan)
+		p, ok := info.Plan.(operator.Plan)
 		require.True(t, ok)
 		normalized, digest := core.NormalizePlan(p)
 

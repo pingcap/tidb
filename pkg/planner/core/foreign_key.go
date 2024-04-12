@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
@@ -54,7 +55,7 @@ type FKCascade struct {
 	// CascadePlans contains the child cascade plan.
 	// CascadePlans will be filled during execution, so only `explain analyze` statement result contains the cascade plan,
 	// `explain` statement result doesn't contain the cascade plan.
-	CascadePlans []Plan
+	CascadePlans []operator.Plan
 }
 
 // FKCascadeType indicates in which (delete/update) statements.

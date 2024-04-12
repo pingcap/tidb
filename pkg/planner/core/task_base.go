@@ -18,11 +18,11 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -40,7 +40,7 @@ type Task interface {
 	// Copy return a shallow copy of current task with the same pointer to p.
 	Copy() Task
 	// Plan returns current task's plan.
-	Plan() PhysicalPlan
+	Plan() operator.PhysicalPlan
 	// Invalid returns whether current task is invalid.
 	Invalid() bool
 	// ConvertToRootTask will convert current task as root type.
@@ -53,18 +53,18 @@ type Task interface {
 
 // RootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type RootTask struct {
-	p       PhysicalPlan
+	p       operator.PhysicalPlan
 	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
 	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
 }
 
 // GetPlan returns the root task's plan.
-func (t *RootTask) GetPlan() PhysicalPlan {
+func (t *RootTask) GetPlan() operator.PhysicalPlan {
 	return t.p
 }
 
 // SetPlan sets the root task' plan.
-func (t *RootTask) SetPlan(p PhysicalPlan) {
+func (t *RootTask) SetPlan(p operator.PhysicalPlan) {
 	t.p = p
 }
 
@@ -101,7 +101,7 @@ func (t *RootTask) Count() float64 {
 }
 
 // Plan implements Task interface.
-func (t *RootTask) Plan() PhysicalPlan {
+func (t *RootTask) Plan() operator.PhysicalPlan {
 	return t.p
 }
 
@@ -127,7 +127,7 @@ func (t *RootTask) MemoryUsage() (sum int64) {
 // 3. consider virtual columns.
 // 4. TODO: partition prune after close
 type MppTask struct {
-	p PhysicalPlan
+	p operator.PhysicalPlan
 
 	partTp   property.MPPPartitionType
 	hashCols []*property.MPPPartitionColumn
@@ -158,7 +158,7 @@ func (t *MppTask) Copy() Task {
 }
 
 // Plan implements Task interface.
-func (t *MppTask) Plan() PhysicalPlan {
+func (t *MppTask) Plan() operator.PhysicalPlan {
 	return t.p
 }
 
@@ -238,8 +238,8 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx PlanContext) *RootTask {
 // CopTask is a task that runs in a distributed kv store.
 // TODO: In future, we should split copTask to indexTask and tableTask.
 type CopTask struct {
-	indexPlan PhysicalPlan
-	tablePlan PhysicalPlan
+	indexPlan operator.PhysicalPlan
+	tablePlan operator.PhysicalPlan
 	// indexPlanFinished means we have finished index plan.
 	indexPlanFinished bool
 	// keepOrder indicates if the plan scans data by order.
@@ -259,7 +259,7 @@ type CopTask struct {
 	// is used to compute average row width when computing scan cost.
 	tblCols []*expression.Column
 
-	idxMergePartPlans      []PhysicalPlan
+	idxMergePartPlans      []operator.PhysicalPlan
 	idxMergeIsIntersection bool
 	idxMergeAccessMVIndex  bool
 
@@ -297,7 +297,7 @@ func (t *CopTask) Copy() Task {
 // Plan implements Task interface.
 // copTask plan should be careful with indexMergeReader, whose real plan is stored in
 // idxMergePartPlans, when its indexPlanFinished is marked with false.
-func (t *CopTask) Plan() PhysicalPlan {
+func (t *CopTask) Plan() operator.PhysicalPlan {
 	if t.indexPlanFinished {
 		return t.tablePlan
 	}

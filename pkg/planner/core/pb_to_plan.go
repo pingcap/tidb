@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // PBPlanBuilder uses to build physical plan from dag protocol buffers.
@@ -44,8 +44,8 @@ func NewPBPlanBuilder(sctx PlanContext, is infoschema.InfoSchema, ranges []*copr
 }
 
 // Build builds physical plan from dag protocol buffers.
-func (b *PBPlanBuilder) Build(executors []*tipb.Executor) (p PhysicalPlan, err error) {
-	var src PhysicalPlan
+func (b *PBPlanBuilder) Build(executors []*tipb.Executor) (p operator.PhysicalPlan, err error) {
+	var src operator.PhysicalPlan
 	for i := 0; i < len(executors); i++ {
 		curr, err := b.pbToPhysicalPlan(executors[i], src)
 		if err != nil {
@@ -57,7 +57,7 @@ func (b *PBPlanBuilder) Build(executors []*tipb.Executor) (p PhysicalPlan, err e
 	return src, nil
 }
 
-func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan PhysicalPlan) (p PhysicalPlan, err error) {
+func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan operator.PhysicalPlan) (p operator.PhysicalPlan, err error) {
 	switch e.Tp {
 	case tipb.ExecType_TypeTableScan:
 		p, err = b.pbToTableScan(e)
@@ -91,7 +91,7 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan PhysicalPlan)
 	return p, err
 }
 
-func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
+func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (operator.PhysicalPlan, error) {
 	tblScan := e.TblScan
 	tbl, ok := b.is.TableByID(tblScan.TableId)
 	if !ok {
@@ -151,7 +151,7 @@ func (b *PBPlanBuilder) buildTableScanSchema(tblInfo *model.TableInfo, columns [
 	return schema
 }
 
-func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (PhysicalPlan, error) {
+func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (operator.PhysicalPlan, error) {
 	conds, err := expression.PBToExprs(b.sctx.GetExprCtx(), e.Selection.Conditions, b.tps)
 	if err != nil {
 		return nil, err
@@ -162,7 +162,7 @@ func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (PhysicalPlan, error) {
 	return p, nil
 }
 
-func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (PhysicalPlan, error) {
+func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (operator.PhysicalPlan, error) {
 	topN := e.TopN
 	byItems := make([]*util.ByItems, 0, len(topN.OrderBy))
 	exprCtx := b.sctx.GetExprCtx()
@@ -180,14 +180,14 @@ func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (PhysicalPlan, error) {
 	return p, nil
 }
 
-func (b *PBPlanBuilder) pbToLimit(e *tipb.Executor) (PhysicalPlan, error) {
+func (b *PBPlanBuilder) pbToLimit(e *tipb.Executor) (operator.PhysicalPlan, error) {
 	p := PhysicalLimit{
 		Count: e.Limit.Limit,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
 }
 
-func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (PhysicalPlan, error) {
+func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (operator.PhysicalPlan, error) {
 	aggFuncs, groupBys, err := b.getAggInfo(e)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -198,7 +198,7 @@ func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (PhysicalPla
 		GroupByItems: groupBys,
 	}
 	baseAgg.schema = schema
-	var partialAgg PhysicalPlan
+	var partialAgg operator.PhysicalPlan
 	if isStreamAgg {
 		partialAgg = baseAgg.initForStream(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	} else {
@@ -258,7 +258,7 @@ func (b *PBPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, pbColumns []
 	return columns, nil
 }
 
-func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (PhysicalPlan, error) {
+func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (operator.PhysicalPlan, error) {
 	node := &ast.KillStmt{
 		ConnectionID: e.Kill.ConnID,
 		Query:        e.Kill.Query,
@@ -267,7 +267,7 @@ func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (PhysicalPlan, error) {
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
 
-func (b *PBPlanBuilder) predicatePushDown(physicalPlan PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, PhysicalPlan) {
+func (b *PBPlanBuilder) predicatePushDown(physicalPlan operator.PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, operator.PhysicalPlan) {
 	if physicalPlan == nil {
 		return predicates, physicalPlan
 	}

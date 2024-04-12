@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -47,7 +48,7 @@ type expressionGroup struct {
 // predicatePushDownToTableScan is used find the selection just above the table scan
 // and try to push down the predicates to the table scan.
 // Used for TiFlash late materialization.
-func predicatePushDownToTableScan(sctx PlanContext, plan PhysicalPlan) PhysicalPlan {
+func predicatePushDownToTableScan(sctx PlanContext, plan operator.PhysicalPlan) operator.PhysicalPlan {
 	switch p := plan.(type) {
 	case *PhysicalSelection:
 		if physicalTableScan, ok := plan.Children()[0].(*PhysicalTableScan); ok && physicalTableScan.StoreType == kv.TiFlash {
@@ -57,7 +58,7 @@ func predicatePushDownToTableScan(sctx PlanContext, plan PhysicalPlan) PhysicalP
 				return p.Children()[0]
 			}
 		} else if !ok {
-			newChildren := make([]PhysicalPlan, 0, len(plan.Children()))
+			newChildren := make([]operator.PhysicalPlan, 0, len(plan.Children()))
 			for _, child := range plan.Children() {
 				newChildren = append(newChildren, predicatePushDownToTableScan(sctx, child))
 			}
@@ -67,7 +68,7 @@ func predicatePushDownToTableScan(sctx PlanContext, plan PhysicalPlan) PhysicalP
 		p.tablePlan = predicatePushDownToTableScan(sctx, p.tablePlan)
 	default:
 		if len(plan.Children()) > 0 {
-			newChildren := make([]PhysicalPlan, 0, len(plan.Children()))
+			newChildren := make([]operator.PhysicalPlan, 0, len(plan.Children()))
 			for _, child := range plan.Children() {
 				newChildren = append(newChildren, predicatePushDownToTableScan(sctx, child))
 			}
