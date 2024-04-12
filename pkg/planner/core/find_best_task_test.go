@@ -30,12 +30,12 @@ type mockDataSource struct {
 	baseLogicalPlan
 }
 
-func (ds mockDataSource) Init(ctx PlanContext) *mockDataSource {
+func (ds mockDataSource) Init(ctx base.PlanContext) *mockDataSource {
 	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, "mockDS", &ds, 0)
 	return &ds
 }
 
-func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *coreusage.PhysicalOptimizeOp) (Task, int64, error) {
+func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *coreusage.PhysicalOptimizeOp) (base.Task, int64, error) {
 	// It can satisfy any of the property!
 	// Just use a TableDual for convenience.
 	p := PhysicalTableDual{}.Init(ds.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
@@ -67,7 +67,7 @@ type mockLogicalPlan4Test struct {
 	costOverflow bool
 }
 
-func (p mockLogicalPlan4Test) Init(ctx PlanContext) *mockLogicalPlan4Test {
+func (p mockLogicalPlan4Test) Init(ctx base.PlanContext) *mockLogicalPlan4Test {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, "mockPlan", &p, 0)
 	return &p
 }
@@ -119,13 +119,13 @@ type mockPhysicalPlan4Test struct {
 	planType int
 }
 
-func (p mockPhysicalPlan4Test) Init(ctx PlanContext) *mockPhysicalPlan4Test {
+func (p mockPhysicalPlan4Test) Init(ctx base.PlanContext) *mockPhysicalPlan4Test {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, "mockPlan", &p, 0)
 	return &p
 }
 
 // Attach2Task implements the PhysicalPlan interface.
-func (p *mockPhysicalPlan4Test) Attach2Task(tasks ...Task) Task {
+func (p *mockPhysicalPlan4Test) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
 	attachPlan2Task(p, t)
 	return t
