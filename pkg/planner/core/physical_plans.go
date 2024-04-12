@@ -2525,6 +2525,7 @@ type PhysicalTableSample struct {
 	physicalSchemaProducer
 	TableSampleInfo *TableSampleInfo
 	TableInfo       table.Table
+	PhysicalTableID int64
 	Desc            bool
 }
 
@@ -2558,7 +2559,7 @@ func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt
 	}
 	return &TableSampleInfo{
 		AstNode:    node,
-		FullSchema: fullSchema,
+		FullSchema: fullSchema.Clone(),
 		Partitions: pt,
 	}
 }

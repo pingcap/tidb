@@ -2535,6 +2535,7 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 	p := PhysicalTableSample{
 		TableSampleInfo: ds.SampleInfo,
 		TableInfo:       ds.table,
+		PhysicalTableID: ds.physicalTableID,
 		Desc:            candidate.isMatchProp && prop.SortItems[0].Desc,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	p.schema = ds.schema
