@@ -21,7 +21,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
@@ -586,10 +585,12 @@ type slowCreateFS struct {
 	vfs.FS
 }
 
+// WaitRMFolderChForTest is a channel for testing.
+var WaitRMFolderChForTest = make(chan struct{})
+
 func (s slowCreateFS) Create(name string) (vfs.File, error) {
 	if strings.Contains(name, "temporary") {
-		// print stack
-		time.Sleep(time.Second)
+		<-WaitRMFolderChForTest
 	}
 	return s.FS.Create(name)
 }

@@ -298,7 +298,6 @@ func (d *ddl) startDispatchLoop() {
 				if err2 != nil {
 					logutil.BgLogger().Info("resign meet error", zap.Error(err2))
 				}
-				time.Sleep(500 * time.Millisecond)
 				ingest.ResignOwnerForTest.Store(false)
 			}
 		})
