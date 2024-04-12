@@ -3271,6 +3271,16 @@ const (
 	BRIEOptionCheckpoint
 	BRIEOptionStartTS
 	BRIEOptionUntilTS
+	// S3 options
+	BRIEOptionS3Endpoint
+	BRIEOptionS3Region
+	BRIEOptionS3StorageClass
+	BRIEOptionS3ServerSideEncryption
+	BRIEOptionS3SSEKMSKeyId
+	BRIEOptionS3ACL
+	BRIEOptionS3Provider
+	BRIEOptionS3RoleARN
+	BRIEOptionS3ExternalID
 	// backup options
 	BRIEOptionBackupTimeAgo
 	BRIEOptionBackupTS
@@ -3391,6 +3401,24 @@ func (kind BRIEOptionType) String() string {
 		return "CSV_SEPARATOR"
 	case BRIEOptionCSVTrimLastSeparators:
 		return "CSV_TRIM_LAST_SEPARATORS"
+	case BRIEOptionS3Endpoint:
+		return "S3_ENDPOINT"
+	case BRIEOptionS3Region:
+		return "S3_REGION"
+	case BRIEOptionS3StorageClass:
+		return "S3_STORAGE_CLASS"
+	case BRIEOptionS3ServerSideEncryption:
+		return "S3_SSE"
+	case BRIEOptionS3SSEKMSKeyId:
+		return "S3_SSE_KMS_KEY_ID"
+	case BRIEOptionS3ACL:
+		return "S3_ACL"
+	case BRIEOptionS3Provider:
+		return "S3_PROVIDER"
+	case BRIEOptionS3RoleARN:
+		return "S3_ROLE_ARN"
+	case BRIEOptionS3ExternalID:
+		return "S3_EXTERNAL_ID"
 	case BRIEOptionFullBackupStorage:
 		return "FULL_BACKUP_STORAGE"
 	case BRIEOptionRestoredTS:
@@ -3429,7 +3457,7 @@ func (opt *BRIEOption) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(opt.Tp.String())
 	ctx.WritePlain(" = ")
 	switch opt.Tp {
-	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionUntilTS, BRIEOptionGCTTL:
+	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionUntilTS, BRIEOptionGCTTL,BRIEOptionS3Endpoint,BRIEOptionS3Region,BRIEOptionS3StorageClass,BRIEOptionS3ServerSideEncryption,BRIEOptionS3SSEKMSKeyId,BRIEOptionS3ACL,BRIEOptionS3Provider,BRIEOptionS3RoleARN,BRIEOptionS3ExternalID:
 		ctx.WriteString(opt.StrValue)
 	case BRIEOptionBackupTimeAgo:
 		ctx.WritePlainf("%d ", opt.UintValue/1000)

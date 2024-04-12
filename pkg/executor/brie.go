@@ -330,6 +330,24 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			cfg.Checksum = opt.UintValue != 0
 		case ast.BRIEOptionSendCreds:
 			cfg.SendCreds = opt.UintValue != 0
+		case ast.BRIEOptionS3Endpoint:
+			cfg.S3.Endpoint = opt.StrValue
+		case ast.BRIEOptionS3Region:
+			cfg.S3.Region = opt.StrValue
+		case ast.BRIEOptionS3StorageClass:
+			cfg.S3.StorageClass = opt.StrValue
+		case ast.BRIEOptionS3ServerSideEncryption:
+			cfg.S3.Sse = opt.StrValue
+		case ast.BRIEOptionS3SSEKMSKeyId:
+			cfg.S3.SseKmsKeyID = opt.StrValue
+		case ast.BRIEOptionS3ACL:
+			cfg.S3.ACL = opt.StrValue
+		case ast.BRIEOptionS3Provider:
+			cfg.S3.Provider = opt.StrValue
+		case ast.BRIEOptionS3RoleARN:
+			cfg.S3.RoleARN = opt.StrValue
+		case ast.BRIEOptionS3ExternalID:
+			cfg.S3.ExternalID = opt.StrValue
 		}
 	}
 

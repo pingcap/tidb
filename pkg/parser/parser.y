@@ -386,6 +386,15 @@ import (
 	csvNull               "CSV_NULL"
 	csvSeparator          "CSV_SEPARATOR"
 	csvTrimLastSeparators "CSV_TRIM_LAST_SEPARATORS"
+	s3Endpoint            "S3_ENDPOINT"
+	s3Region              "S3_REGION"
+	s3StorageClass        "S3_STORAGE_CLASS"
+	s3Sse                 "S3_SSE"
+	s3SseKmsKeyId         "S3_SSE_KMS_KEY_ID"
+	s3Acl                 "S3_ACL"
+	s3Provider            "S3_PROVIDER"
+	s3RoleArn             "S3_ROLE_ARN"
+	s3ExternalId          "S3_EXTERNAL_ID"
 	current               "CURRENT"
 	cycle                 "CYCLE"
 	data                  "DATA"
@@ -5633,6 +5642,42 @@ BRIEStringOptionName:
 	{
 		$$ = ast.BRIEOptionCSVNull
 	}
+|	"S3_ENDPOINT"
+	{
+		$$ = ast.BRIEOptionS3Endpoint
+	}
+|	"S3_REGION"
+	{
+		$$ = ast.BRIEOptionS3Region
+	}
+|	"S3_STORAGE_CLASS"
+	{
+		$$ = ast.BRIEOptionS3StorageClass
+	}
+|	"S3_SSE"
+	{
+		$$ = ast.BRIEOptionS3ServerSideEncryption
+	}
+|	"S3_SSE_KMS_KEY_ID"
+	{
+		$$ = ast.BRIEOptionS3SSEKMSKeyId
+	}
+|	"S3_ACL"
+	{
+		$$ = ast.BRIEOptionS3ACL
+	}
+|	"S3_PROVIDER"
+	{
+		$$ = ast.BRIEOptionS3Provider
+	}
+|	"S3_ROLE_ARN"
+	{
+		$$ = ast.BRIEOptionS3RoleARN
+	}
+|	"S3_EXTERNAL_ID"
+	{
+		$$ = ast.BRIEOptionS3ExternalID
+	}
 
 BRIEKeywordOptionName:
 	"BACKEND"
@@ -6870,6 +6915,15 @@ UnReservedKeyword:
 |	"CSV_HEADER"
 |	"CSV_NULL"
 |	"CSV_SEPARATOR"
+|	"S3_ENDPOINT"
+|	"S3_REGION"
+|	"S3_STORAGE_CLASS"
+|	"S3_SSE"
+|	"S3_SSE_KMS_KEY_ID"
+|	"S3_ACL"
+|	"S3_PROVIDER"
+|	"S3_ROLE_ARN"
+|	"S3_EXTERNAL_ID"
 |	"ON_DUPLICATE"
 |	"TIKV_IMPORTER"
 |	"REPLICAS"
