@@ -61,6 +61,7 @@ require (
 	github.com/gordonklaus/ineffassign v0.1.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gostaticanalysis/forcetypeassert v0.1.0
+	github.com/grafana/pyroscope-go v1.1.1
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/hashicorp/go-version v1.7.0
 	github.com/jedib0t/go-pretty/v6 v6.2.2
@@ -225,6 +226,7 @@ require (
 	github.com/gorilla/websocket v1.5.1 // indirect
 	github.com/gostaticanalysis/analysisutil v0.7.1 // indirect
 	github.com/gostaticanalysis/comment v1.4.2 // indirect
+	github.com/grafana/pyroscope-go/godeltaprof v0.1.7 // indirect
 	github.com/grafana/regexp v0.0.0-20221122212121-6b5c0a4cb7fd // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway v1.16.0 // indirect
