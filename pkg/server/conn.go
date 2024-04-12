@@ -1140,13 +1140,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
 				var timestamp uint64
-				if ctx := cc.getCtx(); ctx != nil && ctx.GetSessionVars() != nil {
-					if ctx.GetSessionVars().TxnCtx != nil {
-						timestamp = ctx.GetSessionVars().TxnCtx.StartTS
-					}
-					if timestamp == 0 && ctx.GetSessionVars().StmtCtx != nil && ctx.GetSessionVars().StmtCtx.StaleReadTs > 0 {
+				if ctx := cc.getCtx(); ctx != nil && ctx.GetSessionVars() != nil && ctx.GetSessionVars().TxnCtx != nil {
+					timestamp = ctx.GetSessionVars().TxnCtx.StartTS
+					if timestamp == 0 && ctx.GetSessionVars().TxnCtx.StaleReadTs > 0 {
 						// for state-read query.
-						timestamp = ctx.GetSessionVars().StmtCtx.StaleReadTs
+						timestamp = ctx.GetSessionVars().TxnCtx.StaleReadTs
 					}
 				}
 				logutil.Logger(ctx).Info("command dispatched failed",

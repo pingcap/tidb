@@ -1748,7 +1748,7 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 		if p.flag&initTxnContextProvider != 0 {
 			p.sctx.GetSessionVars().StmtCtx.IsStaleness = true
 			if !p.sctx.GetSessionVars().InTxn() {
-				p.sctx.GetSessionVars().StmtCtx.StaleReadTs = p.LastSnapshotTS
+				p.sctx.GetSessionVars().TxnCtx.StaleReadTs = p.LastSnapshotTS
 				txnManager := sessiontxn.GetTxnManager(p.sctx)
 				newTxnRequest := &sessiontxn.EnterNewTxnRequest{
 					Type:     sessiontxn.EnterNewTxnWithReplaceProvider,

@@ -219,7 +219,6 @@ type StatementContext struct {
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
 	IsStaleness     bool
-	StaleReadTs     uint64
 	InRestrictedSQL bool
 	ViewDepth       int32
 	// mu struct holds variables that change during execution.
