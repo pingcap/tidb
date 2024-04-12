@@ -150,8 +150,6 @@ type PointGetExecutor struct {
 	lock             bool
 	lockWaitTime     int64
 	rowDecoder       *rowcodec.ChunkDecoder
-	// datumDecoder is only used to decode datum, which can be used to calculate row checksum.
-	datumDecoder *rowcodec.DatumMapDecoder
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -396,7 +394,10 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 
-	err = fillRowChecksum(e.BaseExecutor.Ctx(), e.Schema(), val, req, e.datumDecoder, nil)
+	// todo: verify how to extract handle col id and ft.
+	var handleColIDs []int64
+	var handleColFt map[int64]*types.FieldType
+	err = fillRowChecksum(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo.Columns, handleColIDs, handleColFt, val, e.handle, req, nil)
 	if err != nil {
 		return err
 	}
@@ -419,10 +420,11 @@ func shouldFillRowChecksum(schema *expression.Schema) (int, bool) {
 }
 
 func fillRowChecksum(
-	sctx sessionctx.Context, schema *expression.Schema, val []byte,
-	req *chunk.Chunk, decoder *rowcodec.DatumMapDecoder, buf []byte,
+	sctx sessionctx.Context, schema *expression.Schema, columns []*model.ColumnInfo,
+	handleColIDs []int64, handleColFt map[int64]*types.FieldType,
+	val []byte, handle kv.Handle, req *chunk.Chunk, buf []byte,
 ) error {
-	if decoder == nil {
+	if !rowcodec.IsNewFormat(val) {
 		return nil
 	}
 	targetIndex, ok := shouldFillRowChecksum(schema)
@@ -430,7 +432,23 @@ func fillRowChecksum(
 		return nil
 	}
 
+	reqCols := make([]rowcodec.ColInfo, len(columns))
+	for idx, col := range columns {
+		reqCols[idx] = rowcodec.ColInfo{
+			ID: col.ID,
+			Ft: &col.FieldType,
+		}
+
+	}
+
+	tz := sctx.GetSessionVars().Location()
+	decoder := rowcodec.NewDatumMapDecoder(reqCols, tz)
 	datums, err := decoder.DecodeToDatumMap(val, nil)
+	if err != nil {
+		return err
+	}
+
+	datums, err = tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, handleColFt, tz, datums)
 	if err != nil {
 		return err
 	}

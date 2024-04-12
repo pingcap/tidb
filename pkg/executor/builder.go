@@ -4878,18 +4878,6 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) exec.Exec
 	return e
 }
 
-func NewDatumMapDecoder(ctx sessionctx.Context, schema *expression.Schema) *rowcodec.DatumMapDecoder {
-	reqCols := make([]rowcodec.ColInfo, len(schema.Columns))
-	for i := range schema.Columns {
-		idx, col := i, schema.Columns[i]
-		reqCols[idx] = rowcodec.ColInfo{
-			ID: col.ID,
-			Ft: col.RetType,
-		}
-	}
-	return rowcodec.NewDatumMapDecoder(reqCols, ctx.GetSessionVars().Location())
-}
-
 // NewRowDecoder creates a chunk decoder for new row format row value decode.
 func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
 	getColInfoByID := func(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
