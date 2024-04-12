@@ -191,10 +191,10 @@ func (em *engineManager) flushAllEngines(parentCtx context.Context) (err error) 
 
 func (em *engineManager) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
 	opt := &pebble.Options{
-		MemTableSize: em.MemTableSize,
+		MemTableSize: uint64(em.MemTableSize),
 		// the default threshold value may cause write stall.
 		MemTableStopWritesThreshold: 8,
-		MaxConcurrentCompactions:    16,
+		MaxConcurrentCompactions:    func() int { return 16 },
 		// set threshold to half of the max open files to avoid trigger compaction
 		L0CompactionThreshold: math.MaxInt32,
 		L0StopWritesThreshold: math.MaxInt32,
@@ -514,7 +514,10 @@ func (em *engineManager) close() {
 
 	if em.duplicateDB != nil {
 		// Check if there are duplicates that are not collected.
-		iter := em.duplicateDB.NewIter(&pebble.IterOptions{})
+		iter, err := em.duplicateDB.NewIter(&pebble.IterOptions{})
+		if err != nil {
+			em.logger.Panic("fail to create iterator")
+		}
 		hasDuplicates := iter.First()
 		allIsWell := true
 		if err := iter.Error(); err != nil {

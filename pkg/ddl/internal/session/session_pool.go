@@ -72,6 +72,7 @@ func (sg *Pool) Get() (sessionctx.Context, error) {
 	}
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
+	ctx.GetSessionVars().StmtCtx.SetTimeZone(ctx.GetSessionVars().Location())
 	infosync.StoreInternalSession(ctx)
 	return ctx, nil
 }

@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -96,16 +95,9 @@ func wrapEvalAssert(ctx EvalContext, fn builtinFunc) (ret *assertionEvalContext)
 }
 
 func checkEvalCtx(ctx EvalContext) {
-	loc := ctx.Location().String()
 	tc := ctx.TypeCtx()
-	tcLoc := tc.Location().String()
-	intest.Assert(loc == tcLoc, "location mismatch, evalCtx: %s, typeCtx: %s", loc, tcLoc)
-	if ctx.GetOptionalPropSet().Contains(context.OptPropSessionVars) {
-		vars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(ctx)
-		intest.AssertNoError(err)
-		stmtLoc := vars.StmtCtx.TimeZone().String()
-		intest.Assert(loc == stmtLoc, "location mismatch, evalCtx: %s, stmtCtx: %s", loc, stmtLoc)
-	}
+	intest.Assert(ctx.Location() == tc.Location(),
+		"location is not equal, ctxLoc: %s, tcLoc: %s", ctx.Location(), tc.Location())
 }
 
 func (ctx *assertionEvalContext) GetOptionalPropProvider(key OptionalEvalPropKey) (OptionalEvalPropProvider, bool) {

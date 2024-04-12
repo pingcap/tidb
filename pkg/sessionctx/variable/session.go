@@ -450,7 +450,7 @@ func (tc *TransactionContext) ReleaseSavepoint(name string) bool {
 	name = strings.ToLower(name)
 	for i, sp := range tc.Savepoints {
 		if sp.Name == name {
-			tc.Savepoints = append(tc.Savepoints[:i])
+			tc.Savepoints = tc.Savepoints[:i]
 			return true
 		}
 	}

@@ -40,13 +40,13 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -77,15 +77,15 @@ type kvRangeBuilder interface {
 
 // tableReaderExecutorContext is the execution context for the `TableReaderExecutor`
 type tableReaderExecutorContext struct {
-	dctx *distsqlctx.DistSQLContext
-	pctx planctx.PlanContext
-	ectx exprctx.BuildContext
+	dctx       *distsqlctx.DistSQLContext
+	rctx       *rangerctx.RangerContext
+	buildPBCtx *planctx.BuildPBContext
+	pctx       planctx.PlanContext
+	ectx       exprctx.BuildContext
+
+	stmtMemTracker *memory.Tracker
 
 	getDDLOwner func(context.Context) (*infosync.ServerInfo, error)
-}
-
-func (treCtx *tableReaderExecutorContext) GetSessionVars() *variable.SessionVars {
-	return treCtx.pctx.GetSessionVars()
 }
 
 func (treCtx *tableReaderExecutorContext) GetInfoSchema() infoschema.InfoSchema {
@@ -117,11 +117,15 @@ func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorC
 		}
 	}
 
+	pctx := sctx.GetPlanCtx()
 	return tableReaderExecutorContext{
-		dctx:        sctx.GetDistSQLCtx(),
-		pctx:        sctx.GetPlanCtx(),
-		ectx:        sctx.GetExprCtx(),
-		getDDLOwner: getDDLOwner,
+		dctx:           sctx.GetDistSQLCtx(),
+		rctx:           pctx.GetRangerCtx(),
+		buildPBCtx:     pctx.GetBuildPBCtx(),
+		pctx:           pctx,
+		ectx:           sctx.GetExprCtx(),
+		stmtMemTracker: sctx.GetSessionVars().StmtCtx.MemTracker,
+		getDDLOwner:    getDDLOwner,
 	}
 }
 
@@ -224,25 +228,25 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	} else {
 		e.memTracker = memory.NewTracker(e.ID(), -1)
 	}
-	e.memTracker.AttachTo(e.GetSessionVars().StmtCtx.MemTracker)
+	e.memTracker.AttachTo(e.stmtMemTracker)
 
 	var err error
 	if e.corColInFilter {
 		// If there's correlated column in filter, need to rewrite dagPB
 		if e.storeType == kv.TiFlash {
-			execs, err := builder.ConstructTreeBasedDistExec(e.pctx, e.tablePlan)
+			execs, err := builder.ConstructTreeBasedDistExec(e.buildPBCtx, e.tablePlan)
 			if err != nil {
 				return err
 			}
 			e.dagPB.RootExecutor = execs[0]
 		} else {
-			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.pctx, e.plans)
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.plans)
 			if err != nil {
 				return err
 			}
 		}
 	}
-	if e.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+	if e.dctx.RuntimeStatsColl != nil {
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}

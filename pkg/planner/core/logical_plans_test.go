@@ -91,8 +91,8 @@ func createPlannerSuite() (s *plannerSuite) {
 		if pi == nil {
 			continue
 		}
-		for _, def := range pi.Definitions {
-			def.ID = id
+		for i := range pi.Definitions {
+			pi.Definitions[i].ID = id
 			id += 1
 		}
 	}

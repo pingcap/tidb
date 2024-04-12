@@ -17,6 +17,7 @@ package contextimpl
 import (
 	"context"
 	"math"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -51,6 +52,8 @@ var _ exprctx.ExprContext = struct {
 type ExprCtxExtendedImpl struct {
 	sctx sessionctx.Context
 	*SessionEvalContext
+	inNullRejectCheck atomic.Bool
+	inUnionCast       atomic.Bool
 }
 
 // NewExprExtendedImpl creates a new ExprCtxExtendedImpl.
@@ -107,6 +110,31 @@ func (ctx *ExprCtxExtendedImpl) IsUseCache() bool {
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
 func (ctx *ExprCtxExtendedImpl) SetSkipPlanCache(reason error) {
 	ctx.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+}
+
+// AllocPlanColumnID allocates column id for plan.
+func (ctx *ExprCtxExtendedImpl) AllocPlanColumnID() int64 {
+	return ctx.sctx.GetSessionVars().AllocPlanColumnID()
+}
+
+// SetInNullRejectCheck sets whether the expression is in null reject check.
+func (ctx *ExprCtxExtendedImpl) SetInNullRejectCheck(in bool) {
+	ctx.inNullRejectCheck.Store(in)
+}
+
+// IsInNullRejectCheck returns whether the expression is in null reject check.
+func (ctx *ExprCtxExtendedImpl) IsInNullRejectCheck() bool {
+	return ctx.inNullRejectCheck.Load()
+}
+
+// SetInUnionCast sets the flag to indicate whether the expression is in union cast.
+func (ctx *ExprCtxExtendedImpl) SetInUnionCast(in bool) {
+	ctx.inUnionCast.Store(in)
+}
+
+// IsInUnionCast indicates whether executing in special cast context that negative unsigned num will be zero.
+func (ctx *ExprCtxExtendedImpl) IsInUnionCast() bool {
+	return ctx.inUnionCast.Load()
 }
 
 // GetWindowingUseHighPrecision determines whether to compute window operations without loss of precision.
@@ -166,8 +194,12 @@ func (ctx *SessionEvalContext) SQLMode() mysql.SQLMode {
 }
 
 // TypeCtx returns the types.Context
-func (ctx *SessionEvalContext) TypeCtx() types.Context {
-	return ctx.sctx.GetSessionVars().StmtCtx.TypeCtx()
+func (ctx *SessionEvalContext) TypeCtx() (tc types.Context) {
+	tc = ctx.sctx.GetSessionVars().StmtCtx.TypeCtx()
+	if intest.InTest {
+		exprctx.AssertLocationWithSessionVars(tc.Location(), ctx.sctx.GetSessionVars())
+	}
+	return
 }
 
 // ErrCtx returns the errctx.Context

@@ -37,6 +37,7 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
@@ -113,6 +114,12 @@ type Context interface {
 
 	// GetDistSQLCtx gets the distsql ctx of the current session
 	GetDistSQLCtx() *distsqlctx.DistSQLContext
+
+	// GetRangerCtx returns the context used in `ranger` related functions
+	GetRangerCtx() *rangerctx.RangerContext
+
+	// GetBuildPBCtx gets the ctx used in `ToPB` of the current session
+	GetBuildPBCtx() *planctx.BuildPBContext
 
 	GetSessionManager() util.SessionManager
 

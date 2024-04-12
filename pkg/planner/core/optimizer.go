@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -137,7 +138,7 @@ type logicalOptRule interface {
 		 The default value is false. It means that no interaction rule will be triggered.
 	3. error: If there is error during the rule optimizer, it will be thrown
 	*/
-	optimize(context.Context, LogicalPlan, *plannerutil.LogicalOptimizeOp) (LogicalPlan, bool, error)
+	optimize(context.Context, LogicalPlan, *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error)
 	name() string
 }
 
@@ -1045,7 +1046,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx PlanContext, plan
 // It's for handling the inconsistency between row count in the statsInfo and the recorded actual row count. Please
 // see comments in PhysicalPlan for details.
 func propagateProbeParents(plan PhysicalPlan, probeParents []PhysicalPlan) {
-	plan.setProbeParents(probeParents)
+	plan.SetProbeParents(probeParents)
 	switch x := plan.(type) {
 	case *PhysicalApply, *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin:
 		if join, ok := plan.(interface{ getInnerChildIdx() int }); ok {
@@ -1122,7 +1123,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	opt := plannerutil.DefaultLogicalOptimizeOption()
+	opt := coreusage.DefaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
 	if vars.StmtCtx.EnableOptimizeTrace {
 		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
@@ -1190,14 +1191,14 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	opt := defaultPhysicalOptimizeOption()
+	opt := coreusage.DefaultPhysicalOptimizeOption()
 	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
 	if stmtCtx.EnableOptimizeTrace {
 		tracer := &tracing.PhysicalOptimizeTracer{
 			PhysicalPlanCostDetails: make(map[string]*tracing.PhysicalPlanCostDetail),
 			Candidates:              make(map[int]*tracing.CandidatePlanTrace),
 		}
-		opt = opt.withEnableOptimizeTracer(tracer)
+		opt = opt.WithEnableOptimizeTracer(tracer)
 		defer func() {
 			r := recover()
 			if r != nil {
@@ -1218,7 +1219,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 	if *planCounter > 0 {
 		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The parameter of nth_plan() is out of range"))
 	}
-	if t.invalid() {
+	if t.Invalid() {
 		errMsg := "Can't find a proper physical plan for this query"
 		if config.GetGlobalConfig().DisaggregatedTiFlash && !logic.SCtx().GetSessionVars().IsMPPAllowed() {
 			errMsg += ": cop and batchCop are not allowed in disaggregated tiflash mode, you should turn on tidb_allow_mpp switch"
@@ -1226,11 +1227,11 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
 
-	if err = t.plan().ResolveIndices(); err != nil {
+	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
-	cost, err = getPlanCost(t.plan(), property.RootTaskType, NewDefaultPlanCostOption())
-	return t.plan(), cost, err
+	cost, err = getPlanCost(t.Plan(), property.RootTaskType, coreusage.NewDefaultPlanCostOption())
+	return t.Plan(), cost, err
 }
 
 // eliminateUnionScanAndLock set lock property for PointGet and BatchPointGet and eliminates UnionScan and Lock.
