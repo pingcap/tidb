@@ -1108,7 +1108,7 @@ func TestSampleFileCompressRatio(t *testing.T) {
 	require.InDelta(t, ratio, 5000.0/float64(bf.Len()), 1e-5)
 }
 
-func TestSampleParquetDataSize(t *testing.T) {
+func testSampleParquetDataSize(t *testing.T, count int) {
 	s := newTestMydumpLoaderSuite(t)
 	store, err := storage.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
@@ -1133,7 +1133,7 @@ func TestSampleParquetDataSize(t *testing.T) {
 	t.Logf("seed: %d. To reproduce the random behaviour, manually set `rand.New(rand.NewSource(seed))`", seed)
 	rnd := rand.New(rand.NewSource(seed))
 	totalRowSize := 0
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < count; i++ {
 		kl := rnd.Intn(20) + 1
 		key := make([]byte, kl)
 		kl, err = rnd.Read(key)
@@ -1165,6 +1165,11 @@ func TestSampleParquetDataSize(t *testing.T) {
 	require.NoError(t, err)
 	// expected error within 10%, so delta = totalRowSize / 10
 	require.InDelta(t, totalRowSize, size, float64(totalRowSize)/10)
+}
+
+func TestSampleParquetDataSize(t *testing.T) {
+	t.Run("count=1000", func(t *testing.T) { testSampleParquetDataSize(t, 1000) })
+	t.Run("count=0", func(t *testing.T) { testSampleParquetDataSize(t, 0) })
 }
 
 func TestSetupOptions(t *testing.T) {
