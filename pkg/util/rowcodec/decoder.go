@@ -210,16 +210,9 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 			chk.AppendNull(colIdx)
 			continue
 		}
-		// todo: remove this part code.
 		if col.ID == model.ExtraRowChecksumID {
-			if v := decoder.row.getChecksumInfo(); len(v) > 0 {
-				chk.AppendString(colIdx, v)
-			} else {
-				chk.AppendNull(colIdx)
-			}
 			continue
 		}
-
 		idx, isNil, notFound := decoder.row.findColID(col.ID)
 		if !notFound && !isNil {
 			colData := decoder.getData(idx)

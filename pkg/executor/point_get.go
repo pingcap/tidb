@@ -394,10 +394,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 
-	// todo: verify how to extract handle col id and ft.
-	var handleColIDs []int64
-	var handleColFt map[int64]*types.FieldType
-	err = fillRowChecksum(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo.Columns, handleColIDs, handleColFt, val, e.handle, req, nil)
+	err = fillRowChecksum(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo, val, e.handle, req, nil)
 	if err != nil {
 		return err
 	}
@@ -420,8 +417,7 @@ func shouldFillRowChecksum(schema *expression.Schema) (int, bool) {
 }
 
 func fillRowChecksum(
-	sctx sessionctx.Context, schema *expression.Schema, columns []*model.ColumnInfo,
-	handleColIDs []int64, handleColFt map[int64]*types.FieldType,
+	sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
 	val []byte, handle kv.Handle, req *chunk.Chunk, buf []byte,
 ) error {
 	if !rowcodec.IsNewFormat(val) {
@@ -432,13 +428,30 @@ func fillRowChecksum(
 		return nil
 	}
 
+	columns := tblInfo.Cols()
 	reqCols := make([]rowcodec.ColInfo, len(columns))
 	for idx, col := range columns {
 		reqCols[idx] = rowcodec.ColInfo{
 			ID: col.ID,
 			Ft: &col.FieldType,
 		}
+	}
 
+	var handleColIDs []int64
+	if tblInfo.PKIsHandle {
+		colInfo := tblInfo.GetPkColInfo()
+		handleColIDs = []int64{colInfo.ID}
+	} else if tblInfo.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		for _, col := range pkIdx.Columns {
+			colInfo := tblInfo.Columns[col.Offset]
+			handleColIDs = append(handleColIDs, colInfo.ID)
+		}
+	}
+
+	columnFt := make(map[int64]*types.FieldType)
+	for _, col := range tblInfo.Columns {
+		columnFt[col.ID] = &col.FieldType
 	}
 
 	tz := sctx.GetSessionVars().Location()
@@ -448,21 +461,19 @@ func fillRowChecksum(
 		return err
 	}
 
-	datums, err = tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, handleColFt, tz, datums)
+	datums, err = tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, columnFt, tz, datums)
 	if err != nil {
 		return err
 	}
 
 	colData := make([]rowcodec.ColData, len(datums))
-	for idx, datum := range datums {
-		column := &model.ColumnInfo{
-			ID:        schema.Columns[idx].ID,
-			FieldType: *schema.Columns[idx].RetType,
+	for idx, col := range columns {
+		d := datums[col.ID]
+		data := rowcodec.ColData{
+			ColumnInfo: col,
+			Datum:      &d,
 		}
-		colData[idx] = rowcodec.ColData{
-			ColumnInfo: column,
-			Datum:      &datum,
-		}
+		colData[idx] = data
 	}
 	row := rowcodec.RowData{
 		Cols: colData,
@@ -471,7 +482,7 @@ func fillRowChecksum(
 	if !sort.IsSorted(row) {
 		sort.Sort(row)
 	}
-	checksum, err := row.Checksum(sctx.GetSessionVars().StmtCtx.TimeZone())
+	checksum, err := row.Checksum(tz)
 	if err != nil {
 		return err
 	}
