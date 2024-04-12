@@ -117,7 +117,7 @@ const (
 	`
 
 	createConflictView = `
-    	CREATE OR REPLACE VIEW  %s.` + ConflictViewName + `
+    	CREATE OR REPLACE VIEW %s.` + ConflictViewName + `
 			AS SELECT 0 AS is_precheck_conflict, task_id, create_time, table_name, index_name, key_data, row_data,
 			raw_key, raw_value, raw_handle, raw_row, is_data_kv, NULL AS path, NULL AS offset, NULL AS error, NULL AS row_id
 			FROM %s.` + ConflictErrorTableName + `
@@ -281,9 +281,9 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 		}
 	}
 
+	// TODO: return VIEW to users regardless of the lightning configuration
 	if em.conflictV1Enabled && em.conflictV2Enabled {
-		sql := [2]string{"create conflict view", createConflictView}
-		err := exec.Exec(ctx, sql[0], strings.TrimSpace(common.SprintfWithIdentifiers(sql[1], em.schema, em.schema, em.schema)))
+		err := exec.Exec(ctx, "create conflict view", strings.TrimSpace(common.SprintfWithIdentifiers(createConflictView, em.schema, em.schema, em.schema)))
 		if err != nil {
 			return err
 		}
