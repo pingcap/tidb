@@ -28,13 +28,15 @@ type entry[K comparable, V any] struct {
 	value   V
 	visited bool
 	element *list.Element
-	size    int
+	size    uint64
 }
 
-func (t *entry[K, V]) Size() int {
+func (t *entry[K, V]) Size() uint64 {
 	if t.size == 0 {
 		size := internal.Sizeof(t)
-		t.size = size
+		if size > 0 {
+			t.size = uint64(size)
+		}
 	}
 	return t.size
 }
@@ -46,14 +48,14 @@ type Sieve[K comparable, V any] struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	mu       sync.Mutex
-	size     int
-	capacity int
+	size     uint64
+	capacity uint64
 	items    map[K]*entry[K, V]
 	ll       *list.List
 	hand     *list.Element
 }
 
-func newSieve[K comparable, V any](capacity int) *Sieve[K, V] {
+func newSieve[K comparable, V any](capacity uint64) *Sieve[K, V] {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	cache := &Sieve[K, V]{
@@ -67,7 +69,7 @@ func newSieve[K comparable, V any](capacity int) *Sieve[K, V] {
 	return cache
 }
 
-func (s *Sieve[K, V]) SetCapacity(capacity int) {
+func (s *Sieve[K, V]) SetCapacity(capacity uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.capacity = capacity
@@ -91,7 +93,7 @@ func (s *Sieve[K, V]) Set(key K, value V) {
 		key:   key,
 		value: value,
 	}
-	s.size += e.Size() // calculate the size first without putting to the list.
+	s.size += uint64(e.Size()) // calculate the size first without putting to the list.
 	e.element = s.ll.PushFront(key)
 
 	s.items[key] = e
@@ -144,7 +146,7 @@ func (s *Sieve[K, V]) Peek(key K) (value V, ok bool) {
 	return
 }
 
-func (s *Sieve[K, V]) Size() int {
+func (s *Sieve[K, V]) Size() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/tidwall/btree"
 	"golang.org/x/sync/singleflight"
 )
@@ -135,15 +136,13 @@ type tableCacheKey struct {
 	schemaVersion int64
 }
 
-const mb = 1 << 20
-
 // NewData creates an infoschema V2 data struct.
 func NewData() *Data {
 	ret := &Data{
 		byID:       btree.NewBTreeG[tableItem](compareByID),
 		byName:     btree.NewBTreeG[tableItem](compareByName),
 		schemaMap:  btree.NewBTreeG[schemaItem](compareSchemaItem),
-		tableCache: newSieve[tableCacheKey, table.Table](1024 * 1024 * mb),
+		tableCache: newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
 		specials:   make(map[string]*schemaTables),
 	}
 	return ret

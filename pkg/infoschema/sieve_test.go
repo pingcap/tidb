@@ -17,12 +17,13 @@ package infoschema
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGetAndSet(t *testing.T) {
 	items := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
-	cache := newSieve[int, int](10 * mb)
+	cache := newSieve[int, int](10 * size.MB)
 
 	for _, v := range items {
 		cache.Set(v, v*10)
@@ -38,7 +39,7 @@ func TestGetAndSet(t *testing.T) {
 }
 
 func TestRemove(t *testing.T) {
-	cache := newSieve[int, int](10 * mb)
+	cache := newSieve[int, int](10 * size.MB)
 	cache.Set(1, 10)
 
 	val, ok := cache.Get(1)
@@ -94,7 +95,7 @@ func TestSievePolicy(t *testing.T) {
 }
 
 func TestContains(t *testing.T) {
-	cache := newSieve[string, string](10 * mb)
+	cache := newSieve[string, string](10 * size.MB)
 	require.False(t, cache.Contains("hello"))
 
 	cache.Set("hello", "world")
@@ -107,7 +108,7 @@ func TestCacheSize(t *testing.T) {
 	var e entry[int, int]
 	sz := e.Size()
 
-	cache := newSieve[int, int](10 * mb)
+	cache := newSieve[int, int](10 * size.MB)
 	require.Equal(t, 0, cache.Size())
 
 	cache.Set(1, 1)
@@ -124,7 +125,7 @@ func TestCacheSize(t *testing.T) {
 }
 
 func TestPurge(t *testing.T) {
-	cache := newSieve[int, int](10 * mb)
+	cache := newSieve[int, int](10 * size.MB)
 	cache.Set(1, 1)
 	cache.Set(2, 2)
 	require.Equal(t, 2, cache.Len())
