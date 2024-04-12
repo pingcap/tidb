@@ -6859,7 +6859,7 @@ func TestIndexAdviseStmt(t *testing.T) {
 // For BRIE
 func TestBRIE(t *testing.T) {
 	table := []testCase{
-		{"BACKUP DATABASE a TO 'local:///tmp/archive01/' S3_REGION='AA'", true, "BACKUP DATABASE `a` TO 'local:///tmp/archive01/' S3_REGION='AA'"},
+		{"BACKUP DATABASE a TO 'local:///tmp/archive01/' s3_region 'AA'", true, "BACKUP DATABASE `a` TO 'local:///tmp/archive01/' S3_REGION = 'AA'"},
 		{"BACKUP SCHEMA a TO 'local:///tmp/archive01/'", true, "BACKUP DATABASE `a` TO 'local:///tmp/archive01/'"},
 		{"BACKUP DATABASE a,b,c TO 'noop://'", true, "BACKUP DATABASE `a`, `b`, `c` TO 'noop://'"},
 		{"BACKUP DATABASE a.b TO 'noop://'", false, ""},
