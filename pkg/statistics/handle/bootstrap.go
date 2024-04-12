@@ -71,7 +71,6 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache util.StatsC
 		tbl := &statistics.Table{
 			HistColl: newHistColl,
 			Version:  row.GetUint64(0),
-			Name:     util.GetFullTableName(is, tableInfo),
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
