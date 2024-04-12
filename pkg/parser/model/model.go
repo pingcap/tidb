@@ -269,7 +269,6 @@ func (c *ColumnInfo) GetOriginDefaultValue() interface{} {
 // SetDefaultValue sets the default value.
 func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 	c.DefaultValue = value
-	fmt.Printf("default val: %v \n", c.DefaultValue)
 	if c.GetType() == mysql.TypeBit {
 		// For mysql.TypeBit type, the default value storage format must be a string.
 		// Other value such as int must convert to string format first.
