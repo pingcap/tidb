@@ -1173,8 +1173,8 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 
 func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transaction, uk *keyValueWithDupInfo, replace bool, r toBeCheckedRow) (bool, error) {
 	if !replace {
-		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-		if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic && e.Ctx().GetSessionVars().LockUnchangedKeys {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+		if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic && e.ctx.GetSessionVars().LockUnchangedKeys {
 			txnCtx.AddUnchangedKeyForLock(uk.newKey)
 		}
 		return true, nil
@@ -1282,41 +1282,7 @@ func (e *InsertValues) batchCheckAndInsert(
 		rowInserted := false
 		for _, uk := range r.uniqueKeys {
 			_, err := txn.Get(ctx, uk.newKey)
-<<<<<<< HEAD:executor/insert_common.go
-			if err == nil {
-				if replace {
-					_, handle, err := tables.FetchDuplicatedHandle(
-						ctx,
-						uk.newKey,
-						true,
-						txn,
-						e.Table.Meta().ID,
-						uk.commonHandle,
-					)
-					if err != nil {
-						return err
-					}
-					if handle == nil {
-						continue
-					}
-					_, err = e.removeRow(ctx, txn, handle, r, true)
-					if err != nil {
-						return err
-					}
-				} else {
-					// If duplicate keys were found in BatchGet, mark row = nil.
-					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
-						e.ctx.GetSessionVars().LockUnchangedKeys {
-						// lock duplicated unique key on insert-ignore
-						txnCtx.AddUnchangedKeyForLock(uk.newKey)
-					}
-					continue CheckAndInsert
-				}
-			} else if !kv.IsErrNotFound(err) {
-=======
 			if err != nil && !kv.IsErrNotFound(err) {
->>>>>>> fb64325ee52 (executor: handle the corner case that temp index is not exist but the normal index is exist (#51862)):pkg/executor/insert_common.go
 				return err
 			}
 			if err == nil {
