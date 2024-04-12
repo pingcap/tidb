@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/manual"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
@@ -593,7 +595,11 @@ var WaitRMFolderChForTest = make(chan struct{})
 
 func (s slowCreateFS) Create(name string) (vfs.File, error) {
 	if strings.Contains(name, "temporary") {
-		<-WaitRMFolderChForTest
+		select {
+		case <-WaitRMFolderChForTest:
+		case <-time.After(1 * time.Second):
+			logutil.BgLogger().Info("no one removes folder")
+		}
 	}
 	return s.FS.Create(name)
 }
