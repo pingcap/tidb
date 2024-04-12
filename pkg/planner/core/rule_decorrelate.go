@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -99,7 +99,7 @@ func ExtractCorrelatedCols4LogicalPlan(p LogicalPlan) []*expression.CorrelatedCo
 
 // ExtractCorrelatedCols4PhysicalPlan recursively extracts all of the correlated columns
 // from a plan tree by calling PhysicalPlan.ExtractCorrelatedCols.
-func ExtractCorrelatedCols4PhysicalPlan(p operator.PhysicalPlan) []*expression.CorrelatedColumn {
+func ExtractCorrelatedCols4PhysicalPlan(p base.PhysicalPlan) []*expression.CorrelatedColumn {
 	corCols := p.ExtractCorrelatedCols()
 	for _, child := range p.Children() {
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
@@ -130,11 +130,11 @@ func ExtractCorrelatedCols4PhysicalPlan(p operator.PhysicalPlan) []*expression.C
 //	 |_ Apply_3
 //	     |_ outerSide
 //	     |_ innerSide(cor_col_3)
-func ExtractOuterApplyCorrelatedCols(p operator.PhysicalPlan) []*expression.CorrelatedColumn {
+func ExtractOuterApplyCorrelatedCols(p base.PhysicalPlan) []*expression.CorrelatedColumn {
 	return extractOuterApplyCorrelatedColsHelper(p, []*expression.Schema{})
 }
 
-func extractOuterApplyCorrelatedColsHelper(p operator.PhysicalPlan, outerSchemas []*expression.Schema) []*expression.CorrelatedColumn {
+func extractOuterApplyCorrelatedColsHelper(p base.PhysicalPlan, outerSchemas []*expression.Schema) []*expression.CorrelatedColumn {
 	if p == nil {
 		return nil
 	}
@@ -157,7 +157,7 @@ func extractOuterApplyCorrelatedColsHelper(p operator.PhysicalPlan, outerSchemas
 
 	switch v := p.(type) {
 	case *PhysicalApply:
-		var outerPlan operator.PhysicalPlan
+		var outerPlan base.PhysicalPlan
 		if v.InnerChildIdx == 0 {
 			outerPlan = v.Children()[1]
 		} else {

@@ -47,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -222,7 +222,7 @@ type ExecStmt struct {
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
-	Plan operator.Plan
+	Plan base.Plan
 	// Text represents the origin query text.
 	Text string
 
@@ -394,7 +394,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 }
 
 // IsFastPlan exports for testing.
-func IsFastPlan(p operator.Plan) bool {
+func IsFastPlan(p base.Plan) bool {
 	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
 		p = proj.Children()[0]
 	}
@@ -803,7 +803,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimi
 	return false, nil, nil
 }
 
-func isNoResultPlan(p operator.Plan) bool {
+func isNoResultPlan(p base.Plan) bool {
 	if p.Schema().Len() == 0 {
 		return true
 	}
@@ -1708,7 +1708,7 @@ func collectWarningsForSlowLog(stmtCtx *stmtctx.StatementContext) []variable.JSO
 }
 
 // GetResultRowsCount gets the count of the statement result rows.
-func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p operator.Plan) int64 {
+func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p base.Plan) int64 {
 	runtimeStatsColl := stmtCtx.RuntimeStatsColl
 	if runtimeStatsColl == nil {
 		return 0
@@ -1732,7 +1732,7 @@ func getFlatPlan(stmtCtx *stmtctx.StatementContext) *plannercore.FlatPhysicalPla
 		f := flat.(*plannercore.FlatPhysicalPlan)
 		return f
 	}
-	p := pp.(operator.Plan)
+	p := pp.(base.Plan)
 	flat := plannercore.FlattenPhysicalPlan(p, false)
 	if flat != nil {
 		stmtCtx.SetFlatPlan(flat)

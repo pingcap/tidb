@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
@@ -40,7 +40,7 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 		return nil
 	}
 	for _, fop := range selectPlan {
-		p := fop.Origin.(operator.PhysicalPlan)
+		p := fop.Origin.(base.PhysicalPlan)
 		hints = genHintsFromSingle(p, nodeTp, fop.StoreType, hints)
 	}
 	for _, cte := range flat.CTEs {
@@ -48,7 +48,7 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 			if i == 0 || !fop.IsRoot {
 				continue
 			}
-			p := fop.Origin.(operator.PhysicalPlan)
+			p := fop.Origin.(base.PhysicalPlan)
 			hints = genHintsFromSingle(p, nodeTp, fop.StoreType, hints)
 		}
 	}
@@ -56,7 +56,7 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 }
 
 // GenHintsFromPhysicalPlan generates hints from physical plan.
-func GenHintsFromPhysicalPlan(p operator.Plan) []*ast.TableOptimizerHint {
+func GenHintsFromPhysicalPlan(p base.Plan) []*ast.TableOptimizerHint {
 	flat := FlattenPhysicalPlan(p, false)
 	return GenHintsFromFlatPlan(flat)
 }
@@ -68,7 +68,7 @@ func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
 	return tblName
 }
 
-func extractTableAsName(p operator.PhysicalPlan) (*model.CIStr, *model.CIStr) {
+func extractTableAsName(p base.PhysicalPlan) (*model.CIStr, *model.CIStr) {
 	if len(p.Children()) > 1 {
 		return nil, nil
 	}
@@ -97,7 +97,7 @@ func extractTableAsName(p operator.PhysicalPlan) (*model.CIStr, *model.CIStr) {
 	return nil, nil
 }
 
-func getJoinHints(sctx PlanContext, joinType string, parentOffset int, nodeType h.NodeType, children ...operator.PhysicalPlan) (res []*ast.TableOptimizerHint) {
+func getJoinHints(sctx PlanContext, joinType string, parentOffset int, nodeType h.NodeType, children ...base.PhysicalPlan) (res []*ast.TableOptimizerHint) {
 	if parentOffset == -1 {
 		return res
 	}
@@ -138,7 +138,7 @@ func getJoinHints(sctx PlanContext, joinType string, parentOffset int, nodeType 
 	return res
 }
 
-func genHintsFromSingle(p operator.PhysicalPlan, nodeType h.NodeType, storeType kv.StoreType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
+func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.StoreType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
 	qbName, err := h.GenerateQBName(nodeType, p.QueryBlockOffset())
 	if err != nil {
 		return res

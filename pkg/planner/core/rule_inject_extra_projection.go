@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/internal"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
 
@@ -33,7 +33,7 @@ import (
 // 1. In postOptimize.
 // 2. TiDB can be used as a coprocessor, when a plan tree been pushed down to
 // TiDB, we need to inject extra projections for the plan tree as well.
-func InjectExtraProjection(plan operator.PhysicalPlan) operator.PhysicalPlan {
+func InjectExtraProjection(plan base.PhysicalPlan) base.PhysicalPlan {
 	failpoint.Inject("DisableProjectionPostOptimization", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(plan)
@@ -51,7 +51,7 @@ func NewProjInjector() *projInjector {
 	return &projInjector{}
 }
 
-func (pe *projInjector) inject(plan operator.PhysicalPlan) operator.PhysicalPlan {
+func (pe *projInjector) inject(plan base.PhysicalPlan) base.PhysicalPlan {
 	for i, child := range plan.Children() {
 		plan.Children()[i] = pe.inject(child)
 	}
@@ -113,7 +113,7 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 // scalar functions in aggregation may speed up by vectorized evaluation in
 // the `proj`. If all the args of `aggFuncs`, and all the item of `groupByItems`
 // are columns or constants, we do not need to build the `proj`.
-func InjectProjBelowAgg(aggPlan operator.PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) operator.PhysicalPlan {
+func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) base.PhysicalPlan {
 	hasScalarFunc := false
 
 	internal.WrapCastForAggFuncs(aggPlan.SCtx().GetExprCtx(), aggFuncs)
@@ -205,7 +205,7 @@ func InjectProjBelowAgg(aggPlan operator.PhysicalPlan, aggFuncs []*aggregation.A
 // PhysicalTopN, some extra columns will be added into the schema of the
 // Projection, thus we need to add another Projection upon them to prune the
 // redundant columns.
-func InjectProjBelowSort(p operator.PhysicalPlan, orderByItems []*util.ByItems) operator.PhysicalPlan {
+func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base.PhysicalPlan {
 	hasScalarFunc, numOrderByItems := false, len(orderByItems)
 	for i := 0; !hasScalarFunc && i < numOrderByItems; i++ {
 		_, isScalarFunc := orderByItems[i].Expr.(*expression.ScalarFunction)
@@ -272,7 +272,7 @@ func InjectProjBelowSort(p operator.PhysicalPlan, orderByItems []*util.ByItems) 
 
 // TurnNominalSortIntoProj will turn nominal sort into two projections. This is to check if the scalar functions will
 // overflow.
-func TurnNominalSortIntoProj(p operator.PhysicalPlan, onlyColumn bool, orderByItems []*util.ByItems) operator.PhysicalPlan {
+func TurnNominalSortIntoProj(p base.PhysicalPlan, onlyColumn bool, orderByItems []*util.ByItems) base.PhysicalPlan {
 	if onlyColumn {
 		return p.Children()[0]
 	}

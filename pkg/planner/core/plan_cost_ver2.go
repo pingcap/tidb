@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -32,14 +32,14 @@ import (
 )
 
 // GetPlanCost returns the cost of this plan.
-func GetPlanCost(p operator.PhysicalPlan, taskType property.TaskType, option *coreusage.PlanCostOption) (float64, error) {
+func GetPlanCost(p base.PhysicalPlan, taskType property.TaskType, option *coreusage.PlanCostOption) (float64, error) {
 	return getPlanCost(p, taskType, option)
 }
 
 // GenPlanCostTrace define a hook function to customize the cost calculation.
-var GenPlanCostTrace func(p operator.PhysicalPlan, costV *coreusage.CostVer2, taskType property.TaskType, option *coreusage.PlanCostOption)
+var GenPlanCostTrace func(p base.PhysicalPlan, costV *coreusage.CostVer2, taskType property.TaskType, option *coreusage.PlanCostOption)
 
-func getPlanCost(p operator.PhysicalPlan, taskType property.TaskType, option *coreusage.PlanCostOption) (float64, error) {
+func getPlanCost(p base.PhysicalPlan, taskType property.TaskType, option *coreusage.PlanCostOption) (float64, error) {
 	if p.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 		planCost, err := p.GetPlanCostVer2(taskType, option)
 		if coreusage.TraceCost(option) && GenPlanCostTrace != nil {
@@ -934,7 +934,7 @@ var defaultVer2Factors = costVer2Factors{
 	TiDBRequest:   coreusage.CostVer2Factor{Name: "tidb_request_factor", Value: 6000000.00},
 }
 
-func getTaskCPUFactorVer2(_ operator.PhysicalPlan, taskType property.TaskType) coreusage.CostVer2Factor {
+func getTaskCPUFactorVer2(_ base.PhysicalPlan, taskType property.TaskType) coreusage.CostVer2Factor {
 	switch taskType {
 	case property.RootTaskType: // TiDB
 		return defaultVer2Factors.TiDBCPU
@@ -945,7 +945,7 @@ func getTaskCPUFactorVer2(_ operator.PhysicalPlan, taskType property.TaskType) c
 	}
 }
 
-func getTaskMemFactorVer2(_ operator.PhysicalPlan, taskType property.TaskType) coreusage.CostVer2Factor {
+func getTaskMemFactorVer2(_ base.PhysicalPlan, taskType property.TaskType) coreusage.CostVer2Factor {
 	switch taskType {
 	case property.RootTaskType: // TiDB
 		return defaultVer2Factors.TiDBMem
@@ -956,7 +956,7 @@ func getTaskMemFactorVer2(_ operator.PhysicalPlan, taskType property.TaskType) c
 	}
 }
 
-func getTaskScanFactorVer2(p operator.PhysicalPlan, storeType kv.StoreType, taskType property.TaskType) coreusage.CostVer2Factor {
+func getTaskScanFactorVer2(p base.PhysicalPlan, storeType kv.StoreType, taskType property.TaskType) coreusage.CostVer2Factor {
 	if isTemporaryTable(getTableInfo(p)) {
 		return defaultVer2Factors.TiDBTemp
 	}
@@ -981,7 +981,7 @@ func getTaskScanFactorVer2(p operator.PhysicalPlan, storeType kv.StoreType, task
 	}
 }
 
-func getTaskNetFactorVer2(p operator.PhysicalPlan, _ property.TaskType) coreusage.CostVer2Factor {
+func getTaskNetFactorVer2(p base.PhysicalPlan, _ property.TaskType) coreusage.CostVer2Factor {
 	if isTemporaryTable(getTableInfo(p)) {
 		return defaultVer2Factors.TiDBTemp
 	}
@@ -996,7 +996,7 @@ func getTaskNetFactorVer2(p operator.PhysicalPlan, _ property.TaskType) coreusag
 	return defaultVer2Factors.TiDB2KVNet
 }
 
-func getTaskRequestFactorVer2(p operator.PhysicalPlan, _ property.TaskType) coreusage.CostVer2Factor {
+func getTaskRequestFactorVer2(p base.PhysicalPlan, _ property.TaskType) coreusage.CostVer2Factor {
 	if isTemporaryTable(getTableInfo(p)) {
 		return defaultVer2Factors.TiDBTemp
 	}
@@ -1007,7 +1007,7 @@ func isTemporaryTable(tbl *model.TableInfo) bool {
 	return tbl != nil && tbl.TempTableType != model.TempTableNone
 }
 
-func getTableInfo(p operator.PhysicalPlan) *model.TableInfo {
+func getTableInfo(p base.PhysicalPlan) *model.TableInfo {
 	switch x := p.(type) {
 	case *PhysicalIndexReader:
 		return getTableInfo(x.indexPlan)

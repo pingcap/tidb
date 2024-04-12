@@ -15,7 +15,7 @@
 package implementation
 
 import (
-	plannercore "github.com/pingcap/tidb/pkg/planner/core/operator"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 )
 

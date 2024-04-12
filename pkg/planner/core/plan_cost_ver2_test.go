@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -148,7 +148,7 @@ func BenchmarkGetPlanCost(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	phyPlan := plan.(operator.PhysicalPlan)
+	phyPlan := plan.(base.PhysicalPlan)
 	_, err = core.GetPlanCost(phyPlan, property.RootTaskType, coreusage.NewDefaultPlanCostOption().WithCostFlag(coreusage.CostFlagRecalculate))
 	if err != nil {
 		b.Fatal(err)

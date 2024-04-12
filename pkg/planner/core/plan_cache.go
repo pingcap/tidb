@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -148,7 +148,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 // isNonPrepared indicates whether to use the non-prepared plan cache or the prepared plan cache.
 func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
-	params []expression.Expression) (plan operator.Plan, names []*types.FieldName, err error) {
+	params []expression.Expression) (plan base.Plan, names []*types.FieldName, err error) {
 	if err := planCachePreprocess(ctx, sctx, isNonPrepared, is, stmt, params); err != nil {
 		return nil, nil, err
 	}
@@ -234,14 +234,14 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 	return
 }
 
-func getCachedPointPlan(stmt *PlanCacheStmt, sessVars *variable.SessionVars, stmtCtx *stmtctx.StatementContext) (operator.Plan,
+func getCachedPointPlan(stmt *PlanCacheStmt, sessVars *variable.SessionVars, stmtCtx *stmtctx.StatementContext) (base.Plan,
 	[]*types.FieldName, bool, error) {
 	// short path for point-get plans
 	// Rewriting the expression in the select.where condition  will convert its
 	// type from "paramMarker" to "Constant".When Point Select queries are executed,
 	// the expression in the where condition will not be evaluated,
 	// so you don't need to consider whether prepared.useCache is enabled.
-	plan := stmt.PointGet.Plan.(operator.Plan)
+	plan := stmt.PointGet.Plan.(base.Plan)
 	names := stmt.PointGet.ColumnNames.(types.NameSlice)
 	if !RebuildPlan4CachedPlan(plan) {
 		return nil, nil, false, nil
@@ -261,7 +261,7 @@ func getCachedPointPlan(stmt *PlanCacheStmt, sessVars *variable.SessionVars, stm
 }
 
 func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache.Key, bindSQL string,
-	is infoschema.InfoSchema, stmt *PlanCacheStmt, matchOpts *utilpc.PlanCacheMatchOpts) (operator.Plan,
+	is infoschema.InfoSchema, stmt *PlanCacheStmt, matchOpts *utilpc.PlanCacheMatchOpts) (base.Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -305,7 +305,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
 	stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, bindSQL string,
-	matchOpts *utilpc.PlanCacheMatchOpts) (operator.Plan, []*types.FieldName, error) {
+	matchOpts *utilpc.PlanCacheMatchOpts) (base.Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -351,7 +351,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 }
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
-func RebuildPlan4CachedPlan(p operator.Plan) (ok bool) {
+func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	if !sc.UseCache {
 		return false // plan-cache is disabled for this query
@@ -371,7 +371,7 @@ func RebuildPlan4CachedPlan(p operator.Plan) (ok bool) {
 	return true
 }
 
-func updateRange(p operator.PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
+func updateRange(p base.PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
 	switch x := p.(type) {
 	case *PhysicalTableScan:
 		x.Ranges = ranges
@@ -397,7 +397,7 @@ func updateRange(p operator.PhysicalPlan, ranges ranger.Ranges, rangeInfo string
 //     generated, its complete ranges are ['a','a'], ['b','b'], ['c','c'], whose mem usage is under range mem limit 100B.
 //     When the cached plan is hit, the complete ranges may become ['aaa','aaa'], ['bbb','bbb'], ['ccc','ccc'], whose mem
 //     usage exceeds range mem limit 100B, and range fallback happens and tidb may fetch more rows than users expect.
-func rebuildRange(p operator.Plan) error {
+func rebuildRange(p base.Plan) error {
 	sctx := p.SCtx()
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
@@ -608,7 +608,7 @@ func rebuildRange(p operator.Plan) error {
 		}
 		// We don't need to handle the indexMerge.TablePlans, because the tablePlans
 		// only can be (Selection) + TableRowIDScan. There have no range need to rebuild.
-	case operator.PhysicalPlan:
+	case base.PhysicalPlan:
 		for _, child := range x.Children() {
 			err = rebuildRange(child)
 			if err != nil {
@@ -772,7 +772,7 @@ func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
 func tryCachePointPlan(_ context.Context, sctx PlanContext,
-	stmt *PlanCacheStmt, p operator.Plan, names types.NameSlice) error {
+	stmt *PlanCacheStmt, p base.Plan, names types.NameSlice) error {
 	if !sctx.GetSessionVars().StmtCtx.UseCache {
 		return nil
 	}

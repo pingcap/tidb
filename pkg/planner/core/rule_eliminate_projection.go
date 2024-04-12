@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
 
@@ -121,7 +121,7 @@ func ResolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 	}
 }
 
-func doPhysicalProjectionElimination(p operator.PhysicalPlan) operator.PhysicalPlan {
+func doPhysicalProjectionElimination(p base.PhysicalPlan) base.PhysicalPlan {
 	for i, child := range p.Children() {
 		p.Children()[i] = doPhysicalProjectionElimination(child)
 	}
@@ -147,7 +147,7 @@ func doPhysicalProjectionElimination(p operator.PhysicalPlan) operator.PhysicalP
 
 // eliminatePhysicalProjection should be called after physical optimization to
 // eliminate the redundant projection left after logical projection elimination.
-func eliminatePhysicalProjection(p operator.PhysicalPlan) operator.PhysicalPlan {
+func eliminatePhysicalProjection(p base.PhysicalPlan) base.PhysicalPlan {
 	failpoint.Inject("DisableProjectionPostOptimization", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(p)

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -187,7 +187,7 @@ func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, planC
 }
 
 // rebuildChildTasks rebuilds the childTasks to make the clock_th combination.
-func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]Task, pp operator.PhysicalPlan, childCnts []int64, planCounter int64, ts uint64, opt *coreusage.PhysicalOptimizeOp) error {
+func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]Task, pp base.PhysicalPlan, childCnts []int64, planCounter int64, ts uint64, opt *coreusage.PhysicalOptimizeOp) error {
 	// The taskMap of children nodes should be rolled back first.
 	for _, child := range p.children {
 		child.rollBackTaskMap(ts)
@@ -219,7 +219,7 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]Task, pp operator.Phys
 }
 
 func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(
-	physicalPlans []operator.PhysicalPlan,
+	physicalPlans []base.PhysicalPlan,
 	prop *property.PhysicalProperty,
 	addEnforcer bool,
 	planCounter *PlanCounterTp,
@@ -302,7 +302,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(
 
 // iteratePhysicalPlan is used to iterate the physical plan and get all child tasks.
 func (p *baseLogicalPlan) iteratePhysicalPlan(
-	selfPhysicalPlan operator.PhysicalPlan,
+	selfPhysicalPlan base.PhysicalPlan,
 	childTasks []Task,
 	childCnts []int64,
 	_ *property.PhysicalProperty,
@@ -335,7 +335,7 @@ func (p *baseLogicalPlan) iteratePhysicalPlan(
 
 // iterateChildPlan does the special part for sequence. We need to iterate its child one by one to check whether the former child is a valid plan and then go to the nex
 func (p *LogicalSequence) iterateChildPlan(
-	selfPhysicalPlan operator.PhysicalPlan,
+	selfPhysicalPlan base.PhysicalPlan,
 	childTasks []Task,
 	childCnts []int64,
 	prop *property.PhysicalProperty,
@@ -496,7 +496,7 @@ func getTaskPlanCost(t Task, pop *coreusage.PhysicalOptimizeOp) (float64, bool, 
 	return cost + indexPartialCost, false, err
 }
 
-func appendCandidate4PhysicalOptimizeOp(pop *coreusage.PhysicalOptimizeOp, lp LogicalPlan, pp operator.PhysicalPlan, prop *property.PhysicalProperty) {
+func appendCandidate4PhysicalOptimizeOp(pop *coreusage.PhysicalOptimizeOp, lp LogicalPlan, pp base.PhysicalPlan, prop *property.PhysicalProperty) {
 	if pop == nil || pop.GetTracer() == nil || pp == nil {
 		return
 	}
@@ -511,7 +511,7 @@ func appendCandidate4PhysicalOptimizeOp(pop *coreusage.PhysicalOptimizeOp, lp Lo
 	// that will cause no physical plan when the logic plan got selected.
 	// the fix to add innerTask.plan() to planTree and mapping correct logic plan
 	index := -1
-	var plan operator.PhysicalPlan
+	var plan base.PhysicalPlan
 	switch join := pp.(type) {
 	case *PhysicalIndexMergeJoin:
 		index = join.InnerChildIdx
@@ -568,7 +568,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
 	newProp := prop.CloneEssentialFields()
-	var plansFitsProp, plansNeedEnforce []operator.PhysicalPlan
+	var plansFitsProp, plansNeedEnforce []base.PhysicalPlan
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
 	// so we try to get the task without the enforced sort first.
@@ -1610,7 +1610,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		}
 	})
 	path := candidate.path
-	scans := make([]operator.PhysicalPlan, 0, len(path.PartialIndexPaths))
+	scans := make([]base.PhysicalPlan, 0, len(path.PartialIndexPaths))
 	cop := &CopTask{
 		indexPlanFinished: false,
 		tblColHists:       ds.TblColHists,
@@ -1630,7 +1630,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		})
 	}
 	for _, partPath := range path.PartialIndexPaths {
-		var scan operator.PhysicalPlan
+		var scan base.PhysicalPlan
 		if partPath.IsTablePath() {
 			scan = ds.convertToPartialTableScan(prop, partPath, candidate.isMatchProp, byItems)
 		} else {
@@ -1679,7 +1679,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	return task, nil
 }
 
-func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (indexPlan operator.PhysicalPlan) {
+func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (indexPlan base.PhysicalPlan) {
 	is := ds.getOriginalPhysicalIndexScan(prop, path, matchProp, false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
@@ -1718,7 +1718,7 @@ func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool
 	return true
 }
 
-func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (tablePlan operator.PhysicalPlan) {
+func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (tablePlan base.PhysicalPlan) {
 	ts, rowCount := ds.getOriginalPhysicalTableScan(prop, path, matchProp)
 	overwritePartialTableScanSchema(ds, ts)
 	// remove ineffetive filter condition after overwriting physicalscan schema
@@ -1791,7 +1791,7 @@ func setIndexMergeTableScanHandleCols(ds *DataSource, ts *PhysicalTableScan) (er
 // buildIndexMergeTableScan() returns Selection that will be pushed to TiKV.
 // Filters that cannot be pushed to TiKV are also returned, and an extra Selection above IndexMergeReader will be constructed later.
 func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Expression,
-	totalRowCount float64, matchProp bool) (operator.PhysicalPlan, []expression.Expression, bool, error) {
+	totalRowCount float64, matchProp bool) (base.PhysicalPlan, []expression.Expression, bool, error) {
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         slices.Clone(ds.Columns),
@@ -1816,7 +1816,7 @@ func (ds *DataSource) buildIndexMergeTableScan(tableFilters []expression.Express
 	if ds.statisticTable.Pseudo {
 		ts.StatsInfo().StatsVersion = statistics.PseudoVersion
 	}
-	var currentTopPlan operator.PhysicalPlan = ts
+	var currentTopPlan base.PhysicalPlan = ts
 	if len(tableFilters) > 0 {
 		pushedFilters, remainingFilters := extractFiltersForIndexMerge(GetPushDownCtx(ds.SCtx()), tableFilters)
 		pushedFilters1, remainingFilters1 := SplitSelCondsWithVirtualColumn(pushedFilters)

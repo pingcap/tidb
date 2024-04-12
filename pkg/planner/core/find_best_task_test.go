@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/stretchr/testify/require"
@@ -72,7 +72,7 @@ func (p mockLogicalPlan4Test) Init(ctx PlanContext) *mockLogicalPlan4Test {
 	return &p
 }
 
-func (p *mockLogicalPlan4Test) getPhysicalPlan1(prop *property.PhysicalProperty) operator.PhysicalPlan {
+func (p *mockLogicalPlan4Test) getPhysicalPlan1(prop *property.PhysicalProperty) base.PhysicalPlan {
 	physicalPlan1 := mockPhysicalPlan4Test{planType: 1}.Init(p.SCtx())
 	physicalPlan1.SetStats(&property.StatsInfo{RowCount: 1})
 	physicalPlan1.childrenReqProps = make([]*property.PhysicalProperty, 1)
@@ -80,7 +80,7 @@ func (p *mockLogicalPlan4Test) getPhysicalPlan1(prop *property.PhysicalProperty)
 	return physicalPlan1
 }
 
-func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty) operator.PhysicalPlan {
+func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty) base.PhysicalPlan {
 	physicalPlan2 := mockPhysicalPlan4Test{planType: 2}.Init(p.SCtx())
 	physicalPlan2.SetStats(&property.StatsInfo{RowCount: 1})
 	physicalPlan2.childrenReqProps = make([]*property.PhysicalProperty, 1)
@@ -88,9 +88,9 @@ func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty)
 	return physicalPlan2
 }
 
-func (p *mockLogicalPlan4Test) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]operator.PhysicalPlan, bool, error) {
-	plan1 := make([]operator.PhysicalPlan, 0, 1)
-	plan2 := make([]operator.PhysicalPlan, 0, 1)
+func (p *mockLogicalPlan4Test) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	plan1 := make([]base.PhysicalPlan, 0, 1)
+	plan2 := make([]base.PhysicalPlan, 0, 1)
 	if prop.IsSortItemEmpty() && p.canGeneratePlan2 {
 		// Generate PhysicalPlan2 when the property is empty.
 		plan2 = append(plan2, p.getPhysicalPlan2(prop))

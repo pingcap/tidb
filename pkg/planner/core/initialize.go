@@ -17,8 +17,8 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	base2 "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -408,7 +408,7 @@ func (p PhysicalIndexMergeReader) Init(ctx PlanContext, offset int) *PhysicalInd
 		p.SetStats(p.partialPlans[0].StatsInfo().ScaleByExpectCnt(totalRowCount))
 		p.StatsInfo().StatsVersion = p.partialPlans[0].StatsInfo().StatsVersion
 	}
-	p.PartialPlans = make([][]operator.PhysicalPlan, 0, len(p.partialPlans))
+	p.PartialPlans = make([][]base2.PhysicalPlan, 0, len(p.partialPlans))
 	for _, partialPlan := range p.partialPlans {
 		tempPlans := flattenPushDownPlan(partialPlan)
 		p.PartialPlans = append(p.PartialPlans, tempPlans)
@@ -574,7 +574,7 @@ func (p PhysicalExchangeReceiver) Init(ctx PlanContext, stats *property.StatsInf
 	return &p
 }
 
-func flattenTreePlan(plan operator.PhysicalPlan, plans []operator.PhysicalPlan) []operator.PhysicalPlan {
+func flattenTreePlan(plan base2.PhysicalPlan, plans []base2.PhysicalPlan) []base2.PhysicalPlan {
 	plans = append(plans, plan)
 	for _, child := range plan.Children() {
 		plans = flattenTreePlan(child, plans)
@@ -583,8 +583,8 @@ func flattenTreePlan(plan operator.PhysicalPlan, plans []operator.PhysicalPlan) 
 }
 
 // flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
-func flattenPushDownPlan(p operator.PhysicalPlan) []operator.PhysicalPlan {
-	plans := make([]operator.PhysicalPlan, 0, 5)
+func flattenPushDownPlan(p base2.PhysicalPlan) []base2.PhysicalPlan {
+	plans := make([]base2.PhysicalPlan, 0, 5)
 	plans = flattenTreePlan(p, plans)
 	for i := 0; i < len(plans)/2; i++ {
 		j := len(plans) - i - 1

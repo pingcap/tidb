@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -532,8 +532,8 @@ func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.Colum
 }
 
 // isPlanCacheable returns whether this plan is cacheable and the reason if not.
-func isPlanCacheable(sctx PlanContext, p operator.Plan, paramNum, limitParamNum int, hasSubQuery bool) (cacheable bool, reason string) {
-	var pp operator.PhysicalPlan
+func isPlanCacheable(sctx PlanContext, p base.Plan, paramNum, limitParamNum int, hasSubQuery bool) (cacheable bool, reason string) {
+	var pp base.PhysicalPlan
 	switch x := p.(type) {
 	case *Insert:
 		pp = x.SelectPlan
@@ -541,7 +541,7 @@ func isPlanCacheable(sctx PlanContext, p operator.Plan, paramNum, limitParamNum 
 		pp = x.SelectPlan
 	case *Delete:
 		pp = x.SelectPlan
-	case operator.PhysicalPlan:
+	case base.PhysicalPlan:
 		pp = x
 	default:
 		return false, fmt.Sprintf("unexpected un-cacheable plan %v", p.ExplainID().String())
@@ -562,8 +562,8 @@ func isPlanCacheable(sctx PlanContext, p operator.Plan, paramNum, limitParamNum 
 }
 
 // isPhysicalPlanCacheable returns whether this physical plan is cacheable and return the reason if not.
-func isPhysicalPlanCacheable(sctx PlanContext, p operator.PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
-	var subPlans []operator.PhysicalPlan
+func isPhysicalPlanCacheable(sctx PlanContext, p base.PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
+	var subPlans []base.PhysicalPlan
 	switch x := p.(type) {
 	case *PhysicalTableDual:
 		if paramNum > 0 {

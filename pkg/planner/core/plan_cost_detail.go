@@ -18,7 +18,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -118,7 +118,7 @@ func setBatchPointGetPlanCostDetail(p *BatchPointGetPlan, opt *coreusage.Physica
 	appendPlanCostDetail4PhysicalOptimizeOp(opt, detail)
 }
 
-func setPhysicalTableOrIndexScanCostDetail(p operator.PhysicalPlan, opt *coreusage.PhysicalOptimizeOp,
+func setPhysicalTableOrIndexScanCostDetail(p base.PhysicalPlan, opt *coreusage.PhysicalOptimizeOp,
 	rowCount, rowSize, scanFactor float64, costModelVersion int) {
 	if opt == nil {
 		return

@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/context"
+	base2 "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -135,8 +135,8 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx PlanContext) *PhysicalShuf
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
-		Tails:        []operator.PhysicalPlan{tail},
-		DataSources:  []operator.PhysicalPlan{dataSource},
+		Tails:        []base2.PhysicalPlan{tail},
+		DataSources:  []base2.PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{byItems},
 	}.Init(ctx, pp.StatsInfo(), pp.QueryBlockOffset(), reqProp)
@@ -172,8 +172,8 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx PlanContext) *Physic
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
-		Tails:        []operator.PhysicalPlan{tail},
-		DataSources:  []operator.PhysicalPlan{dataSource},
+		Tails:        []base2.PhysicalPlan{tail},
+		DataSources:  []base2.PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{util.CloneExprs(pp.GroupByItems)},
 	}.Init(ctx, pp.StatsInfo(), pp.QueryBlockOffset(), reqProp)
@@ -187,8 +187,8 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx PlanContext) *Physic
 	}
 
 	children := pp.Children()
-	dataSources := make([]operator.PhysicalPlan, len(children))
-	tails := make([]operator.PhysicalPlan, len(children))
+	dataSources := make([]base2.PhysicalPlan, len(children))
+	tails := make([]base2.PhysicalPlan, len(children))
 
 	for i := range children {
 		sort, ok := children[i].(*PhysicalSort)
@@ -222,7 +222,7 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx PlanContext) *Physic
 // LogicalPlan is a tree of logical operators.
 // We can do a lot of logical optimizations to it, like predicate pushdown and column pruning.
 type LogicalPlan interface {
-	operator.Plan
+	base2.Plan
 
 	// HashCode encodes a LogicalPlan to fast compare whether a LogicalPlan equals to another.
 	// We use a strict encode method here which ensures there is no conflict.
@@ -290,7 +290,7 @@ type LogicalPlan interface {
 	// It will return:
 	// 1. All possible plans that can match the required property.
 	// 2. Whether the SQL hint can work. Return true if there is no hint.
-	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []operator.PhysicalPlan, hintCanWork bool, err error)
+	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []base2.PhysicalPlan, hintCanWork bool, err error)
 
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
@@ -356,7 +356,7 @@ func (*baseLogicalPlan) ExplainInfo() string {
 	return ""
 }
 
-func getEstimatedProbeCntFromProbeParents(probeParents []operator.PhysicalPlan) float64 {
+func getEstimatedProbeCntFromProbeParents(probeParents []base2.PhysicalPlan) float64 {
 	res := float64(1)
 	for _, pp := range probeParents {
 		switch pp.(type) {
@@ -370,7 +370,7 @@ func getEstimatedProbeCntFromProbeParents(probeParents []operator.PhysicalPlan) 
 	return res
 }
 
-func getActualProbeCntFromProbeParents(pps []operator.PhysicalPlan, statsColl *execdetails.RuntimeStatsColl) int64 {
+func getActualProbeCntFromProbeParents(pps []base2.PhysicalPlan, statsColl *execdetails.RuntimeStatsColl) int64 {
 	res := int64(1)
 	for _, pp := range pps {
 		switch pp.(type) {
@@ -396,8 +396,8 @@ type basePhysicalPlan struct {
 	base.Plan
 
 	childrenReqProps []*property.PhysicalProperty
-	self             operator.PhysicalPlan
-	children         []operator.PhysicalPlan
+	self             base2.PhysicalPlan
+	children         []base2.PhysicalPlan
 
 	// used by the new cost interface
 	planCostInit bool
@@ -406,7 +406,7 @@ type basePhysicalPlan struct {
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in op.PhysicalPlan for details.
-	probeParents []operator.PhysicalPlan
+	probeParents []base2.PhysicalPlan
 
 	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
 	// 1. For ExchangeSender, means its output will be partitioned by hash key.
@@ -414,7 +414,7 @@ type basePhysicalPlan struct {
 	TiFlashFineGrainedShuffleStreamCount uint64
 }
 
-func (p *basePhysicalPlan) cloneWithSelf(newSelf operator.PhysicalPlan) (*basePhysicalPlan, error) {
+func (p *basePhysicalPlan) cloneWithSelf(newSelf base2.PhysicalPlan) (*basePhysicalPlan, error) {
 	base := &basePhysicalPlan{
 		Plan:                                 p.Plan,
 		self:                                 newSelf,
@@ -438,7 +438,7 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf operator.PhysicalPlan) (*basePh
 }
 
 // Clone implements op.PhysicalPlan interface.
-func (p *basePhysicalPlan) Clone() (operator.PhysicalPlan, error) {
+func (p *basePhysicalPlan) Clone() (base2.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p.self)
 }
 
@@ -494,7 +494,7 @@ func (p *basePhysicalPlan) GetActualProbeCnt(statsColl *execdetails.RuntimeStats
 	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
 }
 
-func (p *basePhysicalPlan) SetProbeParents(probeParents []operator.PhysicalPlan) {
+func (p *basePhysicalPlan) SetProbeParents(probeParents []base2.PhysicalPlan) {
 	p.probeParents = probeParents
 }
 
@@ -614,7 +614,7 @@ func newBaseLogicalPlan(ctx PlanContext, tp string, self LogicalPlan, qbOffset i
 	}
 }
 
-func newBasePhysicalPlan(ctx PlanContext, tp string, self operator.PhysicalPlan, offset int) basePhysicalPlan {
+func newBasePhysicalPlan(ctx PlanContext, tp string, self base2.PhysicalPlan, offset int) basePhysicalPlan {
 	return basePhysicalPlan{
 		Plan: base.NewBasePlan(ctx, tp, offset),
 		self: self,
@@ -662,7 +662,7 @@ func (p *baseLogicalPlan) Children() []LogicalPlan {
 }
 
 // Children implements op.PhysicalPlan Children interface.
-func (p *basePhysicalPlan) Children() []operator.PhysicalPlan {
+func (p *basePhysicalPlan) Children() []base2.PhysicalPlan {
 	return p.children
 }
 
@@ -672,7 +672,7 @@ func (p *baseLogicalPlan) SetChildren(children ...LogicalPlan) {
 }
 
 // SetChildren implements op.PhysicalPlan SetChildren interface.
-func (p *basePhysicalPlan) SetChildren(children ...operator.PhysicalPlan) {
+func (p *basePhysicalPlan) SetChildren(children ...base2.PhysicalPlan) {
 	p.children = children
 }
 
@@ -682,7 +682,7 @@ func (p *baseLogicalPlan) SetChild(i int, child LogicalPlan) {
 }
 
 // SetChild implements op.PhysicalPlan SetChild interface.
-func (p *basePhysicalPlan) SetChild(i int, child operator.PhysicalPlan) {
+func (p *basePhysicalPlan) SetChild(i int, child base2.PhysicalPlan) {
 	p.children[i] = child
 }
 

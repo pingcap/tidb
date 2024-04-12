@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -392,7 +392,7 @@ func TestExtraPKNotNullFlag(t *testing.T) {
 	require.Equal(t, mysql.PriKeyFlag|mysql.NotNullFlag, ds.schema.Columns[2].RetType.GetFlag())
 }
 
-func buildLogicPlan4GroupBy(s *plannerSuite, t *testing.T, sql string) (operator.Plan, error) {
+func buildLogicPlan4GroupBy(s *plannerSuite, t *testing.T, sql string) (base.Plan, error) {
 	sqlMode := s.ctx.GetSessionVars().SQLMode
 	mockedTableInfo := MockSignedTable()
 	// mock the table info here for later use
@@ -1845,7 +1845,7 @@ func (s *plannerSuiteWithOptimizeVars) doTestWindowFunction(t *testing.T, input,
 	}
 }
 
-func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string) (operator.PhysicalPlan, ast.Node, error) {
+func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string) (base.PhysicalPlan, ast.Node, error) {
 	stmt, err := s.p.ParseOneStmt(sql, "", "")
 	if err != nil {
 		return nil, nil, err
@@ -1875,7 +1875,7 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 		return nil, nil, err
 	}
 	p, _, err = physicalOptimize(p.(LogicalPlan), &PlanCounterDisabled)
-	return p.(operator.PhysicalPlan), stmt, err
+	return p.(base.PhysicalPlan), stmt, err
 }
 
 func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {

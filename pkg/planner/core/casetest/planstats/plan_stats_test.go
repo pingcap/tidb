@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -67,11 +67,11 @@ func TestPlanStatsLoad(t *testing.T) {
 	testCases := []struct {
 		sql   string
 		skip  bool
-		check func(p operator.Plan, tableInfo *model.TableInfo)
+		check func(p base.Plan, tableInfo *model.TableInfo)
 	}{
 		{ // DataSource
 			sql: "select * from t where c>1",
-			check: func(p operator.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				switch pp := p.(type) {
 				case *plannercore.PhysicalTableReader:
 					stats := pp.StatsInfo().HistColl
@@ -84,7 +84,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // PartitionTable
 			sql: "select * from pt where a < 15 and c > 1",
-			check: func(p operator.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				pua, ok := p.(*plannercore.PhysicalUnionAll)
 				require.True(t, ok)
 				for _, child := range pua.Children() {
@@ -94,8 +94,8 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // Join
 			sql: "select * from t t1 inner join t t2 on t1.b=t2.b where t1.d=3",
-			check: func(p operator.Plan, tableInfo *model.TableInfo) {
-				pp, ok := p.(operator.PhysicalPlan)
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
+				pp, ok := p.(base.PhysicalPlan)
 				require.True(t, ok)
 				require.Greater(t, countFullStats(pp.Children()[0].StatsInfo().HistColl, tableInfo.Columns[3].ID), 0)
 				require.Greater(t, countFullStats(pp.Children()[1].StatsInfo().HistColl, tableInfo.Columns[3].ID), 0)
@@ -103,7 +103,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // Apply
 			sql: "select * from t t1 where t1.b > (select count(*) from t t2 where t2.c > t1.a and t2.d>1) and t1.c>2",
-			check: func(p operator.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				pp, ok := p.(*plannercore.PhysicalProjection)
 				require.True(t, ok)
 				pa, ok := pp.Children()[0].(*plannercore.PhysicalApply)
@@ -116,7 +116,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // > Any
 			sql: "select * from t where t.b > any(select d from t where t.c > 2)",
-			check: func(p operator.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				ph, ok := p.(*plannercore.PhysicalHashJoin)
 				require.True(t, ok)
 				ptr, ok := ph.Children()[0].(*plannercore.PhysicalTableReader)
@@ -126,7 +126,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // in
 			sql: "select * from t where t.b in (select d from t where t.c > 2)",
-			check: func(p operator.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				ph, ok := p.(*plannercore.PhysicalHashJoin)
 				require.True(t, ok)
 				ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
@@ -136,7 +136,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // not in
 			sql: "select * from t where t.b not in (select d from t where t.c > 2)",
-			check: func(p operator.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				ph, ok := p.(*plannercore.PhysicalHashJoin)
 				require.True(t, ok)
 				ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
@@ -146,7 +146,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // exists
 			sql: "select * from t t1 where exists (select * from t t2 where t1.b > t2.d and t2.c>1)",
-			check: func(p operator.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				ph, ok := p.(*plannercore.PhysicalHashJoin)
 				require.True(t, ok)
 				ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
@@ -156,7 +156,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // not exists
 			sql: "select * from t t1 where not exists (select * from t t2 where t1.b > t2.d and t2.c>1)",
-			check: func(p operator.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				ph, ok := p.(*plannercore.PhysicalHashJoin)
 				require.True(t, ok)
 				ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
@@ -166,7 +166,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // CTE
 			sql: "with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3",
-			check: func(p operator.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				ps, ok := p.(*plannercore.PhysicalProjection)
 				require.True(t, ok)
 				pc, ok := ps.Children()[0].(*plannercore.PhysicalTableReader)
@@ -180,7 +180,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // recursive CTE
 			sql: "with recursive cte(x, y) as (select a, b from t where c > 1 union select x + 1, y from cte where x < 5) select * from cte",
-			check: func(p operator.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				pc, ok := p.(*plannercore.PhysicalCTE)
 				require.True(t, ok)
 				pp, ok := pc.SeedPlan.(*plannercore.PhysicalProjection)
@@ -192,7 +192,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // check idx(b)
 			sql: "select * from t USE INDEX(idx) where b >= 10",
-			check: func(p operator.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				pr, ok := p.(*plannercore.PhysicalIndexLookUpReader)
 				require.True(t, ok)
 				pis, ok := pr.IndexPlans[0].(*plannercore.PhysicalIndexScan)

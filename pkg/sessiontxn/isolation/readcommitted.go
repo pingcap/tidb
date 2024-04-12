@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -264,11 +264,11 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 }
 
 // planSkipGetTsoFromPD identifies the plans which don't need get newest ts from PD.
-func planSkipGetTsoFromPD(sctx sessionctx.Context, plan operator.Plan, inLockOrWriteStmt bool) bool {
+func planSkipGetTsoFromPD(sctx sessionctx.Context, plan base.Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
 	case *plannercore.PointGetPlan:
 		return sctx.GetSessionVars().RcWriteCheckTS && (v.Lock || inLockOrWriteStmt)
-	case operator.PhysicalPlan:
+	case base.PhysicalPlan:
 		if len(v.Children()) == 0 {
 			return false
 		}
@@ -303,7 +303,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val any) (err e
 		return nil
 	}
 
-	plan, ok := val.(operator.Plan)
+	plan, ok := val.(base.Plan)
 	if !ok {
 		return nil
 	}

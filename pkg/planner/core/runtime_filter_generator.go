@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -30,7 +30,7 @@ import (
 type RuntimeFilterGenerator struct {
 	rfIDGenerator                 *util.IDGenerator
 	columnUniqueIDToRF            map[int64][]*RuntimeFilter
-	parentPhysicalPlan            operator.PhysicalPlan
+	parentPhysicalPlan            base.PhysicalPlan
 	childIdxForParentPhysicalPlan int
 }
 
@@ -56,7 +56,7 @@ PhysicalPlanTree:
  TableScan   ExchangeNode
 (assign RF1)
 */
-func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan operator.PhysicalPlan) {
+func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan base.PhysicalPlan) {
 	switch physicalPlan := plan.(type) {
 	case *PhysicalHashJoin:
 		generator.generateRuntimeFilterInterval(physicalPlan)
@@ -228,7 +228,7 @@ func (generator *RuntimeFilterGenerator) calculateRFMode(buildNode *PhysicalHash
 	return variable.RFGlobal
 }
 
-func (generator *RuntimeFilterGenerator) belongsToSameFragment(currentNode operator.PhysicalPlan, targetNode *PhysicalTableScan) bool {
+func (generator *RuntimeFilterGenerator) belongsToSameFragment(currentNode base.PhysicalPlan, targetNode *PhysicalTableScan) bool {
 	switch currentNode.(type) {
 	case *PhysicalExchangeReceiver:
 		// terminal traversal

@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/operator"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -53,7 +53,7 @@ func TestEncodeDecodePlan(t *testing.T) {
 	getPlanTree := func() (str1, str2 string) {
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(operator.Plan)
+		p, ok := info.Plan.(base.Plan)
 		require.True(t, ok)
 		encodeStr := core.EncodePlan(p)
 		planTree, err := plancodec.DecodePlan(encodeStr)
@@ -328,7 +328,7 @@ func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, i
 	tk.MustQuery(sql1)
 	info := tk.Session().ShowProcess()
 	require.NotNil(t, info)
-	physicalPlan, ok := info.Plan.(operator.PhysicalPlan)
+	physicalPlan, ok := info.Plan.(base.PhysicalPlan)
 	require.True(t, ok)
 	normalized1, digest1 := core.NormalizePlan(physicalPlan)
 
@@ -341,7 +341,7 @@ func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, i
 	tk.MustQuery(sql2)
 	info = tk.Session().ShowProcess()
 	require.NotNil(t, info)
-	physicalPlan, ok = info.Plan.(operator.PhysicalPlan)
+	physicalPlan, ok = info.Plan.(base.PhysicalPlan)
 	require.True(t, ok)
 	normalized2, digest2 := core.NormalizePlan(physicalPlan)
 
@@ -413,7 +413,7 @@ func BenchmarkDecodePlan(b *testing.B) {
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
-	p, ok := info.Plan.(operator.PhysicalPlan)
+	p, ok := info.Plan.(base.PhysicalPlan)
 	require.True(b, ok)
 	// TODO: optimize the encode plan performance when encode plan with runtimeStats
 	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
@@ -440,7 +440,7 @@ func BenchmarkEncodePlan(b *testing.B) {
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
-	p, ok := info.Plan.(operator.PhysicalPlan)
+	p, ok := info.Plan.(base.PhysicalPlan)
 	require.True(b, ok)
 	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	b.ResetTimer()
@@ -464,7 +464,7 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
-	p, ok := info.Plan.(operator.PhysicalPlan)
+	p, ok := info.Plan.(base.PhysicalPlan)
 	require.True(b, ok)
 	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	b.ResetTimer()
