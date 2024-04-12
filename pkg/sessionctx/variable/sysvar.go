@@ -1225,7 +1225,7 @@ var defaultSysVars = []*SysVar{
 		Value: strconv.Itoa(DefTiDBMemQuotaAnalyze),
 		Type:  TypeInt, MinValue: -1, MaxValue: math.MaxInt64,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			appendDeprecationWarning(vars, TiDBMemQuotaAnalyze, TiDBMemQuotaQuery)
+			appendDeprecationWarning(vars, TiDBMemQuotaAnalyze, TiDBServerMemoryLimit)
 			return normalizedValue, nil
 		},
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
