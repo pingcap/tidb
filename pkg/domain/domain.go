@@ -2275,10 +2275,6 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
 	// These tasks do not interfere with or depend on the initialization process.
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
-<<<<<<< HEAD
-	do.wg.Run(func() { do.autoAnalyzeWorker(owner) }, "autoAnalyzeWorker")
-	do.wg.Run(func() { do.gcAnalyzeHistory(owner) }, "gcAnalyzeHistory")
-=======
 	// Wait for the stats worker to finish the initialization.
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
 	do.wg.Run(
@@ -2291,11 +2287,10 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.wg.Run(
 		func() {
 			<-do.StatsHandle().InitStatsDone
-			do.analyzeJobsCleanupWorker(owner)
+			do.gcAnalyzeHistory(owner)
 		},
-		"analyzeJobsCleanupWorker",
+		"gcAnalyzeHistory",
 	)
->>>>>>> 0f23d8324c9 (domain: do not start Auto Analyze Worker until statistics initialization is complete (#52407))
 	return nil
 }
 
