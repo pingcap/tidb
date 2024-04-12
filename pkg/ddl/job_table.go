@@ -406,7 +406,16 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 
-		err := wk.HandleLocalDDLJob(d.ddlCtx, job)
+		maxRetryTime := 10
+		var err error
+		for i := 0; i < maxRetryTime; i++ {
+			err = wk.HandleLocalDDLJob(d.ddlCtx, job)
+			if err == nil || !isRetryableError(err) {
+				break
+			}
+			logutil.Logger(context.Background()).Warn("handle local ddl job", zap.Int("retry times", i), zap.Error(err))
+			time.Sleep(time.Second)
+		}
 		pool.put(wk)
 		if err != nil {
 			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
