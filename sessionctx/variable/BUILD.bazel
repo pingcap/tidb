@@ -45,6 +45,7 @@ go_library(
         "//util/disk",
         "//util/execdetails",
         "//util/gctuner",
+        "//util/intest",
         "//util/kvcache",
         "//util/logutil",
         "//util/mathutil",
