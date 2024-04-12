@@ -310,4 +310,23 @@ func TestSessionBuildContext(t *testing.T) {
 	require.True(t, impl.IsInUnionCast())
 	impl.SetInUnionCast(false)
 	require.False(t, impl.IsInUnionCast())
+
+	// InInsertOrUpdate
+	vars.StmtCtx.InInsertStmt = false
+	vars.StmtCtx.InUpdateStmt = false
+	require.False(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = true
+	require.True(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = false
+	vars.StmtCtx.InUpdateStmt = true
+	require.True(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = true
+	require.True(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = false
+	vars.StmtCtx.InUpdateStmt = false
+	require.False(t, impl.InInsertOrUpdate())
 }

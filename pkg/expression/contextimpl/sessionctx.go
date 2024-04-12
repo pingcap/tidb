@@ -148,6 +148,12 @@ func (ctx *ExprCtxExtendedImpl) GetGroupConcatMaxLen() uint64 {
 	return ctx.sctx.GetSessionVars().GroupConcatMaxLen
 }
 
+// InInsertOrUpdate returns whether when are building an expression for insert or update statement.
+func (ctx *ExprCtxExtendedImpl) InInsertOrUpdate() bool {
+	sc := ctx.sctx.GetSessionVars().StmtCtx
+	return sc.InInsertStmt || sc.InUpdateStmt
+}
+
 // SessionEvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.
 type SessionEvalContext struct {
 	sctx  sessionctx.Context
