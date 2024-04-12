@@ -1579,6 +1579,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
 		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
 	}
+	if txnTS == 0 {
+		txnTS = sessVars.TxnCtx.StaleReadTs
+	}
 
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,

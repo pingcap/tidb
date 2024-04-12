@@ -1748,7 +1748,6 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 		if p.flag&initTxnContextProvider != 0 {
 			p.sctx.GetSessionVars().StmtCtx.IsStaleness = true
 			if !p.sctx.GetSessionVars().InTxn() {
-				p.sctx.GetSessionVars().TxnCtx.StaleReadTs = p.LastSnapshotTS
 				txnManager := sessiontxn.GetTxnManager(p.sctx)
 				newTxnRequest := &sessiontxn.EnterNewTxnRequest{
 					Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
@@ -1760,6 +1759,7 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 				if err := txnManager.OnStmtStart(context.TODO(), txnManager.GetCurrentStmt()); err != nil {
 					return err
 				}
+				p.sctx.GetSessionVars().TxnCtx.StaleReadTs = p.LastSnapshotTS
 			}
 		}
 	}
