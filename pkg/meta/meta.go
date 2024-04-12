@@ -63,7 +63,8 @@ var (
 // }
 
 var (
-	mMetaPrefix          = []byte("m")
+	mMetaPrefix = []byte("m")
+	// the value inside it is actually the max current used ID, not next id.
 	mNextGlobalIDKey     = []byte("NextGlobalID")
 	mSchemaVersionKey    = []byte("SchemaVersionKey")
 	mDBs                 = []byte("DBs")
@@ -1261,6 +1262,8 @@ var (
 
 var (
 	// DefaultJobListKey keeps all actions of DDL jobs except "add index".
+	// this and below list are always appended, so the order is the same as the
+	// job's creation order.
 	DefaultJobListKey JobListKeyType = mDDLJobListKey
 	// AddIndexJobListKey only keeps the action of adding index.
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList

@@ -488,9 +488,13 @@ type JobMeta struct {
 
 // Job is for a DDL operation.
 type Job struct {
-	ID         int64         `json:"id"`
-	Type       ActionType    `json:"type"`
-	SchemaID   int64         `json:"schema_id"`
+	ID   int64      `json:"id"`
+	Type ActionType `json:"type"`
+	// TableID means different for different job types:
+	// - ExchangeTablePartition: nt db id
+	SchemaID int64 `json:"schema_id"`
+	// TableID means different for different job types:
+	// - ExchangeTablePartition: nt id
 	TableID    int64         `json:"table_id"`
 	SchemaName string        `json:"schema_name"`
 	TableName  string        `json:"table_name"`
@@ -504,8 +508,14 @@ type Job struct {
 	Mu       sync.Mutex `json:"-"`
 	// CtxVars are variables attached to the job. It is for internal usage.
 	// E.g. passing arguments between functions by one single *Job pointer.
+	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
 	CtxVars []interface{} `json:"-"`
-	Args    []interface{} `json:"-"`
+	// for create-table job, it's [model.TableInfo, foreignKeyCheck]
+	// - AddIndex or AddPrimaryKey: [unique, ....
+	// - TruncateTable: [new-table-id, foreignKeyCheck, ...
+	// - RenameTable: [old-db-id, new-table-name, old-db-name]
+	// - ExchangeTablePartition: [partition-id, pt-db-id, pt-id, partition-name, with-validation]
+	Args []interface{} `json:"-"`
 	// RawArgs : We must use json raw message to delay parsing special args.
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
@@ -517,7 +527,7 @@ type Job struct {
 	// StartTS uses timestamp allocated by TSO.
 	// Now it's the TS when we put the job to TiKV queue.
 	StartTS uint64 `json:"start_ts"`
-	// DependencyID is the job's ID that the current job depends on.
+	// DependencyID is the largest job ID before current job and current job depends on.
 	DependencyID int64 `json:"dependency_id"`
 	// Query string of the ddl job.
 	Query      string       `json:"query"`
@@ -561,8 +571,9 @@ type Job struct {
 	// CDCWriteSource indicates the source of CDC write.
 	CDCWriteSource uint64 `json:"cdc_write_source"`
 
-	// LocalMode indicates whether the job is running in local TiDB.
-	// Only happens when tidb_enable_fast_ddl = on
+	// LocalMode = true means the job is running on the local TiDB that the client
+	// connects to, else it's run on the DDL owner.
+	// Only happens when tidb_enable_fast_create_table = on
 	LocalMode bool `json:"local_mode"`
 
 	// SQLMode for executing DDL query.
@@ -1016,9 +1027,9 @@ type JobState int32
 const (
 	JobStateNone    JobState = 0
 	JobStateRunning JobState = 1
+	// JobStateRollingback is the state to do the rolling back job.
 	// When DDL encountered an unrecoverable error at reorganization state,
 	// some keys has been added already, we need to remove them.
-	// JobStateRollingback is the state to do the rolling back job.
 	JobStateRollingback  JobState = 2
 	JobStateRollbackDone JobState = 3
 	JobStateDone         JobState = 4

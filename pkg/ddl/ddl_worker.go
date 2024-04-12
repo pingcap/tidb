@@ -213,6 +213,7 @@ func (d *ddl) limitDDLJobs(ch chan *limitJobTask, handler func(tasks []*limitJob
 	tasks := make([]*limitJobTask, 0, batchAddingJobs)
 	for {
 		select {
+		// the channel is never closed
 		case task := <-ch:
 			tasks = tasks[:0]
 			jobLen := len(ch)
@@ -393,11 +394,11 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		return errors.Trace(err)
 	}
 	defer d.sessPool.Put(se)
-	job, err := getJobsBySQL(sess.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
+	jobs, err := getJobsBySQL(sess.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(job) != 0 {
+	if len(jobs) != 0 {
 		return errors.Errorf("Can't add ddl job, have flashback cluster job")
 	}
 
