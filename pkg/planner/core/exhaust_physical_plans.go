@@ -46,6 +46,7 @@ import (
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
