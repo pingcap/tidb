@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -26,173 +27,168 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func createSimpleFilter() (expression.CNFExprs, error) {
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	a := &expression.Column{Index: 0, RetType: intTp}
+	intConstant := int64(10000)
+	var d types.Datum
+	d.SetMinNotNull()
+	d.SetValueWithDefaultCollation(intConstant)
+	b := &expression.Constant{RetType: intTp, Value: d}
+	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
+	if err != nil {
+		return nil, err
+	}
+	buildFilter := make(expression.CNFExprs, 0)
+	buildFilter = append(buildFilter, sf)
+	return buildFilter, nil
+}
+
+func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, buildKeyIndex []int, buildTypes []*types.FieldType, buildKeyTypes []*types.FieldType, probeKeyTypes []*types.FieldType, keepFilteredRows bool) {
+	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, []int{1}, false)
+	buildSchema := &expression.Schema{}
+	for _, tp := range buildTypes {
+		buildSchema.Append(&expression.Column{
+			RetType: tp,
+		})
+	}
+	hasNullableKey := false
+	for _, buildKeyType := range buildKeyTypes {
+		if !mysql.HasNotNullFlag(buildKeyType.GetFlag()) {
+			hasNullableKey = true
+			break
+		}
+	}
+	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, 1, hasNullableKey, buildFilter != nil, keepFilteredRows)
+	chk := chunk.GenRandomChunks(buildTypes, 2049)
+	if withSelCol {
+		sel := make([]int, 0, 2049)
+		for i := 0; i < chk.NumRows(); i++ {
+			if i%3 == 0 {
+				continue
+			}
+			sel = append(sel, i)
+		}
+		chk.SetSel(sel)
+	}
+	hashJoinCtx := &PartitionedHashJoinCtx{
+		SessCtx:         mock.NewContext(),
+		PartitionNumber: 1,
+		hashTableMeta:   meta,
+		BuildFilter:     buildFilter,
+	}
+	rowTables := make([]*rowTable, hashJoinCtx.PartitionNumber)
+	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, rowTables)
+	builder.appendRemainingRowLocations(rowTables)
+	require.NoError(t, err, "processOneChunk returns error")
+	require.Equal(t, chk.NumRows(), len(builder.usedRows))
+	// all the selected rows should be converted to row format, even for the rows that contains null key
+	if keepFilteredRows {
+		require.Equal(t, uint64(len(builder.usedRows)), rowTables[0].rowCount())
+		// check both validJoinKeyRow index and join key
+		validJoinKeyRowIndex := 0
+		for logicalIndex, physicalIndex := range builder.usedRows {
+			if (builder.filterVector != nil && !builder.filterVector[physicalIndex]) || (builder.nullKeyVector != nil && builder.nullKeyVector[physicalIndex]) {
+				continue
+			}
+			validKeyPos := rowTables[0].getValidJoinKeyPos(validJoinKeyRowIndex)
+			require.Equal(t, logicalIndex, validKeyPos, "valid key pos not match, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
+			rowStart := rowTables[0].getRowStart(validKeyPos)
+			require.NotEqual(t, uintptr(0), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
+			require.Equal(t, builder.serializedKeyVectorBuffer[logicalIndex], meta.getKeyBytes(rowStart), "key not match, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
+			validJoinKeyRowIndex++
+		}
+		validKeyPos := rowTables[0].getValidJoinKeyPos(validJoinKeyRowIndex)
+		require.Equal(t, -1, validKeyPos, "validKeyPos must be -1 at the end of test")
+	} else {
+		// check join key
+		rowIndex := 0
+		for logicalIndex, physicalIndex := range builder.usedRows {
+			if (builder.filterVector != nil && !builder.filterVector[physicalIndex]) || (builder.nullKeyVector != nil && builder.nullKeyVector[physicalIndex]) {
+				// filtered row, skip
+				continue
+			}
+			rowStart := rowTables[0].getRowStart(rowIndex)
+			require.NotEqual(t, uintptr(0), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
+			require.Equal(t, builder.serializedKeyVectorBuffer[logicalIndex], meta.getKeyBytes(rowStart), "key not match, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
+			rowIndex++
+		}
+		rowStart := rowTables[0].getRowStart(rowIndex)
+		require.Equal(t, uintptr(0), rowStart, "row start must be nil at the end of the test")
+	}
+}
+
 func TestKey(t *testing.T) {
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	uintTp := types.NewFieldType(mysql.TypeLonglong)
 	uintTp.AddFlag(mysql.UnsignedFlag)
 	stringTp := types.NewFieldType(mysql.TypeVarString)
 	binaryStringTp := types.NewFieldType(mysql.TypeBlob)
-
-	testFunc := func(buildKeyIndex []int, buildTypes []*types.FieldType, buildKeyTypes []*types.FieldType, probeKeyTypes []*types.FieldType) {
-		meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, []int{}, false)
-		buildSchema := &expression.Schema{}
-		for _, tp := range buildTypes {
-			buildSchema.Append(&expression.Column{
-				RetType: tp,
-			})
-		}
-		builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, 1, true, false, false)
-		chk := chunk.GenRandomChunks(buildTypes, 2049)
-		hashJoinCtx := &PartitionedHashJoinCtx{
-			SessCtx:         mock.NewContext(),
-			PartitionNumber: 1,
-			hashTableMeta:   meta,
-		}
-		rowTables := make([]*rowTable, hashJoinCtx.PartitionNumber)
-		err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, rowTables)
-		builder.appendRemainingRowLocations(rowTables)
-		require.NoError(t, err, "processOneChunk returns error")
-		// check valid key pos, filtered rows is not kept
-		for _, seg := range rowTables[0].segments {
-			for index, value := range seg.validJoinKeyPos {
-				require.Equal(t, index, value, "wrong result in validJoinKeyPos")
-			}
-		}
-		rowIndex := 0
-		for i := 0; i < chk.NumRows(); i++ {
-			if (builder.filterVector != nil && !builder.filterVector[i]) || (builder.nullKeyVector != nil && builder.nullKeyVector[i]) {
-				continue
-			}
-			rowStart := rowTables[0].getRowStart(rowIndex)
-			require.NotEqual(t, 0, rowStart, "row start must not be nil, index = "+strconv.Itoa(i))
-			require.Equal(t, builder.serializedKeyVectorBuffer[i], meta.getKeyBytes(rowStart), "key not matched, index = "+strconv.Itoa(i))
-			rowIndex++
-		}
-		rowStart := rowTables[0].getRowStart(rowIndex)
-		require.Equal(t, uintptr(0), rowStart, "row start must be nil at the end of test")
-	}
+	notNullIntTp := types.NewFieldType(mysql.TypeLonglong)
+	notNullIntTp.SetFlag(mysql.NotNullFlag)
 
 	// inlined fixed length keys
 	buildKeyIndex := []int{0}
 	buildTypes := []*types.FieldType{intTp, uintTp, uintTp}
 	buildKeyTypes := []*types.FieldType{intTp}
 	probeKeyTypes := []*types.FieldType{intTp}
-	testFunc(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes)
+	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
+	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
+	buildKeyIndex = []int{0}
+	buildTypes = []*types.FieldType{notNullIntTp, uintTp, uintTp}
+	buildKeyTypes = []*types.FieldType{notNullIntTp}
+	probeKeyTypes = []*types.FieldType{notNullIntTp}
+	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
+	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
 	// inlined variable length keys
 	buildKeyIndex = []int{0, 1}
 	buildTypes = []*types.FieldType{binaryStringTp, intTp, uintTp}
 	buildKeyTypes = []*types.FieldType{binaryStringTp, intTp}
 	probeKeyTypes = []*types.FieldType{binaryStringTp, intTp}
-	testFunc(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes)
+	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
+	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
 
 	// not inlined fixed length keys
 	buildKeyIndex = []int{0}
 	buildTypes = []*types.FieldType{intTp, uintTp, uintTp}
 	buildKeyTypes = []*types.FieldType{intTp}
 	probeKeyTypes = []*types.FieldType{uintTp}
-	testFunc(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes)
+	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
+	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
 
 	// not inlined variable length keys
 	buildKeyIndex = []int{0, 1}
 	buildTypes = []*types.FieldType{stringTp, intTp, uintTp}
 	buildKeyTypes = []*types.FieldType{stringTp, intTp}
 	probeKeyTypes = []*types.FieldType{stringTp, intTp}
-	testFunc(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes)
+	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
+	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
 	buildKeyIndex = []int{2, 0, 1}
 	buildTypes = []*types.FieldType{stringTp, intTp, binaryStringTp, uintTp}
 	buildKeyTypes = []*types.FieldType{stringTp, intTp, binaryStringTp}
 	probeKeyTypes = []*types.FieldType{stringTp, intTp, binaryStringTp}
-	testFunc(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes)
-}
+	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
+	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
 
-func TestKeepRows(t *testing.T) {
-	intTp := types.NewFieldType(mysql.TypeLonglong)
-	uintTp := types.NewFieldType(mysql.TypeLonglong)
-	uintTp.AddFlag(mysql.UnsignedFlag)
-	buildKeyIndex := []int{0}
-	buildTypes := []*types.FieldType{intTp, uintTp, uintTp}
-	buildKeyTypes := []*types.FieldType{intTp}
-	probeKeyTypes := []*types.FieldType{intTp}
-
-	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, []int{}, false)
-	buildSchema := &expression.Schema{}
-	for _, tp := range buildTypes {
-		buildSchema.Append(&expression.Column{
-			RetType: tp,
-		})
-	}
-	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, 1, true, false, true)
-	chk := chunk.GenRandomChunks(buildTypes, 2049)
-	hashJoinCtx := &PartitionedHashJoinCtx{
-		SessCtx:         mock.NewContext(),
-		PartitionNumber: 1,
-		hashTableMeta:   meta,
-	}
-	rowTables := make([]*rowTable, hashJoinCtx.PartitionNumber)
-	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, rowTables)
-	builder.appendRemainingRowLocations(rowTables)
-	require.NoError(t, err, "processOneChunk returns error")
-	// all rows should be converted to row format, even for the rows that contains null key
-	require.Equal(t, uint64(2049), rowTables[0].rowCount())
-	validJoinKeyRowIndex := 0
-	for i := 0; i < chk.NumRows(); i++ {
-		if (builder.filterVector != nil && !builder.filterVector[i]) || (builder.nullKeyVector != nil && builder.nullKeyVector[i]) {
-			continue
-		}
-		validKeyPos := rowTables[0].getValidJoinKeyPos(validJoinKeyRowIndex)
-		require.Equal(t, i, validKeyPos, "valid key pos not match, index = "+strconv.Itoa(i))
-		validJoinKeyRowIndex++
-	}
-	validKeyPos := rowTables[0].getValidJoinKeyPos(validJoinKeyRowIndex)
-	require.Equal(t, -1, validKeyPos, "validKeyPos must be -1 at the end of test")
-}
-
-func TestChunkWithSel(t *testing.T) {
-	intTp := types.NewFieldType(mysql.TypeLonglong)
-	uintTp := types.NewFieldType(mysql.TypeLonglong)
-	uintTp.AddFlag(mysql.UnsignedFlag)
-	buildKeyIndex := []int{0}
-	buildTypes := []*types.FieldType{intTp, uintTp, uintTp}
-	buildKeyTypes := []*types.FieldType{intTp}
-	probeKeyTypes := []*types.FieldType{intTp}
-
-	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, []int{}, false)
-	buildSchema := &expression.Schema{}
-	for _, tp := range buildTypes {
-		buildSchema.Append(&expression.Column{
-			RetType: tp,
-		})
-	}
-	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, 1, true, false, true)
-	chk := chunk.GenRandomChunks(buildTypes, 2049)
-	sel := make([]int, 0, 2049)
-	for i := 0; i < chk.NumRows(); i++ {
-		if i%3 == 0 {
-			continue
-		}
-		sel = append(sel, i)
-	}
-	chk.SetSel(sel)
-	hashJoinCtx := &PartitionedHashJoinCtx{
-		SessCtx:         mock.NewContext(),
-		PartitionNumber: 1,
-		hashTableMeta:   meta,
-	}
-	rowTables := make([]*rowTable, hashJoinCtx.PartitionNumber)
-	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, rowTables)
-	builder.appendRemainingRowLocations(rowTables)
-	require.NoError(t, err, "processOneChunk returns error")
-	// all rows should be converted to row format, even for the rows that contains null key
-	require.Equal(t, uint64(2049), rowTables[0].rowCount())
-	validJoinKeyRowIndex := 0
-	for i := 0; i < chk.NumRows(); i++ {
-		if (builder.filterVector != nil && !builder.filterVector[i]) || (builder.nullKeyVector != nil && builder.nullKeyVector[i]) {
-			continue
-		}
-		validKeyPos := rowTables[0].getValidJoinKeyPos(validJoinKeyRowIndex)
-		require.Equal(t, i, validKeyPos, "valid key pos not match, index = "+strconv.Itoa(i))
-		validJoinKeyRowIndex++
-	}
-	validKeyPos := rowTables[0].getValidJoinKeyPos(validJoinKeyRowIndex)
-	require.Equal(t, -1, validKeyPos, "validKeyPos must be -1 at the end of test")
+	// keepRows = true
+	buildKeyIndex = []int{0}
+	buildTypes = []*types.FieldType{intTp, uintTp, uintTp}
+	buildKeyTypes = []*types.FieldType{intTp}
+	probeKeyTypes = []*types.FieldType{intTp}
+	checkKeys(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
+	// with sel = true
+	checkKeys(t, true, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
+	checkKeys(t, true, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
+	// buildFilter != nil
+	buildFilter, err := createSimpleFilter()
+	require.NoError(t, err)
+	checkKeys(t, true, buildFilter, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
+	checkKeys(t, true, buildFilter, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
+	buildKeyIndex = []int{0}
+	buildTypes = []*types.FieldType{notNullIntTp, uintTp, uintTp}
+	buildKeyTypes = []*types.FieldType{notNullIntTp}
+	probeKeyTypes = []*types.FieldType{notNullIntTp}
+	checkKeys(t, true, buildFilter, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
+	checkKeys(t, true, buildFilter, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
 }
