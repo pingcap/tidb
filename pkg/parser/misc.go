@@ -297,7 +297,7 @@ var tokenMap = map[string]int{
 	"S3_EXTERNAL_ID":           s3ExternalId,
 	"TLS_CA":                   tlsCa,
 	"TLS_CERT":                 tlsCert,
-	"TLS_KEY":                      key,
+	"TLS_KEY":                  key,
 	"PD":                       pd,
 	"AZBLOB_ACCESS_TIER":       azblobAccessTier,
 	"AZBLOB_ACCOUNT_KEY":       azblobAccountKey,
