@@ -59,12 +59,6 @@ var (
 // Table represents statistics for a table.
 type Table struct {
 	ExtendedStats *ExtendedStatsColl
-<<<<<<< HEAD
-	Name          string
-=======
-
-	ColAndIdxExistenceMap *ColAndIdxExistenceMap
->>>>>>> 69d7770335a (statistics: remove useless GetFullTableName (#52552))
 	HistColl
 	Version uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
@@ -307,18 +301,9 @@ func (t *Table) Copy() *Table {
 		newHistColl.Indices[id] = idx.Copy()
 	}
 	nt := &Table{
-<<<<<<< HEAD
 		HistColl:        newHistColl,
 		Version:         t.Version,
-		Name:            t.Name,
 		TblInfoUpdateTS: t.TblInfoUpdateTS,
-=======
-		HistColl:           newHistColl,
-		Version:            t.Version,
-		TblInfoUpdateTS:    t.TblInfoUpdateTS,
-		IsPkIsHandle:       t.IsPkIsHandle,
-		LastAnalyzeVersion: t.LastAnalyzeVersion,
->>>>>>> 69d7770335a (statistics: remove useless GetFullTableName (#52552))
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -347,20 +332,10 @@ func (t *Table) ShallowCopy() *Table {
 		ModifyCount:    t.ModifyCount,
 	}
 	nt := &Table{
-<<<<<<< HEAD
 		HistColl:        newHistColl,
 		Version:         t.Version,
-		Name:            t.Name,
 		TblInfoUpdateTS: t.TblInfoUpdateTS,
 		ExtendedStats:   t.ExtendedStats,
-=======
-		HistColl:              newHistColl,
-		Version:               t.Version,
-		TblInfoUpdateTS:       t.TblInfoUpdateTS,
-		ExtendedStats:         t.ExtendedStats,
-		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
-		LastAnalyzeVersion:    t.LastAnalyzeVersion,
->>>>>>> 69d7770335a (statistics: remove useless GetFullTableName (#52552))
 	}
 	return nt
 }

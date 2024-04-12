@@ -231,21 +231,6 @@ func DurationToTS(d time.Duration) uint64 {
 	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
 }
 
-<<<<<<< HEAD
-// GetFullTableName returns the full table name.
-func GetFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string {
-	for _, schema := range is.AllSchemas() {
-		if t, err := is.TableByName(schema.Name, tblInfo.Name); err == nil {
-			if t.Meta().ID == tblInfo.ID {
-				return schema.Name.O + "." + tblInfo.Name.O
-			}
-		}
-	}
-	return strconv.FormatInt(tblInfo.ID, 10)
-}
-
-=======
->>>>>>> 69d7770335a (statistics: remove useless GetFullTableName (#52552))
 // JSONTable is used for dumping statistics.
 type JSONTable struct {
 	Columns           map[string]*JSONColumn `json:"columns"`
