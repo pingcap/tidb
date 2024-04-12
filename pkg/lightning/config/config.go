@@ -1378,12 +1378,10 @@ func (c *Conflict) adjust(i *TikvImporter) error {
 
 	if c.Threshold < 0 {
 		switch c.Strategy {
-		case ErrorOnDup:
+		case ErrorOnDup, NoneOnDup:
 			c.Threshold = 0
 		case IgnoreOnDup, ReplaceOnDup:
 			c.Threshold = DefaultRecordDuplicateThreshold
-		case NoneOnDup:
-			c.Threshold = 0
 		}
 	}
 	if c.Threshold > 0 && c.Strategy == ErrorOnDup {
