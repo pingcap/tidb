@@ -80,9 +80,9 @@ const (
 	defaultLogicalImportBatchRows     = 65536
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
-	defaultMetaSchemaName     = "lightning_metadata"
-	defaultTaskInfoSchemaName = "lightning_task_info"
-	DefaultThreshold          = 10000
+	defaultMetaSchemaName           = "lightning_metadata"
+	defaultTaskInfoSchemaName       = "lightning_task_info"
+	DefaultRecordDuplicateThreshold = 10000
 
 	// autoDiskQuotaLocalReservedSpeed is the estimated size increase per
 	// millisecond per write thread the local backend may gain on all engines.
@@ -1381,7 +1381,7 @@ func (c *Conflict) adjust(i *TikvImporter) error {
 		case ErrorOnDup:
 			c.Threshold = 0
 		case IgnoreOnDup, ReplaceOnDup:
-			c.Threshold = DefaultThreshold
+			c.Threshold = DefaultRecordDuplicateThreshold
 		case NoneOnDup:
 			c.Threshold = 0
 		}
