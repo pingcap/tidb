@@ -63,7 +63,7 @@ func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool, r
 	cfg.Checkpoint.Enable = true
 	if unique {
 		cfg.Conflict.Strategy = lightning.ErrorOnDup
-		cfg.Conflict.Threshold = lightning.DefaultThreshold
+		cfg.Conflict.Threshold = lightning.DefaultRecordDuplicateThreshold
 	} else {
 		cfg.Conflict.Strategy = lightning.NoneOnDup
 	}
