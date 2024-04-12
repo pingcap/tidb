@@ -786,12 +786,10 @@
           "        └─ExchangeSender 3544.89 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#14, collate: binary], [name: Column#15, collate: binary]",
           "          └─HashAgg 3544.89 mpp[tiflash]  group by:Column#14, Column#15, ",
           "            └─Union 4431.11 mpp[tiflash]  ",
-          "              ├─Projection 3323.33 mpp[tiflash]  cast(test.t.a, int(11) BINARY)->Column#14, test.t.b->Column#15",
-          "              │ └─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 18), lt(test.t.a, 60)",
-          "              │   └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
-          "              └─Projection 1107.78 mpp[tiflash]  cast(test.t.a, int(11) BINARY)->Column#14, test.t.b->Column#15",
-          "                └─Selection 1107.78 mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
-          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
+          "              ├─Selection 3323.33 mpp[tiflash]  lt(test.t.a, 18), lt(test.t.a, 60)",
+          "              │ └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
+          "              └─Selection 1107.78 mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
         ],
         "Warn": null
       },

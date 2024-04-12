@@ -1901,7 +1901,7 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	} else if b.GetType() == mysql.TypeNull {
 		return a
 	}
-	resultTp := types.NewFieldType(types.MergeFieldType(a.GetType(), b.GetType()))
+	resultTp := types.AggFieldType([]*types.FieldType{a, b})
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
 	if resultTp.GetType() == mysql.TypeNewDecimal {
 		// The decimal result type will be unsigned only when all the decimals to be united are unsigned.

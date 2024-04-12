@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -2268,4 +2269,30 @@ func TestIssue48257(t *testing.T) {
 		"TableReader 1.00 root  data:TableFullScan",
 		"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false",
 	))
+}
+
+func TestIssue52472(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 ( c1 int);")
+	tk.MustExec("CREATE TABLE t2 ( c1 int unsigned);")
+	tk.MustExec("CREATE TABLE t3 ( c1 bigint unsigned);")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES (8);")
+	tk.MustExec("INSERT INTO t2 (c1) VALUES (2454396638);")
+
+	// union int and unsigned int will be promoted to long long
+	rs, err := tk.Exec("SELECT c1 FROM t1 UNION ALL SELECT c1 FROM t2")
+	require.NoError(t, err)
+	require.Len(t, rs.Fields(), 1)
+	require.Equal(t, mysql.TypeLonglong, rs.Fields()[0].Column.FieldType.GetType())
+	require.NoError(t, rs.Close())
+
+	// union int (even literal) and unsigned bigint will be promoted to decimal
+	rs, err = tk.Exec("SELECT 0 UNION ALL SELECT c1 FROM t3")
+	require.NoError(t, err)
+	require.Len(t, rs.Fields(), 1)
+	require.Equal(t, mysql.TypeNewDecimal, rs.Fields()[0].Column.FieldType.GetType())
+	require.NoError(t, rs.Close())
 }
