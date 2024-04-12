@@ -1580,6 +1580,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
 	}
 	if txnTS == 0 {
+		// TODO: txnTS maybe ambiguous, consider logging stale-read-ts with a new field in the slow log.
 		txnTS = sessVars.TxnCtx.StaleReadTs
 	}
 
