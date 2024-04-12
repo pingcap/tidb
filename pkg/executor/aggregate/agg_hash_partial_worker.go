@@ -272,7 +272,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 		partialResult := partialResultOfEachRow[i]
 		rows[0] = chk.GetRow(i)
 		for j, af := range w.aggFuncs {
-			memDelta, err := af.UpdatePartialResult(exprCtx, rows, partialResult[j])
+			memDelta, err := af.UpdatePartialResult(exprCtx.GetEvalCtx(), rows, partialResult[j])
 			if err != nil {
 				return err
 			}

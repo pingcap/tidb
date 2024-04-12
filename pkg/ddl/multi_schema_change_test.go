@@ -621,6 +621,7 @@ func TestMultiSchemaChangeMixCancelled(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_enable_dist_task = 0;")
 	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 0;")
 
 	tk.MustExec("create table t (a int, b int, c int, index i1(c), index i2(c));")

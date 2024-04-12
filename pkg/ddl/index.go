@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -422,6 +423,8 @@ func onRenameIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	renameIndexes(tblInfo, from, to)
+	renameHiddenColumns(tblInfo, from, to)
+
 	if ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -851,6 +854,9 @@ func cleanupSortPath(ctx context.Context, currentJobID int64) error {
 				logutil.Logger(ctx).Warn(ingest.LitErrCleanSortPath, zap.Error(err))
 				return nil
 			}
+			failpoint.Inject("ownerResignAfterDispatchLoopCheck", func() {
+				close(local.WaitRMFolderChForTest)
+			})
 		}
 	}
 	return nil
@@ -2214,6 +2220,9 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 	return err
 }
 
+// EstimateTableRowSizeForTest is used for test.
+var EstimateTableRowSizeForTest = estimateTableRowSize
+
 // estimateTableRowSize estimates the row size in bytes of a table.
 // This function tries to retrieve row size in following orders:
 //  1. AVG_ROW_LENGTH column from information_schema.tables.
@@ -2266,9 +2275,6 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 		return 0, err
 	}
 	pid := tbl.Meta().ID
-	if part := tbl.GetPartitionedTable(); part != nil {
-		pid = part.Meta().ID
-	}
 	sk, ek := tablecodec.GetTableHandleKeyRange(pid)
 	sRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
 	if err != nil {
@@ -2665,6 +2671,15 @@ func renameIndexes(tblInfo *model.TableInfo, from, to model.CIStr) {
 		} else if isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == from.O {
 			idx.Name.L = strings.Replace(idx.Name.L, from.L, to.L, 1)
 			idx.Name.O = strings.Replace(idx.Name.O, from.O, to.O, 1)
+		}
+	}
+}
+
+func renameHiddenColumns(tblInfo *model.TableInfo, from, to model.CIStr) {
+	for _, col := range tblInfo.Columns {
+		if col.Hidden && getExpressionIndexOriginName(col) == from.O {
+			col.Name.L = strings.Replace(col.Name.L, from.L, to.L, 1)
+			col.Name.O = strings.Replace(col.Name.O, from.O, to.O, 1)
 		}
 	}
 }

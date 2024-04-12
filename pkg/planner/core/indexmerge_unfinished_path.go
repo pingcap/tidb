@@ -150,6 +150,12 @@ func initUnfinishedPathsFromExpr(
 				ret[i].initedAsFinished = true
 				ret[i].accessFilters = paths[0].AccessConds
 				ret[i].needKeepFilter = needSelection
+				// Here is a special case, if this expr is always false and this path is a dual path, it will run to
+				// this point, and paths[0].AccessConds and paths[0].Ranges will be nil.
+				// In this case, we set the accessFilters to the original expr.
+				if len(ret[i].accessFilters) <= 0 {
+					ret[i].accessFilters = []expression.Expression{expr}
+				}
 				continue
 			}
 		}

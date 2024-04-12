@@ -45,10 +45,8 @@ type statsSyncLoad struct {
 func NewStatsSyncLoad(statsHandle statstypes.StatsHandle) statstypes.StatsSyncLoad {
 	s := &statsSyncLoad{statsHandle: statsHandle}
 	cfg := config.GetGlobalConfig()
-	s.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	s.StatsLoad.NeededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	s.StatsLoad.TimeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
-	s.StatsLoad.WorkingColMap = map[model.TableItemID][]chan stmtctx.StatsLoadResult{}
 	return s
 }
 
@@ -57,12 +55,6 @@ type statsWrapper struct {
 	idxInfo *model.IndexInfo
 	col     *statistics.Column
 	idx     *statistics.Index
-}
-
-// SetSubCtxs sets the sessionctx which is used to run queries background.
-// TODO: use SessionPool instead.
-func (s *statsSyncLoad) SetSubCtxs(idx int, sctx sessionctx.Context) {
-	s.StatsLoad.SubCtxs[idx] = sctx
 }
 
 // SendLoadRequests send neededColumns requests
@@ -221,7 +213,7 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 		}
 	}()
 	if lastTask == nil {
-		task, err = s.drainColTask(exit)
+		task, err = s.drainColTask(sctx, exit)
 		if err != nil {
 			if err != errExit {
 				logutil.BgLogger().Error("Fail to drain task for stats loading.", zap.Error(err))
@@ -231,24 +223,46 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 	} else {
 		task = lastTask
 	}
-	return s.handleOneItemTask(sctx, task)
+	resultChan := s.StatsLoad.Singleflight.DoChan(task.Item.Key(), func() (any, error) {
+		return s.handleOneItemTask(sctx, task)
+	})
+	timeout := time.Until(task.ToTimeout)
+	select {
+	case result := <-resultChan:
+		if result.Err == nil {
+			slr := result.Val.(*stmtctx.StatsLoadResult)
+			if slr.Error != nil {
+				return task, slr.Error
+			}
+			task.ResultCh <- *slr
+			return nil, nil
+		}
+		return task, result.Err
+	case <-time.After(timeout):
+		task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
+		return task, nil
+	}
 }
 
-func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statstypes.NeededItemTask) (*statstypes.NeededItemTask, error) {
-	result := stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
+func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statstypes.NeededItemTask) (result *stmtctx.StatsLoadResult, err error) {
+	defer func() {
+		// recover for each task, worker keeps working
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
+			err = errors.Errorf("stats loading panicked: %v", r)
+		}
+	}()
+	result = &stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
 	item := result.Item
 	tbl, ok := s.statsHandle.Get(item.TableID)
 	if !ok {
-		s.writeToResultChan(task.ResultCh, result)
-		return nil, nil
+		return result, nil
 	}
-	var err error
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, loadNeeded := tbl.IndexIsLoadNeeded(item.ID)
 		if !loadNeeded {
-			s.writeToResultChan(task.ResultCh, result)
-			return nil, nil
+			return result, nil
 		}
 		if index != nil {
 			wrapper.idxInfo = index.Info
@@ -258,8 +272,7 @@ func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statsty
 	} else {
 		col, loadNeeded := tbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
 		if !loadNeeded {
-			s.writeToResultChan(task.ResultCh, result)
-			return nil, nil
+			return result, nil
 		}
 		if col != nil {
 			wrapper.colInfo = col.Info
@@ -267,18 +280,12 @@ func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statsty
 			wrapper.colInfo = tbl.ColAndIdxExistenceMap.GetCol(item.ID)
 		}
 	}
-	// to avoid duplicated handling in concurrent scenario
-	working := s.setWorking(result.Item, task.ResultCh)
-	if !working {
-		s.writeToResultChan(task.ResultCh, result)
-		return nil, nil
-	}
 	t := time.Now()
 	needUpdate := false
 	wrapper, err = s.readStatsForOneItem(sctx, item, wrapper, tbl.IsPkIsHandle, task.Item.FullLoad)
 	if err != nil {
 		result.Error = err
-		return task, err
+		return result, err
 	}
 	if item.IsIndex {
 		if wrapper.idxInfo != nil {
@@ -291,9 +298,8 @@ func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statsty
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
 	if needUpdate && s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad) {
-		s.writeToResultChan(task.ResultCh, result)
+		return result, nil
 	}
-	s.finishWorking(result)
 	return nil, nil
 }
 
@@ -391,7 +397,7 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 }
 
 // drainColTask will hang until a column task can return, and either task or error will be returned.
-func (s *statsSyncLoad) drainColTask(exit chan struct{}) (*statstypes.NeededItemTask, error) {
+func (s *statsSyncLoad) drainColTask(sctx sessionctx.Context, exit chan struct{}) (*statstypes.NeededItemTask, error) {
 	// select NeededColumnsCh firstly, if no task, then select TimeoutColumnsCh
 	for {
 		select {
@@ -404,6 +410,7 @@ func (s *statsSyncLoad) drainColTask(exit chan struct{}) (*statstypes.NeededItem
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
+				task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 				s.writeToTimeoutChan(s.StatsLoad.TimeoutItemsCh, task)
 				continue
 			}
@@ -508,33 +515,4 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 	}
 	s.statsHandle.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	return true
-}
-
-func (s *statsSyncLoad) setWorking(item model.TableItemID, resultCh chan stmtctx.StatsLoadResult) bool {
-	s.StatsLoad.Lock()
-	defer s.StatsLoad.Unlock()
-	chList, ok := s.StatsLoad.WorkingColMap[item]
-	if ok {
-		if chList[0] == resultCh {
-			return true // just return for duplicate setWorking
-		}
-		s.StatsLoad.WorkingColMap[item] = append(chList, resultCh)
-		return false
-	}
-	chList = []chan stmtctx.StatsLoadResult{}
-	chList = append(chList, resultCh)
-	s.StatsLoad.WorkingColMap[item] = chList
-	return true
-}
-
-func (s *statsSyncLoad) finishWorking(result stmtctx.StatsLoadResult) {
-	s.StatsLoad.Lock()
-	defer s.StatsLoad.Unlock()
-	if chList, ok := s.StatsLoad.WorkingColMap[result.Item]; ok {
-		list := chList[1:]
-		for _, ch := range list {
-			s.writeToResultChan(ch, result)
-		}
-	}
-	delete(s.StatsLoad.WorkingColMap, result.Item)
 }

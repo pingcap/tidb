@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	tmock "github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -39,7 +40,7 @@ func TestSessionEvalContextBasic(t *testing.T) {
 	ctx := mock.NewContext()
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
-	impl := contextimpl.NewExprExtendedImpl(ctx)
+	impl := contextimpl.NewSessionEvalContext(ctx)
 	require.True(t, impl.GetOptionalPropSet().IsFull())
 
 	// should contain all the optional properties
@@ -97,7 +98,7 @@ func TestSessionEvalContextCurrentTime(t *testing.T) {
 	ctx := mock.NewContext()
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
-	impl := contextimpl.NewExprExtendedImpl(ctx)
+	impl := contextimpl.NewSessionEvalContext(ctx)
 
 	var now atomic.Pointer[time.Time]
 	sc.SetStaleTSOProvider(func() (uint64, error) {
@@ -164,7 +165,7 @@ func (m *mockPrivManager) RequestDynamicVerification(
 
 func TestSessionEvalContextPrivilegeCheck(t *testing.T) {
 	ctx := mock.NewContext()
-	impl := contextimpl.NewExprExtendedImpl(ctx)
+	impl := contextimpl.NewSessionEvalContext(ctx)
 	activeRoles := []*auth.RoleIdentity{
 		{Username: "role1", Hostname: "host1"},
 		{Username: "role2", Hostname: "host2"},
@@ -201,7 +202,7 @@ func TestSessionEvalContextPrivilegeCheck(t *testing.T) {
 
 func getProvider[T context.OptionalEvalPropProvider](
 	t *testing.T,
-	impl *contextimpl.ExprCtxExtendedImpl,
+	impl *contextimpl.SessionEvalContext,
 	key context.OptionalEvalPropKey,
 ) T {
 	val, ok := impl.GetOptionalPropProvider(key)
@@ -214,7 +215,7 @@ func getProvider[T context.OptionalEvalPropProvider](
 
 func TestSessionEvalContextOptProps(t *testing.T) {
 	ctx := mock.NewContext()
-	impl := contextimpl.NewExprExtendedImpl(ctx)
+	impl := contextimpl.NewSessionEvalContext(ctx)
 
 	// test for OptPropCurrentUser
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "user1", Hostname: "host1"}
@@ -227,7 +228,10 @@ func TestSessionEvalContextOptProps(t *testing.T) {
 	require.Equal(t, ctx.GetSessionVars().ActiveRoles, roles)
 
 	// test for OptPropSessionVars
-	gotVars := getProvider[*contextopt.SessionVarsPropProvider](t, impl, context.OptPropSessionVars).GetSessionVars()
+	sessVarsProvider := getProvider[*contextopt.SessionVarsPropProvider](t, impl, context.OptPropSessionVars)
+	require.NotNil(t, sessVarsProvider)
+	gotVars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(impl)
+	require.NoError(t, err)
 	require.Same(t, ctx.GetSessionVars(), gotVars)
 
 	// test for OptPropAdvisoryLock
@@ -241,4 +245,69 @@ func TestSessionEvalContextOptProps(t *testing.T) {
 	require.False(t, ddlInfoProvider())
 	ctx.SetIsDDLOwner(true)
 	require.True(t, ddlInfoProvider())
+}
+
+func TestSessionBuildContext(t *testing.T) {
+	ctx := mock.NewContext()
+	impl := contextimpl.NewExprExtendedImpl(ctx)
+	evalCtx, ok := impl.GetEvalCtx().(*contextimpl.SessionEvalContext)
+	require.True(t, ok)
+	require.Same(t, evalCtx, impl.SessionEvalContext)
+	require.True(t, evalCtx.GetOptionalPropSet().IsFull())
+	require.Same(t, ctx, evalCtx.Sctx())
+
+	// charset and collation
+	vars := ctx.GetSessionVars()
+	err := vars.SetSystemVar("character_set_connection", "gbk")
+	require.NoError(t, err)
+	err = vars.SetSystemVar("collation_connection", "gbk_chinese_ci")
+	require.NoError(t, err)
+	vars.DefaultCollationForUTF8MB4 = "utf8mb4_0900_ai_ci"
+
+	charset, collate := impl.GetCharsetInfo()
+	require.Equal(t, "gbk", charset)
+	require.Equal(t, "gbk_chinese_ci", collate)
+	require.Equal(t, "utf8mb4_0900_ai_ci", impl.GetDefaultCollationForUTF8MB4())
+
+	// SysdateIsNow
+	vars.SysdateIsNow = true
+	require.True(t, impl.GetSysdateIsNow())
+
+	// NoopFuncsMode
+	vars.NoopFuncsMode = 2
+	require.Equal(t, 2, impl.GetNoopFuncsMode())
+
+	// Rng
+	vars.Rng = mathutil.NewWithSeed(123)
+	require.Same(t, vars.Rng, impl.Rng())
+
+	// PlanCache
+	vars.StmtCtx.UseCache = true
+	require.True(t, impl.IsUseCache())
+	impl.SetSkipPlanCache(errors.New("mockReason"))
+	require.False(t, impl.IsUseCache())
+
+	// Alloc column id
+	prevID := vars.PlanColumnID.Load()
+	colID := impl.AllocPlanColumnID()
+	require.Equal(t, colID, prevID+1)
+	colID = impl.AllocPlanColumnID()
+	require.Equal(t, colID, prevID+2)
+	vars.AllocPlanColumnID()
+	colID = impl.AllocPlanColumnID()
+	require.Equal(t, colID, prevID+4)
+
+	// InNullRejectCheck
+	require.False(t, impl.IsInNullRejectCheck())
+	impl.SetInNullRejectCheck(true)
+	require.True(t, impl.IsInNullRejectCheck())
+	impl.SetInNullRejectCheck(false)
+	require.False(t, impl.IsInNullRejectCheck())
+
+	// InUnionCast
+	require.False(t, impl.IsInUnionCast())
+	impl.SetInUnionCast(true)
+	require.True(t, impl.IsInUnionCast())
+	impl.SetInUnionCast(false)
+	require.False(t, impl.IsInUnionCast())
 }

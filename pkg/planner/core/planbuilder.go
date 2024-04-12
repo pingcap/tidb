@@ -1555,18 +1555,18 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		}
 	}
 
-	cop := &copTask{
+	cop := &CopTask{
 		indexPlan:        is,
 		tablePlan:        ts,
 		tblColHists:      is.StatsInfo().HistColl,
 		extraHandleCol:   extraCol,
 		commonHandleCols: commonCols,
 	}
-	rootT := cop.convertToRootTask(b.ctx)
-	if err := rootT.p.ResolveIndices(); err != nil {
+	rootT := cop.ConvertToRootTask(b.ctx)
+	if err := rootT.GetPlan().ResolveIndices(); err != nil {
 		return nil, err
 	}
-	return rootT.p, nil
+	return rootT.GetPlan(), nil
 }
 
 func getIndexColumnInfos(tblInfo *model.TableInfo, idx *model.IndexInfo) []*model.ColumnInfo {
@@ -4429,7 +4429,7 @@ func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan Logical
 	if !ok {
 		return d, errors.New("Expect constant values")
 	}
-	value, err := constant.Eval(b.ctx.GetExprCtx(), chunk.Row{})
+	value, err := constant.Eval(b.ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return d, err
 	}

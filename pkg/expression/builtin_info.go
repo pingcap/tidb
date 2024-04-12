@@ -634,7 +634,7 @@ func (c *benchmarkFunctionClass) getFunction(ctx BuildContext, args []Expression
 	var constLoopCount int64
 	con, ok := args[0].(*Constant)
 	if ok && con.Value.Kind() == types.KindInt64 {
-		if lc, isNull, err := con.EvalInt(ctx, chunk.Row{}); err == nil && !isNull {
+		if lc, isNull, err := con.EvalInt(ctx.GetEvalCtx(), chunk.Row{}); err == nil && !isNull {
 			constLoopCount = lc
 		}
 	}
@@ -758,7 +758,7 @@ func (c *charsetFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)
@@ -827,7 +827,7 @@ func (c *collationFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)
@@ -953,7 +953,7 @@ func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx BuildContext, args [
 		return nil, err
 	}
 
-	if !ctx.RequestVerification("", "", "", mysql.ProcessPriv) {
+	if !ctx.GetEvalCtx().RequestVerification("", "", "", mysql.ProcessPriv) {
 		return nil, errSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 
@@ -1408,7 +1408,7 @@ func (c *formatBytesFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	sig := &builtinFormatBytesSig{bf}
@@ -1447,7 +1447,7 @@ func (c *formatNanoTimeFunctionClass) getFunction(ctx BuildContext, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	sig := &builtinFormatNanoTimeSig{bf}

@@ -609,6 +609,9 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 	if t == nil || t.Pseudo {
 		return 0, false
 	}
+	if !t.IsAnalyzed() {
+		return 0, true
+	}
 	var healthy int64
 	count := float64(t.RealtimeCount)
 	if histCount := t.GetAnalyzeRowCount(); histCount > 0 {

@@ -1354,7 +1354,7 @@ func (e *SlowQueryExtractor) decodeBytesToTime(bs []byte) (int64, error) {
 
 func (*SlowQueryExtractor) decodeToTime(handle kv.Handle) (int64, error) {
 	tp := types.NewFieldType(mysql.TypeDatetime)
-	col := rowcodec.ColInfo{ID: 0, Ft: tp}
+	col := rowcodec.ColInfo{Ft: tp}
 	chk := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 1)
 	coder := codec.NewDecoder(chk, nil)
 	_, err := coder.DecodeOne(handle.EncodedCol(0), 0, col.Ft)

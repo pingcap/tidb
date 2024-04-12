@@ -1755,7 +1755,7 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo) [][]types
 				col.Name.O,            // COLUMN_NAME
 				i+1,                   // ORDINAL_POSITION,
 				1,                     // POSITION_IN_UNIQUE_CONSTRAINT
-				schema.O,              // REFERENCED_TABLE_SCHEMA
+				fk.RefSchema.O,        // REFERENCED_TABLE_SCHEMA
 				fk.RefTable.O,         // REFERENCED_TABLE_NAME
 				fkRefCol,              // REFERENCED_COLUMN_NAME
 			)

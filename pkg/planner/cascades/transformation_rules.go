@@ -198,7 +198,7 @@ func (*PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 	if ts.HandleCols == nil {
 		return nil, false, false, nil
 	}
-	accesses, remained := ranger.DetachCondsForColumn(ts.SCtx(), sel.Conditions, ts.HandleCols.GetCol(0))
+	accesses, remained := ranger.DetachCondsForColumn(ts.SCtx().GetRangerCtx(), sel.Conditions, ts.HandleCols.GetCol(0))
 	if accesses == nil {
 		return nil, false, false, nil
 	}
@@ -260,7 +260,7 @@ func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		copy(conditions, sel.Conditions)
 		copy(conditions[len(sel.Conditions):], is.AccessConds)
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(is.SCtx(), conditions, is.IdxCols, is.IdxColLens, is.SCtx().GetSessionVars().RangeMaxSize)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(is.SCtx().GetRangerCtx(), conditions, is.IdxCols, is.IdxColLens, is.SCtx().GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, false, false, err
 	}
@@ -269,7 +269,7 @@ func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		// or the pushed down conditions are the same with before.
 		sameConds := true
 		for i := range res.AccessConds {
-			if !res.AccessConds[i].Equal(is.SCtx().GetExprCtx(), is.AccessConds[i]) {
+			if !res.AccessConds[i].Equal(is.SCtx().GetExprCtx().GetEvalCtx(), is.AccessConds[i]) {
 				sameConds = false
 				break
 			}
@@ -1460,7 +1460,7 @@ func (*MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
 		return false
 	}
 	for i := 0; i < len(topN.ByItems); i++ {
-		if !topN.ByItems[i].Equal(topN.SCtx().GetExprCtx(), child.ByItems[i]) {
+		if !topN.ByItems[i].Equal(topN.SCtx().GetExprCtx().GetEvalCtx(), child.ByItems[i]) {
 			return false
 		}
 	}
@@ -2089,9 +2089,9 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 	caseArgsNum := len(caseArgs)
 
 	// `case when a>0 then null else a end` should be converted to `case when !(a>0) then a else null end`.
-	var nullFlip = caseArgsNum == 3 && caseArgs[1].Equal(ctx.GetExprCtx(), expression.NewNull()) && !caseArgs[2].Equal(ctx.GetExprCtx(), expression.NewNull())
+	var nullFlip = caseArgsNum == 3 && caseArgs[1].Equal(ctx.GetExprCtx().GetEvalCtx(), expression.NewNull()) && !caseArgs[2].Equal(ctx.GetExprCtx().GetEvalCtx(), expression.NewNull())
 	// `case when a>0 then 0 else a end` should be converted to `case when !(a>0) then a else 0 end`.
-	var zeroFlip = !nullFlip && caseArgsNum == 3 && caseArgs[1].Equal(ctx.GetExprCtx(), expression.NewZero())
+	var zeroFlip = !nullFlip && caseArgsNum == 3 && caseArgs[1].Equal(ctx.GetExprCtx().GetEvalCtx(), expression.NewZero())
 
 	var outputIdx int
 	if nullFlip || zeroFlip {
@@ -2108,7 +2108,7 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 		// =>
 		//   newAggFuncDesc: COUNT(DISTINCT y), newCondition: x = 'foo'
 
-		if aggFuncName == ast.AggFuncCount && r.isOnlyOneNotNull(ctx.GetExprCtx(), caseArgs, caseArgsNum, outputIdx) {
+		if aggFuncName == ast.AggFuncCount && r.isOnlyOneNotNull(ctx.GetExprCtx().GetEvalCtx(), caseArgs, caseArgsNum, outputIdx) {
 			newAggFuncDesc := aggFuncDesc.Clone()
 			newAggFuncDesc.Args = []expression.Expression{caseArgs[outputIdx]}
 			return true, newConditions, []*aggregation.AggFuncDesc{newAggFuncDesc}
@@ -2124,8 +2124,8 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 	//   => newAggFuncDesc: SUM(cnt), newCondition: x = 'foo'
 
 	switch {
-	case r.allowsSelection(aggFuncName) && (caseArgsNum == 2 || caseArgs[3-outputIdx].Equal(ctx.GetExprCtx(), expression.NewNull())), // Case A1
-		aggFuncName == ast.AggFuncSum && caseArgsNum == 3 && caseArgs[3-outputIdx].Equal(ctx.GetExprCtx(), expression.NewZero()): // Case A2
+	case r.allowsSelection(aggFuncName) && (caseArgsNum == 2 || caseArgs[3-outputIdx].Equal(ctx.GetExprCtx().GetEvalCtx(), expression.NewNull())), // Case A1
+		aggFuncName == ast.AggFuncSum && caseArgsNum == 3 && caseArgs[3-outputIdx].Equal(ctx.GetExprCtx().GetEvalCtx(), expression.NewZero()): // Case A2
 		newAggFuncDesc := aggFuncDesc.Clone()
 		newAggFuncDesc.Args = []expression.Expression{caseArgs[outputIdx]}
 		return true, newConditions, []*aggregation.AggFuncDesc{newAggFuncDesc}
@@ -2543,8 +2543,8 @@ func (*MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
 
 	// Whether Partition, OrderBy and Frame parts are the same.
 	if !(curWinPlan.EqualPartitionBy(nextWinPlan) &&
-		curWinPlan.EqualOrderBy(ctx.GetExprCtx(), nextWinPlan) &&
-		curWinPlan.EqualFrame(ctx.GetExprCtx(), nextWinPlan)) {
+		curWinPlan.EqualOrderBy(ctx.GetExprCtx().GetEvalCtx(), nextWinPlan) &&
+		curWinPlan.EqualFrame(ctx.GetExprCtx().GetEvalCtx(), nextWinPlan)) {
 		return false
 	}
 

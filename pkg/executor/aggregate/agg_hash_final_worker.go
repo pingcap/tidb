@@ -104,7 +104,7 @@ func (w *HashAggFinalWorker) mergeInputIntoResultMap(sctx sessionctx.Context, in
 		}
 
 		for j, af := range w.aggFuncs {
-			memDelta, err := af.MergePartialResult(exprCtx, value[j], dstVal[j])
+			memDelta, err := af.MergePartialResult(exprCtx.GetEvalCtx(), value[j], dstVal[j])
 			if err != nil {
 				return err
 			}
@@ -144,7 +144,7 @@ func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, resu
 	exprCtx := sctx.GetExprCtx()
 	for _, results := range w.partialResultMap {
 		for j, af := range w.aggFuncs {
-			if err := af.AppendFinalResult2Chunk(exprCtx, results[j], result); err != nil {
+			if err := af.AppendFinalResult2Chunk(exprCtx.GetEvalCtx(), results[j], result); err != nil {
 				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
 			}
 		}

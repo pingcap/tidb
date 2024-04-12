@@ -26,7 +26,7 @@ import (
 )
 
 func TestQueryWatch(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int)")
@@ -35,6 +35,11 @@ func TestQueryWatch(t *testing.T) {
 	tk.MustExec("insert into t2 values(1)")
 	tk.MustExec("create table t3(a int)")
 	tk.MustExec("insert into t3 values(1)")
+
+	require.Eventually(t, func() bool {
+		return dom.RunawayManager().IsSyncerInitialized()
+	}, 20*time.Second, 300*time.Millisecond)
+
 	err := tk.QueryToErr("query watch add sql text exact to 'select * from test.t1'")
 	require.ErrorContains(t, err, "must set runaway config for resource group `default`")
 	err = tk.QueryToErr("query watch add resource group rg2 action DRYRUN sql text exact to 'select * from test.t1'")

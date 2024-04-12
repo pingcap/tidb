@@ -201,7 +201,7 @@ func (rf *RuntimeFilter) Clone() *RuntimeFilter {
 }
 
 // RuntimeFilterListToPB convert runtime filter list to PB list
-func RuntimeFilterListToPB(ctx PlanContext, runtimeFilterList []*RuntimeFilter, client kv.Client) ([]*tipb.RuntimeFilter, error) {
+func RuntimeFilterListToPB(ctx *BuildPBContext, runtimeFilterList []*RuntimeFilter, client kv.Client) ([]*tipb.RuntimeFilter, error) {
 	result := make([]*tipb.RuntimeFilter, 0, len(runtimeFilterList))
 	for _, runtimeFilter := range runtimeFilterList {
 		rfPB, err := runtimeFilter.ToPB(ctx, client)
@@ -214,8 +214,8 @@ func RuntimeFilterListToPB(ctx PlanContext, runtimeFilterList []*RuntimeFilter, 
 }
 
 // ToPB convert runtime filter to PB
-func (rf *RuntimeFilter) ToPB(ctx PlanContext, client kv.Client) (*tipb.RuntimeFilter, error) {
-	pc := expression.NewPBConverter(client, ctx.GetExprCtx())
+func (rf *RuntimeFilter) ToPB(ctx *BuildPBContext, client kv.Client) (*tipb.RuntimeFilter, error) {
+	pc := expression.NewPBConverter(client, ctx.GetExprCtx().GetEvalCtx())
 	srcExprListPB := make([]*tipb.Expr, 0, len(rf.srcExprList))
 	for _, srcExpr := range rf.srcExprList {
 		srcExprPB := pc.ExprToPB(srcExpr)
