@@ -265,9 +265,8 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 		}
 	}
 
-	failpoint.Inject("set-attemp-to-zero", func(_ failpoint.Value) {
-		bo.delayTime = 0
-		bo.attempt = 0
+	failpoint.Inject("set-attemp-to-one", func(_ failpoint.Value) {
+		bo.attempt = 1
 	})
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
