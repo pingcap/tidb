@@ -19,12 +19,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/cockroachdb/pebble/vfs"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -584,19 +581,6 @@ func (em *engineManager) getBufferPool() *membuf.Pool {
 	return em.bufferPool
 }
 
-// only used in tests
-type slowCreateFS struct {
-	vfs.FS
-}
-
-func (s slowCreateFS) Create(name string) (vfs.File, error) {
-	if strings.Contains(name, "temporary") {
-		// print stack
-		time.Sleep(time.Second)
-	}
-	return s.FS.Create(name)
-}
-
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	dbPath := filepath.Join(storeDir, duplicateDBName)
 	// TODO: Optimize the opts for better write.
@@ -605,9 +589,6 @@ func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 			newRangePropertiesCollector,
 		},
 	}
-	failpoint.Inject("slowCreateFS", func() {
-		opts.FS = slowCreateFS{vfs.Default}
-	})
 	return pebble.Open(dbPath, opts)
 }
 
