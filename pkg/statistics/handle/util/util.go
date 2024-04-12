@@ -27,12 +27,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 const (
@@ -228,11 +230,14 @@ func DurationToTS(d time.Duration) uint64 {
 
 // GetFullTableName returns the full table name.
 func GetFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string {
-	for _, schemaName := range is.AllSchemaNames() {
-		if t, err := is.TableByName(schemaName, tblInfo.Name); err == nil {
-			if t.Meta().ID == tblInfo.ID {
-				return schemaName.O + "." + tblInfo.Name.O
-			}
+	schemaName, ok := is.SchemaByID(tblInfo.DBID)
+	if !ok {
+		statslogutil.StatsLogger().Warn("failed to get schema by ID", zap.Int64("dbID", tblInfo.DBID))
+		return strconv.FormatInt(tblInfo.ID, 10)
+	}
+	if t, err := is.TableByName(schemaName.Name, tblInfo.Name); err == nil {
+		if t.Meta().ID == tblInfo.ID {
+			return schemaName.Name.O + "." + tblInfo.Name.O
 		}
 	}
 	return strconv.FormatInt(tblInfo.ID, 10)
