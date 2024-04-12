@@ -84,6 +84,7 @@ func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 	return true, nil
 }
 
+// ResignOwnerForTest is only used for test.
 var ResignOwnerForTest = atomic.NewBool(false)
 
 // Register creates a new backend and registers it to the backend context.
