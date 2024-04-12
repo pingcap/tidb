@@ -273,6 +273,7 @@ func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statsty
 			logutil.BgLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err = errors.Errorf("stats loading panicked: %v", r)
 		}
+		close(task.ResultCh)
 	}()
 	result = &stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
 	item := result.Item
