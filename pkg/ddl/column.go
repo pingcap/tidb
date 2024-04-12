@@ -1948,8 +1948,9 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (any, error) {
 	var err error
 	odValue := col.GetDefaultValue()
-	logutil.BgLogger().Info(fmt.Sprintf("112------default val: %v \n", odValue))
-	if odValue == nil && mysql.HasNotNullFlag(col.GetFlag()) {
+	if odValue == nil && mysql.HasNotNullFlag(col.GetFlag()) ||
+		// It's for drop column and modify column.
+		(col.DefaultIsExpr && odValue != strings.ToUpper(ast.CurrentTimestamp) && ctx == nil) {
 		switch col.GetType() {
 		// Just use enum field's first element for OriginDefaultValue.
 		case mysql.TypeEnum:
@@ -1983,16 +1984,25 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 		return odValue, nil
 	}
 
-	if col.DefaultIsExpr {
-		oldValue := strings.ToLower(odValue.(string))
+	if col.DefaultIsExpr && ctx != nil {
+		valStr, ok := odValue.(string)
+		if !ok {
+			return nil, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String())
+		}
+		oldValue := strings.ToLower(valStr)
 		// It's checked in getFuncCallDefaultValue.
-		if strings.Contains(oldValue, fmt.Sprintf("%s(%s(),", ast.DateFormat, ast.Now)) || strings.Contains(oldValue, ast.StrToDate) {
-			odValue, err = table.GetColDefaultValue(ctx.GetExprCtx(), col)
-			if err != nil {
-				return nil, types.ErrInvalidDefault.GenWithStackByArgs(col.Name)
-			}
-		} else {
-			return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction.GenWithStackByArgs())
+		if !strings.Contains(oldValue, fmt.Sprintf("%s(%s(),", ast.DateFormat, ast.Now)) &&
+			!strings.Contains(oldValue, ast.StrToDate) {
+			return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction)
+		}
+
+		defVal, err := table.GetColDefaultValue(ctx.GetExprCtx(), col)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		odValue, err = defVal.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	return odValue, nil

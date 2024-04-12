@@ -4339,7 +4339,6 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 		return nil, errors.Trace(err)
 	}
 
-	logutil.BgLogger().Info(fmt.Sprintf("111------default val: %v \n", col.DefaultValue))
 	originDefVal, err := generateOriginDefaultValue(col.ToInfo(), ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -5544,7 +5543,6 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 
 func setDefaultValueWithBinaryPadding(col *table.Column, value any) error {
 	err := col.SetDefaultValue(value)
-	logutil.BgLogger().Info(fmt.Sprintf("110------default val: %v \n", col.DefaultValue))
 	if err != nil {
 		return err
 	}

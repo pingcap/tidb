@@ -12,7 +12,6 @@ create table t5 (c int(10), c1 date default (date_format(now(),_utf8mb4'%Y-%m-%d
 create table t6 (c int(10), c1 varchar(256) default (date_format(now(),'%b %d %Y %h:%i %p')));
 -- error 3770
 create table t7 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H:%i:%s %p')));
-alter table t0 add column c2 date default (date_format(now(),'%Y-%m'));
 # insert records
 SET @x := NOW();
 insert into t0(c) values (1);
@@ -40,16 +39,23 @@ show create table t0;
 show create table t1;
 show create table t2;
 
-# test modify column, set default value, add index
+# test modify column, set default value, add index, add column
+-- replace_regex /Incorrect date value:.*/Incorrect date value:<time>/
+-- error 1292
+alter table t0 add column c2 date default (date_format(now(),'%Y-%m'));
 alter table t0 add index idx(c1);
 alter table t1 add index idx(c1);
-insert into t0 values (3, default);
+alter table t0 add column c2 date default (date_format(now(),'%Y-%m-%d'));
+-- error 1265
+alter table t0 add column c3 enum('y','n') default (date_format(now(),'%Y-%m-%d'));
+alter table t0 add column c4 blob default (date_format(now(),'%Y-%m-%d'));
+insert into t0 values (3, default, default, default);
 insert into t1 values (3, default);
 show create table t0;
 show create table t1;
 alter table t0 modify column c1 varchar(30) default 'xx';
 alter table t1 modify column c1 varchar(30) default 'xx';
-insert into t0 values (4, default);
+insert into t0 values (4, default, default, default);
 insert into t1 values (4, default);
 show create table t0;
 show create table t1;
@@ -57,7 +63,7 @@ show create table t1;
 -- error 1292
 alter table t0 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
 alter table t0 alter column c1 SET DEFAULT (date_format(now(), '%Y-%m-%d'));
-insert into t0 values (5, default);
+insert into t0 values (5, default, default, default);
 -- error 1292
 alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
 delete from t1 where c = 4;
@@ -90,6 +96,8 @@ create table t1 (c int(10), c1 varchar(256) default (REPLACE(UPPER('dfdkj-kjkl-d
 alter table t add column c2 varchar(32) default (REPLACE(UPPER(UUID()), '-', ''));
 -- error 1674
 alter table t add column c3 int default (UPPER(UUID()));
+# Alter support "REPLACE(UPPER('dfdkj-kjkl-d'), '-', '')", we need to support this DDL.
+-- error 1674
 alter table t add column c4 int default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', ''));
 
 # insert records
@@ -140,15 +148,13 @@ set session sql_mode=@sqlMode;
 create table t6 (c int(10), c1 varchar(32) default (str_to_date(upper('1980-01-01'),'%Y-%m-%d')));
 -- error 3770
 create table t6 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01',upper('%Y-%m-%d'))));
--- error 0,1292
 alter table t0 add column c3 datetime default (str_to_date('1980-01-01','%Y-%m-%d'));
-alter table t0 add column c3 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d'));
 alter table t0 add column c4 int default (str_to_date('1980-01-01','%Y-%m-%d'));
 
 # insert records
 insert into t0(c) values (1),(2),(3);
 insert into t1(c) values (1),(2),(3);
-insert into t0 values (4, default, default);
+insert into t0 values (4, default, default, default, default);
 insert into t1 values (4, default, default);
 -- error 1292
 insert into t3(c) values (1);
@@ -173,20 +179,20 @@ show create table t2;
 # test modify column, set default value, add index, drop column
 alter table t0 add index idx1(c1);
 alter table t1 add unique index idx1(c, c1);
-insert into t0 values (5, default, default);
+insert into t0 values (5, default, default, default, default);
 insert into t1 values (5, default, default);
 show create table t0;
 show create table t1;
 alter table t0 alter column c2 set default (current_date());
 alter table t1 modify column c1 varchar(30) default 'xx';
-insert into t0 values (6, default, default);
+insert into t0 values (6, default, default, default, default);
 insert into t1 values (6, default, default);
 show create table t0;
 show create table t1;
 alter table t0 alter column c1 drop default;
 alter table t1 modify column c1 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d'));
 -- error 1364
-insert into t0 values (7, default, default);
+insert into t0 values (7, default, default, default, default);
 insert into t1 values (7, default, default);
 select * from t0 where c < 6;
 select c, c1 from t0 where c = 6 and c2 = date_format(now(),'%Y-%m-%d');;
