@@ -1219,7 +1219,15 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return fmt.Sprint(tikvutil.CommitterConcurrency.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBMemQuotaAnalyze, Value: strconv.Itoa(DefTiDBMemQuotaAnalyze), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64,
+	{
+		Scope: ScopeGlobal,
+		Name:  TiDBMemQuotaAnalyze,
+		Value: strconv.Itoa(DefTiDBMemQuotaAnalyze),
+		Type:  TypeInt, MinValue: -1, MaxValue: math.MaxInt64,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			appendDeprecationWarning(vars, TiDBMemQuotaAnalyze, TiDBMemQuotaQuery)
+			return normalizedValue, nil
+		},
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return strconv.FormatInt(GetMemQuotaAnalyze(), 10), nil
 		},
