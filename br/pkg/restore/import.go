@@ -485,6 +485,34 @@ func (importer *FileImporter) SetRawRange(startKey, endKey []byte) error {
 	return nil
 }
 
+func getKeyRangeByMode(mode KvMode) func(f *backuppb.File, rules *RewriteRules) ([]byte, []byte, error) {
+	switch mode {
+	case Raw:
+		return func(f *backuppb.File, rules *RewriteRules) ([]byte, []byte, error) {
+			return f.GetStartKey(), f.GetEndKey(), nil
+		}
+	case Txn:
+		return func(f *backuppb.File, rules *RewriteRules) ([]byte, []byte, error) {
+			start, end := f.GetStartKey(), f.GetEndKey()
+			if len(start) != 0 {
+				start = codec.EncodeBytes([]byte{}, f.GetStartKey())
+			}
+			if len(end) != 0 {
+				end = codec.EncodeBytes([]byte{}, f.GetEndKey())
+			}
+			return start, end, nil
+		}
+	default:
+		return func(f *backuppb.File, rules *RewriteRules) ([]byte, []byte, error) {
+			start, end, err := GetRewriteRawKeys(f, rules)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			return start, end, nil
+		}
+	}
+}
+
 // getKeyRangeForFiles gets the maximum range on files.
 func (importer *FileImporter) getKeyRangeForFiles(
 	files []*backuppb.File,
@@ -495,20 +523,12 @@ func (importer *FileImporter) getKeyRangeForFiles(
 		start, end       []byte
 		err              error
 	)
-
+	getRangeFn := getKeyRangeByMode(importer.kvMode)
 	for _, f := range files {
-		if importer.kvMode == Raw {
-			start, end = f.GetStartKey(), f.GetEndKey()
-		} else if importer.kvMode == Txn {
-			start = codec.EncodeBytes([]byte{}, f.GetStartKey())
-			end = codec.EncodeBytes([]byte{}, f.GetEndKey())
-		} else {
-			start, end, err = GetRewriteRawKeys(f, rewriteRules)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
+		start, end, err = getRangeFn(f, rewriteRules)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
 		}
-
 		if len(startKey) == 0 || bytes.Compare(start, startKey) < 0 {
 			startKey = start
 		}
