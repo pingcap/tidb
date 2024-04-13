@@ -1287,73 +1287,87 @@ func tryWhereIn2BatchPointGet(ctx PlanContext, selStmt *ast.SelectStmt) *BatchPo
 // 3. All the columns must be public and not generated.
 // 4. The condition is an access path that the range is a unique key.
 func tryPointGetPlan(ctx PlanContext, selStmt *ast.SelectStmt, check bool) *PointGetPlan {
-	if selStmt.Having != nil || selStmt.OrderBy != nil {
-		return nil
-	} else if selStmt.Limit != nil {
-		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
-		if err != nil || count == 0 || offset > 0 {
-			return nil
-		}
-	}
-	tblName, tblAlias := getSingleTableNameAndAlias(selStmt.From)
-	if tblName == nil {
-		return nil
-	}
-	tbl := tblName.TableInfo
-	if tbl == nil {
-		return nil
-	}
-
-	var pkColOffset int
-	for i, col := range tbl.Columns {
-		// Do not handle generated columns.
-		if col.IsGenerated() {
-			return nil
-		}
-		// Only handle tables that all columns are public.
-		if col.State != model.StatePublic {
-			return nil
-		}
-		if mysql.HasPriKeyFlag(col.GetFlag()) {
-			pkColOffset = i
-		}
-	}
-	schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
-	if schema == nil {
-		return nil
-	}
-	dbName := tblName.Schema.L
-	if dbName == "" {
-		dbName = ctx.GetSessionVars().CurrentDB
-	}
-
-	pairs := make([]nameValuePair, 0, 4)
-	pairs, isTableDual := getNameValuePairs(ctx, tbl, tblAlias, pairs, selStmt.Where)
-	if pairs == nil && !isTableDual {
-		return nil
-	}
-
-	handlePair, fieldType := findPKHandle(tbl, pairs)
-	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 && indexIsAvailableByHints(nil, tblName.IndexHints) {
-		if isTableDual {
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
-			p.IsTableDual = true
-			return p
-		}
-
-		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
-		p.Handle = kv.IntHandle(handlePair.value.GetInt64())
-		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
-		p.handleFieldType = fieldType
-		p.HandleConstant = handlePair.con
-		p.HandleColOffset = pkColOffset
-		p.PartitionNames = tblName.PartitionNames
-		return p
-	} else if handlePair.value.Kind() != types.KindNull {
-		return nil
-	}
-
-	return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, isTableDual, check)
+	//	if selStmt.Having != nil || selStmt.OrderBy != nil {
+	//		return nil
+	//	} else if selStmt.Limit != nil {
+	//
+	//		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
+	//		if err != nil || count == 0 || offset > 0 {
+	//			return nil
+	//		}
+	//	}
+	//
+	// tblName, tblAlias := getSingleTableNameAndAlias(selStmt.From)
+	//
+	//	if tblName == nil {
+	//		return nil
+	//	}
+	//
+	// tbl := tblName.TableInfo
+	//
+	//	if tbl == nil {
+	//		return nil
+	//	}
+	//
+	// var pkColOffset int
+	//
+	//	for i, col := range tbl.Columns {
+	//		// Do not handle generated columns.
+	//		if col.IsGenerated() {
+	//			return nil
+	//		}
+	//		// Only handle tables that all columns are public.
+	//		if col.State != model.StatePublic {
+	//			return nil
+	//		}
+	//		if mysql.HasPriKeyFlag(col.GetFlag()) {
+	//			pkColOffset = i
+	//		}
+	//	}
+	//
+	// schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
+	//
+	//	if schema == nil {
+	//		return nil
+	//	}
+	//
+	// dbName := tblName.Schema.L
+	//
+	//	if dbName == "" {
+	//		dbName = ctx.GetSessionVars().CurrentDB
+	//	}
+	//
+	// pairs := make([]nameValuePair, 0, 4)
+	// pairs, isTableDual := getNameValuePairs(ctx, tbl, tblAlias, pairs, selStmt.Where)
+	//
+	//	if pairs == nil && !isTableDual {
+	//		return nil
+	//	}
+	//
+	// handlePair, fieldType := findPKHandle(tbl, pairs)
+	//
+	//	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 && indexIsAvailableByHints(nil, tblName.IndexHints) {
+	//		if isTableDual {
+	//			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+	//			p.IsTableDual = true
+	//			return p
+	//		}
+	//
+	//		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
+	//		p.Handle = kv.IntHandle(handlePair.value.GetInt64())
+	//		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
+	//		p.handleFieldType = fieldType
+	//		p.HandleConstant = handlePair.con
+	//		p.HandleColOffset = pkColOffset
+	//		p.PartitionNames = tblName.PartitionNames
+	//		return p
+	//	} else if handlePair.value.Kind() != types.KindNull {
+	//
+	//		return nil
+	//	}
+	//
+	// return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, isTableDual, check)
+	return nil
 }
 
 func checkTblIndexForPointPlan(ctx PlanContext, tblName *ast.TableName, schema *expression.Schema,
