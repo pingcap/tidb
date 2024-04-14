@@ -509,7 +509,6 @@ func getIdStr(id any) string {
 	default:
 		panic("Unsupported type")
 	}
-	return "ERROR :)"
 }
 
 func preparedStmtPointGet(t *testing.T, ids []any, tk *testkit.TestKit, testTbl partCoverStruct, seededRand *rand.Rand, rowData map[any]string, filler, currTest string) {

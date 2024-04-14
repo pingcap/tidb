@@ -213,6 +213,7 @@ go_test(
         "physical_plan_trace_test.go",
         "plan_cache_lru_test.go",
         "plan_cache_param_test.go",
+        "plan_cache_partition_table_test.go",
         "plan_cache_test.go",
         "plan_cacheable_checker_test.go",
         "plan_cost_detail_test.go",
