@@ -828,15 +828,15 @@ func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, allUsedT
 	aliveStores = new(aliveStoresBundle)
 	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 
-	allValidTiflashStores := make([]*tikv.Store, 0, len(allUsedTiflashStoresMap))
+	allUnusedTiflashStores := make([]*tikv.Store, 0, len(allUsedTiflashStoresMap))
 	for _, store := range allTiFlashStores {
 		_, ok := allUsedTiflashStoresMap[store.StoreID()]
 		if ok {
-			allValidTiflashStores = append(allValidTiflashStores, store)
+			allUnusedTiflashStores = append(allUnusedTiflashStores, store)
 		}
 	}
 
-	aliveStores.storesInAllZones = filterAliveStores(ctx, allValidTiflashStores, ttl, store)
+	aliveStores.storesInAllZones = filterAliveStores(ctx, allUnusedTiflashStores, ttl, store)
 
 	if !tiflashReplicaReadPolicy.IsAllReplicas() {
 		aliveStores.storeIDsInTiDBZone = make(map[uint64]struct{}, len(aliveStores.storesInAllZones))
