@@ -25,7 +25,7 @@ import (
 func TestRetryErrOnNextSubtasksBatch(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 2, 16, true)
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetPlanErrSchedulerExt(c.MockCtrl, c.TestContext), c.TestContext, nil)
-	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "key1", "", c.TestContext)
+	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "key1", c.TestContext)
 }
 
 func TestPlanNotRetryableOnNextSubtasksBatchErr(t *testing.T) {

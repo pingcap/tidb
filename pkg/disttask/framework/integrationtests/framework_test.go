@@ -30,20 +30,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func submitTaskAndCheckSuccessForBasic(ctx context.Context, t *testing.T, taskKey string, targetScope string, testContext *testutil.TestContext) {
-	submitTaskAndCheckSuccess(ctx, t, taskKey, targetScope, testContext, map[proto.Step]int{
+func submitTaskAndCheckSuccessForBasic(ctx context.Context, t *testing.T, taskKey string, testContext *testutil.TestContext) int64 {
+	return submitTaskAndCheckSuccess(ctx, t, taskKey, "", testContext, map[proto.Step]int{
 		proto.StepOne: 3,
 		proto.StepTwo: 1,
 	})
 }
 
 func submitTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey string, targetScope string,
-	testContext *testutil.TestContext, subtaskCnts map[proto.Step]int) {
+	testContext *testutil.TestContext, subtaskCnts map[proto.Step]int) int64 {
 	task := testutil.SubmitAndWaitTask(ctx, t, taskKey, targetScope, 1)
 	require.Equal(t, proto.TaskStateSucceed, task.State)
 	for step, cnt := range subtaskCnts {
 		require.Equal(t, cnt, testContext.CollectedSubtaskCnt(task.ID, step))
 	}
+	return task.ID
 }
 
 func TestRandomOwnerChangeWithMultipleTasks(t *testing.T) {
@@ -54,7 +55,7 @@ func TestRandomOwnerChangeWithMultipleTasks(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		taskKey := fmt.Sprintf("key%d", i)
 		wg.Run(func() {
-			submitTaskAndCheckSuccessForBasic(c.Ctx, t, taskKey, "", c.TestContext)
+			submitTaskAndCheckSuccessForBasic(c.Ctx, t, taskKey, c.TestContext)
 		})
 	}
 	wg.Run(func() {
@@ -80,7 +81,7 @@ func TestFrameworkScaleInAndOut(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		taskKey := fmt.Sprintf("key%d", i)
 		wg.Run(func() {
-			submitTaskAndCheckSuccessForBasic(c.Ctx, t, taskKey, "", c.TestContext)
+			submitTaskAndCheckSuccessForBasic(c.Ctx, t, taskKey, c.TestContext)
 		})
 	}
 	wg.Run(func() {
@@ -102,7 +103,7 @@ func TestFrameworkWithQuery(t *testing.T) {
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
-		submitTaskAndCheckSuccessForBasic(c.Ctx, t, "key1", "", c.TestContext)
+		submitTaskAndCheckSuccessForBasic(c.Ctx, t, "key1", c.TestContext)
 	})
 
 	tk := testkit.NewTestKit(t, c.Store)
@@ -154,7 +155,7 @@ func TestOwnerChangeWhenSchedule(t *testing.T) {
 		c.AsyncChangeOwner()
 	}
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockOwnerChange", "1*return(true)")
-	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😊", "", c.TestContext)
+	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😊", c.TestContext)
 }
 
 func TestGC(t *testing.T) {
@@ -164,7 +165,7 @@ func TestGC(t *testing.T) {
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 
-	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😊", "", c.TestContext)
+	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😊", c.TestContext)
 
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
@@ -218,7 +219,7 @@ func TestFrameworkCleanUpRoutine(t *testing.T) {
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
 
 	// normal
-	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "key1", "", c.TestContext)
+	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "key1", c.TestContext)
 	<-scheduler.WaitCleanUpFinished
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
@@ -231,7 +232,7 @@ func TestFrameworkCleanUpRoutine(t *testing.T) {
 
 	// transfer err
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTransferErr", "1*return()")
-	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "key2", "", c.TestContext)
+	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "key2", c.TestContext)
 	<-scheduler.WaitCleanUpFinished
 	mgr, err = storage.GetTaskManager()
 	require.NoError(t, err)

@@ -16,7 +16,7 @@ go_test(
     ],
     flaky = True,
     race = "off",
-    shard_count = 22,
+    shard_count = 23,
     deps = [
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
@@ -34,6 +34,7 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@io_opencensus_go//stats/view",
+        "@org_golang_x_exp//rand",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_mock//gomock",
     ],

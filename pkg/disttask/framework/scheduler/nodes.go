@@ -167,9 +167,33 @@ func (nm *NodeManager) getNodes() []proto.ManagedNode {
 func filterByScope(nodes []proto.ManagedNode, targetScope string) []string {
 	var nodeIDs []string
 
+	haveOther := false
+	haveBackground := false
 	for _, node := range nodes {
-		if node.Role == targetScope {
-			nodeIDs = append(nodeIDs, node.ID)
+		if node.Role != "" && node.Role != "background" {
+			haveOther = true
+		}
+		if node.Role == "background" {
+			haveBackground = true
+		}
+	}
+
+	for _, node := range nodes {
+		if haveOther {
+			if node.Role == targetScope {
+				nodeIDs = append(nodeIDs, node.ID)
+			}
+		} else {
+			// When not have other, use background nodes,
+			// use these branches to maintain backward compatibility.
+			// Should not take care of `targetScope`.
+			if node.Role == "background" && haveBackground {
+				nodeIDs = append(nodeIDs, node.ID)
+			}
+			if !haveBackground {
+				// use all nodes.
+				nodeIDs = append(nodeIDs, node.ID)
+			}
 		}
 	}
 	return nodeIDs
