@@ -418,7 +418,7 @@ func (e *RecoverIndexExec) buildIndexedValues(row chunk.Row, idxVals []types.Dat
 	sctx := e.Ctx()
 	for i, col := range e.index.Meta().Columns {
 		if e.table.Meta().Columns[col.Offset].IsGenerated() {
-			val, err := e.cols[col.Offset].EvalVirtualColumn(sctx.GetExprCtx(), row)
+			val, err := e.cols[col.Offset].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), row)
 			if err != nil {
 				return nil, err
 			}

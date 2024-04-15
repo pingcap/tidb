@@ -632,7 +632,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: ThreadPoolSize, Value: "16", Type: TypeUnsigned, MinValue: 1, MaxValue: 64},
 	{Scope: ScopeNone, Name: "lower_case_file_system", Value: "1"},
 	{Scope: ScopeNone, Name: LowerCaseTableNames, Value: "2"},
-	{Scope: ScopeGlobal, Name: TiDBSchemaCacheSize, Value: "0"},
 
 	// for compatibility purpose, we should leave them alone.
 	// TODO: Follow the Terminology Updates of MySQL after their changes arrived.

@@ -61,7 +61,6 @@ type Table struct {
 	ExtendedStats *ExtendedStatsColl
 
 	ColAndIdxExistenceMap *ColAndIdxExistenceMap
-	Name                  string
 	HistColl
 	Version uint64
 	// It's the timestamp of the last analyze time.
@@ -427,7 +426,6 @@ func (t *Table) Copy() *Table {
 	nt := &Table{
 		HistColl:           newHistColl,
 		Version:            t.Version,
-		Name:               t.Name,
 		TblInfoUpdateTS:    t.TblInfoUpdateTS,
 		IsPkIsHandle:       t.IsPkIsHandle,
 		LastAnalyzeVersion: t.LastAnalyzeVersion,
@@ -465,7 +463,6 @@ func (t *Table) ShallowCopy() *Table {
 	nt := &Table{
 		HistColl:              newHistColl,
 		Version:               t.Version,
-		Name:                  t.Name,
 		TblInfoUpdateTS:       t.TblInfoUpdateTS,
 		ExtendedStats:         t.ExtendedStats,
 		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
@@ -606,8 +603,11 @@ func (coll *HistColl) GetScaledRealtimeAndModifyCnt(idxStats *Index) (realtimeCn
 // GetStatsHealthy calculates stats healthy if the table stats is not pseudo.
 // If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, true.
 func (t *Table) GetStatsHealthy() (int64, bool) {
-	if t == nil || t.Pseudo || !t.IsAnalyzed() {
+	if t == nil || t.Pseudo {
 		return 0, false
+	}
+	if !t.IsAnalyzed() {
+		return 0, true
 	}
 	var healthy int64
 	count := float64(t.RealtimeCount)

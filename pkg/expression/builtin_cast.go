@@ -122,7 +122,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
+	bf := newBaseBuiltinCastFunc(b, ctx.IsInUnionCast())
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
@@ -171,7 +171,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
+	bf := newBaseBuiltinCastFunc(b, ctx.IsInUnionCast())
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
@@ -226,7 +226,7 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
+	bf := newBaseBuiltinCastFunc(b, ctx.IsInUnionCast())
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastDecimalAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDecimal)
@@ -2052,10 +2052,10 @@ func CanImplicitEvalReal(expr Expression) bool {
 // BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union
 // Expression.
 func BuildCastFunction4Union(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	ctx.SetValue(inUnionCastContext, struct{}{})
-	defer func() {
-		ctx.SetValue(inUnionCastContext, nil)
-	}()
+	if !ctx.IsInUnionCast() {
+		ctx.SetInUnionCast(true)
+		defer ctx.SetInUnionCast(false)
+	}
 	return BuildCastFunction(ctx, expr, tp)
 }
 
@@ -2220,7 +2220,7 @@ func WrapWithCastAsDecimal(ctx BuildContext, expr Expression) Expression {
 	castExpr := BuildCastFunction(ctx, expr, tp)
 	// For const item, we can use find-grained precision and scale by the result.
 	if castExpr.ConstLevel() == ConstStrict {
-		val, isnull, err := castExpr.EvalDecimal(ctx, chunk.Row{})
+		val, isnull, err := castExpr.EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 		if !isnull && err == nil {
 			precision, frac := val.PrecisionAndFrac()
 			castTp := castExpr.GetType()
@@ -2270,7 +2270,7 @@ func WrapWithCastAsString(ctx BuildContext, expr Expression) Expression {
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
 	} else {
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		tp.SetCharset(charset)
 		tp.SetCollate(collate)
 	}

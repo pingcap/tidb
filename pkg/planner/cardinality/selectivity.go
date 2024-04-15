@@ -328,7 +328,7 @@ OUTER:
 		}
 
 		dnfItems := expression.FlattenDNFConditions(scalarCond)
-		dnfItems = ranger.MergeDNFItems4Col(ctx, dnfItems)
+		dnfItems = ranger.MergeDNFItems4Col(ctx.GetRangerCtx(), dnfItems)
 		// If the conditions only contain a single column, we won't handle them.
 		if len(dnfItems) <= 1 {
 			continue
@@ -671,12 +671,13 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 func findPrefixOfIndexByCol(ctx context.PlanContext, cols []*expression.Column, idxColIDs []int64,
 	cachedPath *planutil.AccessPath) []*expression.Column {
 	if cachedPath != nil {
+		evalCtx := ctx.GetExprCtx().GetEvalCtx()
 		idxCols := cachedPath.IdxCols
 		retCols := make([]*expression.Column, 0, len(idxCols))
 	idLoop:
 		for _, idCol := range idxCols {
 			for _, col := range cols {
-				if col.EqualByExprAndID(ctx.GetExprCtx(), idCol) {
+				if col.EqualByExprAndID(evalCtx, idCol) {
 					retCols = append(retCols, col)
 					continue idLoop
 				}
@@ -696,8 +697,8 @@ func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, ra
 	var accessConds, remainedConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
-		accessConds = ranger.ExtractAccessConditionsForColumn(ctx, exprs, cols[0])
-		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType,
+		accessConds = ranger.ExtractAccessConditionsForColumn(ctx.GetRangerCtx(), exprs, cols[0])
+		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx.GetRangerCtx(), cols[0].RetType,
 			types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {
@@ -706,7 +707,7 @@ func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, ra
 			break
 		}
 		var res *ranger.DetachRangeResult
-		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
+		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx.GetRangerCtx(), exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
 		if err != nil {
 			return 0, nil, false, err
 		}
@@ -723,7 +724,7 @@ func getMaskAndRanges(ctx context.PlanContext, exprs []expression.Expression, ra
 	}
 	for i := range exprs {
 		for j := range accessConds {
-			if exprs[i].Equal(ctx.GetExprCtx(), accessConds[j]) {
+			if exprs[i].Equal(ctx.GetExprCtx().GetEvalCtx(), accessConds[j]) {
 				mask |= 1 << uint64(i)
 				break
 			}
@@ -753,7 +754,7 @@ func getMaskAndSelectivityForMVIndex(
 	var mask int64
 	for i := range exprs {
 		for _, accessCond := range accessConds {
-			if exprs[i].Equal(ctx.GetExprCtx(), accessCond) {
+			if exprs[i].Equal(ctx.GetExprCtx().GetEvalCtx(), accessCond) {
 				mask |= 1 << uint64(i)
 				break
 			}
@@ -850,7 +851,7 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 			}
 			c.AppendDatum(0, &val)
 		}
-		selected, err = expression.VectorizedFilter(sctx.GetExprCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
 		if err != nil {
 			return false, 0, err
 		}
@@ -867,7 +868,7 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 	// The buckets lower bounds are used as random samples and are regarded equally.
 	if hist != nil && histTotalCnt > 0 {
 		selected = selected[:0]
-		selected, err = expression.VectorizedFilter(sctx.GetExprCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(hist.Bounds), selected)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(hist.Bounds), selected)
 		if err != nil {
 			return false, 0, err
 		}
@@ -901,7 +902,7 @@ func GetSelectivityByFilter(sctx context.PlanContext, coll *statistics.HistColl,
 	c.Reset()
 	c.AppendNull(0)
 	selected = selected[:0]
-	selected, err = expression.VectorizedFilter(sctx.GetExprCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
+	selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
 	if err != nil || len(selected) != 1 || !selected[0] {
 		nullSel = 0
 	} else {
