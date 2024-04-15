@@ -263,7 +263,9 @@ func TestAlterUserStmt(t *testing.T) {
 	// and it can modify semuser3 because RESTRICTED_USER_ADMIN does not also need SYSTEM_USER
 	tk.MustExec("ALTER USER 'semuser1' IDENTIFIED BY ''")
 	tk.MustExec("ALTER USER 'semuser2' IDENTIFIED BY ''")
-	tk.MustExec("ALTER USER 'semuser3' IDENTIFIED BY ''")
+	// It cannot modify semuser3 because RESTRICTED_USER_ADMIN does not replace SYSTEM_USER.
+	err = tk.ExecToErr("ALTER USER 'semuser3' IDENTIFIED BY ''")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost"}, nil, nil, nil))
 	err = tk.ExecToErr("ALTER USER 'semuser1' IDENTIFIED BY 'newpassword'")
@@ -1167,6 +1169,19 @@ func TestSecurityEnhancedModeRestrictedTables(t *testing.T) {
 
 	sem.Enable()
 	defer sem.Disable()
+	tidbCfg := config.NewConfig()
+	tidbCfg.Security.SEM.RestrictedDatabases = []string{"metrics_schema"}
+	tidbCfg.Security.SEM.RestrictedTables = []config.RestrictedTable{
+		{
+			Schema: "metrics_schema",
+			Name:   "uptime",
+		},
+		{
+			Schema: "mysql",
+			Name:   "abcd",
+		},
+	}
+	config.StoreGlobalConfig(tidbCfg)
 
 	err := urootTk.ExecToErr("use metrics_schema")
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'uroot'@'%' to database 'metrics_schema'")
@@ -1269,6 +1284,40 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	sem.Enable()
 	defer sem.Disable()
 
+	tidbCfg := config.NewConfig()
+	tidbCfg.Security.SEM.RestrictedVariables = []config.RestrictedVariable{
+		{
+			Name:            variable.TiDBForcePriority,
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            "tidb_enable_telemetry",
+			RestrictionType: "hidden",
+			Scope:           "global",
+			Value:           "",
+		},
+		{
+			Name:            "tidb_top_sql_max_time_series_count",
+			RestrictionType: "hidden",
+			Scope:           "global",
+			Value:           "",
+		},
+		{
+			Name:            "tidb_top_sql_max_meta_count",
+			RestrictionType: "hidden",
+			Scope:           "global",
+			Value:           "",
+		},
+		{
+			Name:            "hostname",
+			RestrictionType: "replace",
+			Value:           variable.DefHostname,
+		},
+	}
+
+	config.StoreGlobalConfig(tidbCfg)
+
 	// svroot1 has SUPER but in SEM will be restricted
 	tk.Session().Auth(&auth.UserIdentity{
 		Username:     "svroot1",
@@ -1327,9 +1376,6 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 
 	tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(variable.DefHostname))
 	sem.Disable()
-	if hostname, err := os.Hostname(); err == nil {
-		tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(hostname))
-	}
 }
 
 // TestViewDefiner tests that default roles are correctly applied in the algorithm definer
@@ -1366,12 +1412,17 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE USER ruroot1, ruroot2, ruroot3")
+	tk.MustExec("CREATE USER ruroot1, ruroot2, ruroot3, restricted_user, sys1, creat1 , sys2, restricted_user_2")
 	tk.MustExec("CREATE ROLE notimportant")
 	tk.MustExec("GRANT SUPER, CREATE USER ON *.* to ruroot1 WITH GRANT OPTION")
 	tk.MustExec("GRANT SUPER, RESTRICTED_USER_ADMIN,  CREATE USER  ON *.* to ruroot2 WITH GRANT OPTION")
 	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* to ruroot3")
 	tk.MustExec("GRANT notimportant TO ruroot2, ruroot3")
+	tk.MustExec("GRANT CREATE USER, RESTRICTED_USER_ADMIN ON *.* to restricted_user")
+	tk.MustExec("GRANT CREATE USER, SYSTEM_USER ON *.* to sys1")
+	tk.MustExec("GRANT CREATE USER  ON *.* to creat1")
+	tk.MustExec("GRANT SYSTEM_USER ON *.* to sys2")
+	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* to restricted_user_2")
 
 	sem.Enable()
 	defer sem.Disable()
@@ -1381,6 +1432,17 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 		"REVOKE notimportant FROM ruroot3",
 		"REVOKE SUPER ON *.* FROM ruroot3",
 		"DROP USER ruroot3",
+	}
+
+	sys2Stmts := []string{
+		"RENAME USER 'sys2'@'%' TO 'sys2'@'127.0.0.1'",
+		"DROP USER 'sys2'@'127.0.0.1'",
+	}
+
+	restrictedStmts := []string{
+		"ALTER USER 'restricted_user_2'@'%' IDENTIFIED BY '123456'",
+		"RENAME USER 'restricted_user_2'@'%' TO 'restricted_user_2'@'127.0.0.1'",
+		"DROP USER 'restricted_user_2'@'127.0.0.1'",
 	}
 
 	// ruroot1 has SUPER but in SEM will be restricted
@@ -1396,6 +1458,80 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 		require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
 	}
 
+	// Test whether SYSTEM_USER and RESTRICTED_USER_ADMIN can be used interchangeably.
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "restricted_user",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	for _, stmt := range sys2Stmts {
+		_, err := tk.Exec(stmt)
+		require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER privilege(s) for this operation")
+	}
+	err := tk.ExecToErr("ALTER USER 'sys2'@'%' IDENTIFIED BY '123456'")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "sys1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	for _, stmt := range restrictedStmts {
+		_, err := tk.Exec(stmt)
+		require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	}
+
+	// Whether ordinary CREATE USER permission can be changed to SYSTEM_USER and RESTRICTED_USER_ADMIN users.
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "creat1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	for _, stmt := range sys2Stmts {
+		_, err := tk.Exec(stmt)
+		require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER privilege(s) for this operation")
+	}
+	err = tk.ExecToErr("ALTER USER 'sys2'@'%' IDENTIFIED BY '123456'")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+
+	for _, stmt := range restrictedStmts {
+		_, err := tk.Exec(stmt)
+		require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	}
+
+	//  Test the correct handling of SYSTEM_USER and RESTRICTED_USER_ADMIN users.
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "restricted_user",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	for _, stmt := range restrictedStmts {
+		_, err := tk.Exec(stmt)
+		require.NoError(t, err)
+	}
+
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "sys1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	require.NoError(t, tk.ExecToErr("ALTER USER 'sys2'@'%' IDENTIFIED BY '123456'"))
+
+	for _, stmt := range sys2Stmts {
+		_, err := tk.Exec(stmt)
+		require.NoError(t, err)
+	}
+
 	// Switch to ruroot2, it should be permitted
 	tk.Session().Auth(&auth.UserIdentity{
 		Username:     "ruroot2",
@@ -1407,6 +1543,161 @@ func TestSecurityEnhancedModeRestrictedUsers(t *testing.T) {
 	for _, stmt := range stmts {
 		tk.MustExec(stmt)
 	}
+}
+
+func TestSecurityEnhancedModeStatus(t *testing.T) {
+	tidbCfg := config.NewConfig()
+	tidbCfg.Security.SEM.RestrictedStatus = []config.RestrictedStatus{
+		{
+			Name:            "ddl_schema_version",
+			RestrictionType: "hidden",
+			Value:           "",
+		},
+		{
+			Name:            "server_id",
+			RestrictionType: "replace",
+			Value:           "00000000-1111-2222-3333-8ca09832a01c",
+		},
+	}
+	config.StoreGlobalConfig(tidbCfg)
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER svroot1, svroot2")
+	tk.MustExec("GRANT SUPER ON *.* to svroot1")
+	tk.MustExec("GRANT SUPER, RESTRICTED_STATUS_ADMIN ON *.* to svroot2")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// svroot1 has SUPER but in SEM will be restricted
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "svroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	tk.MustQuery(`SHOW STATUS LIKE 'ddl_schema_version';`).Check(testkit.Rows())
+	tk.MustQuery(`SHOW STATUS LIKE 'server_id';`).Check(testkit.Rows("server_id 00000000-1111-2222-3333-8ca09832a01c"))
+
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "svroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	rows := tk.MustQuery(`SHOW STATUS LIKE 'ddl_schema_version';`).Rows()
+	require.Equal(t, 1, len(rows))
+}
+
+func TestSecurityEnhancedModePrivilege(t *testing.T) {
+	tidbCfg := config.NewConfig()
+	p := make(map[mysql.PrivilegeType]struct{})
+	p[mysql.ConfigPriv] = struct{}{}
+	p[mysql.ShutdownPriv] = struct{}{}
+	tidbCfg.Security.SEM.RestrictedStaticPrivileges = p
+	config.StoreGlobalConfig(tidbCfg)
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER svroot1, svroot2, user1, user2, user3, user4, user5, c1")
+	tk.MustExec("GRANT SUPER, SHUTDOWN, CONFIG, RESTRICTED_TABLES_ADMIN, RESTRICTED_VARIABLES_ADMIN ON *.* to svroot1 WITH GRANT OPTION")
+	tk.MustExec("GRANT SUPER, SHUTDOWN, CONFIG, RESTRICTED_TABLES_ADMIN, RESTRICTED_PRIV_ADMIN, RESTRICTED_VARIABLES_ADMIN ON *.* to svroot2 WITH GRANT OPTION")
+	tk.MustExec("GRANT RESTRICTED_PRIV_ADMIN ON *.* to user3, user4")
+	tk.MustExec("GRANT SHUTDOWN, CONFIG ON *.* to c1")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "svroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	// Restricted Permission Usage Limitation Testing
+	err := tk.ExecToErr("SHUTDOWN;")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("SHOW CONFIG;")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("SET CONFIG tidb `ballast-object-size` = 0;")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.QueryToErr("SELECT * FROM information_schema.CLUSTER_config;")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	// Restricted Permission Authorization and Revocation Limitation Testing
+	err = tk.ExecToErr("GRANT CONFIG ON *.* TO user1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("GRANT CONFIG ON *.* TO user3")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("GRANT SHUTDOWN ON *.* TO user1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("GRANT SHUTDOWN ON *.* TO user3")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("REVOKE CONFIG ON *.* FROM c1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("REVOKE SHUTDOWN ON *.* FROM c1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO user5")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("REVOKE RESTRICTED_VARIABLES_ADMIN ON *.* FROM user4")
+	require.NoError(t, err)
+
+	tk.Session().Auth(&auth.UserIdentity{
+		Username:     "svroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil, nil)
+
+	//err := tk.ExecToErr("SHUTDOWN;")
+	//require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
+
+	err = tk.ExecToErr("SHOW CONFIG;")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("SET CONFIG tikv `ballast-object-size` = 0;")
+	require.NoError(t, err)
+
+	err = tk.QueryToErr("SELECT * FROM information_schema.CLUSTER_config;")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("GRANT CONFIG ON *.* TO user2")
+	require.EqualError(t, err, "[planner:8177]Access denied; the recipient needs (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation.")
+
+	err = tk.ExecToErr("GRANT CONFIG ON *.* TO user4")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("GRANT SHUTDOWN ON *.* TO user2")
+	require.EqualError(t, err, "[planner:8177]Access denied; the recipient needs (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation.")
+
+	err = tk.ExecToErr("GRANT SHUTDOWN ON *.* TO user4")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO user5")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("REVOKE CONFIG ON *.* FROM c1")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("REVOKE SHUTDOWN ON *.* FROM c1")
+	require.NoError(t, err)
+
+	err = tk.ExecToErr("REVOKE RESTRICTED_VARIABLES_ADMIN ON *.* FROM user5")
+	require.NoError(t, err)
 }
 
 func TestDynamicPrivsRegistration(t *testing.T) {
@@ -1834,7 +2125,7 @@ func TestSkipGrantTable(t *testing.T) {
 	tk.MustExec(`GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'test1'@'%';`)
 	tk.MustExec(`GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO 'test1'@'%';`)
 	tk.MustExec(`GRANT RESTRICTED_STATUS_ADMIN ON *.* TO 'test1'@'%';`)
-	tk.MustExec(`GRANT RESTRICTED_CONNECTION_ADMIN, CONNECTION_ADMIN ON *.* TO 'test1'@'%';`)
+	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN, CONNECTION_ADMIN ON *.* TO 'test1'@'%';`)
 	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN ON *.* TO 'test1'@'%';`)
 	tk.MustExec(`GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'test1'@'%';`)
 	tk.MustExec(`GRANT PROCESS ON *.* TO 'test1'@'%';`)

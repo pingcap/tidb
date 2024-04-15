@@ -57,15 +57,16 @@ var dynamicPrivs = []string{
 	"SYSTEM_VARIABLES_ADMIN",
 	"ROLE_ADMIN",
 	"CONNECTION_ADMIN",
-	"PLACEMENT_ADMIN",                 // Can Create/Drop/Alter PLACEMENT POLICY
-	"DASHBOARD_CLIENT",                // Can login to the TiDB-Dashboard.
-	"RESTRICTED_TABLES_ADMIN",         // Can see system tables when SEM is enabled
-	"RESTRICTED_STATUS_ADMIN",         // Can see all status vars when SEM is enabled.
-	"RESTRICTED_VARIABLES_ADMIN",      // Can see all variables when SEM is enabled
-	"RESTRICTED_USER_ADMIN",           // User can not have their access revoked by SUPER users.
-	"RESTRICTED_CONNECTION_ADMIN",     // Can not be killed by PROCESS/CONNECTION_ADMIN privilege
+	"PLACEMENT_ADMIN",            // Can Create/Drop/Alter PLACEMENT POLICY
+	"DASHBOARD_CLIENT",           // Can login to the TiDB-Dashboard.
+	"RESTRICTED_TABLES_ADMIN",    // Can see system tables when SEM is enabled
+	"RESTRICTED_STATUS_ADMIN",    // Can see all status vars when SEM is enabled.
+	"RESTRICTED_VARIABLES_ADMIN", // Can see all variables when SEM is enabled
+	"RESTRICTED_USER_ADMIN",      // User can not have their access revoked by SUPER users.
+	//"RESTRICTED_CONNECTION_ADMIN", // This function is deprecated, please use the new function RESTRICTED_USER_ADMIN instead
 	"RESTRICTED_REPLICA_WRITER_ADMIN", // Can write to the sever even when tidb_restriced_read_only is turned on.
 	"RESOURCE_GROUP_ADMIN",            // Create/Drop/Alter RESOURCE GROUP
+	"RESTRICTED_PRIV_ADMIN",           // No longer subject to SEM-related special security restrictions.
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute

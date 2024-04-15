@@ -15,10 +15,11 @@
 package sem
 
 import (
-	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -66,14 +67,44 @@ const (
 
 var (
 	semEnabled int32
+	// sysMap record original value of sysvar
+	sysMap      map[string]string
+	mapMutex    sync.Mutex
+	sysMapMutex sync.RWMutex
 )
+
+// GetOrigVar Get original system variables
+func GetOrigVar(name string) string {
+	sysMapMutex.RLock()
+	defer sysMapMutex.RUnlock()
+	return sysMap[name]
+}
 
 // Enable enables SEM. This is intended to be used by the test-suite.
 // Dynamic configuration by users may be a security risk.
 func Enable() {
-	atomic.StoreInt32(&semEnabled, 1)
+	if !atomic.CompareAndSwapInt32(&semEnabled, 0, 1) {
+		logutil.BgLogger().Info("SEM enable operation was skipped because it is already enabled")
+		return
+	}
+
+	mapMutex.Lock()
+	defer mapMutex.Unlock()
+	sysMap = make(map[string]string)
 	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.On)
-	variable.SetSysVar(variable.Hostname, variable.DefHostname)
+
+	cfg := config.GetGlobalConfig()
+	for _, resVar := range cfg.Security.SEM.RestrictedVariables {
+		if resVar.RestrictionType == "replace" {
+			if variable.IsVarExists(resVar.Name) {
+				originalValue := variable.GetSysVar(resVar.Name).Value
+				if _, ok := sysMap[resVar.Name]; !ok {
+					sysMap[resVar.Name] = originalValue
+					variable.SetSysVar(resVar.Name, resVar.Value)
+				}
+			}
+		}
+	}
 	// write to log so users understand why some operations are weird.
 	logutil.BgLogger().Info("tidb-server is operating with security enhanced mode (SEM) enabled")
 }
@@ -81,11 +112,18 @@ func Enable() {
 // Disable disables SEM. This is intended to be used by the test-suite.
 // Dynamic configuration by users may be a security risk.
 func Disable() {
-	atomic.StoreInt32(&semEnabled, 0)
-	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.Off)
-	if hostname, err := os.Hostname(); err == nil {
-		variable.SetSysVar(variable.Hostname, hostname)
+	if !atomic.CompareAndSwapInt32(&semEnabled, 1, 0) {
+		logutil.BgLogger().Info("SEM disable operation was skipped because it is already disabled")
+		return
 	}
+	mapMutex.Lock()
+	defer mapMutex.Unlock()
+	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.Off)
+	for varName, varValue := range sysMap {
+		variable.SetSysVar(varName, varValue)
+	}
+	sysMap = nil
+	logutil.BgLogger().Info("tidb-server is operating with security enhanced mode (SEM) disabled")
 }
 
 // IsEnabled checks if Security Enhanced Mode (SEM) is enabled
@@ -96,33 +134,27 @@ func IsEnabled() bool {
 // IsInvisibleSchema returns true if the dbName needs to be hidden
 // when sem is enabled.
 func IsInvisibleSchema(dbName string) bool {
-	return strings.EqualFold(dbName, metricsSchema)
+	cfg := config.GetGlobalConfig()
+	for _, dbn := range cfg.Security.SEM.RestrictedDatabases {
+		if strings.EqualFold(dbName, dbn) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsInvisibleTable returns true if the table needs to be hidden
 // when sem is enabled.
 func IsInvisibleTable(dbLowerName, tblLowerName string) bool {
-	switch dbLowerName {
-	case mysql.SystemDB:
-		switch tblLowerName {
-		case exprPushdownBlacklist, gcDeleteRange, gcDeleteRangeDone, optRuleBlacklist, tidb, globalVariables:
-			return true
-		}
-	case informationSchema:
-		switch tblLowerName {
-		case clusterConfig, clusterHardware, clusterLoad, clusterLog, clusterSystemInfo, inspectionResult,
-			inspectionRules, inspectionSummary, metricsSummary, metricsSummaryByLabel, metricsTables, tidbHotRegions:
-			return true
-		}
-	case performanceSchema:
-		switch tblLowerName {
-		case pdProfileAllocs, pdProfileBlock, pdProfileCPU, pdProfileGoroutines, pdProfileMemory,
-			pdProfileMutex, tidbProfileAllocs, tidbProfileBlock, tidbProfileCPU, tidbProfileGoroutines,
-			tidbProfileMemory, tidbProfileMutex, tikvProfileCPU:
-			return true
-		}
-	case metricsSchema:
+	cfg := config.GetGlobalConfig()
+	if IsInvisibleSchema(dbLowerName) {
 		return true
+	}
+
+	for _, tbl := range cfg.Security.SEM.RestrictedTables {
+		if strings.EqualFold(dbLowerName, tbl.Schema) && strings.EqualFold(tblLowerName, tbl.Name) {
+			return true
+		}
 	}
 	return false
 }
@@ -134,32 +166,63 @@ func IsInvisibleStatusVar(varName string) bool {
 
 // IsInvisibleSysVar returns true if the sysvar needs to be hidden
 func IsInvisibleSysVar(varNameInLower string) bool {
-	switch varNameInLower {
-	case variable.TiDBDDLSlowOprThreshold, // ddl_slow_threshold
-		variable.TiDBCheckMb4ValueInUTF8,
-		variable.TiDBConfig,
-		variable.TiDBEnableSlowLog,
-		variable.TiDBEnableTelemetry,
-		variable.TiDBExpensiveQueryTimeThreshold,
-		variable.TiDBForcePriority,
-		variable.TiDBGeneralLog,
-		variable.TiDBMetricSchemaRangeDuration,
-		variable.TiDBMetricSchemaStep,
-		variable.TiDBOptWriteRowID,
-		variable.TiDBPProfSQLCPU,
-		variable.TiDBRecordPlanInSlowLog,
-		variable.TiDBRowFormatVersion,
-		variable.TiDBSlowQueryFile,
-		variable.TiDBSlowLogThreshold,
-		variable.TiDBSlowTxnLogThreshold,
-		variable.TiDBEnableCollectExecutionInfo,
-		variable.TiDBMemoryUsageAlarmRatio,
-		variable.TiDBRedactLog,
-		variable.TiDBRestrictedReadOnly,
-		variable.TiDBTopSQLMaxTimeSeriesCount,
-		variable.TiDBTopSQLMaxMetaCount,
-		tidbAuditRetractLog:
-		return true
+	cfg := config.GetGlobalConfig()
+	for _, resvarName := range cfg.Security.SEM.RestrictedVariables {
+		if strings.EqualFold(varNameInLower, resvarName.Name) {
+			if resvarName.RestrictionType == "hidden" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// IsInvisibleGlobalSysVar returns true if the sysvar needs to be hidden
+func IsInvisibleGlobalSysVar(varNameInLower string) bool {
+	if !IsInvisibleSysVar(varNameInLower) {
+		return false
+	}
+	cfg := config.GetGlobalConfig()
+	for _, resvarName := range cfg.Security.SEM.RestrictedVariables {
+		if strings.EqualFold(varNameInLower, resvarName.Name) && strings.EqualFold(resvarName.Scope, "global") {
+			return true
+		}
+	}
+	return false
+}
+
+// IsReadOnlySysVar returns true if the sysvar is read-only
+func IsReadOnlySysVar(varNameInLower string) bool {
+	cfg := config.GetGlobalConfig()
+	for _, resvarName := range cfg.Security.SEM.RestrictedVariables {
+		if strings.EqualFold(varNameInLower, resvarName.Name) {
+			return resvarName.Readonly
+		}
+	}
+	return false
+}
+
+// IsReadOnlyGlobalSysVar returns true if the sysvar is read-only
+func IsReadOnlyGlobalSysVar(varNameInLower string) bool {
+	if !IsReadOnlySysVar(varNameInLower) {
+		return false
+	}
+	cfg := config.GetGlobalConfig()
+	for _, resvarName := range cfg.Security.SEM.RestrictedVariables {
+		if strings.EqualFold(varNameInLower, resvarName.Name) && strings.EqualFold(resvarName.Scope, "global") {
+			return resvarName.Readonly
+		}
+	}
+	return false
+}
+
+// IsReplacedSysVar returns true if the sys var need to be replaced
+func IsReplacedSysVar(varNameInLower string) bool {
+	cfg := config.GetGlobalConfig()
+	for _, resvarName := range cfg.Security.SEM.RestrictedVariables {
+		if varNameInLower == resvarName.Name && resvarName.RestrictionType == "replace" {
+			return true
+		}
 	}
 	return false
 }
@@ -171,4 +234,25 @@ func IsRestrictedPrivilege(privNameInUpper string) bool {
 		return false
 	}
 	return privNameInUpper[:11] == restrictedPriv
+}
+
+// IsStaticPermissionRestricted Returning true when statically permissions are hit first in the list.
+func IsStaticPermissionRestricted(privType mysql.PrivilegeType) bool {
+	cfg := config.GetGlobalConfig()
+	restrictedPrivileges := cfg.Security.SEM.RestrictedStaticPrivileges
+	_, ok := restrictedPrivileges[privType]
+	return ok
+}
+
+// GetRestrictedStatusOfStateVariable Return the actual restricted status of the status variable.
+// false indicates no restriction.
+func GetRestrictedStatusOfStateVariable(varName string) (bool, *config.RestrictedStatus) {
+	cfg := config.GetGlobalConfig()
+	status := cfg.Security.SEM.RestrictedStatus
+	for _, state := range status {
+		if varName == state.Name {
+			return true, &state
+		}
+	}
+	return false, &config.RestrictedStatus{}
 }

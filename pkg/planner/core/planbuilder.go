@@ -578,6 +578,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 func (b *PlanBuilder) buildSetConfig(ctx context.Context, v *ast.SetConfigStmt) (Plan, error) {
 	privErr := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
+	b.visitInfo = appendVisitInfoForRestrictedStaticPriv(b.visitInfo, mysql.ConfigPriv)
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 	if _, ok := v.Value.(*ast.DefaultExpr); ok {
 		return nil, errors.New("Unknown DEFAULT for SET CONFIG")
@@ -3178,6 +3179,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	case ast.ShowConfig:
 		privErr := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
+		b.visitInfo = appendVisitInfoForRestrictedStaticPriv(b.visitInfo, mysql.ConfigPriv)
 	case ast.ShowCreateView:
 		var err error
 		user := b.ctx.GetSessionVars().User
@@ -3302,6 +3304,10 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.RenameUserStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
+		for _, user := range raw.UserToUsers {
+			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, user.OldUser, "RESTRICTED_USER_ADMIN")
+			b.visitInfo = appendVisitInfoIsSystemUser(b.visitInfo, b.ctx, user.OldUser, "SYSTEM_USER")
+		}
 	case *ast.GrantStmt:
 		var err error
 		b.visitInfo, err = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
@@ -3347,7 +3353,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.KillStmt:
 		// All users can kill their own connections regardless.
 		// If you have the SUPER privilege, you can kill all threads and statements unless SEM is enabled.
-		// In which case you require RESTRICTED_CONNECTION_ADMIN to kill connections that belong to RESTRICTED_USER_ADMIN users.
+		// In which case you require RESTRICTED_USER_ADMIN to kill connections that belong to RESTRICTED_USER_ADMIN users.
 		sm := b.ctx.GetSessionManager()
 		if sm != nil {
 			if pi, ok := sm.GetProcessInfo(raw.ConnectionID); ok {
@@ -3355,7 +3361,8 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 				if pi.User != loginUser.Username {
 					err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
 					b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "CONNECTION_ADMIN", false, err)
-					b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
+					b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_USER_ADMIN")
+					b.visitInfo = appendVisitInfoIsSystemUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "SYSTEM_USER")
 				}
 			} else if raw.ConnectionID == domain.GetDomain(b.ctx).GetAutoAnalyzeProcID() {
 				// Only the users with SUPER or CONNECTION_ADMIN privilege can kill auto analyze.
@@ -3372,6 +3379,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		// because they use complex OR conditions (not supported by visitInfo).
 		for _, user := range raw.UserList {
 			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
+			b.visitInfo = appendVisitInfoIsSystemUser(b.visitInfo, b.ctx, user, "SYSTEM_USER")
 		}
 	case *ast.SetPwdStmt:
 		if raw.User != nil {
@@ -3379,6 +3387,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		}
 	case *ast.ShutdownStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
+		b.visitInfo = appendVisitInfoForRestrictedStaticPriv(b.visitInfo, mysql.ShutdownPriv)
 	case *ast.BeginStmt:
 		readTS := b.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
 		if raw.AsOf != nil {
@@ -3471,6 +3480,28 @@ func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx PlanContext, us
 		visitInfo = appendDynamicVisitInfo(visitInfo, priv, false, err)
 	}
 	return visitInfo
+}
+
+// appendVisitInfoIsSystemUser - Append an additional access permission
+// The append criteria are to be met when the SYSTEM_USER permission is possessed.
+func appendVisitInfoIsSystemUser(visitInfo []visitInfo, sctx PlanContext, user *auth.UserIdentity, priv string) []visitInfo {
+	checker := privilege.GetPrivilegeManager(sctx)
+	if checker != nil && checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, user) {
+		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs(priv)
+		visitInfo = appendDynamicVisitInfo(visitInfo, priv, false, err)
+	}
+	return visitInfo
+}
+
+// appendVisitInfoForRestrictedStaticPriv - Append access control based on static privilege determination
+// The append criteria are to be met when SEM is enabled and the restricted list is matched.
+func appendVisitInfoForRestrictedStaticPriv(visitInfo []visitInfo, priv mysql.PrivilegeType) []visitInfo {
+	if !sem.IsEnabled() || !sem.IsStaticPermissionRestricted(priv) {
+		return visitInfo
+	}
+
+	err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_PRIV_ADMIN")
+	return appendDynamicVisitInfo(visitInfo, "RESTRICTED_PRIV_ADMIN", false, err)
 }
 
 func collectVisitInfoFromGrantStmt(sctx PlanContext, vi []visitInfo, stmt *ast.GrantStmt) ([]visitInfo, error) {

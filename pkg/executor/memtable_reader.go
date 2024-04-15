@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -48,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/set"
 	pd "github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
@@ -168,6 +170,13 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 	}
 	if !hasPriv(sctx, mysql.ConfigPriv) {
 		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+	}
+	if sem.IsEnabled() && sem.IsStaticPermissionRestricted(mysql.ConfigPriv) {
+		checker := privilege.GetPrivilegeManager(sctx)
+		activeRoles := sctx.GetSessionVars().ActiveRoles
+		if checker != nil && !checker.RequestDynamicVerification(activeRoles, "RESTRICTED_PRIV_ADMIN", false) {
+			return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_PRIV_ADMIN")
+		}
 	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
@@ -314,6 +323,13 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	case diagnosticspb.ServerInfoType_HardwareInfo:
 		if !hasPriv(sctx, mysql.ConfigPriv) {
 			return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+		}
+		if sem.IsEnabled() && sem.IsStaticPermissionRestricted(mysql.ConfigPriv) {
+			checker := privilege.GetPrivilegeManager(sctx)
+			activeRoles := sctx.GetSessionVars().ActiveRoles
+			if checker != nil && !checker.RequestDynamicVerification(activeRoles, "RESTRICTED_PRIV_ADMIN", false) {
+				return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_PRIV_ADMIN")
+			}
 		}
 	}
 	if e.extractor.SkipRequest || e.retrieved {

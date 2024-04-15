@@ -2626,6 +2626,11 @@ error = '''
 variable %s has no effect in TiDB
 '''
 
+["planner:8177"]
+error = '''
+Access denied; the recipient needs (at least one of) the %-.128s privilege(s) for this operation.
+'''
+
 ["planner:8242"]
 error = '''
 '%s' is unsupported on cache tables.

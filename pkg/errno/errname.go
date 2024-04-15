@@ -1125,6 +1125,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrIngestFailed:                mysql.Message("Ingest failed: %s", nil),
 	ErrIngestCheckEnvFailed:        mysql.Message("Check ingest environment failed: %s", nil),
 	ErrNotSupportedWithSem:         mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
+	ErrRecipientAccessDenied:       mysql.Message("Access denied; the recipient needs (at least one of) the %-.128s privilege(s) for this operation.", nil),
 
 	ErrPlacementPolicyCheck:            mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 	ErrMultiStatementDisabled:          mysql.Message("client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", nil),

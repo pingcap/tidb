@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"go.uber.org/zap"
 )
@@ -164,7 +165,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sessVars.StmtCtx)
-	originStmtHints, _, warns := hint.ParseStmtHints(tableHints, setVarHintChecker, byte(kv.ReplicaReadFollower))
+	originStmtHints, _, warns := hint.ParseStmtHints(tableHints, setVarHintChecker(sctx), byte(kv.ReplicaReadFollower))
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
 		sessVars.StmtCtx.AppendWarning(warn)
@@ -281,7 +282,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				core.DebugTraceTryBinding(pctx, binding.Hint)
 			}
 			hint.BindHint(stmtNode, binding.Hint)
-			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetFirstTableHints(), setVarHintChecker, byte(kv.ReplicaReadFollower))
+			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetFirstTableHints(), setVarHintChecker(sctx), byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
@@ -573,15 +574,23 @@ func handleInvalidBinding(ctx context.Context, sctx pctx.PlanContext, level stri
 }
 
 // setVarHintChecker checks whether the variable name in set_var hint is valid.
-func setVarHintChecker(varName, hint string) (ok bool, warning error) {
-	sysVar := variable.GetSysVar(varName)
-	if sysVar == nil { // no such a variable
-		return false, plannererrors.ErrUnresolvedHintName.FastGenByArgs(varName, hint)
+func setVarHintChecker(sctx sessionctx.Context) func(varName, hint string) (bool, error) {
+	return func(varName, hint string) (ok bool, warning error) {
+		sysVar := variable.GetSysVar(varName)
+		if sysVar == nil { // no such a variable
+			return false, plannererrors.ErrUnresolvedHintName.FastGenByArgs(varName, hint)
+		}
+		checker := privilege.GetPrivilegeManager(sctx)
+		sessionVars := sctx.GetSessionVars()
+		if !sysVar.IsHintUpdatableVerified {
+			warning = plannererrors.ErrNotHintUpdatable.FastGenByArgs(varName)
+		}
+		if sem.IsEnabled() && sem.IsReadOnlySysVar(varName) && !checker.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+			warning = plannererrors.ErrSQLInReadOnlyMode.FastGenByArgs(varName)
+			return false, warning
+		}
+		return true, warning
 	}
-	if !sysVar.IsHintUpdatableVerified {
-		warning = plannererrors.ErrNotHintUpdatable.FastGenByArgs(varName)
-	}
-	return true, warning
 }
 
 func init() {
