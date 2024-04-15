@@ -28,7 +28,7 @@ import (
 
 var (
 	// IDAllocatorStep is the default step for id allocator.
-	IDAllocatorStep = 10
+	IDAllocatorStep = 100
 )
 
 // IDAllocator is used to allocate global ID.
