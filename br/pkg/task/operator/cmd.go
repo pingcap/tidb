@@ -138,7 +138,11 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	cx.run(func() error { return pauseGCKeeper(cx) })
 	cx.run(func() error {
 		log.Info("Pause scheduler waiting all connections established.")
-		<-initChan
+		select {
+		case <-initChan:
+		case <-cx.Done():
+			return cx.Err()
+		}
 		log.Info("Pause scheduler noticed connections established.")
 		return pauseSchedulerKeeper(cx)
 	})
