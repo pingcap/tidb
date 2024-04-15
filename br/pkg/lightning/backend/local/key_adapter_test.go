@@ -23,13 +23,11 @@ import (
 	"time"
 	"unsafe"
 
-<<<<<<< HEAD:br/pkg/lightning/backend/local/key_adapter_test.go
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-=======
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
->>>>>>> b91a1b3c416 (lightning: change MinRowID because ADD UNIQUE INDEX may be smaller (#51955)):br/pkg/lightning/common/key_adapter_test.go
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -170,7 +168,7 @@ func TestDecodeKeyDstIsInsufficient(t *testing.T) {
 }
 
 func TestMinRowID(t *testing.T) {
-	keyApapter := DupDetectKeyAdapter{}
+	keyApapter := dupDetectKeyAdapter{}
 	key := []byte("key")
 	val := []byte("val")
 	shouldBeMin := keyApapter.Encode(key, val, MinRowID)
@@ -195,7 +193,8 @@ func TestMinRowID(t *testing.T) {
 		types.NewBytesDatum(make([]byte, 100)),
 	}
 	for _, d := range handleData {
-		encodedKey, err := codec.EncodeKey(time.Local, nil, d)
+		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		encodedKey, err := codec.EncodeKey(sc, nil, d)
 		require.NoError(t, err)
 		ch, err := kv.NewCommonHandle(encodedKey)
 		require.NoError(t, err)

@@ -436,9 +436,6 @@ type KvPair struct {
 	Key []byte
 	// Val is the value of the KV pair
 	Val []byte
-<<<<<<< HEAD
-	// RowID is the row id of the KV pair.
-=======
 	// RowID identifies a KvPair in case two KvPairs are equal in Key and Val. It has
 	// two sources:
 	//
@@ -446,7 +443,6 @@ type KvPair struct {
 	//
 	// Otherwise, the RowID is related to the row number in the source files, and
 	// encode the number with `codec.EncodeComparableVarint`.
->>>>>>> b91a1b3c416 (lightning: change MinRowID because ADD UNIQUE INDEX may be smaller (#51955))
 	RowID []byte
 }
 

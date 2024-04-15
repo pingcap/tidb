@@ -101,7 +101,6 @@ go_test(
     ],
     embed = [":common"],
     flaky = True,
-<<<<<<< HEAD
     shard_count = 21,
     deps = [
         "//br/pkg/errors",
@@ -119,27 +118,6 @@ go_test(
         "//testkit/testsetup",
         "//util/dbutil",
         "//util/mock",
-=======
-    shard_count = 29,
-    deps = [
-        "//br/pkg/errors",
-        "//br/pkg/lightning/log",
-        "//pkg/ddl",
-        "//pkg/errno",
-        "//pkg/kv",
-        "//pkg/meta",
-        "//pkg/meta/autoid",
-        "//pkg/parser",
-        "//pkg/parser/ast",
-        "//pkg/parser/model",
-        "//pkg/store/driver/error",
-        "//pkg/store/mockstore",
-        "//pkg/testkit/testsetup",
-        "//pkg/types",
-        "//pkg/util/codec",
-        "//pkg/util/dbutil",
-        "//pkg/util/mock",
->>>>>>> b91a1b3c416 (lightning: change MinRowID because ADD UNIQUE INDEX may be smaller (#51955))
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
