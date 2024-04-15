@@ -296,7 +296,19 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 
 func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Service {
 	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
+	service := &Service{
+		autoIDMap:  make(map[autoIDKey]*autoIDValue),
+		leaderShip: l,
+		store:      store,
+	}
 	l.SetBeOwnerHook(func() {
+		// Reset the map to avoid a case that a node lose leadership and regain it, then
+		// improperly use the stale map to serve the autoid requests.
+		// See https://github.com/pingcap/tidb/issues/52600
+		service.autoIDLock.Lock()
+		clear(service.autoIDMap)
+		service.autoIDLock.Unlock()
+
 		logutil.BgLogger().Info("leader change of autoid service, this node become owner",
 			zap.String("addr", selfAddr),
 			zap.String("category", "autoid service"))
@@ -307,11 +319,7 @@ func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Servic
 		panic(err)
 	}
 
-	return &Service{
-		autoIDMap:  make(map[autoIDKey]*autoIDValue),
-		leaderShip: l,
-		store:      store,
-	}
+	return service
 }
 
 type mockClient struct {
@@ -348,7 +356,10 @@ func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 // Close closes the Service and clean up resource.
 func (s *Service) Close() {
 	if s.leaderShip != nil && s.leaderShip.IsOwner() {
+		s.autoIDLock.Lock()
+		defer s.autoIDLock.Unlock()
 		for k, v := range s.autoIDMap {
+			v.Lock()
 			if v.base > 0 {
 				err := v.forceRebase(context.Background(), s.store, k.dbID, k.tblID, v.base, v.isUnsigned)
 				if err != nil {
@@ -359,6 +370,7 @@ func (s *Service) Close() {
 						zap.Error(err))
 				}
 			}
+			v.Unlock()
 		}
 		s.leaderShip.Cancel()
 	}
