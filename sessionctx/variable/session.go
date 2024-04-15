@@ -2002,11 +2002,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
-<<<<<<< HEAD:sessionctx/variable/session.go
-=======
-	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.StatsLoadSyncWait.Store(StatsLoadSyncWait.Load())
->>>>>>> 9bb3697349b (statistics: upgrade stats timeout checkpoint after it timeouts (#52424)):pkg/sessionctx/variable/session.go
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
