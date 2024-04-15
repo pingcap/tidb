@@ -15,6 +15,7 @@
 package autoid_test
 
 import (
+	"fmt"
 	"context"
 	"strconv"
 	"strings"
@@ -566,4 +567,50 @@ func TestIssue39528(t *testing.T) {
 	require.NoError(t, err)
 	// Make sure the code does not visit tikv on allocate path.
 	require.False(t, codeRun)
+}
+
+func TestIssue52622(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@auto_increment_increment = 66;`)
+	tk.MustExec(`set @@auto_increment_offset = 9527;`)
+
+	
+	tk.MustQuery(`select @@auto_increment_increment;`).Check(testkit.Rows("66"))
+	tk.MustQuery(`select @@auto_increment_offset;`).Check(testkit.Rows("9527"))
+
+	for i:=0; i<2; i++ {
+		createTableSQL := "create table issue52622 (id int primary key auto_increment, k int)"
+		if i == 0 {
+			createTableSQL = createTableSQL + " AUTO_ID_CACHE 1"
+		}
+
+		fmt.Println("============== create ", createTableSQL)
+
+		tk.MustExec(createTableSQL)
+
+		fmt.Println("??????????? ", createTableSQL)
+
+		tk.MustExec("insert into issue52622 (k) values (1),(2),(3);")
+		tk.MustQuery("select * from issue52622").Check(testkit.Rows("7 1", "73 2", "139 3"))
+
+		// if i == 0 {
+		// 	tk.MustQuery("show create table issue52622").CheckContain("")
+		// }
+
+
+		// tk.MustExec("truncate table issue52622;")
+		// tk.MustExec("insert into issue52622 (k) values (1)")
+		// tk.MustExec("insert into issue52622 (k) values (2)")
+		// tk.MustExec("insert into issue52622 (k) values (3)")
+		// tk.MustQuery("show create table issue52622;")
+		// tk.MustExec("insert into issue52622 (k) values (4);")
+
+		// tk.MustQuery("select * from issue52622").Check(testkit.Rows())
+
+
+		tk.MustExec("drop table issue52622;")
+	}
 }

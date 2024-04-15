@@ -15,6 +15,7 @@
 package structure
 
 import (
+	"fmt"
 	"bytes"
 	"context"
 	"strconv"
@@ -42,6 +43,7 @@ func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 // HGet gets the value of a hash field.
 func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	dataKey := t.encodeHashDataKey(key, field)
+	fmt.Println("xxxx", dataKey)
 	value, err := t.reader.Get(context.TODO(), dataKey)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
