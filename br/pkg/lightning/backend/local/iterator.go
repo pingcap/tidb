@@ -27,9 +27,6 @@ import (
 
 // Iter abstract iterator method for Ingester.
 type Iter interface {
-	// Seek seek to specify position.
-	// if key not found, seeks next key position in iter.
-	Seek(key []byte) bool
 	// Error return current error on this iter.
 	Error() error
 	// First moves this iter to the first key.
@@ -86,15 +83,6 @@ type dupDetectIter struct {
 // DupDetectOpt is the option for duplicate detection.
 type DupDetectOpt struct {
 	ReportErrOnDup bool
-}
-
-func (d *dupDetectIter) Seek(key []byte) bool {
-	rawKey := d.keyAdapter.Encode(nil, key, ZeroRowID)
-	if d.err != nil || !d.iter.SeekGE(rawKey) {
-		return false
-	}
-	d.fill()
-	return d.err == nil
 }
 
 func (d *dupDetectIter) First() bool {
@@ -223,15 +211,6 @@ type dupDBIter struct {
 	keyAdapter KeyAdapter
 	curKey     []byte
 	err        error
-}
-
-func (d *dupDBIter) Seek(key []byte) bool {
-	rawKey := d.keyAdapter.Encode(nil, key, ZeroRowID)
-	if d.err != nil || !d.iter.SeekGE(rawKey) {
-		return false
-	}
-	d.curKey, d.err = d.keyAdapter.Decode(d.curKey[:0], d.iter.Key())
-	return d.err == nil
 }
 
 func (d *dupDBIter) Error() error {
