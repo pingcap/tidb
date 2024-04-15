@@ -598,6 +598,10 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 		req := rc.NewChunk(nil)
 		iter := chunk.NewIterator4Chunk(req)
+		// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
+		// Hence, when reading statistics, we should skip invalid date check. See #39336.
+		sc := h.initStatsCtx.GetSessionVars().StmtCtx
+		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 		for {
 			err := rc.Next(ctx, req)
 			if err != nil {
