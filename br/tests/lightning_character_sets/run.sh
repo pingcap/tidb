@@ -77,13 +77,9 @@ check_contains 's: 5291'
 
 # test about unsupported charset in UTF-8 encoding dump files
 # test local backend
-<<<<<<< HEAD
 run_lightning --config "tests/$TEST_NAME/greek.toml" -d "tests/$TEST_NAME/greek" 2>&1 | grep -q "Unknown character set: 'greek'"
-=======
-run_lightning --config "$CUR/greek.toml" -d "$CUR/greek" 2>&1 | grep -q "Unknown character set: 'greek'"
 # check TiDB does not receive the DDL
 check_not_contains "greek" $TEST_DIR/tidb.log
->>>>>>> eea121309ac (lightning: skip CREATE DATABASE when downstream exists, and return error when parse failed (#51801))
 run_sql 'DROP DATABASE IF EXISTS charsets;'
 run_sql 'CREATE DATABASE charsets;'
 run_sql 'CREATE TABLE charsets.greek (c VARCHAR(20) PRIMARY KEY);'
