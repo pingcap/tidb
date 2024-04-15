@@ -728,3 +728,23 @@ func TestName(t *testing.T) {
 	err = txn.Rollback()
 	require.NoError(t, err)
 }
+
+func TestXXX(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	acc := m.GetAutoIDAccessors(362, 12777)
+	idAcc := acc.IncrementID(model.TableInfoVersion5)
+	_, err = idAcc.Get()
+	require.NoError(t, err)
+	// require.NoError(t, acc.RandomID().Put(101))
+	// require.NoError(t, meta.BackupAndRestoreAutoIDs(m, 1, 1, 2, 2))
+	// require.NoError(t, txn.Commit(context.Background()))
+}
