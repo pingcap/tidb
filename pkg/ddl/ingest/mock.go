@@ -43,15 +43,6 @@ func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBacken
 	}
 }
 
-// MarkJobProcessing implements BackendCtxMgr.MarkJobProcessing interface.
-func (*MockBackendCtxMgr) MarkJobProcessing(_ int64) bool {
-	return true
-}
-
-// MarkJobFinish implements BackendCtxMgr.MarkJobFinish interface.
-func (*MockBackendCtxMgr) MarkJobFinish() {
-}
-
 // CheckAvailable implements BackendCtxMgr.Available interface.
 func (m *MockBackendCtxMgr) CheckAvailable() (bool, error) {
 	return len(m.runningJobs) == 0, nil

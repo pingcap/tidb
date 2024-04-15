@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -157,12 +158,13 @@ func TestVerifyChecksum(t *testing.T) {
 
 func TestGetTargetNodeCpuCnt(t *testing.T) {
 	_, tm, ctx := testutil.InitTableTest(t)
-	require.False(t, variable.EnableDistTask.Load())
+	old := variable.EnableDistTask.Load()
 
+	variable.EnableDistTask.Store(false)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)"))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-		variable.EnableDistTask.Store(false)
+		variable.EnableDistTask.Store(old)
 	})
 	require.NoError(t, tm.InitMeta(ctx, "tidb1", ""))
 
@@ -260,7 +262,7 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	require.True(t, ok)
 	table, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
 	require.NoError(t, err)
-	var selectPlan plannercore.PhysicalPlan
+	var selectPlan base.PhysicalPlan
 	if path == "" {
 		selectPlan = &plannercore.PhysicalSelection{}
 	}

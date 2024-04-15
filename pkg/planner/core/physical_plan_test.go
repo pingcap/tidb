@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/internal"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -392,7 +393,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 		require.NoError(t, err, comment)
 
 		require.Equal(t, tt.plan, core.ToString(p), comment)
-		root, ok := p.(core.PhysicalPlan)
+		root, ok := p.(base.PhysicalPlan)
 		if !ok {
 			continue
 		}
@@ -400,7 +401,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 	}
 }
 
-func testDAGPlanBuilderSplitAvg(t *testing.T, root core.PhysicalPlan) {
+func testDAGPlanBuilderSplitAvg(t *testing.T, root base.PhysicalPlan) {
 	if p, ok := root.(*core.PhysicalTableReader); ok {
 		if p.TablePlans != nil {
 			baseAgg := p.TablePlans[len(p.TablePlans)-1]
@@ -457,11 +458,11 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	tk.MustExec(sql)
 	info := tk.Session().ShowProcess()
 	require.NotNil(t, info)
-	p, ok := info.Plan.(core.Plan)
+	p, ok := info.Plan.(base.Plan)
 	require.True(t, ok)
 
-	var findSelection func(p core.Plan) *core.PhysicalSelection
-	findSelection = func(p core.Plan) *core.PhysicalSelection {
+	var findSelection func(p base.Plan) *core.PhysicalSelection
+	findSelection = func(p base.Plan) *core.PhysicalSelection {
 		if p == nil {
 			return nil
 		}
@@ -481,7 +482,7 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 			}
 			return nil
 		default:
-			physicayPlan := p.(core.PhysicalPlan)
+			physicayPlan := p.(base.PhysicalPlan)
 			for _, child := range physicayPlan.Children() {
 				if sel := findSelection(child); sel != nil {
 					return sel

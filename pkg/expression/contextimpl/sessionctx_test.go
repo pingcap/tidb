@@ -228,7 +228,10 @@ func TestSessionEvalContextOptProps(t *testing.T) {
 	require.Equal(t, ctx.GetSessionVars().ActiveRoles, roles)
 
 	// test for OptPropSessionVars
-	gotVars := getProvider[*contextopt.SessionVarsPropProvider](t, impl, context.OptPropSessionVars).GetSessionVars()
+	sessVarsProvider := getProvider[*contextopt.SessionVarsPropProvider](t, impl, context.OptPropSessionVars)
+	require.NotNil(t, sessVarsProvider)
+	gotVars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(impl)
+	require.NoError(t, err)
 	require.Same(t, ctx.GetSessionVars(), gotVars)
 
 	// test for OptPropAdvisoryLock

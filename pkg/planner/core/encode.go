@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -70,7 +71,7 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 		var estRows float64
 		if fop.IsPhysicalPlan {
-			estRows = fop.Origin.(PhysicalPlan).GetEstRowCountForDisplay()
+			estRows = fop.Origin.(base.PhysicalPlan).GetEstRowCountForDisplay()
 		} else if statsInfo := p.StatsInfo(); statsInfo != nil {
 			estRows = statsInfo.RowCount
 		}
@@ -102,7 +103,7 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 		var estRows float64
 		if fop.IsPhysicalPlan {
-			estRows = fop.Origin.(PhysicalPlan).GetEstRowCountForDisplay()
+			estRows = fop.Origin.(base.PhysicalPlan).GetEstRowCountForDisplay()
 		} else if statsInfo := p.StatsInfo(); statsInfo != nil {
 			estRows = statsInfo.RowCount
 		}
@@ -152,7 +153,7 @@ type planEncoder struct {
 
 // EncodePlan is used to encodePlan the plan to the plan tree with compressing.
 // Deprecated: FlattenPhysicalPlan() + EncodeFlatPlan() is preferred.
-func EncodePlan(p Plan) string {
+func EncodePlan(p base.Plan) string {
 	if explain, ok := p.(*Explain); ok {
 		p = explain.TargetPlan
 	}
@@ -170,7 +171,7 @@ func EncodePlan(p Plan) string {
 	return pn.encodePlanTree(p)
 }
 
-func (pn *planEncoder) encodePlanTree(p Plan) string {
+func (pn *planEncoder) encodePlanTree(p base.Plan) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
 	pn.ctes = pn.ctes[:0]
@@ -205,11 +206,11 @@ func (pn *planEncoder) encodeCTEPlan() {
 	}
 }
 
-func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth int) {
+func (pn *planEncoder) encodePlan(p base.Plan, isRoot bool, store kv.StoreType, depth int) {
 	taskTypeInfo := plancodec.EncodeTaskType(isRoot, store)
 	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 	rowCount := 0.0
-	if pp, ok := p.(PhysicalPlan); ok {
+	if pp, ok := p.(base.PhysicalPlan); ok {
 		rowCount = pp.GetEstRowCountForDisplay()
 	} else if statsInfo := p.StatsInfo(); statsInfo != nil {
 		rowCount = statsInfo.RowCount
@@ -285,7 +286,7 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 	d.buf.Grow(30 * len(selectPlan))
 	for _, fop := range selectPlan {
 		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(fop.IsRoot, fop.StoreType)
-		p := fop.Origin.(PhysicalPlan)
+		p := fop.Origin.(base.PhysicalPlan)
 		plancodec.NormalizePlanNode(
 			int(fop.Depth-uint32(selectPlanOffset)),
 			fop.Origin.TP(),
@@ -308,7 +309,7 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 
 // NormalizePlan is used to normalize the plan and generate plan digest.
 // Deprecated: FlattenPhysicalPlan() + NormalizeFlatPlan() is preferred.
-func NormalizePlan(p Plan) (normalized string, digest *parser.Digest) {
+func NormalizePlan(p base.Plan) (normalized string, digest *parser.Digest) {
 	selectPlan := getSelectPlan(p)
 	if selectPlan == nil {
 		return "", parser.NewDigest(nil)
@@ -329,13 +330,13 @@ func NormalizePlan(p Plan) (normalized string, digest *parser.Digest) {
 	return
 }
 
-func (d *planDigester) normalizePlanTree(p PhysicalPlan) {
+func (d *planDigester) normalizePlanTree(p base.PhysicalPlan) {
 	d.encodedPlans = make(map[int]bool)
 	d.buf.Reset()
 	d.normalizePlan(p, true, kv.TiKV, 0)
 }
 
-func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, store kv.StoreType, depth int) {
+func (d *planDigester) normalizePlan(p base.PhysicalPlan, isRoot bool, store kv.StoreType, depth int) {
 	taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(isRoot, store)
 	plancodec.NormalizePlanNode(depth, p.TP(), taskTypeInfo, p.ExplainNormalizedInfo(), &d.buf)
 	d.encodedPlans[p.ID()] = true
@@ -365,9 +366,9 @@ func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, store kv.Store
 	}
 }
 
-func getSelectPlan(p Plan) PhysicalPlan {
-	var selectPlan PhysicalPlan
-	if physicalPlan, ok := p.(PhysicalPlan); ok {
+func getSelectPlan(p base.Plan) base.PhysicalPlan {
+	var selectPlan base.PhysicalPlan
+	if physicalPlan, ok := p.(base.PhysicalPlan); ok {
 		selectPlan = physicalPlan
 	} else {
 		switch x := p.(type) {
