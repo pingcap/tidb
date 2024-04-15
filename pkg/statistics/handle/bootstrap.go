@@ -112,7 +112,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statstypes.StatsCache,
 	return tables, nil
 }
 
-func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, forceInit bool) {
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID := row.GetInt64(0)
@@ -125,7 +125,9 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 			if !ok {
 				continue
 			}
-			table = table.Copy()
+			if !forceInit {
+				table = table.Copy()
+			}
 		}
 		isIndex := row.GetInt64(1)
 		id := row.GetInt64(2)
@@ -176,7 +178,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 	}
 }
 
-func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, forceInit bool) {
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
@@ -189,7 +191,9 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			if !ok {
 				continue
 			}
-			table = table.Copy()
+			if !forceInit {
+				table = table.Copy()
+			}
 		}
 		// All the objects in the table share the same stats version.
 		if statsVer != statistics.Version0 {
@@ -267,7 +271,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 	}
 }
 
-func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
+func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statstypes.StatsCache, forceInit bool) error {
 	sql := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl)*/ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms order by table_id"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
@@ -285,12 +289,12 @@ func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache statsty
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4ChunkLite(is, cache, iter)
+		h.initStatsHistograms4ChunkLite(is, cache, iter, forceInit)
 	}
 	return nil
 }
 
-func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
+func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.StatsCache, forceInit bool) error {
 	sql := "select  /*+ ORDER_INDEX(mysql.stats_histograms,tbl)*/ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms order by table_id"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
@@ -308,12 +312,12 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4Chunk(is, cache, iter)
+		h.initStatsHistograms4Chunk(is, cache, iter, forceInit)
 	}
 	return nil
 }
 
-func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task) error {
+func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache statstypes.StatsCache, task initstats.Task, forceInit bool) error {
 	se, err := h.Pool.SPool().Get()
 	if err != nil {
 		return err
@@ -341,16 +345,16 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4Chunk(is, cache, iter)
+		h.initStatsHistograms4Chunk(is, cache, iter, forceInit)
 	}
 	return nil
 }
 
-func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
+func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache statstypes.StatsCache, forceInit bool) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
-		return h.initStatsHistogramsByPaging(is, cache, task)
+		return h.initStatsHistogramsByPaging(is, cache, task, forceInit)
 	})
 	ls.LoadStats()
 	for tid <= maxTid {
@@ -364,7 +368,7 @@ func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache 
 	return nil
 }
 
-func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, forceInit bool) {
 	affectedIndexes := make(map[*statistics.Index]struct{})
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -378,7 +382,9 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			if !ok {
 				continue
 			}
-			table = table.Copy()
+			if !forceInit {
+				table = table.Copy()
+			}
 		}
 		idx, ok := table.Indices[row.GetInt64(1)]
 		if !ok || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
@@ -400,7 +406,7 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 	}
 }
 
-func (h *Handle) initStatsTopN(cache statstypes.StatsCache) error {
+func (h *Handle) initStatsTopN(cache statstypes.StatsCache, forceInit bool) error {
 	sql := "select /*+ ORDER_INDEX(mysql.stats_top_n,tbl)*/  HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1 order by table_id"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
@@ -418,12 +424,12 @@ func (h *Handle) initStatsTopN(cache statstypes.StatsCache) error {
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsTopN4Chunk(cache, iter)
+		h.initStatsTopN4Chunk(cache, iter, forceInit)
 	}
 	return nil
 }
 
-func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initstats.Task) error {
+func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initstats.Task, forceInit bool) error {
 	se, err := h.Pool.SPool().Get()
 	if err != nil {
 		return err
@@ -451,16 +457,16 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsTopN4Chunk(cache, iter)
+		h.initStatsTopN4Chunk(cache, iter, forceInit)
 	}
 	return nil
 }
 
-func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache) error {
+func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache, forceInit bool) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
-		return h.initStatsTopNByPaging(cache, task)
+		return h.initStatsTopNByPaging(cache, task, forceInit)
 	})
 	ls.LoadStats()
 	for tid <= maxTid {
@@ -524,7 +530,7 @@ func (h *Handle) initStatsFMSketch(cache statstypes.StatsCache) error {
 	return nil
 }
 
-func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, forceInit bool) {
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
@@ -537,7 +543,9 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			if !ok {
 				continue
 			}
-			table = table.Copy()
+			if !forceInit {
+				table = table.Copy()
+			}
 		}
 		var lower, upper types.Datum
 		var hist *statistics.Histogram
@@ -585,8 +593,9 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 }
 
 func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
+	forceInit := config.GetGlobalConfig().Performance.ForceInitStats
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err := h.initStatsBucketsConcurrency(cache)
+		err := h.initStatsBucketsConcurrency(cache, forceInit)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -608,7 +617,7 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 			if req.NumRows() == 0 {
 				break
 			}
-			h.initStatsBuckets4Chunk(cache, iter)
+			h.initStatsBuckets4Chunk(cache, iter, forceInit)
 		}
 	}
 	tables := cache.Values()
@@ -630,7 +639,7 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 	return nil
 }
 
-func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task initstats.Task) error {
+func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task initstats.Task, forceInit bool) error {
 	se, err := h.Pool.SPool().Get()
 	if err != nil {
 		return err
@@ -658,16 +667,16 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsBuckets4Chunk(cache, iter)
+		h.initStatsBuckets4Chunk(cache, iter, forceInit)
 	}
 	return nil
 }
 
-func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache) error {
+func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, forceInit bool) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
-		return h.initStatsBucketsByPaging(cache, task)
+		return h.initStatsBucketsByPaging(cache, task, forceInit)
 	})
 	ls.LoadStats()
 	for tid <= maxTid {
@@ -696,11 +705,12 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
+	forceInit := config.GetGlobalConfig().Performance.ForceInitStats
 	cache, err := h.initStatsMeta(is)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = h.initStatsHistogramsLite(is, cache)
+	err = h.initStatsHistogramsLite(is, cache, forceInit)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -727,18 +737,20 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err = h.initStatsHistogramsConcurrency(is, cache)
+	concurrentInit := config.GetGlobalConfig().Performance.ConcurrentlyInitStats
+	forceInit := config.GetGlobalConfig().Performance.ForceInitStats
+	if concurrentInit {
+		err = h.initStatsHistogramsConcurrency(is, cache, forceInit)
 	} else {
-		err = h.initStatsHistograms(is, cache)
+		err = h.initStatsHistograms(is, cache, forceInit)
 	}
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err = h.initStatsTopNConcurrency(cache)
+	if concurrentInit {
+		err = h.initStatsTopNConcurrency(cache, forceInit)
 	} else {
-		err = h.initStatsTopN(cache)
+		err = h.initStatsTopN(cache, forceInit)
 	}
 	if err != nil {
 		return err
