@@ -24,7 +24,8 @@ import (
 )
 
 func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel", "1*return(true)->1*return(false)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel",
+		"1*return(true)->1*return(false)")
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel")
 	}()
@@ -66,7 +67,8 @@ func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 }
 
 func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error", "1*return(true)->1*return(false)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error",
+		"1*return(true)->1*return(false)")
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error")
 	}()
