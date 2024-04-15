@@ -173,7 +173,7 @@ func TestSlowQueryMisc(t *testing.T) {
 	tk.MustQuery("select a from test.t_stale_read")
 	tk.MustExec("commit")
 	require.Len(t, tk.MustQuery("SELECT query, txn_start_ts  FROM `information_schema`.`slow_query` "+
-		"where query like 'select % from %t_stale_read%' and Txn_start_ts > 0").Rows(), 3)
+		"where (query = 'select a from test.t_stale_read;' or query like 'select a from test.t_stale_read as of timestamp %') and Txn_start_ts > 0").Rows(), 3)
 }
 
 func TestLogSlowLogIndex(t *testing.T) {
