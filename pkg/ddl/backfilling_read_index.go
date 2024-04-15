@@ -306,5 +306,6 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		r.job.ReorgMeta,
 		r.avgRowSize,
 		concurrency,
+		r.GetResource(),
 	)
 }
