@@ -652,6 +652,8 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 				return nil, nil
 			}
 
+			// for debug
+			log.Info("delete range", zap.String("key", e.Key.String()), zap.String("value", string(e.Value)))
 			return nil, sr.restoreFromHistory(job, false)
 		}
 		return nil, nil
