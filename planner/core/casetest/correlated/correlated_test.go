@@ -17,7 +17,7 @@ package correlated
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/testkit"
 )
 
 func TestCorrelatedSubquery(t *testing.T) {

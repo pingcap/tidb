@@ -18,7 +18,7 @@ import (
 	"flag"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
