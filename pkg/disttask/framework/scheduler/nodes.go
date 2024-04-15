@@ -183,8 +183,7 @@ func filterByScope(nodes []proto.ManagedNode, targetScope string) []string {
 				nodeIDs = append(nodeIDs, node.ID)
 			}
 		} else {
-			// When not have other, use background nodes,
-			// use these branches to maintain backward compatibility.
+			// When not have other, use background nodes, use these branches to maintain backward compatibility.
 			// Should not take care of `targetScope`.
 			if node.Role == "background" && haveBackground {
 				nodeIDs = append(nodeIDs, node.ID)
