@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	base2 "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -155,7 +156,7 @@ type physicalSchemaProducer struct {
 	basePhysicalPlan
 }
 
-func (s *physicalSchemaProducer) cloneWithSelf(newSelf PhysicalPlan) (*physicalSchemaProducer, error) {
+func (s *physicalSchemaProducer) cloneWithSelf(newSelf base2.PhysicalPlan) (*physicalSchemaProducer, error) {
 	base, err := s.basePhysicalPlan.cloneWithSelf(newSelf)
 	if err != nil {
 		return nil, err
@@ -272,7 +273,7 @@ func buildLogicalJoinSchema(joinType JoinType, join LogicalPlan) *expression.Sch
 }
 
 // BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
-func BuildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.Schema {
+func BuildPhysicalJoinSchema(joinType JoinType, join base2.PhysicalPlan) *expression.Schema {
 	leftSchema := join.Children()[0].Schema()
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
@@ -317,8 +318,8 @@ func GetStatsInfo(i any) map[string]uint64 {
 		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419
 		return nil
 	}
-	p := i.(Plan)
-	var physicalPlan PhysicalPlan
+	p := i.(base2.Plan)
+	var physicalPlan base2.PhysicalPlan
 	switch x := p.(type) {
 	case *Insert:
 		physicalPlan = x.SelectPlan
@@ -326,7 +327,7 @@ func GetStatsInfo(i any) map[string]uint64 {
 		physicalPlan = x.SelectPlan
 	case *Delete:
 		physicalPlan = x.SelectPlan
-	case PhysicalPlan:
+	case base2.PhysicalPlan:
 		physicalPlan = x
 	}
 
@@ -387,7 +388,7 @@ func extractStringFromBoolSlice(slice []bool) string {
 	return strings.Join(l, ",")
 }
 
-func tableHasDirtyContent(ctx PlanContext, tableInfo *model.TableInfo) bool {
+func tableHasDirtyContent(ctx base2.PlanContext, tableInfo *model.TableInfo) bool {
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ctx.HasDirtyContent(tableInfo.ID)
@@ -402,8 +403,8 @@ func tableHasDirtyContent(ctx PlanContext, tableInfo *model.TableInfo) bool {
 	return false
 }
 
-func clonePhysicalPlan(plans []PhysicalPlan) ([]PhysicalPlan, error) {
-	cloned := make([]PhysicalPlan, 0, len(plans))
+func clonePhysicalPlan(plans []base2.PhysicalPlan) ([]base2.PhysicalPlan, error) {
+	cloned := make([]base2.PhysicalPlan, 0, len(plans))
 	for _, p := range plans {
 		c, err := p.Clone()
 		if err != nil {
@@ -472,11 +473,11 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 }
 
 // GetPushDownCtx creates a PushDownContext from PlanContext
-func GetPushDownCtx(pctx PlanContext) expression.PushDownContext {
+func GetPushDownCtx(pctx base2.PlanContext) expression.PushDownContext {
 	return GetPushDownCtxFromBuildPBContext(pctx.GetBuildPBCtx())
 }
 
 // GetPushDownCtxFromBuildPBContext creates a PushDownContext from BuildPBContext
-func GetPushDownCtxFromBuildPBContext(bctx *BuildPBContext) expression.PushDownContext {
+func GetPushDownCtxFromBuildPBContext(bctx *base2.BuildPBContext) expression.PushDownContext {
 	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(), bctx.InExplainStmt, bctx.AppendWarning, bctx.AppendExtraWarning, bctx.GroupConcatMaxLen)
 }

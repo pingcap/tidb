@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
@@ -858,7 +859,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		e.viewMu.Lock()
 		_, ok := e.viewSchemaMap[tbl.ID]
 		if !ok {
-			var viewLogicalPlan plannercore.Plan
+			var viewLogicalPlan base.Plan
 			internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 			// Build plan is not thread safe, there will be concurrency on sessionctx.
 			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -58,7 +59,7 @@ import (
 // 4. Executor sends requests to the target components instead of all of the components
 type MemTablePredicateExtractor interface {
 	// Extracts predicates which can be pushed down and returns the remained predicates
-	Extract(PlanContext, *expression.Schema, []*types.FieldName, []expression.Expression) (remained []expression.Expression)
+	Extract(base.PlanContext, *expression.Schema, []*types.FieldName, []expression.Expression) (remained []expression.Expression)
 	explainInfo(p *PhysicalMemTable) string
 }
 
@@ -529,7 +530,7 @@ func (extractHelper) getStringFunctionName(fn *expression.ScalarFunction) string
 // SELECT * FROM t WHERE time='2019-10-10 10:10:10'
 // SELECT * FROM t WHERE time>'2019-10-10 10:10:10' AND time<'2019-10-11 10:10:10'
 func (helper extractHelper) extractTimeRange(
-	ctx PlanContext,
+	ctx base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -718,7 +719,7 @@ type ClusterTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *ClusterTableExtractor) Extract(_ PlanContext,
+func (e *ClusterTableExtractor) Extract(_ base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -784,7 +785,7 @@ type ClusterLogTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *ClusterLogTableExtractor) Extract(ctx PlanContext,
+func (e *ClusterLogTableExtractor) Extract(ctx base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -897,7 +898,7 @@ type HotRegionsHistoryTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *HotRegionsHistoryTableExtractor) Extract(ctx PlanContext,
+func (e *HotRegionsHistoryTableExtractor) Extract(ctx base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1015,7 +1016,7 @@ func newMetricTableExtractor() *MetricTableExtractor {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *MetricTableExtractor) Extract(ctx PlanContext,
+func (e *MetricTableExtractor) Extract(ctx base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1085,7 +1086,7 @@ func (e *MetricTableExtractor) explainInfo(p *PhysicalMemTable) string {
 }
 
 // GetMetricTablePromQL uses to get the promQL of metric table.
-func (e *MetricTableExtractor) GetMetricTablePromQL(sctx PlanContext, lowerTableName string) string {
+func (e *MetricTableExtractor) GetMetricTablePromQL(sctx base.PlanContext, lowerTableName string) string {
 	quantiles := e.Quantiles
 	def, err := infoschema.GetMetricTableDef(lowerTableName)
 	if err != nil {
@@ -1115,7 +1116,7 @@ type MetricSummaryTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *MetricSummaryTableExtractor) Extract(_ PlanContext,
+func (e *MetricSummaryTableExtractor) Extract(_ base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1147,7 +1148,7 @@ type InspectionResultTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *InspectionResultTableExtractor) Extract(_ PlanContext,
+func (e *InspectionResultTableExtractor) Extract(_ base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1184,7 +1185,7 @@ type InspectionSummaryTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *InspectionSummaryTableExtractor) Extract(_ PlanContext,
+func (e *InspectionSummaryTableExtractor) Extract(_ base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1242,7 +1243,7 @@ type InspectionRuleTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *InspectionRuleTableExtractor) Extract(_ PlanContext,
+func (e *InspectionRuleTableExtractor) Extract(_ base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1286,7 +1287,7 @@ type TimeRange struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *SlowQueryExtractor) Extract(ctx PlanContext,
+func (e *SlowQueryExtractor) Extract(ctx base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1389,7 +1390,7 @@ type TableStorageStatsExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface.
-func (e *TableStorageStatsExtractor) Extract(_ PlanContext,
+func (e *TableStorageStatsExtractor) Extract(_ base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1459,7 +1460,7 @@ type TiFlashSystemTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *TiFlashSystemTableExtractor) Extract(_ PlanContext,
+func (e *TiFlashSystemTableExtractor) Extract(_ base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1521,7 +1522,7 @@ type StatementsSummaryExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *StatementsSummaryExtractor) Extract(sctx PlanContext,
+func (e *StatementsSummaryExtractor) Extract(sctx base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1574,7 +1575,7 @@ func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 }
 
 func (e *StatementsSummaryExtractor) findCoarseTimeRange(
-	sctx PlanContext,
+	sctx base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1622,7 +1623,7 @@ type TikvRegionPeersExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *TikvRegionPeersExtractor) Extract(_ PlanContext,
+func (e *TikvRegionPeersExtractor) Extract(_ base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1680,7 +1681,7 @@ type ColumnsTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *ColumnsTableExtractor) Extract(_ PlanContext,
+func (e *ColumnsTableExtractor) Extract(_ base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1743,7 +1744,7 @@ type TiKVRegionStatusExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *TiKVRegionStatusExtractor) Extract(_ PlanContext,
+func (e *TiKVRegionStatusExtractor) Extract(_ base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1797,7 +1798,7 @@ type InfoSchemaTablesExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *InfoSchemaTablesExtractor) Extract(_ PlanContext,
+func (e *InfoSchemaTablesExtractor) Extract(_ base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -261,7 +262,7 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	require.True(t, ok)
 	table, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
 	require.NoError(t, err)
-	var selectPlan plannercore.PhysicalPlan
+	var selectPlan base.PhysicalPlan
 	if path == "" {
 		selectPlan = &plannercore.PhysicalSelection{}
 	}
