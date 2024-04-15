@@ -824,14 +824,13 @@ func filterAllStoresAccordingToTiFlashReplicaRead(allStores []uint64, aliveStore
 
 // getAliveStoresAndStoreIDs gets alive TiFlash stores and their IDs.
 // If tiflashReplicaReadPolicy is not all_replicas, it will also return the IDs of the alive TiFlash stores in TiDB zone.
-// func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, allTiFlashStores []*locate.Store, ttl time.Duration, store *kvStore, tiflashReplicaReadPolicy tiflash.ReplicaRead, tidbZone string) (aliveStores *aliveStoresBundle) {
-func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, allValidTiflashStoresMap map[uint64]struct{}, ttl time.Duration, store *kvStore, tiflashReplicaReadPolicy tiflash.ReplicaRead, tidbZone string) (aliveStores *aliveStoresBundle) {
+func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, allUsedTiflashStoresMap map[uint64]struct{}, ttl time.Duration, store *kvStore, tiflashReplicaReadPolicy tiflash.ReplicaRead, tidbZone string) (aliveStores *aliveStoresBundle) {
 	aliveStores = new(aliveStoresBundle)
 	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 
-	allValidTiflashStores := make([]*tikv.Store, 0)
+	allValidTiflashStores := make([]*tikv.Store, 0, len(allUsedTiflashStoresMap))
 	for _, store := range allTiFlashStores {
-		_, ok := allValidTiflashStoresMap[store.StoreID()]
+		_, ok := allUsedTiflashStoresMap[store.StoreID()]
 		if ok {
 			allValidTiflashStores = append(allValidTiflashStores, store)
 		}
@@ -928,9 +927,9 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			}
 		}
 
-		rpcCtxs := make([]*tikv.RPCContext, 0)
-		validTiflashStores := make([][]uint64, 0)
-		allValidTiflashStores := make(map[uint64]struct{}, 0)
+		rpcCtxs := make([]*tikv.RPCContext, 0, len(tasks))
+		usedTiFlashStores := make([][]uint64, 0, len(tasks))
+		usedTiFlashStoresMap := make(map[uint64]struct{}, 0)
 		needRetry := false
 		for _, task := range tasks {
 			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, isMPP, tikv.LabelFilterNoTiFlashWriteNode)
@@ -952,10 +951,10 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 
 			allStores, _ := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store, tikv.LabelFilterNoTiFlashWriteNode)
 			for _, storeID := range allStores {
-				allValidTiflashStores[storeID] = struct{}{}
+				usedTiFlashStoresMap[storeID] = struct{}{}
 			}
 			rpcCtxs = append(rpcCtxs, rpcCtx)
-			validTiflashStores = append(validTiflashStores, allStores)
+			usedTiFlashStores = append(usedTiFlashStores, allStores)
 		}
 
 		if needRetry {
@@ -969,7 +968,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			continue
 		}
 
-		aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, allValidTiflashStores, ttl, store, tiflashReplicaReadPolicy, tidbZone)
+		aliveStores = getAliveStoresAndStoreIDs(bo.GetCtx(), cache, usedTiFlashStoresMap, ttl, store, tiflashReplicaReadPolicy, tidbZone)
 		if tiflashReplicaReadPolicy.IsClosestReplicas() {
 			maxRemoteReadCountAllowed = len(aliveStores.storeIDsInTiDBZone) * tiflash.MaxRemoteReadCountPerNodeForClosestReplicas
 		}
@@ -982,7 +981,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		for idx, task := range tasks {
 			var err error
 			var regionInfo RegionInfo
-			regionInfo, regionInfosNeedReloadOnSendFail, regionIDsInOtherZones, err = filterAccessibleStoresAndBuildRegionInfo(cache, validTiflashStores[idx], bo, task, rpcCtxs[idx], aliveStores, isTiDBLabelZoneSet, tiflashReplicaReadPolicy, regionInfosNeedReloadOnSendFail, regionIDsInOtherZones, maxRemoteReadCountAllowed, tidbZone)
+			regionInfo, regionInfosNeedReloadOnSendFail, regionIDsInOtherZones, err = filterAccessibleStoresAndBuildRegionInfo(cache, usedTiFlashStores[idx], bo, task, rpcCtxs[idx], aliveStores, isTiDBLabelZoneSet, tiflashReplicaReadPolicy, regionInfosNeedReloadOnSendFail, regionIDsInOtherZones, maxRemoteReadCountAllowed, tidbZone)
 			if err != nil {
 				return nil, err
 			}
