@@ -16,17 +16,40 @@ package integrationtests
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
+	"go.uber.org/mock/gomock"
+	"golang.org/x/exp/rand"
+
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+func getMockBasicSchedulerExtForScope(ctrl *gomock.Controller, subtaskCnt int) scheduler.Extension {
+	return testutil.GetMockSchedulerExt(ctrl, testutil.SchedulerInfo{
+		AllErrorRetryable: true,
+		StepInfos: []testutil.StepInfo{
+			{Step: proto.StepOne, SubtaskCnt: subtaskCnt},
+			{Step: proto.StepTwo, SubtaskCnt: 1},
+		},
+	})
+}
+
+func submitTaskAndCheckSuccessForScope(ctx context.Context, t *testing.T, taskKey string, nodeCnt int, targetScope string, testContext *testutil.TestContext) int64 {
+	return submitTaskAndCheckSuccess(ctx, t, taskKey, targetScope, testContext, map[proto.Step]int{
+		proto.StepOne: nodeCnt,
+		proto.StepTwo: 1,
+	})
+}
 
 func checkSubtaskOnNodes(ctx context.Context, t *testing.T, taskID int64, expectedNodes []string) {
 	mgr, err := storage.GetTaskManager()
@@ -39,15 +62,16 @@ func checkSubtaskOnNodes(ctx context.Context, t *testing.T, taskID int64, expect
 }
 
 func TestScopeBasic(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 3, 16, true)
+	nodeCnt := 3
+	c := testutil.NewTestDXFContext(t, nodeCnt, 16, true)
 
-	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
+	testutil.RegisterTaskMeta(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, 3), c.TestContext, nil)
 	tk := testkit.NewTestKit(t, c.Store)
 
 	// 1. all "" role.
-	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😁", "", c.TestContext)
+	taskID := submitTaskAndCheckSuccessForScope(c.Ctx, t, "😁", nodeCnt, "", c.TestContext)
 
-	checkSubtaskOnNodes(c.Ctx, t, 1, []string{":4000", ":4001", ":4002"})
+	checkSubtaskOnNodes(c.Ctx, t, taskID, []string{":4000", ":4001", ":4002"})
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4000"`).Check(testkit.Rows(""))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4001"`).Check(testkit.Rows(""))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4002"`).Check(testkit.Rows(""))
@@ -59,33 +83,25 @@ func TestScopeBasic(t *testing.T) {
 
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "1*return()")
 	<-scheduler.TestRefreshedChan
-	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😊", "", c.TestContext)
+	taskID = submitTaskAndCheckSuccessForScope(c.Ctx, t, "😊", nodeCnt, "background", c.TestContext)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh"))
 
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4000"`).Check(testkit.Rows("background"))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4001"`).Check(testkit.Rows(""))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4002"`).Check(testkit.Rows(""))
-	// task with target_scope="", so run subtasks on nodes with "" role
-	checkSubtaskOnNodes(c.Ctx, t, 2, []string{":4001", ":4002"})
-
-	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "b1", "background", c.TestContext)
-	checkSubtaskOnNodes(c.Ctx, t, 3, []string{":4000"})
+	checkSubtaskOnNodes(c.Ctx, t, taskID, []string{":4000"})
 
 	// 3. 2 "background" role.
 	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
 	time.Sleep(5 * time.Second)
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "1*return()")
 	<-scheduler.TestRefreshedChan
-	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😆", "", c.TestContext)
+	taskID = submitTaskAndCheckSuccessForScope(c.Ctx, t, "😆", nodeCnt, "background", c.TestContext)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh"))
-	// task with target_scope="", so run subtasks on nodes with "" role
-	checkSubtaskOnNodes(c.Ctx, t, 4, []string{":4002"})
+	checkSubtaskOnNodes(c.Ctx, t, taskID, []string{":4000", ":4001"})
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4000"`).Check(testkit.Rows("background"))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4001"`).Check(testkit.Rows("background"))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4002"`).Check(testkit.Rows(""))
-
-	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "b2", "background", c.TestContext)
-	checkSubtaskOnNodes(c.Ctx, t, 5, []string{":4000", ":4001"})
 }
 
 func TestSetScope(t *testing.T) {
@@ -100,4 +116,59 @@ func TestSetScope(t *testing.T) {
 	// 2. set keyspace id.
 	tk.MustExec("update mysql.dist_framework_meta set keyspace_id = 16777216 where host = \":4000\"")
 	tk.MustQuery("select keyspace_id from mysql.dist_framework_meta where host = \":4000\"").Check(testkit.Rows("16777216"))
+}
+
+type targetScopeCase struct {
+	scope      string
+	nodeScopes []string
+}
+
+func generateScopeCase(nodeNum int, scopeNum int) targetScopeCase {
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	scope := fmt.Sprintf("scope-%d", rand.Intn(100))
+
+	nodeScopes := make([]string, nodeNum)
+	for i := 0; i < nodeNum-scopeNum; i++ {
+		nodeScopes[i] = fmt.Sprintf("scope-%d", rand.Intn(100))
+	}
+	for i := 0; i < scopeNum; i++ {
+		nodeScopes[nodeNum-scopeNum+i] = scope
+	}
+
+	return targetScopeCase{
+		scope:      scope,
+		nodeScopes: nodeScopes,
+	}
+}
+
+func runTargetScopeCase(t *testing.T, c *testutil.TestDXFContext, tk *testkit.TestKit, testCase targetScopeCase, idx int, nodeCnt int) {
+	for i := 0; i < len(testCase.nodeScopes); i++ {
+		tk.MustExec(fmt.Sprintf("update mysql.dist_framework_meta set role = \"%s\" where host = \"%s\"", testCase.nodeScopes[i], c.GetNodeIDByIdx(i)))
+	}
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "1*return()")
+	<-scheduler.TestRefreshedChan
+	<-scheduler.TestRefreshedChan
+	<-scheduler.TestRefreshedChan
+	taskID := submitTaskAndCheckSuccessForScope(c.Ctx, t, "task"+strconv.Itoa(idx), nodeCnt, testCase.scope, c.TestContext)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh"))
+	expected := make([]string, 0)
+	for i, scope := range testCase.nodeScopes {
+		if scope == testCase.scope {
+			expected = append(expected, c.GetNodeIDByIdx(i))
+		}
+	}
+	checkSubtaskOnNodes(c.Ctx, t, taskID, expected)
+	t.Logf("test case %d passed", idx)
+}
+
+func TestTargetScope(t *testing.T) {
+	nodeCnt := 60
+	c := testutil.NewTestDXFContext(t, 60, 16, true)
+	testutil.RegisterTaskMeta(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, 60), c.TestContext, nil)
+	tk := testkit.NewTestKit(t, c.Store)
+	caseNum := 100
+	for i := 0; i < caseNum; i++ {
+		runTargetScopeCase(t, c, tk, generateScopeCase(60, 5), i, nodeCnt)
+	}
 }
