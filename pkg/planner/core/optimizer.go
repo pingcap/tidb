@@ -301,10 +301,7 @@ func doOptimize(
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	finalPlan, err := postOptimize(ctx, sctx, physical)
-	if err != nil {
-		return nil, nil, 0, err
-	}
+	finalPlan := postOptimize(ctx, sctx, physical)
 
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
@@ -412,13 +409,9 @@ func mergeContinuousSelections(p base.PhysicalPlan) {
 	}
 }
 
-func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan) (base.PhysicalPlan, error) {
+func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan) base.PhysicalPlan {
 	// some cases from update optimize will require avoiding projection elimination.
 	// see comments ahead of call of DoOptimize in function of buildUpdate().
-	err := prunePhysicalColumns(sctx, plan)
-	if err != nil {
-		return nil, err
-	}
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
 	mergeContinuousSelections(plan)
@@ -430,7 +423,7 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	disableReuseChunkIfNeeded(sctx, plan)
 	tryEnableLateMaterialization(sctx, plan)
 	generateRuntimeFilter(sctx, plan)
-	return plan, nil
+	return plan
 }
 
 func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
@@ -447,145 +440,6 @@ func generateRuntimeFilter(sctx base.PlanContext, plan base.PhysicalPlan) {
 	rfGenerator.GenerateRuntimeFilter(plan)
 	logutil.BgLogger().Debug("Finish runtime filter generator",
 		zap.Duration("Cost", time.Since(startRFGenerator)))
-}
-
-// prunePhysicalColumns currently only work for MPP(HashJoin<-Exchange).
-// Here add projection instead of pruning columns directly for safety considerations.
-// And projection is cheap here for it saves the network cost and work in memory.
-func prunePhysicalColumns(sctx base.PlanContext, plan base.PhysicalPlan) error {
-	if tableReader, ok := plan.(*PhysicalTableReader); ok {
-		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
-			err := prunePhysicalColumnsInternal(sctx, tableReader.tablePlan)
-			if err != nil {
-				return err
-			}
-		}
-	} else {
-		for _, child := range plan.Children() {
-			return prunePhysicalColumns(sctx, child)
-		}
-	}
-	return nil
-}
-
-func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
-	for _, eqCond := range p.EqualConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
-	}
-	for _, neCond := range p.NAEqualConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(neCond)...)
-	}
-	for _, leftCond := range p.LeftConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(leftCond)...)
-	}
-	for _, rightCond := range p.RightConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(rightCond)...)
-	}
-	for _, otherCond := range p.OtherConditions {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(otherCond)...)
-	}
-	lChild := p.children[0]
-	rChild := p.children[1]
-	for _, col := range parentUsedCols {
-		if lChild.Schema().Contains(col) {
-			leftCols = append(leftCols, col)
-		} else if rChild.Schema().Contains(col) {
-			rightCols = append(rightCols, col)
-		}
-	}
-	return leftCols, rightCols
-}
-
-func prunePhysicalColumnForHashJoinChild(sctx base.PlanContext, hashJoin *PhysicalHashJoin, joinUsedCols []*expression.Column, sender *PhysicalExchangeSender) error {
-	var err error
-	evalCtx := sctx.GetExprCtx().GetEvalCtx()
-	joinUsed := expression.GetUsedList(evalCtx, joinUsedCols, sender.Schema())
-	hashCols := make([]*expression.Column, len(sender.HashCols))
-	for i, mppCol := range sender.HashCols {
-		hashCols[i] = mppCol.Col
-	}
-	hashUsed := expression.GetUsedList(evalCtx, hashCols, sender.Schema())
-
-	needPrune := false
-	usedExprs := make([]expression.Expression, len(sender.Schema().Columns))
-	prunedSchema := sender.Schema().Clone()
-	for i := len(joinUsed) - 1; i >= 0; i-- {
-		usedExprs[i] = sender.Schema().Columns[i]
-		if !joinUsed[i] && !hashUsed[i] {
-			needPrune = true
-			usedExprs = append(usedExprs[:i], usedExprs[i+1:]...)
-			prunedSchema.Columns = append(prunedSchema.Columns[:i], prunedSchema.Columns[i+1:]...)
-		}
-	}
-
-	if needPrune && len(sender.children) > 0 {
-		ch := sender.children[0]
-		proj := PhysicalProjection{
-			Exprs: usedExprs,
-		}.Init(sctx, ch.StatsInfo(), ch.QueryBlockOffset())
-
-		proj.SetSchema(prunedSchema)
-		proj.SetChildren(ch)
-		sender.children[0] = proj
-
-		// Resolve Indices from bottom to up
-		err = proj.ResolveIndicesItself()
-		if err != nil {
-			return err
-		}
-		err = sender.ResolveIndicesItself()
-		if err != nil {
-			return err
-		}
-		err = hashJoin.ResolveIndicesItself()
-		if err != nil {
-			return err
-		}
-	}
-	return err
-}
-
-func prunePhysicalColumnsInternal(sctx base.PlanContext, plan base.PhysicalPlan) error {
-	var err error
-	switch x := plan.(type) {
-	case *PhysicalHashJoin:
-		schemaColumns := x.Schema().Clone().Columns
-		leftCols, rightCols := x.extractUsedCols(schemaColumns)
-		matchPattern := false
-		for i := 0; i <= 1; i++ {
-			// Pattern: HashJoin <- ExchangeReceiver <- ExchangeSender
-			matchPattern = false
-			var exchangeSender *PhysicalExchangeSender
-			if receiver, ok := x.children[i].(*PhysicalExchangeReceiver); ok {
-				exchangeSender, matchPattern = receiver.children[0].(*PhysicalExchangeSender)
-			}
-
-			if matchPattern {
-				if i == 0 {
-					err = prunePhysicalColumnForHashJoinChild(sctx, x, leftCols, exchangeSender)
-				} else {
-					err = prunePhysicalColumnForHashJoinChild(sctx, x, rightCols, exchangeSender)
-				}
-				if err != nil {
-					return nil
-				}
-			}
-
-			/// recursively travel the physical plan
-			err = prunePhysicalColumnsInternal(sctx, x.children[i])
-			if err != nil {
-				return nil
-			}
-		}
-	default:
-		for _, child := range x.Children() {
-			err = prunePhysicalColumnsInternal(sctx, child)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 // tryEnableLateMaterialization tries to push down some filter conditions to the table scan operator

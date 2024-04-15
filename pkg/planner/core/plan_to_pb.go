@@ -176,7 +176,7 @@ func (p *PhysicalSelection) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalProjection) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	client := ctx.GetClient()
-	exprs, err := expression.ExpressionsToPBList(ctx.GetExprCtx().GetEvalCtx(), p.Exprs, client)
+	exprs, err := expression.ProjectionExpressionsToPBList(ctx.GetExprCtx().GetEvalCtx(), p.Exprs, client)
 	if err != nil {
 		return nil, err
 	}
