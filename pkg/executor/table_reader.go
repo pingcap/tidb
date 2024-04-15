@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	isctx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
@@ -81,16 +82,16 @@ type tableReaderExecutorContext struct {
 	dctx       *distsqlctx.DistSQLContext
 	rctx       *rangerctx.RangerContext
 	buildPBCtx *planctx.BuildPBContext
-	pctx       planctx.PlanContext
 	ectx       exprctx.BuildContext
 
 	stmtMemTracker *memory.Tracker
 
+	infoSchema  isctx.MetaOnlyInfoSchema
 	getDDLOwner func(context.Context) (*infosync.ServerInfo, error)
 }
 
-func (treCtx *tableReaderExecutorContext) GetInfoSchema() infoschema.InfoSchema {
-	return treCtx.pctx.GetInfoSchema().(infoschema.InfoSchema)
+func (treCtx *tableReaderExecutorContext) GetInfoSchema() isctx.MetaOnlyInfoSchema {
+	return treCtx.infoSchema
 }
 
 func (treCtx *tableReaderExecutorContext) GetDDLOwner(ctx context.Context) (*infosync.ServerInfo, error) {
@@ -123,9 +124,9 @@ func newTableReaderExecutorContext(sctx sessionctx.Context) tableReaderExecutorC
 		dctx:           sctx.GetDistSQLCtx(),
 		rctx:           pctx.GetRangerCtx(),
 		buildPBCtx:     pctx.GetBuildPBCtx(),
-		pctx:           pctx,
 		ectx:           sctx.GetExprCtx(),
 		stmtMemTracker: sctx.GetSessionVars().StmtCtx.MemTracker,
+		infoSchema:     pctx.GetInfoSchema(),
 		getDDLOwner:    getDDLOwner,
 	}
 }
