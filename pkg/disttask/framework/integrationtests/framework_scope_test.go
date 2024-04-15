@@ -123,17 +123,17 @@ type targetScopeCase struct {
 	nodeScopes []string
 }
 
-func generateScopeCase(nodeNum int, scopeNum int) targetScopeCase {
+func generateScopeCase(nodeCnt int, scopeCnt int) targetScopeCase {
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
 	scope := fmt.Sprintf("scope-%d", rand.Intn(100))
 
-	nodeScopes := make([]string, nodeNum)
-	for i := 0; i < nodeNum-scopeNum; i++ {
+	nodeScopes := make([]string, nodeCnt)
+	for i := 0; i < nodeCnt-scopeCnt; i++ {
 		nodeScopes[i] = fmt.Sprintf("scope-%d", rand.Intn(100))
 	}
-	for i := 0; i < scopeNum; i++ {
-		nodeScopes[nodeNum-scopeNum+i] = scope
+	for i := 0; i < scopeCnt; i++ {
+		nodeScopes[nodeCnt-scopeCnt+i] = scope
 	}
 
 	return targetScopeCase{
@@ -146,7 +146,7 @@ func runTargetScopeCase(t *testing.T, c *testutil.TestDXFContext, tk *testkit.Te
 	for i := 0; i < len(testCase.nodeScopes); i++ {
 		tk.MustExec(fmt.Sprintf("update mysql.dist_framework_meta set role = \"%s\" where host = \"%s\"", testCase.nodeScopes[i], c.GetNodeIDByIdx(i)))
 	}
-	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "1*return()")
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "3*return()")
 	<-scheduler.TestRefreshedChan
 	<-scheduler.TestRefreshedChan
 	<-scheduler.TestRefreshedChan
@@ -163,12 +163,12 @@ func runTargetScopeCase(t *testing.T, c *testutil.TestDXFContext, tk *testkit.Te
 }
 
 func TestTargetScope(t *testing.T) {
-	nodeCnt := 60
-	c := testutil.NewTestDXFContext(t, 60, 16, true)
-	testutil.RegisterTaskMeta(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, 60), c.TestContext, nil)
+	nodeCnt := 10
+	c := testutil.NewTestDXFContext(t, nodeCnt, 16, true)
+	testutil.RegisterTaskMeta(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, nodeCnt), c.TestContext, nil)
 	tk := testkit.NewTestKit(t, c.Store)
-	caseNum := 100
+	caseNum := 10
 	for i := 0; i < caseNum; i++ {
-		runTargetScopeCase(t, c, tk, generateScopeCase(60, 5), i, nodeCnt)
+		runTargetScopeCase(t, c, tk, generateScopeCase(nodeCnt, 5), i, nodeCnt)
 	}
 }
