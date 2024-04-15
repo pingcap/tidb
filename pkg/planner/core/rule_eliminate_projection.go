@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
@@ -168,14 +168,14 @@ type projectionEliminator struct {
 }
 
 // optimize implements the logicalOptRule interface.
-func (pe *projectionEliminator) optimize(_ context.Context, lp LogicalPlan, opt *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
+func (pe *projectionEliminator) optimize(_ context.Context, lp LogicalPlan, opt *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false, opt)
 	return root, planChanged, nil
 }
 
 // eliminate eliminates the redundant projection in a logical plan.
-func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*expression.Column, canEliminate bool, opt *util.LogicalOptimizeOp) LogicalPlan {
+func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*expression.Column, canEliminate bool, opt *coreusage.LogicalOptimizeOp) LogicalPlan {
 	// LogicalCTE's logical optimization is independent.
 	if _, ok := p.(*LogicalCTE); ok {
 		return p
@@ -339,7 +339,7 @@ func (*projectionEliminator) name() string {
 	return "projection_eliminate"
 }
 
-func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *util.LogicalOptimizeOp) {
+func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *coreusage.LogicalOptimizeOp) {
 	action := func() string {
 		buffer := bytes.NewBufferString(
 			fmt.Sprintf("%v_%v is eliminated, %v_%v's expressions changed into[", child.TP(), child.ID(), parent.TP(), parent.ID()))
@@ -358,7 +358,7 @@ func appendDupProjEliminateTraceStep(parent, child *LogicalProjection, opt *util
 	opt.AppendStepToCurrent(child.ID(), child.TP(), reason, action)
 }
 
-func appendProjEliminateTraceStep(proj *LogicalProjection, opt *util.LogicalOptimizeOp) {
+func appendProjEliminateTraceStep(proj *LogicalProjection, opt *coreusage.LogicalOptimizeOp) {
 	reason := func() string {
 		return fmt.Sprintf("%v_%v's Exprs are all Columns", proj.TP(), proj.ID())
 	}

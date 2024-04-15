@@ -1317,7 +1317,11 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
-func checkDistTask(s sessiontypes.Session) {
+func checkDistTask(s sessiontypes.Session, ver int64) {
+	if ver > version195 {
+		// since version195 we enable dist task by default, no need to check
+		return
+	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx, "SELECT HIGH_PRIORITY variable_value from mysql.global_variables where variable_name = %?;", variable.TiDBEnableDistTask)
 	if err != nil {
@@ -1368,7 +1372,7 @@ func upgrade(s sessiontypes.Session) {
 		return
 	}
 
-	checkDistTask(s)
+	checkDistTask(s, ver)
 	printClusterState(s, ver)
 
 	// Only upgrade from under version92 and this TiDB is not owner set.

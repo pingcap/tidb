@@ -85,6 +85,7 @@ func TestIngestError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_enable_dist_task = 0")
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1;")
@@ -125,6 +126,8 @@ func TestAddIndexIngestPanic(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+
+	tk.MustExec("set global tidb_enable_dist_task = 0")
 
 	// Mock panic on coprocessor request sender.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockCopSenderPanic", "return(true)"))

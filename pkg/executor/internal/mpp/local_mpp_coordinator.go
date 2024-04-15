@@ -498,6 +498,9 @@ func (c *localMppCoordinator) cancelMppTasks() {
 func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta, bo *backoff.Backoffer) {
 	stream, err := c.sessionCtx.GetMPPClient().EstablishMPPConns(kv.EstablishMPPConnsParam{Ctx: bo.GetCtx(), Req: req, TaskMeta: taskMeta})
 	if err != nil {
+		if stream != nil {
+			stream.Close()
+		}
 		// if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
 		if c.needTriggerFallback {
 			c.sendError(derr.ErrTiFlashServerTimeout)
