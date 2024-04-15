@@ -19,7 +19,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
-        "//pkg/planner/core/internal",
+        "//pkg/planner/util/coreusage",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",
