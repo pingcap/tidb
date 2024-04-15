@@ -47,7 +47,7 @@ func ExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) 
 }
 
 // ProjectionExpressionsToPBList converts PhysicalProjection's expressions to tipb.Expr list for new plan.
-// It doesn't check type for top level column expression, since top level column expression doesn't imply any executions
+// It doesn't check type for top level column expression, since top level column expression doesn't imply any calculations
 func ProjectionExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
 	pc := PbConverter{client: client, ctx: ctx}
 	for _, expr := range exprs {
