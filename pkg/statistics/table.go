@@ -626,7 +626,7 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 // The Column should be visible in the table and really has analyzed statistics in the stroage.
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Column together with the checking result, to avoid accessing the map multiple times.
-// The first bool is whether we have it in memory. The second bool is whether this column has stats or not.
+// The first bool is whether we have it in memory. The second bool is whether this column has stats in the system table or not.
 func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool) {
 	if t.Pseudo {
 		return nil, false, false
@@ -636,7 +636,7 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 
 	// If it's not analyzed yet.
 	if !hasAnalyzed {
-		// If we don't have it in memory, we create a fake hist for pseudo estimation.
+		// If we don't have it in memory, we create a fake hist for pseudo estimation (see handleOneItemTask()).
 		if !ok {
 			// If we don't have this column. We skip it.
 			// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
