@@ -23,12 +23,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stathat/consistent"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 )
 
@@ -281,4 +284,39 @@ func TestTopoFetcherBackoff(t *testing.T) {
 	require.GreaterOrEqual(t, dura, time.Duration(fetchTopoMaxBackoff*1000))
 	require.GreaterOrEqual(t, dura, 30*time.Second)
 	require.LessOrEqual(t, dura, 50*time.Second)
+}
+
+func TestGetAllUnusedTiflashStores(t *testing.T) {
+	mockClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	label1 := metapb.StoreLabel{Key: tikvrpc.EngineLabelKey, Value: tikvrpc.EngineLabelTiFlash}
+	label2 := metapb.StoreLabel{Key: tikvrpc.EngineRoleLabelKey, Value: tikvrpc.EngineLabelTiFlashCompute}
+
+	cache.SetRegionCacheStore(1, "192.168.1.1", "", tikvrpc.TiFlash, 0, []*metapb.StoreLabel{&label1, &label2})
+	cache.SetRegionCacheStore(2, "192.168.1.2", "192.168.1.3", tikvrpc.TiFlash, 0, []*metapb.StoreLabel{&label1, &label2})
+	cache.SetRegionCacheStore(3, "192.168.1.3", "192.168.1.2", tikvrpc.TiFlash, 0, []*metapb.StoreLabel{&label1, &label2})
+
+	allUsedTiflashStoresMap := make(map[uint64]struct{})
+	allUsedTiflashStoresMap[2] = struct{}{}
+	allUsedTiflashStoresMap[3] = struct{}{}
+	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
+	require.Equal(t, 3, len(allTiFlashStores))
+	allUnusedTiflashStores := getAllUnusedTiflashStores(allTiFlashStores, allUsedTiflashStoresMap)
+	require.Equal(t, len(allUsedTiflashStoresMap), len(allUnusedTiflashStores))
+	for _, store := range allUnusedTiflashStores {
+		_, ok := allUsedTiflashStoresMap[store.StoreID()]
+		require.True(t, ok)
+	}
 }

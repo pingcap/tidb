@@ -822,12 +822,7 @@ func filterAllStoresAccordingToTiFlashReplicaRead(allStores []uint64, aliveStore
 	return
 }
 
-// getAliveStoresAndStoreIDs gets alive TiFlash stores and their IDs.
-// If tiflashReplicaReadPolicy is not all_replicas, it will also return the IDs of the alive TiFlash stores in TiDB zone.
-func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, allUsedTiflashStoresMap map[uint64]struct{}, ttl time.Duration, store *kvStore, tiflashReplicaReadPolicy tiflash.ReplicaRead, tidbZone string) (aliveStores *aliveStoresBundle) {
-	aliveStores = new(aliveStoresBundle)
-	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
-
+func getAllUnusedTiflashStores(allTiFlashStores []*tikv.Store, allUsedTiflashStoresMap map[uint64]struct{}) []*tikv.Store {
 	allUnusedTiflashStores := make([]*tikv.Store, 0, len(allUsedTiflashStoresMap))
 	for _, store := range allTiFlashStores {
 		_, ok := allUsedTiflashStoresMap[store.StoreID()]
@@ -835,7 +830,15 @@ func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, allUsedT
 			allUnusedTiflashStores = append(allUnusedTiflashStores, store)
 		}
 	}
+	return allUnusedTiflashStores
+}
 
+// getAliveStoresAndStoreIDs gets alive TiFlash stores and their IDs.
+// If tiflashReplicaReadPolicy is not all_replicas, it will also return the IDs of the alive TiFlash stores in TiDB zone.
+func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, allUsedTiflashStoresMap map[uint64]struct{}, ttl time.Duration, store *kvStore, tiflashReplicaReadPolicy tiflash.ReplicaRead, tidbZone string) (aliveStores *aliveStoresBundle) {
+	aliveStores = new(aliveStoresBundle)
+	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
+	allUnusedTiflashStores := getAllUnusedTiflashStores(allTiFlashStores, allUsedTiflashStoresMap)
 	aliveStores.storesInAllZones = filterAliveStores(ctx, allUnusedTiflashStores, ttl, store)
 
 	if !tiflashReplicaReadPolicy.IsAllReplicas() {
