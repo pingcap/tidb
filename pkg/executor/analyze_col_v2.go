@@ -246,11 +246,17 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		}()
 		return readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker)
 	})
-	e.samplingMergeWg = &util.WaitGroupWrapper{}
-	e.samplingMergeWg.Add(samplingStatsConcurrency)
+	var samplingMergeWg util.WaitGroupWrapper
+	samplingMergeWg.Add(samplingStatsConcurrency)
 	for i := 0; i < samplingStatsConcurrency; i++ {
 		id := i
 		gp.Go(func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+				}
+				samplingMergeWg.Done()
+			}()
 			e.subMergeWorker(mergeResultCh, mergeTaskCh, l, id)
 		})
 	}
@@ -288,6 +294,9 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		}
 		return err
 	})
+	defer func() {
+		samplingMergeWg.Wait()
+	}()
 	err = taskEg.Wait()
 	if err != nil {
 		mergeCtx.Done()
@@ -603,9 +612,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 				break
 			}
 		}
-		e.samplingMergeWg.Done()
 		if closeTheResultCh {
-			e.samplingMergeWg.Wait()
 			close(resultCh)
 		}
 	}()

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -53,7 +52,6 @@ type AnalyzeColumnsExec struct {
 	core.AnalyzeInfo
 
 	samplingBuilderWg *notifyErrorWaitGroupWrapper
-	samplingMergeWg   *util.WaitGroupWrapper
 
 	schemaForVirtualColEval *expression.Schema
 	baseCount               int64
