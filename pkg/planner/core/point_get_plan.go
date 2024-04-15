@@ -15,7 +15,6 @@
 package core
 
 import (
-	math2 "math"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -55,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
@@ -872,51 +869,51 @@ func TryFastPlan(ctx PlanContext, node ast.Node) (p Plan) {
 	ctx.GetSessionVars().PlanID.Store(0)
 	ctx.GetSessionVars().PlanColumnID.Store(0)
 	switch x := node.(type) {
-	case *ast.SelectStmt:
-		defer func() {
-			vars := ctx.GetSessionVars()
-			if vars.SelectLimit != math2.MaxUint64 && p != nil {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("sql_select_limit is set, so point get plan is not activated"))
-				p = nil
-			}
-			if vars.StmtCtx.EnableOptimizeTrace && p != nil {
-				if vars.StmtCtx.OptimizeTracer == nil {
-					vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
-				}
-				vars.StmtCtx.OptimizeTracer.SetFastPlan(p.BuildPlanTrace())
-			}
-		}()
-		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
-		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
-		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
-			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
-				return
-			}
-			if tidbutil.IsMemDB(fp.dbName) {
-				return nil
-			}
-			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
-			p = fp
-			return
-		}
-		if fp := tryPointGetPlan(ctx, x, isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
-			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
-				return nil
-			}
-			if tidbutil.IsMemDB(fp.dbName) {
-				return nil
-			}
-			if fp.IsTableDual {
-				tableDual := PhysicalTableDual{}
-				tableDual.names = fp.outputNames
-				tableDual.SetSchema(fp.Schema())
-				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
-				return
-			}
-			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
-			p = fp
-			return
-		}
+	//	case *ast.SelectStmt:
+	//		defer func() {
+	//			vars := ctx.GetSessionVars()
+	//			if vars.SelectLimit != math2.MaxUint64 && p != nil {
+	//				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("sql_select_limit is set, so point get plan is not activated"))
+	//				p = nil
+	//			}
+	//			if vars.StmtCtx.EnableOptimizeTrace && p != nil {
+	//				if vars.StmtCtx.OptimizeTracer == nil {
+	//					vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
+	//				}
+	//				vars.StmtCtx.OptimizeTracer.SetFastPlan(p.BuildPlanTrace())
+	//			}
+	//		}()
+	//		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
+	//		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
+	//		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
+	//			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
+	//				return
+	//			}
+	//			if tidbutil.IsMemDB(fp.dbName) {
+	//				return nil
+	//			}
+	//			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
+	//			p = fp
+	//			return
+	//		}
+	//		if fp := tryPointGetPlan(ctx, x, isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
+	//			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
+	//				return nil
+	//			}
+	//			if tidbutil.IsMemDB(fp.dbName) {
+	//				return nil
+	//			}
+	//			if fp.IsTableDual {
+	//				tableDual := PhysicalTableDual{}
+	//				tableDual.names = fp.outputNames
+	//				tableDual.SetSchema(fp.Schema())
+	//				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
+	//				return
+	//			}
+	//			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
+	//			p = fp
+	//			return
+	//		}
 	case *ast.UpdateStmt:
 		return tryUpdatePointPlan(ctx, x)
 	case *ast.DeleteStmt:
@@ -1300,73 +1297,87 @@ func tryWhereIn2BatchPointGet(ctx PlanContext, selStmt *ast.SelectStmt) *BatchPo
 // 3. All the columns must be public and not generated.
 // 4. The condition is an access path that the range is a unique key.
 func tryPointGetPlan(ctx PlanContext, selStmt *ast.SelectStmt, check bool) *PointGetPlan {
-	if selStmt.Having != nil || selStmt.OrderBy != nil {
-		return nil
-	} else if selStmt.Limit != nil {
-		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
-		if err != nil || count == 0 || offset > 0 {
-			return nil
-		}
-	}
-	tblName, tblAlias := getSingleTableNameAndAlias(selStmt.From)
-	if tblName == nil {
-		return nil
-	}
-	tbl := tblName.TableInfo
-	if tbl == nil {
-		return nil
-	}
-
-	var pkColOffset int
-	for i, col := range tbl.Columns {
-		// Do not handle generated columns.
-		if col.IsGenerated() {
-			return nil
-		}
-		// Only handle tables that all columns are public.
-		if col.State != model.StatePublic {
-			return nil
-		}
-		if mysql.HasPriKeyFlag(col.GetFlag()) {
-			pkColOffset = i
-		}
-	}
-	schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
-	if schema == nil {
-		return nil
-	}
-	dbName := tblName.Schema.L
-	if dbName == "" {
-		dbName = ctx.GetSessionVars().CurrentDB
-	}
-
-	pairs := make([]nameValuePair, 0, 4)
-	pairs, isTableDual := getNameValuePairs(ctx, tbl, tblAlias, pairs, selStmt.Where)
-	if pairs == nil && !isTableDual {
-		return nil
-	}
-
-	handlePair, fieldType := findPKHandle(tbl, pairs)
-	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 && indexIsAvailableByHints(nil, tblName.IndexHints) {
-		if isTableDual {
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
-			p.IsTableDual = true
-			return p
-		}
-
-		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
-		p.Handle = kv.IntHandle(handlePair.value.GetInt64())
-		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
-		p.handleFieldType = fieldType
-		p.HandleConstant = handlePair.con
-		p.HandleColOffset = pkColOffset
-		p.PartitionNames = tblName.PartitionNames
-		return p
-	} else if handlePair.value.Kind() != types.KindNull {
-		return nil
-	}
-
-	return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, isTableDual, check)
+	//	if selStmt.Having != nil || selStmt.OrderBy != nil {
+	//		return nil
+	//	} else if selStmt.Limit != nil {
+	//
+	//		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
+	//		if err != nil || count == 0 || offset > 0 {
+	//			return nil
+	//		}
+	//	}
+	//
+	// tblName, tblAlias := getSingleTableNameAndAlias(selStmt.From)
+	//
+	//	if tblName == nil {
+	//		return nil
+	//	}
+	//
+	// tbl := tblName.TableInfo
+	//
+	//	if tbl == nil {
+	//		return nil
+	//	}
+	//
+	// var pkColOffset int
+	//
+	//	for i, col := range tbl.Columns {
+	//		// Do not handle generated columns.
+	//		if col.IsGenerated() {
+	//			return nil
+	//		}
+	//		// Only handle tables that all columns are public.
+	//		if col.State != model.StatePublic {
+	//			return nil
+	//		}
+	//		if mysql.HasPriKeyFlag(col.GetFlag()) {
+	//			pkColOffset = i
+	//		}
+	//	}
+	//
+	// schema, names := buildSchemaFromFields(tblName.Schema, tbl, tblAlias, selStmt.Fields.Fields)
+	//
+	//	if schema == nil {
+	//		return nil
+	//	}
+	//
+	// dbName := tblName.Schema.L
+	//
+	//	if dbName == "" {
+	//		dbName = ctx.GetSessionVars().CurrentDB
+	//	}
+	//
+	// pairs := make([]nameValuePair, 0, 4)
+	// pairs, isTableDual := getNameValuePairs(ctx, tbl, tblAlias, pairs, selStmt.Where)
+	//
+	//	if pairs == nil && !isTableDual {
+	//		return nil
+	//	}
+	//
+	// handlePair, fieldType := findPKHandle(tbl, pairs)
+	//
+	//	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 && indexIsAvailableByHints(nil, tblName.IndexHints) {
+	//		if isTableDual {
+	//			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+	//			p.IsTableDual = true
+	//			return p
+	//		}
+	//
+	//		p := newPointGetPlan(ctx, dbName, schema, tbl, names)
+	//		p.Handle = kv.IntHandle(handlePair.value.GetInt64())
+	//		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
+	//		p.handleFieldType = fieldType
+	//		p.HandleConstant = handlePair.con
+	//		p.HandleColOffset = pkColOffset
+	//		p.PartitionNames = tblName.PartitionNames
+	//		return p
+	//	} else if handlePair.value.Kind() != types.KindNull {
+	//
+	//		return nil
+	//	}
+	//
+	// return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, isTableDual, check)
+	return nil
 }
 
 func checkTblIndexForPointPlan(ctx PlanContext, tblName *ast.TableName, schema *expression.Schema,
