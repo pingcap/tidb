@@ -53,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -409,7 +408,7 @@ func mergeContinuousSelections(p base.PhysicalPlan) {
 	}
 }
 
-func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan) (base.PhysicalPlan) {
+func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan) base.PhysicalPlan {
 	// some cases from update optimize will require avoiding projection elimination.
 	// see comments ahead of call of DoOptimize in function of buildUpdate().
 	plan = eliminatePhysicalProjection(plan)
