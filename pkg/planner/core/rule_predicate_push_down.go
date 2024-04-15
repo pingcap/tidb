@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
@@ -36,7 +37,7 @@ type ppdSolver struct{}
 // exprPrefixAdder is the wrapper struct to add tidb_shard(x) = val for `OrigConds`
 // `cols` is the index columns for a unique shard index
 type exprPrefixAdder struct {
-	sctx      PlanContext
+	sctx      base.PlanContext
 	OrigConds []expression.Expression
 	cols      []*expression.Column
 	lengths   []int
@@ -422,7 +423,7 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 // If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
-func isNullRejected(ctx PlanContext, schema *expression.Schema, expr expression.Expression) bool {
+func isNullRejected(ctx base.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
 	exprCtx := ctx.GetExprCtx()
 	expr = expression.PushDownNot(exprCtx, expr)
 	if expression.ContainOuterNot(expr) {
@@ -454,14 +455,14 @@ func isNullRejected(ctx PlanContext, schema *expression.Schema, expr expression.
 
 // isNullRejectedSpecially handles some null-rejected cases specially, since the current in
 // EvaluateExprWithNull is too strict for some cases, e.g. #49616.
-func isNullRejectedSpecially(ctx PlanContext, schema *expression.Schema, expr expression.Expression) bool {
+func isNullRejectedSpecially(ctx base.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
 	return specialNullRejectedCase1(ctx, schema, expr) // only 1 case now
 }
 
 // specialNullRejectedCase1 is mainly for #49616.
 // Case1 specially handles `null-rejected OR (null-rejected AND {others})`, then no matter what the result
 // of `{others}` is (True, False or Null), the result of this predicate is null, so this predicate is null-rejected.
-func specialNullRejectedCase1(ctx PlanContext, schema *expression.Schema, expr expression.Expression) bool {
+func specialNullRejectedCase1(ctx base.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
 	isFunc := func(e expression.Expression, lowerFuncName string) *expression.ScalarFunction {
 		f, ok := e.(*expression.ScalarFunction)
 		if !ok {
@@ -712,7 +713,7 @@ func DeriveOtherConditions(
 // deriveNotNullExpr generates a new expression `not(isnull(col))` given `col1 op col2`,
 // in which `col` is in specified schema. Caller guarantees that only one of `col1` or
 // `col2` is in schema.
-func deriveNotNullExpr(ctx PlanContext, expr expression.Expression, schema *expression.Schema) expression.Expression {
+func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema *expression.Schema) expression.Expression {
 	binop, ok := expr.(*expression.ScalarFunction)
 	if !ok || len(binop.GetArgs()) != 2 {
 		return nil
@@ -918,7 +919,7 @@ func appendAddSelectionTraceStep(p LogicalPlan, child LogicalPlan, sel *LogicalS
 // "SELECT * FROM test WHERE tidb_shard(a) = val1 AND a = 10 OR tidb_shard(a) = val2 AND a = 20"
 // @param[in] conds            the original condtion of this datasource
 // @retval - the new condition after adding expression prefix
-func (ds *DataSource) AddPrefix4ShardIndexes(sc PlanContext, conds []expression.Expression) []expression.Expression {
+func (ds *DataSource) AddPrefix4ShardIndexes(sc base.PlanContext, conds []expression.Expression) []expression.Expression {
 	if !ds.containExprPrefixUk {
 		return conds
 	}
@@ -945,7 +946,7 @@ func (ds *DataSource) AddPrefix4ShardIndexes(sc PlanContext, conds []expression.
 	return newConds
 }
 
-func (ds *DataSource) addExprPrefixCond(sc PlanContext, path *util.AccessPath,
+func (ds *DataSource) addExprPrefixCond(sc base.PlanContext, path *util.AccessPath,
 	conds []expression.Expression) ([]expression.Expression, error) {
 	idxCols, idxColLens :=
 		expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
