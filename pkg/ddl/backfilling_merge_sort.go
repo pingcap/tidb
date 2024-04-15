@@ -35,7 +35,6 @@ type mergeSortExecutor struct {
 	jobID         int64
 	idxNum        int
 	ptbl          table.PhysicalTable
-	avgRowSize    int
 	cloudStoreURI string
 
 	mu                  sync.Mutex
@@ -47,14 +46,12 @@ func newMergeSortExecutor(
 	idxNum int,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
-	avgRowSize int,
 ) (*mergeSortExecutor, error) {
 	return &mergeSortExecutor{
 		jobID:         jobID,
 		idxNum:        idxNum,
 		ptbl:          ptbl,
 		cloudStoreURI: cloudStoreURI,
-		avgRowSize:    avgRowSize,
 	}, nil
 }
 
