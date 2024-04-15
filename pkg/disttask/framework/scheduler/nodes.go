@@ -166,7 +166,6 @@ func (nm *NodeManager) getNodes() []proto.ManagedNode {
 
 func filterByScope(nodes []proto.ManagedNode, targetScope string) []string {
 	var nodeIDs []string
-
 	haveOther := false
 	haveBackground := false
 	for _, node := range nodes {

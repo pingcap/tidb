@@ -118,3 +118,62 @@ func TestMaintainManagedNodes(t *testing.T) {
 	require.Equal(t, 100, int(slotMgr.capacity.Load()))
 	require.True(t, ctrl.Satisfied())
 }
+
+type filterCase struct {
+	nodes         []proto.ManagedNode
+	targetScope   string
+	expectedNodes []string
+}
+
+func mockManagedNode(id string, role string) proto.ManagedNode {
+	return proto.ManagedNode{
+		ID:       id,
+		Role:     role,
+		CPUCount: 100,
+	}
+}
+
+func TestFilterByScope(t *testing.T) {
+	cases := []filterCase{
+		{
+			nodes:         []proto.ManagedNode{mockManagedNode("1", "background"), mockManagedNode("2", "background"), mockManagedNode("3", "")},
+			targetScope:   "",
+			expectedNodes: []string{"1", "2"},
+		},
+		{
+			nodes:         []proto.ManagedNode{mockManagedNode("1", ""), mockManagedNode("2", ""), mockManagedNode("3", "")},
+			targetScope:   "",
+			expectedNodes: []string{"1", "2", "3"},
+		},
+		{
+			// this case is imposible for real cluster.
+			nodes:         []proto.ManagedNode{mockManagedNode("1", ""), mockManagedNode("2", ""), mockManagedNode("3", "")},
+			targetScope:   "background",
+			expectedNodes: []string{"1", "2", "3"},
+		},
+		{
+			nodes:         []proto.ManagedNode{mockManagedNode("1", "1"), mockManagedNode("2", ""), mockManagedNode("3", "")},
+			targetScope:   "",
+			expectedNodes: []string{"2", "3"},
+		},
+		{
+			nodes:         []proto.ManagedNode{mockManagedNode("1", "1"), mockManagedNode("2", ""), mockManagedNode("3", "")},
+			targetScope:   "1",
+			expectedNodes: []string{"1"},
+		},
+		{
+			nodes:         []proto.ManagedNode{mockManagedNode("1", "1"), mockManagedNode("2", "2"), mockManagedNode("3", "2")},
+			targetScope:   "1",
+			expectedNodes: []string{"1"},
+		},
+		{
+			nodes:         []proto.ManagedNode{mockManagedNode("1", "1"), mockManagedNode("2", "2"), mockManagedNode("3", "3")},
+			targetScope:   "2",
+			expectedNodes: []string{"2"},
+		},
+	}
+
+	for _, cas := range cases {
+		require.Equal(t, cas.expectedNodes, filterByScope(cas.nodes, cas.targetScope))
+	}
+}
