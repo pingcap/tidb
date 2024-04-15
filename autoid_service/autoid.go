@@ -174,7 +174,7 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 		if newBase == math.MaxInt64 {
 			return 0, 0, errAutoincReadFailed
 		}
-		logutil.BgLogger().Info("alloc4Unsigned from",
+		logutil.BgLogger().Info("alloc4Signed from",
 			zap.String("category", "autoid service"),
 			zap.Int64("dbID", dbID),
 			zap.Int64("tblID", tblID),
@@ -199,12 +199,6 @@ func (alloc *autoIDValue) rebase4Unsigned(ctx context.Context,
 	}
 	// Satisfied by alloc.end, need to update alloc.base.
 	if requiredBase <= uint64(alloc.end) {
-		logutil.BgLogger().Info("rebase4Unsigned in memory",
-			zap.Int64("dbID", dbID),
-			zap.Int64("tblID", tblID),
-			zap.Int64("from", alloc.base),
-			zap.Uint64("to", requiredBase),
-		)
 		alloc.base = int64(requiredBase)
 		return nil
 	}
@@ -248,12 +242,6 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 	}
 	// Satisfied by alloc.end, need to update alloc.base.
 	if requiredBase <= alloc.end {
-		logutil.BgLogger().Info("rebase4Signed in memory",
-			zap.Int64("dbID", dbID),
-			zap.Int64("tblID", tblID),
-			zap.Int64("from", alloc.base),
-			zap.Int64("to", requiredBase),
-		)
 		alloc.base = requiredBase
 		return nil
 	}
