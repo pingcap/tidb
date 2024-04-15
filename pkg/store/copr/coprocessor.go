@@ -1450,6 +1450,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		logutil.Logger(bo.GetCtx()).Warn("other error",
 			zap.Uint64("txnStartTS", worker.req.StartTs),
 			zap.Uint64("regionID", task.region.GetID()),
+			zap.String("region", task.region.String()),
 			zap.Uint64("bucketsVer", task.bucketsVer),
 			zap.Uint64("latestBucketsVer", resp.pbResp.GetLatestBucketsVersion()),
 			zap.Int("rangeNums", task.ranges.Len()),
