@@ -1713,18 +1713,16 @@ func GetShardingInfo(dbInfo model.CIStr, tableInfo *model.TableInfo) any {
 		return nil
 	}
 	shardingInfo := "NOT_SHARDED"
-	if tableInfo.PKIsHandle {
-		if tableInfo.ContainsAutoRandomBits() {
-			shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
-			rangeBits := tableInfo.AutoRandomRangeBits
-			if rangeBits != 0 && rangeBits != autoid.AutoRandomRangeBitsDefault {
-				shardingInfo = fmt.Sprintf("%s, RANGE BITS=%d", shardingInfo, rangeBits)
-			}
-		} else {
-			shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
+	if tableInfo.ContainsAutoRandomBits() {
+		shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
+		rangeBits := tableInfo.AutoRandomRangeBits
+		if rangeBits != 0 && rangeBits != autoid.AutoRandomRangeBitsDefault {
+			shardingInfo = fmt.Sprintf("%s, RANGE BITS=%d", shardingInfo, rangeBits)
 		}
 	} else if tableInfo.ShardRowIDBits > 0 {
 		shardingInfo = "SHARD_BITS=" + strconv.Itoa(int(tableInfo.ShardRowIDBits))
+	} else if tableInfo.PKIsHandle {
+		shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
 	}
 	return shardingInfo
 }
