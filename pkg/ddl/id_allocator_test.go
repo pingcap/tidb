@@ -27,8 +27,9 @@ import (
 )
 
 func TestIDAllocator(t *testing.T) {
+	ddl.IDAllocatorStep = 10
 	store := testkit.CreateMockStore(t)
-	ia := ddl.NewIDAllocator(store)
+	ia := ddl.NewAllocator(store)
 
 	ids, err := ia.AllocIDs(1)
 	require.NoError(t, err)
@@ -49,4 +50,16 @@ func TestIDAllocator(t *testing.T) {
 	ids, err = ia.AllocIDs(19)
 	require.NoError(t, err)
 	require.Equal(t, []int64{126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144}, ids)
+
+	ia2 := ddl.NewAllocator(store)
+	ids, err = ia2.AllocIDs(1)
+	require.NoError(t, err)
+	require.Equal(t, []int64{145}, ids)
+	ids, err = ia.AllocIDs(1)
+	require.NoError(t, err)
+	require.Equal(t, []int64{155}, ids)
+
+	ids, err = ia2.AllocIDs(10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{146, 147, 148, 149, 150, 151, 152, 153, 154, 165}, ids)
 }

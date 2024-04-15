@@ -26,46 +26,49 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 )
 
-const (
-	defaultIDAllocatorStep = 10
+var (
+	// IDAllocatorStep is the default step for id allocator.
+	IDAllocatorStep = 10
 )
 
+// IDAllocator is used to allocate global ID.
 type IDAllocator interface {
 	AllocIDs(n int) ([]int64, error)
 }
 
-type idAllocator struct {
+type allocator struct {
 	cache []int64
 	store kv.Storage
 	mu    sync.Mutex
 }
 
-func NewIDAllocator(store kv.Storage) IDAllocator {
-	return &idAllocator{
-		cache: make([]int64, 0, defaultIDAllocatorStep),
+// NewAllocator creates a new IDAllocator.
+func NewAllocator(store kv.Storage) IDAllocator {
+	return &allocator{
+		cache: make([]int64, 0, IDAllocatorStep),
 		store: store,
 	}
 }
 
-func (ia *idAllocator) AllocIDs(n int) ([]int64, error) {
-	ia.mu.Lock()
-	defer ia.mu.Unlock()
+func (a *allocator) AllocIDs(n int) ([]int64, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
-	ids := make([]int64, 0, n)
+	var ids []int64
 	// return the range of IDs n is less than or equal to the range
-	if n <= len(ia.cache) {
-		ids = ia.cache[:n]
-		ia.cache = ia.cache[n:]
+	if n <= len(a.cache) {
+		ids = a.cache[:n]
+		a.cache = a.cache[n:]
 		return ids, nil
 	}
 
-	count := max(defaultIDAllocatorStep, n-len(ia.cache))
+	count := max(IDAllocatorStep, n-len(a.cache))
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	var (
 		ret []int64
 		err error
 	)
-	err2 := kv.RunInNewTxn(ctx, ia.store, true, func(_ context.Context, txn kv.Transaction) error {
+	err2 := kv.RunInNewTxn(ctx, a.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		ret, err = m.GenGlobalIDs(count)
 		return err
@@ -74,8 +77,8 @@ func (ia *idAllocator) AllocIDs(n int) ([]int64, error) {
 		return nil, err2
 	}
 	// append the new IDs to the cache
-	ia.cache = append(ia.cache, ret...)
-	ids = ia.cache[:n]
-	ia.cache = ia.cache[n:]
+	a.cache = append(a.cache, ret...)
+	ids = a.cache[:n]
+	a.cache = a.cache[n:]
 	return ids, nil
 }
