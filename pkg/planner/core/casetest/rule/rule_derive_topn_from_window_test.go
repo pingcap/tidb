@@ -15,10 +15,10 @@
 package rule
 
 import (
-	testkit2 "github.com/pingcap/tidb/pkg/planner/util/testkit"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 )
@@ -35,7 +35,7 @@ func TestPushDerivedTopnFlash(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, primary key(b,a))")
-	testkit2.SetTiFlashReplica(t, dom, "test", "t")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
 	tk.MustExec("set tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
 	var input Input
