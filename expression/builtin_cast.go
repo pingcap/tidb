@@ -874,7 +874,7 @@ func (b *builtinCastStringAsJSONSig) evalJSON(row chunk.Row) (res types.BinaryJS
 	typ := b.args[0].GetType()
 	if types.IsBinaryStr(typ) {
 		buf := []byte(val)
-		if typ.GetType() == mysql.TypeString {
+		if typ.GetType() == mysql.TypeString && typ.GetFlen() > 0 {
 			// the tailing zero should also be in the opaque json
 			buf = make([]byte, typ.GetFlen())
 			copy(buf, val)
