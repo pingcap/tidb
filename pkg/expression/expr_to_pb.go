@@ -216,7 +216,7 @@ func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr 
 	if checkType {
 		switch column.GetType().GetType() {
 		case mysql.TypeBit:
-			if !IsPushDownEnabled(ast.TypeStr(column.GetType().GetType()), kv.TiKV) {
+			if !IsPushDownEnabled(ast.TypeStr(mysql.TypeBit), kv.TiKV) {
 				return nil
 			}
 		case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
