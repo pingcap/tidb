@@ -210,7 +210,6 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		hashValue := hash.Sum64()
 		partIndex := hashValue % uint64(j.ctx.PartitionNumber)
 		j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: hashValue, pos: logicalRowIndex})
-		//j.matchedRowsHeaders[i] = j.ctx.joinHashTable.lookup(j.hashValues[i])
 	}
 	j.currentProbeRow = 0
 	for i := 0; i < j.ctx.PartitionNumber; i++ {
@@ -218,7 +217,6 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.joinHashTable.tables[i].lookup(j.hashValues[i][index].hashValue)
 		}
 	}
-	//j.matchedRowsHeaders[j.currentProbeRow] = j.ctx.joinHashTable.lookup(j.hashValues[j.currentProbeRow])
 	return
 }
 
@@ -306,10 +304,10 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 		}
 	}
 	for columnIndex := currentColumnInRow; columnIndex < len(meta.rowColumnsOrder) && columnIndex < columnsToAppend; columnIndex++ {
-		index, ok := colIndexMap[meta.rowColumnsOrder[columnIndex]]
+		indexInDstChk, ok := colIndexMap[meta.rowColumnsOrder[columnIndex]]
 		var currentColumn *chunk.Column
 		if ok {
-			currentColumn = chk.Column(index)
+			currentColumn = chk.Column(indexInDstChk)
 			for index := range j.cachedBuildRows {
 				currentColumn.AppendNullBitmap(!meta.isColumnNull(j.cachedBuildRows[index].buildRowStart, columnIndex))
 				j.cachedBuildRows[index].buildRowData = chunk.AppendCellFromRawData(currentColumn, j.cachedBuildRows[index].buildRowData)
@@ -436,4 +434,49 @@ func NewJoinProbe(ctx *PartitionedHashJoinCtx, workID uint, joinType core.JoinTy
 	default:
 		panic("unsupported join type")
 	}
+}
+
+type mockJoinProbe struct {
+	baseJoinProbe
+}
+
+func (m *mockJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) error {
+	return errors.New("not supported")
+}
+
+func (m *mockJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, result *util.HashjoinWorkerResult) {
+	panic("not supported")
+}
+
+func (m *mockJoinProbe) IsCurrentChunkProbeDone() bool {
+	panic("not supported")
+}
+
+func (m *mockJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult) (result *util.HashjoinWorkerResult) {
+	panic("not supported")
+}
+
+func (m *mockJoinProbe) IsScanRowTableDone() bool {
+	panic("not supported")
+}
+
+func (m *mockJoinProbe) NeedScanRowTable() bool {
+	panic("not supported")
+}
+
+func (m *mockJoinProbe) InitForScanRowTable() {
+	panic("not supported")
+}
+
+// used for test
+func newMockJoinProbe(ctx *PartitionedHashJoinCtx) *mockJoinProbe {
+	base := baseJoinProbe{
+		ctx:                   ctx,
+		lUsed:                 ctx.LUsed,
+		rUsed:                 ctx.RUsed,
+		lUsedInOtherCondition: ctx.LUsedInOtherCondition,
+		rUsedInOtherCondition: ctx.RUsedInOtherCondition,
+		rightAsBuildSide:      false,
+	}
+	return &mockJoinProbe{base}
 }

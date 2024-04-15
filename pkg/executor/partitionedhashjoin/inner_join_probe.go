@@ -92,7 +92,7 @@ func (j *innerJoinProbe) IsScanRowTableDone() bool {
 	panic("should not reach here")
 }
 
-func (j *innerJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joinedChk *chunk.Chunk) (err error) {
+func (j *baseJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joinedChk *chunk.Chunk) (err error) {
 	// construct the return chunk based on joinedChk and selected, there are 3 kinds of columns
 	// 1. columns already in joinedChk
 	// 2. columns from build side, but not in joinedChk
@@ -116,9 +116,9 @@ func (j *innerJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joined
 			})
 		}
 	}
-	buildUsedColumns, buildColOffset, buildColOffsetInJoinedChk := j.rUsed, len(j.lUsed), j.currentChunk.NumCols()
-	if !j.rightAsBuildSide {
-		buildUsedColumns, buildColOffset, buildColOffsetInJoinedChk = j.lUsed, 0, 0
+	buildUsedColumns, buildColOffset, buildColOffsetInJoinedChk := j.lUsed, 0, 0
+	if j.rightAsBuildSide {
+		buildUsedColumns, buildColOffset, buildColOffsetInJoinedChk = j.rUsed, len(j.lUsed), j.currentChunk.NumCols()
 	}
 	hasRemainCols := false
 	for index, colIndex := range buildUsedColumns {
