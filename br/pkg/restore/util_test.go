@@ -67,7 +67,7 @@ func TestGetKeyRangeByMode(t *testing.T) {
 	require.Equal(t, codec.EncodeBytes(nil, []byte("t2ccc")), end)
 
 	// TODO maybe fix later
-	// current restore does not support rewrite empry endkey.
+	// current restore does not support rewrite empty endkey.
 	// because backup guarantees that the end key is not empty.
 	// start, end, err = testFn(endFile, rule)
 	// require.NoError(t, err)
