@@ -186,6 +186,8 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 			inTerms:  "return(true)",
 		},
 	}
+	sc := testKit.Session().(sessionctx.Context).GetSessionVars().StmtCtx
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 
 	for _, fp := range failpoints {
 		// clear statsCache
