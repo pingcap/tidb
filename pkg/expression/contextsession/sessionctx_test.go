@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package contextimpl_test
+package contextsession_test
 
 import (
 	"sync/atomic"
@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextimpl"
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/contextsession"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -40,7 +40,7 @@ func TestSessionEvalContextBasic(t *testing.T) {
 	ctx := mock.NewContext()
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
-	impl := contextimpl.NewSessionEvalContext(ctx)
+	impl := contextsession.NewSessionEvalContext(ctx)
 	require.True(t, impl.GetOptionalPropSet().IsFull())
 
 	// should contain all the optional properties
@@ -98,7 +98,7 @@ func TestSessionEvalContextCurrentTime(t *testing.T) {
 	ctx := mock.NewContext()
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
-	impl := contextimpl.NewSessionEvalContext(ctx)
+	impl := contextsession.NewSessionEvalContext(ctx)
 
 	var now atomic.Pointer[time.Time]
 	sc.SetStaleTSOProvider(func() (uint64, error) {
@@ -165,7 +165,7 @@ func (m *mockPrivManager) RequestDynamicVerification(
 
 func TestSessionEvalContextPrivilegeCheck(t *testing.T) {
 	ctx := mock.NewContext()
-	impl := contextimpl.NewSessionEvalContext(ctx)
+	impl := contextsession.NewSessionEvalContext(ctx)
 	activeRoles := []*auth.RoleIdentity{
 		{Username: "role1", Hostname: "host1"},
 		{Username: "role2", Hostname: "host2"},
@@ -202,7 +202,7 @@ func TestSessionEvalContextPrivilegeCheck(t *testing.T) {
 
 func getProvider[T context.OptionalEvalPropProvider](
 	t *testing.T,
-	impl *contextimpl.SessionEvalContext,
+	impl *contextsession.SessionEvalContext,
 	key context.OptionalEvalPropKey,
 ) T {
 	val, ok := impl.GetOptionalPropProvider(key)
@@ -215,7 +215,7 @@ func getProvider[T context.OptionalEvalPropProvider](
 
 func TestSessionEvalContextOptProps(t *testing.T) {
 	ctx := mock.NewContext()
-	impl := contextimpl.NewSessionEvalContext(ctx)
+	impl := contextsession.NewSessionEvalContext(ctx)
 
 	// test for OptPropCurrentUser
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "user1", Hostname: "host1"}
@@ -249,8 +249,8 @@ func TestSessionEvalContextOptProps(t *testing.T) {
 
 func TestSessionBuildContext(t *testing.T) {
 	ctx := mock.NewContext()
-	impl := contextimpl.NewExprExtendedImpl(ctx)
-	evalCtx, ok := impl.GetEvalCtx().(*contextimpl.SessionEvalContext)
+	impl := contextsession.NewExprExtendedImpl(ctx)
+	evalCtx, ok := impl.GetEvalCtx().(*contextsession.SessionEvalContext)
 	require.True(t, ok)
 	require.Same(t, evalCtx, impl.SessionEvalContext)
 	require.True(t, evalCtx.GetOptionalPropSet().IsFull())

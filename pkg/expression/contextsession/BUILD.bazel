@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "contextimpl",
+    name = "contextsession",
     srcs = ["sessionctx.go"],
-    importpath = "github.com/pingcap/tidb/pkg/expression/contextimpl",
+    importpath = "github.com/pingcap/tidb/pkg/expression/contextsession",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/errctx",
@@ -28,13 +28,13 @@ go_library(
 )
 
 go_test(
-    name = "contextimpl_test",
+    name = "contextsession_test",
     timeout = "short",
     srcs = ["sessionctx_test.go"],
     flaky = True,
     shard_count = 5,
     deps = [
-        ":contextimpl",
+        ":contextsession",
         "//pkg/errctx",
         "//pkg/expression/context",
         "//pkg/expression/contextopt",

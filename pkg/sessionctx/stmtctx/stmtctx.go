@@ -149,8 +149,6 @@ func (rf *ReferenceCount) UnFreeze() {
 	atomic.StoreInt32((*int32)(rf), ReferenceCountNoReference)
 }
 
-var stmtCtxIDGenerator atomic.Uint64
-
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -463,7 +461,7 @@ func NewStmtCtx() *StatementContext {
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
 	sc := &StatementContext{
-		ctxID: stmtCtxIDGenerator.Add(1),
+		ctxID: contextutil.GenContextID(),
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, defaultErrLevels, sc)
@@ -473,7 +471,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
-		ctxID: stmtCtxIDGenerator.Add(1),
+		ctxID: contextutil.GenContextID(),
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, defaultErrLevels, sc)
