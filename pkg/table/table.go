@@ -20,7 +20,6 @@ package table
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
@@ -225,7 +224,6 @@ func getIncrementAndOffset(vars *variable.SessionVars) (int, int) {
 	if offset > increment {
 		offset = 1
 	}
-	fmt.Println("getIncrementAndOffset ===", increment, offset)
 	return increment, offset
 }
 
