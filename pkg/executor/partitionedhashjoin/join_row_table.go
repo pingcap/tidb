@@ -618,9 +618,16 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*
 		builder.startPosInRawData[partIdx] = append(builder.startPosInRawData[partIdx], uint64(len(seg.rawData)))
 		// next_row_ptr
 		seg.rawData = append(seg.rawData, fakeAddrByte...)
-		if len := rowTableMeta.nullMapLength; len > 0 {
-			tmp := make([]byte, len)
-			seg.rawData = append(seg.rawData, tmp...)
+		// null_map
+		if nullMapLength := rowTableMeta.nullMapLength; nullMapLength > 0 {
+			bitmap := make([]byte, (nullMapLength+7)/8)
+			buildColumns := builder.buildSchema.Columns
+			for i := 0; i < len(builder.buildKeyIndex); i++ {
+				if !mysql.HasNotNullFlag(buildColumns[builder.buildKeyIndex[i]].RetType.GetFlag()) {
+					bitmap[i/8] |= 1 << (7 - i%8)
+				}
+			}
+			seg.rawData = append(seg.rawData, bitmap...)
 		}
 		length := uint64(0)
 		// if join_key is not fixed length: `key_length` need to be written in rawData
