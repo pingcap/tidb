@@ -16,6 +16,8 @@ package ddl
 
 import (
 	"context"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
 
@@ -382,4 +384,43 @@ func TestError(t *testing.T) {
 		require.NotEqual(t, mysql.ErrUnknown, code)
 		require.Equal(t, uint16(err.Code()), code)
 	}
+}
+
+func TestInsertIgnore(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a smallint(6) DEFAULT '-13202', b varchar(221) NOT NULL DEFAULT 'duplicatevalue', " +
+		"c tinyint(1) NOT NULL DEFAULT '0', PRIMARY KEY (c, b));")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &TestDDLCallback{}
+
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, err := tk1.Exec("INSERT INTO t VALUES (-18585,'aaa',1), (-18585,'0',1), (-18585,'1',1), (-18585,'duplicatevalue',1);")
+			assert.NoError(t, err)
+		case model.StateWriteReorganization:
+			tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			assert.NoError(t, err)
+			idx := tbl.Meta().FindIndexByName("idx")
+			if idx.BackfillState == model.BackfillStateReadyToMerge {
+				_, err := tk1.Exec("insert ignore into `t`  values ( 234,'duplicatevalue',-2028 );")
+				assert.NoError(t, err)
+				return
+			}
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
 }
