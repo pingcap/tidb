@@ -101,24 +101,26 @@ func (hg *Histogram) PreCalculateScalar() {
 	}
 	switch hg.GetLower(0).Kind() {
 	case types.KindMysqlDecimal, types.KindMysqlTime:
-		lower, upper := new(types.Datum), new(types.Datum)
+		var lower, upper types.Datum
 		hg.Scalars = make([]scalar, l)
 		for i := 0; i < l; i++ {
-			hg.LowerToDatum(i, lower)
-			hg.UpperToDatum(i, upper)
-			hg.Scalars[i].lower = convertDatumToScalar(lower, 0)
-			hg.Scalars[i].upper = convertDatumToScalar(upper, 0)
+			// It's read-only, so we don't need to allocate new datum each time.
+			hg.LowerToDatum(i, &lower)
+			hg.UpperToDatum(i, &upper)
+			hg.Scalars[i].lower = convertDatumToScalar(&lower, 0)
+			hg.Scalars[i].upper = convertDatumToScalar(&upper, 0)
 		}
 	case types.KindBytes, types.KindString:
-		lower, upper := new(types.Datum), new(types.Datum)
+		var lower, upper types.Datum
 		hg.Scalars = make([]scalar, l)
 		for i := 0; i < l; i++ {
-			hg.LowerToDatum(i, lower)
-			hg.UpperToDatum(i, upper)
+			// It's read-only, so we don't need to allocate new datum each time.
+			hg.LowerToDatum(i, &lower)
+			hg.UpperToDatum(i, &upper)
 			common := commonPrefixLength(lower.GetBytes(), upper.GetBytes())
 			hg.Scalars[i].commonPfxLen = common
-			hg.Scalars[i].lower = convertDatumToScalar(lower, common)
-			hg.Scalars[i].upper = convertDatumToScalar(upper, common)
+			hg.Scalars[i].lower = convertDatumToScalar(&lower, common)
+			hg.Scalars[i].upper = convertDatumToScalar(&upper, common)
 		}
 	}
 }
