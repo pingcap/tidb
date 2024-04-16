@@ -5,19 +5,10 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
-<<<<<<< HEAD:ddl/metadatalocktest/BUILD.bazel
         "mdl_test.go",
-=======
-        "widow_with_exist_subquery_test.go",
-        "window_push_down_test.go",
->>>>>>> 9b78a2388b3 (planner: add newly created col for window projection (#52378)):pkg/planner/core/casetest/windows/BUILD.bazel
     ],
     flaky = True,
-<<<<<<< HEAD:ddl/metadatalocktest/BUILD.bazel
     shard_count = 32,
-=======
-    shard_count = 5,
->>>>>>> 9b78a2388b3 (planner: add newly created col for window projection (#52378)):pkg/planner/core/casetest/windows/BUILD.bazel
     deps = [
         "//config",
         "//ddl",
