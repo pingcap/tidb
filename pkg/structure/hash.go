@@ -15,9 +15,9 @@
 package structure
 
 import (
-	"fmt"
 	"bytes"
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/pingcap/errors"

@@ -15,7 +15,6 @@
 package autoid
 
 import (
-	"fmt"
 	"context"
 	"crypto/tls"
 	"math"
@@ -131,15 +130,12 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 	n uint64, increment, offset int64) (min int64, max int64, err error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {
-		fmt.Println("special code branch, offset ===", offset)
 		if err := alloc.rebase4Signed(ctx, store, dbID, tblID, offset-1); err != nil {
 			return 0, 0, err
 		}
 	}
-
 	// calcNeededBatchSize calculates the total batch size needed.
 	n1 := calcNeededBatchSize(alloc.base, int64(n), increment, offset, isUnsigned)
-	fmt.Println("need batch size == ", n1, alloc.base)
 
 	// Condition alloc.base+N1 > alloc.end will overflow when alloc.base + N1 > MaxInt64. So need this.
 	if math.MaxInt64-alloc.base <= n1 {
@@ -171,9 +167,6 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 			if tmpStep < n1 {
 				return errAutoincReadFailed
 			}
-
-			fmt.Println("recalc need batch size in txn ==", n1, nextStep, tmpStep)
-
 			newEnd, err1 = idAcc.Inc(tmpStep)
 			return err1
 		})
@@ -195,7 +188,6 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 	}
 	min = alloc.base
 	alloc.base += n1
-	fmt.Println("return value ???", min, alloc.base)
 	return min, alloc.base, nil
 }
 
@@ -252,7 +244,6 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 	}
 	// Satisfied by alloc.end, need to update alloc.base.
 	if requiredBase > alloc.base && requiredBase <= alloc.end {
-		fmt.Println("rebase4signed .. in memory, update base", alloc.base, requiredBase, alloc.end)
 		alloc.base = requiredBase
 		return nil
 	}
@@ -270,10 +261,6 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 		newBase = mathutil.Max(currentEnd, requiredBase)
 		newEnd = mathutil.Min(math.MaxInt64-batch, newBase) + batch
 		_, err1 = idAcc.Inc(newEnd - currentEnd)
-		fmt.Println("remote current end ==", currentEnd,
-			"newBase ==", newBase,
-			"newEnd ==", newEnd,
-			"new value ==", newEnd - currentEnd)
 		return err1
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -529,21 +516,10 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 
 	var min, max int64
 	var err error
-	// When the value of auto_increment_offset is greater than that of auto_increment_increment,
-	// the value of auto_increment_offset is ignored.
-	// Ref https://dev.mysql.com/doc/refman/8.0/en/replication-options-source.html
-	offset := req.Offset
-	if offset > req.Increment {
-		offset = 1
-		fmt.Println("use offset=1 to calculate batch size!!!")
-	}
-
-	fmt.Println("input offset ==", offset)
-
 	if req.IsUnsigned {
-		min, max, err = val.alloc4Unsigned(ctx, s.store, req.DbID, req.TblID, req.IsUnsigned, req.N, req.Increment, offset)
+		min, max, err = val.alloc4Unsigned(ctx, s.store, req.DbID, req.TblID, req.IsUnsigned, req.N, req.Increment, req.Offset)
 	} else {
-		min, max, err = val.alloc4Signed(ctx, s.store, req.DbID, req.TblID, req.IsUnsigned, req.N, req.Increment, offset)
+		min, max, err = val.alloc4Signed(ctx, s.store, req.DbID, req.TblID, req.IsUnsigned, req.N, req.Increment, req.Offset)
 	}
 
 	if err != nil {
