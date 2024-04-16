@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"math"
 	"slices"
 
 	"github.com/pingcap/errors"
@@ -50,18 +51,19 @@ var (
 )
 
 type memIndexReader struct {
-	ctx           sessionctx.Context
-	index         *model.IndexInfo
-	table         *model.TableInfo
-	kvRanges      []kv.KeyRange
-	conditions    []expression.Expression
-	addedRows     [][]types.Datum
-	addedRowsLen  int
-	retFieldTypes []*types.FieldType
-	outputOffset  []int
-	cacheTable    kv.MemBuffer
-	keepOrder     bool
-	physTblIDIdx  int
+	ctx            sessionctx.Context
+	index          *model.IndexInfo
+	table          *model.TableInfo
+	kvRanges       []kv.KeyRange
+	conditions     []expression.Expression
+	addedRows      [][]types.Datum
+	addedRowsLen   int
+	retFieldTypes  []*types.FieldType
+	outputOffset   []int
+	cacheTable     kv.MemBuffer
+	keepOrder      bool
+	physTblIDIdx   int
+	partitionIDMap map[int64]struct{}
 	compareExec
 }
 
@@ -73,22 +75,21 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 		outputOffset = append(outputOffset, col.Index)
 	}
 	if us.desc {
-		for i, j := 0, len(kvRanges)-1; i < j; i, j = i+1, j-1 {
-			kvRanges[i], kvRanges[j] = kvRanges[j], kvRanges[i]
-		}
+		slices.Reverse(kvRanges)
 	}
 	return &memIndexReader{
-		ctx:           us.Ctx(),
-		index:         idxReader.index,
-		table:         idxReader.table.Meta(),
-		kvRanges:      kvRanges,
-		conditions:    us.conditions,
-		retFieldTypes: exec.RetTypes(us),
-		outputOffset:  outputOffset,
-		cacheTable:    us.cacheTable,
-		keepOrder:     us.keepOrder,
-		compareExec:   us.compareExec,
-		physTblIDIdx:  us.physTblIDIdx,
+		ctx:            us.Ctx(),
+		index:          idxReader.index,
+		table:          idxReader.table.Meta(),
+		kvRanges:       kvRanges,
+		conditions:     us.conditions,
+		retFieldTypes:  exec.RetTypes(us),
+		outputOffset:   outputOffset,
+		cacheTable:     us.cacheTable,
+		keepOrder:      us.keepOrder,
+		compareExec:    us.compareExec,
+		physTblIDIdx:   us.physTblIDIdx,
+		partitionIDMap: us.partitionIDMap,
 	}
 }
 
@@ -184,12 +185,18 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 
 func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType, colInfos []rowcodec.ColInfo) ([]types.Datum, error) {
 	hdStatus := tablecodec.HandleDefault
-	if mysql.HasUnsignedFlag(tps[len(tps)-1].GetFlag()) {
+	// `HandleIsUnsigned` only affects IntHandle which always has one column.
+	if mysql.HasUnsignedFlag(tps[len(m.index.Columns)].GetFlag()) {
 		hdStatus = tablecodec.HandleIsUnsigned
 	}
 	values, err := tablecodec.DecodeIndexKV(key, value, len(m.index.Columns), hdStatus, colInfos)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	physTblIDColumnIdx := math.MaxInt64
+	if m.physTblIDIdx >= 0 {
+		physTblIDColumnIdx = m.outputOffset[m.physTblIDIdx]
 	}
 
 	ds := make([]types.Datum, 0, len(m.outputOffset))
@@ -198,6 +205,9 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 			tid, _, _, _ := tablecodec.DecodeKeyHead(key)
 			ds = append(ds, types.NewIntDatum(tid))
 			continue
+		}
+		if offset > physTblIDColumnIdx {
+			offset = offset - 1
 		}
 		d, err := tablecodec.DecodeColumnValue(values[offset], tps[offset], m.ctx.GetSessionVars().Location())
 		if err != nil {
@@ -266,9 +276,7 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 	cd := NewRowDecoder(us.Ctx(), us.Schema(), us.table.Meta())
 	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, defVal, us.Ctx().GetSessionVars().Location())
 	if us.desc {
-		for i, j := 0, len(kvRanges)-1; i < j; i, j = i+1, j-1 {
-			kvRanges[i], kvRanges[j] = kvRanges[j], kvRanges[i]
-		}
+		slices.Reverse(kvRanges)
 	}
 	return &memTableReader{
 		ctx:           us.Ctx(),
@@ -643,6 +651,12 @@ func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
 				return err
 			}
 		}
+		// filter key/value by partitition id
+		if ph, ok := handle.(kv.PartitionHandle); ok {
+			if _, exist := m.partitionIDMap[ph.PartitionID]; !exist {
+				return nil
+			}
+		}
 		handles = append(handles, handle)
 		return nil
 	})
@@ -679,13 +693,14 @@ func buildMemIndexLookUpReader(ctx context.Context, us *UnionScanExec, idxLookUp
 	kvRanges := idxLookUpReader.kvRanges
 	outputOffset := []int{len(idxLookUpReader.index.Columns)}
 	memIdxReader := &memIndexReader{
-		ctx:           us.Ctx(),
-		index:         idxLookUpReader.index,
-		table:         idxLookUpReader.table.Meta(),
-		kvRanges:      kvRanges,
-		retFieldTypes: exec.RetTypes(us),
-		outputOffset:  outputOffset,
-		cacheTable:    us.cacheTable,
+		ctx:            us.Ctx(),
+		index:          idxLookUpReader.index,
+		table:          idxLookUpReader.table.Meta(),
+		kvRanges:       kvRanges,
+		retFieldTypes:  exec.RetTypes(us),
+		outputOffset:   outputOffset,
+		cacheTable:     us.cacheTable,
+		partitionIDMap: us.partitionIDMap,
 	}
 
 	return &memIndexLookUpReader{
@@ -959,6 +974,15 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 		// check whether the key was been deleted.
 		if len(value) == 0 {
 			continue
+		}
+
+		// filter key/value by partitition id
+		if iter.index.Global {
+			seg := tablecodec.SplitIndexValue(value)
+			_, pid, _ := codec.DecodeInt(seg.PartitionID)
+			if _, ok := iter.partitionIDMap[pid]; !ok {
+				continue
+			}
 		}
 
 		data, err := iter.memIndexReader.decodeIndexKeyValue(key, value, iter.tps, iter.colInfos)

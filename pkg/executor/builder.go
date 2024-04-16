@@ -1312,6 +1312,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		}
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
+		us.partitionIDMap = x.partitionIDMap
 		us.table = x.table
 		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *IndexLookUpExecutor:
@@ -1328,6 +1329,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
+		us.partitionIDMap = x.partitionIDMap
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 		us.handleCachedTable(b, x, sessionVars, startTS)
 	case *IndexMergeReaderExecutor:
@@ -3614,12 +3616,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 	}
 
 	if is.Index.Global {
-		tmp, ok := b.is.TableByID(ret.table.Meta().ID)
-		if !ok {
-			b.err = infoschema.ErrTableNotExists
-			return nil
-		}
-		tbl, ok := tmp.(table.PartitionedTable)
+		tbl, ok := ret.table.(table.PartitionedTable)
 		if !ok {
 			b.err = exeerrors.ErrBuildExecutor
 			return nil
@@ -4364,11 +4361,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	if is.Index.Global {
-		tmp, ok := builder.is.TableByID(tbInfo.ID)
-		if !ok {
-			return nil, infoschema.ErrTableNotExists
-		}
-		tbl, ok := tmp.(table.PartitionedTable)
+		tbl, ok := e.table.(table.PartitionedTable)
 		if !ok {
 			return nil, exeerrors.ErrBuildExecutor
 		}
@@ -4376,7 +4369,6 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		if err != nil {
 			return nil, err
 		}
-
 		if e.ranges, err = buildRangesForIndexJoin(e.Ctx(), lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
 			return nil, err
 		}

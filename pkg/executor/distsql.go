@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -176,7 +175,6 @@ type IndexReaderExecutor struct {
 	ranges          []*ranger.Range
 	partitions      []table.PhysicalTable
 	partRangeMap    map[int64][]*ranger.Range // each partition may have different ranges
-	partitionIDMap  map[int64]struct{}        // partitionIDs that global index access
 
 	// kvRanges are only used for union scan.
 	kvRanges         []kv.KeyRange
@@ -192,6 +190,8 @@ type IndexReaderExecutor struct {
 	columns []*model.ColumnInfo
 	// outputColumns are only required by union scan.
 	outputColumns []*expression.Column
+	// partitionIDMap are only required by union scan with global index.
+	partitionIDMap map[int64]struct{}
 
 	paging bool
 
@@ -326,42 +326,6 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		}
 	}
 
-	if e.index.Global {
-		idxScanExec := e.dagPB.Executors[0]
-		args := make([]expression.Expression, 0, len(e.partitionIDMap))
-		column := &expression.Column{
-			UniqueID: model.ExtraPidColID,
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			Index:    len(idxScanExec.IdxScan.Columns) - 1,
-			OrigName: model.ExtraPartitionIdName.L,
-		}
-		args = append(args, column)
-		for pid := range e.partitionIDMap {
-			args = append(args, expression.NewInt64Const(pid))
-		}
-
-		inCondition, err := expression.NewFunction(e.Ctx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
-		if err != nil {
-			return err
-		}
-		pbConditions, err := expression.ExpressionsToPBList(e.Ctx().GetExprCtx().GetEvalCtx(), []expression.Expression{inCondition}, e.Ctx().GetClient())
-		if err != nil {
-			return err
-		}
-		if len(e.dagPB.Executors) > 1 && e.dagPB.Executors[1].Tp == tipb.ExecType_TypeSelection {
-			e.dagPB.Executors[1].Selection.Conditions = append(e.dagPB.Executors[1].Selection.Conditions, pbConditions...)
-		} else {
-			selExec := &tipb.Selection{
-				Conditions: pbConditions,
-			}
-			executors := make([]*tipb.Executor, 0, len(e.dagPB.Executors)+1)
-			executors = append(executors, e.dagPB.Executors[0])
-			executors = append(executors, &tipb.Executor{Tp: tipb.ExecType_TypeSelection, Selection: selExec})
-			executors = append(executors, e.dagPB.Executors[1:]...)
-			e.dagPB.Executors = executors
-		}
-	}
-
 	if e.RuntimeStats() != nil {
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
@@ -430,8 +394,12 @@ type IndexLookUpExecutor struct {
 	handleCols      []*expression.Column
 	primaryKeyIndex *model.IndexInfo
 	tableRequest    *tipb.DAGRequest
+
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
+	// partitionIDMap are only required by union scan with global index.
+	partitionIDMap map[int64]struct{}
+
 	*dataReaderBuilder
 	idxNetDataSize float64
 	avgRowSize     float64
@@ -439,7 +407,6 @@ type IndexLookUpExecutor struct {
 	// fields about accessing partition tables
 	partitionTableMode bool                  // if this executor is accessing a local index with partition table
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
-	partitionIDMap     map[int64]struct{}    // partitionIDs that global index access
 	partitionRangeMap  map[int64][]*ranger.Range
 	partitionKVRanges  [][]kv.KeyRange // kvRanges of each prunedPartitions
 
@@ -1102,11 +1069,6 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			h, err := w.idxLookup.getHandle(chk.GetRow(i), handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
 			if err != nil {
 				return handles, retChk, err
-			}
-			if ph, ok := h.(kv.PartitionHandle); ok {
-				if _, exist := w.idxLookup.partitionIDMap[ph.PartitionID]; !exist {
-					continue
-				}
 			}
 			handles = append(handles, h)
 		}

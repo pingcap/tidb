@@ -2025,6 +2025,30 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		tblCols:     ds.TblCols,
 		expectCnt:   uint64(prop.ExpectedCnt),
 	}
+	// Add a `Selection` for `IndexScan` with global index.
+	// For SQL like 'select x from t partition(p0, p1) use index(idx)',
+	// we will add a `Selection` like `in(t._tidb_pid, p0, p1)` into the plan.
+	if is.Index.Global && len(ds.partitionNames) != 0 {
+		args := make([]expression.Expression, 0, len(ds.partitionNames)+1)
+		for _, col := range is.schema.Columns {
+			if col.ID == model.ExtraPidColID {
+				args = append(args, col.Clone())
+				break
+			}
+		}
+		for _, pName := range ds.partitionNames {
+			pid := is.Table.Partition.GetPartitionIDByName(pName.L)
+			if pid == -1 {
+				return invalidTask, nil
+			}
+			args = append(args, expression.NewInt64Const(pid))
+		}
+		inCondition, err := expression.NewFunction(ds.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
+		if err != nil {
+			return invalidTask, err
+		}
+		path.IndexFilters = append(path.IndexFilters, inCondition)
+	}
 	cop.physPlanPartInfo = PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.allConds),
 		PartitionNames: ds.partitionNames,
@@ -2180,6 +2204,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 					RetType:  types.NewFieldType(mysql.TypeLonglong),
 					ID:       model.ExtraHandleID,
 					UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
+					OrigName: model.ExtraHandleName.O,
 				})
 			}
 		}
@@ -2189,6 +2214,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 				RetType:  types.NewFieldType(mysql.TypeLonglong),
 				ID:       model.ExtraPidColID,
 				UniqueID: is.SCtx().GetSessionVars().AllocPlanColumnID(),
+				OrigName: model.ExtraPartitionIdName.O,
 			})
 		}
 	}

@@ -64,6 +64,9 @@ type UnionScanExec struct {
 	// < 0 if not used.
 	physTblIDIdx int
 
+	// partitionIDMap are only required by union scan with global index.
+	partitionIDMap map[int64]struct{}
+
 	keepOrder bool
 	compareExec
 }
