@@ -154,53 +154,53 @@ func TestIssue47881(t *testing.T) {
 	tk.MustExec("create table t2(id int,name varchar(10),name1 varchar(10),name2 varchar(10),`date1` date);")
 	tk.MustExec("insert into t2 values(1,'tt','ttt','tttt','2099-12-31'),(2,'dd','ddd','dddd','2099-12-31');")
 	rs := tk.MustQuery(`WITH bzzs AS (
-		SELECT 
-		  count(1) AS bzn 
-		FROM 
+		SELECT
+		  count(1) AS bzn
+		FROM
 		  t c
-	      ), 
+	      ),
 	      tmp1 AS (
-		SELECT 
-		  t1.* 
-		FROM 
-		  t1 
-		  LEFT JOIN bzzs ON 1 = 1 
-		WHERE 
-		  name IN ('tt') 
+		SELECT
+		  t1.*
+		FROM
+		  t1
+		  LEFT JOIN bzzs ON 1 = 1
+		WHERE
+		  name IN ('tt')
 		  AND bzn <> 1
-	      ), 
+	      ),
 	      tmp2 AS (
-		SELECT 
-		  tmp1.*, 
-		  date('2099-12-31') AS endate 
-		FROM 
+		SELECT
+		  tmp1.*,
+		  date('2099-12-31') AS endate
+		FROM
 		  tmp1
-	      ), 
+	      ),
 	      tmp3 AS (
-		SELECT 
-		  * 
-		FROM 
-		  tmp2 
-		WHERE 
-		  endate > CURRENT_DATE 
-		UNION ALL 
-		SELECT 
-		  '1' AS id, 
-		  'ss' AS name, 
-		  'sss' AS name1, 
-		  'ssss' AS name2, 
-		  date('2099-12-31') AS endate 
-		FROM 
-		  bzzs t1 
-		WHERE 
+		SELECT
+		  *
+		FROM
+		  tmp2
+		WHERE
+		  endate > CURRENT_DATE
+		UNION ALL
+		SELECT
+		  '1' AS id,
+		  'ss' AS name,
+		  'sss' AS name1,
+		  'ssss' AS name2,
+		  date('2099-12-31') AS endate
+		FROM
+		  bzzs t1
+		WHERE
 		  bzn = 1
-	      ) 
-	      SELECT 
-		c2.id, 
-		c3.id 
-	      FROM 
-		t2 db 
-		LEFT JOIN tmp3 c2 ON c2.id = '1' 
+	      )
+	      SELECT
+		c2.id,
+		c3.id
+	      FROM
+		t2 db
+		LEFT JOIN tmp3 c2 ON c2.id = '1'
 		LEFT JOIN tmp3 c3 ON c3.id = '1';`)
 	rs.Check(testkit.Rows("1 1", "1 1"))
 }
@@ -229,4 +229,36 @@ func TestIssue51670(t *testing.T) {
 	// The two should return the same result set.
 	tk.MustQuery("select b.b from A a left join (B b left join C c on b.b = c.b) on b.b = a.b where a.a in (2, 3);").Sort().Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select b.b from A a left join (B b left join C c on b.b = c.b) on b.b = a.b where a.a in (2, 3, null);").Sort().Check(testkit.Rows("1", "2"))
+}
+
+func TestIssue50614(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt(a bigint, b bigint, c bigint, d bigint, e bigint, primary key(c,d));")
+	tk.MustQuery("explain format = brief " +
+		"update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp " +
+		"set tt.a=tmp.c1, tt.b=tmp.c2 " +
+		"where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));").Check(
+		testkit.Rows(
+			"Update N/A root  N/A",
+			"└─Projection 0.00 root  test.tt.a, test.tt.b, test.tt.c, test.tt.d, test.tt.e, Column#18, Column#19, Column#20, Column#21",
+			"  └─Projection 0.00 root  test.tt.a, test.tt.b, test.tt.c, test.tt.d, test.tt.e, Column#18, Column#19, Column#20, Column#21",
+			"    └─IndexJoin 0.00 root  inner join, inner:TableReader, outer key:Column#20, Column#21, inner key:test.tt.c, test.tt.d, equal cond:eq(Column#20, test.tt.c), eq(Column#21, test.tt.d), other cond:or(or(and(eq(Column#20, 11), eq(test.tt.d, 111)), and(eq(Column#20, 22), eq(test.tt.d, 222))), or(and(eq(Column#20, 33), eq(test.tt.d, 333)), and(eq(Column#20, 44), eq(test.tt.d, 444)))), or(or(and(eq(test.tt.c, 11), eq(Column#21, 111)), and(eq(test.tt.c, 22), eq(Column#21, 222))), or(and(eq(test.tt.c, 33), eq(Column#21, 333)), and(eq(test.tt.c, 44), eq(Column#21, 444))))",
+			"      ├─Union(Build) 0.00 root  ",
+			"      │ ├─Projection 0.00 root  Column#6, Column#7, Column#8, Column#9",
+			"      │ │ └─Projection 0.00 root  1->Column#6, 2->Column#7, 3->Column#8, 4->Column#9",
+			"      │ │   └─TableDual 0.00 root  rows:0",
+			"      │ ├─Projection 0.00 root  Column#10, Column#11, Column#12, Column#13",
+			"      │ │ └─Projection 0.00 root  2->Column#10, 3->Column#11, 4->Column#12, 5->Column#13",
+			"      │ │   └─TableDual 0.00 root  rows:0",
+			"      │ └─Projection 0.00 root  Column#14, Column#15, Column#16, Column#17",
+			"      │   └─Projection 0.00 root  3->Column#14, 4->Column#15, 5->Column#16, 6->Column#17",
+			"      │     └─TableDual 0.00 root  rows:0",
+			"      └─TableReader(Probe) 0.00 root  data:Selection",
+			"        └─Selection 0.00 cop[tikv]  or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444)))), or(or(eq(test.tt.c, 11), eq(test.tt.c, 22)), or(eq(test.tt.c, 33), eq(test.tt.c, 44))), or(or(eq(test.tt.d, 111), eq(test.tt.d, 222)), or(eq(test.tt.d, 333), eq(test.tt.d, 444)))",
+			"          └─TableRangeScan 0.00 cop[tikv] table:tt range: decided by [eq(test.tt.c, Column#20) eq(test.tt.d, Column#21)], keep order:false, stats:pseudo",
+		),
+	)
 }
