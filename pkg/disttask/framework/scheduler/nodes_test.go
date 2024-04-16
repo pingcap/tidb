@@ -171,6 +171,16 @@ func TestFilterByScope(t *testing.T) {
 			targetScope:   "2",
 			expectedNodes: []string{"2"},
 		},
+		{
+			nodes:         []proto.ManagedNode{mockManagedNode("1", "1"), mockManagedNode("2", "2"), mockManagedNode("3", "background")},
+			targetScope:   "background",
+			expectedNodes: []string{"3"},
+		},
+		{
+			nodes:         []proto.ManagedNode{mockManagedNode("1", "1"), mockManagedNode("2", ""), mockManagedNode("3", "background")},
+			targetScope:   "",
+			expectedNodes: []string{"2"},
+		},
 	}
 
 	for _, cas := range cases {
