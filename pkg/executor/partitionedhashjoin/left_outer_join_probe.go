@@ -21,7 +21,7 @@ import (
 )
 
 type leftOuterJoinProbe struct {
-	innerJoinProbe
+	baseJoinProbe
 	// used when build right side, isNotMatchedRows is indexed by logical row index
 	isNotMatchedRows []bool
 	// used when build left side
@@ -29,7 +29,7 @@ type leftOuterJoinProbe struct {
 }
 
 func (j *leftOuterJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error) {
-	err = j.innerJoinProbe.SetChunkForProbe(chunk)
+	err = j.baseJoinProbe.SetChunkForProbe(chunk)
 	if err != nil {
 		return err
 	}
