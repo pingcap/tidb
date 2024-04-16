@@ -155,7 +155,7 @@ func (d *dupDetectIter) Next() bool {
 		}
 		if d.option.ReportErrOnDup {
 			dupKey := make([]byte, len(d.curKey))
-			dupVal := make([]byte, len(d.iter.Value()))
+			dupVal := make([]byte, len(d.curVal))
 			copy(dupKey, d.curKey)
 			copy(dupVal, d.curVal)
 			d.err = common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupVal)
