@@ -98,13 +98,17 @@ func (r *resultChecker) initRowPtrs() {
 	}
 }
 
-func (r *resultChecker) check(resultChunks []*chunk.Chunk, isTopN bool, offset uint64, count uint64) bool {
+func (r *resultChecker) check(resultChunks []*chunk.Chunk, offset int64, count int64) bool {
 	if r.rowPtrs == nil {
 		r.initRowPtrs()
 		sort.Slice(r.rowPtrs, r.keyColumnsLess)
-		if isTopN {
-			r.rowPtrs = r.rowPtrs[offset : offset+count]
+		if offset < 0 {
+			offset = 0
 		}
+		if count < 0 {
+			count = (int64(len(r.rowPtrs)) - offset)
+		}
+		r.rowPtrs = r.rowPtrs[offset : offset+count]
 	}
 
 	cursor := 0
@@ -223,7 +227,7 @@ func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortE
 func checkCorrectness(schema *expression.Schema, exe *sortexec.SortExec, dataSource *testutil.MockDataSource, resultChunks []*chunk.Chunk) bool {
 	keyColumns, keyCmpFuncs, byItemsDesc := exe.GetSortMetaForTest()
 	checker := newResultChecker(schema, keyColumns, keyCmpFuncs, byItemsDesc, dataSource.GenData)
-	return checker.check(resultChunks, false, 0, 0)
+	return checker.check(resultChunks, -1, -1)
 }
 
 func onePartitionAndAllDataInMemoryCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {

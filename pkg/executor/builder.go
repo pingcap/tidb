@@ -2151,8 +2151,9 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
 	}
 	executor_metrics.ExecutorCounterTopNExec.Inc()
 	return &sortexec.TopNExec{
-		SortExec: sortExec,
-		Limit:    &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
+		SortExec:    sortExec,
+		Limit:       &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
+		Concurrency: b.ctx.GetSessionVars().Concurrency.ExecutorConcurrency,
 	}
 }
 

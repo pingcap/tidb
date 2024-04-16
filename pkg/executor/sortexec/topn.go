@@ -51,7 +51,7 @@ type TopNExec struct {
 	spillHelper *topNSpillHelper
 	spillAction *topNSpillAction
 
-	// Normally, heap will be stored in memory after it has been built.
+	// Normally, heap will be stored in me  从  mory after it has been built.
 	// However, other executors may trigger topn spill after the heap is built
 	// and inMemoryThenSpillFlag will be set to true at this time.
 	inMemoryThenSpillFlag bool
@@ -63,11 +63,12 @@ type TopNExec struct {
 	// This variable is only used for test.
 	isSpillTriggeredInStage1ForTest bool
 	isSpillTriggeredInStage2ForTest bool
+
+	Concurrency int
 }
 
 // Open implements the Executor Open interface.
 func (e *TopNExec) Open(ctx context.Context) error {
-	concurrency := e.Ctx().GetSessionVars().Concurrency.ExecutorConcurrency
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
@@ -78,7 +79,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 
 	e.finishCh = make(chan struct{}, 1)
 	e.resultChannel = make(chan rowWithError, e.MaxChunkSize())
-	e.chunkChannel = make(chan *chunk.Chunk, concurrency)
+	e.chunkChannel = make(chan *chunk.Chunk, e.Concurrency)
 	e.inMemoryThenSpillFlag = false
 	e.isSpillTriggeredInStage1ForTest = false
 	e.isSpillTriggeredInStage2ForTest = false
@@ -88,7 +89,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 		e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 		e.fetcherAndWorkerSyncer = &sync.WaitGroup{}
 
-		workers := make([]*topNWorker, concurrency)
+		workers := make([]*topNWorker, e.Concurrency)
 		for i := range workers {
 			chkHeap := &topNChunkHeap{}
 			// Offset of heap in worker should be 0, as we need to spill all data
@@ -104,7 +105,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 			e.diskTracker,
 			exec.RetTypes(e),
 			workers,
-			concurrency,
+			e.Concurrency,
 		)
 		e.spillAction = &topNSpillAction{spillHelper: e.spillHelper}
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
@@ -118,7 +119,7 @@ func (e *TopNExec) Close() error {
 	close(e.finishCh)
 	if e.fetched.CompareAndSwap(false, true) {
 		close(e.resultChannel)
-		return nil
+		return exec.Close(e.Children(0))
 	}
 
 	// Wait for the finish of all tasks
@@ -226,6 +227,11 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 const topNCompactionFactor = 4
 
 func (e *TopNExec) executeTopNNoSpill(ctx context.Context) error {
+	if e.spillHelper.isSpillNeeded() {
+		e.isSpillTriggeredInStage2ForTest = true
+		return nil
+	}
+
 	childRowChk := exec.TryNewCacheChunk(e.Children(0))
 	for {
 		if e.spillHelper.isSpillNeeded() {
