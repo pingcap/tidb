@@ -43,8 +43,8 @@ func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBacken
 	}
 }
 
-// CheckAvailable implements BackendCtxMgr.Available interface.
-func (m *MockBackendCtxMgr) CheckAvailable() (bool, error) {
+// CheckMoreTasksAvailable implements BackendCtxMgr.CheckMoreTaskAvailable interface.
+func (m *MockBackendCtxMgr) CheckMoreTasksAvailable() (bool, error) {
 	return len(m.runningJobs) == 0, nil
 }
 

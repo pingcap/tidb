@@ -178,7 +178,7 @@ func TestAddIndexIngestCancel(t *testing.T) {
 	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
 	require.True(t, cancelled)
 	dom.DDL().SetHook(defHook)
-	ok, err := ingest.LitBackCtxMgr.CheckAvailable()
+	ok, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
 	require.NoError(t, err)
 	require.True(t, ok)
 }
@@ -255,7 +255,7 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook.Clone())
 	tk.MustGetErrCode("alter table t add index idx1(c1)", errno.ErrCancelledDDLJob)
-	available, err := ingest.LitBackCtxMgr.CheckAvailable()
+	available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
 	require.NoError(t, err)
 	require.True(t, available)
 }

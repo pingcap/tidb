@@ -225,6 +225,7 @@ func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
 
 func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 	return d.getJob(sess, jobTypeReorg, func(job *model.Job) (bool, error) {
+		// TODO(lance6716): remove inner ingest check
 		if !d.runningJobs.checkRunnable(job) {
 			return false, nil
 		}
