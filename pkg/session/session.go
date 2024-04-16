@@ -73,6 +73,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
@@ -172,7 +173,7 @@ type session struct {
 	}
 
 	currentCtx  context.Context // only use for runtime.trace, Please NEVER use it.
-	currentPlan plannercore.Plan
+	currentPlan base.Plan
 
 	store kv.Storage
 
@@ -3046,6 +3047,7 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (types.Session, error
 		s.GetSessionVars().MaxChunkSize = 32
 		s.GetSessionVars().MinPagingSize = variable.DefMinPagingSize
 		s.GetSessionVars().EnablePaging = variable.DefTiDBEnablePaging
+		s.GetSessionVars().StmtCtx.SetTimeZone(s.GetSessionVars().Location())
 		err = s.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, "utf8mb4")
 	}
 	return s, err
