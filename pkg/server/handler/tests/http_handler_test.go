@@ -24,6 +24,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"io"
 	"math/rand"
 	"net/http"
@@ -1501,4 +1502,14 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 	mockedAllServerInfos["s2"].GitHash = mockedAllServerInfos["s0"].GitHash
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	checkUpgradeShow(3, 100, 0)
+}
+
+func TestIssue52608(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+	on, addr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
+	require.Equal(t, on, true)
+	require.Equal(t, addr[:10], "127.0.0.1:")
 }
