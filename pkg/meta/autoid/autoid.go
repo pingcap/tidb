@@ -703,7 +703,6 @@ func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset i
 			return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
 		}
 	}
-
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.isUnsigned {
