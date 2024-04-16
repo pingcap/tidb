@@ -325,7 +325,7 @@ func blockingMergePartitionStats2GlobalStats(
 		var poppedTopN []statistics.TopNMeta
 		wrapper := NewStatsWrapper(allHg[i], allTopN[i])
 		globalStats.TopN[i], poppedTopN, allHg[i], err = mergeGlobalStatsTopN(gpool, sc, wrapper,
-			sc.GetSessionVars().StmtCtx.TimeZone(), sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
+			sc.GetSessionVars().StmtCtx.TimeZone(), sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex, 0)
 		if err != nil {
 			return
 		}

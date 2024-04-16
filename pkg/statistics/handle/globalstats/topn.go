@@ -29,12 +29,14 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/tiancaiamao/gp"
+	"go.uber.org/zap"
 )
 
 func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
-	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
+	timeZone *time.Location, version int, n uint32, isIndex bool, globalNDV int64) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	if statistics.CheckEmptyTopNs(wrapper.AllTopN) {
 		return nil, nil, wrapper.AllHg, nil
@@ -47,7 +49,7 @@ func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrap
 		if version == 1 {
 			return MergePartTopN2GlobalTopNForAnalyzeVer1(timeZone, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killer)
 		}
-		return MergePartTopN2GlobalTopN(timeZone, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killer)
+		return MergePartTopN2GlobalTopN(timeZone, wrapper.AllTopN, n, wrapper.AllHg, isIndex, globalNDV, killer)
 	}
 	batchSize := len(wrapper.AllTopN) / mergeConcurrency
 	if batchSize < 1 {
@@ -263,12 +265,25 @@ type topNMerger struct {
 		item          statistics.TopNMeta
 	}
 
+	totalRowNum int64
+	minPossible int64
+
 	n       int
 	isIndex bool
 	tp      byte
 }
 
 func (merger *topNMerger) checkCurrentAndMoveForward(nextVal *statistics.TopNMeta, position uint) error {
+	// Short-circuit.
+	if merger.cur.item.Count < uint64(merger.minPossible) {
+		merger.remainedTopNs = append(merger.remainedTopNs, statistics.TopNMeta{Encoded: merger.cur.item.Encoded, Count: merger.cur.item.Count})
+		// Set the cur maintained to the next value.
+		merger.cur.item.Encoded = nextVal.Encoded
+		merger.cur.item.Count = nextVal.Count
+		merger.cur.affectedTopNs.ClearAll()
+		merger.cur.affectedTopNs.Set(position)
+		return nil
+	}
 	// It's perf-sensitive path. Don't use defer.
 	// Initializing the datum.
 	d, err := statistics.TopNMetaValToDatum(merger.cur.item.Encoded, merger.tp, merger.isIndex, merger.loc)
@@ -332,6 +347,7 @@ func newMerger(
 	n uint32,
 	hists []*statistics.Histogram,
 	isIndex bool,
+	globalNDV int64,
 ) *topNMerger {
 	merger := &topNMerger{
 		isIndex: isIndex,
@@ -348,6 +364,7 @@ func newMerger(
 			idx:           i,
 			nextPosInTopN: 1,
 		})
+		merger.totalRowNum += int64(topN.TotalCount())
 	}
 	if merger.multiwayMergingHeap.Len() == 0 {
 		// If there's no topn to merge, return a nil merger.
@@ -361,6 +378,7 @@ func newMerger(
 			curMax = max(curMax, bkt.Repeat)
 		}
 		merger.maxPossibleAdded[i] = curMax
+		merger.totalRowNum += int64(hist.NotNullCount())
 	}
 	merger.histIters = make([]histIter, len(hists))
 	for i, hist := range hists {
@@ -370,6 +388,26 @@ func newMerger(
 	merger.finalTopNs = make([]statistics.TopNMeta, 0, n)
 	merger.remainedTopNs = make([]statistics.TopNMeta, 0, n)
 	merger.affectedHist = make([]int, 0, len(hists))
+
+	if globalNDV > 0 {
+		minPossible := int64(float64((merger.totalRowNum+globalNDV-1)/globalNDV) * 1.1)
+		// We don't put 1 inside the global TopN.
+		if minPossible < 2 {
+			minPossible = 2
+		}
+		least := float64(merger.totalRowNum) / float64(n) * 0.8
+		if minPossible > int64(least) {
+			minPossible = int64(least)
+		}
+		logutil.BgLogger().Warn("print the threshold for TopN",
+			zap.Int64("the avg", (minPossible)),
+			zap.Int64("least topn possible", int64(least)),
+		)
+		merger.minPossible = minPossible
+	} else {
+		merger.minPossible = math.MaxInt64
+	}
+
 	return merger
 }
 
@@ -402,9 +440,10 @@ func MergePartTopN2GlobalTopN(
 	n uint32,
 	hists []*statistics.Histogram,
 	isIndex bool,
+	globalNDV int64,
 	killer *sqlkiller.SQLKiller,
 ) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
-	merger := newMerger(loc, topNs, n, hists, isIndex)
+	merger := newMerger(loc, topNs, n, hists, isIndex, globalNDV)
 	if merger == nil {
 		return nil, nil, hists, nil
 	}
