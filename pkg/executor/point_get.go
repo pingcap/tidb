@@ -430,7 +430,8 @@ func fillRowChecksum(
 
 	columns := tblInfo.Cols()
 	reqCols := make([]rowcodec.ColInfo, len(columns))
-	for idx, col := range columns {
+	for idx := range columns {
+		col := columns[idx]
 		reqCols[idx] = rowcodec.ColInfo{
 			ID: col.ID,
 			Ft: &col.FieldType,
@@ -450,7 +451,8 @@ func fillRowChecksum(
 	}
 
 	columnFt := make(map[int64]*types.FieldType)
-	for _, col := range tblInfo.Columns {
+	for idx := range tblInfo.Columns {
+		col := tblInfo.Columns[idx]
 		columnFt[col.ID] = &col.FieldType
 	}
 
