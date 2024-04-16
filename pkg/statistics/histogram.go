@@ -1509,7 +1509,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 					continue
 				}
 				// Now buckets[i-1].lower < currentLeftMost < buckets[i-1].upper
-				overlapping := calcFraction4Datums(buckets[i-1].lower, buckets[i-1].upper, currentLeftMost)
+				overlapping := calcFraction4Datums(sc.TypeCtx(), buckets[i-1].lower, buckets[i-1].upper, currentLeftMost)
 				overlappedCount := int64(float64(buckets[i-1].Count) * overlapping)
 				overlappedNDV := int64(float64(buckets[i-1].NDV) * overlapping)
 				sum += overlappedCount
