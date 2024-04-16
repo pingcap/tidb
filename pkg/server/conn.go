@@ -1206,7 +1206,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	if counter != nil {
 		counter.Inc()
 	} else {
-		label := strconv.Itoa(int(cmd))
+		label := server_metrics.CmdToString(cmd)
 		if err != nil {
 			metrics.QueryTotalCounter.WithLabelValues(label, "Error", resourceGroupName).Inc()
 		} else {
