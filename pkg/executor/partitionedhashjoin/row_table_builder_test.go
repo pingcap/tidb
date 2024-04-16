@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createSimpleFilter() (expression.CNFExprs, error) {
+func createSimpleFilter(t *testing.T) expression.CNFExprs {
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	a := &expression.Column{Index: 0, RetType: intTp}
@@ -37,12 +37,33 @@ func createSimpleFilter() (expression.CNFExprs, error) {
 	d.SetValueWithDefaultCollation(intConstant)
 	b := &expression.Constant{RetType: intTp, Value: d}
 	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
-	if err != nil {
-		return nil, err
-	}
+	require.NoError(t, err, "error when create simple filter")
 	buildFilter := make(expression.CNFExprs, 0)
 	buildFilter = append(buildFilter, sf)
-	return buildFilter, nil
+	return buildFilter
+}
+
+func createImpossibleFilter(t *testing.T) expression.CNFExprs {
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	a := &expression.Column{Index: 0, RetType: intTp}
+	intConstant := int64(10000)
+	var d types.Datum
+	d.SetMinNotNull()
+	d.SetValueWithDefaultCollation(intConstant)
+	b := &expression.Constant{RetType: intTp, Value: d}
+	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
+	require.NoError(t, err)
+	buildFilter := make(expression.CNFExprs, 0)
+	buildFilter = append(buildFilter, sf)
+	intConstant = int64(5000)
+	d.SetMinNotNull()
+	d.SetValueWithDefaultCollation(intConstant)
+	b = &expression.Constant{RetType: intTp, Value: d}
+	sf, err = expression.NewFunction(mock.NewContext(), ast.LT, tinyTp, a, b)
+	require.NoError(t, err)
+	buildFilter = append(buildFilter, sf)
+	return buildFilter
 }
 
 func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, buildKeyIndex []int, buildTypes []*types.FieldType, buildKeyTypes []*types.FieldType, probeKeyTypes []*types.FieldType, keepFilteredRows bool) {
@@ -181,8 +202,7 @@ func TestKey(t *testing.T) {
 	checkKeys(t, true, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
 	checkKeys(t, true, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
 	// buildFilter != nil
-	buildFilter, err := createSimpleFilter()
-	require.NoError(t, err)
+	buildFilter := createSimpleFilter(t)
 	checkKeys(t, true, buildFilter, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true)
 	checkKeys(t, true, buildFilter, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
 	buildKeyIndex = []int{0}
@@ -193,33 +213,53 @@ func TestKey(t *testing.T) {
 	checkKeys(t, true, buildFilter, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, false)
 }
 
-func checkColumnResult(t *testing.T, result *chunk.Chunk, expected *chunk.Chunk, ctx *PartitionedHashJoinCtx, forOtherCondition bool) {
-	require.Equal(t, expected.NumRows(), result.NumRows())
+func checkColumnResult(t *testing.T, builder *rowTableBuilder, keepFilteredRows bool, result *chunk.Chunk, expected *chunk.Chunk, ctx *PartitionedHashJoinCtx, forOtherCondition bool) {
+	if keepFilteredRows {
+		require.Equal(t, expected.NumRows(), result.NumRows())
+	}
 	meta := ctx.hashTableMeta
 	if forOtherCondition {
 		for i := 0; i < meta.columnCountNeededForOtherCondition; i++ {
 			colIndex := meta.rowColumnsOrder[i]
 			resultCol := result.Column(colIndex)
 			require.Equal(t, result.NumRows(), resultCol.Rows())
-			for j := 0; j < resultCol.Rows(); j++ {
-				isNull := expected.GetRow(j).IsNull(colIndex)
-				require.Equal(t, isNull, resultCol.IsNull(j), "data not match, col index = "+strconv.Itoa(colIndex)+" row index = "+strconv.Itoa(j))
-				if !isNull {
-					require.Equal(t, expected.GetRow(j).GetRaw(colIndex), resultCol.GetRaw(j), "data not match, col index = "+strconv.Itoa(colIndex)+" row index = "+strconv.Itoa(j))
+			resultIndex := 0
+			for logicalIndex, physicalIndex := range builder.usedRows {
+				if !keepFilteredRows {
+					if (builder.filterVector != nil && !builder.filterVector[physicalIndex]) || (builder.nullKeyVector != nil && builder.nullKeyVector[physicalIndex]) {
+						// filtered row, skip
+						continue
+					}
 				}
+				isNull := expected.GetRow(logicalIndex).IsNull(colIndex)
+				require.Equal(t, isNull, resultCol.IsNull(resultIndex), "data not match, col index = "+strconv.Itoa(colIndex)+" row index = "+strconv.Itoa(logicalIndex))
+				if !isNull {
+					require.Equal(t, expected.GetRow(logicalIndex).GetRaw(colIndex), resultCol.GetRaw(resultIndex), "data not match, col index = "+strconv.Itoa(colIndex)+" row index = "+strconv.Itoa(logicalIndex))
+				}
+				resultIndex++
 			}
+			require.Equal(t, resultIndex, result.NumRows())
 		}
 	} else {
 		for index, orgIndex := range ctx.LUsed {
 			resultCol := result.Column(index)
 			require.Equal(t, result.NumRows(), resultCol.Rows())
-			for j := 0; j < resultCol.Rows(); j++ {
-				isNull := expected.GetRow(j).IsNull(orgIndex)
-				require.Equal(t, isNull, resultCol.IsNull(j), "data not match, col index = "+strconv.Itoa(orgIndex)+" row index = "+strconv.Itoa(j))
-				if !isNull {
-					require.Equal(t, expected.GetRow(j).GetRaw(orgIndex), resultCol.GetRaw(j), "data not match, col index = "+strconv.Itoa(orgIndex)+" row index = "+strconv.Itoa(j))
+			resultIndex := 0
+			for logicalIndex, physicalIndex := range builder.usedRows {
+				if !keepFilteredRows {
+					if (builder.filterVector != nil && !builder.filterVector[physicalIndex]) || (builder.nullKeyVector != nil && builder.nullKeyVector[physicalIndex]) {
+						// filtered row, skip
+						continue
+					}
 				}
+				isNull := expected.GetRow(logicalIndex).IsNull(orgIndex)
+				require.Equal(t, isNull, resultCol.IsNull(resultIndex), "data not match, col index = "+strconv.Itoa(orgIndex)+" row index = "+strconv.Itoa(logicalIndex))
+				if !isNull {
+					require.Equal(t, expected.GetRow(logicalIndex).GetRaw(orgIndex), resultCol.GetRaw(resultIndex), "data not match, col index = "+strconv.Itoa(orgIndex)+" row index = "+strconv.Itoa(logicalIndex))
+				}
+				resultIndex++
 			}
+			require.Equal(t, resultIndex, result.NumRows())
 		}
 	}
 }
@@ -228,6 +268,10 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 	buildKeyTypes []*types.FieldType, probeKeyTypes []*types.FieldType, keepFilteredRows bool, columnsUsedByOtherCondition []int,
 	outputColumns []int, needUsedFlag bool) {
 	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, columnsUsedByOtherCondition, outputColumns, needUsedFlag)
+	resultTypes := make([]*types.FieldType, 0, len(outputColumns))
+	for _, index := range outputColumns {
+		resultTypes = append(resultTypes, buildTypes[index])
+	}
 	buildSchema := &expression.Schema{}
 	for _, tp := range buildTypes {
 		buildSchema.Append(&expression.Column{
@@ -267,34 +311,44 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 	require.NoError(t, err, "processOneChunk returns error")
 	require.Equal(t, chk.NumRows(), len(builder.usedRows))
 	mockJoinProber := newMockJoinProbe(hashJoinCtx)
-	resultChunk := chunk.NewEmptyChunk(buildTypes)
+	resultChunk := chunk.NewEmptyChunk(resultTypes)
 	resultChunk.SetInCompleteChunk(true)
+	tmpChunk := chunk.NewEmptyChunk(buildTypes)
+	tmpChunk.SetInCompleteChunk(true)
+	hasOtherConditionColumns := len(columnsUsedByOtherCondition) > 0
 	// all the selected rows should be converted to row format, even for the rows that contains null key
 	if keepFilteredRows {
 		require.Equal(t, uint64(len(builder.usedRows)), rowTables[0].rowCount())
-		hasOtherConditionColumns := len(columnsUsedByOtherCondition) > 0
 		for logicalIndex, physicalIndex := range builder.usedRows {
 			rowStart := rowTables[0].getRowStart(logicalIndex)
 			require.NotEqual(t, uintptr(0), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
-			mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: 0, buildRowStart: rowStart}, resultChunk, 0, hasOtherConditionColumns)
+			if hasOtherConditionColumns {
+				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: 0, buildRowStart: rowStart}, tmpChunk, 0, hasOtherConditionColumns)
+			} else {
+				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: 0, buildRowStart: rowStart}, resultChunk, 0, hasOtherConditionColumns)
+			}
 		}
 		if len(mockJoinProber.cachedBuildRows) > 0 {
-			mockJoinProber.batchConstructBuildRows(resultChunk, 0, hasOtherConditionColumns)
+			if hasOtherConditionColumns {
+				mockJoinProber.batchConstructBuildRows(tmpChunk, 0, hasOtherConditionColumns)
+			} else {
+				mockJoinProber.batchConstructBuildRows(resultChunk, 0, hasOtherConditionColumns)
+			}
 		}
-		checkColumnResult(t, resultChunk, chk, hashJoinCtx, hasOtherConditionColumns)
 		if hasOtherConditionColumns {
+			checkColumnResult(t, builder, keepFilteredRows, tmpChunk, chk, hashJoinCtx, hasOtherConditionColumns)
 			// assume all the column is selected
-			mockJoinProber.selected = make([]bool, 0, resultChunk.NumRows())
-			for i := 0; i < resultChunk.NumRows(); i++ {
+			mockJoinProber.selected = make([]bool, 0, tmpChunk.NumRows())
+			for i := 0; i < tmpChunk.NumRows(); i++ {
 				mockJoinProber.selected = append(mockJoinProber.selected, true)
 			}
 			// need to append the rest columns
-			newResultChk := chunk.NewEmptyChunk(buildTypes)
-			newResultChk.SetInCompleteChunk(true)
-			err1 := mockJoinProber.buildResultAfterOtherCondition(newResultChk, resultChunk)
+			err1 := mockJoinProber.buildResultAfterOtherCondition(resultChunk, tmpChunk)
 			require.NoError(t, err1)
-			require.Equal(t, rowTables[0].rowCount(), uint64(newResultChk.NumRows()))
-			checkColumnResult(t, newResultChk, chk, hashJoinCtx, false)
+			require.Equal(t, rowTables[0].rowCount(), uint64(resultChunk.NumRows()))
+			checkColumnResult(t, builder, keepFilteredRows, resultChunk, chk, hashJoinCtx, false)
+		} else {
+			checkColumnResult(t, builder, keepFilteredRows, resultChunk, chk, hashJoinCtx, hasOtherConditionColumns)
 		}
 	} else {
 		// check join key
@@ -306,15 +360,39 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 			}
 			rowStart := rowTables[0].getRowStart(rowIndex)
 			require.NotEqual(t, uintptr(0), rowStart, "row start must not be nil, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
-			require.Equal(t, builder.serializedKeyVectorBuffer[logicalIndex], meta.getKeyBytes(rowStart), "key not match, logical index = "+strconv.Itoa(logicalIndex)+", physical index = "+strconv.Itoa(physicalIndex))
+			if hasOtherConditionColumns {
+				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: 0, buildRowStart: rowStart}, tmpChunk, 0, hasOtherConditionColumns)
+			} else {
+				mockJoinProber.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: 0, buildRowStart: rowStart}, resultChunk, 0, hasOtherConditionColumns)
+			}
 			rowIndex++
+		}
+		if len(mockJoinProber.cachedBuildRows) > 0 {
+			if hasOtherConditionColumns {
+				mockJoinProber.batchConstructBuildRows(tmpChunk, 0, hasOtherConditionColumns)
+			} else {
+				mockJoinProber.batchConstructBuildRows(resultChunk, 0, hasOtherConditionColumns)
+			}
 		}
 		rowStart := rowTables[0].getRowStart(rowIndex)
 		require.Equal(t, uintptr(0), rowStart, "row start must be nil at the end of the test")
+		if hasOtherConditionColumns {
+			checkColumnResult(t, builder, keepFilteredRows, tmpChunk, chk, hashJoinCtx, hasOtherConditionColumns)
+			mockJoinProber.selected = make([]bool, 0, tmpChunk.NumRows())
+			for i := 0; i < tmpChunk.NumRows(); i++ {
+				mockJoinProber.selected = append(mockJoinProber.selected, true)
+			}
+			err1 := mockJoinProber.buildResultAfterOtherCondition(resultChunk, tmpChunk)
+			require.NoError(t, err1)
+			require.Equal(t, rowTables[0].rowCount(), uint64(resultChunk.NumRows()))
+			checkColumnResult(t, builder, keepFilteredRows, resultChunk, chk, hashJoinCtx, false)
+		} else {
+			checkColumnResult(t, builder, keepFilteredRows, resultChunk, chk, hashJoinCtx, hasOtherConditionColumns)
+		}
 	}
 }
 
-func TestColumns(t *testing.T) {
+func TestColumnsBasic(t *testing.T) {
 	// todo enable nullable type if builder support nullable
 	//intTp := types.NewFieldType(mysql.TypeLonglong)
 	//uintTp := types.NewFieldType(mysql.TypeLonglong)
@@ -333,7 +411,121 @@ func TestColumns(t *testing.T) {
 	buildTypes := []*types.FieldType{notNullIntTp, notNullIntTp, notNullString, notNullUintTp, notNullBinaryStringTp, notNullIntTp}
 	buildKeyTypes := []*types.FieldType{notNullIntTp}
 	probeKeyTypes := []*types.FieldType{notNullIntTp}
-	columnUsedByOtherCondition := []int{2, 3}
-	outputColumns := []int{0, 1, 2, 3, 4, 5}
-	checkColumns(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, true, columnUsedByOtherCondition, outputColumns, false)
+	columnUsedByOtherConditions := [][]int{{2, 3}, {0, 2}, nil}
+	outputColumns := [][]int{{0, 1, 2, 3, 4, 5}, {2, 3, 4, 5, 1, 0}}
+	keepFilteredRows := []bool{true, false}
+	needUsedFlag := []bool{true, false}
+	filter := createSimpleFilter(t)
+	filters := []expression.CNFExprs{filter, nil}
+	withSelCol := []bool{true, false}
+	for _, otherCondition := range columnUsedByOtherConditions {
+		for _, allColumns := range outputColumns {
+			for _, keep := range keepFilteredRows {
+				for _, usedFlag := range needUsedFlag {
+					for _, buildFilter := range filters {
+						for _, withSel := range withSelCol {
+							checkColumns(t, withSel, buildFilter, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, keep, otherCondition, allColumns, usedFlag)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestColumnsAllDataTypes(t *testing.T) {
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	tinyTp.AddFlag(mysql.NotNullFlag)
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	intTp.AddFlag(mysql.NotNullFlag)
+	uintTp := types.NewFieldType(mysql.TypeLonglong)
+	uintTp.AddFlag(mysql.UnsignedFlag)
+	uintTp.AddFlag(mysql.NotNullFlag)
+	yearTp := types.NewFieldType(mysql.TypeYear)
+	yearTp.AddFlag(mysql.NotNullFlag)
+	durationTp := types.NewFieldType(mysql.TypeDuration)
+	durationTp.AddFlag(mysql.NotNullFlag)
+	enumTp := types.NewFieldType(mysql.TypeEnum)
+	enumTp.AddFlag(mysql.NotNullFlag)
+	enumWithIntFlag := types.NewFieldType(mysql.TypeEnum)
+	enumWithIntFlag.AddFlag(mysql.EnumSetAsIntFlag)
+	enumWithIntFlag.AddFlag(mysql.NotNullFlag)
+	setTp := types.NewFieldType(mysql.TypeSet)
+	setTp.AddFlag(mysql.NotNullFlag)
+	bitTp := types.NewFieldType(mysql.TypeBit)
+	bitTp.AddFlag(mysql.NotNullFlag)
+	jsonTp := types.NewFieldType(mysql.TypeJSON)
+	jsonTp.AddFlag(mysql.NotNullFlag)
+	floatTp := types.NewFieldType(mysql.TypeFloat)
+	floatTp.AddFlag(mysql.NotNullFlag)
+	doubleTp := types.NewFieldType(mysql.TypeDouble)
+	doubleTp.AddFlag(mysql.NotNullFlag)
+	stringTp := types.NewFieldType(mysql.TypeVarString)
+	stringTp.AddFlag(mysql.NotNullFlag)
+	datetimeTp := types.NewFieldType(mysql.TypeDatetime)
+	datetimeTp.AddFlag(mysql.NotNullFlag)
+	decimalTp := types.NewFieldType(mysql.TypeNewDecimal)
+	decimalTp.AddFlag(mysql.NotNullFlag)
+	timestampTp := types.NewFieldType(mysql.TypeTimestamp)
+	timestampTp.AddFlag(mysql.NotNullFlag)
+	dateTp := types.NewFieldType(mysql.TypeDate)
+	dateTp.AddFlag(mysql.NotNullFlag)
+	buildKeyIndex := []int{0}
+	buildTypes := []*types.FieldType{tinyTp, intTp, uintTp, yearTp, durationTp, enumTp, enumWithIntFlag, setTp, bitTp, jsonTp, floatTp, doubleTp, stringTp, datetimeTp, decimalTp, timestampTp, dateTp}
+	buildKeyTypes := []*types.FieldType{tinyTp}
+	probeKeyTypes := []*types.FieldType{tinyTp}
+	outputColumns := make([]int, 0, len(buildTypes))
+	for index := range buildTypes {
+		outputColumns = append(outputColumns, index)
+	}
+	keepFilteredRows := []bool{true, false}
+	needUsedFlag := []bool{true, false}
+	for _, keep := range keepFilteredRows {
+		for _, usedFlag := range needUsedFlag {
+			checkColumns(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, keep, nil, outputColumns, usedFlag)
+		}
+	}
+}
+
+func TestBalanceOfFilteredRows(t *testing.T) {
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	stringTp := types.NewFieldType(mysql.TypeVarString)
+	binaryStringTp := types.NewFieldType(mysql.TypeBlob)
+	buildKeyIndex := []int{0}
+	buildTypes := []*types.FieldType{intTp, stringTp, binaryStringTp}
+	buildKeyTypes := []*types.FieldType{intTp}
+	probeKeyTypes := []*types.FieldType{intTp}
+	buildSchema := &expression.Schema{}
+	for _, tp := range buildTypes {
+		buildSchema.Append(&expression.Column{
+			RetType: tp,
+		})
+	}
+
+	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, []int{}, false)
+	hasNullableKey := false
+	for _, buildKeyType := range buildKeyTypes {
+		if !mysql.HasNotNullFlag(buildKeyType.GetFlag()) {
+			hasNullableKey = true
+			break
+		}
+	}
+
+	partitionNumber := 5
+	buildFilter := createImpossibleFilter(t)
+	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, partitionNumber, hasNullableKey, true, true)
+	chk := chunk.GenRandomChunks(buildTypes, 3000)
+	hashJoinCtx := &PartitionedHashJoinCtx{
+		SessCtx:         mock.NewContext(),
+		PartitionNumber: partitionNumber,
+		hashTableMeta:   meta,
+		BuildFilter:     buildFilter,
+	}
+	rowTables := make([]*rowTable, hashJoinCtx.PartitionNumber)
+	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, rowTables)
+	require.NoError(t, err)
+	builder.appendRemainingRowLocations(rowTables)
+	for i := 0; i < partitionNumber; i++ {
+		require.Equal(t, 3000/partitionNumber, int(rowTables[i].rowCount()))
+	}
 }
