@@ -17,14 +17,17 @@ package executor
 import (
 	"context"
 	stderrors "errors"
+<<<<<<< HEAD
 	"math"
 	"sort"
 	"sync/atomic"
+=======
+	"slices"
+>>>>>>> 2e1d9e1039c (executor: remove the retry for analyze (#52634))
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -55,6 +58,7 @@ type AnalyzeColumnsExecV2 struct {
 	*AnalyzeColumnsExec
 }
 
+<<<<<<< HEAD
 func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2() *statistics.AnalyzeResults {
 	analyzeResult := e.analyzeColumnsPushDownV2()
 	if e.notRetryable(analyzeResult) {
@@ -97,6 +101,9 @@ func (e *AnalyzeColumnsExecV2) notRetryable(analyzeResult *statistics.AnalyzeRes
 }
 
 func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeResults {
+=======
+func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics.AnalyzeResults {
+>>>>>>> 2e1d9e1039c (executor: remove the retry for analyze (#52634))
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
