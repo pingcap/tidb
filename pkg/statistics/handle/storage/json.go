@@ -103,8 +103,7 @@ func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *mo
 		Version:      tbl.Version,
 	}
 	for _, col := range tbl.Columns {
-		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-		hist, err := col.ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+		hist, err := col.ConvertTo(sctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

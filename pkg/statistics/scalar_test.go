@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -167,11 +168,12 @@ func TestCalcFraction(t *testing.T) {
 			tp:       types.NewFieldType(mysql.TypeBlob),
 		},
 	}
+	sctx := mock.NewContext()
 	for _, test := range tests {
 		hg := NewHistogram(0, 0, 0, 0, test.tp, 1, 0)
 		hg.AppendBucket(&test.lower, &test.upper, 0, 0)
-		hg.PreCalculateScalar()
-		fraction := hg.calcFraction(0, &test.value)
+		hg.PreCalculateScalar(sctx.TypeCtx())
+		fraction := hg.calcFraction(sctx.TypeCtx(), 0, &test.value)
 		require.InDelta(t, test.fraction, fraction, eps)
 	}
 }

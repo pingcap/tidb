@@ -545,7 +545,7 @@ func TestIndexQueryBytes(t *testing.T) {
 	idx.Bounds.AppendBytes(0, low)
 	idx.Bounds.AppendBytes(0, high)
 	idx.Buckets = append(idx.Buckets, Bucket{Repeat: 10, Count: 20, NDV: 20})
-	idx.PreCalculateScalar()
+	idx.PreCalculateScalar(ctx.TypeCtx())
 	idx.CMSketch = nil
 	// Count / NDV
 	require.Equal(t, idx.QueryBytes(nil, low), uint64(1))

@@ -2264,6 +2264,10 @@ func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 		// We need to assign high priority to it so that we can get the stats as quick as we can.
 		ctx.GetSessionVars().StmtCtx.Priority = mysql.HighPriority
 		do.wg.Add(1)
+		// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
+		// Hence, when reading statistics, we should skip invalid date check. See #39336.
+		sc := ctx.GetSessionVars().StmtCtx
+		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
 	}
 }

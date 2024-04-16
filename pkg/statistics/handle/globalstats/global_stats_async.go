@@ -316,6 +316,10 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	return util.CallWithSCtx(a.statsHandle.SPool(),
 		func(sctx sessionctx.Context) error {
+			// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
+			// Hence, when reading statistics, we should skip invalid date check. See #39336.
+			sc := sctx.GetSessionVars().StmtCtx
+			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 			err := a.prepare(sctx, isIndex)
 			if err != nil {
 				return err
