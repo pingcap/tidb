@@ -4,7 +4,7 @@ go_library(
     name = "base",
     srcs = ["plan.go"],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/base",
-    visibility = ["//pkg/planner/core:__subpackages__"],
+    visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
         "//pkg/planner/context",
