@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -171,7 +172,7 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer1(_ property.TaskType, option 
 
 	p.planCost = 0
 	// child's cost
-	for _, child := range []PhysicalPlan{p.indexPlan, p.tablePlan} {
+	for _, child := range []base.PhysicalPlan{p.indexPlan, p.tablePlan} {
 		childCost, err := child.GetPlanCostVer1(property.CopMultiReadTaskType, option)
 		if err != nil {
 			return 0, err
@@ -406,7 +407,7 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer1(_ property.TaskType, option *
 }
 
 // GetPartialReaderNetDataSize returns the estimated total response data size of a partial read.
-func (p *PhysicalIndexMergeReader) GetPartialReaderNetDataSize(plan PhysicalPlan) float64 {
+func (p *PhysicalIndexMergeReader) GetPartialReaderNetDataSize(plan base.PhysicalPlan) float64 {
 	_, isIdxScan := plan.(*PhysicalIndexScan)
 	return plan.StatsCount() * cardinality.GetAvgRowSize(p.SCtx(), getTblStats(plan), plan.Schema().Columns, isIdxScan, false)
 }
@@ -1243,7 +1244,7 @@ func (p *PhysicalExchangeReceiver) GetPlanCostVer1(taskType property.TaskType, o
 	return p.planCost, nil
 }
 
-func getOperatorActRows(operator PhysicalPlan) float64 {
+func getOperatorActRows(operator base.PhysicalPlan) float64 {
 	if operator == nil {
 		return 0
 	}
@@ -1260,7 +1261,7 @@ func getOperatorActRows(operator PhysicalPlan) float64 {
 	return actRows
 }
 
-func getCardinality(operator PhysicalPlan, costFlag uint64) float64 {
+func getCardinality(operator base.PhysicalPlan, costFlag uint64) float64 {
 	if hasCostFlag(costFlag, coreusage.CostFlagUseTrueCardinality) {
 		actualProbeCnt := operator.GetActualProbeCnt(operator.SCtx().GetSessionVars().StmtCtx.RuntimeStatsColl)
 		if actualProbeCnt == 0 {
@@ -1279,7 +1280,7 @@ func getCardinality(operator PhysicalPlan, costFlag uint64) float64 {
 // estimateNetSeekCost calculates the net seek cost for the plan.
 // for TiKV, it's len(access-range) * seek-factor,
 // and for TiFlash, it's len(access-range) * len(access-column) * seek-factor.
-func estimateNetSeekCost(copTaskPlan PhysicalPlan) float64 {
+func estimateNetSeekCost(copTaskPlan base.PhysicalPlan) float64 {
 	switch x := copTaskPlan.(type) {
 	case *PhysicalTableScan:
 		if x.StoreType == kv.TiFlash { // the old TiFlash interface uses cop-task protocol
@@ -1294,7 +1295,7 @@ func estimateNetSeekCost(copTaskPlan PhysicalPlan) float64 {
 }
 
 // getTblStats returns the tbl-stats of this plan, which contains all columns before pruning.
-func getTblStats(copTaskPlan PhysicalPlan) *statistics.HistColl {
+func getTblStats(copTaskPlan base.PhysicalPlan) *statistics.HistColl {
 	switch x := copTaskPlan.(type) {
 	case *PhysicalTableScan:
 		return x.tblColHists
@@ -1306,7 +1307,7 @@ func getTblStats(copTaskPlan PhysicalPlan) *statistics.HistColl {
 }
 
 // getTableNetFactor returns the corresponding net factor of this table, it's mainly for temporary tables
-func getTableNetFactor(copTaskPlan PhysicalPlan) float64 {
+func getTableNetFactor(copTaskPlan base.PhysicalPlan) float64 {
 	switch x := copTaskPlan.(type) {
 	case *PhysicalTableScan:
 		return x.SCtx().GetSessionVars().GetNetworkFactor(x.Table)

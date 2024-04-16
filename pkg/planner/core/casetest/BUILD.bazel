@@ -18,6 +18,7 @@ go_test(
         "//pkg/parser",
         "//pkg/parser/model",
         "//pkg/planner/core",
+        "//pkg/planner/core/base",
         "//pkg/planner/property",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
