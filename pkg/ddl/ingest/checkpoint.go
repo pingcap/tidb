@@ -174,7 +174,11 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 	cp.currentKeys += added
 	s.mu.Unlock()
 
+<<<<<<< HEAD
 	flushed, imported, err := s.flushCtrl.Flush(s.indexID, FlushModeAuto)
+=======
+	flushed, imported, _, err := TryFlushAllIndexes(s.flushCtrl, FlushModeAuto, s.indexIDs)
+>>>>>>> 5ccadf8b273 (ddl: flush index records for local distributed sort (#52641) (#52649))
 	if !flushed || err != nil {
 		return err
 	}
@@ -218,7 +222,11 @@ func (s *CheckpointManager) Close() {
 
 // Sync syncs the checkpoint.
 func (s *CheckpointManager) Sync() {
+<<<<<<< HEAD
 	_, _, err := s.flushCtrl.Flush(s.indexID, FlushModeForceLocal)
+=======
+	_, _, _, err := TryFlushAllIndexes(s.flushCtrl, FlushModeForceLocal, s.indexIDs)
+>>>>>>> 5ccadf8b273 (ddl: flush index records for local distributed sort (#52641) (#52649))
 	if err != nil {
 		logutil.BgLogger().Warn("flush local engine failed", zap.String("category", "ddl-ingest"), zap.Error(err))
 	}
