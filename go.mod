@@ -18,6 +18,7 @@ require (
 	github.com/aws/aws-sdk-go v1.50.0
 	github.com/bazelbuild/buildtools v0.0.0-20230926111657-7d855c59baeb
 	github.com/bazelbuild/rules_go v0.42.1-0.20231101215950-df20c987afcb
+	github.com/bits-and-blooms/bitset v1.10.0
 	github.com/blacktear23/go-proxyprotocol v1.0.6
 	github.com/butuzov/mirror v1.1.0
 	github.com/carlmjohnson/flagext v0.21.0
