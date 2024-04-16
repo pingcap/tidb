@@ -407,7 +407,7 @@ func genRandomColumn(col *Column, fieldType *types.FieldType, size int) {
 				continue
 			}
 			base := genRandomInt(math.MaxInt32)
-			divide := genRandomInt(10)
+			divide := genRandomInt(10) + 1
 			isNeg := genRandomInt(math.MaxInt16)%2 == 1
 			if isNeg {
 				base = -base
@@ -461,16 +461,16 @@ func genRandomColumn(col *Column, fieldType *types.FieldType, size int) {
 				col.AppendJSON(types.CreateBinaryJSON(nil))
 			case 3:
 				// array
-				array := make([]int64, 0, 2)
+				array := make([]any, 0, 2)
 				array = append(array, genRandomInt(math.MaxInt64))
 				array = append(array, genRandomInt(math.MaxInt64))
 				col.AppendJSON(types.CreateBinaryJSON(array))
 			case 4:
 				// map
-				maps := make(map[int64]int64)
-				maps[genRandomInt(math.MaxInt64)] = genRandomInt(math.MaxInt64)
-				maps[genRandomInt(math.MaxInt64)] = genRandomInt(math.MaxInt64)
-				maps[genRandomInt(math.MaxInt64)] = genRandomInt(math.MaxInt64)
+				maps := make(map[string]any)
+				maps[strconv.Itoa(int(genRandomInt(math.MaxInt32)))] = genRandomInt(math.MaxInt64)
+				maps[strconv.Itoa(int(genRandomInt(math.MaxInt32)))] = genRandomInt(math.MaxInt64)
+				maps[strconv.Itoa(int(genRandomInt(math.MaxInt32)))] = genRandomInt(math.MaxInt64)
 				col.AppendJSON(types.CreateBinaryJSON(maps))
 			case 5:
 				// string

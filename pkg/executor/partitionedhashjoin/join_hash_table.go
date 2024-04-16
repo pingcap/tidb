@@ -63,7 +63,7 @@ func newSubTable(table *rowTable) *subTable {
 	if table.validKeyCount() == 0 {
 		ret.isHashTableEmpty = true
 	}
-	capacity := mathutil.MaxUint64(nextPowerOfTwo(uint64(table.validKeyCount())), uint64(1024))
+	capacity := mathutil.MaxUint64(nextPowerOfTwo(table.validKeyCount()), uint64(1024))
 	ret.hashTable = make([]uintptr, capacity)
 	ret.posMask = capacity - 1
 	return ret
@@ -108,7 +108,6 @@ func (st *subTable) build(startSegmentIndex int, endSegmentIndex int) {
 }
 
 type JoinHashTable struct {
-	isThreadSafe    bool
 	tables          []*subTable
 	partitionNumber uint64
 }
