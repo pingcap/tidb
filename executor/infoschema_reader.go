@@ -1868,13 +1868,13 @@ func (e *memtableRetriever) setDataForTiDBHotRegions(ctx sessionctx.Context) err
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	schemas := tikvHelper.FilterMemDBs(sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema().AllSchemas())
-	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, schemas)
+	allSchemas := tikvHelper.FilterMemDBs(ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas())
+	metrics, err := tikvHelper.ScrapeHotInfo(pdapi.HotRead, allSchemas)
 	if err != nil {
 		return err
 	}
 	e.setDataForHotRegionByMetrics(metrics, "read")
-	metrics, err = tikvHelper.ScrapeHotInfo(pdapi.HotWrite, schemas)
+	metrics, err = tikvHelper.ScrapeHotInfo(pdapi.HotWrite, allSchemas)
 	if err != nil {
 		return err
 	}
