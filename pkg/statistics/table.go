@@ -61,7 +61,6 @@ type Table struct {
 	ExtendedStats *ExtendedStatsColl
 
 	ColAndIdxExistenceMap *ColAndIdxExistenceMap
-	Name                  string
 	HistColl
 	Version uint64
 	// It's the timestamp of the last analyze time.
@@ -427,7 +426,6 @@ func (t *Table) Copy() *Table {
 	nt := &Table{
 		HistColl:           newHistColl,
 		Version:            t.Version,
-		Name:               t.Name,
 		TblInfoUpdateTS:    t.TblInfoUpdateTS,
 		IsPkIsHandle:       t.IsPkIsHandle,
 		LastAnalyzeVersion: t.LastAnalyzeVersion,
@@ -465,7 +463,6 @@ func (t *Table) ShallowCopy() *Table {
 	nt := &Table{
 		HistColl:              newHistColl,
 		Version:               t.Version,
-		Name:                  t.Name,
 		TblInfoUpdateTS:       t.TblInfoUpdateTS,
 		ExtendedStats:         t.ExtendedStats,
 		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
@@ -629,13 +626,25 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 // The Column should be visible in the table and really has analyzed statistics in the stroage.
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Column together with the checking result, to avoid accessing the map multiple times.
-func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool) {
+// The first bool is whether we have it in memory. The second bool is whether this column has stats in the system table or not.
+func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool) {
+	if t.Pseudo {
+		return nil, false, false
+	}
 	col, ok := t.Columns[id]
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
-	// If it's not analyzed yet. Don't need to load it.
+	// If it's not analyzed yet.
 	if !hasAnalyzed {
-		return nil, false
+		// If we don't have it in memory, we create a fake hist for pseudo estimation (see handleOneItemTask()).
+		if !ok {
+			// If we don't have this column. We skip it.
+			// It's something ridiculous. But it's possible that the stats don't have some ColumnInfo.
+			// We need to find a way to maintain it more correctly.
+			return nil, t.ColAndIdxExistenceMap.Has(id, false), false
+		}
+		// Otherwise we don't need to load it.
+		return nil, false, false
 	}
 
 	// Restore the condition from the simplified form:
@@ -643,11 +652,11 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool) {
 	// 2. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
 	// 3. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
 	if !ok || (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
-		return col, true
+		return col, true, true
 	}
 
 	// Otherwise don't need load it.
-	return col, false
+	return col, false, true
 }
 
 // IndexIsLoadNeeded checks whether the index needs trigger the async/sync load.

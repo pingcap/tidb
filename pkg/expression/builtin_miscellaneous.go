@@ -588,7 +588,7 @@ func (c *inetNtoaFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(93)
@@ -716,7 +716,7 @@ func (c *inet6NtoaFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(117)
@@ -1331,7 +1331,7 @@ func (c *uuidFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(36)
@@ -1499,7 +1499,7 @@ func (c *binToUUIDFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(32)

@@ -2312,14 +2312,15 @@ func SetPBColumnsDefaultValue(ctx expression.BuildContext, pbColumns []*tipb.Col
 			continue
 		}
 
-		sessVars := ctx.GetSessionVars()
+		evalCtx := ctx.GetEvalCtx()
 		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(ctx, c)
 		if err != nil {
 			return err
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(sessVars.StmtCtx.TimeZone(), nil, d)
-		err = sessVars.StmtCtx.HandleError(err)
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(evalCtx.Location(), nil, d)
+		ec := evalCtx.ErrCtx()
+		err = ec.HandleError(err)
 		if err != nil {
 			return err
 		}

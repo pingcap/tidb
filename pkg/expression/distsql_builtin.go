@@ -1113,7 +1113,7 @@ func PBToExprs(ctx BuildContext, pbExprs []*tipb.Expr, fieldTps []*types.FieldTy
 
 // PBToExpr converts pb structure to expression.
 func PBToExpr(ctx BuildContext, expr *tipb.Expr, tps []*types.FieldType) (Expression, error) {
-	sc := ctx.GetSessionVars().StmtCtx
+	evalCtx := ctx.GetEvalCtx()
 	switch expr.Tp {
 	case tipb.ExprType_ColumnRef:
 		_, offset, err := codec.DecodeInt(expr.Val)
@@ -1142,7 +1142,7 @@ func PBToExpr(ctx BuildContext, expr *tipb.Expr, tps []*types.FieldType) (Expres
 	case tipb.ExprType_MysqlDuration:
 		return convertDuration(expr.Val)
 	case tipb.ExprType_MysqlTime:
-		return convertTime(expr.Val, expr.FieldType, sc.TimeZone())
+		return convertTime(expr.Val, expr.FieldType, evalCtx.Location())
 	case tipb.ExprType_MysqlJson:
 		return convertJSON(expr.Val)
 	case tipb.ExprType_MysqlEnum:

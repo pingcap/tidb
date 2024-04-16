@@ -86,7 +86,7 @@ func TestEngineManager(t *testing.T) {
 	require.NoError(t, em.closeEngine(ctx, &backend.EngineConfig{}, engine1ID))
 	require.Equal(t, 0, int(em.getImportedKVCount(engine1ID)))
 	// close non-existent engine
-	require.ErrorContains(t, em.closeEngine(ctx, &backend.EngineConfig{}, uuid.New()), "no such file or directory")
+	require.ErrorContains(t, em.closeEngine(ctx, &backend.EngineConfig{}, uuid.New()), "does not exist")
 
 	// reset non-existent engine should work
 	require.NoError(t, em.resetEngine(ctx, uuid.New()))

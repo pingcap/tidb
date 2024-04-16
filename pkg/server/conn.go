@@ -74,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
@@ -1158,9 +1159,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
-				var startTS uint64
+				var timestamp uint64
 				if ctx := cc.getCtx(); ctx != nil && ctx.GetSessionVars() != nil && ctx.GetSessionVars().TxnCtx != nil {
-					startTS = ctx.GetSessionVars().TxnCtx.StartTS
+					timestamp = ctx.GetSessionVars().TxnCtx.StartTS
+					if timestamp == 0 && ctx.GetSessionVars().TxnCtx.StaleReadTs > 0 {
+						// for state-read query.
+						timestamp = ctx.GetSessionVars().TxnCtx.StaleReadTs
+					}
 				}
 				logutil.Logger(ctx).Info("command dispatched failed",
 					zap.String("connInfo", cc.String()),
@@ -1168,7 +1173,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					zap.String("status", cc.SessionStatusToString()),
 					zap.Stringer("sql", getLastStmtInConn{cc}),
 					zap.String("txn_mode", txnMode),
-					zap.Uint64("timestamp", startTS),
+					zap.Uint64("timestamp", timestamp),
 					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
 				)
 			}
@@ -1729,7 +1734,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	warns := sc.GetWarnings()
 	parserWarns := warns[len(prevWarns):]
 
-	var pointPlans []plannercore.Plan
+	var pointPlans []base.Plan
 	cc.ctx.GetSessionVars().InMultiStmts = false
 	if len(stmts) > 1 {
 		// The client gets to choose if it allows multi-statements, and
@@ -1831,7 +1836,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 // prefetchPointPlanKeys extracts the point keys in multi-statement query,
 // use BatchGet to get the keys, so the values will be cached in the snapshot cache, save RPC call cost.
 // For pessimistic transaction, the keys will be batch locked.
-func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode, sqls string) ([]plannercore.Plan, error) {
+func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode, sqls string) ([]base.Plan, error) {
 	txn, err := cc.ctx.Txn(false)
 	if err != nil {
 		return nil, err
@@ -1852,12 +1857,12 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			return nil, nil
 		}
 	}
-	pointPlans := make([]plannercore.Plan, len(stmts))
+	pointPlans := make([]base.Plan, len(stmts))
 	var idxKeys []kv.Key //nolint: prealloc
 	var rowKeys []kv.Key //nolint: prealloc
 	isCommonHandle := make(map[string]bool, 0)
 
-	handlePlan := func(sctx sessionctx.Context, p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
+	handlePlan := func(sctx sessionctx.Context, p base.PhysicalPlan, resetStmtCtxFn func()) error {
 		var tableID int64
 		switch v := p.(type) {
 		case *plannercore.PointGetPlan:

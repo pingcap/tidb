@@ -53,6 +53,7 @@ import (
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -436,6 +437,7 @@ func (s *Server) Run(dom *domain.Domain) error {
 			log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
 			return err
 		}
+		mppcoordmanager.InstanceMPPCoordinatorManager.InitServerAddr(s.GetStatusServerAddr())
 	}
 	if config.GetGlobalConfig().Performance.ForceInitStats && dom != nil {
 		<-dom.StatsHandle().InitStatsDone
