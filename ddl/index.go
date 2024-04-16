@@ -727,6 +727,10 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 		return model.ReorgTypeTxn, nil
 	}
+	if hasSysDB(job) {
+		job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+		return model.ReorgTypeTxn, nil
+	}
 	if ingest.LitInitialized {
 		available, err := ingest.LitBackCtxMgr.CheckAvailable()
 		if err != nil {
