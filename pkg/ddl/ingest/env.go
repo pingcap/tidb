@@ -70,7 +70,7 @@ func InitGlobalLightningEnv(filterProcessingJobIDs FilterProcessingJobIDsFunc) {
 	} else {
 		memTotal = memTotal / 2
 	}
-	LitBackCtxMgr = newLitBackendCtxMgr(sortPath, memTotal, filterProcessingJobIDs)
+	LitBackCtxMgr = NewLitBackendCtxMgr(sortPath, memTotal, filterProcessingJobIDs)
 	litRLimit = util.GenRLimit("ddl-ingest")
 	LitInitialized = true
 	litLogger.Info(LitInfoEnvInitSucc,

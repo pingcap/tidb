@@ -19,7 +19,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -37,7 +39,7 @@ import (
 
 // BackendCtxMgr is used to manage the BackendCtx.
 type BackendCtxMgr interface {
-	// CheckMoreTasksAvailable checks if more ingest backfill task is available.
+	// CheckMoreTasksAvailable checks if it can run more ingest backfill tasks.
 	CheckMoreTasksAvailable(ctx context.Context) (bool, error)
 	// Register uses jobID to identify the BackendCtx. If there's already a
 	// BackendCtx with the same jobID, it will be returned. Otherwise, a new
@@ -51,6 +53,7 @@ type BackendCtxMgr interface {
 		resourceGroupName string,
 	) (BackendCtx, error)
 	Unregister(jobID int64)
+	// Load returns the registered BackendCtx with the given jobID.
 	Load(jobID int64) (BackendCtx, bool)
 }
 
@@ -58,9 +61,20 @@ type BackendCtxMgr interface {
 // input job IDs.
 type FilterProcessingJobIDsFunc func([]int64) ([]int64, error)
 
-// TODO(lance6716): mention folder hierarchy in the comment.
+// litBackendCtxMgr manages multiple litBackendCtx for each DDL job. Each
+// litBackendCtx can use some local disk space and memory resource which are
+// controlled by litBackendCtxMgr.
 type litBackendCtxMgr struct {
-	backends generic.SyncMap[int64, *litBackendCtx]
+	// the lifetime of entries in backends should cover all other resources so it can
+	// be used as a lightweight indicator when interacts with other resources.
+	// Currently, the entry must be created not after disk folder is created and
+	// memory usage is tracked, and vice versa when considering deletion.
+	backends struct {
+		mu sync.RWMutex
+		m  map[int64]*litBackendCtx
+	}
+	// all disk resources of litBackendCtx should be used under path. Currently the
+	// hierarchy is ${path}/${jobID} for each litBackendCtx.
 	path     string
 	memRoot  MemRoot
 	diskRoot DiskRoot
@@ -68,12 +82,13 @@ type litBackendCtxMgr struct {
 	filterProcessingJobIDs FilterProcessingJobIDsFunc
 }
 
-func newLitBackendCtxMgr(path string, memQuota uint64, getProcessingJobIDs FilterProcessingJobIDsFunc) BackendCtxMgr {
+// NewLitBackendCtxMgr creates a new litBackendCtxMgr.
+func NewLitBackendCtxMgr(path string, memQuota uint64, getProcessingJobIDs FilterProcessingJobIDsFunc) BackendCtxMgr {
 	mgr := &litBackendCtxMgr{
-		backends:               generic.NewSyncMap[int64, *litBackendCtx](10),
 		path:                   path,
 		filterProcessingJobIDs: getProcessingJobIDs,
 	}
+	mgr.backends.m = make(map[int64]*litBackendCtx, 4)
 	mgr.memRoot = NewMemRootImpl(int64(memQuota), mgr)
 	mgr.diskRoot = NewDiskRootImpl(path, mgr)
 	LitMemRoot = mgr.memRoot
@@ -126,16 +141,22 @@ func (m *litBackendCtxMgr) Register(
 	failpoint.Inject("beforeCreateLocalBackend", func() {
 		ResignOwnerForTest.Store(true)
 	})
+	// lock backends because createLocalBackend will let lightning create the sort
+	// folder, which may cause cleanupSortPath wrongly delete the sort folder if only
+	// checking the existence of the entry in backends.
+	m.backends.mu.Lock()
 	bd, err := createLocalBackend(ctx, cfg, pdSvcDiscovery)
 	if err != nil {
+		m.backends.mu.Unlock()
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
 		return nil, err
 	}
 
 	bcCtx := newBackendContext(ctx, jobID, bd, cfg.lightning, defaultImportantVariables, m.memRoot, m.diskRoot, etcdClient)
-	m.backends.Store(jobID, bcCtx)
-
+	m.backends.m[jobID] = bcCtx
 	m.memRoot.Consume(StructSizeBackendCtx)
+	m.backends.mu.Unlock()
+
 	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()),
@@ -172,7 +193,7 @@ func (m *litBackendCtxMgr) cleanupSortPath(ctx context.Context) {
 			logutil.Logger(ctx).Error(LitErrCleanSortPath, zap.Error(err))
 			continue
 		}
-		if _, ok := m.backends.Load(jobID); ok {
+		if _, ok := m.Load(jobID); ok {
 			continue
 		}
 		toCheckJobIDs[jobID] = struct{}{}
@@ -182,7 +203,9 @@ func (m *litBackendCtxMgr) cleanupSortPath(ctx context.Context) {
 		return
 	}
 
-	processing, err := m.filterProcessingJobIDs(maps.Keys(toCheckJobIDs))
+	idSlice := maps.Keys(toCheckJobIDs)
+	slices.Sort(idSlice)
+	processing, err := m.filterProcessingJobIDs(idSlice)
 	if err != nil {
 		logutil.Logger(ctx).Error(LitErrCleanSortPath, zap.Error(err))
 		return
@@ -231,7 +254,16 @@ func createLocalBackend(
 
 const checkpointUpdateInterval = 10 * time.Minute
 
-func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg *config.Config, vars map[string]string, memRoot MemRoot, diskRoot DiskRoot, etcdClient *clientv3.Client) *litBackendCtx {
+func newBackendContext(
+	ctx context.Context,
+	jobID int64,
+	be *local.Backend,
+	cfg *config.Config,
+	vars map[string]string,
+	memRoot MemRoot,
+	diskRoot DiskRoot,
+	etcdClient *clientv3.Client,
+) *litBackendCtx {
 	bCtx := &litBackendCtx{
 		SyncMap:        generic.NewSyncMap[int64, *engineInfo](10),
 		MemRoot:        memRoot,
@@ -251,7 +283,16 @@ func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg 
 
 // Unregister removes a backend context from the backend context manager.
 func (m *litBackendCtxMgr) Unregister(jobID int64) {
-	bc, exist := m.backends.Delete(jobID)
+	m.backends.mu.RLock()
+	_, exist := m.backends.m[jobID]
+	m.backends.mu.RUnlock()
+	if !exist {
+		return
+	}
+
+	m.backends.mu.Lock()
+	defer m.backends.mu.Unlock()
+	bc, exist := m.backends.m[jobID]
 	if !exist {
 		return
 	}
@@ -265,34 +306,38 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
 		zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()))
+	delete(m.backends.m, jobID)
 }
 
 func (m *litBackendCtxMgr) Load(jobID int64) (BackendCtx, bool) {
-	return m.backends.Load(jobID)
+	m.backends.mu.RLock()
+	defer m.backends.mu.RUnlock()
+	ret, ok := m.backends.m[jobID]
+	return ret, ok
 }
 
 // TotalDiskUsage returns the total disk usage of all backends.
 func (m *litBackendCtxMgr) TotalDiskUsage() uint64 {
 	var totalDiskUsed uint64
-	for _, key := range m.backends.Keys() {
-		bc, exists := m.backends.Load(key)
-		if exists {
-			_, _, bcDiskUsed, _ := local.CheckDiskQuota(bc.backend, math.MaxInt64)
-			totalDiskUsed += uint64(bcDiskUsed)
-		}
+	m.backends.mu.RLock()
+	defer m.backends.mu.RUnlock()
+
+	for _, bc := range m.backends.m {
+		_, _, bcDiskUsed, _ := local.CheckDiskQuota(bc.backend, math.MaxInt64)
+		totalDiskUsed += uint64(bcDiskUsed)
 	}
 	return totalDiskUsed
 }
 
 // UpdateMemoryUsage collects the memory usages from all the backend and updates it to the memRoot.
 func (m *litBackendCtxMgr) UpdateMemoryUsage() {
-	for _, key := range m.backends.Keys() {
-		bc, exists := m.backends.Load(key)
-		if exists {
-			curSize := bc.backend.TotalMemoryConsume()
-			m.memRoot.ReleaseWithTag(encodeBackendTag(bc.jobID))
-			m.memRoot.ConsumeWithTag(encodeBackendTag(bc.jobID), curSize)
-		}
+	m.backends.mu.RLock()
+	defer m.backends.mu.RUnlock()
+
+	for _, bc := range m.backends.m {
+		curSize := bc.backend.TotalMemoryConsume()
+		m.memRoot.ReleaseWithTag(encodeBackendTag(bc.jobID))
+		m.memRoot.ConsumeWithTag(encodeBackendTag(bc.jobID), curSize)
 	}
 }
 
