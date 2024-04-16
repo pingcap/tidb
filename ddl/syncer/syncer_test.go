@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"runtime"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,6 +37,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/etcdserver"
 	"go.etcd.io/etcd/tests/v3/integration"
+	"go.uber.org/atomic"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -202,24 +204,31 @@ func TestPutKVToEtcdMono(t *testing.T) {
 	err = util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(3))
 	require.NoError(t, err)
 
-	eg := util.NewErrorGroupWithRecover()
+	eg := sync.WaitGroup{}
+	var aerr atomic.Error
 	for i := 0; i < 30; i++ {
-		eg.Go(func() error {
+		eg.Add(1)
+		go func() {
 			err := util2.PutKVToEtcdMono(ctx, cli, 1, "testKey", strconv.Itoa(5))
-			return err
-		})
+			aerr.Store(err)
+			eg.Done()
+		}()
 	}
 	// PutKVToEtcdMono should be conflicted and get errors.
-	require.Error(t, eg.Wait())
+	eg.Wait()
+	require.Error(t, aerr.Load())
 
-	eg = util.NewErrorGroupWithRecover()
+	aerr.Store(nil)
 	for i := 0; i < 30; i++ {
-		eg.Go(func() error {
+		eg.Add(1)
+		go func() {
 			err := util2.PutKVToEtcd(ctx, cli, 1, "testKey", strconv.Itoa(5))
-			return err
-		})
+			aerr.Store(err)
+			eg.Done()
+		}()
 	}
-	require.NoError(t, eg.Wait())
+	eg.Wait()
+	require.NoError(t, aerr.Load())
 
 	err = util2.PutKVToEtcdMono(ctx, cli, 3, "testKey", strconv.Itoa(1))
 	require.NoError(t, err)
