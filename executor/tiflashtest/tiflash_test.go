@@ -1738,4 +1738,3 @@ func TestMppStoreCntWithErrors(t *testing.T) {
 	require.Nil(t, failpoint.Disable(mppStoreCountSetLastUpdateTimeP2))
 	require.Nil(t, failpoint.Disable(mppStoreCountPDError))
 }
-
