@@ -398,6 +398,7 @@ type ddlCtx struct {
 	// hook may be modified.
 	mu struct {
 		sync.RWMutex
+		// see newDefaultCallBack for its value in normal flow.
 		hook        Callback
 		interceptor Interceptor
 	}

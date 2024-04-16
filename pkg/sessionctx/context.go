@@ -141,6 +141,10 @@ type Context interface {
 	HasDirtyContent(tid int64) bool
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
+	// it must be called before CommitTxn, else all changes since last StmtCommit
+	// will be lost. For SQL statement, StmtCommit or StmtRollback is called automatically.
+	// the "Stmt" not only means SQL statement, but also any KV changes, such as
+	// meta KV.
 	StmtCommit(ctx context.Context)
 	// StmtRollback provides statement level rollback. The parameter `forPessimisticRetry` should be true iff it's used
 	// for auto-retrying execution of DMLs in pessimistic transactions.

@@ -510,7 +510,8 @@ type Job struct {
 	// E.g. passing arguments between functions by one single *Job pointer.
 	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
 	CtxVars []interface{} `json:"-"`
-	// for create-table job, it's [model.TableInfo, foreignKeyCheck]
+	// Note: it might change when state changes, such as when rollback on AddColumn.
+	// - CreateTable, it's [model.TableInfo, foreignKeyCheck]
 	// - AddIndex or AddPrimaryKey: [unique, ....
 	// - TruncateTable: [new-table-id, foreignKeyCheck, ...
 	// - RenameTable: [old-db-id, new-table-name, old-db-name]

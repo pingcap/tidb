@@ -102,7 +102,7 @@ type worker struct {
 	sess            *sess.Session // sess is used and only used in running DDL job.
 	delRangeManager delRangeManager
 	logCtx          context.Context
-	lockSeqNum      bool
+	seqNumLocked    bool
 
 	*ddlCtx
 }
@@ -745,7 +745,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 func (w *worker) writeDDLSeqNum(job *model.Job) {
 	w.ddlSeqNumMu.Lock()
 	w.ddlSeqNumMu.seqNum++
-	w.lockSeqNum = true
+	w.seqNumLocked = true
 	job.SeqNum = w.ddlSeqNumMu.seqNum
 }
 
@@ -800,12 +800,12 @@ func (w *JobContext) setDDLLabelForTopSQL(jobQuery string) {
 }
 
 func (w *worker) unlockSeqNum(err error) {
-	if w.lockSeqNum {
+	if w.seqNumLocked {
 		if err != nil {
 			// if meet error, we should reset seqNum.
 			w.ddlSeqNumMu.seqNum--
 		}
-		w.lockSeqNum = false
+		w.seqNumLocked = false
 		w.ddlSeqNumMu.Unlock()
 	}
 }
