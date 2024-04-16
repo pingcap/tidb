@@ -5561,8 +5561,8 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 
 	// Clean the NoDefaultValueFlag value.
 	col.DelFlag(mysql.NoDefaultValueFlag)
+	col.DefaultIsExpr = false
 	if len(specNewColumn.Options) == 0 {
-		col.DefaultIsExpr = false
 		err = col.SetDefaultValue(nil)
 		if err != nil {
 			return errors.Trace(err)
