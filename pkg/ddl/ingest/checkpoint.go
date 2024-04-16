@@ -174,7 +174,7 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 	cp.currentKeys += added
 	s.mu.Unlock()
 
-	flushed, imported, err := s.tryFlushAllIndexes(FlushModeAuto)
+	flushed, imported, _, err := TryFlushAllIndexes(s.flushCtrl, FlushModeAuto, s.indexIDs)
 	if !flushed || err != nil {
 		return err
 	}
@@ -192,20 +192,6 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 		s.endGlobal = s.endLocal
 	}
 	return nil
-}
-
-func (s *CheckpointManager) tryFlushAllIndexes(mode FlushMode) (flushed, imported bool, err error) {
-	allFlushed := true
-	allImported := true
-	for _, idxID := range s.indexIDs {
-		flushed, imported, err := s.flushCtrl.Flush(idxID, mode)
-		if err != nil {
-			return false, false, err
-		}
-		allFlushed = allFlushed && flushed
-		allImported = allImported && imported
-	}
-	return allFlushed, allImported, nil
 }
 
 func (s *CheckpointManager) progressLocalSyncMinKey() {
@@ -232,7 +218,7 @@ func (s *CheckpointManager) Close() {
 
 // Sync syncs the checkpoint.
 func (s *CheckpointManager) Sync() {
-	_, _, err := s.tryFlushAllIndexes(FlushModeForceLocal)
+	_, _, _, err := TryFlushAllIndexes(s.flushCtrl, FlushModeForceLocal, s.indexIDs)
 	if err != nil {
 		logutil.BgLogger().Warn("flush local engine failed", zap.String("category", "ddl-ingest"), zap.Error(err))
 	}
