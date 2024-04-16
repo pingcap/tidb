@@ -151,15 +151,13 @@ const (
 	selectIndexConflictKeysReplace = `
 		SELECT raw_key, index_name, raw_value, raw_handle
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND is_data_kv = 0
-		ORDER BY raw_key;
+		WHERE table_name = ? AND is_data_kv = 0;
 	`
 
 	selectDataConflictKeysReplace = `
 		SELECT raw_key, raw_value
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND is_data_kv = 1
-		ORDER BY raw_key;
+		WHERE table_name = ? AND is_data_kv = 1;
 	`
 
 	deleteNullDataRow = `
