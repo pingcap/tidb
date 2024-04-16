@@ -223,7 +223,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(tblInfos[i], dsSchemaCols[i])
-		_, _, err = cardinality.Selectivity(sctx, histColl, selConditions[i], nil)
+		_, _, err = cardinality.Selectivity(sctx.GetPlanCtx(), histColl, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver2")
 		traceInfo := stmtCtx.OptimizerDebugTrace
 		buf.Reset()
@@ -233,7 +233,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		testdata.OnRecord(func() {
 			out[i].ResultForV2 = res
 		})
-		require.Equal(t, out[i].ResultForV2, res, sql, "For ver2")
+		require.Equal(t, out[i].ResultForV2, res, sql, fmt.Sprintf("For ver2: test#%d", i))
 	}
 
 	tk.MustExec("set tidb_analyze_version = 1")
@@ -247,7 +247,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	for i, sql := range in {
 		stmtCtx.OptimizerDebugTrace = nil
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(tblInfos[i], dsSchemaCols[i])
-		_, _, err = cardinality.Selectivity(sctx, histColl, selConditions[i], nil)
+		_, _, err = cardinality.Selectivity(sctx.GetPlanCtx(), histColl, selConditions[i], nil)
 		require.NoError(t, err, sql, "For ver1")
 		traceInfo := stmtCtx.OptimizerDebugTrace
 		buf.Reset()

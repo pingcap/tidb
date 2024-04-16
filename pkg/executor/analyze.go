@@ -200,7 +200,7 @@ func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, results
 }
 
 // filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
-func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, infoSchema infoschema.InfoSchema) ([]*analyzeTask, uint, []string, error) {
+func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, is infoschema.InfoSchema) ([]*analyzeTask, uint, []string, error) {
 	var (
 		filteredTasks       []*analyzeTask
 		skippedTables       []string
@@ -237,19 +237,19 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 		if _, ok := tidAndPidsMap[physicalTableID]; !ok {
 			if isLocked {
 				if tableID.IsPartitionTable() {
-					tbl, _, def := infoSchema.FindTableByPartitionID(tableID.PartitionID)
+					tbl, _, def := is.FindTableByPartitionID(tableID.PartitionID)
 					if def == nil {
 						logutil.BgLogger().Warn("Unknown partition ID in analyze task", zap.Int64("pid", tableID.PartitionID))
 					} else {
-						schema, _ := infoSchema.SchemaByTable(tbl.Meta())
+						schema, _ := infoschema.SchemaByTable(is, tbl.Meta())
 						skippedTables = append(skippedTables, fmt.Sprintf("%s.%s partition (%s)", schema.Name, tbl.Meta().Name.O, def.Name.O))
 					}
 				} else {
-					tbl, ok := infoSchema.TableByID(physicalTableID)
+					tbl, ok := is.TableByID(physicalTableID)
 					if !ok {
 						logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", physicalTableID))
 					} else {
-						schema, _ := infoSchema.SchemaByTable(tbl.Meta())
+						schema, _ := infoschema.SchemaByTable(is, tbl.Meta())
 						skippedTables = append(skippedTables, fmt.Sprintf("%s.%s", schema.Name, tbl.Meta().Name.O))
 					}
 				}
@@ -346,7 +346,7 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 		idx++
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 	_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		return err
@@ -519,9 +519,15 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
-			resultsCh <- &statistics.AnalyzeResults{
-				Err: getAnalyzePanicErr(r),
+			// If errExitCh is closed, it means the whole analyze task is aborted. So we do not need to send the result to resultsCh.
+			err := getAnalyzePanicErr(r)
+			select {
+			case resultsCh <- &statistics.AnalyzeResults{
+				Err: err,
 				Job: task.job,
+			}:
+			case <-e.errExitCh:
+				logutil.BgLogger().Error("analyze worker exits because the whole analyze task is aborted", zap.Error(err))
 			}
 		}
 	}()
@@ -594,7 +600,7 @@ func StartAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	}
 	job.StartTime = time.Now()
 	job.Progress.SetLastDumpTime(job.StartTime)
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
 	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
@@ -620,7 +626,7 @@ func UpdateAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCo
 	if delta == 0 {
 		return
 	}
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	const sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %? WHERE id = %?"
 	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, delta, *job.ID)
@@ -658,7 +664,7 @@ func FinishAnalyzeMergeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, 
 		sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
 		args = []any{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
 	}
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)
 	if err != nil {
@@ -702,7 +708,7 @@ func FinishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
 		args = []any{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
 	}
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)
 	if err != nil {

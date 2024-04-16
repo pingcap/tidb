@@ -9,6 +9,8 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/sysproctrack",
+        "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/types",
@@ -16,6 +18,7 @@ go_library(
         "//pkg/util/chunk",
         "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
 )

@@ -22,7 +22,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -223,7 +224,7 @@ type joinTypeWithExtMsg struct {
 	outerBindCondition []expression.Expression
 }
 
-func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	tracer := &joinReorderTrace{cost: map[string]float64{}, opt: opt}
 	tracer.traceJoinReorder(p)
@@ -234,7 +235,7 @@ func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *logi
 }
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
-func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
+func (s *joinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	if _, ok := p.(*LogicalCTE); ok {
 		return p, nil
 	}
@@ -393,7 +394,7 @@ type joinGroupResult struct {
 
 // nolint:structcheck
 type baseSingleGroupJoinOrderSolver struct {
-	ctx              sessionctx.Context
+	ctx              base.PlanContext
 	curJoinGroup     []*jrNode
 	leadingJoinGroup LogicalPlan
 	*basicJoinGroupInfo
@@ -512,7 +513,7 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan Log
 				rightNode, leftNode = leftPlan, rightPlan
 				usedEdges = append(usedEdges, edge)
 			} else {
-				newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
 				usedEdges = append(usedEdges, newSf)
 			}
 		}
@@ -663,7 +664,7 @@ func (*joinReOrderSolver) name() string {
 	return "join_reorder"
 }
 
-func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt *logicalOptimizeOp) {
+func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt *coreusage.LogicalOptimizeOp) {
 	if len(tracer.initial) < 1 || len(tracer.final) < 1 {
 		return
 	}
@@ -686,7 +687,7 @@ func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt 
 		buffer.WriteString("]")
 		return buffer.String()
 	}
-	opt.appendStepToCurrent(plan.ID(), plan.TP(), reason, action)
+	opt.AppendStepToCurrent(plan.ID(), plan.TP(), reason, action)
 }
 
 func allJoinOrderToString(tt []*tracing.PlanTrace) string {
@@ -773,14 +774,14 @@ func findRoots(t *tracing.PlanTrace) []*tracing.PlanTrace {
 }
 
 type joinReorderTrace struct {
-	opt     *logicalOptimizeOp
+	opt     *coreusage.LogicalOptimizeOp
 	initial string
 	final   string
 	cost    map[string]float64
 }
 
 func (t *joinReorderTrace) traceJoinReorder(p LogicalPlan) {
-	if t == nil || t.opt == nil || t.opt.tracer == nil {
+	if t == nil || t.opt == nil || t.opt.TracerIsNil() {
 		return
 	}
 	if len(t.initial) > 0 {
@@ -791,7 +792,7 @@ func (t *joinReorderTrace) traceJoinReorder(p LogicalPlan) {
 }
 
 func (t *joinReorderTrace) appendLogicalJoinCost(join LogicalPlan, cost float64) {
-	if t == nil || t.opt == nil || t.opt.tracer == nil {
+	if t == nil || t.opt == nil || t.opt.TracerIsNil() {
 		return
 	}
 	joinMapKey := allJoinOrderToString(extractJoinAndDataSource(join.BuildPlanTrace()))

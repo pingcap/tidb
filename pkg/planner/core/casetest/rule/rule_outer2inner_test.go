@@ -27,8 +27,9 @@ func TestOuter2Inner(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t1(a1 int, b1 int)")
-	tk.MustExec("create table t2(a2 int, b2 int)")
+	tk.MustExec("create table t1(a1 int, b1 int, c1 int)")
+	tk.MustExec("create table t2(a2 int, b2 int, c2 int)")
+	tk.MustExec("create table t3(a3 int, b3 int, c3 int)")
 	var input Input
 	var output []struct {
 		SQL  string

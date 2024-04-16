@@ -176,6 +176,8 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 	// For specified type null, it should return CoercibilityIgnorable, which means it got the lowest priority in DeriveCollationFromExprs.
 	if c.RetType.GetType() == mysql.TypeNull {
 		return CoercibilityIgnorable
+	} else if types.IsTypeBit(c.RetType) {
+		return CoercibilityImplicit
 	}
 
 	switch c.RetType.EvalType() {
@@ -238,7 +240,7 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 			return CheckAndDeriveCollationFromExprs(ctx, funcName, types.ETInt, args...)
 		}
 	case ast.DateFormat, ast.TimeFormat:
-		charsetInfo, collation := ctx.GetSessionVars().GetCharsetInfo()
+		charsetInfo, collation := ctx.GetCharsetInfo()
 		return &ExprCollation{args[1].Coercibility(), args[1].Repertoire(), charsetInfo, collation}, nil
 	case ast.Cast:
 		// We assume all the cast are implicit.
@@ -246,7 +248,7 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 		// Non-string type cast to string type should use @@character_set_connection and @@collation_connection.
 		// String type cast to string type should keep its original charset and collation. It should not happen.
 		if retType == types.ETString && argTps[0] != types.ETString {
-			ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
+			ec.Charset, ec.Collation = ctx.GetCharsetInfo()
 		}
 		return ec, nil
 	case ast.Case:
@@ -279,7 +281,7 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 	case ast.Format, ast.Space, ast.ToBase64, ast.UUID, ast.Hex, ast.MD5, ast.SHA, ast.SHA2, ast.SM3:
 		// should return ASCII repertoire, MySQL's doc says it depends on character_set_connection, but it not true from its source code.
 		ec = &ExprCollation{Coer: CoercibilityCoercible, Repe: ASCII}
-		ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
+		ec.Charset, ec.Collation = ctx.GetCharsetInfo()
 		return ec, nil
 	case ast.JSONPretty, ast.JSONQuote:
 		// JSON function always return utf8mb4 and utf8mb4_bin.
@@ -289,7 +291,7 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 
 	ec = &ExprCollation{CoercibilityNumeric, ASCII, charset.CharsetBin, charset.CollationBin}
 	if retType == types.ETString {
-		ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
+		ec.Charset, ec.Collation = ctx.GetCharsetInfo()
 		ec.Coer = CoercibilityCoercible
 		if ec.Charset != charset.CharsetASCII {
 			ec.Repe = UNICODE
@@ -310,7 +312,7 @@ func CheckAndDeriveCollationFromExprs(ctx BuildContext, funcName string, evalTyp
 	}
 
 	if evalType == types.ETString && ec.Coer == CoercibilityNumeric {
-		ec.Charset, ec.Collation = ctx.GetSessionVars().GetCharsetInfo()
+		ec.Charset, ec.Collation = ctx.GetCharsetInfo()
 		ec.Coer = CoercibilityCoercible
 		ec.Repe = ASCII
 	}
@@ -335,7 +337,7 @@ func safeConvert(ctx BuildContext, ec *ExprCollation, args ...Expression) bool {
 		}
 
 		if c, ok := arg.(*Constant); ok {
-			str, isNull, err := c.EvalString(ctx, chunk.Row{})
+			str, isNull, err := c.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return false
 			}
@@ -373,6 +375,8 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 	dstCharset, dstCollation := exprs[0].GetType().GetCharset(), exprs[0].GetType().GetCollate()
 	if exprs[0].GetType().EvalType() == types.ETJson {
 		dstCharset, dstCollation = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
+	} else if types.IsTypeBit(exprs[0].GetType()) {
+		dstCharset, dstCollation = charset.CharsetBin, charset.CollationBin
 	}
 	unknownCS := false
 
@@ -383,6 +387,8 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 		// see details https://github.com/pingcap/tidb/issues/31320#issuecomment-1010599311
 		if arg.GetType().EvalType() == types.ETJson {
 			argCharset, argCollation = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
+		} else if types.IsTypeBit(arg.GetType()) {
+			argCharset, argCollation = charset.CharsetBin, charset.CollationBin
 		}
 		// If one of the arguments is binary charset, we allow it can be used with other charsets.
 		// If they have the same coercibility, let the binary charset one to be the winner because binary has more precedence.

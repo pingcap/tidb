@@ -26,12 +26,13 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -49,18 +50,20 @@ import (
 )
 
 // EvalSubqueryFirstRow evaluates incorrelated subqueries once, and get first row.
-var EvalSubqueryFirstRow func(ctx context.Context, p PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (row []types.Datum, err error)
+var EvalSubqueryFirstRow func(ctx context.Context, p base.PhysicalPlan, is infoschema.InfoSchema, sctx base.PlanContext) (row []types.Datum, err error)
 
 // evalAstExprWithPlanCtx evaluates ast expression with plan context.
-func evalAstExprWithPlanCtx(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
+// Different with expression.EvalSimpleAst, it uses planner context and is more powerful to build some special expressions
+// like subquery, window function, etc.
+func evalAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode) (types.Datum, error) {
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	newExpr, err := rewriteAstExpr(sctx, expr, nil, nil, false)
+	newExpr, err := rewriteAstExprWithPlanCtx(sctx, expr, nil, nil, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
-	return newExpr.Eval(sctx, chunk.Row{})
+	return newExpr.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 }
 
 // evalAstExpr evaluates ast expression directly.
@@ -68,15 +71,17 @@ func evalAstExpr(ctx expression.BuildContext, expr ast.ExprNode) (types.Datum, e
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	newExpr, err := buildExprWithAst(ctx, expr)
+	newExpr, err := buildSimpleExpr(ctx, expr)
 	if err != nil {
 		return types.Datum{}, err
 	}
-	return newExpr.Eval(ctx, chunk.Row{})
+	return newExpr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 }
 
-// rewriteAstExpr rewrites ast expression directly.
-func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error) {
+// rewriteAstExprWithPlanCtx rewrites ast expression directly.
+// Different with expression.BuildSimpleExpr, it uses planner context and is more powerful to build some special expressions
+// like subquery, window function, etc.
+func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error) {
 	var is infoschema.InfoSchema
 	// in tests, it may be null
 	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
@@ -98,7 +103,13 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	return newExpr, nil
 }
 
-func buildExprWithAst(ctx expression.BuildContext, node ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
+func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
+	intest.AssertNotNil(node)
+	if node == nil {
+		// This should never happen. Return error to make it easy to debug in case we have some unexpected bugs.
+		return nil, errors.New("expression node should be present")
+	}
+
 	var options expression.BuildOptions
 	for _, opt := range opts {
 		opt(&options)
@@ -112,6 +123,23 @@ func buildExprWithAst(ctx expression.BuildContext, node ast.ExprNode, opts ...ex
 		return nil, errors.New("InputSchema and InputNames should be the same length")
 	}
 
+	// assert all input db names are the same if specified
+	intest.AssertFunc(func() bool {
+		if len(options.InputNames) == 0 {
+			return true
+		}
+
+		dbName := options.InputNames[0].DBName
+		if options.SourceTableDB.L != "" {
+			intest.Assert(dbName.L == options.SourceTableDB.L)
+		}
+
+		for _, name := range options.InputNames {
+			intest.Assert(name.DBName.L == dbName.L)
+		}
+		return true
+	})
+
 	rewriter := &expressionRewriter{
 		ctx:                 context.TODO(),
 		sctx:                ctx,
@@ -123,7 +151,7 @@ func buildExprWithAst(ctx expression.BuildContext, node ast.ExprNode, opts ...ex
 	}
 
 	if tbl := options.SourceTable; tbl != nil && rewriter.schema == nil {
-		cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr(""), tbl.Name, tbl.Cols(), tbl)
+		cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, options.SourceTableDB, tbl.Name, tbl.Cols(), tbl)
 		if err != nil {
 			return nil, err
 		}
@@ -135,9 +163,16 @@ func buildExprWithAst(ctx expression.BuildContext, node ast.ExprNode, opts ...ex
 	if rewriter.schema == nil {
 		rewriter.schema = expression.NewSchema()
 	}
-	rewriter.sctx.SetValue(expression.TiDBDecodeKeyFunctionKey, decodeKeyFromString)
 
 	expr, _, err := rewriteExprNode(rewriter, node, rewriter.asScalar)
+	if err != nil {
+		return nil, err
+	}
+
+	if ft := options.TargetFieldType; ft != nil {
+		expr = expression.BuildCastFunction(ctx, expr, ft)
+	}
+
 	return expr, err
 }
 
@@ -215,10 +250,9 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 
 	if len(b.rewriterPool) < b.rewriterCounter {
 		rewriter = &expressionRewriter{
-			sctx: b.ctx, ctx: ctx,
+			sctx: b.ctx.GetExprCtx(), ctx: ctx,
 			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, rollExpand: b.currentBlockExpand},
 		}
-		rewriter.sctx.SetValue(expression.TiDBDecodeKeyFunctionKey, decodeKeyFromString)
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
 	}
@@ -666,7 +700,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 
 	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())) == 0 {
-		er.sctx.GetSessionVars().StmtCtx.SetHintWarning(
+		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
 		noDecorrelate = false
 	}
@@ -763,7 +797,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPla
 	if useMin {
 		funcName = ast.AggFuncMin
 	}
-	funcMaxOrMin, err := aggregation.NewAggFuncDesc(planCtx.builder.ctx, funcName, []expression.Expression{rexpr}, false)
+	funcMaxOrMin, err := aggregation.NewAggFuncDesc(planCtx.builder.ctx.GetExprCtx(), funcName, []expression.Expression{rexpr}, false)
 	if err != nil {
 		er.err = err
 		return
@@ -771,7 +805,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPla
 
 	// Create a column and append it to the schema of that aggregation.
 	colMaxOrMin := &expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  funcMaxOrMin.RetTp,
 	}
 	colMaxOrMin.SetCoercibility(rexpr.Coercibility())
@@ -791,13 +825,14 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 	innerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr)
 	outerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), lexpr)
 
-	funcSum, err := aggregation.NewAggFuncDesc(planCtx.builder.ctx, ast.AggFuncSum, []expression.Expression{innerIsNull}, false)
+	funcSum, err := aggregation.NewAggFuncDesc(planCtx.builder.ctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{innerIsNull}, false)
 	if err != nil {
 		er.err = err
 		return
 	}
+	sessVars := planCtx.builder.ctx.GetSessionVars()
 	colSum := &expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: sessVars.AllocPlanColumnID(),
 		RetType:  funcSum.RetTp,
 	}
 	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcSum)
@@ -805,13 +840,13 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 	innerHasNull := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), colSum, expression.NewZero())
 
 	// Build `count(1)` aggregation to check if subquery is empty.
-	funcCount, err := aggregation.NewAggFuncDesc(planCtx.builder.ctx, ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
+	funcCount, err := aggregation.NewAggFuncDesc(planCtx.builder.ctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
 	if err != nil {
 		er.err = err
 		return
 	}
 	colCount := &expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: sessVars.AllocPlanColumnID(),
 		RetType:  funcCount.RetTp,
 	}
 	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcCount)
@@ -858,7 +893,7 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
 	proj.schema.Append(&expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: sessVars.AllocPlanColumnID(),
 		RetType:  cond.GetType(),
 	})
 	proj.names = append(proj.names, types.EmptyName)
@@ -872,14 +907,15 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 func (er *expressionRewriter) handleNEAny(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np LogicalPlan, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
 	sctx := planCtx.builder.ctx
+	exprCtx := sctx.GetExprCtx()
 	// If there is NULL in s.id column, s.id should be the value that isn't null in condition t.id != s.id.
 	// So use function max to filter NULL.
-	maxFunc, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncMax, []expression.Expression{rexpr}, false)
+	maxFunc, err := aggregation.NewAggFuncDesc(exprCtx, ast.AggFuncMax, []expression.Expression{rexpr}, false)
 	if err != nil {
 		er.err = err
 		return
 	}
-	countFunc, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	countFunc, err := aggregation.NewAggFuncDesc(exprCtx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
 	if err != nil {
 		er.err = err
 		return
@@ -893,12 +929,12 @@ func (er *expressionRewriter) handleNEAny(planCtx *exprRewriterPlanCtx, lexpr, r
 	}
 	plan4Agg.SetChildren(np)
 	maxResultCol := &expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  maxFunc.RetTp,
 	}
 	maxResultCol.SetCoercibility(rexpr.Coercibility())
 	count := &expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName, types.EmptyName)
@@ -914,12 +950,13 @@ func (er *expressionRewriter) handleNEAny(planCtx *exprRewriterPlanCtx, lexpr, r
 func (er *expressionRewriter) handleEQAll(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np LogicalPlan, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
 	sctx := planCtx.builder.ctx
-	firstRowFunc, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	exprCtx := sctx.GetExprCtx()
+	firstRowFunc, err := aggregation.NewAggFuncDesc(exprCtx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	if err != nil {
 		er.err = err
 		return
 	}
-	countFunc, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	countFunc, err := aggregation.NewAggFuncDesc(exprCtx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
 	if err != nil {
 		er.err = err
 		return
@@ -945,13 +982,13 @@ func (er *expressionRewriter) handleEQAll(planCtx *exprRewriterPlanCtx, lexpr, r
 	firstRowFunc.RetTp = newRetTp
 
 	firstRowResultCol := &expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  firstRowFunc.RetTp,
 	}
 	firstRowResultCol.SetCoercibility(rexpr.Coercibility())
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
 	count := &expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
 	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
@@ -980,13 +1017,13 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 
 	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())) == 0 {
-		er.sctx.GetSessionVars().StmtCtx.SetHintWarning(
+		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
 		noDecorrelate = false
 	}
 	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
 	if semiJoinRewrite && noDecorrelate {
-		er.sctx.GetSessionVars().StmtCtx.SetHintWarning(
+		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 			"NO_DECORRELATE() and SEMI_JOIN_REWRITE() are in conflict. Both will be ineffective.")
 		noDecorrelate = false
 		semiJoinRewrite = false
@@ -1000,10 +1037,10 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 		er.ctxStackAppend(planCtx.plan.Schema().Columns[planCtx.plan.Schema().Len()-1], planCtx.plan.OutputNames()[planCtx.plan.Schema().Len()-1])
 	} else {
 		// We don't want nth_plan hint to affect separately executed subqueries here, so disable nth_plan temporarily.
-		nthPlanBackup := er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
-		er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = -1
+		nthPlanBackup := b.ctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
+		b.ctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = -1
 		physicalPlan, _, err := DoOptimize(ctx, planCtx.builder.ctx, b.optFlag, np)
-		er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = nthPlanBackup
+		b.ctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = nthPlanBackup
 		if err != nil {
 			er.err = err
 			return v, true
@@ -1024,7 +1061,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 			scalarSubQ.SetCoercibility(np.Schema().Columns[0].Coercibility())
 			b.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
 			if v.Not {
-				notWrapped, err := expression.NewFunction(b.ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), scalarSubQ)
+				notWrapped, err := expression.NewFunction(b.ctx.GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), scalarSubQ)
 				if err != nil {
 					er.err = err
 					return v, true
@@ -1156,7 +1193,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	corCols := extractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
 	if len(corCols) == 0 && noDecorrelate {
-		er.sctx.GetSessionVars().StmtCtx.SetHintWarning(
+		planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
 		noDecorrelate = false
 	}
@@ -1165,7 +1202,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
 	// we can treat it as constant, because the upper LogicalApply cannot be eliminated since current node is a join node),
 	// and don't need to append a scalar value, we can rewrite it to inner join.
-	if er.sctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag {
+	if planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag {
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		planCtx.builder.optFlag |= flagEliminateAgg
 		planCtx.builder.optFlag |= flagEliminateProjection
@@ -1217,7 +1254,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 
 	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())) == 0 {
-		er.sctx.GetSessionVars().StmtCtx.SetHintWarning(
+		planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
 		noDecorrelate = false
 	}
@@ -1241,10 +1278,10 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		return v, true
 	}
 	// We don't want nth_plan hint to affect separately executed subqueries here, so disable nth_plan temporarily.
-	nthPlanBackup := er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
-	er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = -1
+	nthPlanBackup := planCtx.builder.ctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
+	planCtx.builder.ctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = -1
 	physicalPlan, _, err := DoOptimize(ctx, planCtx.builder.ctx, planCtx.builder.optFlag, np)
-	er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = nthPlanBackup
+	planCtx.builder.ctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = nthPlanBackup
 	if err != nil {
 		er.err = err
 		return v, true
@@ -1341,7 +1378,7 @@ func initConstantRepertoire(c *expression.Constant) {
 
 func (er *expressionRewriter) adjustUTF8MB4Collation(tp *types.FieldType) {
 	if tp.GetFlag()&mysql.UnderScoreCharsetFlag > 0 && charset.CharsetUTF8MB4 == tp.GetCharset() {
-		tp.SetCollate(er.sctx.GetSessionVars().DefaultCollationForUTF8MB4)
+		tp.SetCollate(er.sctx.GetDefaultCollationForUTF8MB4())
 	}
 }
 
@@ -1583,9 +1620,6 @@ func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *type
 	if err != nil {
 		return
 	}
-	if scalarFunc, ok := ret.(*expression.ScalarFunction); ok {
-		er.sctx.BuiltinFunctionUsageInc(scalarFunc.Function.PbCode().String())
-	}
 	return
 }
 
@@ -1602,7 +1636,7 @@ func (*expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
 }
 
 func (er *expressionRewriter) useCache() bool {
-	return er.sctx.GetSessionVars().StmtCtx.UseCache
+	return er.sctx.IsUseCache()
 }
 
 func (er *expressionRewriter) rewriteVariable(planCtx *exprRewriterPlanCtx, v *ast.VariableExpr) {
@@ -1842,7 +1876,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 					if c.GetType().EvalType() == types.ETInt {
 						continue // no need to refine it
 					}
-					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackErrorf("'%v' may be converted to INT", c.String()))
+					er.sctx.SetSkipPlanCache(errors.NewNoStackErrorf("'%v' may be converted to INT", c.String()))
 					if err := expression.RemoveMutableConst(er.sctx, []expression.Expression{c}); err != nil {
 						er.err = err
 						return
@@ -2009,13 +2043,13 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 		return
 	}
 
-	char, col := er.sctx.GetSessionVars().GetCharsetInfo()
+	char, col := er.sctx.GetCharsetInfo()
 	var function expression.Expression
 	fieldType := &types.FieldType{}
 	isPatternExactMatch := false
 	// Treat predicate 'like' or 'ilike' the same way as predicate '=' when it is an exact match and new collation is not enabled.
 	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
-		patString, isNull, err := patExpression.EvalString(er.sctx, chunk.Row{})
+		patString, isNull, err := patExpression.EvalString(er.sctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			er.err = err
 			return
@@ -2539,11 +2573,10 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 	return strings.ToLower(x) == ast.CurrentTimestamp
 }
 
-func decodeKeyFromString(ctx expression.EvalContext, s string) string {
-	sc := ctx.GetSessionVars().StmtCtx
+func decodeKeyFromString(tc types.Context, isVer infoschemactx.MetaOnlyInfoSchema, s string) string {
 	key, err := hex.DecodeString(s)
 	if err != nil {
-		sc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
+		tc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
 		return s
 	}
 	// Auto decode byte if needed.
@@ -2552,41 +2585,41 @@ func decodeKeyFromString(ctx expression.EvalContext, s string) string {
 		key = bs
 	}
 	tableID := tablecodec.DecodeTableID(key)
-	if tableID == 0 {
-		sc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
+	if tableID <= 0 {
+		tc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
 		return s
 	}
 
-	is, ok := ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	is, ok := isVer.(infoschema.InfoSchema)
 	if !ok {
-		sc.AppendWarning(errors.NewNoStackErrorf("infoschema not found when decoding key: %X", key))
+		tc.AppendWarning(errors.NewNoStackErrorf("infoschema not found when decoding key: %X", key))
 		return s
 	}
 	tbl, _ := infoschema.FindTableByTblOrPartID(is, tableID)
-	loc := ctx.GetSessionVars().Location()
+	loc := tc.Location()
 	if tablecodec.IsRecordKey(key) {
 		ret, err := decodeRecordKey(key, tableID, tbl, loc)
 		if err != nil {
-			sc.AppendWarning(err)
+			tc.AppendWarning(err)
 			return s
 		}
 		return ret
 	} else if tablecodec.IsIndexKey(key) {
 		ret, err := decodeIndexKey(key, tableID, tbl, loc)
 		if err != nil {
-			sc.AppendWarning(err)
+			tc.AppendWarning(err)
 			return s
 		}
 		return ret
 	} else if tablecodec.IsTableKey(key) {
 		ret, err := decodeTableKey(key, tableID, tbl)
 		if err != nil {
-			sc.AppendWarning(err)
+			tc.AppendWarning(err)
 			return s
 		}
 		return ret
 	}
-	sc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
+	tc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
 	return s
 }
 

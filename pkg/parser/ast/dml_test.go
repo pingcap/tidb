@@ -415,6 +415,10 @@ func TestWindowSpecRestore(t *testing.T) {
 func TestLoadDataRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{
+			sourceSQL: "load data low_priority infile '/a.csv' into table `t`",
+			expectSQL: "LOAD DATA LOW_PRIORITY INFILE '/a.csv' INTO TABLE `t`",
+		},
+		{
 			sourceSQL: "load data infile '/a.csv' format 'sql file' into table `t`",
 			expectSQL: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t`",
 		},

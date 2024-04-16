@@ -19,12 +19,12 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
@@ -44,37 +44,61 @@ type BackfillTaskMeta struct {
 	EleTypeKey []byte `json:"ele_type_key"`
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
-	// UseMergeSort indicate whether the backfilling task use merge sort step for global sort.
-	// Merge Sort step aims to support more data.
-	UseMergeSort bool `json:"use_merge_sort"`
+	EstimateRowSize int    `json:"estimate_row_size"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
 type BackfillSubTaskMeta struct {
 	PhysicalTableID int64 `json:"physical_table_id"`
 
-	RangeSplitKeys        [][]byte `json:"range_split_keys"`
-	DataFiles             []string `json:"data-files"`
-	StatFiles             []string `json:"stat-files"`
+	// Used by read index step.
+	RowStart []byte `json:"row_start"`
+	RowEnd   []byte `json:"row_end"`
+
+	// Used by global sort write & ingest step.
+	RangeSplitKeys [][]byte `json:"range_split_keys,omitempty"`
+	DataFiles      []string `json:"data-files,omitempty"`
+	StatFiles      []string `json:"stat-files,omitempty"`
+	// Each group of MetaGroups represents a different index kvs meta.
+	MetaGroups []*external.SortedKVMeta `json:"meta_groups,omitempty"`
+	// Only used for adding one single index.
+	// Keep this for compatibility with v7.5.
 	external.SortedKVMeta `json:",inline"`
 }
 
-// NewBackfillSubtaskExecutor creates a new backfill subtask executor.
-func NewBackfillSubtaskExecutor(taskMeta []byte, d *ddl,
-	bc ingest.BackendCtx, stage proto.Step) (execute.StepExecutor, error) {
-	bgm := &BackfillTaskMeta{}
-	err := json.Unmarshal(taskMeta, bgm)
+func decodeBackfillSubTaskMeta(raw []byte) (*BackfillSubTaskMeta, error) {
+	var subtask BackfillSubTaskMeta
+	err := json.Unmarshal(raw, &subtask)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
-	jobMeta := &bgm.Job
 
-	_, tbl, err := d.getTableByTxn((*asAutoIDRequirement)(d.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
+	// For compatibility with old version TiDB.
+	if len(subtask.RowStart) == 0 {
+		subtask.RowStart = subtask.SortedKVMeta.StartKey
+		subtask.RowEnd = subtask.SortedKVMeta.EndKey
+	}
+	if len(subtask.MetaGroups) == 0 {
+		m := subtask.SortedKVMeta
+		subtask.MetaGroups = []*external.SortedKVMeta{&m}
+	}
+	return &subtask, nil
+}
+
+func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
+	stage proto.Step,
+) (execute.StepExecutor, error) {
+	jobMeta := &s.taskMeta.Job
+	ddlObj := s.d
+
+	_, tblIface, err := ddlObj.getTableByTxn((*asAutoIDRequirement)(ddlObj.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err
 	}
-	indexInfos := make([]*model.IndexInfo, 0, len(bgm.EleIDs))
-	for _, eid := range bgm.EleIDs {
+	tbl := tblIface.(table.PhysicalTable)
+	eleIDs := s.taskMeta.EleIDs
+	indexInfos := make([]*model.IndexInfo, 0, len(eleIDs))
+	for _, eid := range eleIDs {
 		indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eid)
 		if indexInfo == nil {
 			logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
@@ -83,33 +107,61 @@ func NewBackfillSubtaskExecutor(taskMeta []byte, d *ddl,
 		}
 		indexInfos = append(indexInfos, indexInfo)
 	}
+	cloudStorageURI := s.taskMeta.CloudStorageURI
+	estRowSize := s.taskMeta.EstimateRowSize
 
 	switch stage {
 	case proto.BackfillStepReadIndex:
-		jc := d.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
-		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
-		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(
-			d, &bgm.Job, indexInfos, tbl.(table.PhysicalTable), jc, bc, bgm.CloudStorageURI), nil
+		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
+		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
+		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
+		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
-		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
+		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
-		if len(bgm.CloudStorageURI) > 0 {
-			return newCloudImportExecutor(&bgm.Job, jobMeta.ID, indexInfos[0], tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
+		if len(cloudStorageURI) == 0 {
+			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return nil, errors.Errorf("local import does not have write & ingest step")
+		return newCloudImportExecutor(jobMeta, indexInfos[0], tbl, s.getBackendCtx, cloudStorageURI)
 	default:
+		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}
 }
 
+func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
+	job := &s.taskMeta.Job
+	unique, err := decodeIndexUniqueness(job)
+	if err != nil {
+		return nil, err
+	}
+	ddlObj := s.d
+	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+
+	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job.ID, unique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+}
+
+func decodeIndexUniqueness(job *model.Job) (bool, error) {
+	unique := make([]bool, 1)
+	err := job.DecodeArgs(&unique[0])
+	if err != nil {
+		err = job.DecodeArgs(&unique)
+	}
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	// We only support adding multiple unique indexes or multiple non-unique indexes,
+	// we use the first index uniqueness here.
+	return unique[0], nil
+}
+
 type backfillDistExecutor struct {
 	*taskexecutor.BaseTaskExecutor
-	d          *ddl
-	task       *proto.Task
-	taskTable  taskexecutor.TaskTable
-	backendCtx ingest.BackendCtx
-	jobID      int64
+	d         *ddl
+	task      *proto.Task
+	taskTable taskexecutor.TaskTable
+	taskMeta  *BackfillTaskMeta
+	jobID     int64
 }
 
 func newBackfillDistExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable, d *ddl) taskexecutor.TaskExecutor {
@@ -128,49 +180,21 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	d := s.d
 
 	bgm := &BackfillTaskMeta{}
 	err = json.Unmarshal(s.task.Meta, bgm)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	job := &bgm.Job
 
-	unique, err := decodeIndexUniqueness(job)
-	if err != nil {
-		return err
-	}
-	pdLeaderAddr := d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
-	// TODO: local backend should be inited when step executor is created.
-	// TODO here we have to use executor ctx to avoid it keeps running when task is canceled.
-	bc, err := ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	s.backendCtx = bc
-	s.jobID = job.ID
+	s.taskMeta = bgm
 	return nil
 }
 
-func decodeIndexUniqueness(job *model.Job) (bool, error) {
-	unique := make([]bool, 1)
-	err := job.DecodeArgs(&unique[0])
-	if err != nil {
-		err = job.DecodeArgs(&unique)
-	}
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	// We only support adding multiple unique indexes or multiple non-unique indexes,
-	// we use the first index uniqueness here.
-	return unique[0], nil
-}
-
-func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) (execute.StepExecutor, error) {
+func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
 	switch task.Step {
 	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
-		return NewBackfillSubtaskExecutor(task.Meta, s.d, s.backendCtx, task.Step)
+		return s.newBackfillSubtaskExecutor(task.Step)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)
 	}
@@ -196,8 +220,5 @@ func (*backfillDistExecutor) IsRetryableError(err error) bool {
 }
 
 func (s *backfillDistExecutor) Close() {
-	if s.backendCtx != nil {
-		ingest.LitBackCtxMgr.Unregister(s.jobID)
-	}
 	s.BaseTaskExecutor.Close()
 }

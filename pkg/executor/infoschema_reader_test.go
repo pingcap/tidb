@@ -45,6 +45,9 @@ func TestInspectionTables(t *testing.T) {
 		"tidb,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash,1001",
 		"tikv,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash,0",
 		"tiproxy,127.0.0.1:6000,127.0.0.1:3380,mock-version,mock-githash,0",
+		"ticdc,127.0.0.1:8300,127.0.0.1:8301,mock-version,mock-githash,0",
+		"tso,127.0.0.1:3379,127.0.0.1:3379,mock-version,mock-githash,0",
+		"scheduling,127.0.0.1:4379,127.0.0.1:4379,mock-version,mock-githash,0",
 	}
 	fpName := "github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo"
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
@@ -56,6 +59,9 @@ func TestInspectionTables(t *testing.T) {
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 1001",
 		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
 		"tiproxy 127.0.0.1:6000 127.0.0.1:3380 mock-version mock-githash 0",
+		"ticdc 127.0.0.1:8300 127.0.0.1:8301 mock-version mock-githash 0",
+		"tso 127.0.0.1:3379 127.0.0.1:3379 mock-version mock-githash 0",
+		"scheduling 127.0.0.1:4379 127.0.0.1:4379 mock-version mock-githash 0",
 	))
 
 	// enable inspection mode
@@ -66,9 +72,12 @@ func TestInspectionTables(t *testing.T) {
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 1001",
 		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
 		"tiproxy 127.0.0.1:6000 127.0.0.1:3380 mock-version mock-githash 0",
+		"ticdc 127.0.0.1:8300 127.0.0.1:8301 mock-version mock-githash 0",
+		"tso 127.0.0.1:3379 127.0.0.1:3379 mock-version mock-githash 0",
+		"scheduling 127.0.0.1:4379 127.0.0.1:4379 mock-version mock-githash 0",
 	))
 	require.NoError(t, inspectionTableCache["cluster_info"].Err)
-	require.Len(t, inspectionTableCache["cluster_info"].Rows, 4)
+	require.Len(t, inspectionTableCache["cluster_info"].Rows, 7)
 
 	// check whether is obtain data from cache at the next time
 	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd", mysql.DefaultCollationName)
@@ -77,6 +86,9 @@ func TestInspectionTables(t *testing.T) {
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 1001",
 		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
 		"tiproxy 127.0.0.1:6000 127.0.0.1:3380 mock-version mock-githash 0",
+		"ticdc 127.0.0.1:8300 127.0.0.1:8301 mock-version mock-githash 0",
+		"tso 127.0.0.1:3379 127.0.0.1:3379 mock-version mock-githash 0",
+		"scheduling 127.0.0.1:4379 127.0.0.1:4379 mock-version mock-githash 0",
 	))
 	tk.Session().GetSessionVars().InspectionTableCache = nil
 }
@@ -530,7 +542,7 @@ SELECT
     )
   LIMIT 1
 ;
-`).Check(testkit.Rows("t a b"))
+`)
 	}
 }
 
@@ -539,6 +551,11 @@ func TestShowColumnsWithSubQueryView(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+
+	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
+		// infoschema v2 requires network, so it cannot be tested this way.
+		t.Skip()
+	}
 
 	tk.MustExec("CREATE TABLE added (`id` int(11), `name` text, `some_date` timestamp);")
 	tk.MustExec("CREATE TABLE incremental (`id` int(11), `name`text, `some_date` timestamp);")
@@ -592,4 +609,21 @@ func newGetTiFlashSystemTableRequestMocker(t *testing.T) *getTiFlashSystemTableR
 		handlers: make(map[string]func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error), 0),
 		t:        t,
 	}
+}
+
+// https://github.com/pingcap/tidb/issues/52350
+func TestReferencedTableSchemaWithForeignKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test;")
+	tk.MustExec("create database if not exists test2;")
+	tk.MustExec("drop table if exists test.t1;")
+	tk.MustExec("drop table if exists test2.t2;")
+	tk.MustExec("create table test.t1(id int primary key);")
+	tk.MustExec("create table test2.t2(i int, id int, foreign key (id) references test.t1(id));")
+
+	tk.MustQuery(`SELECT column_name, referenced_column_name, referenced_table_name, table_schema, referenced_table_schema 
+	FROM information_schema.key_column_usage
+	WHERE table_name = 't2' AND table_schema = 'test2';`).Check(testkit.Rows(
+		"id id t1 test2 test"))
 }

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -222,7 +221,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			if normalized {
 				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.LateMaterializationFilterCondition))
 			} else {
-				buffer.Write(expression.SortedExplainExpressionList(p.SCtx(), p.LateMaterializationFilterCondition))
+				buffer.Write(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.LateMaterializationFilterCondition))
 			}
 		} else {
 			buffer.WriteString("empty")
@@ -353,12 +352,12 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalUnionScan) ExplainInfo() string {
-	return string(expression.SortedExplainExpressionList(p.SCtx(), p.Conditions))
+	return string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
 }
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalSelection) ExplainInfo() string {
-	exprStr := string(expression.SortedExplainExpressionList(p.SCtx(), p.Conditions))
+	exprStr := string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
@@ -425,7 +424,7 @@ func (p *PhysicalTableDual) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	buffer = explainByItems(p.SCtx(), buffer, p.ByItems)
+	buffer = explainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems)
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
 	}
@@ -475,7 +474,7 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 	builder := &strings.Builder{}
 	if len(p.GroupByItems) > 0 {
 		builder.WriteString("group by:")
-		builder.Write(sortedExplainExpressionList(p.SCtx(), p.GroupByItems))
+		builder.Write(sortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.GroupByItems))
 		builder.WriteString(", ")
 	}
 	for i := 0; i < len(p.AggFuncs); i++ {
@@ -484,9 +483,9 @@ func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 		if normalized {
 			colName = p.schema.Columns[i].ExplainNormalizedInfo()
 		} else {
-			colName = p.schema.Columns[i].ExplainInfo(p.SCtx())
+			colName = p.schema.Columns[i].ExplainInfo(p.SCtx().GetExprCtx().GetEvalCtx())
 		}
-		builder.WriteString(aggregation.ExplainAggFunc(p.SCtx(), p.AggFuncs[i], normalized))
+		builder.WriteString(aggregation.ExplainAggFunc(p.SCtx().GetExprCtx().GetEvalCtx(), p.AggFuncs[i], normalized))
 		builder.WriteString("->")
 		builder.WriteString(colName)
 		if i+1 < len(p.AggFuncs) {
@@ -522,6 +521,8 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) 
 		}
 	}
 
+	exprCtx := p.SCtx().GetExprCtx()
+	evalCtx := exprCtx.GetEvalCtx()
 	buffer := bytes.NewBufferString(p.JoinType.String())
 	buffer.WriteString(", inner:")
 	if normalized {
@@ -531,36 +532,36 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) 
 	}
 	if len(p.OuterJoinKeys) > 0 {
 		buffer.WriteString(", outer key:")
-		buffer.Write(expression.ExplainColumnList(p.SCtx(), p.OuterJoinKeys))
+		buffer.Write(expression.ExplainColumnList(evalCtx, p.OuterJoinKeys))
 	}
 	if len(p.InnerJoinKeys) > 0 {
 		buffer.WriteString(", inner key:")
-		buffer.Write(expression.ExplainColumnList(p.SCtx(), p.InnerJoinKeys))
+		buffer.Write(expression.ExplainColumnList(evalCtx, p.InnerJoinKeys))
 	}
 
 	if len(p.OuterHashKeys) > 0 && !isIndexMergeJoin {
 		exprs := make([]expression.Expression, 0, len(p.OuterHashKeys))
 		for i := range p.OuterHashKeys {
-			expr, err := expression.NewFunctionBase(p.SCtx(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
+			expr, err := expression.NewFunctionBase(exprCtx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
 			if err != nil {
 				logutil.BgLogger().Warn("fail to NewFunctionBase", zap.Error(err))
 			}
 			exprs = append(exprs, expr)
 		}
 		buffer.WriteString(", equal cond:")
-		buffer.Write(sortedExplainExpressionList(p.SCtx(), exprs))
+		buffer.Write(sortedExplainExpressionList(evalCtx, exprs))
 	}
 	if len(p.LeftConditions) > 0 {
 		buffer.WriteString(", left cond:")
-		buffer.Write(sortedExplainExpressionList(p.SCtx(), p.LeftConditions))
+		buffer.Write(sortedExplainExpressionList(evalCtx, p.LeftConditions))
 	}
 	if len(p.RightConditions) > 0 {
 		buffer.WriteString(", right cond:")
-		buffer.Write(sortedExplainExpressionList(p.SCtx(), p.RightConditions))
+		buffer.Write(sortedExplainExpressionList(evalCtx, p.RightConditions))
 	}
 	if len(p.OtherConditions) > 0 {
 		buffer.WriteString(", other cond:")
-		buffer.Write(sortedExplainExpressionList(p.SCtx(), p.OtherConditions))
+		buffer.Write(sortedExplainExpressionList(evalCtx, p.OtherConditions))
 	}
 	return buffer.String()
 }
@@ -605,6 +606,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 
 	buffer.WriteString(p.JoinType.String())
 
+	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	if len(p.EqualConditions) > 0 {
 		if normalized {
 			buffer.WriteString(", equal:")
@@ -652,11 +654,11 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	}
 	if len(p.RightConditions) > 0 {
 		buffer.WriteString(", right cond:")
-		buffer.Write(sortedExplainExpressionList(p.SCtx(), p.RightConditions))
+		buffer.Write(sortedExplainExpressionList(evalCtx, p.RightConditions))
 	}
 	if len(p.OtherConditions) > 0 {
 		buffer.WriteString(", other cond:")
-		buffer.Write(sortedExplainExpressionList(p.SCtx(), p.OtherConditions))
+		buffer.Write(sortedExplainExpressionList(evalCtx, p.OtherConditions))
 	}
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		fmt.Fprintf(buffer, ", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
@@ -688,14 +690,15 @@ func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 		}
 	}
 
+	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString(p.JoinType.String())
 	if len(p.LeftJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", left key:%s",
-			expression.ExplainColumnList(p.SCtx(), p.LeftJoinKeys))
+			expression.ExplainColumnList(evalCtx, p.LeftJoinKeys))
 	}
 	if len(p.RightJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", right key:%s",
-			expression.ExplainColumnList(p.SCtx(), p.RightJoinKeys))
+			expression.ExplainColumnList(evalCtx, p.RightJoinKeys))
 	}
 	if len(p.LeftConditions) > 0 {
 		if normalized {
@@ -706,11 +709,11 @@ func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 	}
 	if len(p.RightConditions) > 0 {
 		fmt.Fprintf(buffer, ", right cond:%s",
-			sortedExplainExpressionList(p.SCtx(), p.RightConditions))
+			sortedExplainExpressionList(evalCtx, p.RightConditions))
 	}
 	if len(p.OtherConditions) > 0 {
 		fmt.Fprintf(buffer, ", other cond:%s",
-			sortedExplainExpressionList(p.SCtx(), p.OtherConditions))
+			sortedExplainExpressionList(evalCtx, p.OtherConditions))
 	}
 	return buffer.String()
 }
@@ -747,7 +750,7 @@ func (p *PhysicalTopN) ExplainInfo() string {
 		if len(p.GetPartitionBy()) > 0 {
 			buffer.WriteString("order by ")
 		}
-		buffer = explainByItems(p.SCtx(), buffer, p.ByItems)
+		buffer = explainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems)
 	}
 	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	return buffer.String()
@@ -779,15 +782,15 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBoun
 	if bound.UnBounded {
 		buffer.WriteString("unbounded")
 	} else if len(bound.CalcFuncs) > 0 {
-		ctx := p.SCtx()
+		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 		sf := bound.CalcFuncs[0].(*expression.ScalarFunction)
 		switch sf.FuncName.L {
 		case ast.DateAdd, ast.DateSub:
 			// For `interval '2:30' minute_second`.
-			fmt.Fprintf(buffer, "interval %s %s", sf.GetArgs()[1].ExplainInfo(ctx), sf.GetArgs()[2].ExplainInfo(ctx))
+			fmt.Fprintf(buffer, "interval %s %s", sf.GetArgs()[1].ExplainInfo(evalCtx), sf.GetArgs()[2].ExplainInfo(evalCtx))
 		case ast.Plus, ast.Minus:
 			// For `1 preceding` of range frame.
-			fmt.Fprintf(buffer, "%s", sf.GetArgs()[1].ExplainInfo(ctx))
+			fmt.Fprintf(buffer, "%s", sf.GetArgs()[1].ExplainInfo(evalCtx))
 		}
 	} else {
 		fmt.Fprintf(buffer, "%d", bound.Num)
@@ -814,12 +817,12 @@ func (p *PhysicalWindow) ExplainInfo() string {
 			buffer.WriteString(" ")
 		}
 		buffer.WriteString("order by ")
-		ctx := p.SCtx()
+		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 		for i, item := range p.OrderBy {
 			if item.Desc {
-				fmt.Fprintf(buffer, "%s desc", item.Col.ExplainInfo(ctx))
+				fmt.Fprintf(buffer, "%s desc", item.Col.ExplainInfo(evalCtx))
 			} else {
-				fmt.Fprintf(buffer, "%s", item.Col.ExplainInfo(ctx))
+				fmt.Fprintf(buffer, "%s", item.Col.ExplainInfo(evalCtx))
 			}
 
 			if i+1 < len(p.OrderBy) {
@@ -851,13 +854,13 @@ func (p *PhysicalWindow) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalShuffle) ExplainInfo() string {
-	explainIds := make([]fmt.Stringer, len(p.DataSources))
+	explainIDs := make([]fmt.Stringer, len(p.DataSources))
 	for i := range p.DataSources {
-		explainIds[i] = p.DataSources[i].ExplainID()
+		explainIDs[i] = p.DataSources[i].ExplainID()
 	}
 
 	buffer := bytes.NewBufferString("")
-	fmt.Fprintf(buffer, "execution info: concurrency:%v, data sources:%v", p.Concurrency, explainIds)
+	fmt.Fprintf(buffer, "execution info: concurrency:%v, data sources:%v", p.Concurrency, explainIDs)
 	return buffer.String()
 }
 
@@ -874,21 +877,22 @@ func formatWindowFuncDescs(buffer *bytes.Buffer, descs []*aggregation.WindowFunc
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalJoin) ExplainInfo() string {
+	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := bytes.NewBufferString(p.JoinType.String())
 	if len(p.EqualConditions) > 0 {
 		fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
 	}
 	if len(p.LeftConditions) > 0 {
 		fmt.Fprintf(buffer, ", left cond:%s",
-			expression.SortedExplainExpressionList(p.SCtx(), p.LeftConditions))
+			expression.SortedExplainExpressionList(evalCtx, p.LeftConditions))
 	}
 	if len(p.RightConditions) > 0 {
 		fmt.Fprintf(buffer, ", right cond:%s",
-			expression.SortedExplainExpressionList(p.SCtx(), p.RightConditions))
+			expression.SortedExplainExpressionList(evalCtx, p.RightConditions))
 	}
 	if len(p.OtherConditions) > 0 {
 		fmt.Fprintf(buffer, ", other cond:%s",
-			expression.SortedExplainExpressionList(p.SCtx(), p.OtherConditions))
+			expression.SortedExplainExpressionList(evalCtx, p.OtherConditions))
 	}
 	return buffer.String()
 }
@@ -898,12 +902,12 @@ func (p *LogicalAggregation) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	if len(p.GroupByItems) > 0 {
 		fmt.Fprintf(buffer, "group by:%s, ",
-			expression.SortedExplainExpressionList(p.SCtx(), p.GroupByItems))
+			expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.GroupByItems))
 	}
 	if len(p.AggFuncs) > 0 {
 		buffer.WriteString("funcs:")
 		for i, agg := range p.AggFuncs {
-			buffer.WriteString(aggregation.ExplainAggFunc(p.SCtx(), agg, false))
+			buffer.WriteString(aggregation.ExplainAggFunc(p.SCtx().GetExprCtx().GetEvalCtx(), agg, false))
 			if i+1 < len(p.AggFuncs) {
 				buffer.WriteString(", ")
 			}
@@ -919,7 +923,7 @@ func (p *LogicalProjection) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalSelection) ExplainInfo() string {
-	return string(expression.SortedExplainExpressionList(p.SCtx(), p.Conditions))
+	return string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
 }
 
 // ExplainInfo implements Plan interface.
@@ -943,10 +947,9 @@ func (ds *DataSource) ExplainInfo() string {
 		tblName = ds.TableAsName.O
 	}
 	fmt.Fprintf(buffer, "table:%s", tblName)
-	if ds.isPartition {
+	if ds.partitionDefIdx != nil {
 		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
-			partitionName := pi.GetNameByID(ds.physicalTableID)
-			fmt.Fprintf(buffer, ", partition:%s", partitionName)
+			fmt.Fprintf(buffer, ", partition:%s", pi.Definitions[*ds.partitionDefIdx].Name.O)
 		}
 	}
 	return buffer.String()
@@ -967,7 +970,7 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		fmt.Fprintf(buffer, ", Compression: %s", p.CompressionMode.Name())
 	}
 	if p.ExchangeType == tipb.ExchangeType_Hash {
-		fmt.Fprintf(buffer, ", Hash Cols: %s", property.ExplainColumnList(p.SCtx(), p.HashCols))
+		fmt.Fprintf(buffer, ", Hash Cols: %s", property.ExplainColumnList(p.SCtx().GetExprCtx().GetEvalCtx(), p.HashCols))
 	}
 	if len(p.Tasks) > 0 {
 		fmt.Fprintf(buffer, ", tasks: [")
@@ -997,12 +1000,12 @@ func (p *PhysicalExchangeReceiver) ExplainInfo() (res string) {
 func (p *LogicalUnionScan) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	fmt.Fprintf(buffer, "conds:%s",
-		expression.SortedExplainExpressionList(p.SCtx(), p.conditions))
+		expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.conditions))
 	fmt.Fprintf(buffer, ", handle:%s", p.handleCols)
 	return buffer.String()
 }
 
-func explainByItems(ctx sessionctx.Context, buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
+func explainByItems(ctx expression.EvalContext, buffer *bytes.Buffer, byItems []*util.ByItems) *bytes.Buffer {
 	for i, item := range byItems {
 		if item.Desc {
 			fmt.Fprintf(buffer, "%s:desc", item.Expr.ExplainInfo(ctx))
@@ -1035,7 +1038,7 @@ func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *by
 // ExplainInfo implements Plan interface.
 func (p *LogicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	return explainByItems(p.SCtx(), buffer, p.ByItems).String()
+	return explainByItems(p.SCtx().GetExprCtx().GetEvalCtx(), buffer, p.ByItems).String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -1045,7 +1048,7 @@ func (lt *LogicalTopN) ExplainInfo() string {
 	if len(lt.GetPartitionBy()) > 0 && len(lt.ByItems) > 0 {
 		buffer.WriteString("order by ")
 	}
-	buffer = explainByItems(lt.SCtx(), buffer, lt.ByItems)
+	buffer = explainByItems(lt.SCtx().GetExprCtx().GetEvalCtx(), buffer, lt.ByItems)
 	fmt.Fprintf(buffer, ", offset:%v, count:%v", lt.Offset, lt.Count)
 	return buffer.String()
 }

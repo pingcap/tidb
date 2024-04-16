@@ -1,4 +1,5 @@
 // Copyright 2024 PingCAP, Inc.
+
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,14 +20,28 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
+
+func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression) []expression.Expression {
+	combinedCond := make([]expression.Expression, 0,
+		len(p.LeftConditions)+len(p.RightConditions)+
+			len(p.EqualConditions)+len(p.OtherConditions)+
+			len(predicates))
+	combinedCond = append(combinedCond, p.LeftConditions...)
+	combinedCond = append(combinedCond, p.RightConditions...)
+	combinedCond = append(combinedCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
+	combinedCond = append(combinedCond, p.OtherConditions...)
+	combinedCond = append(combinedCond, predicates...)
+	return combinedCond
+}
 
 // convertOuterToInnerJoin converts outer to inner joins if the unmtaching rows are filtered.
 type convertOuterToInnerJoin struct {
 }
 
-func (*convertOuterToInnerJoin) optimize(_ context.Context, p LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (*convertOuterToInnerJoin) optimize(_ context.Context, p LogicalPlan, _ *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	return p.convertOuterToInnerJoin(nil), planChanged, nil
 }
@@ -40,50 +55,35 @@ func (s *baseLogicalPlan) convertOuterToInnerJoin(predicates []expression.Expres
 	return p
 }
 
-func (s *LogicalJoin) convertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan {
-	convertOuter2InnerJoins(s, predicates)
-	return s
-}
+func (p *LogicalJoin) convertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan {
+	innerTable := p.Children()[0]
+	outerTable := p.Children()[1]
+	var switchChild bool = false
 
-func (*convertOuterToInnerJoin) name() string {
-	return "convert_outer_to_inner_joins"
-}
-
-func (s *LogicalSelection) convertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan {
-	p := s.self.(*LogicalSelection)
-	child := p.Children()[0]
-	child = child.convertOuterToInnerJoin(p.Conditions)
-	p.SetChildren(child)
-	return p
-}
-
-// convertOuter2InnerJoins transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if predicates filters out unmatching rows.
-func convertOuter2InnerJoins(p *LogicalJoin, predicates []expression.Expression) {
-	if p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != InnerJoin {
-		return
-	}
-
-	innerTable := p.children[0]
-	outerTable := p.children[1]
 	if p.JoinType == LeftOuterJoin {
 		innerTable, outerTable = outerTable, innerTable
+		switchChild = true
 	}
 
-	// first simplify embedded outer join.
-	if innerPlan, ok := innerTable.(*LogicalJoin); ok {
-		convertOuter2InnerJoins(innerPlan, predicates)
-	}
-	if outerPlan, ok := outerTable.(*LogicalJoin); ok {
-		convertOuter2InnerJoins(outerPlan, predicates)
-	}
-
+	combinedCond := mergeOnClausePredicates(p, predicates)
+	innerTable = innerTable.convertOuterToInnerJoin(combinedCond)
 	if p.JoinType == InnerJoin {
-		return
+		outerTable = outerTable.convertOuterToInnerJoin(combinedCond)
+	} else {
+		outerTable = outerTable.convertOuterToInnerJoin(predicates)
 	}
-	// then simplify embedding outer join.
+
+	if switchChild {
+		p.SetChild(0, outerTable)
+		p.SetChild(1, innerTable)
+	} else {
+		p.SetChild(0, innerTable)
+		p.SetChild(1, outerTable)
+	}
+
 	canBeSimplified := false
 	for _, expr := range predicates {
-		isOk := isNullFiltered(p.self.SCtx(), innerTable.Schema(), expr, outerTable.Schema())
+		isOk := isNullFiltered(p.SCtx(), innerTable.Schema(), expr, outerTable.Schema())
 		if isOk {
 			canBeSimplified = true
 			break
@@ -92,11 +92,45 @@ func convertOuter2InnerJoins(p *LogicalJoin, predicates []expression.Expression)
 	if canBeSimplified {
 		p.JoinType = InnerJoin
 	}
+
+	return p
 }
 
-func isNullFiltered(ctx sessionctx.Context, innerSchema *expression.Schema, predicate expression.Expression, outerSchema *expression.Schema) bool {
-	// avoid the case where the predicate only refers to the schema of outerTable
-	if expression.ExprFromSchema(predicate, outerSchema) {
+func (*convertOuterToInnerJoin) name() string {
+	return "convert_outer_to_inner_joins"
+}
+
+func (s *LogicalSelection) convertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan {
+	p := s.self.(*LogicalSelection)
+	combinedCond := append(predicates, p.Conditions...)
+	child := p.Children()[0]
+	child = child.convertOuterToInnerJoin(combinedCond)
+	p.SetChildren(child)
+	return p
+}
+
+// allConstants checks if only the expression has only constants.
+func allConstants(expr expression.Expression) bool {
+	switch v := expr.(type) {
+	case *expression.ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			if !allConstants(arg) {
+				return false
+			}
+		}
+		return true
+	case *expression.Constant:
+		return true
+	}
+	return false
+}
+
+// isNullFiltered takes care of complex predicates like this:
+// isNullFiltered(A OR B) = isNullFiltered(A) AND isNullFiltered(B)
+// isNullFiltered(A AND B) = isNullFiltered(A) OR isNullFiltered(B)
+func isNullFiltered(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression, outerSchema *expression.Schema) bool {
+	// The expression should reference at least one field in innerSchema or all constants.
+	if !expression.ExprReferenceSchema(predicate, innerSchema) && !allConstants(predicate) {
 		return false
 	}
 
@@ -105,40 +139,39 @@ func isNullFiltered(ctx sessionctx.Context, innerSchema *expression.Schema, pred
 		if expr.FuncName.L == ast.LogicAnd {
 			if isNullFiltered(ctx, innerSchema, expr.GetArgs()[0], outerSchema) {
 				return true
-			} else {
-				return isNullFiltered(ctx, innerSchema, expr.GetArgs()[1], outerSchema)
 			}
+			return isNullFiltered(ctx, innerSchema, expr.GetArgs()[0], outerSchema)
 		} else if expr.FuncName.L == ast.LogicOr {
 			if !(isNullFiltered(ctx, innerSchema, expr.GetArgs()[0], outerSchema)) {
 				return false
-			} else {
-				return isNullFiltered(ctx, innerSchema, expr.GetArgs()[1], outerSchema)
 			}
+			return isNullFiltered(ctx, innerSchema, expr.GetArgs()[1], outerSchema)
 		} else {
 			return isNullFilteredOneExpr(ctx, innerSchema, expr)
 		}
 	default:
-		return isNullFilteredOneExpr(ctx, innerSchema, expr)
+		return isNullFilteredOneExpr(ctx, innerSchema, predicate)
 	}
 }
 
-// isNullFilteredOneExpr check whether a condition is null-rejected
-// A condition would be null-rejected in one of following cases:
-// If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
-// If it is a conjunction containing a null-rejected condition as a conjunct.
-// If it is a disjunction of null-rejected conditions.
-func isNullFilteredOneExpr(ctx sessionctx.Context, schema *expression.Schema, expr expression.Expression) bool {
-	expr = expression.PushDownNot(ctx, expr)
+// isNullFilteredOneExpr check whether a a single condition is null-filtered. A condition is null-filtered
+// boolean expression evaluates to FALSE or UNKNOWN if all the arguments are null.
+// The code goes over all the conditions and returns true if at least one is null filtering. For this module,
+// We just need to check one simple condition but the routine is also used as a general utility for checking if
+// any list of condition (in CNF form) is null-filtered.
+func isNullFilteredOneExpr(ctx base.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
+	exprCtx := ctx.GetExprCtx()
+	expr = expression.PushDownNot(exprCtx, expr)
 	if expression.ContainOuterNot(expr) {
 		return false
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.InNullRejectCheck = true
-	defer func() {
-		sc.InNullRejectCheck = false
-	}()
+	if !exprCtx.IsInNullRejectCheck() {
+		exprCtx.SetInNullRejectCheck(true)
+		defer exprCtx.SetInNullRejectCheck(false)
+	}
 	for _, cond := range expression.SplitCNFItems(expr) {
-		result := expression.EvaluateExprWithNull(ctx, schema, cond)
+		result := expression.EvaluateExprWithNull(exprCtx, schema, cond)
 		x, ok := result.(*expression.Constant)
 		if !ok {
 			continue

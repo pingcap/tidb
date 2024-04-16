@@ -49,6 +49,7 @@ select TABLE_COLLATION is null from INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='
 TABLE_COLLATION is null
 1
 1
+1
 SELECT * FROM information_schema.views WHERE table_schema='executor__infoschema_reader' AND table_name='v1';
 TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	VIEW_DEFINITION	CHECK_OPTION	IS_UPDATABLE	DEFINER	SECURITY_TYPE	CHARACTER_SET_CLIENT	COLLATION_CONNECTION
 def	executor__infoschema_reader	v1	SELECT 1 AS `1`	CASCADED	NO	root@localhost	DEFINER	utf8mb4	utf8mb4_general_ci
@@ -136,6 +137,7 @@ character_maximum_length	character_octet_length
 4	16
 drop table t;
 set global tidb_ddl_enable_fast_reorg = false;
+set global tidb_enable_dist_task = false;
 drop database if exists test_ddl_jobs;
 create database test_ddl_jobs;
 select db_name, job_type from information_schema.DDL_JOBS limit 1;
@@ -173,6 +175,7 @@ test_ddl_jobs	tt	add index /* subjob */ /* txn */
 drop database test_ddl_jobs;
 use executor__infoschema_reader;
 set global tidb_ddl_enable_fast_reorg = default;
+set global tidb_enable_dist_task = default;
 select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
 def	mysql	tbl	def	mysql	stats_meta	table_id	1	NULL	NULL	NULL	NULL
@@ -184,6 +187,12 @@ GRANT ALL PRIVILEGES ON mysql.stats_meta TO r_stats_meta;
 GRANT r_stats_meta TO key_column_tester;
 set role r_stats_meta;
 select count(*)>0 from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta';
+count(*)>0
+1
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where upper(TABLE_NAME)='STATS_META';
+count(*)>0
+1
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where lower(TABLE_NAME)='stats_meta';
 count(*)>0
 1
 drop table if exists e, e2;
@@ -311,3 +320,13 @@ tidb_mem_oom_action
 tidb_pessimistic_txn_fair_locking
 tidb_row_format_version
 tidb_txn_assertion_level
+drop table if exists t;
+CREATE TABLE t (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));
+insert into t(a, b, c) values(1, 2, 'c'), (7, 3, 'd'), (12, 4, 'e');
+analyze table t;
+select sleep(1);
+sleep(1)
+0
+select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t' AND TABLE_SCHEMA='executor__infoschema_reader';
+table_rows	avg_row_length	data_length	index_length
+3	18	54	6

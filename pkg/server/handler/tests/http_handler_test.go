@@ -16,6 +16,7 @@ package tests
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -66,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
 )
 
@@ -461,17 +464,18 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
-
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
-	ts.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	ts.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	ts.server = server
 	ts.server.SetDomain(ts.domain)
 	go func() {
 		err := server.Run(ts.domain)
 		require.NoError(t, err)
 	}()
+	<-server2.RunInGoTestChan
+	ts.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	ts.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	ts.WaitUntilServerOnline()
 
 	do, err := session.GetDomain(ts.store)
@@ -849,7 +853,7 @@ func TestGetSchema(t *testing.T) {
 	err = decoder.Decode(&dbs)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	expects := []string{"information_schema", "metrics_schema", "mysql", "performance_schema", "test", "tidb"}
+	expects := []string{"information_schema", "metrics_schema", "mysql", "performance_schema", "sys", "test", "tidb"}
 	names := make([]string, len(dbs))
 	for i, v := range dbs {
 		names[i] = v.Name.L
@@ -1202,6 +1206,64 @@ func TestSetLabels(t *testing.T) {
 	})
 }
 
+func TestSetLabelsWithEtcd(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	client := cluster.RandClient()
+	infosync.SetEtcdClient(client)
+	ts.domain.InfoSyncer().Restart(ctx)
+
+	testUpdateLabels := func(labels, expected map[string]string) {
+		buffer := bytes.NewBuffer([]byte{})
+		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
+		resp, err := ts.PostStatus("/labels", "application/json", buffer)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		newLabels := config.GetGlobalConfig().Labels
+		require.Equal(t, newLabels, expected)
+		servers, err := infosync.GetAllServerInfo(ctx)
+		require.NoError(t, err)
+		for _, server := range servers {
+			for k, expectV := range expected {
+				v, ok := server.Labels[k]
+				require.True(t, ok)
+				require.Equal(t, expectV, v)
+			}
+			return
+		}
+		require.Fail(t, "no server found")
+	}
+
+	labels := map[string]string{
+		"zone": "us-west-1",
+		"test": "123",
+	}
+	testUpdateLabels(labels, labels)
+
+	updated := map[string]string{
+		"zone": "bj-1",
+	}
+	labels["zone"] = "bj-1"
+	testUpdateLabels(updated, labels)
+
+	// reset the global variable
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{}
+	})
+}
+
 func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 
@@ -1440,4 +1502,14 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 	mockedAllServerInfos["s2"].GitHash = mockedAllServerInfos["s0"].GitHash
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	checkUpgradeShow(3, 100, 0)
+}
+
+func TestIssue52608(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+	on, addr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
+	require.Equal(t, on, true)
+	require.Equal(t, addr[:10], "127.0.0.1:")
 }

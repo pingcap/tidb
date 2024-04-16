@@ -65,8 +65,6 @@ type Manager interface {
 
 	// SetBeOwnerHook sets a hook. The hook is called before becoming an owner.
 	SetBeOwnerHook(hook func())
-	// SetRetireOwnerHook will be called after retiring the owner.
-	SetRetireOwnerHook(hook func())
 }
 
 const (
@@ -118,8 +116,7 @@ type ownerManager struct {
 	wg             sync.WaitGroup
 	campaignCancel context.CancelFunc
 
-	beOwnerHook     func()
-	retireOwnerHook func()
+	beOwnerHook func()
 }
 
 // NewOwnerManager creates a new Manager.
@@ -162,10 +159,6 @@ func (*ownerManager) RequireOwner(_ context.Context) error {
 
 func (m *ownerManager) SetBeOwnerHook(hook func()) {
 	m.beOwnerHook = hook
-}
-
-func (m *ownerManager) SetRetireOwnerHook(hook func()) {
-	m.retireOwnerHook = hook
 }
 
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
@@ -230,9 +223,6 @@ func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
 
 // RetireOwner make the manager to be a not owner.
 func (m *ownerManager) RetireOwner() {
-	if m.retireOwnerHook != nil {
-		m.retireOwnerHook()
-	}
 	atomic.StorePointer(&m.elec, nil)
 }
 
@@ -338,8 +328,8 @@ func getOwnerInfo(ctx, logCtx context.Context, etcdCli *clientv3.Client, ownerPa
 	var resp *clientv3.GetResponse
 	var err error
 	for i := 0; i < 3; i++ {
-		if util.IsContextDone(ctx) {
-			return "", nil, op, 0, errors.Trace(ctx.Err())
+		if err = ctx.Err(); err != nil {
+			return "", nil, op, 0, errors.Trace(err)
 		}
 
 		childCtx, cancel := context.WithTimeout(ctx, util.KeyOpDefaultTimeout)

@@ -26,16 +26,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	dcontext "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/store/copr"
-	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -54,12 +52,6 @@ import (
 
 var (
 	errQueryInterrupted = dbterror.ClassExecutor.NewStd(errno.ErrQueryInterrupted)
-)
-
-var (
-	telemetryBatchedQueryTaskCnt     = metrics.TelemetryBatchedQueryTaskCnt
-	telemetryStoreBatchedCnt         = metrics.TelemetryStoreBatchedCnt
-	telemetryStoreBatchedFallbackCnt = metrics.TelemetryStoreBatchedFallbackCnt
 )
 
 var (
@@ -293,7 +285,7 @@ type selectResult struct {
 
 	rowLen     int
 	fieldTypes []*types.FieldType
-	ctx        sessionctx.Context
+	ctx        *dcontext.DistSQLContext
 
 	selectResp       *tipb.SelectResponse
 	selectRespSize   int64 // record the selectResp.Size() when it is initialized.
@@ -321,35 +313,6 @@ type selectResult struct {
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
-	defer func() {
-		if r.stats != nil {
-			// Ignore internal sql.
-			if !r.ctx.GetSessionVars().InRestrictedSQL && r.stats.copRespTime.Size() > 0 {
-				ratio := r.stats.calcCacheHit()
-				if ratio >= 1 {
-					telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
-				}
-				if ratio >= 0.8 {
-					telemetry.CurrentCoprCacheHitRatioGTE80Count.Inc()
-				}
-				if ratio >= 0.4 {
-					telemetry.CurrentCoprCacheHitRatioGTE40Count.Inc()
-				}
-				if ratio >= 0.2 {
-					telemetry.CurrentCoprCacheHitRatioGTE20Count.Inc()
-				}
-				if ratio >= 0.1 {
-					telemetry.CurrentCoprCacheHitRatioGTE10Count.Inc()
-				}
-				if ratio >= 0.01 {
-					telemetry.CurrentCoprCacheHitRatioGTE1Count.Inc()
-				}
-				if ratio >= 0 {
-					telemetry.CurrentCoprCacheHitRatioGTE0Count.Inc()
-				}
-			}
-		}
-	}()
 	for {
 		r.respChkIdx = 0
 		startTime := time.Now()
@@ -389,13 +352,11 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if err := r.selectResp.Error; err != nil {
 			return dbterror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
 		}
-		sessVars := r.ctx.GetSessionVars()
-		if err = sessVars.SQLKiller.HandleSignal(); err != nil {
+		if err = r.ctx.SQLKiller.HandleSignal(); err != nil {
 			return err
 		}
-		sc := sessVars.StmtCtx
 		for _, warning := range r.selectResp.Warnings {
-			sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
+			r.ctx.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 
 		r.partialCount++
@@ -408,7 +369,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 					return err
 				}
 				copStats.CopTime = duration
-				sc.MergeExecDetails(&copStats.ExecDetails, nil)
+				r.ctx.ExecDetails.MergeExecDetails(&copStats.ExecDetails, nil)
 			}
 		}
 		if len(r.selectResp.Chunks) != 0 {
@@ -513,32 +474,32 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 }
 
 // FillDummySummariesForTiFlashTasks fills dummy execution summaries for mpp tasks which lack summaries
-func FillDummySummariesForTiFlashTasks(sctx *stmtctx.StatementContext, callee string, storeTypeName string, allPlanIDs []int, recordedPlanIDs map[int]int) {
+func FillDummySummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, callee string, storeTypeName string, allPlanIDs []int, recordedPlanIDs map[int]int) {
 	num := uint64(0)
 	dummySummary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &num, NumProducedRows: &num, NumIterations: &num, ExecutorId: nil}
 	for _, planID := range allPlanIDs {
 		if _, ok := recordedPlanIDs[planID]; !ok {
-			sctx.RuntimeStatsColl.RecordOneCopTask(planID, storeTypeName, callee, dummySummary)
+			runtimeStatsColl.RecordOneCopTask(planID, storeTypeName, callee, dummySummary)
 		}
 	}
 }
 
 // recordExecutionSummariesForTiFlashTasks records mpp task execution summaries
-func recordExecutionSummariesForTiFlashTasks(sctx *stmtctx.StatementContext, executionSummaries []*tipb.ExecutorExecutionSummary, callee string, storeTypeName string, allPlanIDs []int) {
+func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, executionSummaries []*tipb.ExecutorExecutionSummary, callee string, storeTypeName string, allPlanIDs []int) {
 	var recordedPlanIDs = make(map[int]int)
 	for _, detail := range executionSummaries {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
-			recordedPlanIDs[sctx.RuntimeStatsColl.
+			recordedPlanIDs[runtimeStatsColl.
 				RecordOneCopTask(-1, storeTypeName, callee, detail)] = 0
 		}
 	}
-	FillDummySummariesForTiFlashTasks(sctx, callee, storeTypeName, allPlanIDs, recordedPlanIDs)
+	FillDummySummariesForTiFlashTasks(runtimeStatsColl, callee, storeTypeName, allPlanIDs, recordedPlanIDs)
 }
 
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) (err error) {
 	callee := copStats.CalleeAddress
-	if r.rootPlanID <= 0 || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
+	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && len(copStats.Stats) == 0) {
 		return
 	}
 
@@ -564,7 +525,10 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
 	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
-		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
+		r.ctx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
+	}
+	if len(r.copPlanIDs) > 0 {
+		r.ctx.RuntimeStatsColl.RecordTimeDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), &copStats.TimeDetail)
 	}
 
 	// If hasExecutor is true, it means the summary is returned from TiFlash.
@@ -585,7 +549,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		}
 	}
 	if hasExecutor {
-		recordExecutionSummariesForTiFlashTasks(r.ctx.GetSessionVars().StmtCtx, r.selectResp.GetExecutionSummaries(), callee, r.storeType.Name(), r.copPlanIDs)
+		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), callee, r.storeType.Name(), r.copPlanIDs)
 	} else {
 		// For cop task cases, we still need this protection.
 		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
@@ -603,7 +567,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			if detail != nil && detail.TimeProcessedNs != nil &&
 				detail.NumProducedRows != nil && detail.NumIterations != nil {
 				planID := r.copPlanIDs[i]
-				r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+				r.ctx.RuntimeStatsColl.
 					RecordOneCopTask(planID, r.storeType.Name(), callee, detail)
 			}
 		}
@@ -613,7 +577,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
-	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
+	decoder := codec.NewDecoder(chk, r.ctx.Location)
 	for !chk.IsFull() && len(rowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
 			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
@@ -639,19 +603,25 @@ func (r *selectResult) Close() error {
 	if respSize > 0 {
 		r.memConsume(-respSize)
 	}
-	if r.stats != nil {
+	if r.ctx != nil {
+		if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
+			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
+			for _, copStats := range unconsumedCopStats {
+				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0))
+				r.ctx.ExecDetails.MergeExecDetails(&copStats.ExecDetails, nil)
+			}
+		}
+	}
+	if r.stats != nil && r.ctx != nil {
 		defer func() {
 			if ci, ok := r.resp.(copr.CopInfo); ok {
 				r.stats.buildTaskDuration = ci.GetBuildTaskElapsed()
 				batched, fallback := ci.GetStoreBatchInfo()
 				if batched != 0 || fallback != 0 {
 					r.stats.storeBatchedNum, r.stats.storeBatchedFallbackNum = batched, fallback
-					telemetryStoreBatchedCnt.Add(float64(r.stats.storeBatchedNum))
-					telemetryStoreBatchedFallbackCnt.Add(float64(r.stats.storeBatchedFallbackNum))
-					telemetryBatchedQueryTaskCnt.Add(float64(r.stats.copRespTime.Size()))
 				}
 			}
-			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
+			r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
 		}()
 	}
 	return r.resp.Close()

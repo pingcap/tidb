@@ -24,24 +24,24 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/metric"
-	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -49,20 +49,29 @@ import (
 // importStepExecutor is a executor for import step.
 // StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
+	execute.StepExecFrameworkInfo
+
 	taskID        int64
 	taskMeta      *TaskMeta
 	tableImporter *importer.TableImporter
+	store         tidbkv.Storage
 	sharedVars    sync.Map
 	logger        *zap.Logger
 
-	indexMemorySizeLimit uint64
+	dataKVMemSizePerCon     uint64
+	perIndexKVMemSizePerCon uint64
 
 	importCtx    context.Context
 	importCancel context.CancelFunc
 	wg           sync.WaitGroup
 }
 
-func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*importer.TableImporter, error) {
+func getTableImporter(
+	ctx context.Context,
+	taskID int64,
+	taskMeta *TaskMeta,
+	store tidbkv.Storage,
+) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
@@ -80,16 +89,12 @@ func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*i
 		return nil, err
 	}
 
-	return importer.NewTableImporter(&importer.JobImportParam{
-		GroupCtx: ctx,
-		Progress: importer.NewProgress(),
-		Job:      &importer.Job{},
-	}, controller, strconv.FormatInt(taskID, 10))
+	return importer.NewTableImporter(ctx, controller, strconv.FormatInt(taskID, 10), store)
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) error {
 	s.logger.Info("init subtask env")
-	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta)
+	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
 	if err != nil {
 		return err
 	}
@@ -106,9 +111,10 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 			s.tableImporter.CheckDiskQuota(s.importCtx)
 		}()
 	}
-	s.indexMemorySizeLimit = getWriterMemorySizeLimit(s.tableImporter.Plan)
-	s.logger.Info("index writer memory size limit",
-		zap.String("limit", units.BytesSize(float64(s.indexMemorySizeLimit))))
+	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
+	s.logger.Info("KV writer memory size limit per concurrency",
+		zap.String("data", units.BytesSize(float64(s.dataKVMemSizePerCon))),
+		zap.String("per-index", units.BytesSize(float64(s.perIndexKVMemSizePerCon))))
 	return nil
 }
 
@@ -148,14 +154,14 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		DataEngine:       dataEngine,
 		IndexEngine:      indexEngine,
 		Progress:         importer.NewProgress(),
-		Checksum:         &verification.KVChecksum{},
+		Checksum:         verification.NewKVGroupChecksumWithKeyspace(s.tableImporter.GetKeySpace()),
 		SortedDataMeta:   &external.SortedKVMeta{},
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, s.indexMemorySizeLimit)
+	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, subtask.Concurrency)
 	op.SetSource(source)
 	pipeline := operator.NewAsyncPipeline(op)
 	if err = pipeline.Execute(); err != nil {
@@ -201,7 +207,7 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 		return errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
 
-	var dataKVCount int64
+	var dataKVCount uint64
 	if s.tableImporter.IsLocalSort() {
 		// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
 		s.logger.Info("import data engine", zap.Int32("engine-id", subtaskMeta.ID))
@@ -209,10 +215,11 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 		if err != nil {
 			return err
 		}
-		dataKVCount, err = s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
+		dataKVCount2, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
 		if err != nil {
 			return err
 		}
+		dataKVCount = uint64(dataKVCount2)
 
 		s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
 		if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
@@ -225,11 +232,16 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 
 	sharedVars.mu.Lock()
 	defer sharedVars.mu.Unlock()
-	subtaskMeta.Checksum.Sum = sharedVars.Checksum.Sum()
-	subtaskMeta.Checksum.KVs = sharedVars.Checksum.SumKVS()
-	subtaskMeta.Checksum.Size = sharedVars.Checksum.SumSize()
+	subtaskMeta.Checksum = map[int64]Checksum{}
+	for id, c := range sharedVars.Checksum.GetInnerChecksums() {
+		subtaskMeta.Checksum[id] = Checksum{
+			Sum:  c.Sum(),
+			KVs:  c.SumKVS(),
+			Size: c.SumSize(),
+		}
+	}
 	subtaskMeta.Result = Result{
-		LoadedRowCnt: uint64(dataKVCount),
+		LoadedRowCnt: dataKVCount,
 		ColSizeMap:   sharedVars.Progress.GetColSize(),
 	}
 	allocators := sharedVars.TableImporter.Allocators()
@@ -265,7 +277,10 @@ type mergeSortStepExecutor struct {
 	// subtask of a task is run in serial now, so we don't need lock here.
 	// change to SyncMap when we support parallel subtask in the future.
 	subtaskSortedKVMeta *external.SortedKVMeta
-	partSize            int64
+	// part-size for uploading merged files, it's calculated by:
+	// 	max(max-merged-files * max-file-size / max-part-num(10000), min-part-size)
+	dataKVPartSize  int64
+	indexKVPartSize int64
 }
 
 var _ execute.StepExecutor = &mergeSortStepExecutor{}
@@ -279,23 +294,28 @@ func (m *mergeSortStepExecutor) Init(ctx context.Context) error {
 		return err
 	}
 	m.controller = controller
-	// 10000 = max part num
-	m.partSize = int64(getWriterMemorySizeLimit(&m.taskMeta.Plan) / 10000 * uint64(external.MergeSortOverlapThreshold))
+	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.GetResource(), &m.taskMeta.Plan)
+	m.dataKVPartSize = max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
+	m.indexKVPartSize = max(external.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
+
+	m.logger.Info("merge sort partSize",
+		zap.String("data-kv", units.BytesSize(float64(m.dataKVPartSize))),
+		zap.String("index-kv", units.BytesSize(float64(m.indexKVPartSize))),
+	)
 	return nil
 }
 
 func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
-	logger := m.logger.With(zap.Int64("subtask-id", subtask.ID))
-	task := log.BeginTask(logger, "run subtask")
-	defer func() {
-		task.End(zapcore.ErrorLevel, err)
-	}()
-
 	sm := &MergeSortStepMeta{}
 	err = json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logger := m.logger.With(zap.Int64("subtask-id", subtask.ID), zap.String("kv-group", sm.KVGroup))
+	task := log.BeginTask(logger, "run subtask")
+	defer func() {
+		task.End(zapcore.ErrorLevel, err)
+	}()
 
 	var mu sync.Mutex
 	m.subtaskSortedKVMeta = &external.SortedKVMeta{}
@@ -307,26 +327,22 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
-	logger.Info("merge sort partSize", zap.String("size", units.BytesSize(float64(m.partSize))))
-
+	partSize := m.dataKVPartSize
+	if sm.KVGroup != dataKVGroup {
+		partSize = m.indexKVPartSize
+	}
 	err = external.MergeOverlappingFiles(
 		logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
 		sm.DataFiles,
 		m.controller.GlobalSortStore,
-		m.partSize,
-		64*1024,
+		partSize,
 		prefix,
 		getKVGroupBlockSize(sm.KVGroup),
-		external.DefaultMemSizeLimit,
-		8*1024,
-		1*size.MB,
-		8*1024,
 		onClose,
-		m.taskMeta.Plan.ThreadCnt,
+		subtask.Concurrency,
 		false)
 	logger.Info(
 		"merge sort finished",
-		zap.String("kv-group", sm.KVGroup),
 		zap.Uint64("total-kv-size", m.subtaskSortedKVMeta.TotalKVSize),
 		zap.Uint64("total-kv-count", m.subtaskSortedKVMeta.TotalKVCnt),
 		brlogutil.Key("start-key", m.subtaskSortedKVMeta.StartKey),
@@ -351,16 +367,19 @@ func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Sub
 }
 
 type writeAndIngestStepExecutor struct {
+	execute.StepExecFrameworkInfo
+
 	taskID        int64
 	taskMeta      *TaskMeta
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
+	store         tidbkv.Storage
 }
 
 var _ execute.StepExecutor = &writeAndIngestStepExecutor{}
 
 func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
-	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta)
+	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta, e.store)
 	if err != nil {
 		return err
 	}
@@ -384,6 +403,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
+	localBackend.WorkerConcurrency = subtask.Concurrency * 2
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:      e.taskMeta.Plan.CloudStorageURI,
@@ -443,6 +463,7 @@ func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
 type postProcessStepExecutor struct {
 	taskexecutor.EmptyStepExecutor
 	taskID   int64
+	store    tidbkv.Storage
 	taskMeta *TaskMeta
 	logger   *zap.Logger
 }
@@ -451,9 +472,10 @@ var _ execute.StepExecutor = &postProcessStepExecutor{}
 
 // NewPostProcessStepExecutor creates a new post process step executor.
 // exported for testing.
-func NewPostProcessStepExecutor(taskID int64, taskMeta *TaskMeta, logger *zap.Logger) execute.StepExecutor {
+func NewPostProcessStepExecutor(taskID int64, store tidbkv.Storage, taskMeta *TaskMeta, logger *zap.Logger) execute.StepExecutor {
 	return &postProcessStepExecutor{
 		taskID:   taskID,
+		store:    store,
 		taskMeta: taskMeta,
 		logger:   logger,
 	}
@@ -472,18 +494,27 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 	failpoint.Inject("waitBeforePostProcess", func() {
 		time.Sleep(5 * time.Second)
 	})
-	return postProcess(ctx, p.taskMeta, &stepMeta, logger)
+	return postProcess(ctx, p.store, p.taskMeta, &stepMeta, logger)
 }
 
 type importExecutor struct {
 	*taskexecutor.BaseTaskExecutor
+	store tidbkv.Storage
 }
 
-func newImportExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+// NewImportExecutor creates a new import task executor.
+func NewImportExecutor(
+	ctx context.Context,
+	id string,
+	task *proto.Task,
+	taskTable taskexecutor.TaskTable,
+	store tidbkv.Storage,
+) taskexecutor.TaskExecutor {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	s := &importExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, id, task, taskTable),
+		store:            store,
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
@@ -499,7 +530,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-func (*importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) (execute.StepExecutor, error) {
+func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
@@ -516,6 +547,7 @@ func (*importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) 
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
+			store:    e.store,
 		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{
@@ -528,20 +560,17 @@ func (*importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) 
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
+			store:    e.store,
 		}, nil
 	case proto.ImportStepPostProcess:
-		return NewPostProcessStepExecutor(task.ID, &taskMeta, logger), nil
+		return NewPostProcessStepExecutor(task.ID, e.store, &taskMeta, logger), nil
 	default:
 		return nil, errors.Errorf("unknown step %d for import task %d", task.Step, task.ID)
 	}
 }
 
 func (e *importExecutor) Close() {
-	task := e.GetTask()
+	task := e.GetTaskBase()
 	metricsManager.unregister(task.ID)
 	e.BaseTaskExecutor.Close()
-}
-
-func init() {
-	taskexecutor.RegisterTaskType(proto.ImportInto, newImportExecutor)
 }

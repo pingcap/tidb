@@ -17,17 +17,22 @@ package taskexecutor
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	litstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/cgroup"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -35,13 +40,17 @@ import (
 )
 
 var (
-	// same as scheduler
-	defaultCheckInterval    = 300 * time.Millisecond
-	maxCheckInterval        = 2 * time.Second
+	// TaskCheckInterval is the interval to check whether there are tasks to run.
+	// TODO maybe change this interval larger for performance.
+	TaskCheckInterval = 300 * time.Millisecond
+	// SubtaskCheckInterval is the interval to check whether there are subtasks to run.
+	// exported for testing.
+	SubtaskCheckInterval = 300 * time.Millisecond
+	// MaxSubtaskCheckInterval is the max interval to check whether there are subtasks to run.
+	// exported for testing.
+	MaxSubtaskCheckInterval = 2 * time.Second
 	maxChecksWhenNoSubtask  = 7
 	recoverMetaInterval     = 90 * time.Second
-	retrySQLTimes           = 30
-	retrySQLInterval        = 500 * time.Millisecond
 	unfinishedSubtaskStates = []proto.SubtaskState{
 		proto.SubtaskStatePending,
 		proto.SubtaskStateRunning,
@@ -85,6 +94,22 @@ func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, 
 	if totalCPU <= 0 || totalMem <= 0 {
 		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
 	}
+	cgroupLimit, version, err := cgroup.GetCgroupMemLimit()
+	// ignore the error of cgroup.GetCgroupMemLimit, as it's not a must-success step.
+	if err == nil && version == cgroup.V2 {
+		// see cgroup.detectMemLimitInV2 for more details.
+		// below are some real memory limits tested on GCP:
+		// node-spec  real-limit  percent
+		// 16c32g        27.83Gi    87%
+		// 32c64g        57.36Gi    89.6%
+		// we use 'limit', not totalMem for adjust, as totalMem = min(physical-mem, 'limit')
+		// content of 'memory.max' might be 'max', so we use the min of them.
+		adjustedMem := min(totalMem, uint64(float64(cgroupLimit)*0.88))
+		logger.Info("adjust memory limit for cgroup v2",
+			zap.String("before", units.BytesSize(float64(totalMem))),
+			zap.String("after", units.BytesSize(float64(adjustedMem))))
+		totalMem = adjustedMem
+	}
 	logger.Info("build task executor manager", zap.Int("total-cpu", totalCPU),
 		zap.String("total-mem", units.BytesSize(float64(totalMem))))
 	m := &Manager{
@@ -104,44 +129,16 @@ func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, 
 // InitMeta initializes the meta of the Manager.
 // not a must-success step before start manager,
 // manager will try to recover meta periodically.
-func (m *Manager) InitMeta() (err error) {
-	for i := 0; i < retrySQLTimes; i++ {
-		err = m.taskTable.InitMeta(m.ctx, m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
-		if err == nil {
-			break
-		}
-		if err1 := m.ctx.Err(); err1 != nil {
-			return err1
-		}
-		if i%10 == 0 {
-			m.logger.Warn("start manager failed",
-				zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
-				zap.Int("retry times", i),
-				zap.Error(err))
-		}
-		time.Sleep(retrySQLInterval)
-	}
-	return err
+func (m *Manager) InitMeta() error {
+	return m.runWithRetry(func() error {
+		return m.taskTable.InitMeta(m.ctx, m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
+	}, "init meta failed")
 }
 
-func (m *Manager) recoverMeta() (err error) {
-	for i := 0; i < retrySQLTimes; i++ {
-		err = m.taskTable.RecoverMeta(m.ctx, m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
-		if err == nil {
-			break
-		}
-		if err1 := m.ctx.Err(); err1 != nil {
-			return err1
-		}
-		if i%10 == 0 {
-			m.logger.Warn("recover meta failed",
-				zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
-				zap.Int("retry times", i),
-				zap.Error(err))
-		}
-		time.Sleep(retrySQLInterval)
-	}
-	return err
+func (m *Manager) recoverMeta() error {
+	return m.runWithRetry(func() error {
+		return m.taskTable.RecoverMeta(m.ctx, m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
+	}, "recover meta failed")
 }
 
 // Start starts the Manager.
@@ -175,7 +172,7 @@ func (m *Manager) Stop() {
 // NOT running by executor before mark the task as paused.
 func (m *Manager) handleTasksLoop() {
 	defer tidbutil.Recover(metrics.LabelDomain, "handleTasksLoop", m.handleTasksLoop, false)
-	ticker := time.NewTicker(defaultCheckInterval)
+	ticker := time.NewTicker(TaskCheckInterval)
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -185,6 +182,10 @@ func (m *Manager) handleTasksLoop() {
 		}
 
 		m.handleTasks()
+		// service scope might change, so we call WithLabelValues every time.
+		metrics.DistTaskUsedSlotsGauge.WithLabelValues(variable.ServiceScope.Load()).
+			Set(float64(m.slotManager.usedSlots()))
+		metrics.GlobalSortUploadWorkerCount.Set(float64(litstorage.GetActiveUploadWorkerCount()))
 	}
 }
 
@@ -198,16 +199,16 @@ func (m *Manager) handleTasks() {
 	executableTasks := make([]*storage.TaskExecInfo, 0, len(tasks))
 	for _, task := range tasks {
 		switch task.State {
-		case proto.TaskStateRunning, proto.TaskStateReverting:
-			if task.State == proto.TaskStateReverting {
-				m.cancelRunningSubtaskOf(task.ID)
-			}
-			// TaskStateReverting require executor to run rollback logic.
+		case proto.TaskStateRunning:
 			if !m.isExecutorStarted(task.ID) {
 				executableTasks = append(executableTasks, task)
 			}
 		case proto.TaskStatePausing:
 			if err := m.handlePausingTask(task.ID); err != nil {
+				m.logErr(err)
+			}
+		case proto.TaskStateReverting:
+			if err := m.handleRevertingTask(task.ID); err != nil {
 				m.logErr(err)
 			}
 		}
@@ -221,12 +222,10 @@ func (m *Manager) handleTasks() {
 // handleExecutableTasks handles executable tasks.
 func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 	for _, task := range taskInfos {
-		m.logger.Info("handle executable task", zap.Int64("task-id", task.ID))
-
-		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.Task)
+		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.TaskBase)
 		if len(tasksNeedFree) > 0 {
 			m.cancelTaskExecutors(tasksNeedFree)
-			// do not handle the tasks with lower priority if current task is waiting tasks free.
+			// do not handle the tasks with lower rank if current task is waiting tasks free.
 			break
 		}
 
@@ -234,7 +233,7 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
 			continue
 		}
-		m.startTaskExecutor(task.Task)
+		m.startTaskExecutor(task.TaskBase)
 	}
 }
 
@@ -262,6 +261,11 @@ func (m *Manager) handlePausingTask(taskID int64) error {
 	return m.taskTable.PauseSubtasks(m.ctx, m.id, taskID)
 }
 
+func (m *Manager) handleRevertingTask(taskID int64) error {
+	m.cancelRunningSubtaskOf(taskID)
+	return m.taskTable.CancelSubtask(m.ctx, m.id, taskID)
+}
+
 // recoverMetaLoop recovers dist_framework_meta for the tidb node running the taskExecutor manager.
 // This is necessary when the TiDB node experiences a prolonged network partition
 // and the scheduler deletes `dist_framework_meta`.
@@ -286,7 +290,7 @@ func (m *Manager) recoverMetaLoop() {
 
 // cancelTaskExecutors cancels the task executors.
 // unlike cancelRunningSubtaskOf, this function doesn't change subtask state.
-func (m *Manager) cancelTaskExecutors(tasks []*proto.Task) {
+func (m *Manager) cancelTaskExecutors(tasks []*proto.TaskBase) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
@@ -297,29 +301,29 @@ func (m *Manager) cancelTaskExecutors(tasks []*proto.Task) {
 	}
 }
 
-// TestContext only used in tests.
-type TestContext struct {
-	TestSyncSubtaskRun chan struct{}
-	mockDown           atomic.Bool
-}
-
 // startTaskExecutor handles a runnable task.
-func (m *Manager) startTaskExecutor(task *proto.Task) {
+func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) {
+	// TODO: remove it when we can create task executor with task base.
+	task, err := m.taskTable.GetTaskByID(m.ctx, taskBase.ID)
+	if err != nil {
+		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID), zap.Error(err))
+		return
+	}
 	// runCtx only used in executor.Run, cancel in m.fetchAndFastCancelTasks.
 	factory := GetTaskExecutorFactory(task.Type)
 	if factory == nil {
 		err := errors.Errorf("task type %s not found", task.Type)
-		m.logErrAndPersist(err, task.ID, nil)
+		m.failSubtask(err, task.ID, nil)
 		return
 	}
 	executor := factory(m.ctx, m.id, task, m.taskTable)
-	err := executor.Init(m.ctx)
+	err = executor.Init(m.ctx)
 	if err != nil {
-		m.logErrAndPersist(err, task.ID, executor)
+		m.failSubtask(err, task.ID, executor)
 		return
 	}
 	m.addTaskExecutor(executor)
-	m.slotManager.alloc(task)
+	m.slotManager.alloc(&task.TaskBase)
 	resource := m.getStepResource(task.Concurrency)
 	m.logger.Info("task executor started", zap.Int64("task-id", task.ID),
 		zap.Stringer("type", task.Type), zap.Int("remaining-slots", m.slotManager.availableSlots()))
@@ -345,13 +349,13 @@ func (m *Manager) getStepResource(concurrency int) *proto.StepResource {
 func (m *Manager) addTaskExecutor(executor TaskExecutor) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.mu.taskExecutors[executor.GetTask().ID] = executor
+	m.mu.taskExecutors[executor.GetTaskBase().ID] = executor
 }
 
 func (m *Manager) delTaskExecutor(executor TaskExecutor) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.mu.taskExecutors, executor.GetTask().ID)
+	delete(m.mu.taskExecutors, executor.GetTaskBase().ID)
 }
 
 func (m *Manager) isExecutorStarted(taskID int64) bool {
@@ -365,7 +369,7 @@ func (m *Manager) logErr(err error) {
 	m.logger.Error("task manager met error", zap.Error(err), zap.Stack("stack"))
 }
 
-func (m *Manager) logErrAndPersist(err error, taskID int64, taskExecutor TaskExecutor) {
+func (m *Manager) failSubtask(err error, taskID int64, taskExecutor TaskExecutor) {
 	m.logErr(err)
 	// TODO we want to define err of taskexecutor.Init as fatal, but add-index have
 	// some code in Init that need retry, remove it after it's decoupled.
@@ -373,9 +377,23 @@ func (m *Manager) logErrAndPersist(err error, taskID int64, taskExecutor TaskExe
 		m.logger.Error("met retryable err", zap.Error(err), zap.Stack("stack"))
 		return
 	}
-	err1 := m.taskTable.FailSubtask(m.ctx, m.id, taskID, err)
-	if err1 != nil {
-		m.logger.Error("update to subtask failed", zap.Error(err1), zap.Stack("stack"))
+	err1 := m.runWithRetry(func() error {
+		return m.taskTable.FailSubtask(m.ctx, m.id, taskID, err)
+	}, "update to subtask failed")
+	if err1 == nil {
+		m.logger.Error("update error to subtask success", zap.Int64("task-id", taskID), zap.Error(err1), zap.Stack("stack"))
 	}
-	m.logger.Error("update error to subtask", zap.Int64("task-id", taskID), zap.Error(err1), zap.Stack("stack"))
+}
+
+func (m *Manager) runWithRetry(fn func() error, msg string) error {
+	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+	err1 := handle.RunWithRetry(m.ctx, scheduler.RetrySQLTimes, backoffer, m.logger,
+		func(_ context.Context) (bool, error) {
+			return true, fn()
+		},
+	)
+	if err1 != nil {
+		m.logger.Warn(msg, zap.Error(err1))
+	}
+	return err1
 }

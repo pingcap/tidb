@@ -20,19 +20,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -59,7 +57,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	tblInfo := tbl.Meta()
 
 	// 1.1 OnNextSubtasksBatch
-	task.Step = sch.GetNextStep(task)
+	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
 	execIDs := []string{":4000"}
 	metas, err := sch.OnNextSubtasksBatch(context.Background(), nil, task, execIDs, task.Step)
@@ -73,7 +71,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 
 	// 1.2 test partition table OnNextSubtasksBatch after BackfillStepReadIndex
 	task.State = proto.TaskStateRunning
-	task.Step = sch.GetNextStep(task)
+	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
 	metas, err = sch.OnNextSubtasksBatch(context.Background(), nil, task, execIDs, task.Step)
 	require.NoError(t, err)
@@ -98,14 +96,14 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	task = createAddIndexTask(t, dom, "test", "t2", proto.Backfill, false)
 	// 2.2.1 stepInit
-	task.Step = sch.GetNextStep(task)
+	task.Step = sch.GetNextStep(&task.TaskBase)
 	metas, err = sch.OnNextSubtasksBatch(context.Background(), nil, task, execIDs, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
 	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
 	// 2.2.2 BackfillStepReadIndex
 	task.State = proto.TaskStateRunning
-	task.Step = sch.GetNextStep(task)
+	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
 	metas, err = sch.OnNextSubtasksBatch(context.Background(), nil, task, execIDs, task.Step)
 	require.NoError(t, err)
@@ -115,21 +113,19 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 func TestCalculateRegionBatch(t *testing.T) {
 	// Test calculate in cloud storage.
 	batchCnt := ddl.CalculateRegionBatchForTest(100, 8, false)
-	require.Equal(t, 12, batchCnt)
+	require.Equal(t, 13, batchCnt)
 	batchCnt = ddl.CalculateRegionBatchForTest(2, 8, false)
 	require.Equal(t, 1, batchCnt)
 	batchCnt = ddl.CalculateRegionBatchForTest(8, 8, false)
 	require.Equal(t, 1, batchCnt)
 
 	// Test calculate in local storage.
-	variable.DDLDiskQuota.Store(96 * units.MiB * 1000)
 	batchCnt = ddl.CalculateRegionBatchForTest(100, 8, true)
-	require.Equal(t, 12, batchCnt)
+	require.Equal(t, 13, batchCnt)
 	batchCnt = ddl.CalculateRegionBatchForTest(2, 8, true)
 	require.Equal(t, 1, batchCnt)
-	variable.DDLDiskQuota.Store(96 * units.MiB * 2)
 	batchCnt = ddl.CalculateRegionBatchForTest(24, 8, true)
-	require.Equal(t, 2, batchCnt)
+	require.Equal(t, 3, batchCnt)
 }
 
 func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
@@ -166,10 +162,10 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	execIDs := []string{":4000"}
 
 	// 1. to read-index stage
-	subtaskMetas, err := sch.OnNextSubtasksBatch(ctx, sch, task, execIDs, sch.GetNextStep(task))
+	subtaskMetas, err := sch.OnNextSubtasksBatch(ctx, sch, task, execIDs, sch.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	nextStep := ext.GetNextStep(task)
+	nextStep := ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepReadIndex, nextStep)
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
@@ -184,7 +180,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 
 	// update meta, same as import into.
 	sortStepMeta := &ddl.BackfillSubTaskMeta{
-		SortedKVMeta: external.SortedKVMeta{
+		MetaGroups: []*external.SortedKVMeta{{
 			StartKey:    []byte("ta"),
 			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
@@ -195,7 +191,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 					},
 				},
 			},
-		},
+		}},
 	}
 	sortStepMetaBytes, err := json.Marshal(sortStepMeta)
 	require.NoError(t, err)
@@ -207,10 +203,10 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 	})
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	nextStep = ext.GetNextStep(task)
+	nextStep = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepMergeSort, nextStep)
 
 	// update meta, same as import into.
@@ -224,7 +220,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	gotSubtasks, err = mgr.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
 	mergeSortStepMeta := &ddl.BackfillSubTaskMeta{
-		SortedKVMeta: external.SortedKVMeta{
+		MetaGroups: []*external.SortedKVMeta{{
 			StartKey:    []byte("ta"),
 			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
@@ -235,7 +231,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 					},
 				},
 			},
-		},
+		}},
 	}
 	mergeSortStepMetaBytes, err := json.Marshal(mergeSortStepMeta)
 	require.NoError(t, err)
@@ -247,35 +243,35 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockWriteIngest"))
 	})
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	task.Step = ext.GetNextStep(task)
+	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.BackfillStepWriteAndIngest, task.Step)
 	// 4. to done stage.
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
-	task.Step = ext.GetNextStep(task)
+	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
 }
 
 func TestGetNextStep(t *testing.T) {
 	task := &proto.Task{
-		Step: proto.StepInit,
+		TaskBase: proto.TaskBase{Step: proto.StepInit},
 	}
 	ext := &ddl.BackfillingSchedulerExt{}
 
 	// 1. local mode
 	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.StepDone} {
-		require.Equal(t, nextStep, ext.GetNextStep(task))
+		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
 		task.Step = nextStep
 	}
 	// 2. global sort mode
 	ext = &ddl.BackfillingSchedulerExt{GlobalSort: true}
 	task.Step = proto.StepInit
 	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest} {
-		require.Equal(t, nextStep, ext.GetNextStep(task))
+		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
 		task.Step = nextStep
 	}
 }
@@ -317,10 +313,12 @@ func createAddIndexTask(t *testing.T,
 	require.NoError(t, err)
 
 	task := &proto.Task{
-		ID:              time.Now().UnixMicro(),
-		Type:            taskType,
-		Step:            proto.StepInit,
-		State:           proto.TaskStatePending,
+		TaskBase: proto.TaskBase{
+			ID:    time.Now().UnixMicro(),
+			Type:  taskType,
+			Step:  proto.StepInit,
+			State: proto.TaskStatePending,
+		},
 		Meta:            taskMetaBytes,
 		StartTime:       time.Now(),
 		StateUpdateTime: time.Now(),

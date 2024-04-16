@@ -169,6 +169,33 @@ func TestGetVar(t *testing.T) {
 	}
 }
 
+func TestTypeConversion(t *testing.T) {
+	ctx := createContext(t)
+	// Set value as int64
+	key := "a"
+	val := int64(3)
+	ctx.GetSessionVars().SetUserVarVal(key, types.NewDatum(val))
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	ctx.GetSessionVars().SetUserVarType(key, tp)
+
+	args := []any{"a"}
+	// To Decimal.
+	tp = types.NewFieldType(mysql.TypeNewDecimal)
+	fn, err := BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(args...))[0], tp)
+	require.NoError(t, err)
+	d, err := fn.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	des := types.NewDecFromInt(3)
+	require.Equal(t, des, d.GetValue())
+	// To Float.
+	tp = types.NewFieldType(mysql.TypeDouble)
+	fn, err = BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(args...))[0], tp)
+	require.NoError(t, err)
+	d, err = fn.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, float64(3), d.GetValue())
+}
+
 func TestValues(t *testing.T) {
 	ctx := createContext(t)
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}
@@ -303,14 +330,15 @@ func TestInFunc(t *testing.T) {
 	strD2 := types.NewCollationStringDatum("Á", "utf8_general_ci")
 	fn, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{strD1, strD2}))
 	require.NoError(t, err)
-	d, isNull, err := fn.evalInt(ctx, chunk.Row{})
-	require.False(t, isNull)
+	d, err := evalBuiltinFunc(fn, ctx, chunk.Row{})
 	require.NoError(t, err)
-	require.Equalf(t, int64(1), d, "%v, %v", strD1, strD2)
+	require.False(t, d.IsNull())
+	require.Equal(t, types.KindInt64, d.Kind())
+	require.Equalf(t, int64(1), d.GetInt64(), "%v, %v", strD1, strD2)
 	chk1 := chunk.NewChunkWithCapacity(nil, 1)
 	chk1.SetNumVirtualRows(1)
 	chk2 := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeTiny)}, 1)
-	err = fn.vecEvalInt(ctx, chk1, chk2.Column(0))
+	err = vecEvalType(ctx, fn, types.ETInt, chk1, chk2.Column(0))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), chk2.Column(0).GetInt64(0))
 }

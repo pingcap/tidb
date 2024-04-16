@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -431,7 +430,7 @@ func unsupportedJSONComparison(ctx BuildContext, args []Expression) {
 	for _, arg := range args {
 		tp := arg.GetType().GetType()
 		if tp == mysql.TypeJSON {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedJSONComparison)
+			ctx.GetEvalCtx().AppendWarning(errUnsupportedJSONComparison)
 			break
 		}
 	}
@@ -1338,7 +1337,7 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 }
 
 // GetCmpFunction get the compare function according to two arguments.
-func GetCmpFunction(ctx sessionctx.Context, lhs, rhs Expression) CompareFunc {
+func GetCmpFunction(ctx BuildContext, lhs, rhs Expression) CompareFunc {
 	switch GetAccurateCmpType(lhs, rhs) {
 	case types.ETInt:
 		return CompareInt
@@ -1384,13 +1383,14 @@ func tryToConvertConstantInt(ctx BuildContext, targetFieldType *types.FieldType,
 	if con.GetType().EvalType() == types.ETInt {
 		return con, false
 	}
-	dt, err := con.Eval(ctx, chunk.Row{})
+
+	evalCtx := ctx.GetEvalCtx()
+	dt, err := con.Eval(evalCtx, chunk.Row{})
 	if err != nil {
 		return con, false
 	}
-	sc := ctx.GetSessionVars().StmtCtx
 
-	dt, err = dt.ConvertTo(sc.TypeCtx(), targetFieldType)
+	dt, err = dt.ConvertTo(evalCtx.TypeCtx(), targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
@@ -1419,17 +1419,16 @@ func tryToConvertConstantInt(ctx BuildContext, targetFieldType *types.FieldType,
 //	If the op == LT,LE,GT,GE and it gets an Overflow when converting, return inf/-inf.
 //	If the op == EQ,NullEQ and the constant can never be equal to the int column, return ‘con’(the input, a non-int constant).
 func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, con *Constant, op opcode.Op) (_ *Constant, isExceptional bool) {
-	dt, err := con.Eval(ctx, chunk.Row{})
+	evalCtx := ctx.GetEvalCtx()
+	dt, err := con.Eval(evalCtx, chunk.Row{})
 	if err != nil {
 		return con, false
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-
 	if targetFieldType.GetType() == mysql.TypeBit {
 		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
-	intDatum, err = dt.ConvertTo(sc.TypeCtx(), &targetFieldType)
+	intDatum, err = dt.ConvertTo(evalCtx.TypeCtx(), &targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
 			return &Constant{
@@ -1441,7 +1440,7 @@ func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, c
 		}
 		return con, false
 	}
-	c, err := intDatum.Compare(sc.TypeCtx(), &con.Value, collate.GetBinaryCollator())
+	c, err := intDatum.Compare(evalCtx.TypeCtx(), &con.Value, collate.GetBinaryCollator())
 	if err != nil {
 		return con, false
 	}
@@ -1486,7 +1485,7 @@ func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, c
 			// 3. Suppose the value of `con` is 2, when `targetFieldType.GetType()` is `TypeYear`, the value of `doubleDatum`
 			//    will be 2.0 and the value of `intDatum` will be 2002 in this case.
 			var doubleDatum types.Datum
-			doubleDatum, err = dt.ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeDouble))
+			doubleDatum, err = dt.ConvertTo(evalCtx.TypeCtx(), types.NewFieldType(mysql.TypeDouble))
 			if err != nil {
 				return con, false
 			}
@@ -1534,7 +1533,7 @@ func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowR
 		exprEvalType := exprType.EvalType()
 		if exprType.GetType() == mysql.TypeYear {
 			reason := errors.NewNoStackErrorf("'%v' may be converted to INT", args[conIdx].String())
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			ctx.SetSkipPlanCache(reason)
 			return true
 		}
 
@@ -1544,7 +1543,7 @@ func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowR
 		if exprEvalType == types.ETInt &&
 			(conEvalType == types.ETString || conEvalType == types.ETReal || conEvalType == types.ETDecimal) {
 			reason := errors.NewNoStackErrorf("'%v' may be converted to INT", args[conIdx].String())
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			ctx.SetSkipPlanCache(reason)
 			return true
 		}
 
@@ -1554,7 +1553,7 @@ func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowR
 		_, exprIsCon := args[1-conIdx].(*Constant)
 		if !exprIsCon && matchRefineRule3Pattern(conEvalType, exprType) {
 			reason := errors.Errorf("'%v' may be converted to datetime", args[conIdx].String())
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			ctx.SetSkipPlanCache(reason)
 			return true
 		}
 	}
@@ -1679,14 +1678,14 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 
 // see https://github.com/pingcap/tidb/issues/38361 for more details
 func (c *compareFunctionClass) refineNumericConstantCmpDatetime(ctx BuildContext, args []Expression, constArg *Constant, constArgIdx int) []Expression {
-	dt, err := constArg.Eval(ctx, chunk.Row{})
+	evalCtx := ctx.GetEvalCtx()
+	dt, err := constArg.Eval(evalCtx, chunk.Row{})
 	if err != nil || dt.IsNull() {
 		return args
 	}
-	sc := ctx.GetSessionVars().StmtCtx
 	var datetimeDatum types.Datum
 	targetFieldType := types.NewFieldType(mysql.TypeDatetime)
-	datetimeDatum, err = dt.ConvertTo(sc.TypeCtx(), targetFieldType)
+	datetimeDatum, err = dt.ConvertTo(evalCtx.TypeCtx(), targetFieldType)
 	if err != nil || datetimeDatum.IsNull() {
 		return args
 	}
@@ -1722,7 +1721,7 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx BuildContext, args [
 	}
 	for i := 0; i < 2; i++ {
 		if con, col := constArgs[1-i], colArgs[i]; con != nil && col != nil {
-			v, isNull, err := con.EvalInt(ctx, chunk.Row{})
+			v, isNull, err := con.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil || isNull || v > 0 {
 				return args
 			}

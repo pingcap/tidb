@@ -541,6 +541,8 @@ type TableInfo struct {
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
+
+	DBID int64 `json:"-"`
 }
 
 // TableNameInfo provides meta data describing a table name info.
@@ -1195,6 +1197,10 @@ type PartitionInfo struct {
 	// rather than pid.
 	Enable bool `json:"enable"`
 
+	// IsEmptyColumns is for syntax like `partition by key()`.
+	// When IsEmptyColums is true, it will not display column name in `show create table` stmt.
+	IsEmptyColumns bool `json:"is_empty_columns"`
+
 	Definitions []PartitionDefinition `json:"definitions"`
 	// AddingDefinitions is filled when adding partitions that is in the mid state.
 	AddingDefinitions []PartitionDefinition `json:"adding_definitions"`
@@ -1244,6 +1250,7 @@ func (pi *PartitionInfo) Clone() *PartitionInfo {
 }
 
 // GetNameByID gets the partition name by ID.
+// TODO: Remove the need for this function!
 func (pi *PartitionInfo) GetNameByID(id int64) string {
 	definitions := pi.Definitions
 	// do not convert this loop to `for _, def := range definitions`.
@@ -1310,6 +1317,14 @@ func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
 		}
 	}
 	return false
+}
+
+// ClearReorgIntermediateInfo remove intermediate information used during reorganize partition.
+func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
+	pi.DDLType = PartitionTypeNone
+	pi.DDLExpr = ""
+	pi.DDLColumns = nil
+	pi.NewTableID = 0
 }
 
 // PartitionState is the state of the partition.
@@ -1765,9 +1780,26 @@ func (cis *CIStr) MemoryUsage() (sum int64) {
 
 // TableItemID is composed by table ID and column/index ID
 type TableItemID struct {
-	TableID int64
-	ID      int64
-	IsIndex bool
+	TableID          int64
+	ID               int64
+	IsIndex          bool
+	IsSyncLoadFailed bool
+}
+
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (t TableItemID) Key() string {
+	return fmt.Sprintf("%d#%d#%t", t.ID, t.TableID, t.IsIndex)
+}
+
+// StatsLoadItem represents the load unit for statistics's memory loading.
+type StatsLoadItem struct {
+	TableItemID
+	FullLoad bool
+}
+
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (s StatsLoadItem) Key() string {
+	return fmt.Sprintf("%s#%t", s.TableItemID.Key(), s.FullLoad)
 }
 
 // PolicyRefInfo is the struct to refer the placement policy.
@@ -1907,6 +1939,10 @@ func (p *PlacementSettings) String() string {
 
 	if len(p.LearnerConstraints) > 0 {
 		writeSettingStringToBuilder(sb, "LEARNER_CONSTRAINTS", p.LearnerConstraints)
+	}
+
+	if len(p.SurvivalPreferences) > 0 {
+		writeSettingStringToBuilder(sb, "SURVIVAL_PREFERENCES", p.SurvivalPreferences)
 	}
 
 	return sb.String()

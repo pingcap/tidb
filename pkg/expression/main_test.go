@@ -63,7 +63,10 @@ func createContext(t *testing.T) *mock.Context {
 	require.NoError(t, err)
 	require.True(t, sqlMode.HasStrictMode())
 	ctx.GetSessionVars().SQLMode = sqlMode
-	ctx.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
+	// sets default time zone to UTC+11 value to make it different with most CI and development environments and forbid
+	// some tests are success in some environments but failed in some others.
+	tz := time.FixedZone("UTC+11", 11*3600)
+	ctx.ResetSessionAndStmtTimeZone(tz)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
 	require.NoError(t, ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864"))

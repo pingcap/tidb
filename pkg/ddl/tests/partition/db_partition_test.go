@@ -736,7 +736,7 @@ create table log_message_1 (
 			"  `a` time DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 			"PARTITION BY RANGE COLUMNS(`a`)\n" +
-			"(PARTITION `p1` VALUES LESS THAN ('2020'))"))
+			"(PARTITION `p1` VALUES LESS THAN ('00:20:20'))"))
 	tk.MustExec(`drop table t`)
 	tk.MustExec(`create table t (a time, b time) partition by range columns (a) (partition p1 values less than ('2020'), partition p2 values less than ('20:20:10'))`)
 	tk.MustQuery(`show create table t`).Check(testkit.Rows(
@@ -745,7 +745,7 @@ create table log_message_1 (
 			"  `b` time DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 			"PARTITION BY RANGE COLUMNS(`a`)\n" +
-			"(PARTITION `p1` VALUES LESS THAN ('2020'),\n" +
+			"(PARTITION `p1` VALUES LESS THAN ('00:20:20'),\n" +
 			" PARTITION `p2` VALUES LESS THAN ('20:20:10'))"))
 	tk.MustExec(`insert into t values ('2019','2019'),('20:20:09','20:20:09')`)
 	tk.MustExec(`drop table t`)
@@ -1257,7 +1257,8 @@ func TestCreateTableWithKeyPartition(t *testing.T) {
 	partition by key(s1) partitions 10;`)
 
 	tk.MustExec(`drop table if exists tm2`)
-	tk.MustExec(`create table tm2 (a char(5), unique key(a(5))) partition by key() partitions 5;`)
+	tk.MustGetErrMsg(`create table tm2 (a char(5), unique key(a(5))) partition by key() partitions 5`,
+		"Table partition metadata not correct, neither partition expression or list of partition columns")
 }
 
 func TestDropPartitionWithGlobalIndex(t *testing.T) {
@@ -1454,12 +1455,15 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec(`begin`)
 	tk3.MustExec(`use test`)
+	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("IndexRangeScan")
+	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("IndexRangeScan")
 	tk3.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
 	tk3.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
 	// Here it will fail with
 	// the partition is not in public.
 	err := tk3.ExecToErr(`insert into test_global values (15,15,15)`)
-	assert.NotNil(t, err)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "the partition is in not in public")
 	tk2.MustExec(`commit`)
 	tk3.MustExec(`commit`)
 	<-syncChan
@@ -1476,6 +1480,10 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	require.NotNil(t, idxInfo)
 	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
 	require.Equal(t, 3, cnt)
+	tk.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
+	tk.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
+	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
+	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
 }
 
 func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
@@ -2097,7 +2105,6 @@ func TestExchangePartitionHook(t *testing.T) {
 func TestExchangePartitionAutoID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 
@@ -3170,20 +3177,21 @@ func TestRemoveListColumnsPartitioning(t *testing.T) {
 
 func TestRemovePartitioningAutoIDs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk1 := testkit.NewTestKit(t, store)
-
 	dbName := "RemovePartAutoIDs"
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+
 	tk1.MustExec(`create schema ` + dbName)
 	tk1.MustExec(`use ` + dbName)
+	tk2.MustExec(`use ` + dbName)
+	tk3.MustExec(`use ` + dbName)
+
 	tk1.MustExec(`CREATE TABLE t (a int auto_increment primary key nonclustered, b varchar(255), key (b)) partition by hash(a) partitions 3`)
 	tk1.MustExec(`insert into t values (11,11),(2,2),(null,12)`)
 	tk1.MustExec(`insert into t values (null,18)`)
 	tk1.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows("13 11 11", "14 2 2", "15 12 12", "17 16 18"))
 
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec(`use ` + dbName)
-	tk3 := testkit.NewTestKit(t, store)
-	tk3.MustExec(`use ` + dbName)
 	waitFor := func(col int, tableName, s string) {
 		for {
 			tk4 := testkit.NewTestKit(t, store)
@@ -3405,10 +3413,49 @@ func TestAlterLastIntervalPartition(t *testing.T) {
 		"  `create_time` datetime DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY RANGE COLUMNS(`create_time`)\n" +
-		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01'),\n" +
-		" PARTITION `P_LT_2023-01-02` VALUES LESS THAN ('2023-01-02'),\n" +
+		"(PARTITION `P_LT_2023-01-01` VALUES LESS THAN ('2023-01-01 00:00:00'),\n" +
+		" PARTITION `P_LT_2023-01-02` VALUES LESS THAN ('2023-01-02 00:00:00'),\n" +
 		" PARTITION `P_LT_2023-01-03 00:00:00` VALUES LESS THAN ('2023-01-03 00:00:00'),\n" +
 		" PARTITION `P_LT_2023-01-04 00:00:00` VALUES LESS THAN ('2023-01-04 00:00:00'))"))
 }
 
 // TODO: check EXCHANGE how it handles null (for all types of partitioning!!!)
+func TestExchangeValidateHandleNullValue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`CREATE TABLE t1 (id int, c varchar(128)) PARTITION BY HASH (id) PARTITIONS 3`)
+	tk.MustExec(`CREATE TABLE t2 (id int, c varchar(128))`)
+	tk.MustExec(`insert into t1 values(null, 'a1')`)
+	tk.MustExec(`insert into t2 values(null, 'b2')`)
+	tk.MustQuery(`select id, c from t1 partition(p0)`).Check(testkit.Rows("<nil> a1"))
+	tk.MustContainErrMsg(`alter table t1 EXCHANGE PARTITION p1 WITH TABLE t2`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table t1 EXCHANGE PARTITION p0 WITH TABLE t2`)
+
+	tk.MustExec(`CREATE TABLE t3 (id int, c date) PARTITION BY HASH (year(c)) PARTITIONS 12`)
+	tk.MustExec(`CREATE TABLE t4 (id int, c date)`)
+	tk.MustExec(`insert into t3 values(1, null)`)
+	tk.MustExec(`insert into t4 values(2, null)`)
+	tk.MustQuery(`select id, c from t3 partition(p0)`).Check(testkit.Rows("1 <nil>"))
+	tk.MustContainErrMsg(`alter table t3 EXCHANGE PARTITION p1 WITH TABLE t4`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table t3 EXCHANGE PARTITION p0 WITH TABLE t4`)
+
+	tk.MustExec(`CREATE TABLE t5 (id int, c varchar(128)) partition by range (id)(
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than (maxvalue))`)
+	tk.MustExec(`CREATE TABLE t6 (id int, c varchar(128))`)
+	tk.MustExec(`insert into t5 values(null, 'a5')`)
+	tk.MustExec(`insert into t6 values(null, 'b6')`)
+	tk.MustQuery(`select id, c from t5 partition(p0)`).Check(testkit.Rows("<nil> a5"))
+	tk.MustContainErrMsg(`alter table t5 EXCHANGE PARTITION p1 WITH TABLE t6`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table t5 EXCHANGE PARTITION p2 WITH TABLE t6`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table t5 EXCHANGE PARTITION p0 WITH TABLE t6`)
+	// TODO: add "partition by range columns(a, b, c)" test cases.
+}

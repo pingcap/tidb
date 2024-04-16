@@ -23,7 +23,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/bindinfo/norm"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/bindinfo/internal/logutil"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -36,9 +37,9 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 )
 
 // GlobalBindingHandle is used to handle all global sql bind operations.
@@ -110,12 +111,7 @@ type GlobalBindingHandle interface {
 type globalBindingHandle struct {
 	sPool SessionPool
 
-	bindingCache atomic.Pointer[bindingCache]
-
-	// fuzzyDigestMap is used to support fuzzy matching.
-	// fuzzyDigest is the digest calculated after eliminating all DB names, e.g. `select * from test.t` -> `select * from t` -> fuzzyDigest.
-	// exactDigest is the digest where all DB names are kept, e.g. `select * from test.t` -> exactDigest.
-	fuzzyDigestMap atomic.Value // map[string][]string fuzzyDigest --> exactDigests
+	fuzzyBindingCache atomic.Value
 
 	// lastTaskTime records the last update time for the global sql bind cache.
 	// This value is used to avoid reload duplicated bindings from storage.
@@ -124,6 +120,9 @@ type globalBindingHandle struct {
 	// invalidBindings indicates the invalid bindings found during querying.
 	// A binding will be deleted from this map, after 2 bind-lease, after it is dropped from the kv.
 	invalidBindings *invalidBindingCache
+
+	// syncBindingSingleflight is used to synchronize the execution of `LoadFromStorageToCache` method.
+	syncBindingSingleflight singleflight.Group
 }
 
 // Lease influences the duration of loading bind info and handling invalid bind.
@@ -156,44 +155,20 @@ func NewGlobalBindingHandle(sPool SessionPool) GlobalBindingHandle {
 	return handle
 }
 
-func (h *globalBindingHandle) getCache() *bindingCache {
-	return h.bindingCache.Load()
+func (h *globalBindingHandle) getCache() FuzzyBindingCache {
+	return h.fuzzyBindingCache.Load().(FuzzyBindingCache)
 }
 
-func (h *globalBindingHandle) setCache(c *bindingCache) {
+func (h *globalBindingHandle) setCache(c FuzzyBindingCache) {
 	// TODO: update the global cache in-place instead of replacing it and remove this function.
-	h.bindingCache.Store(c)
-}
-
-func (h *globalBindingHandle) getFuzzyDigestMap() map[string][]string {
-	return h.fuzzyDigestMap.Load().(map[string][]string)
-}
-
-func (h *globalBindingHandle) setFuzzyDigestMap(m map[string][]string) {
-	h.fuzzyDigestMap.Store(m)
-}
-
-func buildFuzzyDigestMap(bindings Bindings) map[string][]string {
-	m := make(map[string][]string)
-	p := parser.New()
-	for _, binding := range bindings {
-		stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
-		if err != nil {
-			logutil.BgLogger().Warn("parse bindSQL failed", zap.String("bindSQL", binding.BindSQL), zap.Error(err))
-			p = parser.New()
-			continue
-		}
-		_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-		m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
-	}
-	return m
+	h.fuzzyBindingCache.Store(c)
 }
 
 // Reset is to reset the BindHandle and clean old info.
 func (h *globalBindingHandle) Reset() {
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
 	h.invalidBindings = newInvalidBindingCache()
-	h.setCache(newBindCache())
+	h.setCache(newFuzzyBindingCache(h.LoadBindingsFromStorage))
 	variable.RegisterStatistics(h)
 }
 
@@ -209,11 +184,11 @@ func (h *globalBindingHandle) setLastUpdateTime(t types.Time) {
 func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) {
 	var lastUpdateTime types.Time
 	var timeCondition string
-	var newCache *bindingCache
+	var newCache FuzzyBindingCache
 	if fullLoad {
 		lastUpdateTime = types.ZeroTimestamp
 		timeCondition = ""
-		newCache = newBindCache()
+		newCache = newFuzzyBindingCache(h.LoadBindingsFromStorage)
 	} else {
 		lastUpdateTime = h.getLastUpdateTime()
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
@@ -235,8 +210,11 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 
 		defer func() {
 			h.setLastUpdateTime(lastUpdateTime)
-			h.setCache(newCache) // TODO: update it in place
-			h.setFuzzyDigestMap(buildFuzzyDigestMap(newCache.GetAllBindings()))
+			h.setCache(newCache)
+
+			metrics.BindingCacheMemUsage.Set(float64(h.GetMemUsage()))
+			metrics.BindingCacheMemLimit.Set(float64(h.GetMemCapacity()))
+			metrics.BindingCacheNumBindings.Set(float64(h.Size()))
 		}()
 
 		for _, row := range rows {
@@ -253,7 +231,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 			}
 
 			if err != nil {
-				logutil.BgLogger().Warn("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
+				logutil.BindLogger().Warn("failed to generate bind record from data row", zap.Error(err))
 				continue
 			}
 
@@ -265,12 +243,11 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 					// When the memory capacity of bing_cache is not enough,
 					// there will be some memory-related errors in multiple places.
 					// Only needs to be handled once.
-					logutil.BgLogger().Warn("BindHandle.Update", zap.String("category", "sql-bind"), zap.Error(err))
+					logutil.BindLogger().Warn("BindHandle.Update", zap.Error(err))
 				}
 			} else {
 				newCache.RemoveBinding(sqlDigest)
 			}
-			updateMetrics(metrics.ScopeGlobal, oldBinding, newCache.GetBinding(sqlDigest), true)
 		}
 		return nil
 	})
@@ -467,7 +444,7 @@ func (c *invalidBindingCache) reset() {
 func (h *globalBindingHandle) DropInvalidGlobalBinding() {
 	defer func() {
 		if err := h.LoadFromStorageToCache(false); err != nil {
-			logutil.BgLogger().Warn("drop invalid global binding error", zap.Error(err))
+			logutil.BindLogger().Warn("drop invalid global binding error", zap.Error(err))
 		}
 	}()
 
@@ -475,7 +452,7 @@ func (h *globalBindingHandle) DropInvalidGlobalBinding() {
 	h.invalidBindings.reset()
 	for _, invalidBinding := range invalidBindings {
 		if _, err := h.dropGlobalBinding(invalidBinding.SQLDigest); err != nil {
-			logutil.BgLogger().Debug("flush bind record failed", zap.String("category", "sql-bind"), zap.Error(err))
+			logutil.BindLogger().Debug("flush bind record failed", zap.Error(err))
 		}
 	}
 }
@@ -493,35 +470,7 @@ func (h *globalBindingHandle) Size() int {
 
 // MatchGlobalBinding returns the matched binding for this statement.
 func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
-	bindingCache := h.getCache()
-	if bindingCache.Size() == 0 {
-		return
-	}
-	fuzzyDigestMap := h.getFuzzyDigestMap()
-	if len(fuzzyDigestMap) == 0 {
-		return
-	}
-
-	leastWildcards := len(tableNames) + 1
-	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
-	for _, exactDigest := range fuzzyDigestMap[fuzzyDigest] {
-		sqlDigest := exactDigest
-		if bindings := bindingCache.GetBinding(sqlDigest); bindings != nil {
-			for _, binding := range bindings {
-				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
-				if matched && numWildcards > 0 && sctx != nil && !enableFuzzyBinding {
-					continue // fuzzy binding is disabled, skip this binding
-				}
-				if matched && numWildcards < leastWildcards {
-					matchedBinding = binding
-					isMatched = true
-					leastWildcards = numWildcards
-					break
-				}
-			}
-		}
-	}
-	return
+	return h.getCache().FuzzyMatchingBinding(sctx, fuzzyDigest, tableNames)
 }
 
 // GetAllGlobalBindings returns all bind records in cache.
@@ -552,32 +501,21 @@ func newBinding(sctx sessionctx.Context, row chunk.Row) (string, Binding, error)
 	if status == Using {
 		status = Enabled
 	}
-	defaultDB := row.GetString(2)
-
-	bindSQL := row.GetString(1)
-	charset, collation := row.GetString(6), row.GetString(7)
-	stmt, err := parser.New().ParseOneStmt(bindSQL, charset, collation)
-	if err != nil {
-		return "", Binding{}, err
-	}
-	tableNames := CollectTableNames(stmt)
-
 	binding := Binding{
 		OriginalSQL: row.GetString(0),
-		Db:          strings.ToLower(defaultDB),
-		BindSQL:     bindSQL,
+		Db:          strings.ToLower(row.GetString(2)),
+		BindSQL:     row.GetString(1),
 		Status:      status,
 		CreateTime:  row.GetTime(4),
 		UpdateTime:  row.GetTime(5),
-		Charset:     charset,
-		Collation:   collation,
+		Charset:     row.GetString(6),
+		Collation:   row.GetString(7),
 		Source:      row.GetString(8),
 		SQLDigest:   row.GetString(9),
 		PlanDigest:  row.GetString(10),
-		TableNames:  tableNames,
 	}
 	sqlDigest := parser.DigestNormalized(binding.OriginalSQL)
-	err = prepareHints(sctx, &binding)
+	err := prepareHints(sctx, &binding)
 	sctx.GetSessionVars().CurrentDB = binding.Db
 	return sqlDigest.String(), binding, err
 }
@@ -612,7 +550,7 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 }
 
 // GenerateBindingSQL generates binding sqls from stmt node and plan hints.
-func GenerateBindingSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string, skipCheckIfHasParam bool, defaultDB string) string {
+func GenerateBindingSQL(stmtNode ast.StmtNode, planHint string, skipCheckIfHasParam bool, defaultDB string) string {
 	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
 	if planHint == "" {
 		return ""
@@ -652,7 +590,7 @@ func GenerateBindingSQL(ctx context.Context, stmtNode ast.StmtNode, planHint str
 			restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &withSb)
 			restoreCtx.DefaultDB = defaultDB
 			if err := n.With.Restore(restoreCtx); err != nil {
-				logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
+				logutil.BindLogger().Debug("restore SQL failed", zap.Error(err))
 				return ""
 			}
 			withEnd := withIdx + len(withSb.String())
@@ -674,7 +612,7 @@ func GenerateBindingSQL(ctx context.Context, stmtNode ast.StmtNode, planHint str
 		bindSQL = bindSQL[insertIdx:]
 		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 	}
-	logutil.Logger(ctx).Debug("unexpected statement type when generating bind SQL", zap.String("category", "sql-bind"), zap.Any("statement", stmtNode))
+	logutil.BindLogger().Debug("unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
 	return ""
 }
 
@@ -696,7 +634,7 @@ func (*paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 
 // Clear resets the bind handle. It is only used for test.
 func (h *globalBindingHandle) Clear() {
-	h.setCache(newBindCache())
+	h.setCache(newFuzzyBindingCache(h.LoadBindingsFromStorage))
 	h.setLastUpdateTime(types.ZeroTimestamp)
 	h.invalidBindings.reset()
 }
@@ -717,7 +655,6 @@ func (h *globalBindingHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.
 			h.sPool.Put(resource)
 		}
 	}()
-
 	sctx := resource.(sessionctx.Context)
 	if wrapTxn {
 		if _, err = exec(sctx, "BEGIN PESSIMISTIC"); err != nil {
@@ -751,4 +688,57 @@ func (h *globalBindingHandle) Stats(_ *variable.SessionVars) (map[string]any, er
 	m := make(map[string]any)
 	m[lastPlanBindingUpdateTime] = h.getLastUpdateTime().String()
 	return m, nil
+}
+
+// LoadBindingsFromStorageToCache loads global bindings from storage to the memory cache.
+func (h *globalBindingHandle) LoadBindingsFromStorage(sctx sessionctx.Context, sqlDigest string) (Bindings, error) {
+	if sqlDigest == "" {
+		return nil, nil
+	}
+	timeout := time.Duration(sctx.GetSessionVars().LoadBindingTimeout) * time.Millisecond
+	resultChan := h.syncBindingSingleflight.DoChan(sqlDigest, func() (any, error) {
+		return h.loadBindingsFromStorageInternal(sqlDigest)
+	})
+	select {
+	case result := <-resultChan:
+		if result.Err != nil {
+			return nil, result.Err
+		}
+		bindings := result.Val
+		if bindings == nil {
+			return nil, nil
+		}
+		return bindings.(Bindings), nil
+	case <-time.After(timeout):
+		return nil, errors.New("load bindings from storage timeout")
+	}
+}
+
+func (h *globalBindingHandle) loadBindingsFromStorageInternal(sqlDigest string) (any, error) {
+	failpoint.Inject("load_bindings_from_storage_internal_timeout", func() {
+		time.Sleep(time.Second)
+	})
+	var bindings Bindings
+	selectStmt := fmt.Sprintf("SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info where sql_digest = '%s'", sqlDigest)
+	err := h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+		rows, _, err := execRows(sctx, selectStmt)
+		if err != nil {
+			return err
+		}
+		bindings = make([]Binding, 0, len(rows))
+		for _, row := range rows {
+			// Skip the builtin record which is designed for binding synchronization.
+			if row.GetString(0) == BuiltinPseudoSQL4BindLock {
+				continue
+			}
+			_, binding, err := newBinding(sctx, row)
+			if err != nil {
+				logutil.BindLogger().Warn("failed to generate bind record from data row", zap.Error(err))
+				continue
+			}
+			bindings = append(bindings, binding)
+		}
+		return nil
+	})
+	return bindings, err
 }

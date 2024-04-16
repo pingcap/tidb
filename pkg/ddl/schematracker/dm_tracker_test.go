@@ -32,8 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -488,6 +486,10 @@ func (m mockRestrictedSQLExecutor) ExecRestrictedSQL(ctx context.Context, opts [
 	return nil, nil, nil
 }
 
+func (m mockRestrictedSQLExecutor) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return m
+}
+
 func TestModifyFromNullToNotNull(t *testing.T) {
 	sql := "create table test.t (a int, b int);"
 	tracker := schematracker.NewSchemaTracker(2)
@@ -496,15 +498,12 @@ func TestModifyFromNullToNotNull(t *testing.T) {
 
 	sql = "alter table test.t modify column a int not null;"
 	ctx := context.Background()
-	store := testkit.CreateMockStore(t)
-	sess := testkit.NewTestKit(t, store).Session()
-	err := sessiontxn.NewTxn(context.Background(), sess)
-	require.NoError(t, err)
+	sctx := mock.NewContext()
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	// converting from NULL to NOT NULL needs to check data, so caller should provide a RestrictedSQLExecutor
-	executorCtx := mockRestrictedSQLExecutor{sess}
+	executorCtx := mockRestrictedSQLExecutor{sctx}
 	err = tracker.AlterTable(ctx, executorCtx, stmt.(*ast.AlterTableStmt))
 	require.NoError(t, err)
 

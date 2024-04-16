@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -85,7 +84,7 @@ const (
 	// addIdxWorker is the worker who handles the operation of adding indexes.
 	addIdxWorker workerType = 1
 	// loaclWorker is the worker who handles the operation in local TiDB.
-	// currently it only handle CreateTable job of TiDBDDLV2.
+	// currently it only handle CreateTable job of fast create table enabled.
 	localWorker workerType = 2
 )
 
@@ -256,8 +255,8 @@ func (d *ddl) addBatchDDLJobsV1(tasks []*limitJobTask) {
 	}
 }
 
-// addBatchDDLJobsV2 gets global job IDs and delivery the DDL jobs to local TiDB
-func (d *ddl) addBatchDDLJobsV2(tasks []*limitJobTask) {
+// addBatchLocalDDLJobs gets global job IDs and delivery the DDL jobs to local TiDB
+func (d *ddl) addBatchLocalDDLJobs(tasks []*limitJobTask) {
 	err := d.addBatchDDLJobs(tasks)
 	if err != nil {
 		for _, task := range tasks {
@@ -305,7 +304,7 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 	// lock to reduce conflict
 	d.globalIDLock.Lock()
 	defer d.globalIDLock.Unlock()
-	return kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	return kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		ids, err := t.GenGlobalIDs(len(tasks))
 		if err != nil {
@@ -414,7 +413,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	// lock to reduce conflict
 	d.globalIDLock.Lock()
-	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		ids, err = t.GenGlobalIDs(len(tasks))
 		if err != nil {
@@ -483,7 +482,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		injectModifyJobArgFailPoint(job)
 	}
 
-	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 
 	if tasks[0].job.LocalMode {
 		for _, task := range tasks {
@@ -554,7 +553,6 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 		}
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
-		job.InvolvingSchemaInfo = nil
 		job.Error = toTError(err)
 		job.ErrorCount++
 		job.SchemaState = model.StateNone
@@ -610,7 +608,7 @@ func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client) {
 	sctx, _ := pool.Get()
 	defer pool.Put(sctx)
 	se := sess.NewSession(sctx)
-	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), sql, "delete-mdl-info")
 	if err != nil {
 		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", jobID), zap.Error(err))
@@ -694,7 +692,6 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	startTime := time.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-		markJobFinish(job)
 	}()
 
 	if JobNeedGC(job) {
@@ -742,15 +739,6 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	w.removeJobCtx(job)
 	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs)
 	return errors.Trace(err)
-}
-
-func markJobFinish(job *model.Job) {
-	if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
-		job.ReorgMeta != nil &&
-		job.ReorgMeta.IsFastReorg &&
-		ingest.LitBackCtxMgr != nil {
-		ingest.LitBackCtxMgr.MarkJobFinish()
-	}
 }
 
 func (w *worker) writeDDLSeqNum(job *model.Job) {
@@ -910,7 +898,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	}
 
 	var t *meta.Meta
-	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+	if variable.EnableFastCreateTable.Load() {
 		t = meta.NewMeta(txn, meta.WithUpdateTableName())
 	} else {
 		t = meta.NewMeta(txn)
@@ -1003,12 +991,12 @@ func (w *worker) checkOwnerBeforeCommit() error {
 	return nil
 }
 
-// HandleDDLJobV2 handles v2 ddl job.
-// Compare with v1:
+// HandleLocalDDLJob handles local ddl job like fast create table.
+// Compare with normal ddl job:
 // 1. directly insert the job to history job table(incompatible with CDC).
 // 2. no need to wait schema version(only support create table now).
 // 3. no register mdl info(only support create table now).
-func (w *worker) HandleDDLJobV2(d *ddlCtx, job *model.Job) (err error) {
+func (w *worker) HandleLocalDDLJob(d *ddlCtx, job *model.Job) (err error) {
 	defer func() {
 		w.unlockSeqNum(err)
 	}()
@@ -1164,7 +1152,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		}, false)
 
 	// Mock for run ddl job panic.
-	failpoint.Inject("mockPanicInRunDDLJob", func(val failpoint.Value) {})
+	failpoint.Inject("mockPanicInRunDDLJob", func(failpoint.Value) {})
 
 	if job.Type != model.ActionMultiSchemaChange {
 		w.jobLogger(job).Info("run DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
@@ -1724,13 +1712,4 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 	}
 	err = t.SetSchemaDiff(diff)
 	return schemaVersion, errors.Trace(err)
-}
-
-func isChanClosed(quitCh <-chan struct{}) bool {
-	select {
-	case <-quitCh:
-		return true
-	default:
-		return false
-	}
 }

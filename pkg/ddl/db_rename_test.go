@@ -86,6 +86,9 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	oldTblID := oldTblInfo.Meta().ID
+	oldDBID := oldTblInfo.Meta().DBID
+	require.NotEqual(t, oldDBID, 0)
+
 	tk.MustExec("create database test1")
 	tk.MustExec("use test1")
 	tk.MustExec(fmt.Sprintf(sql, "test.t", "test1.t1"))
@@ -93,6 +96,9 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID, newTblInfo.Meta().ID)
+	require.NotEqual(t, newTblInfo.Meta().DBID, oldDBID)
+	require.NotEqual(t, newTblInfo.Meta().DBID, 0)
+	oldDBID = newTblInfo.Meta().DBID
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
 	tk.MustExec("use test")
 
@@ -107,6 +113,7 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	newTblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	require.Equal(t, oldTblID, newTblInfo.Meta().ID)
+	require.Equal(t, oldDBID, newTblInfo.Meta().DBID)
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 1", "2 2"))
 	isExist := is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t1"))
 	require.False(t, isExist)
@@ -289,7 +296,11 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk2.MustExec(`use test`)
+	tk3.MustExec(`use test`)
 	// Use first client session, tidb1
 	tk1.MustExec(`create schema if not exists test1`)
 	tk1.MustExec(`create schema if not exists test2`)
@@ -308,14 +319,11 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 	require.Equal(t, int64(5), origAllocs.Allocs[0].End())
 
 	// Switch to a new client (tidb2)
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec(`use test`)
 	alterChan := make(chan error)
 	go func() {
 		// will wait for tidb1
 		alterChan <- tk2.ExecToErr(`rename table test1.t1 to test2.t2`)
 	}()
-	tk3 := testkit.NewTestKit(t, store)
 	waitFor := func(tableName, s string, pos int) {
 		for {
 			select {
@@ -337,7 +345,6 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 
 	// Switch to new client (tidb3)
 	waitFor("t1", "public", 4)
-	tk3.MustExec(`use test`)
 	tk3.MustExec(`begin`)
 	tk3.MustExec(`insert into test2.t2 values (null, "t2 first null")`)
 	tk3.MustQuery(`select _tidb_rowid, a, b from test2.t2`).Sort().Check(testkit.Rows("4 3 t2 first null"))

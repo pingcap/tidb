@@ -228,17 +228,6 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 		if !d.runningJobs.checkRunnable(job) {
 			return false, nil
 		}
-		if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
-			job.State == model.JobStateQueueing &&
-			job.ReorgMeta != nil &&
-			job.ReorgMeta.IsFastReorg &&
-			ingest.LitBackCtxMgr != nil {
-			succeed := ingest.LitBackCtxMgr.MarkJobProcessing(job.ID)
-			if !succeed {
-				// We only allow one task to use ingest at the same time in order to limit the CPU/memory usage.
-				return false, nil
-			}
-		}
 		// Check if there is any block ddl running, like drop schema and flashback cluster.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where "+
 			"(CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and type = %d and processing) "+
@@ -283,7 +272,7 @@ func (d *ddl) startDispatchLoop() {
 	defer ticker.Stop()
 	isOnce := false
 	for {
-		if isChanClosed(d.ctx.Done()) {
+		if d.ctx.Err() != nil {
 			return
 		}
 		if !d.isOwner() {
@@ -292,6 +281,15 @@ func (d *ddl) startDispatchLoop() {
 			time.Sleep(dispatchLoopWaitingDuration)
 			continue
 		}
+		failpoint.Inject("ownerResignAfterDispatchLoopCheck", func() {
+			if ingest.ResignOwnerForTest.Load() {
+				err2 := d.ownerManager.ResignOwner(context.Background())
+				if err2 != nil {
+					logutil.BgLogger().Info("resign meet error", zap.Error(err2))
+				}
+				ingest.ResignOwnerForTest.Store(false)
+			}
+		})
 		select {
 		case <-d.ddlJobCh:
 		case <-ticker.C:
@@ -375,7 +373,7 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 	d.mu.hook.OnGetJobAfter(pool.tp().String(), job)
 	d.mu.RUnlock()
 
-	d.delivery2worker(wk, pool, job)
+	d.delivery2Worker(wk, pool, job)
 }
 
 // delivery2LocalWorker runs the DDL job of v2 in local.
@@ -406,7 +404,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 
-		err := wk.HandleDDLJobV2(d.ddlCtx, job)
+		err := wk.HandleLocalDDLJob(d.ddlCtx, job)
 		pool.put(wk)
 		if err != nil {
 			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
@@ -415,8 +413,8 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 	})
 }
 
-// delivery2worker owns the worker, need to put it back to the pool in this function.
-func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
+// delivery2Worker owns the worker, need to put it back to the pool in this function.
+func (d *ddl) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
 	d.runningJobs.add(job)
 	d.wg.Run(func() {
@@ -499,7 +497,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 }
 
 func (*ddl) markJobProcessing(se *sess.Session, job *model.Job) error {
-	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), fmt.Sprintf(
 		"update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID),
 		"mark_job_processing")
@@ -509,7 +507,7 @@ func (*ddl) markJobProcessing(se *sess.Session, job *model.Job) error {
 func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
 	var tbl table.Table
 	var dbInfo *model.DBInfo
-	err := kv.RunInNewTxn(d.ctx, r.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(d.ctx, r.Store(), false, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		dbInfo, err1 = t.GetDatabase(schemaID)
@@ -552,7 +550,7 @@ func insertDDLJobs2Table(se *sess.Session, updateRawArgs bool, jobs ...*model.Jo
 		}
 		fmt.Fprintf(&sql, "(%d, %t, %s, %s, %s, %d, %t)", job.ID, job.MayNeedReorg(), strconv.Quote(job2SchemaIDs(job)), strconv.Quote(job2TableIDs(job)), util.WrapKey2String(b), job.Type, !job.NotStarted())
 	}
-	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	_, err := se.Execute(ctx, sql.String(), "insert_job")
 	logutil.BgLogger().Debug("add job to mysql.tidb_ddl_job table", zap.String("category", "ddl"), zap.String("sql", sql.String()))
@@ -666,6 +664,7 @@ func getCheckpointReorgHandle(se *sess.Session, job *model.Job) (startKey, endKe
 			}
 			if len(cp.EndKey) > 0 {
 				endKey = cp.EndKey
+				endKey = adjustEndKeyAcrossVersion(job, endKey)
 			}
 		}
 	}

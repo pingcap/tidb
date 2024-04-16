@@ -32,8 +32,9 @@ import (
 )
 
 var (
-	// checkTaskRunningInterval is the interval for loading tasks.
-	checkTaskRunningInterval = 3 * time.Second
+	// CheckTaskRunningInterval is the interval for loading tasks.
+	// It is exported for testing.
+	CheckTaskRunningInterval = 3 * time.Second
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 	// DefaultCleanUpInterval is the interval of cleanup routine.
@@ -56,7 +57,7 @@ func (sm *Manager) addScheduler(taskID int64, scheduler Scheduler) {
 	sm.mu.schedulerMap[taskID] = scheduler
 	sm.mu.schedulers = append(sm.mu.schedulers, scheduler)
 	slices.SortFunc(sm.mu.schedulers, func(i, j Scheduler) int {
-		return i.GetTask().Compare(j.GetTask())
+		return i.GetTask().CompareTask(j.GetTask())
 	})
 }
 
@@ -154,9 +155,6 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Mana
 
 // Start the schedulerManager, start the scheduleTaskLoop to start multiple schedulers.
 func (sm *Manager) Start() {
-	failpoint.Inject("disableSchedulerManager", func() {
-		failpoint.Return()
-	})
 	// init cached managed nodes
 	sm.nodeMgr.refreshManagedNodes(sm.ctx, sm.taskMgr, sm.slotMgr)
 
@@ -200,7 +198,7 @@ func (sm *Manager) Initialized() bool {
 // scheduleTaskLoop schedules the tasks.
 func (sm *Manager) scheduleTaskLoop() {
 	sm.logger.Info("schedule task loop start")
-	ticker := time.NewTicker(checkTaskRunningInterval)
+	ticker := time.NewTicker(CheckTaskRunningInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -218,52 +216,80 @@ func (sm *Manager) scheduleTaskLoop() {
 			continue
 		}
 
-		tasks, err := sm.taskMgr.GetTopUnfinishedTasks(sm.ctx)
+		schedulableTasks, err := sm.getSchedulableTasks()
 		if err != nil {
-			sm.logger.Warn("get unfinished tasks failed", zap.Error(err))
 			continue
 		}
 
-		schedulableTasks := make([]*proto.Task, 0, len(tasks))
-		for _, task := range tasks {
-			if sm.hasScheduler(task.ID) {
-				continue
-			}
-			// we check it before start scheduler, so no need to check it again.
-			// see startScheduler.
-			// this should not happen normally, unless user modify system table
-			// directly.
-			if getSchedulerFactory(task.Type) == nil {
-				sm.logger.Warn("unknown task type", zap.Int64("task-id", task.ID),
-					zap.Stringer("task-type", task.Type))
-				sm.failTask(task.ID, task.State, errors.New("unknown task type"))
-				continue
-			}
-			schedulableTasks = append(schedulableTasks, task)
-		}
-		if len(schedulableTasks) == 0 {
+		err = sm.startSchedulers(schedulableTasks)
+		if err != nil {
 			continue
-		}
-
-		if err = sm.slotMgr.update(sm.ctx, sm.nodeMgr, sm.taskMgr); err != nil {
-			sm.logger.Warn("update used slot failed", zap.Error(err))
-			continue
-		}
-		for _, task := range schedulableTasks {
-			taskCnt = sm.getSchedulerCount()
-			if taskCnt >= proto.MaxConcurrentTask {
-				break
-			}
-			reservedExecID, ok := sm.slotMgr.canReserve(task)
-			if !ok {
-				// task of lower priority might be able to be scheduled.
-				continue
-			}
-			metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.SchedulingStatus).Inc()
-			metrics.UpdateMetricsForDispatchTask(task.ID, task.Type)
-			sm.startScheduler(task, reservedExecID)
 		}
 	}
+}
+
+func (sm *Manager) getSchedulableTasks() ([]*proto.TaskBase, error) {
+	tasks, err := sm.taskMgr.GetTopUnfinishedTasks(sm.ctx)
+	if err != nil {
+		sm.logger.Warn("get unfinished tasks failed", zap.Error(err))
+		return nil, err
+	}
+
+	schedulableTasks := make([]*proto.TaskBase, 0, len(tasks))
+	for _, task := range tasks {
+		if sm.hasScheduler(task.ID) {
+			continue
+		}
+		// we check it before start scheduler, so no need to check it again.
+		// see startScheduler.
+		// this should not happen normally, unless user modify system table
+		// directly.
+		if getSchedulerFactory(task.Type) == nil {
+			sm.logger.Warn("unknown task type", zap.Int64("task-id", task.ID),
+				zap.Stringer("task-type", task.Type))
+			sm.failTask(task.ID, task.State, errors.New("unknown task type"))
+			continue
+		}
+		schedulableTasks = append(schedulableTasks, task)
+	}
+	return schedulableTasks, nil
+}
+
+func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
+	if len(schedulableTasks) == 0 {
+		return nil
+	}
+	if err := sm.slotMgr.update(sm.ctx, sm.nodeMgr, sm.taskMgr); err != nil {
+		sm.logger.Warn("update used slot failed", zap.Error(err))
+		return err
+	}
+	for _, task := range schedulableTasks {
+		taskCnt := sm.getSchedulerCount()
+		if taskCnt >= proto.MaxConcurrentTask {
+			break
+		}
+		var reservedExecID string
+		allocateSlots := true
+		var ok bool
+		switch task.State {
+		case proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateResuming:
+			reservedExecID, ok = sm.slotMgr.canReserve(task)
+			if !ok {
+				// task of lower rank might be able to be scheduled.
+				continue
+			}
+		// reverting/cancelling/pausing
+		default:
+			allocateSlots = false
+			sm.logger.Info("start scheduler without allocating slots",
+				zap.Int64("task-id", task.ID), zap.Stringer("state", task.State))
+		}
+
+		metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.SchedulingStatus).Inc()
+		metrics.UpdateMetricsForScheduleTask(task.ID, task.Type)
+		sm.startScheduler(task, allocateSlots, reservedExecID)
+	}
+	return nil
 }
 
 func (sm *Manager) failTask(id int64, currState proto.TaskState, err error) {
@@ -302,7 +328,7 @@ func (sm *Manager) gcSubtaskHistoryTableLoop() {
 	}
 }
 
-func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) {
+func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool, reservedExecID string) {
 	task, err := sm.taskMgr.GetTaskByID(sm.ctx, basicTask.ID)
 	if err != nil {
 		sm.logger.Error("get task failed", zap.Int64("task-id", basicTask.ID), zap.Error(err))
@@ -311,10 +337,11 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 
 	schedulerFactory := getSchedulerFactory(task.Type)
 	scheduler := schedulerFactory(sm.ctx, task, Param{
-		taskMgr:  sm.taskMgr,
-		nodeMgr:  sm.nodeMgr,
-		slotMgr:  sm.slotMgr,
-		serverID: sm.serverID,
+		taskMgr:        sm.taskMgr,
+		nodeMgr:        sm.nodeMgr,
+		slotMgr:        sm.slotMgr,
+		serverID:       sm.serverID,
+		allocatedSlots: allocateSlots,
 	})
 	if err = scheduler.Init(); err != nil {
 		sm.logger.Error("init scheduler failed", zap.Error(err))
@@ -322,13 +349,17 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 		return
 	}
 	sm.addScheduler(task.ID, scheduler)
-	sm.slotMgr.reserve(basicTask, reservedExecID)
+	if allocateSlots {
+		sm.slotMgr.reserve(basicTask, reservedExecID)
+	}
 	sm.logger.Info("task scheduler started", zap.Int64("task-id", task.ID))
 	sm.schedulerWG.RunWithLog(func() {
 		defer func() {
 			scheduler.Close()
 			sm.delScheduler(task.ID)
-			sm.slotMgr.unReserve(basicTask, reservedExecID)
+			if allocateSlots {
+				sm.slotMgr.unReserve(basicTask, reservedExecID)
+			}
 			handle.NotifyTaskChange()
 			sm.logger.Info("task scheduler exist", zap.Int64("task-id", task.ID))
 		}()
@@ -418,16 +449,6 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
 }
 
-// MockScheduler mock one scheduler for one task, only used for tests.
-func (sm *Manager) MockScheduler(task *proto.Task) *BaseScheduler {
-	return NewBaseScheduler(sm.ctx, task, Param{
-		taskMgr:  sm.taskMgr,
-		nodeMgr:  sm.nodeMgr,
-		slotMgr:  sm.slotMgr,
-		serverID: sm.serverID,
-	})
-}
-
 func (sm *Manager) collectLoop() {
 	sm.logger.Info("collect loop start")
 	ticker := time.NewTicker(defaultCollectMetricsInterval)
@@ -451,4 +472,14 @@ func (sm *Manager) collect() {
 	}
 
 	subtaskCollector.subtaskInfo.Store(&subtasks)
+}
+
+// MockScheduler mock one scheduler for one task, only used for tests.
+func (sm *Manager) MockScheduler(task *proto.Task) *BaseScheduler {
+	return NewBaseScheduler(sm.ctx, task, Param{
+		taskMgr:  sm.taskMgr,
+		nodeMgr:  sm.nodeMgr,
+		slotMgr:  sm.slotMgr,
+		serverID: sm.serverID,
+	})
 }

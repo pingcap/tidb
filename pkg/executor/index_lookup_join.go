@@ -456,11 +456,12 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	if ow.filter != nil {
 		task.outerMatch = make([][]bool, task.outerResult.NumChunks())
 		var err error
+		exprCtx := ow.ctx.GetExprCtx()
 		for i := 0; i < numChks; i++ {
 			chk := task.outerResult.GetChunk(i)
 			outerMatch := make([]bool, 0, chk.NumRows())
 			task.memTracker.Consume(int64(cap(outerMatch)))
-			task.outerMatch[i], err = expression.VectorizedFilter(ow.ctx, ow.filter, chunk.NewIterator4Chunk(chk), outerMatch)
+			task.outerMatch[i], err = expression.VectorizedFilter(exprCtx.GetEvalCtx(), ow.ctx.GetSessionVars().EnableVectorizedExpression, ow.filter, chunk.NewIterator4Chunk(chk), outerMatch)
 			if err != nil {
 				return task, err
 			}

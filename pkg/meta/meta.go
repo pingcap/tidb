@@ -970,6 +970,7 @@ func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) erro
 		if err != nil {
 			return errors.Trace(err)
 		}
+		tbInfo.DBID = dbID
 
 		err = fn(tbInfo)
 		return errors.Trace(err)
@@ -1002,6 +1003,7 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		tbInfo.DBID = dbID
 
 		tables = append(tables, tbInfo)
 	}
@@ -1218,6 +1220,7 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 
 	tableInfo := &model.TableInfo{}
 	err = json.Unmarshal(value, tableInfo)
+	tableInfo.DBID = dbID
 	return tableInfo, errors.Trace(err)
 }
 
@@ -1585,7 +1588,7 @@ func (m *Meta) DropTableName(dbName string, tableName string) error {
 func (m *Meta) DropDatabaseName(dbName string) error {
 	// iterate all tables
 	prefix := m.TableNameKey(dbName, "")
-	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, value []byte) error {
+	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, _ []byte) error {
 		return m.txn.Clear(key)
 	})
 }
@@ -1593,7 +1596,7 @@ func (m *Meta) DropDatabaseName(dbName string) error {
 // ClearAllTableNames clears all table names.
 func (m *Meta) ClearAllTableNames() error {
 	prefix := kv.Key(fmt.Sprintf("%s:", mNames))
-	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, value []byte) error {
+	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, _ []byte) error {
 		return m.txn.Clear(key)
 	})
 }

@@ -975,20 +975,36 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 	return kv.NewCommonHandle(keySuffix)
 }
 
-func decodeHandleInIndexValue(value []byte) (kv.Handle, error) {
-	if getIndexVersion(value) == 1 {
-		seg := SplitIndexValueForClusteredIndexVersion1(value)
-		return kv.NewCommonHandle(seg.CommonHandle)
-	}
-	if len(value) > MaxOldEncodeValueLen {
-		tailLen := value[0]
-		if tailLen >= 8 {
-			return decodeIntHandleInIndexValue(value[len(value)-int(tailLen):]), nil
+func decodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
+	var seg IndexValueSegments
+	if getIndexVersion(value) == 0 {
+		// For Old Encoding (IntHandle without any others options)
+		if len(value) <= MaxOldEncodeValueLen {
+			return decodeIntHandleInIndexValue(value), nil
 		}
-		handleLen := uint16(value[2])<<8 + uint16(value[3])
-		return kv.NewCommonHandle(value[4 : 4+handleLen])
+		// For IndexValueVersion0
+		seg = SplitIndexValue(value)
+	} else {
+		// For IndexValueForClusteredIndexVersion1
+		seg = SplitIndexValueForClusteredIndexVersion1(value)
 	}
-	return decodeIntHandleInIndexValue(value), nil
+	if len(seg.IntHandle) != 0 {
+		handle = decodeIntHandleInIndexValue(seg.IntHandle)
+	}
+	if len(seg.CommonHandle) != 0 {
+		handle, err = kv.NewCommonHandle(seg.CommonHandle)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(seg.PartitionID) != 0 {
+		_, pid, err := codec.DecodeInt(seg.PartitionID)
+		if err != nil {
+			return nil, err
+		}
+		handle = kv.NewPartitionHandle(pid, handle)
+	}
+	return handle, nil
 }
 
 // decodeIntHandleInIndexValue uses to decode index value as int handle id.
@@ -1446,7 +1462,7 @@ func GenIndexValuePortal(loc *time.Location, tblInfo *model.TableInfo, idxInfo *
 // TryGetCommonPkColumnRestoredIds get the IDs of primary key columns which need restored data if the table has common handle.
 // Caller need to make sure the table has common handle.
 func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
-	var pkColIds []int64
+	var pkColIDs []int64
 	var pkIdx *model.IndexInfo
 	for _, idx := range tbl.Indices {
 		if idx.Primary {
@@ -1455,14 +1471,14 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 		}
 	}
 	if pkIdx == nil {
-		return pkColIds
+		return pkColIDs
 	}
 	for _, idxCol := range pkIdx.Columns {
 		if types.NeedRestoredData(&tbl.Columns[idxCol.Offset].FieldType) {
-			pkColIds = append(pkColIds, tbl.Columns[idxCol.Offset].ID)
+			pkColIDs = append(pkColIDs, tbl.Columns[idxCol.Offset].ID)
 		}
 	}
-	return pkColIds
+	return pkColIDs
 }
 
 // GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
@@ -1508,8 +1524,8 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 		}
 
 		if len(handleRestoredData) > 0 {
-			pkColIds := TryGetCommonPkColumnRestoredIds(tblInfo)
-			colIds = append(colIds, pkColIds...)
+			pkColIDs := TryGetCommonPkColumnRestoredIds(tblInfo)
+			colIds = append(colIds, pkColIDs...)
 			allRestoredData = append(allRestoredData, handleRestoredData...)
 		}
 

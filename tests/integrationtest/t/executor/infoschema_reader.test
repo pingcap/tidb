@@ -102,6 +102,7 @@ drop table t;
 
 # TestDDLJobs
 set global tidb_ddl_enable_fast_reorg = false;
+set global tidb_enable_dist_task = false;
 drop database if exists test_ddl_jobs;
 create database test_ddl_jobs;
 select db_name, job_type from information_schema.DDL_JOBS limit 1;
@@ -134,6 +135,7 @@ disconnect conn1;
 drop database test_ddl_jobs;
 use executor__infoschema_reader;
 set global tidb_ddl_enable_fast_reorg = default;
+set global tidb_enable_dist_task = default;
 
 # TestKeyColumnUsage
 select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';
@@ -150,6 +152,8 @@ GRANT r_stats_meta TO key_column_tester;
 connection conn1;
 set role r_stats_meta;
 select count(*)>0 from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta';
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where upper(TABLE_NAME)='STATS_META';
+select count(*)>0 from information_schema.KEY_COLUMN_USAGE where lower(TABLE_NAME)='stats_meta';
 
 connection default;
 disconnect conn1;
@@ -251,3 +255,12 @@ set global tidb_txn_assertion_level = default;
 set global tidb_enable_mutation_checker = default;
 set global tidb_pessimistic_txn_fair_locking = default;
 select a.VARIABLE_NAME from information_schema.VARIABLES_INFO as a, mysql.GLOBAL_VARIABLES as b where a.VARIABLE_NAME = b.VARIABLE_NAME and a.DEFAULT_VALUE = b.VARIABLE_VALUE and a.CURRENT_VALUE = b.VARIABLE_VALUE and a.variable_name in ('tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;
+
+
+# test issue51942
+drop table if exists t;
+CREATE TABLE t (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));
+insert into t(a, b, c) values(1, 2, 'c'), (7, 3, 'd'), (12, 4, 'e');
+analyze table t;
+select sleep(1);
+select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t' AND TABLE_SCHEMA='executor__infoschema_reader';

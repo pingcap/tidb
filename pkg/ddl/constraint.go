@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 func (w *worker) onAddCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -314,7 +313,7 @@ func buildConstraintInfo(tblInfo *model.TableInfo, dependedCols []model.CIStr, c
 	// Restore check constraint expression to string.
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-		format.RestoreSpacesAroundBinaryOperation
+		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
 	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 	sb.Reset()
@@ -376,7 +375,7 @@ func (w *worker) verifyRemainRecordsForCheckConstraint(dbInfo *model.DBInfo, tab
 	// Prepare internal SQL to fetch data from physical table under this filter.
 	sql := fmt.Sprintf("select 1 from `%s`.`%s` where not %s limit 1", dbInfo.Name.L, tableInfo.Name.L, constr.ExprString)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql)
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}

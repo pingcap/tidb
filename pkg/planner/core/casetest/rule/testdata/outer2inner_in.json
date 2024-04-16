@@ -5,9 +5,30 @@
       "select * from t1 left outer join t2 on a1=a2 where b2 < 1 -- basic case of outer to inner join conversion",
       "select * from t1 left outer join t2 on a1=a2 where b2 is not null -- basic case of not null",
       "select * from t1 left outer join t2 on a1=a2 where not(b2 is null) -- another form of basic case of not null",
-      "select * from t1 left outer join t2 on a1=a2 where b2 is null -- basic negative case of outer to inner join conversion",
+      "select * from t1 left outer join t2 on a1=a2 where c2 = 5 OR b2 < 55 -- case with A OR B (Both A  and B are null filtering)",
+      "select * from t1 left outer join t2 on a1=a2 where c2 = 5 AND b2 is null -- case with A AND B (A is null filtering and B is not)",
+      "select * from t2 left outer join t1 on a1=a2 where b1+b1 > 2; -- expression evaluates to UNKNOWN/FALSE",
+      "select * from t2 left outer join t1 on a1=a2 where b2+b1 > 2; -- expression evaluates to UNKNOWN/FALSE even though we have fields from outer table",
+      "select * from t2 left outer join t1 on a1=a2 where coalesce(b1,2)  > 2; -- false condition for b1=NULL",
+      "select * from t2 left outer join t1 on a1=a2 where true and b1 = 5; -- AND with one branch is null filtering",
+      "select * from t2 left outer join t1 on a1=a2 where false OR b1 = 5; -- OR with both branches are null filtering",
+      "select * from t3 as t1 left join t3 as t2 on t1.c3 = t2.c3 where t2.b3 != NULL; -- self join",
+      "select * from t1 ta left outer join (t1 tb left outer join t1 tc on tb.b1 = tc.b1) on ta.a1=tc.a1; -- nested join. On clause is null filtering on tc.",
+      "select * from t1 ta left outer join (t1 tb left outer join t1 tc on tb.b1 = tc.b1) on ta.a1=tc.a1 where tb.a1 > 5; -- nested join. On clause and WHERE clause are filters",
+      "select * from (t2 left join t1 on a1=a2) join t3 on b1=b3 -- on clause applied nested join",
+      "select * from t1 left outer join t2 on a1=a2 where b2 is null -- negative case with single predicate which is not null filtering",
+      "select * from t1 left outer join t2 on a1=a2 where c2 = 5 OR b2 is null -- negative case with A OR B (A is null filtering and B is not)",
       "select * from t1 left outer join t2 on a1=a2 where not(b2 is not null) -- nested 'not' negative case",
-      "select * from t1 left outer join t2 on a1=a2 where not(not(b2 is null)) -- nested 'not' negative case"
+      "select * from t1 left outer join t2 on a1=a2 where not(not(b2 is null)) -- nested 'not' negative case",
+      "select * from t1 left outer join t2 on a1=a2 where b1 is not null -- negative case with condition on outer table.",
+      "select * from t2 left outer join t1 on a1=a2 where coalesce(b1,2)  = 2; -- true condition for b1=NULL",
+      "select * from t2 left outer join t1 on a1=a2 where true OR b1 = 5; -- negative case with OR and one branch is TRUE",
+      "select * from t3 as t1 left join t3 as t2 on t1.c3 = t2.c3 where t1.b3 != NULL -- negative case with self join",
+      "select * from (t1 left outer join t2 on a1=a2) left outer join t3 on a2=a3 and b2 = 5  -- negative case. inner side is not a join",
+      "select * from t1 ta right outer join (t1 tb right outer join t1 tc on tb.b1 = tc.b1) on ta.a1=tc.a1; -- negative case. inner side is not a join",
+      "select * from t1 ta right outer join (t1 tb right outer join t1 tc on tb.b1 = tc.b1) on ta.a1=tc.a1 where tc.a1 > 5; -- negative case. inner side is not a join and WHERE clause on outer table",
+      "select * from (t2 left join t1 on a1=a2) join t3 on b2=b3 -- negative case, on clause on outer table in nested join",
+      "select t1.c1 in (select count(s.b1) from t1 s where s.a1 = t1.a1) from t1 -- subquery test that generates outer join and not converted"
     ]
   }
 ]

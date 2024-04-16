@@ -21,14 +21,14 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	llog "github.com/pingcap/tidb/br/pkg/lightning/log"
+	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
 var (
 	// liveNodesCheckInterval is the tick interval of fetching all server infos from etcs.
-	nodesCheckInterval = 2 * checkTaskFinishedInterval
+	nodesCheckInterval = 2 * CheckTaskFinishedInterval
 )
 
 // NodeManager maintains live TiDB nodes in the cluster, and maintains the nodes

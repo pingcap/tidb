@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/tikv/client-go/v2/oracle"
@@ -816,6 +815,16 @@ func (b *builtinTiDBBoundedStalenessSig) vectorized() bool {
 }
 
 func (b *builtinTiDBBoundedStalenessSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	store, err := b.GetKVStore(ctx)
+	if err != nil {
+		return err
+	}
+
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
+
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -836,7 +845,7 @@ func (b *builtinTiDBBoundedStalenessSig) vecEvalTime(ctx EvalContext, input *chu
 	args0 := buf0.Times()
 	args1 := buf1.Times()
 	timeZone := getTimeZone(ctx)
-	minSafeTime := getMinSafeTime(ctx, timeZone)
+	minSafeTime := GetStmtMinSafeTime(vars.StmtCtx, store, timeZone)
 	result.ResizeTime(n, false)
 	result.MergeNulls(buf0, buf1)
 	times := result.Times()
@@ -1555,8 +1564,7 @@ func (b *builtinWeekWithoutModeSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	ds := buf.Times()
 
 	mode := 0
-	modeStr, ok := ctx.GetSessionVars().GetSystemVar(variable.DefaultWeekFormat)
-	if ok && modeStr != "" {
+	if modeStr := ctx.GetDefaultWeekFormatMode(); modeStr != "" {
 		mode, err = strconv.Atoi(modeStr)
 		if err != nil {
 			return handleInvalidTimeError(ctx, types.ErrInvalidWeekModeFormat.GenWithStackByArgs(modeStr))

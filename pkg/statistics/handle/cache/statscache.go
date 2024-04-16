@@ -16,10 +16,13 @@ package cache
 
 import (
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
@@ -61,6 +64,7 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 
 // Update reads stats meta from store and updates the stats map.
 func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
+	start := time.Now()
 	lastVersion := s.getLastVersion()
 	var (
 		rows []chunk.Row
@@ -123,13 +127,13 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		tbl.Version = version
 		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
-		tbl.Name = util.GetFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
 
 	s.UpdateStatsCache(tables, deletedTableIDs)
-
+	dur := time.Since(start)
+	tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
 	return nil
 }
 
@@ -200,6 +204,9 @@ func (s *StatsCacheImpl) MemConsumed() (size int64) {
 
 // Get returns the specified table's stats.
 func (s *StatsCacheImpl) Get(tableID int64) (*statistics.Table, bool) {
+	failpoint.Inject("StatsCacheGetNil", func() {
+		failpoint.Return(nil, false)
+	})
 	return s.Load().Get(tableID)
 }
 

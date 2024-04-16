@@ -89,7 +89,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	}
 
 	// Add `` for some names like `table name`.
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := ctx.GetRestrictedSQLExecutor()
 	tblCnt, err := getCount(exec, snapshot, "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
@@ -161,7 +161,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
 				}
 				// NULL value is regarded as its default value.
-				colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
+				colDefVal, err := table.GetColOriginDefaultValue(sessCtx.GetExprCtx(), col.ToInfo())
 				if err != nil {
 					return false, errors.Trace(err)
 				}
@@ -194,7 +194,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 
 func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder, error) {
 	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
-	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Cols(), t.Meta())
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx.GetExprCtx(), dbName, t.Meta().Name, t.Meta().Cols(), t.Meta())
 	if err != nil {
 		return nil, err
 	}

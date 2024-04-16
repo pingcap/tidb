@@ -30,13 +30,14 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -52,7 +53,7 @@ func TestInitDefaultOptions(t *testing.T) {
 		DataSourceType: DataSourceTypeQuery,
 	}
 	plan.initDefaultOptions(10)
-	require.Equal(t, 1, plan.ThreadCnt)
+	require.Equal(t, 2, plan.ThreadCnt)
 
 	plan = &Plan{
 		DataSourceType: DataSourceTypeFile,
@@ -90,7 +91,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		for _, opt := range inOptions {
 			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
 			if opt.Value != nil {
-				loadDataOpt.Value, err = expression.RewriteSimpleExprWithNames(sctx, opt.Value, nil, nil)
+				loadDataOpt.Value, err = plannerutil.RewriteAstExprWithPlanCtx(sctx, opt.Value, nil, nil, false)
 				require.NoError(t, err)
 			}
 			options = append(options, &loadDataOpt)
@@ -115,7 +116,8 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		recordErrorsOption+"=123, "+
 		detachedOption+", "+
 		disableTiKVImportModeOption+", "+
-		maxEngineSizeOption+"='100gib'",
+		maxEngineSizeOption+"='100gib', "+
+		disablePrecheckOption,
 	)
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
@@ -139,6 +141,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.True(t, plan.DisableTiKVImportMode, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.MaxEngineSize, sql)
 	require.Empty(t, plan.CloudStorageURI, sql)
+	require.True(t, plan.DisablePrecheck, sql)
 
 	// set cloud storage uri
 	variable.CloudStorageURI.Store("s3://bucket/path")
@@ -194,10 +197,10 @@ func TestAdjustOptions(t *testing.T) {
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/common/GetStorageSize", "return(2048)")
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize", "return(2048)")
 	require.NoError(t, err)
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/GetStorageSize")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/common/GetStorageSize")
 	}()
 	d := t.TempDir()
 	require.Equal(t, int64(1638), adjustDiskQuota(0, d, logutil.BgLogger()))
@@ -228,17 +231,17 @@ func TestASTArgsFromStmt(t *testing.T) {
 }
 
 func TestGetFileRealSize(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
 	require.NoError(t, err)
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage")
 	}()
 	fileMeta := mydump.SourceFileMeta{Compression: mydump.CompressionNone, FileSize: 100}
 	c := &LoadDataController{logger: log.L()}
 	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
 	fileMeta.Compression = mydump.CompressionGZ
 	require.Equal(t, int64(250), c.getFileRealSize(context.Background(), fileMeta, nil))
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
 	require.NoError(t, err)
 	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
 }
@@ -316,7 +319,7 @@ func TestGetBackendWorkerConcurrency(t *testing.T) {
 			ThreadCnt: 3,
 		},
 	}
-	require.Equal(t, 32, c.getBackendWorkerConcurrency())
+	require.Equal(t, 6, c.getBackendWorkerConcurrency())
 	c.Plan.CloudStorageURI = "xxx"
 	require.Equal(t, 6, c.getBackendWorkerConcurrency())
 	c.Plan.ThreadCnt = 123
@@ -411,6 +414,28 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0o400))
 	c.Path = path.Join(tempDir, "server-*.csv")
 	require.NoError(t, c.InitDataFiles(ctx))
+	// test glob matching pattern [12]
+	err = os.WriteFile(path.Join(tempDir, "glob-1.csv"), []byte("1,1"), 0o644)
+	require.NoError(t, err)
+	err = os.WriteFile(path.Join(tempDir, "glob-2.csv"), []byte("2,2"), 0o644)
+	require.NoError(t, err)
+	err = os.WriteFile(path.Join(tempDir, "glob-3.csv"), []byte("3,3"), 0o644)
+	require.NoError(t, err)
+	c.Path = path.Join(tempDir, "glob-[12].csv")
+	require.NoError(t, c.InitDataFiles(ctx))
+	gotPath := make([]string, 0, len(c.dataFiles))
+	for _, f := range c.dataFiles {
+		gotPath = append(gotPath, f.Path)
+	}
+	require.ElementsMatch(t, []string{"glob-1.csv", "glob-2.csv"}, gotPath)
+	// test glob matching pattern [2-3]
+	c.Path = path.Join(tempDir, "glob-[2-3].csv")
+	require.NoError(t, c.InitDataFiles(ctx))
+	gotPath = make([]string, 0, len(c.dataFiles))
+	for _, f := range c.dataFiles {
+		gotPath = append(gotPath, f.Path)
+	}
+	require.ElementsMatch(t, []string{"glob-2.csv", "glob-3.csv"}, gotPath)
 }
 
 func TestGetDataSourceType(t *testing.T) {

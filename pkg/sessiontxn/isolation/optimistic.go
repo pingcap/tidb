@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -120,7 +121,7 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan any) (err err
 		return nil
 	}
 
-	realPlan, ok := plan.(plannercore.Plan)
+	realPlan, ok := plan.(base.Plan)
 	if !ok {
 		return nil
 	}
@@ -129,7 +130,7 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan any) (err err
 		realPlan = execute.Plan
 	}
 
-	ok, err = plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(p.sctx, realPlan)
+	ok, err = plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(p.sctx.GetSessionVars(), realPlan)
 	if err != nil {
 		return err
 	}

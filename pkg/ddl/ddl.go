@@ -441,7 +441,7 @@ func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storag
 	if err != nil {
 		return schemaVersion, errors.Trace(err)
 	}
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
 		var err error
 		m := meta.NewMeta(txn)
 		schemaVersion, err = m.GenSchemaVersion()
@@ -458,7 +458,7 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 	if ownerID != jobID {
 		sv.schemaVersionMu.Lock()
 		sv.lockOwner.Store(jobID)
-		if sv.etcdClient != nil && variable.DDLVersion.Load() == model.TiDBDDLV2 {
+		if sv.etcdClient != nil && variable.EnableFastCreateTable.Load() {
 			se, err := concurrency.NewSession(sv.etcdClient)
 			if err != nil {
 				return errors.Trace(err)
@@ -754,7 +754,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
 	variable.SwitchMDL = d.SwitchMDL
-	variable.SwitchDDLVersion = d.SwitchDDLVersion
+	variable.SwitchFastCreateTable = d.SwitchFastCreateTable
 
 	return d
 }
@@ -790,7 +790,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 			if err != nil {
 				return nil, err
 			}
-			sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+			sessForJob.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 			wk.sess = sess.NewSession(sessForJob)
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 			return wk, nil
@@ -820,7 +820,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		d.limitDDLJobs(d.limitJobCh, d.addBatchDDLJobsV1)
 	})
 	d.wg.Run(func() {
-		d.limitDDLJobs(d.limitJobChV2, d.addBatchDDLJobsV2)
+		d.limitDDLJobs(d.limitJobChV2, d.addBatchLocalDDLJobs)
 	})
 	d.sessPool = sess.NewSessionPool(ctxPool, d.store)
 	d.ownerManager.SetBeOwnerHook(func() {
@@ -831,6 +831,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		if err != nil {
 			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
 		}
+		d.runningJobs.clear()
 	})
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
@@ -869,12 +870,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	defer d.sessPool.Put(ctx)
 
 	ingest.InitGlobalLightningEnv()
-	d.ownerManager.SetRetireOwnerHook(func() {
-		// Since this instance is not DDL owner anymore, we clean up the processing job info.
-		if ingest.LitBackCtxMgr != nil {
-			ingest.LitBackCtxMgr.MarkJobFinish()
-		}
-	})
 
 	return nil
 }
@@ -912,7 +907,7 @@ func (d *ddl) DisableDDL() error {
 func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
 	var count uint64
 	ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err error
 		count, err = t.GetHistoryDDLCount()
@@ -922,7 +917,7 @@ func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
 }
 
 func (d *ddl) close() {
-	if isChanClosed(d.ctx.Done()) {
+	if d.ctx.Err() != nil {
 		return
 	}
 
@@ -977,7 +972,7 @@ func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 	// lock to reduce conflict
 	d.globalIDLock.Lock()
 	defer d.globalIDLock.Unlock()
-	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
 				failpoint.Return(errors.New("gofail genGlobalIDs error"))
@@ -996,7 +991,7 @@ func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 func (d *ddl) genPlacementPolicyID() (int64, error) {
 	var ret int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		var err error
 		ret, err = m.GenPlacementPolicyID()
@@ -1107,7 +1102,7 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 }
 
 func setDDLJobMode(job *model.Job) {
-	if variable.DDLVersion.Load() != model.TiDBDDLV2 {
+	if !variable.EnableFastCreateTable.Load() {
 		job.LocalMode = false
 		return
 	}
@@ -1391,7 +1386,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	}
 
 	variable.EnableMDL.Store(enable)
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		oldEnable, _, err := m.GetMetadataLock()
 		if err != nil {
@@ -1410,10 +1405,10 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	return nil
 }
 
-// SwitchDDLVersion switch ddl version.
-func (d *ddl) SwitchDDLVersion(version int64) error {
-	oldVersion := variable.DDLVersion.Load()
-	if oldVersion == version {
+// SwitchFastCreateTable switch fast create table
+func (d *ddl) SwitchFastCreateTable(val bool) error {
+	old := variable.EnableFastCreateTable.Load()
+	if old == val {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
@@ -1435,17 +1430,17 @@ func (d *ddl) SwitchDDLVersion(version int64) error {
 		return errors.New("please wait for all jobs done")
 	}
 
-	if err := d.migration2DDLVersion(version); err != nil {
+	if err := d.switchFastCreateTable(val); err != nil {
 		return errors.Trace(err)
 	}
 
-	variable.DDLVersion.Store(version)
-	logutil.BgLogger().Info("switch ddl version", zap.String("category", "ddl"), zap.Int64("version", version))
+	variable.EnableFastCreateTable.Store(val)
+	logutil.BgLogger().Info("switch fast create table", zap.String("category", "ddl"), zap.Bool("val", val))
 	return nil
 }
 
-// migration2DDLV1 migration ddl version to v1.
-func (*ddl) migration2DDLV1(m *meta.Meta) error {
+// disableFastCreateTable disable fast create table feature.
+func (*ddl) disableFastCreateTable(m *meta.Meta) error {
 	ddlV2Initialized, err := m.GetDDLV2Initialized()
 	if err != nil {
 		return errors.Trace(err)
@@ -1460,8 +1455,8 @@ func (*ddl) migration2DDLV1(m *meta.Meta) error {
 	return errors.Trace(m.SetDDLV2Initialized(false))
 }
 
-// migration2DDLV2 migration ddl version to v2.
-func (*ddl) migration2DDLV2(m *meta.Meta) error {
+// enableFastCreateTable enable fast create table feature.
+func (*ddl) enableFastCreateTable(m *meta.Meta) error {
 	ddlV2Initialized, err := m.GetDDLV2Initialized()
 	if err != nil {
 		return errors.Trace(err)
@@ -1494,17 +1489,14 @@ func (*ddl) migration2DDLV2(m *meta.Meta) error {
 	return errors.Trace(m.SetDDLV2Initialized(true))
 }
 
-func (d *ddl) migration2DDLVersion(ver int64) (err error) {
-	return kv.RunInNewTxn(kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+func (d *ddl) switchFastCreateTable(val bool) (err error) {
+	return kv.RunInNewTxn(kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL), d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 
-		switch ver {
-		case model.TiDBDDLV1, 0:
-			err = d.migration2DDLV1(m)
-		case model.TiDBDDLV2:
-			err = d.migration2DDLV2(m)
-		default:
-			err = errors.Errorf("unknown ddl version %d", ver)
+		if val {
+			err = d.enableFastCreateTable(m)
+		} else {
+			err = d.disableFastCreateTable(m)
 		}
 		return errors.Trace(err)
 	})

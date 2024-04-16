@@ -47,7 +47,7 @@ var defaultKeepaliveCfg = keepalive.ClientParameters{
 func TestCreateTables(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, defaultKeepaliveCfg)
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
@@ -106,7 +106,7 @@ func TestCreateTables(t *testing.T) {
 func TestIsOnline(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, defaultKeepaliveCfg)
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
@@ -124,20 +124,50 @@ func getStartedMockedCluster(t *testing.T) *mock.Cluster {
 	return cluster
 }
 
+func TestNeedCheckTargetClusterFresh(t *testing.T) {
+	// cannot use shared `mc`, other parallel case may change it.
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
+
+	g := gluetidb.New()
+	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg)
+	err := client.Init(g, cluster.Storage)
+	require.NoError(t, err)
+
+	// not set filter and first run with checkpoint
+	require.True(t, client.NeedCheckFreshCluster(false, true))
+
+	// skip check when has checkpoint
+	require.False(t, client.NeedCheckFreshCluster(false, false))
+
+	// skip check when set --filter
+	require.False(t, client.NeedCheckFreshCluster(true, false))
+
+	// skip check when has set --filter and has checkpoint
+	require.False(t, client.NeedCheckFreshCluster(true, true))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/mock-incr-backup-data", "return(false)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/mock-incr-backup-data"))
+	}()
+	// skip check when increment backup
+	require.False(t, client.NeedCheckFreshCluster(false, true))
+}
+
 func TestCheckTargetClusterFresh(t *testing.T) {
 	// cannot use shared `mc`, other parallel case may change it.
 	cluster := getStartedMockedCluster(t)
 	defer cluster.Stop()
 
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	require.NoError(t, client.CheckTargetClusterFresh(ctx))
 
-	require.NoError(t, client.CreateDatabase(ctx, &model.DBInfo{Name: model.NewCIStr("user_db")}))
+	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: model.NewCIStr("user_db")}}}))
 	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
 }
 
@@ -147,7 +177,7 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 	defer cluster.Stop()
 
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
@@ -182,7 +212,7 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 func TestCheckSysTableCompatibility(t *testing.T) {
 	cluster := mc
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
@@ -258,7 +288,7 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 func TestInitFullClusterRestore(t *testing.T) {
 	cluster := mc
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
@@ -283,7 +313,7 @@ func TestInitFullClusterRestore(t *testing.T) {
 func TestPreCheckTableClusterIndex(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, defaultKeepaliveCfg)
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
@@ -372,7 +402,7 @@ func TestGetTSWithRetry(t *testing.T) {
 	t.Run("PD leader is healthy:", func(t *testing.T) {
 		retryTimes := -1000
 		pDClient := fakePDClient{notLeader: false, retryTimes: &retryTimes}
-		client := restore.NewRestoreClient(pDClient, nil, nil, defaultKeepaliveCfg, false)
+		client := restore.NewRestoreClient(pDClient, nil, nil, defaultKeepaliveCfg)
 		_, err := client.GetTSWithRetry(context.Background())
 		require.NoError(t, err)
 	})
@@ -380,7 +410,7 @@ func TestGetTSWithRetry(t *testing.T) {
 	t.Run("PD leader failure:", func(t *testing.T) {
 		retryTimes := -1000
 		pDClient := fakePDClient{notLeader: true, retryTimes: &retryTimes}
-		client := restore.NewRestoreClient(pDClient, nil, nil, defaultKeepaliveCfg, false)
+		client := restore.NewRestoreClient(pDClient, nil, nil, defaultKeepaliveCfg)
 		_, err := client.GetTSWithRetry(context.Background())
 		require.Error(t, err)
 	})
@@ -388,7 +418,7 @@ func TestGetTSWithRetry(t *testing.T) {
 	t.Run("PD leader switch successfully", func(t *testing.T) {
 		retryTimes := 0
 		pDClient := fakePDClient{notLeader: true, retryTimes: &retryTimes}
-		client := restore.NewRestoreClient(pDClient, nil, nil, defaultKeepaliveCfg, false)
+		client := restore.NewRestoreClient(pDClient, nil, nil, defaultKeepaliveCfg)
 		_, err := client.GetTSWithRetry(context.Background())
 		require.NoError(t, err)
 	})
@@ -420,7 +450,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 	g := gluetidb.New()
 	client := restore.NewRestoreClient(fakePDClient{
 		stores: mockStores,
-	}, nil, nil, defaultKeepaliveCfg, false)
+	}, nil, nil, defaultKeepaliveCfg)
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
@@ -544,7 +574,7 @@ func TestSetSpeedLimit(t *testing.T) {
 	// 1. The cost of concurrent communication is expected to be less than the cost of serial communication.
 	client := restore.NewRestoreClient(fakePDClient{
 		stores: mockStores,
-	}, nil, nil, defaultKeepaliveCfg, false)
+	}, nil, nil, defaultKeepaliveCfg)
 	ctx := context.Background()
 
 	recordStores = NewRecordStores()
@@ -570,7 +600,7 @@ func TestSetSpeedLimit(t *testing.T) {
 	mockStores[5].Id = SET_SPEED_LIMIT_ERROR // setting a fault store
 	client = restore.NewRestoreClient(fakePDClient{
 		stores: mockStores,
-	}, nil, nil, defaultKeepaliveCfg, false)
+	}, nil, nil, defaultKeepaliveCfg)
 
 	// Concurrency needs to be less than the number of stores
 	err = restore.MockCallSetSpeedLimit(ctx, FakeImporterClient{}, client, 2)
@@ -650,7 +680,7 @@ func TestDeleteRangeQuery(t *testing.T) {
 	g := gluetidb.New()
 	client := restore.NewRestoreClient(fakePDClient{
 		stores: mockStores,
-	}, nil, nil, defaultKeepaliveCfg, false)
+	}, nil, nil, defaultKeepaliveCfg)
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
@@ -700,7 +730,7 @@ func TestDeleteRangeQueryExec(t *testing.T) {
 	client := restore.NewRestoreClient(fakePDClient{
 		stores:     mockStores,
 		retryTimes: &retryCnt,
-	}, nil, nil, defaultKeepaliveCfg, false)
+	}, nil, nil, defaultKeepaliveCfg)
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 

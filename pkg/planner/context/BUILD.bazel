@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "context",
+    srcs = ["context.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/context",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression/context",
+        "//pkg/infoschema/context",
+        "//pkg/kv",
+        "//pkg/lock/context",
+        "//pkg/parser/model",
+        "//pkg/sessionctx/variable",
+        "//pkg/util",
+        "//pkg/util/context",
+        "//pkg/util/ranger/context",
+        "//pkg/util/sqlexec",
+    ],
+)

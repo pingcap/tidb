@@ -76,6 +76,7 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 	}
 
 	errCtx := ctx.GetSessionVars().StmtCtx.ErrCtx()
+	exprCtx := ctx.GetExprCtx()
 	for _, item := range groupByItems {
 		tp := item.GetType()
 
@@ -96,7 +97,7 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			tp = &newTp
 		}
 
-		if err := expression.EvalExpr(ctx, item, tp.EvalType(), input, buf); err != nil {
+		if err := expression.EvalExpr(exprCtx.GetEvalCtx(), ctx.GetSessionVars().EnableVectorizedExpression, item, tp.EvalType(), input, buf); err != nil {
 			expression.PutColumn(buf)
 			return nil, err
 		}

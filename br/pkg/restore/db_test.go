@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -376,18 +377,18 @@ func TestGetExistedUserDBs(t *testing.T) {
 	dbs := restore.GetExistedUserDBs(dom)
 	require.Equal(t, 0, len(dbs))
 
-	builder, err := infoschema.NewBuilder(dom, nil).InitWithDBInfos(
+	builder, err := infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("test")},
 		},
 		nil, nil, 1)
 	require.Nil(t, err)
-	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build(math.MaxUint64))
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 0, len(dbs))
 
-	builder, err = infoschema.NewBuilder(dom, nil).InitWithDBInfos(
+	builder, err = infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("test")},
@@ -395,23 +396,23 @@ func TestGetExistedUserDBs(t *testing.T) {
 		},
 		nil, nil, 1)
 	require.Nil(t, err)
-	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build(math.MaxUint64))
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 1, len(dbs))
 
-	builder, err = infoschema.NewBuilder(dom, nil).InitWithDBInfos(
+	builder, err = infoschema.NewBuilder(dom, nil, nil).InitWithDBInfos(
 		[]*model.DBInfo{
 			{Name: model.NewCIStr("mysql")},
 			{Name: model.NewCIStr("d1")},
 			{
 				Name:   model.NewCIStr("test"),
-				Tables: []*model.TableInfo{{Name: model.NewCIStr("t1"), State: model.StatePublic}},
+				Tables: []*model.TableInfo{{ID: 1, Name: model.NewCIStr("t1"), State: model.StatePublic}},
 				State:  model.StatePublic,
 			},
 		},
 		nil, nil, 1)
 	require.Nil(t, err)
-	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build(math.MaxUint64))
 	dbs = restore.GetExistedUserDBs(dom)
 	require.Equal(t, 2, len(dbs))
 }
@@ -424,8 +425,5 @@ func TestGetExistedUserDBs(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	s := createRestoreSchemaSuite(t)
-	tk := testkit.NewTestKit(t, s.mock.Storage)
-	ret := tk.MustQuery("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'mysql'")
-	ret.Equal([][]any{{55}})
+	require.Equal(t, int64(195), session.CurrentBootstrapVersion)
 }

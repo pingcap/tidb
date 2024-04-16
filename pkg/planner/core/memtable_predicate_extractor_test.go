@@ -44,7 +44,7 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	builder, _ := plannercore.NewPlanBuilder().Init(se, dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	builder, _ := plannercore.NewPlanBuilder().Init(se.GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
 	plan, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
 
@@ -634,6 +634,7 @@ func TestMetricTableExtractor(t *testing.T) {
 			quantiles: []float64{0},
 		},
 	}
+	se.GetSessionVars().TimeZone = time.Local
 	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
 	for _, ca := range cases {
 		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
@@ -647,7 +648,7 @@ func TestMetricTableExtractor(t *testing.T) {
 			require.EqualValues(t, ca.quantiles, metricTableExtractor.Quantiles)
 		}
 		if !ca.skipRequest {
-			promQL := metricTableExtractor.GetMetricTablePromQL(se, "tidb_query_duration")
+			promQL := metricTableExtractor.GetMetricTablePromQL(se.GetPlanCtx(), "tidb_query_duration")
 			require.EqualValues(t, promQL, ca.promQL, "SQL: %v", ca.sql)
 			start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
 			require.GreaterOrEqual(t, end.UnixNano(), start.UnixNano())
@@ -1048,6 +1049,7 @@ func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
+	se.GetSessionVars().TimeZone = time.Local
 	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
 
 	var cases = []struct {
@@ -1569,6 +1571,14 @@ func TestColumns(t *testing.T) {
 		skipRequest        bool
 	}{
 		{
+			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where lower(column_name)=lower('T');`,
+			columnName: set.NewStringSet(),
+		},
+		{
+			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where column_name=lower('T');`,
+			columnName: set.NewStringSet("t"),
+		},
+		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where column_name='T';`,
 			columnName: set.NewStringSet("t"),
 		},
@@ -1822,18 +1832,37 @@ func TestInformSchemaTableExtract(t *testing.T) {
 		colPredicates map[string]set.StringSet
 	}{
 		{
-			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_name='T';`,
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where lower(table_name)='T';`,
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
-				"table_name":   set.NewStringSet("t"),
-				"table_schema": set.NewStringSet(),
+				"table_name": set.NewStringSet("T"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_name=lower('T');`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("t"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where lower(table_name)=lower('T');`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("t"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where upper(table_name)=upper('T');`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("T"),
 			},
 		},
 		{
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_schema='TS';`,
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
-				"table_name":   set.NewStringSet(),
 				"table_schema": set.NewStringSet("ts"),
 			},
 		},
@@ -1849,48 +1878,56 @@ func TestInformSchemaTableExtract(t *testing.T) {
 			sql:         "select * from information_schema.TABLES where table_name ='t' or table_name ='A'",
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
-				"table_name":   set.NewStringSet("t", "a"),
-				"table_schema": set.NewStringSet(),
+				"table_name": set.NewStringSet("t", "a"),
 			},
 		},
 		{
 			sql:         "select * from information_schema.REFERENTIAL_CONSTRAINTS where table_name ='t' or table_name ='A'",
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
-				"table_name":   set.NewStringSet("t", "a"),
-				"table_schema": set.NewStringSet(),
+				"table_name": set.NewStringSet("t", "a"),
 			},
 		},
 		{
 			sql:         "select * from information_schema.KEY_COLUMN_USAGE where table_name ='t' or table_name ='A'",
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
-				"table_name":   set.NewStringSet("t", "a"),
-				"table_schema": set.NewStringSet(),
+				"table_name": set.NewStringSet("t", "a"),
 			},
 		},
 		{
 			sql:         "select * from information_schema.STATISTICS where table_name ='t' or table_name ='A'",
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
-				"table_name":   set.NewStringSet("t", "a"),
-				"table_schema": set.NewStringSet(),
+				"table_name": set.NewStringSet("t", "a"),
 			},
 		},
 		{
-			sql:         "select * from information_schema.STATISTICS where table_name ='t' and table_name ='A'",
-			skipRequest: true,
+			sql:           "select * from information_schema.STATISTICS where table_name ='t' and table_name ='A'",
+			skipRequest:   true,
+			colPredicates: map[string]set.StringSet{},
+		},
+		{
+			sql:           "select * from information_schema.STATISTICS where table_name ='t' and table_schema ='A' and table_schema = 'b'",
+			skipRequest:   true,
+			colPredicates: map[string]set.StringSet{},
+		},
+		{
+			sql:           "select * from information_schema.STATISTICS where table_schema ='A' or lower(table_schema) = 'a'",
+			skipRequest:   false,
+			colPredicates: map[string]set.StringSet{},
+		},
+		{
+			sql:         "select * from information_schema.STATISTICS where (table_schema ='A' or lower(table_schema) = 'a') and table_name='t'",
+			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
-				"table_name":   set.NewStringSet(),
-				"table_schema": set.NewStringSet(),
+				"table_name": set.NewStringSet("t"),
 			},
 		},
 		{
-			sql:         "select * from information_schema.STATISTICS where table_name ='t' and table_schema ='A' and table_schema = 'b'",
-			skipRequest: true,
-			colPredicates: map[string]set.StringSet{
-				"table_schema": set.NewStringSet(),
-			},
+			sql:           "select * from information_schema.STATISTICS where table_schema ='A' or lower(table_schema) = 'b'",
+			skipRequest:   false,
+			colPredicates: map[string]set.StringSet{},
 		},
 	}
 	parser := parser.New()

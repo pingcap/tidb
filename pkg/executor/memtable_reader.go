@@ -204,6 +204,12 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), statusAddr)
 				case "tiproxy":
 					url = fmt.Sprintf("%s://%s/api/admin/config?format=json", util.InternalHTTPSchema(), statusAddr)
+				case "ticdc":
+					url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), statusAddr)
+				case "tso":
+					url = fmt.Sprintf("%s://%s/tso/api/v1/config", util.InternalHTTPSchema(), statusAddr)
+				case "scheduling":
+					url = fmt.Sprintf("%s://%s/scheduling/api/v1/config", util.InternalHTTPSchema(), statusAddr)
 				default:
 					ch <- result{err: errors.Errorf("currently we do not support get config from node type: %s(%s)", typ, address)}
 					return
@@ -319,7 +325,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 		return nil, err
 	}
 	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
-	return infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx, serversInfo, e.serverInfoType, true)
+	return infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversInfo, e.serverInfoType, true)
 }
 
 func parseFailpointServerInfo(s string) []infoschema.ServerInfo {
@@ -784,8 +790,10 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		RegionCache: tikvStore.GetRegionCache(),
 	}
 	tz := sctx.GetSessionVars().Location()
-	allSchemas := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().AllSchemas()
-	schemas := tikvHelper.FilterMemDBs(allSchemas)
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	allSchemaNames := is.AllSchemaNames()
+	schemas := ensureSchemaTables(is, allSchemaNames)
+	schemas = tikvHelper.FilterMemDBs(schemas)
 	tables := tikvHelper.GetTablesInfoWithKeyRange(schemas)
 	for e.heap.Len() > 0 && len(finalRows) < hotRegionsHistoryBatchSize {
 		minTimeItem := heap.Pop(e.heap).(hotRegionsResult)

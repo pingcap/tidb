@@ -576,7 +576,10 @@ func GetFsp(s string) int {
 
 // GetFracIndex finds the last '.' for get fracStr, index = -1 means fracStr not found.
 // but for format like '2019.01.01 00:00:00', the index should be -1.
-// It will not be affected by the time zone suffix. For format like '2020-01-01 12:00:00.123456+05:00', the index should be 19.
+//
+// It will not be affected by the time zone suffix.
+// For format like '2020-01-01 12:00:00.123456+05:00' and `2020-01-01 12:00:00.123456-05:00`, the index should be 19.
+// related issue https://github.com/pingcap/tidb/issues/35291 and https://github.com/pingcap/tidb/issues/49555
 func GetFracIndex(s string) (index int) {
 	tzIndex, _, _, _, _ := GetTimezone(s)
 	var end int
@@ -587,7 +590,7 @@ func GetFracIndex(s string) (index int) {
 	}
 	index = -1
 	for i := end; i >= 0; i-- {
-		if unicode.IsPunct(rune(s[i])) {
+		if s[i] != '+' && s[i] != '-' && isPunctuation(s[i]) {
 			if s[i] == '.' {
 				index = i
 			}

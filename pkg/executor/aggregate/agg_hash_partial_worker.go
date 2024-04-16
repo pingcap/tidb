@@ -267,11 +267,12 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 	numRows := chk.NumRows()
 	rows := make([]chunk.Row, 1)
 	allMemDelta := int64(0)
+	exprCtx := ctx.GetExprCtx()
 	for i := 0; i < numRows; i++ {
 		partialResult := partialResultOfEachRow[i]
 		rows[0] = chk.GetRow(i)
 		for j, af := range w.aggFuncs {
-			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResult[j])
+			memDelta, err := af.UpdatePartialResult(exprCtx.GetEvalCtx(), rows, partialResult[j])
 			if err != nil {
 				return err
 			}

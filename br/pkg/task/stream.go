@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -52,7 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
@@ -82,7 +83,7 @@ var (
 	StreamStatus   = "log status"
 	StreamTruncate = "log truncate"
 	StreamMetadata = "log metadata"
-	StreamCtl      = "log ctl"
+	StreamCtl      = "log advancer"
 
 	skipSummaryCommandList = map[string]struct{}{
 		StreamStatus:   {},
@@ -317,8 +318,9 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 		}
 
 		opts := storage.ExternalStorageOptions{
-			NoCredentials:   cfg.NoCreds,
-			SendCredentials: cfg.SendCreds,
+			NoCredentials:            cfg.NoCreds,
+			SendCredentials:          cfg.SendCreds,
+			CheckS3ObjectLockOptions: true,
 		}
 		if err = client.SetStorage(ctx, backend, &opts); err != nil {
 			return nil, errors.Trace(err)
@@ -458,7 +460,7 @@ func (s *streamMgr) checkStreamStartEnable(g glue.Glue) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	supportStream, err := utils.IsLogBackupEnabled(execCtx)
 	if err != nil {
 		return errors.Trace(err)
@@ -485,7 +487,7 @@ func KeepGcDisabled(g glue.Glue, store kv.Storage) (RestoreFunc, string, error) 
 		return nil, "", errors.Trace(err)
 	}
 
-	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	oldRatio, err := utils.GetGcRatio(execCtx)
 	if err != nil {
 		return nil, "", errors.Trace(err)
@@ -724,8 +726,8 @@ func RunStreamStop(
 	if err := streamMgr.setGCSafePoint(ctx,
 		utils.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
-			TTL:      utils.DefaultStreamStartSafePointTTL,
-			BackupTS: 0,
+			TTL:      0, // 0 means remove this service safe point.
+			BackupTS: math.MaxUint64,
 		},
 	); err != nil {
 		log.Warn("failed to remove safe point", zap.String("error", err.Error()))
@@ -1082,7 +1084,7 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 
 	// check cdc changefeed
 	if cfg.CheckRequirements {
-		nameSet, err := utils.GetCDCChangefeedNameSet(ctx, etcdCLI)
+		nameSet, err := cdcutil.GetCDCChangefeedNameSet(ctx, etcdCLI)
 		if err != nil {
 			return err
 		}
@@ -1460,13 +1462,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	var err error
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(
-		mgr.GetPDClient(),
-		mgr.GetPDHTTPClient(),
-		mgr.GetTLSConfig(),
-		keepaliveCfg,
-		false,
-	)
+	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 	err = client.Init(g, mgr.GetStorage())
 	if err != nil {
 		return nil, errors.Trace(err)

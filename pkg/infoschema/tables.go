@@ -232,6 +232,14 @@ const (
 	DataLockWaitsColumnSQLDigestText = "SQL_DIGEST_TEXT"
 )
 
+// The following variables will only be used when PD in the microservice mode.
+const (
+	// tsoServiceName is the name of TSO service.
+	tsoServiceName = "tso"
+	// schedulingServiceName is the name of scheduling service.
+	schedulingServiceName = "scheduling"
+)
+
 var tableIDMap = map[string]int64{
 	TableSchemata:                           autoid.InformationSchemaDBID + 1,
 	TableTables:                             autoid.InformationSchemaDBID + 2,
@@ -1700,23 +1708,21 @@ var tableTiDBIndexUsage = []columnInfo{
 //
 // The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
 // This function is exported for unit test.
-func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) any {
-	if dbInfo == nil || tableInfo == nil || tableInfo.IsView() || util.IsMemOrSysDB(dbInfo.Name.L) {
+func GetShardingInfo(dbInfo model.CIStr, tableInfo *model.TableInfo) any {
+	if tableInfo == nil || tableInfo.IsView() || util.IsMemOrSysDB(dbInfo.L) {
 		return nil
 	}
 	shardingInfo := "NOT_SHARDED"
-	if tableInfo.PKIsHandle {
-		if tableInfo.ContainsAutoRandomBits() {
-			shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
-			rangeBits := tableInfo.AutoRandomRangeBits
-			if rangeBits != 0 && rangeBits != autoid.AutoRandomRangeBitsDefault {
-				shardingInfo = fmt.Sprintf("%s, RANGE BITS=%d", shardingInfo, rangeBits)
-			}
-		} else {
-			shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
+	if tableInfo.ContainsAutoRandomBits() {
+		shardingInfo = "PK_AUTO_RANDOM_BITS=" + strconv.Itoa(int(tableInfo.AutoRandomBits))
+		rangeBits := tableInfo.AutoRandomRangeBits
+		if rangeBits != 0 && rangeBits != autoid.AutoRandomRangeBitsDefault {
+			shardingInfo = fmt.Sprintf("%s, RANGE BITS=%d", shardingInfo, rangeBits)
 		}
 	} else if tableInfo.ShardRowIDBits > 0 {
 		shardingInfo = "SHARD_BITS=" + strconv.Itoa(int(tableInfo.ShardRowIDBits))
+	} else if tableInfo.PKIsHandle {
+		shardingInfo = "NOT_SHARDED(PK_IS_HANDLE)"
 	}
 	return shardingInfo
 }
@@ -1804,9 +1810,12 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	})
 
 	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
+	retrievers := []retriever{GetTiDBServerInfo, GetPDServerInfo, func(ctx sessionctx.Context) ([]ServerInfo, error) {
+		return GetStoreServerInfo(ctx.GetStore())
+	}, GetTiProxyServerInfo, GetTiCDCServerInfo, GetTSOServerInfo, GetSchedulingServerInfo}
 	//nolint: prealloc
 	var servers []ServerInfo
-	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetStoreServerInfo, GetTiProxyServerInfo} {
+	for _, r := range retrievers {
 		nodes, err := r(ctx)
 		if err != nil {
 			return nil, err
@@ -1872,14 +1881,9 @@ func FormatTiDBVersion(TiDBVersion string, isDefaultVersion bool) string {
 // GetPDServerInfo returns all PD nodes information of cluster
 func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	// Get PD servers info.
-	store := ctx.GetStore()
-	etcd, ok := store.(kv.EtcdBackend)
-	if !ok {
-		return nil, errors.Errorf("%T not an etcd backend", store)
-	}
-	members, err := etcd.EtcdAddrs()
+	members, err := getEtcdMembers(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	// TODO: maybe we should unify the PD API request interface.
 	var (
@@ -1949,6 +1953,96 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
+// GetTSOServerInfo returns all TSO nodes information of cluster
+func GetTSOServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	return getMicroServiceServerInfo(ctx, tsoServiceName)
+}
+
+// GetSchedulingServerInfo returns all scheduling nodes information of cluster
+func GetSchedulingServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	return getMicroServiceServerInfo(ctx, schedulingServiceName)
+}
+
+func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]ServerInfo, error) {
+	members, err := getEtcdMembers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// TODO: maybe we should unify the PD API request interface.
+	var servers []ServerInfo
+
+	if len(members) == 0 {
+		return servers, nil
+	}
+	// Try on each member until one succeeds or all fail.
+	for _, addr := range members {
+		// Get members
+		url := fmt.Sprintf("%s://%s%s/%s", util.InternalHTTPSchema(), addr, "/pd/api/v2/ms/members", serviceName)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("create microservice server info request error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
+			continue
+		}
+		req.Header.Add("PD-Allow-follower-handle", "true")
+		resp, err := util.InternalHTTPClient().Do(req)
+		if resp == nil || resp.StatusCode != http.StatusOK {
+			terror.Log(resp.Body.Close())
+			return servers, nil
+		}
+		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("request microservice server info error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
+			continue
+		}
+		var content = []struct {
+			ServiceAddr    string `json:"service-addr"`
+			Version        string `json:"version"`
+			GitHash        string `json:"git-hash"`
+			DeployPath     string `json:"deploy-path"`
+			StartTimestamp int64  `json:"start-timestamp"`
+		}{}
+		err = json.NewDecoder(resp.Body).Decode(&content)
+		terror.Log(resp.Body.Close())
+		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("close microservice server info request error", zap.String("service", serviceName), zap.String("url", url), zap.Error(err))
+			continue
+		}
+
+		for _, c := range content {
+			addr := strings.TrimPrefix(c.ServiceAddr, "http://")
+			addr = strings.TrimPrefix(addr, "https://")
+			if len(c.Version) > 0 && c.Version[0] == 'v' {
+				c.Version = c.Version[1:]
+			}
+			servers = append(servers, ServerInfo{
+				ServerType:     serviceName,
+				Address:        addr,
+				StatusAddr:     addr,
+				Version:        c.Version,
+				GitHash:        c.GitHash,
+				StartTimestamp: c.StartTimestamp,
+			})
+		}
+		return servers, nil
+	}
+	return servers, nil
+}
+
+func getEtcdMembers(ctx sessionctx.Context) ([]string, error) {
+	store := ctx.GetStore()
+	etcd, ok := store.(kv.EtcdBackend)
+	if !ok {
+		return nil, errors.Errorf("%T not an etcd backend", store)
+	}
+	members, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return members, nil
+}
+
 func isTiFlashStore(store *metapb.Store) bool {
 	for _, label := range store.Labels {
 		if label.GetKey() == placement.EngineLabelKey && label.GetValue() == placement.EngineLabelTiFlash {
@@ -1968,7 +2062,7 @@ func isTiFlashWriteNode(store *metapb.Store) bool {
 }
 
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
-func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+func GetStoreServerInfo(store kv.Storage) ([]ServerInfo, error) {
 	failpoint.Inject("mockStoreServerInfo", func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
 			var servers []ServerInfo
@@ -1987,7 +2081,6 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 	})
 
-	store := ctx.GetStore()
 	// Get TiKV servers info.
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
@@ -2051,7 +2144,7 @@ func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 		}
 	})
 
-	stores, err := GetStoreServerInfo(ctx)
+	stores, err := GetStoreServerInfo(ctx.GetStore())
 	if err != nil {
 		return cnt, err
 	}
@@ -2075,6 +2168,26 @@ func GetTiProxyServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			ServerType:     "tiproxy",
 			Address:        net.JoinHostPort(node.IP, node.Port),
 			StatusAddr:     net.JoinHostPort(node.IP, node.StatusPort),
+			Version:        node.Version,
+			GitHash:        node.GitHash,
+			StartTimestamp: node.StartTimestamp,
+		})
+	}
+	return servers, nil
+}
+
+// GetTiCDCServerInfo gets server info of TiCDC from PD.
+func GetTiCDCServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	ticdcNodes, err := infosync.GetTiCDCServerInfo(context.Background())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var servers = make([]ServerInfo, 0, len(ticdcNodes))
+	for _, node := range ticdcNodes {
+		servers = append(servers, ServerInfo{
+			ServerType:     "ticdc",
+			Address:        node.Address,
+			StatusAddr:     node.Address,
 			Version:        node.Version,
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,
@@ -2426,11 +2539,11 @@ func (vt *VirtualTable) Type() table.Type {
 }
 
 // GetTiFlashServerInfo returns all TiFlash server infos
-func GetTiFlashServerInfo(sctx sessionctx.Context) ([]ServerInfo, error) {
+func GetTiFlashServerInfo(store kv.Storage) ([]ServerInfo, error) {
 	if config.GetGlobalConfig().DisaggregatedTiFlash {
 		return nil, table.ErrUnsupportedOp
 	}
-	serversInfo, err := GetStoreServerInfo(sctx)
+	serversInfo, err := GetStoreServerInfo(store)
 	if err != nil {
 		return nil, err
 	}
@@ -2439,7 +2552,7 @@ func GetTiFlashServerInfo(sctx sessionctx.Context) ([]ServerInfo, error) {
 }
 
 // FetchClusterServerInfoWithoutPrivilegeCheck fetches cluster server information
-func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, sctx sessionctx.Context, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) ([][]types.Datum, error) {
+func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *variable.SessionVars, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) ([][]types.Datum, error) {
 	type result struct {
 		idx  int
 		rows [][]types.Datum
@@ -2476,7 +2589,7 @@ func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, sctx sessi
 	for result := range ch {
 		if result.err != nil {
 			if recordWarningInStmtCtx {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
+				vars.StmtCtx.AppendWarning(result.err)
 			} else {
 				log.Warn(result.err.Error())
 			}

@@ -5,6 +5,7 @@
 //
 //	mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor TaskTable,Pool,TaskExecutor,Extension
 //
+
 // Package mock is a generated GoMock package.
 package mock
 
@@ -39,6 +40,11 @@ func NewMockTaskTable(ctrl *gomock.Controller) *MockTaskTable {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockTaskTable) EXPECT() *MockTaskTableMockRecorder {
 	return m.recorder
+}
+
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockTaskTable) ISGOMOCK() struct{} {
+	return struct{}{}
 }
 
 // CancelSubtask mocks base method.
@@ -121,6 +127,21 @@ func (mr *MockTaskTableMockRecorder) GetSubtasksByExecIDAndStepAndStates(arg0, a
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]any{arg0, arg1, arg2, arg3}, arg4...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtasksByExecIDAndStepAndStates", reflect.TypeOf((*MockTaskTable)(nil).GetSubtasksByExecIDAndStepAndStates), varargs...)
+}
+
+// GetTaskBaseByID mocks base method.
+func (m *MockTaskTable) GetTaskBaseByID(arg0 context.Context, arg1 int64) (*proto.TaskBase, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTaskBaseByID", arg0, arg1)
+	ret0, _ := ret[0].(*proto.TaskBase)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTaskBaseByID indicates an expected call of GetTaskBaseByID.
+func (mr *MockTaskTableMockRecorder) GetTaskBaseByID(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskBaseByID", reflect.TypeOf((*MockTaskTable)(nil).GetTaskBaseByID), arg0, arg1)
 }
 
 // GetTaskByID mocks base method.
@@ -236,7 +257,7 @@ func (mr *MockTaskTableMockRecorder) RecoverMeta(arg0, arg1, arg2 any) *gomock.C
 }
 
 // RunningSubtasksBack2Pending mocks base method.
-func (m *MockTaskTable) RunningSubtasksBack2Pending(arg0 context.Context, arg1 []*proto.Subtask) error {
+func (m *MockTaskTable) RunningSubtasksBack2Pending(arg0 context.Context, arg1 []*proto.SubtaskBase) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RunningSubtasksBack2Pending", arg0, arg1)
 	ret0, _ := ret[0].(error)
@@ -298,6 +319,11 @@ func NewMockPool(ctrl *gomock.Controller) *MockPool {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockPool) EXPECT() *MockPoolMockRecorder {
 	return m.recorder
+}
+
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockPool) ISGOMOCK() struct{} {
+	return struct{}{}
 }
 
 // ReleaseAndWait mocks base method.
@@ -363,6 +389,11 @@ func (m *MockTaskExecutor) EXPECT() *MockTaskExecutorMockRecorder {
 	return m.recorder
 }
 
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockTaskExecutor) ISGOMOCK() struct{} {
+	return struct{}{}
+}
+
 // Cancel mocks base method.
 func (m *MockTaskExecutor) Cancel() {
 	m.ctrl.T.Helper()
@@ -399,18 +430,18 @@ func (mr *MockTaskExecutorMockRecorder) Close() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockTaskExecutor)(nil).Close))
 }
 
-// GetTask mocks base method.
-func (m *MockTaskExecutor) GetTask() *proto.Task {
+// GetTaskBase mocks base method.
+func (m *MockTaskExecutor) GetTaskBase() *proto.TaskBase {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTask")
-	ret0, _ := ret[0].(*proto.Task)
+	ret := m.ctrl.Call(m, "GetTaskBase")
+	ret0, _ := ret[0].(*proto.TaskBase)
 	return ret0
 }
 
-// GetTask indicates an expected call of GetTask.
-func (mr *MockTaskExecutorMockRecorder) GetTask() *gomock.Call {
+// GetTaskBase indicates an expected call of GetTaskBase.
+func (mr *MockTaskExecutorMockRecorder) GetTaskBase() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTask", reflect.TypeOf((*MockTaskExecutor)(nil).GetTask))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskBase", reflect.TypeOf((*MockTaskExecutor)(nil).GetTaskBase))
 }
 
 // Init mocks base method.
@@ -476,19 +507,24 @@ func (m *MockExtension) EXPECT() *MockExtensionMockRecorder {
 	return m.recorder
 }
 
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockExtension) ISGOMOCK() struct{} {
+	return struct{}{}
+}
+
 // GetStepExecutor mocks base method.
-func (m *MockExtension) GetStepExecutor(arg0 *proto.Task, arg1 *proto.StepResource) (execute.StepExecutor, error) {
+func (m *MockExtension) GetStepExecutor(arg0 *proto.Task) (execute.StepExecutor, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetStepExecutor", arg0, arg1)
+	ret := m.ctrl.Call(m, "GetStepExecutor", arg0)
 	ret0, _ := ret[0].(execute.StepExecutor)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetStepExecutor indicates an expected call of GetStepExecutor.
-func (mr *MockExtensionMockRecorder) GetStepExecutor(arg0, arg1 any) *gomock.Call {
+func (mr *MockExtensionMockRecorder) GetStepExecutor(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStepExecutor", reflect.TypeOf((*MockExtension)(nil).GetStepExecutor), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStepExecutor", reflect.TypeOf((*MockExtension)(nil).GetStepExecutor), arg0)
 }
 
 // IsIdempotent mocks base method.

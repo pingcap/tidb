@@ -509,7 +509,7 @@ func (t *Tracker) Release(bytes int64) {
 			// use fake ref instead of obj ref, otherwise obj will be reachable again and gc in next cycle
 			newRef := &finalizerRef{}
 			finalizer := func(tracker *Tracker) func(ref *finalizerRef) {
-				return func(ref *finalizerRef) {
+				return func(*finalizerRef) {
 					tracker.release(bytes) // finalizer func is called async
 				}
 			}

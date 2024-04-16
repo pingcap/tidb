@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/server"
+	srv "github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
@@ -40,8 +40,8 @@ import (
 // TidbTestSuite is a test suite for tidb
 type TidbTestSuite struct {
 	*testserverclient.TestServerClient
-	Tidbdrv *server.TiDBDriver
-	Server  *server.Server
+	Tidbdrv *srv.TiDBDriver
+	Server  *srv.Server
 	Domain  *domain.Domain
 	Store   kv.Storage
 }
@@ -68,12 +68,11 @@ func CreateTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *TidbTestSuite
 	require.NoError(t, err)
 	ts.Domain, err = session.BootstrapSession(ts.Store)
 	require.NoError(t, err)
-	ts.Tidbdrv = server.NewTiDBDriver(ts.Store)
+	ts.Tidbdrv = srv.NewTiDBDriver(ts.Store)
 
-	server, err := server.NewServer(cfg, ts.Tidbdrv)
+	server, err := srv.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
-	ts.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	ts.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+
 	ts.Server = server
 	ts.Server.SetDomain(ts.Domain)
 	ts.Domain.InfoSyncer().SetSessionManager(ts.Server)
@@ -81,6 +80,9 @@ func CreateTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *TidbTestSuite
 		err := ts.Server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-srv.RunInGoTestChan
+	ts.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	ts.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	ts.WaitUntilServerOnline()
 
 	t.Cleanup(func() {

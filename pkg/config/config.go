@@ -231,7 +231,7 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// SkipRegisterToDashboard tells TiDB don't register itself to the dashboard.
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
-	// EnableTelemetry enables the usage data report to PingCAP.
+	// EnableTelemetry enables the usage data report to PingCAP. Deprecated: Telemetry has been removed.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 	// Labels indicates the labels set for the tidb server. The labels describe some specific properties for the tidb
 	// server like `zone`/`rack`/`host`. Currently, labels won't affect the tidb server except for some special
@@ -490,6 +490,8 @@ type Log struct {
 	// ExpensiveThreshold is deprecated.
 	ExpensiveThreshold uint `toml:"expensive-threshold" json:"expensive-threshold"`
 
+	GeneralLogFile string `toml:"general-log-file" json:"general-log-file"`
+
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -747,6 +749,9 @@ type Performance struct {
 	// If ForceInitStats is false, tidb can provide service before init stats is finished. Note that during the period
 	// of init stats the optimizer may make bad decisions due to pseudo stats.
 	ForceInitStats bool `toml:"force-init-stats" json:"force-init-stats"`
+
+	// ConcurrentlyInitStats indicates whether to use concurrency to init stats.
+	ConcurrentlyInitStats bool `toml:"concurrently-init-stats" json:"concurrently-init-stats"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -1014,6 +1019,7 @@ var defaultConf = Config{
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
+		ConcurrentlyInitStats:             true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -1083,7 +1089,7 @@ var defaultConf = Config{
 }
 
 var (
-	globalConf atomic.Value
+	globalConf atomic.Pointer[Config]
 )
 
 // NewConfig creates a new config instance with default value.
@@ -1096,7 +1102,7 @@ func NewConfig() *Config {
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
-	return globalConf.Load().(*Config)
+	return globalConf.Load()
 }
 
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
@@ -1264,13 +1270,16 @@ func (c *Config) RemovedVariableCheck(confFile string) error {
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
+	if err != nil {
+		return err
+	}
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
 	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
 	undecoded := metaData.Undecoded()
-	if len(undecoded) > 0 && err == nil {
+	if len(undecoded) > 0 {
 		var undecodedItems []string
 		for _, item := range undecoded {
 			undecodedItems = append(undecodedItems, item.String())
@@ -1441,7 +1450,7 @@ var TableLockDelayClean = func() uint64 {
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(),
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.GeneralLogFile, l.File, l.getDisableTimestamp(),
 		func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() },
 		func(config *zaplog.Config) { config.Timeout = l.Timeout },
 	)
@@ -1473,9 +1482,6 @@ func init() {
 }
 
 func initByLDFlags(edition, checkBeforeDropLDFlag string) {
-	if edition != versioninfo.CommunityEdition {
-		defaultConf.EnableTelemetry = false
-	}
 	conf := defaultConf
 	StoreGlobalConfig(&conf)
 	if checkBeforeDropLDFlag == "1" {

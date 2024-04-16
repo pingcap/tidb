@@ -22,17 +22,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/metric"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/mock/gomock"
 )
 
@@ -98,7 +98,6 @@ func TestFileChunkProcess(t *testing.T) {
 	)
 	require.NoError(t, err)
 	diskQuotaLock := &syncutil.RWMutex{}
-	codec := tikv.NewCodecV1(tikv.ModeRaw)
 
 	t.Run("process success", func(t *testing.T) {
 		var dataKVCnt, indexKVCnt int
@@ -132,21 +131,28 @@ func TestFileChunkProcess(t *testing.T) {
 			}).AnyTimes()
 		indexWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 			func(ctx context.Context, columnNames []string, rows encode.Rows) error {
-				indexKVCnt += len(rows.(*kv.Pairs).Pairs)
+				group := rows.(kv.GroupedPairs)
+				for _, pairs := range group {
+					indexKVCnt += len(pairs)
+				}
 				return nil
 			}).AnyTimes()
 
 		chunkInfo := &checkpoints.ChunkCheckpoint{
 			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
+		checksum := verify.NewKVGroupChecksumWithKeyspace(nil)
 		processor := importer.NewFileChunkProcessor(
-			csvParser, encoder, codec,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter,
+			csvParser, encoder, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, checksum,
 		)
 		require.NoError(t, processor.Process(ctx))
 		require.True(t, ctrl.Satisfied())
-		require.Equal(t, uint64(9), chunkInfo.Checksum.SumKVS())
-		require.Equal(t, uint64(348), chunkInfo.Checksum.SumSize())
+		checksumDataKVCnt, checksumIndexKVCnt := checksum.DataAndIndexSumKVS()
+		require.Equal(t, uint64(3), checksumDataKVCnt)
+		require.Equal(t, uint64(6), checksumIndexKVCnt)
+		dataKVSize, indexKVSize := checksum.DataAndIndexSumSize()
+		require.Equal(t, uint64(348), dataKVSize+indexKVSize)
 		require.Equal(t, 3, dataKVCnt)
 		require.Equal(t, 6, indexKVCnt)
 		require.Equal(t, float64(len(sourceData)), metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored)))
@@ -173,8 +179,8 @@ func TestFileChunkProcess(t *testing.T) {
 			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
 		processor := importer.NewFileChunkProcessor(
-			csvParser, encoder, codec,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter,
+			csvParser, encoder, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
 		)
 		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
 		require.True(t, ctrl.Satisfied())
@@ -198,8 +204,8 @@ func TestFileChunkProcess(t *testing.T) {
 			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
 		processor := importer.NewFileChunkProcessor(
-			csvParser, encoder, codec,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter,
+			csvParser, encoder, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
 		)
 		require.ErrorIs(t, processor.Process(ctx), common.ErrEncodeKV)
 		require.True(t, ctrl.Satisfied())
@@ -222,8 +228,8 @@ func TestFileChunkProcess(t *testing.T) {
 			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
 		processor := importer.NewFileChunkProcessor(
-			csvParser, encoder, codec,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter,
+			csvParser, encoder, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
 		)
 		require.ErrorContains(t, processor.Process(ctx), "data write error")
 		require.True(t, ctrl.Satisfied())
@@ -247,8 +253,8 @@ func TestFileChunkProcess(t *testing.T) {
 			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
 		processor := importer.NewFileChunkProcessor(
-			csvParser, encoder, codec,
-			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter,
+			csvParser, encoder, nil,
+			chunkInfo, logger.Logger, diskQuotaLock, dataWriter, indexWriter, nil,
 		)
 		require.ErrorContains(t, processor.Process(ctx), "index write error")
 		require.True(t, ctrl.Satisfied())

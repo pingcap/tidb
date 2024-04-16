@@ -16,6 +16,7 @@ package testserverclient
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -38,11 +39,13 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -2626,6 +2629,101 @@ func (cli *TestServerClient) RunTestInfoschemaClientErrors(t *testing.T) {
 				require.Equalf(t, warnings, newWarnings, "source=information_schema.%s code=%d statement=%s", tbl, test.errCode, test.stmt)
 			}
 		}
+	})
+}
+
+func (cli *TestServerClient) RunTestSQLModeIsLoadedBeforeQuery(t *testing.T) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "set global sql_mode='NO_BACKSLASH_ESCAPES';")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, `
+		CREATE TABLE t1 (
+			id bigint(20) NOT NULL,
+			t text DEFAULT NULL,
+			PRIMARY KEY (id)
+		);`)
+		require.NoError(t, err)
+
+		// use another new connection
+		conn1, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn1.ExecContext(ctx, "insert into t1 values (1, 'ab\\\\c');")
+		require.NoError(t, err)
+		result, err := conn1.QueryContext(ctx, "select t from t1 where id = 1;")
+		require.NoError(t, err)
+		require.True(t, result.Next())
+		var tStr string
+		require.NoError(t, result.Scan(&tStr))
+
+		require.Equal(t, "ab\\\\c", tStr)
+	})
+}
+
+func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
+	readConnCount := func(resourceGroupName string) float64 {
+		metric, err := metrics.ConnGauge.GetMetricWith(map[string]string{
+			metrics.LblResourceGroup: resourceGroupName,
+		})
+		require.NoError(t, err)
+		output := &dto.Metric{}
+		metric.Write(output)
+
+		return output.GetGauge().GetValue()
+	}
+
+	resourceGroupConnCountReached := func(t *testing.T, resourceGroupName string, expected float64) {
+		require.Eventually(t, func() bool {
+			return readConnCount(resourceGroupName) == expected
+		}, 5*time.Second, 100*time.Millisecond)
+	}
+
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+		dbt.GetDB().SetMaxIdleConns(0)
+
+		// start 100 connections
+		conns := make([]*sql.Conn, 100)
+		for i := 0; i < 100; i++ {
+			conn, err := dbt.GetDB().Conn(ctx)
+			require.NoError(t, err)
+			conns[i] = conn
+		}
+		resourceGroupConnCountReached(t, "default", 100.0)
+
+		// close 50 connections
+		for i := 0; i < 50; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 50.0)
+
+		// close 25 connections
+		for i := 50; i < 75; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 25.0)
+
+		// change the following 25 connections from `default` resource group to `test`
+		dbt.MustExec("create resource group test RU_PER_SEC = 1000;")
+		for i := 75; i < 100; i++ {
+			_, err := conns[i].ExecContext(ctx, "set resource group test")
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 0.0)
+		resourceGroupConnCountReached(t, "test", 25.0)
+
+		// close 25 connections
+		for i := 75; i < 100; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 0.0)
+		resourceGroupConnCountReached(t, "test", 0.0)
 	})
 }
 

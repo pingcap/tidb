@@ -17,7 +17,6 @@ package autoanalyze
 import (
 	"context"
 	"fmt"
-	"math"
 	"math/rand"
 	"net"
 	"strconv"
@@ -30,9 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -50,13 +51,13 @@ import (
 type statsAnalyze struct {
 	statsHandle statstypes.StatsHandle
 	// sysProcTracker is used to track sys process like analyze
-	sysProcTracker sessionctx.SysProcTracker
+	sysProcTracker sysproctrack.Tracker
 }
 
 // NewStatsAnalyze creates a new StatsAnalyze.
 func NewStatsAnalyze(
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) statstypes.StatsAnalyze {
 	return &statsAnalyze{statsHandle: statsHandle, sysProcTracker: sysProcTracker}
 }
@@ -259,49 +260,11 @@ func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalID
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
-func parseAutoAnalyzeRatio(ratio string) float64 {
-	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
-	if err != nil {
-		return variable.DefAutoAnalyzeRatio
-	}
-	return math.Max(autoAnalyzeRatio, 0)
-}
-
-// parseAnalyzePeriod parses the start and end time for auto analyze.
-// It parses the times in UTC location.
-func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
-	if start == "" {
-		start = variable.DefAutoAnalyzeStartTime
-	}
-	if end == "" {
-		end = variable.DefAutoAnalyzeEndTime
-	}
-	s, err := time.ParseInLocation(variable.FullDayTimeFormat, start, time.UTC)
-	if err != nil {
-		return s, s, errors.Trace(err)
-	}
-	e, err := time.ParseInLocation(variable.FullDayTimeFormat, end, time.UTC)
-	return s, e, err
-}
-
-func getAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
-	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
-	rows, _, err := statsutil.ExecWithOpts(sctx, nil, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
-	if err != nil {
-		return map[string]string{}
-	}
-	parameters := make(map[string]string, len(rows))
-	for _, row := range rows {
-		parameters[row.GetString(0)] = row.GetString(1)
-	}
-	return parameters
-}
-
 // HandleAutoAnalyze analyzes the newly created table or index.
 func HandleAutoAnalyze(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 ) (analyzed bool) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -312,11 +275,20 @@ func HandleAutoAnalyze(
 			)
 		}
 	}()
+	if variable.EnableAutoAnalyzePriorityQueue.Load() {
+		r := refresher.NewRefresher(statsHandle, sysProcTracker)
+		err := r.RebuildTableAnalysisJobQueue()
+		if err != nil {
+			statslogutil.StatsLogger().Error("rebuild table analysis job queue failed", zap.Error(err))
+			return false
+		}
+		return r.PickOneTableAndAnalyzeByPriority()
+	}
 
-	parameters := getAutoAnalyzeParameters(sctx)
-	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-	// Get the available time period for auto analyze and check if the current time is in the period.
-	start, end, err := parseAnalyzePeriod(
+	parameters := exec.GetAutoAnalyzeParameters(sctx)
+	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	// Determine the time window for auto-analysis and verify if the current time falls within this range.
+	start, end, err := exec.ParseAutoAnalysisWindow(
 		parameters[variable.TiDBAutoAnalyzeStartTime],
 		parameters[variable.TiDBAutoAnalyzeEndTime],
 	)
@@ -352,7 +324,7 @@ func HandleAutoAnalyze(
 func RandomPickOneTableAndTryAutoAnalyze(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 	autoAnalyzeRatio float64,
 	pruneMode variable.PartitionPruneMode,
 	start, end time.Time,
@@ -467,21 +439,17 @@ func getPartitionStats(
 	partitionStats := make(map[int64]*statistics.Table, len(defs))
 
 	for _, def := range defs {
-		partitionStats[def.ID] = statsHandle.GetPartitionStats(tblInfo, def.ID)
+		partitionStats[def.ID] = statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, def.ID)
 	}
 
 	return partitionStats
 }
 
-// AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
-// Exported for testing.
-var AutoAnalyzeMinCnt int64 = 1000
-
 // Determine whether the table and index require analysis.
 func tryAutoAnalyzeTable(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 	tblInfo *model.TableInfo,
 	statsTbl *statistics.Table,
 	ratio float64,
@@ -489,9 +457,10 @@ func tryAutoAnalyzeTable(
 	params ...any,
 ) bool {
 	// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze
+	//    Pseudo statistics can be created by the optimizer, so we need to double check it.
 	// 2. If the table is too small, we don't want to waste time to analyze it.
 	//    Leave the opportunity to other bigger tables.
-	if statsTbl == nil || statsTbl.RealtimeCount < AutoAnalyzeMinCnt || statsTbl.Pseudo {
+	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount < exec.AutoAnalyzeMinCnt {
 		return false
 	}
 
@@ -519,7 +488,7 @@ func tryAutoAnalyzeTable(
 
 	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
-		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
+		if _, ok := statsTbl.Indices[idx.ID]; !ok && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
 			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
 			escaped, err := sqlescape.EscapeSQL(sqlWithIdx, paramsWithIdx...)
@@ -548,7 +517,7 @@ func tryAutoAnalyzeTable(
 //
 // Exposed for test.
 func NeedAnalyzeTable(tbl *statistics.Table, autoAnalyzeRatio float64) (bool, string) {
-	analyzed := TableAnalyzed(tbl)
+	analyzed := tbl.IsAnalyzed()
 	if !analyzed {
 		return true, "table unanalyzed"
 	}
@@ -567,26 +536,11 @@ func NeedAnalyzeTable(tbl *statistics.Table, autoAnalyzeRatio float64) (bool, st
 	return true, fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tblCnt, autoAnalyzeRatio)
 }
 
-// TableAnalyzed checks if any column or index of the table has been analyzed.
-func TableAnalyzed(tbl *statistics.Table) bool {
-	for _, col := range tbl.Columns {
-		if col.IsAnalyzed() {
-			return true
-		}
-	}
-	for _, idx := range tbl.Indices {
-		if idx.IsAnalyzed() {
-			return true
-		}
-	}
-	return false
-}
-
 // It is very similar to tryAutoAnalyzeTable, but it commits the analyze job in batch for partitions.
 func tryAutoAnalyzePartitionTableInDynamicMode(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
+	sysProcTracker sysproctrack.Tracker,
 	tblInfo *model.TableInfo,
 	partitionDefs []model.PartitionDefinition,
 	partitionStats map[int64]*statistics.Table,
@@ -598,15 +552,16 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	needAnalyzePartitionNames := make([]any, 0, len(partitionDefs))
 
 	for _, def := range partitionDefs {
-		partitionStatsTbl := partitionStats[def.ID]
-		// 1. If the stats are not loaded, we don't need to analyze it.
+		partitionStats := partitionStats[def.ID]
+		// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
+		//	  Pseudo statistics can be created by the optimizer, so we need to double check it.
 		// 2. If the table is too small, we don't want to waste time to analyze it.
 		//    Leave the opportunity to other bigger tables.
-		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
+		if partitionStats == nil || partitionStats.Pseudo || partitionStats.RealtimeCount < exec.AutoAnalyzeMinCnt {
 			continue
 		}
 		if needAnalyze, reason := NeedAnalyzeTable(
-			partitionStatsTbl,
+			partitionStats,
 			ratio,
 		); needAnalyze {
 			needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
@@ -617,7 +572,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				zap.String("partition", def.Name.O),
 				zap.String("reason", reason),
 			)
-			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
+			statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
 		}
 	}
 
@@ -673,10 +628,16 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 		}
 		// Collect all the partition names that need to analyze.
 		for _, def := range partitionDefs {
-			partitionStatsTbl := partitionStats[def.ID]
-			if _, ok := partitionStatsTbl.Indices[idx.ID]; !ok {
+			partitionStats := partitionStats[def.ID]
+			// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
+			//    Pseudo statistics can be created by the optimizer, so we need to double check it.
+			if partitionStats == nil || partitionStats.Pseudo {
+				continue
+			}
+			// 2. If the index is not analyzed, we need to analyze it.
+			if !partitionStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
 				needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
-				statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
+				statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
 			}
 		}
 		if len(needAnalyzePartitionNames) > 0 {

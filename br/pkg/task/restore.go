@@ -43,6 +43,7 @@ import (
 const (
 	flagOnline              = "online"
 	flagNoSchema            = "no-schema"
+	flagLoadStats           = "load-stats"
 	flagGranularity         = "granularity"
 	flagConcurrencyPerStore = "tikv-max-restore-concurrency"
 
@@ -102,15 +103,15 @@ const (
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
 type RestoreCommonConfig struct {
-	Online              bool   `json:"online" toml:"online"`
-	Granularity         string `json:"granularity" toml:"granularity"`
-	ConcurrencyPerStore uint   `json:"tikv-max-restore-concurrency" toml:"tikv-max-restore-concurrency"`
+	Online              bool                     `json:"online" toml:"online"`
+	Granularity         string                   `json:"granularity" toml:"granularity"`
+	ConcurrencyPerStore pconfig.ConfigTerm[uint] `json:"tikv-max-restore-concurrency" toml:"tikv-max-restore-concurrency"`
 
 	// MergeSmallRegionSizeBytes is the threshold of merging small regions (Default 96MB, region split size).
 	// MergeSmallRegionKeyCount is the threshold of merging smalle regions (Default 960_000, region split key count).
 	// See https://github.com/tikv/tikv/blob/v4.0.8/components/raftstore/src/coprocessor/config.rs#L35-L38
-	MergeSmallRegionSizeBytes uint64 `json:"merge-region-size-bytes" toml:"merge-region-size-bytes"`
-	MergeSmallRegionKeyCount  uint64 `json:"merge-region-key-count" toml:"merge-region-key-count"`
+	MergeSmallRegionSizeBytes pconfig.ConfigTerm[uint64] `json:"merge-region-size-bytes" toml:"merge-region-size-bytes"`
+	MergeSmallRegionKeyCount  pconfig.ConfigTerm[uint64] `json:"merge-region-key-count" toml:"merge-region-key-count"`
 
 	// determines whether enable restore sys table on default, see fullClusterRestore in restore/client.go
 	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
@@ -121,17 +122,17 @@ type RestoreCommonConfig struct {
 // adjust adjusts the abnormal config value in the current config.
 // useful when not starting BR from CLI (e.g. from BRIE in SQL).
 func (cfg *RestoreCommonConfig) adjust() {
-	if cfg.MergeSmallRegionKeyCount == 0 {
-		cfg.MergeSmallRegionKeyCount = conn.DefaultMergeRegionKeyCount
+	if !cfg.MergeSmallRegionKeyCount.Modified {
+		cfg.MergeSmallRegionKeyCount.Value = conn.DefaultMergeRegionKeyCount
 	}
-	if cfg.MergeSmallRegionSizeBytes == 0 {
-		cfg.MergeSmallRegionSizeBytes = conn.DefaultMergeRegionSizeBytes
+	if !cfg.MergeSmallRegionSizeBytes.Modified {
+		cfg.MergeSmallRegionSizeBytes.Value = conn.DefaultMergeRegionSizeBytes
 	}
 	if len(cfg.Granularity) == 0 {
-		cfg.Granularity = string(restore.FineGrained)
+		cfg.Granularity = string(restore.CoarseGrained)
 	}
-	if cfg.ConcurrencyPerStore == 0 {
-		cfg.ConcurrencyPerStore = 128
+	if !cfg.ConcurrencyPerStore.Modified {
+		cfg.ConcurrencyPerStore.Value = conn.DefaultImportNumGoroutines
 	}
 }
 
@@ -139,8 +140,8 @@ func (cfg *RestoreCommonConfig) adjust() {
 func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
-	flags.String(flagGranularity, string(restore.FineGrained), "(experimental) Whether split & scatter regions using fine-grained way during restore")
-	flags.Uint(flagConcurrencyPerStore, 128, "(experimental) The size of thread pool on each store that executes tasks")
+	flags.String(flagGranularity, string(restore.CoarseGrained), "Whether split & scatter regions using fine-grained way during restore")
+	flags.Uint(flagConcurrencyPerStore, 128, "The size of thread pool on each store that executes tasks, only enabled when `--granularity=coarse-grained`")
 	flags.Uint32(flagConcurrency, 128, "(deprecated) The size of thread pool on BR that executes tasks, "+
 		"where each task restores one SST file to TiKV")
 	flags.Uint64(FlagMergeRegionSizeBytes, conn.DefaultMergeRegionSizeBytes,
@@ -178,14 +179,23 @@ func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.MergeSmallRegionKeyCount, err = flags.GetUint64(FlagMergeRegionKeyCount)
+	cfg.ConcurrencyPerStore.Value, err = flags.GetUint(flagConcurrencyPerStore)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.MergeSmallRegionSizeBytes, err = flags.GetUint64(FlagMergeRegionSizeBytes)
+	cfg.ConcurrencyPerStore.Modified = flags.Changed(flagConcurrencyPerStore)
+
+	cfg.MergeSmallRegionKeyCount.Value, err = flags.GetUint64(FlagMergeRegionKeyCount)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	cfg.MergeSmallRegionKeyCount.Modified = flags.Changed(FlagMergeRegionKeyCount)
+
+	cfg.MergeSmallRegionSizeBytes.Value, err = flags.GetUint64(FlagMergeRegionSizeBytes)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.MergeSmallRegionSizeBytes.Modified = flags.Changed(FlagMergeRegionSizeBytes)
 
 	if flags.Lookup(flagWithSysTable) != nil {
 		cfg.WithSysTable, err = flags.GetBool(flagWithSysTable)
@@ -206,6 +216,7 @@ type RestoreConfig struct {
 	RestoreCommonConfig
 
 	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
+	LoadStats          bool          `json:"load-stats" toml:"load-stats"`
 	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
 	StatsConcurrency   uint          `json:"stats-concurrency" toml:"stats-concurrency"`
 	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
@@ -250,6 +261,7 @@ type RestoreConfig struct {
 // DefineRestoreFlags defines common flags for the restore tidb command.
 func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
+	flags.Bool(flagLoadStats, true, "Run load stats at end of snapshot restore task")
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
@@ -318,6 +330,10 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	cfg.NoSchema, err = flags.GetBool(flagNoSchema)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.LoadStats, err = flags.GetBool(flagLoadStats)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -529,7 +545,6 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 		return errors.Trace(err)
 	}
 	client.SetConcurrency(uint(cfg.Concurrency))
-	client.SetConcurrencyPerStore(cfg.ConcurrencyPerStore)
 	return nil
 }
 
@@ -706,24 +721,22 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer mgr.Close()
 	codec := mgr.GetStorage().GetCodec()
 
-	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
-	mergeRegionCount := cfg.MergeSmallRegionKeyCount
-	if mergeRegionSize == conn.DefaultMergeRegionSizeBytes &&
-		mergeRegionCount == conn.DefaultMergeRegionKeyCount {
-		// according to https://github.com/pingcap/tidb/issues/34167.
-		// we should get the real config from tikv to adapt the dynamic region.
-		httpCli := httputil.NewClient(mgr.GetTLSConfig())
-		mergeRegionSize, mergeRegionCount = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
+	// need retrieve these configs from tikv if not set in command.
+	kvConfigs := &pconfig.KVConfig{
+		ImportGoroutines:    cfg.ConcurrencyPerStore,
+		MergeRegionSize:     cfg.MergeSmallRegionSizeBytes,
+		MergeRegionKeyCount: cfg.MergeSmallRegionKeyCount,
 	}
 
+	// according to https://github.com/pingcap/tidb/issues/34167.
+	// we should get the real config from tikv to adapt the dynamic region.
+	httpCli := httputil.NewClient(mgr.GetTLSConfig())
+	mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
+
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(
-		mgr.GetPDClient(),
-		mgr.GetPDHTTPClient(),
-		mgr.GetTLSConfig(),
-		keepaliveCfg,
-		false,
-	)
+	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
+	// using tikv config to set the concurrency-per-store for client.
+	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
 	err = configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -751,7 +764,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, reader); err != nil {
+	if err = client.InitBackupMeta(c, backupMeta, u, reader, cfg.LoadStats); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -800,29 +813,21 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		log.Info("finish removing pd scheduler")
 	}()
 
-	var checkpointSetWithTableID map[int64]map[string]struct{}
+	var checkpointTaskName string
+	var checkpointFirstRun bool = true
 	if cfg.UseCheckpoint {
-		taskName := cfg.generateSnapshotRestoreTaskName(client.GetClusterID(ctx))
-		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(ctx, s, taskName, schedulersConfig, cfg.UseCheckpoint)
+		checkpointTaskName = cfg.generateSnapshotRestoreTaskName(client.GetClusterID(ctx))
+		// if the checkpoint metadata exists in the external storage, the restore is not
+		// for the first time.
+		existsCheckpointMetadata, err := checkpoint.ExistsRestoreCheckpoint(ctx, s, checkpointTaskName)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if restoreSchedulersConfigFromCheckpoint != nil {
-			restoreSchedulers = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
-		}
-		checkpointSetWithTableID = sets
-
-		defer func() {
-			// need to flush the whole checkpoint data so that br can quickly jump to
-			// the log kv restore step when the next retry.
-			log.Info("wait for flush checkpoint...")
-			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !schedulersRemovable)
-		}()
+		checkpointFirstRun = !existsCheckpointMetadata
 	}
 
 	if isFullRestore(cmdName) {
-		// we need check cluster is fresh every time. except restore from a checkpoint.
-		if client.IsFull() && len(checkpointSetWithTableID) == 0 {
+		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
 			if err = client.CheckTargetClusterFresh(ctx); err != nil {
 				return errors.Trace(err)
 			}
@@ -840,6 +845,26 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	// reload or register the checkpoint
+	var checkpointSetWithTableID map[int64]map[string]struct{}
+	if cfg.UseCheckpoint {
+		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(ctx, s, checkpointTaskName, schedulersConfig, checkpointFirstRun)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if restoreSchedulersConfigFromCheckpoint != nil {
+			restoreSchedulers = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
+		}
+		checkpointSetWithTableID = sets
+
+		defer func() {
+			// need to flush the whole checkpoint data so that br can quickly jump to
+			// the log kv restore step when the next retry.
+			log.Info("wait for flush checkpoint...")
+			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !schedulersRemovable)
+		}()
 	}
 
 	sp := utils.BRServiceSafePoint{
@@ -909,6 +934,12 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
+	// preallocate the table id, because any ddl job or database creation also allocates the global ID
+	err = client.AllocTableIDs(ctx, tables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// execute DDL first
 	err = client.ExecDDLs(ctx, ddlJobs)
 	if err != nil {
@@ -923,11 +954,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return nil
 	}
 
-	for _, db := range dbs {
-		err = client.CreateDatabase(ctx, db.Info)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	if err = client.CreateDatabases(ctx, dbs); err != nil {
+		return errors.Trace(err)
 	}
 
 	// We make bigger errCh so we won't block on multi-part failed.
@@ -982,7 +1010,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
 	rangeStream := restore.GoValidateFileRanges(
-		ctx, tableStream, tableFileMap, mergeRegionSize, mergeRegionCount, errCh)
+		ctx, tableStream, tableFileMap, kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value, errCh)
 
 	rangeSize := restore.EstimateRangeSize(files)
 	summary.CollectInt("restore ranges", rangeSize)
@@ -1000,7 +1028,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// Restore sst files in batch.
 	batchSize := mathutil.Clamp(int(cfg.Concurrency), defaultRestoreConcurrency, maxRestoreBatchSizeLimit)
 	if client.GetGranularity() == string(restore.CoarseGrained) {
-		batchSize = mathutil.Max(int(client.GetTotalDownloadConcurrency()), maxRestoreBatchSizeLimit)
+		batchSize = mathutil.MaxInt
 	}
 	failpoint.Inject("small-batch-size", func(v failpoint.Value) {
 		log.Info("failpoint small batch size is on", zap.Int("size", v.(int)))
@@ -1036,13 +1064,14 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	var finish <-chan struct{}
 	postHandleCh := afterTableRestoredCh
 
-	// pipeline checksum and load stats
+	// pipeline checksum
 	if cfg.Checksum {
-		afterTableCheckesumedCh := client.GoValidateChecksum(
-			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
-		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, s, &cfg.CipherInfo, afterTableCheckesumedCh, errCh, cfg.StatsConcurrency)
-		postHandleCh = afterTableLoadStatsCh
+		postHandleCh = client.GoValidateChecksum(
+			ctx, postHandleCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
 	}
+
+	// pipeline update meta and load stats
+	postHandleCh = client.GoUpdateMetaAndLoadStats(ctx, s, &cfg.CipherInfo, postHandleCh, errCh, cfg.StatsConcurrency, cfg.LoadStats)
 
 	// pipeline wait Tiflash synced
 	if cfg.WaitTiflashReady {

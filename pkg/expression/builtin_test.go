@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -53,6 +52,7 @@ func evalBuiltinFuncConcurrent(f builtinFunc, ctx EvalContext, row chunk.Row) (d
 }
 
 func evalBuiltinFunc(f builtinFunc, ctx EvalContext, row chunk.Row) (d types.Datum, err error) {
+	ctx = wrapEvalAssert(ctx, f)
 	var (
 		res    any
 		isNull bool
@@ -80,11 +80,11 @@ func evalBuiltinFunc(f builtinFunc, ctx EvalContext, row chunk.Row) (d types.Dat
 		res, isNull, err = f.evalString(ctx, row)
 	}
 
-	if isNull || err != nil {
+	d.SetValue(res, f.getRetTp())
+	if isNull {
 		d.SetNull()
 		return d, err
 	}
-	d.SetValue(res, f.getRetTp())
 	return
 }
 
@@ -260,7 +260,7 @@ func TestBuiltinFuncCache(t *testing.T) {
 
 // newFunctionForTest creates a new ScalarFunction using funcName and arguments,
 // it is different from expression.NewFunction which needs an additional retType argument.
-func newFunctionForTest(ctx sessionctx.Context, funcName string, args ...Expression) (Expression, error) {
+func newFunctionForTest(ctx BuildContext, funcName string, args ...Expression) (Expression, error) {
 	fc, ok := funcs[funcName]
 	if !ok {
 		return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)

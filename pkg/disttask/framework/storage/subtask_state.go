@@ -27,7 +27,7 @@ func (mgr *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		vars := se.GetSessionVars()
 		_, err := sqlexec.ExecSQL(ctx,
-			se,
+			se.GetSQLExecutor(),
 			`update mysql.tidb_background_subtask
 			 set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
 			 where id = %? and exec_id = %?`,
@@ -61,14 +61,14 @@ func (mgr *TaskManager) FailSubtask(ctx context.Context, execID string, taskID i
 	}
 	_, err1 := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask
-		set state = %?, 
-		error = %?, 
-		start_time = unix_timestamp(), 
+		set state = %?,
+		error = %?,
+		start_time = unix_timestamp(),
 		state_update_time = unix_timestamp(),
 		end_time = CURRENT_TIMESTAMP()
-		where exec_id = %? and 
-		task_key = %? and 
-		state in (%?, %?) 
+		where exec_id = %? and
+		task_key = %? and
+		state in (%?, %?)
 		limit 1;`,
 		proto.SubtaskStateFailed,
 		serializeErr(err),
@@ -83,13 +83,13 @@ func (mgr *TaskManager) FailSubtask(ctx context.Context, execID string, taskID i
 func (mgr *TaskManager) CancelSubtask(ctx context.Context, execID string, taskID int64) error {
 	_, err1 := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask
-		set state = %?, 
-		start_time = unix_timestamp(), 
+		set state = %?,
+		start_time = unix_timestamp(),
 		state_update_time = unix_timestamp(),
 		end_time = CURRENT_TIMESTAMP()
-		where exec_id = %? and 
-		task_key = %? and 
-		state in (%?, %?) 
+		where exec_id = %? and
+		task_key = %? and
+		state in (%?, %?)
 		limit 1;`,
 		proto.SubtaskStateCanceled,
 		execID,
@@ -114,14 +114,14 @@ func (mgr *TaskManager) ResumeSubtasks(ctx context.Context, taskID int64) error 
 }
 
 // RunningSubtasksBack2Pending implements the taskexecutor.TaskTable interface.
-func (mgr *TaskManager) RunningSubtasksBack2Pending(ctx context.Context, subtasks []*proto.Subtask) error {
+func (mgr *TaskManager) RunningSubtasksBack2Pending(ctx context.Context, subtasks []*proto.SubtaskBase) error {
 	// skip the update process.
 	if len(subtasks) == 0 {
 		return nil
 	}
 	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		for _, subtask := range subtasks {
-			_, err := sqlexec.ExecSQL(ctx, se, `
+			_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 				update mysql.tidb_background_subtask
 				set state = %?, state_update_time = unix_timestamp()
 				where id = %? and exec_id = %? and state = %?`,

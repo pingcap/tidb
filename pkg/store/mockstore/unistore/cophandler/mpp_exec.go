@@ -559,7 +559,7 @@ func (e *topNExec) open() error {
 		for i := 0; i < numRows; i++ {
 			row := chk.GetRow(i)
 			for j, cond := range e.conds {
-				d, err := cond.Eval(e.sctx, row)
+				d, err := cond.Eval(e.sctx.GetExprCtx().GetEvalCtx(), row)
 				if err != nil {
 					return err
 				}
@@ -1012,7 +1012,7 @@ func (e *aggExec) getGroupKey(row chunk.Row) (*chunk.MutRow, []byte, error) {
 	gbyRow := chunk.MutRowFromTypes(e.groupByTypes)
 	sc := e.sctx.GetSessionVars().StmtCtx
 	for i, item := range e.groupByExprs {
-		v, err := item.Eval(e.sctx, row)
+		v, err := item.Eval(e.sctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -1032,7 +1032,7 @@ func (e *aggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateContext
 	if !ok {
 		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.aggExprs))
 		for _, agg := range e.aggExprs {
-			aggCtxs = append(aggCtxs, agg.CreateContext(e.sctx))
+			aggCtxs = append(aggCtxs, agg.CreateContext(e.sctx.GetExprCtx().GetEvalCtx()))
 		}
 		e.aggCtxsMap[string(groupKey)] = aggCtxs
 	}
@@ -1131,7 +1131,7 @@ func (e *selExec) next() (*chunk.Chunk, error) {
 			row := chk.GetRow(rows)
 			passCheck := true
 			for _, cond := range e.conditions {
-				d, err := cond.Eval(e.sctx, row)
+				d, err := cond.Eval(e.sctx.GetExprCtx().GetEvalCtx(), row)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -1182,7 +1182,7 @@ func (e *projExec) next() (*chunk.Chunk, error) {
 		row := chk.GetRow(i)
 		newRow := chunk.MutRowFromTypes(e.fieldTypes)
 		for i, expr := range e.exprs {
-			d, err := expr.Eval(e.sctx, row)
+			d, err := expr.Eval(e.sctx.GetExprCtx().GetEvalCtx(), row)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

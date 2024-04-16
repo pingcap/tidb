@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/core/internal"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -45,7 +45,8 @@ func TestReadFromStorageHint(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count:     1,
 			Available: true,
@@ -73,7 +74,7 @@ func TestReadFromStorageHint(t *testing.T) {
 }
 
 func TestAllViewHintType(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -94,7 +95,8 @@ func TestAllViewHintType(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -138,7 +140,7 @@ func TestAllViewHintType(t *testing.T) {
 }
 
 func TestJoinHintCompatibility(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -164,7 +166,8 @@ func TestJoinHintCompatibility(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		name := tblInfo.Name.L
 		if name == "t4" || name == "t5" || name == "t6" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
@@ -213,7 +216,8 @@ func TestReadFromStorageHintAndIsolationRead(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count:     1,
 			Available: true,
@@ -254,7 +258,8 @@ func TestIsolationReadTiFlashUseIndexHint(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 			Count:     1,
 			Available: true,
@@ -306,7 +311,8 @@ func TestOptimizeHintOnPartitionTable(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,

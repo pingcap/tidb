@@ -186,7 +186,7 @@ func buildClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closure
 func convertToExprs(sctx sessionctx.Context, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
 	exprs := make([]expression.Expression, 0, len(pbExprs))
 	for _, expr := range pbExprs {
-		e, err := expression.PBToExpr(sctx, expr, fieldTps)
+		e, err := expression.PBToExpr(sctx.GetExprCtx(), expr, fieldTps)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -787,7 +787,7 @@ func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool,
 	gotRow = true
 	for _, expr := range e.selectionCtx.conditions {
 		wc := e.sctx.GetSessionVars().StmtCtx.WarningCount()
-		d, err := expr.Eval(e.sctx, row)
+		d, err := expr.Eval(e.sctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -1026,7 +1026,7 @@ func (e *topNProcessor) Process(key, value []byte) (err error) {
 	ctx := e.topNCtx
 	row := e.scanCtx.chk.GetRow(0)
 	for i, expr := range ctx.orderByExprs {
-		d, err := expr.Eval(e.sctx, row)
+		d, err := expr.Eval(e.sctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1124,7 +1124,7 @@ func (e *hashAggProcessor) getGroupKey(row chunk.Row) ([]byte, error) {
 	sc := e.sctx.GetSessionVars().StmtCtx
 	errCtx := sc.ErrCtx()
 	for _, item := range e.groupByExprs {
-		v, err := item.Eval(e.sctx, row)
+		v, err := item.Eval(e.sctx.GetExprCtx().GetEvalCtx(), row)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1143,7 +1143,7 @@ func (e *hashAggProcessor) getContexts(groupKey []byte) []*aggregation.AggEvalua
 	if !ok {
 		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.aggExprs))
 		for _, agg := range e.aggExprs {
-			aggCtxs = append(aggCtxs, agg.CreateContext(e.sctx))
+			aggCtxs = append(aggCtxs, agg.CreateContext(e.sctx.GetExprCtx().GetEvalCtx()))
 		}
 		e.aggCtxsMap[string(groupKey)] = aggCtxs
 	}
@@ -1185,7 +1185,7 @@ func safeCopy(b []byte) []byte {
 }
 
 func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) error {
-	if isResolved(startTS, resolved) {
+	if isResolved(lock.StartTS, resolved) {
 		return nil
 	}
 	lockVisible := lock.StartTS < startTS

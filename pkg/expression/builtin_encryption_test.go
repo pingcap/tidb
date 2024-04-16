@@ -26,11 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -281,7 +281,7 @@ func TestAESDecrypt(t *testing.T) {
 	}
 }
 
-func testNullInput(t *testing.T, ctx sessionctx.Context, fnName string) {
+func testNullInput(t *testing.T, ctx *mock.Context, fnName string) {
 	err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
 	fc := funcs[fnName]
@@ -300,7 +300,7 @@ func testNullInput(t *testing.T, ctx sessionctx.Context, fnName string) {
 	require.True(t, crypt.IsNull())
 }
 
-func testAmbiguousInput(t *testing.T, ctx sessionctx.Context, fnName string) {
+func testAmbiguousInput(t *testing.T, ctx *mock.Context, fnName string) {
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	// test for modes that require init_vector

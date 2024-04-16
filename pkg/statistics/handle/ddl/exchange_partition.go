@@ -54,7 +54,7 @@ func (h *ddlHandlerImpl) onExchangeAPartition(t *util.DDLEvent) error {
 		// Update the global stats.
 		if modifyCountDelta != 0 || countDelta != 0 {
 			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-			globalTableSchema, ok := is.SchemaByTable(globalTableInfo)
+			globalTableSchema, ok := infoschema.SchemaByTable(is, globalTableInfo)
 			if !ok {
 				return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
 			}

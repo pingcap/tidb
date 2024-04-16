@@ -29,6 +29,18 @@ import (
 )
 
 func TestWriteRUStatistics(t *testing.T) {
+	tz, _ := time.LoadLocation("Asia/Shanghai")
+	testWriteRUStatisticsTz(t, tz)
+
+	// test with DST timezone.
+	tz, _ = time.LoadLocation("Australia/Lord_Howe")
+	testWriteRUStatisticsTz(t, tz)
+
+	testWriteRUStatisticsTz(t, time.Local)
+	testWriteRUStatisticsTz(t, time.UTC)
+}
+
+func testWriteRUStatisticsTz(t *testing.T, tz *time.Location) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newTestKit(t, store)
 
@@ -63,29 +75,29 @@ func TestWriteRUStatistics(t *testing.T) {
 	testInfo := &testInfoschema{
 		groups: infoGroups,
 	}
-	testInfoCache := infoschema.NewCache(1)
+	testInfoCache := infoschema.NewCache(nil, 1)
 	testInfoCache.Insert(testInfo, uint64(time.Now().Unix()))
 	testRUWriter.RMClient = testRMClient
 	testRUWriter.InfoCache = testInfoCache
 
 	tk.MustQuery("SELECT count(*) from mysql.request_unit_by_group").Check(testkit.Rows("0"))
 
-	testRUWriter.StartTime = time.Date(2023, 12, 26, 0, 0, 1, 0, time.Local)
+	testRUWriter.StartTime = time.Date(2023, 12, 26, 0, 0, 1, 0, tz)
 	require.NoError(t, testRUWriter.DoWriteRUStatistics(context.Background()))
 	tk.MustQuery("SELECT resource_group, total_ru from mysql.request_unit_by_group").Check(testkit.Rows("default 350", "test 150"))
 
 	// after 1 day, only 1 group has delta ru.
 	testRMClient.groups[1].RUStats.RRU = 500
-	testRUWriter.StartTime = time.Date(2023, 12, 27, 0, 0, 1, 0, time.Local)
+	testRUWriter.StartTime = time.Date(2023, 12, 27, 0, 0, 1, 0, tz)
 	require.NoError(t, testRUWriter.DoWriteRUStatistics(context.Background()))
 	tk.MustQuery("SELECT resource_group, total_ru from mysql.request_unit_by_group where end_time = '2023-12-27'").Check(testkit.Rows("test 400"))
 
 	// test after 1 day with 0 delta ru, no data inserted.
-	testRUWriter.StartTime = time.Date(2023, 12, 28, 0, 0, 1, 0, time.Local)
+	testRUWriter.StartTime = time.Date(2023, 12, 28, 0, 0, 1, 0, tz)
 	require.NoError(t, testRUWriter.DoWriteRUStatistics(context.Background()))
 	tk.MustQuery("SELECT count(*) from mysql.request_unit_by_group where end_time = '2023-12-28'").Check(testkit.Rows("0"))
 
-	testRUWriter.StartTime = time.Date(2023, 12, 29, 0, 0, 0, 0, time.Local)
+	testRUWriter.StartTime = time.Date(2023, 12, 29, 0, 0, 0, 0, tz)
 	testRMClient.groups[0].RUStats.WRU = 200
 	require.NoError(t, testRUWriter.DoWriteRUStatistics(context.Background()))
 	tk.MustQuery("SELECT resource_group, total_ru from mysql.request_unit_by_group where end_time = '2023-12-29'").Check(testkit.Rows("default 50"))
@@ -94,12 +106,12 @@ func TestWriteRUStatistics(t *testing.T) {
 	// This is to test after restart, no unexpected data are inserted.
 	testRMClient.groups[0].RUStats.RRU = 1000
 	testRMClient.groups[1].RUStats.WRU = 2000
-	testRUWriter.StartTime = time.Date(2023, 12, 29, 1, 0, 0, 0, time.Local)
+	testRUWriter.StartTime = time.Date(2023, 12, 29, 1, 0, 0, 0, tz)
 	require.NoError(t, testRUWriter.DoWriteRUStatistics(context.Background()))
 	tk.MustQuery("SELECT resource_group, total_ru from mysql.request_unit_by_group where end_time = '2023-12-29'").Check(testkit.Rows("default 50"))
 
 	// after 61 days, old record should be GCed.
-	testRUWriter.StartTime = time.Date(2023, 12, 26, 0, 0, 0, 0, time.Local).Add(92 * 24 * time.Hour)
+	testRUWriter.StartTime = time.Date(2023, 12, 26, 0, 0, 0, 0, tz).Add(92 * 24 * time.Hour)
 	tk.MustQuery("SELECT count(*) from mysql.request_unit_by_group where end_time = '2023-12-26'").Check(testkit.Rows("2"))
 	require.NoError(t, testRUWriter.GCOutdatedRecords(testRUWriter.StartTime))
 	tk.MustQuery("SELECT count(*) from mysql.request_unit_by_group where end_time = '2023-12-26'").Check(testkit.Rows("0"))
@@ -130,20 +142,30 @@ func (is *testInfoschema) SchemaMetaVersion() int64 {
 }
 
 func TestGetLastExpectedTime(t *testing.T) {
+	tz, _ := time.LoadLocation("Asia/Shanghai")
+	testGetLastExpectedTimeTz(t, tz)
+
+	// test with DST affected timezone.
+	tz, _ = time.LoadLocation("Australia/Lord_Howe")
+	testGetLastExpectedTimeTz(t, tz)
+	testGetLastExpectedTimeTz(t, time.Local)
+}
+
+func testGetLastExpectedTimeTz(t *testing.T, tz *time.Location) {
 	// 2023-12-28 10:46:23.000
-	now := time.Date(2023, 12, 28, 10, 46, 23, 0, time.Local)
+	now := time.Date(2023, 12, 28, 10, 46, 23, 0, tz)
 	newTime := func(hour, minute int) time.Time {
-		return time.Date(2023, 12, 28, hour, minute, 0, 0, time.Local)
+		return time.Date(2023, 12, 28, hour, minute, 0, 0, tz)
 	}
 
-	require.Equal(t, domain.GetLastExpectedTime(now, 5*time.Minute), newTime(10, 45))
-	require.Equal(t, domain.GetLastExpectedTime(time.Date(2023, 12, 28, 10, 45, 0, 0, time.Local), 5*time.Minute), newTime(10, 45))
-	require.Equal(t, domain.GetLastExpectedTime(now, 10*time.Minute), newTime(10, 40))
-	require.Equal(t, domain.GetLastExpectedTime(now, 30*time.Minute), newTime(10, 30))
-	require.Equal(t, domain.GetLastExpectedTime(now, time.Hour), newTime(10, 0))
-	require.Equal(t, domain.GetLastExpectedTime(now, 3*time.Hour), newTime(9, 0))
-	require.Equal(t, domain.GetLastExpectedTime(now, 4*time.Hour), newTime(8, 0))
-	require.Equal(t, domain.GetLastExpectedTime(now, 12*time.Hour), newTime(0, 0))
-	require.Equal(t, domain.GetLastExpectedTime(now, 24*time.Hour), newTime(0, 0))
-	require.Equal(t, domain.GetLastExpectedTime(time.Date(2023, 12, 28, 0, 0, 0, 0, time.Local), 24*time.Hour), newTime(0, 0))
+	require.Equal(t, domain.GetLastExpectedTimeTZ(now, 5*time.Minute, tz), newTime(10, 45))
+	require.Equal(t, domain.GetLastExpectedTimeTZ(time.Date(2023, 12, 28, 10, 45, 0, 0, tz), 5*time.Minute, tz), newTime(10, 45))
+	require.Equal(t, domain.GetLastExpectedTimeTZ(now, 10*time.Minute, tz), newTime(10, 40))
+	require.Equal(t, domain.GetLastExpectedTimeTZ(now, 30*time.Minute, tz), newTime(10, 30))
+	require.Equal(t, domain.GetLastExpectedTimeTZ(now, time.Hour, tz), newTime(10, 0))
+	require.Equal(t, domain.GetLastExpectedTimeTZ(now, 3*time.Hour, tz), newTime(9, 0))
+	require.Equal(t, domain.GetLastExpectedTimeTZ(now, 4*time.Hour, tz), newTime(8, 0))
+	require.Equal(t, domain.GetLastExpectedTimeTZ(now, 12*time.Hour, tz), newTime(0, 0))
+	require.Equal(t, domain.GetLastExpectedTimeTZ(now, 24*time.Hour, tz), newTime(0, 0))
+	require.Equal(t, domain.GetLastExpectedTimeTZ(time.Date(2023, 12, 28, 0, 0, 0, 0, tz), 24*time.Hour, tz), newTime(0, 0))
 }

@@ -28,8 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -821,7 +819,7 @@ func TestTime(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func resetStmtContext(ctx sessionctx.Context) {
+func resetStmtContext(ctx *mock.Context) {
 	ctx.GetSessionVars().StmtCtx.ResetStmtCache()
 }
 
@@ -872,8 +870,9 @@ func TestNowAndUTCTimestamp(t *testing.T) {
 	}
 
 	// Test that "timestamp" and "time_zone" variable may affect the result of Now() builtin function.
-	err := ctx.GetSessionVars().SetSystemVar("time_zone", "+00:00")
+	err := ctx.GetSessionVars().SetSystemVar("time_zone", "UTC")
 	require.NoError(t, err)
+	ctx.GetSessionVars().StmtCtx.SetTimeZone(time.UTC)
 	err = ctx.GetSessionVars().SetSystemVar("timestamp", "1234")
 	require.NoError(t, err)
 	fc := funcs[ast.Now]
@@ -1131,7 +1130,7 @@ func TestSubTimeSig(t *testing.T) {
 func TestSysDate(t *testing.T) {
 	fc := funcs[ast.Sysdate]
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx.SetTimeZone(timeutil.SystemLocation())
+	ctx.ResetSessionAndStmtTimeZone(timeutil.SystemLocation())
 	timezones := []string{"1234", "0"}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.
@@ -1148,7 +1147,7 @@ func TestSysDate(t *testing.T) {
 
 		baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, ast.Sysdate, vecExprBenchCase{retEvalType: types.ETDatetime})
 		resetStmtContext(ctx)
-		err = baseFunc.vecEvalTime(ctx, input, output)
+		err = vecEvalType(ctx, baseFunc, types.ETDatetime, input, output)
 		require.NoError(t, err)
 		last = time.Now()
 		times := output.Times()
@@ -1165,7 +1164,7 @@ func TestSysDate(t *testing.T) {
 		resetStmtContext(ctx)
 		loc := location(ctx)
 		startTm := time.Now().In(loc)
-		err = baseFunc.vecEvalTime(ctx, input, output)
+		err = vecEvalType(ctx, baseFunc, types.ETDatetime, input, output)
 		require.NoError(t, err)
 		for i := 0; i < 1024; i++ {
 			require.GreaterOrEqual(t, times[i].String(), startTm.Format(types.TimeFormat))
@@ -1185,7 +1184,7 @@ func TestSysDate(t *testing.T) {
 	require.Error(t, err)
 }
 
-func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
+func convertToTimeWithFsp(tc types.Context, arg types.Datum, tp byte, fsp int) (d types.Datum, err error) {
 	if fsp > types.MaxFsp {
 		fsp = types.MaxFsp
 	}
@@ -1193,7 +1192,7 @@ func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte
 	f := types.NewFieldType(tp)
 	f.SetDecimal(fsp)
 
-	d, err = arg.ConvertTo(sc.TypeCtx(), f)
+	d, err = arg.ConvertTo(tc, f)
 	if err != nil {
 		d.SetNull()
 		return d, err
@@ -1210,12 +1209,12 @@ func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte
 	return
 }
 
-func convertToTime(sc *stmtctx.StatementContext, arg types.Datum, tp byte) (d types.Datum, err error) {
-	return convertToTimeWithFsp(sc, arg, tp, types.MaxFsp)
+func convertToTime(tc types.Context, arg types.Datum, tp byte) (d types.Datum, err error) {
+	return convertToTimeWithFsp(tc, arg, tp, types.MaxFsp)
 }
 
-func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datum, err error) {
-	date, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDatetime)
+func builtinDateFormat(tc types.Context, args []types.Datum) (d types.Datum, err error) {
+	date, err := convertToTime(tc, args[0], mysql.TypeDatetime)
 	if err != nil {
 		return d, err
 	}
@@ -1254,12 +1253,7 @@ func TestFromUnixTime(t *testing.T) {
 		{false, 5000000000, 0, "", "2128-06-11 08:53:20"},
 		{true, 32536771199, 32536771199.99999, "", "3001-01-18 23:59:59.999990"},
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	originTZ := sc.TimeZone()
-	sc.SetTimeZone(time.UTC)
-	defer func() {
-		sc.SetTimeZone(originTZ)
-	}()
+	ctx.ResetSessionAndStmtTimeZone(time.UTC)
 	fc := funcs[ast.FromUnixTime]
 	for _, c := range tbl {
 		var timestamp types.Datum
@@ -1292,7 +1286,7 @@ func TestFromUnixTime(t *testing.T) {
 			require.NoError(t, err)
 			v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			require.NoError(t, err)
-			result, err := builtinDateFormat(ctx, []types.Datum{types.NewStringDatum(c.expect), format})
+			result, err := builtinDateFormat(ctx.GetSessionVars().StmtCtx.TypeCtx(), []types.Datum{types.NewStringDatum(c.expect), format})
 			require.NoError(t, err)
 			require.Equalf(t, result.GetString(), v.GetString(), "%+v", t)
 		}
@@ -1329,7 +1323,7 @@ func TestCurrentTime(t *testing.T) {
 	ctx := createContext(t)
 	tfStr := time.TimeOnly
 
-	last := time.Now()
+	last := time.Now().In(ctx.GetSessionVars().Location())
 	fc := funcs[ast.CurrentTime]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
 	require.NoError(t, err)
@@ -1843,7 +1837,7 @@ func TestUnixTimestamp(t *testing.T) {
 	require.Equal(t, true, d.IsNull())
 
 	// Set the time_zone variable, because UnixTimestamp() result depends on it.
-	ctx.GetSessionVars().TimeZone = time.UTC
+	ctx.ResetSessionAndStmtTimeZone(time.UTC)
 	ctx.GetSessionVars().StmtCtx.SetTypeFlags(ctx.GetSessionVars().StmtCtx.TypeFlags().WithIgnoreZeroInDate(true))
 	tests := []struct {
 		inputDecimal int
@@ -2626,7 +2620,7 @@ func TestPeriodAdd(t *testing.T) {
 		require.NotNil(t, f)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if !test.Success {
-			require.True(t, result.IsNull())
+			require.Error(t, err)
 			continue
 		}
 		require.NoError(t, err)
@@ -2987,9 +2981,10 @@ func TestWithTimeZone(t *testing.T) {
 	ctx := createContext(t)
 	sv := ctx.GetSessionVars()
 	originTZ := sv.Location()
-	sv.TimeZone, _ = time.LoadLocation("Asia/Tokyo")
+	tz, _ := time.LoadLocation("Asia/Tokyo")
+	ctx.ResetSessionAndStmtTimeZone(tz)
 	defer func() {
-		sv.TimeZone = originTZ
+		ctx.ResetSessionAndStmtTimeZone(originTZ)
 	}()
 
 	timeToGoTime := func(d types.Datum, loc *time.Location) time.Time {
@@ -3029,7 +3024,7 @@ func TestWithTimeZone(t *testing.T) {
 
 func TestTidbParseTso(t *testing.T) {
 	ctx := createContext(t)
-	ctx.GetSessionVars().TimeZone = time.UTC
+	ctx.ResetSessionAndStmtTimeZone(time.UTC)
 	tests := []struct {
 		param  any
 		expect string
@@ -3112,7 +3107,7 @@ func TestTiDBBoundedStaleness(t *testing.T) {
 	t2 := time.Now()
 	t2Str := t2.Format(types.TimeFormat)
 	timeZone := time.Local
-	ctx.GetSessionVars().TimeZone = timeZone
+	ctx.ResetSessionAndStmtTimeZone(timeZone)
 	tests := []struct {
 		leftTime     any
 		rightTime    any

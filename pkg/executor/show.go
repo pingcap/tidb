@@ -374,7 +374,7 @@ func (e *ShowExec) fetchShowBind() error {
 }
 
 func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';", bindinfo.Enabled, bindinfo.Using))
@@ -405,7 +405,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 
 func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM information_schema.engines`)
 	if err != nil {
@@ -559,7 +559,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 
 	var snapshot uint64
@@ -653,7 +653,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			defaultValStr := fmt.Sprintf("%v", desc.DefaultValue)
 			// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
 			if col.GetType() == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr && !strings.HasPrefix(strings.ToUpper(defaultValStr), strings.ToUpper(ast.CurrentTimestamp)) {
-				timeValue, err := table.GetColDefaultValue(e.Ctx(), col.ToInfo())
+				timeValue, err := table.GetColDefaultValue(e.Ctx().GetExprCtx(), col.ToInfo())
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -1042,7 +1042,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
 					if defaultValStr != types.ZeroDatetimeStr && col.GetType() == mysql.TypeTimestamp {
-						timeValue, err := table.GetColDefaultValue(ctx, col)
+						timeValue, err := table.GetColDefaultValue(ctx.GetExprCtx(), col)
 						if err != nil {
 							return errors.Trace(err)
 						}
@@ -1050,7 +1050,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 					}
 
 					if col.DefaultIsExpr {
-						fmt.Fprintf(buf, " DEFAULT %s", format.OutputFormat(defaultValStr))
+						fmt.Fprintf(buf, " DEFAULT %s", defaultValStr)
 					} else {
 						if col.GetType() == mysql.TypeBit {
 							defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
@@ -1172,7 +1172,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 			colNames = append(colNames, stringutil.Escape(col.O, sqlMode))
 		}
 		fmt.Fprintf(buf, "(%s)", strings.Join(colNames, ","))
-		if fk.RefSchema.L != "" {
+		if fk.RefSchema.L != "" && dbName != nil && fk.RefSchema.L != dbName.L {
 			fmt.Fprintf(buf, " REFERENCES %s.%s ", stringutil.Escape(fk.RefSchema.O, sqlMode), stringutil.Escape(fk.RefTable.O, sqlMode))
 		} else {
 			fmt.Fprintf(buf, " REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode))
@@ -1424,7 +1424,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	tableInfo := tb.Meta()
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
-	if err = constructResultOfShowCreateTable(e.Ctx(), &e.DBName, tableInfo, tb.Allocators(e.Ctx().GetSessionVars()), &buf); err != nil {
+	if err = constructResultOfShowCreateTable(e.Ctx(), &e.DBName, tableInfo, tb.Allocators(e.Ctx().GetTableCtx()), &buf); err != nil {
 		return err
 	}
 	if tableInfo.IsView() {
@@ -1645,7 +1645,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		}
 	}
 
-	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
 		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
@@ -2296,7 +2296,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	if e.ImportJobID != nil {
 		var info *importer.JobInfo
 		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
-			exec := se.(sqlexec.SQLExecutor)
+			exec := se.GetSQLExecutor()
 			var err2 error
 			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
 			return err2
@@ -2307,7 +2307,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	}
 	var infos []*importer.JobInfo
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
-		exec := se.(sqlexec.SQLExecutor)
+		exec := se.GetSQLExecutor()
 		var err2 error
 		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
 		return err2
@@ -2337,7 +2337,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	return runWithSystemSession(ctx, sctx, func(s sessionctx.Context) error {
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
-			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, hint.NewQBHintHandler(nil))
+			plannercore.PlanBuilderOptNoExecution{}).Init(s.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil)
 		if err != nil {
 			return err

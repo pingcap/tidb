@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tidb/pkg/util/sem"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -606,7 +605,7 @@ func handleBRIEError(err error, terror *terror.Error) error {
 }
 
 func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
-	globalBRIEQueue.tasks.Range(func(key, value any) bool {
+	globalBRIEQueue.tasks.Range(func(_, value any) bool {
 		item := value.(*brieQueueItem)
 		if item.info.kind == kind {
 			item.progress.lock.Lock()
@@ -716,13 +715,13 @@ type tidbGlueSession struct {
 // NOTE: Maybe drain the restult too? See `gluetidb.tidbSession.ExecuteInternal` for more details.
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_, _, err := gs.se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql)
+	_, _, err := gs.se.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
 	return err
 }
 
 func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args ...any) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	exec := gs.se.(sqlexec.SQLExecutor)
+	exec := gs.se.GetSQLExecutor()
 	_, err := exec.ExecuteInternal(ctx, sql, args...)
 	return err
 }

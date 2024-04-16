@@ -1353,6 +1353,61 @@ func TestTiDBEnableRowLevelChecksum(t *testing.T) {
 	require.Equal(t, Off, val)
 }
 
+func TestTiDBAutoAnalyzeRatio(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	// default to 0.5
+	val, err := mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "0.5", val)
+
+	// set to 0.1
+	err = mock.SetGlobalSysVar(ctx, TiDBAutoAnalyzeRatio, "0.1")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "0.1", val)
+
+	// set to 1.1
+	err = mock.SetGlobalSysVar(ctx, TiDBAutoAnalyzeRatio, "1.1")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "1.1", val)
+
+	// set to 0
+	err = mock.SetGlobalSysVar(ctx, TiDBAutoAnalyzeRatio, "0")
+	require.Error(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "1.1", val)
+
+	// set to 0.0000000001
+	err = mock.SetGlobalSysVar(ctx, TiDBAutoAnalyzeRatio, "0.0000000001")
+	require.Error(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "1.1", val)
+
+	// set to 0.00001
+	err = mock.SetGlobalSysVar(ctx, TiDBAutoAnalyzeRatio, "0.00001")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "0.00001", val)
+
+	// set to 0.000009999
+	err = mock.SetGlobalSysVar(ctx, TiDBAutoAnalyzeRatio, "0.000009999")
+	require.Error(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBAutoAnalyzeRatio)
+	require.NoError(t, err)
+	require.Equal(t, "0.00001", val)
+}
+
 func TestTiDBTiFlashReplicaRead(t *testing.T) {
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
@@ -1525,4 +1580,28 @@ func TestTiDBOptTxnAutoRetry(t *testing.T) {
 		warn := vars.StmtCtx.GetWarnings()[0].Err
 		require.Equal(t, "[variable:1287]'OFF' is deprecated and will be removed in a future release. Please use ON instead", warn.Error())
 	}
+}
+
+func TestTiDBLowResTSOUpdateInterval(t *testing.T) {
+	sv := GetSysVar(TiDBLowResolutionTSOUpdateInterval)
+	vars := NewSessionVars(nil)
+
+	// Too low, will get raised to the min value
+	val, err := sv.Validate(vars, "0", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(GetSysVar(TiDBLowResolutionTSOUpdateInterval).MinValue, 10), val)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_low_resolution_tso_update_interval value: '0'", warn.Error())
+
+	// Too high, will get lowered to the max value
+	val, err = sv.Validate(vars, "100000", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(GetSysVar(TiDBLowResolutionTSOUpdateInterval).MaxValue, 10), val)
+	warn = vars.StmtCtx.GetWarnings()[1].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_low_resolution_tso_update_interval value: '100000'", warn.Error())
+
+	// valid
+	val, err = sv.Validate(vars, "1000", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "1000", val)
 }

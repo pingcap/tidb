@@ -338,6 +338,7 @@ func cmdRun(args ...string) bool {
 			fmt.Println("create junit file fail:", err)
 			return false
 		}
+		defer f.Close()
 		if err := write(f, out); err != nil {
 			fmt.Println("write junit file error:", err)
 			return false
@@ -839,7 +840,7 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 }
 
 func skipDIR(pkg string) bool {
-	skipDir := []string{"br", "cmd", "dumpling", "tests", "tools/check", "build"}
+	skipDir := []string{"br", "lightning", "pkg/lightning", "cmd", "dumpling", "tests", "tools/check", "build"}
 	for _, ignore := range skipDir {
 		if strings.HasPrefix(pkg, ignore) {
 			return true
@@ -869,8 +870,26 @@ func buildTestBinary(pkg string) error {
 	return nil
 }
 
+func generateBuildCache() error {
+	// cd cmd/tidb-server && go test -tags intest -exec true -vet off -toolexec=go-compile-without-link
+	cmd := exec.Command("go", "test", "-tags=intest", "-exec=true", "-vet=off")
+	goCompileWithoutLink := fmt.Sprintf("-toolexec=%s/tools/check/go-compile-without-link.sh", workDir)
+	cmd.Args = append(cmd.Args, goCompileWithoutLink)
+	cmd.Dir = path.Join(workDir, "cmd/tidb-server")
+	if err := cmd.Run(); err != nil {
+		return withTrace(err)
+	}
+	return nil
+}
+
 // buildTestBinaryMulti is much faster than build the test packages one by one.
 func buildTestBinaryMulti(pkgs []string) error {
+	// staged build, generate the build cache for all the tests first, then generate the test binary.
+	// This way is faster than generating test binaries directly, because the cache can be used.
+	if err := generateBuildCache(); err != nil {
+		return withTrace(err)
+	}
+
 	// go test --exec=xprog -cover -vet=off --count=0 $(pkgs)
 	xprogPath := path.Join(workDir, "tools/bin/xprog")
 	packages := make([]string, 0, len(pkgs))

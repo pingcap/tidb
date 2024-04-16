@@ -80,7 +80,7 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 		// Although it may skip a segment here, we still treat it as consumed.
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			newBase, err1 = idAcc.Get()
@@ -107,6 +107,14 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 		if uint64(newBase) == math.MaxUint64 {
 			return 0, 0, errAutoincReadFailed
 		}
+		logutil.BgLogger().Info("alloc4Unsigned from",
+			zap.String("category", "autoid service"),
+			zap.Int64("dbID", dbID),
+			zap.Int64("tblID", tblID),
+			zap.Int64("from base", alloc.base),
+			zap.Int64("from end", alloc.end),
+			zap.Int64("to base", newBase),
+			zap.Int64("to end", newEnd))
 		alloc.base, alloc.end = newBase, newEnd
 	}
 	min = alloc.base
@@ -141,7 +149,7 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 		nextStep := int64(batch)
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-		err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			newBase, err1 = idAcc.Get()
@@ -168,6 +176,14 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 		if newBase == math.MaxInt64 {
 			return 0, 0, errAutoincReadFailed
 		}
+		logutil.BgLogger().Info("alloc4Signed from",
+			zap.String("category", "autoid service"),
+			zap.Int64("dbID", dbID),
+			zap.Int64("tblID", tblID),
+			zap.Int64("from base", alloc.base),
+			zap.Int64("from end", alloc.end),
+			zap.Int64("to base", newBase),
+			zap.Int64("to end", newEnd))
 		alloc.base, alloc.end = newBase, newEnd
 	}
 	min = alloc.base
@@ -193,7 +209,7 @@ func (alloc *autoIDValue) rebase4Unsigned(ctx context.Context,
 	var oldValue int64
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -235,7 +251,7 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 	var oldValue, newBase, newEnd int64
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -301,7 +317,19 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 
 func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Service {
 	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
+	service := &Service{
+		autoIDMap:  make(map[autoIDKey]*autoIDValue),
+		leaderShip: l,
+		store:      store,
+	}
 	l.SetBeOwnerHook(func() {
+		// Reset the map to avoid a case that a node lose leadership and regain it, then
+		// improperly use the stale map to serve the autoid requests.
+		// See https://github.com/pingcap/tidb/issues/52600
+		service.autoIDLock.Lock()
+		clear(service.autoIDMap)
+		service.autoIDLock.Unlock()
+
 		logutil.BgLogger().Info("leader change of autoid service, this node become owner",
 			zap.String("addr", selfAddr),
 			zap.String("category", "autoid service"))
@@ -312,11 +340,7 @@ func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Servic
 		panic(err)
 	}
 
-	return &Service{
-		autoIDMap:  make(map[autoIDKey]*autoIDValue),
-		leaderShip: l,
-		store:      store,
-	}
+	return service
 }
 
 type mockClient struct {
@@ -353,7 +377,10 @@ func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 // Close closes the Service and clean up resource.
 func (s *Service) Close() {
 	if s.leaderShip != nil && s.leaderShip.IsOwner() {
+		s.autoIDLock.Lock()
+		defer s.autoIDLock.Unlock()
 		for k, v := range s.autoIDMap {
+			v.Lock()
 			if v.base > 0 {
 				err := v.forceRebase(context.Background(), s.store, k.dbID, k.tblID, v.base, v.isUnsigned)
 				if err != nil {
@@ -364,6 +391,7 @@ func (s *Service) Close() {
 						zap.Error(err))
 				}
 			}
+			v.Unlock()
 		}
 		s.leaderShip.Cancel()
 	}
@@ -466,7 +494,7 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		// This item is not initialized, get the data from remote.
 		var currentEnd int64
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
-		err := kv.RunInNewTxn(ctx, s.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
 			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(req.DbID, req.TblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			currentEnd, err1 = idAcc.Get()
@@ -505,7 +533,7 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbID, tblID, requiredBase int64, isUnsigned bool) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	var oldValue int64
-	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {

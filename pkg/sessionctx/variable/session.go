@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -199,6 +200,7 @@ type TxnCtxNoNeedToRestore struct {
 	InfoSchema  any
 	History     any
 	StartTS     uint64
+	StaleReadTs uint64
 
 	// ShardStep indicates the max size of continuous rowid shard in one transaction.
 	ShardStep    int
@@ -449,7 +451,7 @@ func (tc *TransactionContext) ReleaseSavepoint(name string) bool {
 	name = strings.ToLower(name)
 	for i, sp := range tc.Savepoints {
 		if sp.Name == name {
-			tc.Savepoints = append(tc.Savepoints[:i])
+			tc.Savepoints = tc.Savepoints[:i]
 			return true
 		}
 	}
@@ -663,6 +665,11 @@ type HookContext interface {
 	GetStore() kv.Storage
 }
 
+// SessionVarsProvider provides the session variables.
+type SessionVarsProvider interface {
+	GetSessionVars() *SessionVars
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -683,9 +690,6 @@ type SessionVars struct {
 	}
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
-	// stmtVars variables are temporarily set by SET_VAR hint
-	// It only take effect for the duration of a single statement
-	stmtVars map[string]string
 	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
@@ -705,7 +709,7 @@ type SessionVars struct {
 	ActiveRoles []*auth.RoleIdentity
 
 	RetryInfo *RetryInfo
-	//  TxnCtx Should be reset on transaction finished.
+	// TxnCtx Should be reset on transaction finished.
 	TxnCtx *TransactionContext
 	// TxnCtxMu is used to protect TxnCtx.
 	TxnCtxMu sync.Mutex
@@ -1065,6 +1069,9 @@ type SessionVars struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
 
+	// LoadBindingTimeout is the timeout for loading the bind info.
+	LoadBindingTimeout uint64
+
 	// TiKVClientReadTimeout is the timeout for readonly kv request in milliseconds, 0 means using default value
 	// See https://github.com/pingcap/tidb/blob/7105505a78fc886c33258caa5813baf197b15247/docs/design/2023-06-30-configurable-kv-timeout.md?plain=1#L14-L15
 	TiKVClientReadTimeout uint64
@@ -1200,8 +1207,8 @@ type SessionVars struct {
 	// EnableParallelApply indicates that thether to use parallel apply.
 	EnableParallelApply bool
 
-	// EnableRedactLog indicates that whether redact log.
-	EnableRedactLog bool
+	// EnableRedactLog indicates that whether redact log. Possible values are 'OFF', 'ON', 'MARKER'.
+	EnableRedactLog string
 
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
@@ -1301,7 +1308,7 @@ type SessionVars struct {
 	ReadConsistency ReadConsistencyLevel
 
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
-	StatsLoadSyncWait int64
+	StatsLoadSyncWait atomic.Int64
 
 	// EnableParallelHashaggSpill indicates if parallel hash agg could spill.
 	EnableParallelHashaggSpill bool
@@ -1572,6 +1579,16 @@ type SessionVars struct {
 	// TxnEntrySizeLimit indicates indicates the max size of a entry in membuf. The default limit (from config) will be
 	// overwritten if this value is not 0.
 	TxnEntrySizeLimit uint64
+
+	// DivPrecisionIncrement indicates the number of digits by which to increase the scale of the result
+	// of division operations performed with the / operator.
+	DivPrecisionIncrement int
+
+	// allowed when tikv disk full happened.
+	DiskFullOpt kvrpcpb.DiskFullOpt
+
+	// GroupConcatMaxLen represents the maximum length of the result of GROUP_CONCAT.
+	GroupConcatMaxLen uint64
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -1933,7 +1950,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 			types:  make(map[string]*types.FieldType),
 		},
 		systems:                       make(map[string]string),
-		stmtVars:                      make(map[string]string),
 		PreparedStmts:                 make(map[uint32]any),
 		PreparedStmtNameToID:          make(map[string]uint32),
 		PlanCacheParams:               NewPlanCacheParamList(),
@@ -2011,7 +2027,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TMPTableSize:                  DefTiDBTmpTableMaxSize,
 		MPPStoreFailTTL:               DefTiDBMPPStoreFailTTL,
 		Rng:                           mathutil.NewWithTime(),
-		StatsLoadSyncWait:             StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:     DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:       DefTiDBRemoveOrderbyInSubquery,
 		EnableSkewDistinctAgg:         DefTiDBSkewDistinctAgg,
@@ -2030,6 +2045,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
+		GroupConcatMaxLen:             DefGroupConcatMaxLen,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
@@ -2078,6 +2094,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
 	vars.MemTracker.Killer = &vars.SQLKiller
+	vars.StatsLoadSyncWait.Store(StatsLoadSyncWait.Load())
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
@@ -2364,7 +2381,7 @@ func (s *SessionVars) SetTxnIsolationLevelOneShotStateForNextTxn() {
 	}
 }
 
-// IsPessimisticReadConsistency if true it means the statement is in an read consistency pessimistic transaction.
+// IsPessimisticReadConsistency if true it means the statement is in a read consistency pessimistic transaction.
 func (s *SessionVars) IsPessimisticReadConsistency() bool {
 	return s.TxnCtx.IsPessimistic && s.IsIsolation(ast.ReadCommitted)
 }
@@ -2395,9 +2412,6 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 		return strconv.Itoa(s.SysWarningCount), true
 	} else if name == ErrorCount {
 		return strconv.Itoa(int(s.SysErrorCount)), true
-	}
-	if val, ok := s.stmtVars[name]; ok {
-		return val, ok
 	}
 	val, ok := s.systems[name]
 	return val, ok
@@ -2474,17 +2488,6 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 	}
 	afterMinus := atomic.AddInt64(&PreparedStmtCount, -int64(psCount))
 	metrics.PreparedStmtGauge.Set(float64(afterMinus))
-}
-
-// SetStmtVar sets the value of a system variable temporarily
-func (s *SessionVars) setStmtVar(name string, val string) error {
-	s.stmtVars[name] = val
-	return nil
-}
-
-// ClearStmtVars clear temporarily system variables.
-func (s *SessionVars) ClearStmtVars() {
-	s.stmtVars = make(map[string]string)
 }
 
 // GetSessionOrGlobalSystemVar gets a system variable.
@@ -2627,6 +2630,11 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 	// Because `prevStmt` may be truncated, so it's senseless to normalize it.
 	// Even if `prevStmtDigest` is empty but `prevStmt` is not, just return it anyway.
 	return s.prevStmtDigest
+}
+
+// GetDivPrecisionIncrement returns the specified value of DivPrecisionIncrement.
+func (s *SessionVars) GetDivPrecisionIncrement() int {
+	return s.DivPrecisionIncrement
 }
 
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
@@ -2811,6 +2819,9 @@ type Concurrency struct {
 
 	// IdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
 	IdleTransactionTimeout int
+
+	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
+	BulkDMLEnabled bool
 }
 
 // SetIndexLookupConcurrency set the number of concurrent index lookup worker.
@@ -3175,7 +3186,7 @@ type SlowQueryLogItems struct {
 	TimeOptimize      time.Duration
 	TimeWaitTS        time.Duration
 	IndexNames        string
-	CopTasks          *stmtctx.CopTasksDetails
+	CopTasks          *execdetails.CopTasksDetails
 	ExecDetail        execdetails.ExecDetails
 	MemMax            int64
 	DiskMax           int64
@@ -3198,7 +3209,7 @@ type SlowQueryLogItems struct {
 	ResultRows        int64
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
-	UsedStats         map[int64]*stmtctx.UsedStatsInfoForTable
+	UsedStats         *stmtctx.UsedStatsInfo
 	IsSyncStatsFailed bool
 	Warnings          []JSONSQLWarnForSlowLog
 	ResourceGroupName string
@@ -3293,13 +3304,13 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.Digest) > 0 {
 		writeSlowLogItem(&buf, SlowLogDigestStr, logItems.Digest)
 	}
-	if len(logItems.UsedStats) > 0 {
+	keys := logItems.UsedStats.Keys()
+	if len(keys) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + SlowLogStatsInfoStr + SlowLogSpaceMarkStr)
 		firstComma := false
-		keys := maps.Keys(logItems.UsedStats)
 		slices.Sort(keys)
 		for _, id := range keys {
-			usedStatsForTbl := logItems.UsedStats[id]
+			usedStatsForTbl := logItems.UsedStats.GetUsedInfo(id)
 			if usedStatsForTbl == nil {
 				continue
 			}
@@ -3616,9 +3627,32 @@ func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
 }
 
+// GetMaxExecutionTime get the max execution timeout value.
+func (s *SessionVars) GetMaxExecutionTime() uint64 {
+	if s.StmtCtx.HasMaxExecutionTime {
+		return s.StmtCtx.MaxExecutionTime
+	}
+	return s.MaxExecutionTime
+}
+
 // GetTiKVClientReadTimeout returns readonly kv request timeout, prefer query hint over session variable
 func (s *SessionVars) GetTiKVClientReadTimeout() uint64 {
 	return s.TiKVClientReadTimeout
+}
+
+// SetDiskFullOpt sets the session variable DiskFullOpt
+func (s *SessionVars) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	s.DiskFullOpt = level
+}
+
+// GetDiskFullOpt returns the value of DiskFullOpt in the current session.
+func (s *SessionVars) GetDiskFullOpt() kvrpcpb.DiskFullOpt {
+	return s.DiskFullOpt
+}
+
+// ClearDiskFullOpt resets the session variable DiskFullOpt to DiskFullOpt_NotAllowedOnFull.
+func (s *SessionVars) ClearDiskFullOpt() {
+	s.DiskFullOpt = kvrpcpb.DiskFullOpt_NotAllowedOnFull
 }
 
 // RuntimeFilterType type of runtime filter "IN"

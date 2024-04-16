@@ -196,6 +196,14 @@
               "intervalFactor": 1,
               "legendFormat": "gc",
               "refId": "F"
+            },
+            {
+              "expr": "tidb_server_memory_quota_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
+              "format": "time_series",
+              "hide": false,
+              "intervalFactor": 1,
+              "legendFormat": "quota",
+              "refId": "G"
             }
           ],
           "thresholds": [],
@@ -316,7 +324,7 @@
               "format": "time_series",
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "limit",
+              "legendFormat": "quota",
               "refId": "B"
             }
           ],

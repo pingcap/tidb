@@ -24,11 +24,10 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
+	mockscheduler "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -47,32 +46,8 @@ const (
 	subtaskCnt = 3
 )
 
-func getTestSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
-	mockScheduler := mockDispatch.NewMockExtension(ctrl)
-	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
-	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Task) ([]string, error) {
-			return nil, nil
-		},
-	).AnyTimes()
-	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
-	mockScheduler.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
-			return proto.StepDone
-		},
-	).AnyTimes()
-	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ storage.TaskHandle, _ *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
-			return nil, nil
-		},
-	).AnyTimes()
-
-	mockScheduler.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	return mockScheduler
-}
-
 func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
-	mockScheduler := mockDispatch.NewMockExtension(ctrl)
+	mockScheduler := mockscheduler.NewMockExtension(ctrl)
 	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, _ *proto.Task) ([]string, error) {
@@ -81,7 +56,7 @@ func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 	).AnyTimes()
 	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
 	mockScheduler.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
-		func(task *proto.Task) proto.Step {
+		func(task *proto.TaskBase) proto.Step {
 			switch task.Step {
 			case proto.StepInit:
 				return proto.StepOne
@@ -119,7 +94,7 @@ func MockSchedulerManager(t *testing.T, ctrl *gomock.Controller, pool *pools.Res
 	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
-			mockScheduler := sch.MockScheduler(task)
+			mockScheduler := scheduler.NewBaseScheduler(ctx, task, param)
 			mockScheduler.Extension = ext
 			return mockScheduler
 		})
@@ -143,11 +118,11 @@ func TestTaskFailInManager(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "handle_test")
 
-	mockScheduler := mock.NewMockScheduler(ctrl)
-	mockScheduler.EXPECT().Init().Return(errors.New("mock scheduler init error"))
-	schManager, mgr := MockSchedulerManager(t, ctrl, pool, getTestSchedulerExt(ctrl), nil)
+	schManager, mgr := MockSchedulerManager(t, ctrl, pool, scheduler.GetTestSchedulerExt(ctrl), nil)
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+			mockScheduler := mock.NewMockScheduler(ctrl)
+			mockScheduler.EXPECT().Init().Return(errors.New("mock scheduler init error"))
 			return mockScheduler
 		})
 	schManager.Start()
@@ -174,12 +149,9 @@ func TestTaskFailInManager(t *testing.T) {
 	}, time.Second*10, time.Millisecond*300)
 }
 
-func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel, isPauseAndResume bool) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
-	}()
-	// test DispatchTaskLoop
+func checkSchedule(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel, isPauseAndResume bool) {
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	// test scheduleTaskLoop
 	// test parallelism control
 	var originalConcurrency int
 	if taskCnt == 1 {
@@ -355,43 +327,43 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 }
 
 func TestSimple(t *testing.T) {
-	checkDispatch(t, 1, true, false, false, false)
+	checkSchedule(t, 1, true, false, false, false)
 }
 
 func TestSimpleErrStage(t *testing.T) {
-	checkDispatch(t, 1, false, false, false, false)
+	checkSchedule(t, 1, false, false, false, false)
 }
 
 func TestSimpleCancel(t *testing.T) {
-	checkDispatch(t, 1, false, true, false, false)
+	checkSchedule(t, 1, false, true, false, false)
 }
 
 func TestSimpleSubtaskCancel(t *testing.T) {
-	checkDispatch(t, 1, false, false, true, false)
+	checkSchedule(t, 1, false, false, true, false)
 }
 
 func TestParallel(t *testing.T) {
-	checkDispatch(t, 3, true, false, false, false)
+	checkSchedule(t, 3, true, false, false, false)
 }
 
 func TestParallelErrStage(t *testing.T) {
-	checkDispatch(t, 3, false, false, false, false)
+	checkSchedule(t, 3, false, false, false, false)
 }
 
 func TestParallelCancel(t *testing.T) {
-	checkDispatch(t, 3, false, true, false, false)
+	checkSchedule(t, 3, false, true, false, false)
 }
 
 func TestParallelSubtaskCancel(t *testing.T) {
-	checkDispatch(t, 3, false, false, true, false)
+	checkSchedule(t, 3, false, false, true, false)
 }
 
 func TestPause(t *testing.T) {
-	checkDispatch(t, 1, false, false, false, true)
+	checkSchedule(t, 1, false, false, false, true)
 }
 
 func TestParallelPause(t *testing.T) {
-	checkDispatch(t, 3, false, false, false, true)
+	checkSchedule(t, 3, false, false, false, true)
 }
 
 func TestVerifyTaskStateTransform(t *testing.T) {
@@ -423,10 +395,7 @@ func TestIsCancelledErr(t *testing.T) {
 
 func TestManagerScheduleLoop(t *testing.T) {
 	// Mock 16 cpu node.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-	})
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockScheduler := mock.NewMockScheduler(ctrl)
@@ -469,13 +438,13 @@ func TestManagerScheduleLoop(t *testing.T) {
 					return
 				}
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
-					_, err := sqlexec.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
+					_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateRunning, proto.StepOne, task.ID)
 					return err
 				}))
 				<-waitChannels[task.Key]
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
-					_, err := sqlexec.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
+					_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateSucceed, proto.StepDone, task.ID)
 					return err
 				}))

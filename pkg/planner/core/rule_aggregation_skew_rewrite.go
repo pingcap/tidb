@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
@@ -46,7 +47,7 @@ type skewDistinctAggRewriter struct {
 // - The aggregate has 1 and only 1 distinct aggregate function (limited to count, avg, sum)
 //
 // This rule is disabled by default. Use tidb_opt_skew_distinct_agg to enable the rule.
-func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation, opt *logicalOptimizeOp) LogicalPlan {
+func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation, opt *coreusage.LogicalOptimizeOp) LogicalPlan {
 	// only group aggregate is applicable
 	if len(agg.GroupByItems) == 0 {
 		return nil
@@ -119,7 +120,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 			}
 
 			for _, arg := range aggFunc.Args {
-				firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx(), ast.AggFuncFirstRow,
+				firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), ast.AggFuncFirstRow,
 					[]expression.Expression{arg}, false)
 				if err != nil {
 					return nil
@@ -155,7 +156,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 
 			if newAggFunc.Name == ast.AggFuncCount {
 				cntIndexes = append(cntIndexes, i)
-				sumAggFunc, err := aggregation.NewAggFuncDesc(agg.SCtx(), ast.AggFuncSum,
+				sumAggFunc, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), ast.AggFuncSum,
 					[]expression.Expression{aggCol}, false)
 				if err != nil {
 					return nil
@@ -179,7 +180,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 		// SELECT count(DISTINCT a) FROM t GROUP BY b;
 		// column b is not in the output schema, we have to add it to the bottom agg schema
 		if firstRowCols.Has(int(col.UniqueID)) {
-			firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx(), ast.AggFuncFirstRow,
+			firstRow, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), ast.AggFuncFirstRow,
 				[]expression.Expression{col}, false)
 			if err != nil {
 				return nil
@@ -225,7 +226,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 		exprType := proj.Exprs[index].GetType()
 		targetType := agg.schema.Columns[index].GetType()
 		if !exprType.Equal(targetType) {
-			proj.Exprs[index] = expression.BuildCastFunction(agg.SCtx(), proj.Exprs[index], targetType)
+			proj.Exprs[index] = expression.BuildCastFunction(agg.SCtx().GetExprCtx(), proj.Exprs[index], targetType)
 		}
 	}
 	proj.SetSchema(agg.schema.Clone())
@@ -262,7 +263,7 @@ func (*skewDistinctAggRewriter) isQualifiedAgg(aggFunc *aggregation.AggFuncDesc)
 	}
 }
 
-func appendSkewDistinctAggRewriteTraceStep(agg *LogicalAggregation, result LogicalPlan, opt *logicalOptimizeOp) {
+func appendSkewDistinctAggRewriteTraceStep(agg *LogicalAggregation, result LogicalPlan, opt *coreusage.LogicalOptimizeOp) {
 	reason := func() string {
 		return fmt.Sprintf("%v_%v has a distinct agg function", agg.TP(), agg.ID())
 	}
@@ -270,10 +271,10 @@ func appendSkewDistinctAggRewriteTraceStep(agg *LogicalAggregation, result Logic
 		return fmt.Sprintf("%v_%v is rewritten to a %v_%v", agg.TP(), agg.ID(), result.TP(), result.ID())
 	}
 
-	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
+	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func (a *skewDistinctAggRewriter) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (a *skewDistinctAggRewriter) optimize(ctx context.Context, p LogicalPlan, opt *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {

@@ -95,7 +95,7 @@ func (r *TiFlashRecorder) GenerateResetAlterTableDDLs(info infoschema.InfoSchema
 			log.Warn("Table do not exist, skipping", zap.Int64("id", id))
 			return
 		}
-		schema, ok := info.SchemaByTable(table.Meta())
+		schema, ok := infoschema.SchemaByTable(info, table.Meta())
 		if !ok {
 			log.Warn("Schema do not exist, skipping", zap.Int64("id", id), zap.Stringer("table", table.Meta().Name))
 			return
@@ -135,7 +135,7 @@ func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []s
 			log.Warn("Table do not exist, skipping", zap.Int64("id", id))
 			return
 		}
-		schema, ok := info.SchemaByTable(table.Meta())
+		schema, ok := infoschema.SchemaByTable(info, table.Meta())
 		if !ok {
 			log.Warn("Schema do not exist, skipping", zap.Int64("id", id), zap.Stringer("table", table.Meta().Name))
 			return

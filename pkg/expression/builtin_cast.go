@@ -29,15 +29,12 @@ import (
 	"strings"
 	gotime "time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
@@ -125,7 +122,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
+	bf := newBaseBuiltinCastFunc(b, ctx.IsInUnionCast())
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
@@ -174,7 +171,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
+	bf := newBaseBuiltinCastFunc(b, ctx.IsInUnionCast())
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
@@ -229,7 +226,7 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.Value(inUnionCastContext) != nil)
+	bf := newBaseBuiltinCastFunc(b, ctx.IsInUnionCast())
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastDecimalAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDecimal)
@@ -549,14 +546,14 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 			return jsonToInt, err
 		}
 	case types.ETReal:
-		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, _ *types.FieldType) (any, error) {
 			if item.TypeCode != types.JSONTypeCodeFloat64 && item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
 				return nil, ErrInvalidJSONForFuncIndex
 			}
 			return types.ConvertJSONToFloat(sc.TypeCtx(), item)
 		}
 	case types.ETDatetime:
-		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+		return func(_ *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
 			if (tp.GetType() == mysql.TypeDatetime && item.TypeCode != types.JSONTypeCodeDatetime) || (tp.GetType() == mysql.TypeDate && item.TypeCode != types.JSONTypeCodeDate) {
 				return nil, ErrInvalidJSONForFuncIndex
 			}
@@ -569,7 +566,7 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 			return res, nil
 		}
 	case types.ETDuration:
-		return func(sc *stmtctx.StatementContext, item types.BinaryJSON, tp *types.FieldType) (any, error) {
+		return func(_ *stmtctx.StatementContext, item types.BinaryJSON, _ *types.FieldType) (any, error) {
 			if item.TypeCode != types.JSONTypeCodeDuration {
 				return nil, ErrInvalidJSONForFuncIndex
 			}
@@ -881,7 +878,7 @@ func (b *builtinCastStringAsJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (r
 	typ := b.args[0].GetType()
 	if types.IsBinaryStr(typ) {
 		buf := []byte(val)
-		if typ.GetType() == mysql.TypeString {
+		if typ.GetType() == mysql.TypeString && typ.GetFlen() > 0 {
 			// the tailing zero should also be in the opaque json
 			buf = make([]byte, typ.GetFlen())
 			copy(buf, val)
@@ -1772,11 +1769,7 @@ func (b *builtinCastDurationAsStringSig) evalString(ctx EvalContext, row chunk.R
 func padZeroForBinaryType(s string, tp *types.FieldType, ctx EvalContext) (string, bool, error) {
 	flen := tp.GetFlen()
 	if tp.GetType() == mysql.TypeString && types.IsBinaryStr(tp) && len(s) < flen {
-		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-		if err != nil {
-			return "", false, errors.Trace(err)
-		}
+		maxAllowedPacket := ctx.GetMaxAllowedPacket()
 		if uint64(flen) > maxAllowedPacket {
 			return "", true, handleAllowedPacketOverflowed(ctx, "cast_as_binary", maxAllowedPacket)
 		}
@@ -2058,11 +2051,11 @@ func CanImplicitEvalReal(expr Expression) bool {
 
 // BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union
 // Expression.
-func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
-	ctx.SetValue(inUnionCastContext, struct{}{})
-	defer func() {
-		ctx.SetValue(inUnionCastContext, nil)
-	}()
+func BuildCastFunction4Union(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
+	if !ctx.IsInUnionCast() {
+		ctx.SetInUnionCast(true)
+		defer ctx.SetInUnionCast(false)
+	}
 	return BuildCastFunction(ctx, expr, tp)
 }
 
@@ -2227,7 +2220,7 @@ func WrapWithCastAsDecimal(ctx BuildContext, expr Expression) Expression {
 	castExpr := BuildCastFunction(ctx, expr, tp)
 	// For const item, we can use find-grained precision and scale by the result.
 	if castExpr.ConstLevel() == ConstStrict {
-		val, isnull, err := castExpr.EvalDecimal(ctx, chunk.Row{})
+		val, isnull, err := castExpr.EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 		if !isnull && err == nil {
 			precision, frac := val.PrecisionAndFrac()
 			castTp := castExpr.GetType()
@@ -2272,8 +2265,12 @@ func WrapWithCastAsString(ctx BuildContext, expr Expression) Expression {
 		charset, collate := expr.CharsetAndCollation()
 		tp.SetCharset(charset)
 		tp.SetCollate(collate)
+	} else if exprTp.GetType() == mysql.TypeBit {
+		// Implicitly casting BIT to string will make it a binary
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
 	} else {
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		tp.SetCharset(charset)
 		tp.SetCollate(collate)
 	}

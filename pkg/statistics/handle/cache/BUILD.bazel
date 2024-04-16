@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/infoschema",
+        "//pkg/metrics",
         "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
@@ -29,6 +30,7 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/syncutil",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
     ],
 )

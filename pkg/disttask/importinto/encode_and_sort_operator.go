@@ -23,14 +23,14 @@ import (
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -38,12 +38,6 @@ import (
 const (
 	maxWaitDuration = 30 * time.Second
 
-	// We limit the memory usage of KV deliver to 1GB per concurrency, and data
-	// KV deliver has external.DefaultMemSizeLimit, the rest of memory is for
-	// all index KV deliver.
-	// Note: this size is the memory taken by KV, not the size of taken by golang,
-	// each KV has additional 24*2 bytes overhead for golang slice.
-	indexKVTotalBufSize = size.GB - external.DefaultMemSizeLimit
 	// we use a larger block size for data KV group to support larger row.
 	// TODO: make it configurable?
 	dataKVGroupBlockSize = 32 * units.MiB
@@ -73,8 +67,13 @@ var _ operator.Operator = (*encodeAndSortOperator)(nil)
 var _ operator.WithSource[*importStepMinimalTask] = (*encodeAndSortOperator)(nil)
 var _ operator.WithSink[workerpool.None] = (*encodeAndSortOperator)(nil)
 
-func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor,
-	sharedVars *SharedVars, subtaskID int64, indexMemorySizeLimit uint64) *encodeAndSortOperator {
+func newEncodeAndSortOperator(
+	ctx context.Context,
+	executor *importStepExecutor,
+	sharedVars *SharedVars,
+	subtaskID int64,
+	concurrency int,
+) *encodeAndSortOperator {
 	subCtx, cancel := context.WithCancel(ctx)
 	op := &encodeAndSortOperator{
 		ctx:           subCtx,
@@ -89,9 +88,9 @@ func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor,
 	pool := workerpool.NewWorkerPool(
 		"encodeAndSortOperator",
 		util.ImportInto,
-		executor.taskMeta.Plan.ThreadCnt,
+		concurrency,
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
-			return newChunkWorker(ctx, op, indexMemorySizeLimit)
+			return newChunkWorker(ctx, op, executor.dataKVMemSizePerCon, executor.perIndexKVMemSizePerCon)
 		},
 	)
 	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
@@ -149,7 +148,7 @@ type chunkWorker struct {
 	indexWriter *importer.IndexRouteWriter
 }
 
-func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, indexMemorySizeLimit uint64) *chunkWorker {
+func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
 		op:  op,
@@ -163,7 +162,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, indexMemoryS
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 				}).
-				SetMemorySizeLimit(indexMemorySizeLimit).
+				SetMemorySizeLimit(perIndexKVMemSizePerCon).
 				SetBlockSize(getKVGroupBlockSize(""))
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
@@ -175,6 +174,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, indexMemoryS
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
+			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(getKVGroupBlockSize(dataKVGroup))
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
@@ -225,17 +225,23 @@ func subtaskPrefix(taskID, subtaskID int64) string {
 	return path.Join(strconv.Itoa(int(taskID)), strconv.Itoa(int(subtaskID)))
 }
 
-func getWriterMemorySizeLimit(plan *importer.Plan) uint64 {
-	// min(external.DefaultMemSizeLimit, indexKVTotalBufSize / num-of-index-that-gen-kv)
-	cnt := getNumOfIndexGenKV(plan.DesiredTableInfo)
-	limit := indexKVTotalBufSize
-	if cnt > 0 {
-		limit = limit / uint64(cnt)
-	}
-	if limit > external.DefaultMemSizeLimit {
-		limit = external.DefaultMemSizeLimit
-	}
-	return limit
+func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan) (
+	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) {
+	indexKVGroupCnt := getNumOfIndexGenKV(plan.DesiredTableInfo)
+	memPerCon := resource.Mem.Capacity() / int64(plan.ThreadCnt)
+	// we use half of the total available memory for data writer, and the other half
+	// for encoding and other stuffs, it's an experience value, might not optimal.
+	// Then we divide those memory into indexKVGroupCnt + 3 shares, data KV writer
+	// takes 3 shares, and each index KV writer takes 1 share.
+	// suppose we have memPerCon = 2G
+	// 	| indexKVGroupCnt | data/per-index writer |
+	// 	| :-------------- | :-------------------- |
+	// 	| 0               | 1GiB/0                |
+	// 	| 1               | 768/256 MiB           |
+	// 	| 5               | 384/128 MiB           |
+	// 	| 13              | 192/64 MiB            |
+	memPerShare := float64(memPerCon) / 2 / float64(indexKVGroupCnt+3)
+	return uint64(memPerShare * 3), uint64(memPerShare)
 }
 
 func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
@@ -246,8 +252,10 @@ func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
 		if idxInfo.State != model.StatePublic {
 			continue
 		}
-		if idxInfo.Primary && !tblInfo.HasClusteredIndex() {
-			nonClusteredPK = true
+		if idxInfo.Primary {
+			if !tblInfo.HasClusteredIndex() {
+				nonClusteredPK = true
+			}
 			continue
 		}
 		count++
