@@ -38,7 +38,7 @@ import (
 // BackendCtxMgr is used to manage the BackendCtx.
 type BackendCtxMgr interface {
 	// CheckMoreTasksAvailable checks if more ingest backfill task is available.
-	CheckMoreTasksAvailable() (bool, error)
+	CheckMoreTasksAvailable(ctx context.Context) (bool, error)
 	// Register uses jobID to identify the BackendCtx. If there's already a
 	// BackendCtx with the same jobID, it will be returned. Otherwise, a new
 	// BackendCtx will be created and returned.
@@ -87,7 +87,8 @@ func newLitBackendCtxMgr(path string, memQuota uint64, getProcessingJobIDs Filte
 }
 
 // CheckMoreTasksAvailable implements BackendCtxMgr.CheckMoreTaskAvailable interface.
-func (m *litBackendCtxMgr) CheckMoreTasksAvailable() (bool, error) {
+func (m *litBackendCtxMgr) CheckMoreTasksAvailable(ctx context.Context) (bool, error) {
+	m.cleanupSortPath(ctx)
 	if err := m.diskRoot.PreCheckUsage(); err != nil {
 		litLogger.Info("ingest backfill is not available", zap.Error(err))
 		return false, err

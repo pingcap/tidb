@@ -225,7 +225,6 @@ func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
 
 func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 	return d.getJob(sess, jobTypeReorg, func(job *model.Job) (bool, error) {
-		// TODO(lance6716): remove inner ingest check
 		if !d.runningJobs.checkRunnable(job) {
 			return false, nil
 		}
@@ -752,4 +751,26 @@ func getJobsBySQL(se *sess.Session, tbl, condition string) ([]*model.Job, error)
 		jobs = append(jobs, &job)
 	}
 	return jobs, nil
+}
+
+func filterProcessingJobIDs(se *sess.Session, jobIDs []int64) ([]int64, error) {
+	var sb strings.Builder
+	for i, id := range jobIDs {
+		if i != 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(strconv.FormatInt(id, 10))
+	}
+	sql := fmt.Sprintf(
+		"SELECT job_id FROM mysql.tidb_ddl_job WHERE job_id IN (%s) AND processing",
+		sb.String())
+	rows, err := se.Execute(context.Background(), sql, "filter_processing_job_ids")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ret := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		ret = append(ret, row.GetInt64(0))
+	}
+	return ret, nil
 }
