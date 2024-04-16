@@ -15,6 +15,8 @@
 package metrics
 
 import (
+	"strconv"
+
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -44,6 +46,39 @@ var (
 
 func init() {
 	InitMetricsVars()
+}
+
+// CmdToString convert command type to string.
+func CmdToString(cmd byte) string {
+	switch cmd {
+	case mysql.ComSleep:
+		return "Sleep"
+	case mysql.ComQuit:
+		return "Quit"
+	case mysql.ComInitDB:
+		return "InitDB"
+	case mysql.ComQuery:
+		return "Query"
+	case mysql.ComPing:
+		return "Ping"
+	case mysql.ComFieldList:
+		return "FieldList"
+	case mysql.ComStmtPrepare:
+		return "StmtPrepare"
+	case mysql.ComStmtExecute:
+		return "StmtExecute"
+	case mysql.ComStmtFetch:
+		return "StmtFetch"
+	case mysql.ComStmtClose:
+		return "StmtClose"
+	case mysql.ComStmtSendLongData:
+		return "StmtSendLongData"
+	case mysql.ComStmtReset:
+		return "StmtReset"
+	case mysql.ComSetOption:
+		return "SetOption"
+	}
+	return strconv.Itoa(int(cmd))
 }
 
 // InitMetricsVars init server metrics vars.
