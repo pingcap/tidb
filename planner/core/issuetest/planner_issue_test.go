@@ -216,3 +216,17 @@ func TestIssue48969(t *testing.T) {
 	tk.MustExec("update test2 set value=0 where test2.id in (select * from v1);")
 	tk.MustQuery("select * from test2").Check(testkit.Rows("1 0", "2 0", "3 0", "4 4", "5 5"))
 }
+
+func TestIssue51670(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table A(a int primary key, b int);")
+	tk.MustExec("create table B(b int primary key);")
+	tk.MustExec("create table C(c int primary key, b int);")
+	tk.MustExec("insert into A values (2, 1), (3, 2);")
+	tk.MustExec("insert into B values (1), (2);")
+	// The two should return the same result set.
+	tk.MustQuery("select b.b from A a left join (B b left join C c on b.b = c.b) on b.b = a.b where a.a in (2, 3);").Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select b.b from A a left join (B b left join C c on b.b = c.b) on b.b = a.b where a.a in (2, 3, null);").Sort().Check(testkit.Rows("1", "2"))
+}
