@@ -620,9 +620,6 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*
 		seg.rawData = append(seg.rawData, fakeAddrByte...)
 		if len := rowTableMeta.nullMapLength; len > 0 {
 			tmp := make([]byte, len)
-			for i := 0; i < len; i++ {
-				seg.rawData = append(tmp, 1)
-			}
 			seg.rawData = append(seg.rawData, tmp...)
 		}
 		length := uint64(0)
