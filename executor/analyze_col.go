@@ -66,7 +66,11 @@ type AnalyzeColumnsExec struct {
 
 func analyzeColumnsPushDownEntry(e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
+<<<<<<< HEAD:executor/analyze_col.go
 		return e.toV2().analyzeColumnsPushDownWithRetryV2()
+=======
+		return e.toV2().analyzeColumnsPushDownV2(gp)
+>>>>>>> 2e1d9e1039c (executor: remove the retry for analyze (#52634)):pkg/executor/analyze_col.go
 	}
 	return e.toV1().analyzeColumnsPushDownV1()
 }
