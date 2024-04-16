@@ -662,5 +662,3 @@ func TestIssue40584(t *testing.T) {
 	<-finishAlloc
 	<-finishBase
 }
-
-

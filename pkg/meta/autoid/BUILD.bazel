@@ -56,6 +56,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/store/mockstore",
+        "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",
