@@ -3616,12 +3616,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 	}
 
 	if is.Index.Global {
-		tbl, ok := ret.table.(table.PartitionedTable)
-		if !ok {
-			b.err = exeerrors.ErrBuildExecutor
-			return nil
-		}
-		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, tbl, &v.PlanPartInfo)
+		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, ret.table.(table.PartitionedTable), &v.PlanPartInfo)
 		if err != nil {
 			b.err = err
 			return nil
@@ -3805,26 +3800,14 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 		return ret
 	}
 
-	if is.Index.Global || len(is.ByItems) != 0 {
-		tmp, ok := b.is.TableByID(ts.Table.ID)
-		if !ok {
-			b.err = err
-			return nil
-		}
-		tbl, ok := tmp.(table.PartitionedTable)
-		if !ok {
-			b.err = exeerrors.ErrBuildExecutor
-			return nil
-		}
-		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, tbl, &v.PlanPartInfo)
+	if is.Index.Global {
+		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, ret.table.(table.PartitionedTable), &v.PlanPartInfo)
 		if err != nil {
 			b.err = err
 			return nil
 		}
 
-		if is.Index.Global {
-			return ret
-		}
+		return ret
 	}
 	if ok, _ := is.IsPartition(); ok {
 		// Already pruned when translated to logical union.
@@ -4361,11 +4344,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	if is.Index.Global {
-		tbl, ok := e.table.(table.PartitionedTable)
-		if !ok {
-			return nil, exeerrors.ErrBuildExecutor
-		}
-		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, tbl, &v.PlanPartInfo)
+		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), &v.PlanPartInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -4426,17 +4405,8 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	}
 
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	if is.Index.Global {
-		tmp, ok := builder.is.TableByID(ts.Table.ID)
-		if !ok {
-			return nil, infoschema.ErrTableNotExists
-		}
-		tbl, ok := tmp.(table.PartitionedTable)
-		if !ok {
-			return nil, exeerrors.ErrBuildExecutor
-		}
-		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, tbl, &v.PlanPartInfo)
+		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), &v.PlanPartInfo)
 		if err != nil {
 			return nil, err
 		}
