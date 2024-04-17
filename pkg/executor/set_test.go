@@ -877,7 +877,7 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows(""))
 	tk.MustGetErrMsg("set @@session.tidb_analyze_skip_column_types = 'int,json'", "[variable:1231]Variable 'tidb_analyze_skip_column_types' can't be set to the value of 'int,json'")
 
-	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob"))
+	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob,text,mediumtext,longtext"))
 	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json, text, blob'")
 	tk.MustQuery("select @@global.tidb_analyze_skip_column_types").Check(testkit.Rows("json,text,blob"))
 	tk.MustExec("set @@global.tidb_analyze_skip_column_types = ''")
