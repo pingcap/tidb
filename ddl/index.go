@@ -1698,7 +1698,10 @@ func writeChunkToLocal(writer ingest.Writer,
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		rsData := getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, restoreDataBuf)
+		var rsData []types.Datum
+		if restore {
+			rsData = getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, restoreDataBuf)
+		}
 		err = writeOneKVToLocal(writer, index, sCtx, writeBufs, idxDataBuf, rsData, handle)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
