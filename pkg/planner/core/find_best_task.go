@@ -2220,10 +2220,8 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
 	// Add a `Selection` for `IndexScan` with global index.
-	// For SQL like 'select x from t partition(p0, p1) use index(idx)',
-	// we will add a `Selection` like `in(t._tidb_pid, p0, p1)` into the plan.
-	// And it should pushdown to TiKV, DataSource schema doesn't contain this column.
-	if is.Index.Global && len(p.partitionNames) != 0 {
+	// It should pushdown to TiKV, DataSource schema doesn't contain this column.
+	if is.Index.Global {
 		args := make([]expression.Expression, 0, len(p.partitionNames)+1)
 		for _, col := range is.schema.Columns {
 			if col.ID == model.ExtraPidColID {
@@ -2231,17 +2229,22 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 				break
 			}
 		}
-		for _, pName := range p.partitionNames {
-			pid := is.Table.Partition.GetPartitionIDByName(pName.L)
-			if pid == -1 {
-				return
+		// For SQL like 'select x from t partition(p0, p1) use index(idx)',
+		// we will add a `Selection` like `in(t._tidb_pid, p0, p1)` into the plan.
+		if len(p.partitionNames) != 0 {
+			for _, pName := range p.partitionNames {
+				pid := is.Table.Partition.GetPartitionIDByName(pName.L)
+				args = append(args, expression.NewInt64Const(pid))
 			}
-			args = append(args, expression.NewInt64Const(pid))
+		} else {
+			// This part is used to truncate/delete partitions,
+			// we should only return indexes where partitions still exist.
+			di := p.tableInfo.GetPartitionInfo().Definitions
+			for _, d := range di {
+				args = append(args, expression.NewInt64Const(d.ID))
+			}
 		}
-		inCondition, err := expression.NewFunction(p.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
-		if err != nil {
-			return
-		}
+		inCondition, _ := expression.NewFunction(p.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
 		indexConds = append(indexConds, inCondition)
 	}
 
