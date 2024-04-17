@@ -822,24 +822,24 @@ func filterAllStoresAccordingToTiFlashReplicaRead(allStores []uint64, aliveStore
 	return
 }
 
-func getAllUsedTiflashStores(allTiFlashStores []*tikv.Store, allUsedTiflashStoresMap map[uint64]struct{}) []*tikv.Store {
-	allUsedTiflashStores := make([]*tikv.Store, 0, len(allUsedTiflashStoresMap))
+func getAllUsedTiFlashStores(allTiFlashStores []*tikv.Store, allUsedTiFlashStoresMap map[uint64]struct{}) []*tikv.Store {
+	allUsedTiFlashStores := make([]*tikv.Store, 0, len(allUsedTiFlashStoresMap))
 	for _, store := range allTiFlashStores {
-		_, ok := allUsedTiflashStoresMap[store.StoreID()]
+		_, ok := allUsedTiFlashStoresMap[store.StoreID()]
 		if ok {
-			allUsedTiflashStores = append(allUsedTiflashStores, store)
+			allUsedTiFlashStores = append(allUsedTiFlashStores, store)
 		}
 	}
-	return allUsedTiflashStores
+	return allUsedTiFlashStores
 }
 
 // getAliveStoresAndStoreIDs gets alive TiFlash stores and their IDs.
 // If tiflashReplicaReadPolicy is not all_replicas, it will also return the IDs of the alive TiFlash stores in TiDB zone.
-func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, allUsedTiflashStoresMap map[uint64]struct{}, ttl time.Duration, store *kvStore, tiflashReplicaReadPolicy tiflash.ReplicaRead, tidbZone string) (aliveStores *aliveStoresBundle) {
+func getAliveStoresAndStoreIDs(ctx context.Context, cache *RegionCache, allUsedTiFlashStoresMap map[uint64]struct{}, ttl time.Duration, store *kvStore, tiflashReplicaReadPolicy tiflash.ReplicaRead, tidbZone string) (aliveStores *aliveStoresBundle) {
 	aliveStores = new(aliveStoresBundle)
 	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
-	allUsedTiflashStores := getAllUsedTiflashStores(allTiFlashStores, allUsedTiflashStoresMap)
-	aliveStores.storesInAllZones = filterAliveStores(ctx, allUsedTiflashStores, ttl, store)
+	allUsedTiFlashStores := getAllUsedTiFlashStores(allTiFlashStores, allUsedTiFlashStoresMap)
+	aliveStores.storesInAllZones = filterAliveStores(ctx, allUsedTiFlashStores, ttl, store)
 
 	if !tiflashReplicaReadPolicy.IsAllReplicas() {
 		aliveStores.storeIDsInTiDBZone = make(map[uint64]struct{}, len(aliveStores.storesInAllZones))
