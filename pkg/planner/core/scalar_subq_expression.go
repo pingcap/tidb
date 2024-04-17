@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	base2 "github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/base"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/baseImpl"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -31,10 +31,10 @@ import (
 
 // ScalarSubqueryEvalCtx store the plan for the subquery, used by ScalarSubQueryExpr.
 type ScalarSubqueryEvalCtx struct {
-	base.Plan
+	baseImpl.Plan
 
 	// The context for evaluating the subquery.
-	scalarSubQuery base2.PhysicalPlan
+	scalarSubQuery base.PhysicalPlan
 	ctx            context.Context
 	is             infoschema.InfoSchema
 	evalErr        error
