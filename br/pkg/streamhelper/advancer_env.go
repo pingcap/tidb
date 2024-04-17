@@ -8,14 +8,9 @@ import (
 
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/tidb/br/pkg/utils"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/engine"
-=======
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/tikv/client-go/v2/oracle"
->>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"

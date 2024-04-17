@@ -156,15 +156,9 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 
 	// inner function def
 	collectRemaining := func() {
-<<<<<<< HEAD
-		log.Info("[log backup advancer] Start collecting remaining events in the channel.",
-			zap.Int("remained", len(c)))
-		defer log.Info("[log backup advancer] Finish collecting remaining events in the channel.")
-=======
 		log.Info("Start collecting remaining events in the channel.", zap.String("category", "log backup advancer"),
 			zap.Int("remained", len(taskCh)))
 		defer log.Info("Finish collecting remaining events in the channel.", zap.String("category", "log backup advancer"))
->>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
 		for {
 			if taskCh == nil && pauseCh == nil {
 				return

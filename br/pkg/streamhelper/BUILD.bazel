@@ -67,12 +67,8 @@ go_test(
         "subscription_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 22,
-=======
     race = "on",
     shard_count = 25,
->>>>>>> 7548df70b1a (br: Enable checkpoint advancer to pause tasks lagged too large (#51441))
     deps = [
         ":streamhelper",
         "//br/pkg/errors",
