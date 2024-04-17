@@ -16,20 +16,12 @@ package executor
 
 import (
 	"context"
-<<<<<<< HEAD:executor/analyze_col_v2.go
-	"math"
 	"sort"
 	"sync/atomic"
-=======
-	stderrors "errors"
-	"slices"
->>>>>>> 2e1d9e1039c (executor: remove the retry for analyze (#52634)):pkg/executor/analyze_col_v2.go
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD:executor/analyze_col_v2.go
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/metrics"
@@ -50,27 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
-=======
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
->>>>>>> 2e1d9e1039c (executor: remove the retry for analyze (#52634)):pkg/executor/analyze_col_v2.go
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -80,45 +51,7 @@ type AnalyzeColumnsExecV2 struct {
 	*AnalyzeColumnsExec
 }
 
-<<<<<<< HEAD:executor/analyze_col_v2.go
-func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2() *statistics.AnalyzeResults {
-	analyzeResult := e.analyzeColumnsPushDownV2()
-	// do not retry if succeed / not oom error / not auto-analyze / samplerate not set
-	if analyzeResult.Err == nil || analyzeResult.Err != errAnalyzeOOM ||
-		!e.ctx.GetSessionVars().InRestrictedSQL ||
-		e.analyzePB.ColReq == nil || *e.analyzePB.ColReq.SampleRate <= 0 {
-		return analyzeResult
-	}
-	finishJobWithLog(e.ctx, analyzeResult.Job, analyzeResult.Err)
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	if statsHandle == nil {
-		return analyzeResult
-	}
-	var statsTbl *statistics.Table
-	tid := e.tableID.GetStatisticsID()
-	if tid == e.tableInfo.ID {
-		statsTbl = statsHandle.GetTableStats(e.tableInfo)
-	} else {
-		statsTbl = statsHandle.GetPartitionStats(e.tableInfo, tid)
-	}
-	if statsTbl == nil || statsTbl.RealtimeCount <= 0 {
-		return analyzeResult
-	}
-	newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.RealtimeCount))
-	if newSampleRate >= *e.analyzePB.ColReq.SampleRate {
-		return analyzeResult
-	}
-	*e.analyzePB.ColReq.SampleRate = newSampleRate
-	prepareV2AnalyzeJobInfo(e.AnalyzeColumnsExec, true)
-	AddNewAnalyzeJob(e.ctx, e.job)
-	StartAnalyzeJob(e.ctx, e.job)
-	return e.analyzeColumnsPushDownV2()
-}
-
 func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeResults {
-=======
-func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics.AnalyzeResults {
->>>>>>> 2e1d9e1039c (executor: remove the retry for analyze (#52634)):pkg/executor/analyze_col_v2.go
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
