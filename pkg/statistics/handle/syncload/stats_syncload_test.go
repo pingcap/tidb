@@ -294,5 +294,4 @@ func TestRetry(t *testing.T) {
 	require.NoError(t, err1)
 	require.Nil(t, task1)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/mockReadStatsForOneFail"))
-
 }
