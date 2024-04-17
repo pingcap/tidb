@@ -402,9 +402,10 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		bdrRole = string(ast.BDRRoleNone)
 	)
 
-	if newTasks, err := d.combineBatchCreateTableJobs(tasks); err == nil {
-		tasks = newTasks
-	}
+	// TODO: since ticdc doesn't support batch create tables now, we disable until ticdc support it.
+	// if newTasks, err := d.combineBatchCreateTableJobs(tasks); err == nil {
+	// 	tasks = newTasks
+	// }
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
