@@ -232,6 +232,10 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 		if result.Err == nil {
 			slr := result.Val.(*stmtctx.StatsLoadResult)
 			if slr.Error != nil {
+				if ok := updateNeededItemTaskRetryCountAndCheck(task); !ok {
+					logutil.BgLogger().Error("stats loading error", zap.Error(slr.Error))
+					return nil, nil
+				}
 				return task, slr.Error
 			}
 			task.ResultCh <- *slr
@@ -239,9 +243,20 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 		}
 		return task, result.Err
 	case <-time.After(timeout):
+		if ok := updateNeededItemTaskRetryCountAndCheck(task); !ok {
+			return nil, nil
+		}
 		task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 		return task, nil
 	}
+}
+
+func updateNeededItemTaskRetryCountAndCheck(task *statstypes.NeededItemTask) bool {
+	task.Retry++
+	if task.Retry > 3 {
+		return false
+	}
+	return true
 }
 
 func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statstypes.NeededItemTask) (result *stmtctx.StatsLoadResult, err error) {
