@@ -870,7 +870,7 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set @@session.tidb_cdc_write_source = 0")
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().CDCWriteSource)
 
-	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob"))
+	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows("json,blob,mediumblob,longblob,text,mediumtext,longtext"))
 	tk.MustExec("set @@session.tidb_analyze_skip_column_types = 'json, text, blob'")
 	tk.MustQuery("select @@session.tidb_analyze_skip_column_types").Check(testkit.Rows("json,text,blob"))
 	tk.MustExec("set @@session.tidb_analyze_skip_column_types = ''")
