@@ -20,7 +20,6 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -549,6 +548,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err != nil {
 					return errors.Trace(err)
 				}
+				fmt.Println("selectIndexConflictKeysReplace")
 
 				var lastRowID int64
 				hasRow := false
@@ -644,6 +644,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 									if err2 != nil {
 										return errors.Trace(err2)
 									}
+									fmt.Println("insertIntoConflictErrorData")
 									var sqlArgs []any
 									sb.WriteString(sqlValuesConflictErrorData)
 									sqlArgs = append(sqlArgs,
@@ -723,6 +724,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err != nil {
 					return errors.Trace(err)
 				}
+				fmt.Println("selectDataConflictKeysReplace")
 
 				var lastRowID int64
 				var previousRawKey, latestValue []byte
@@ -862,10 +864,11 @@ func (em *ErrorManager) ReplaceConflictKeys(
 
 	for {
 		nullDataRows, err := em.db.QueryContext(
-			dataGCtx, common.SprintfWithIdentifiers(selectNullDataRows, em.schema))
+			ctx, common.SprintfWithIdentifiers(selectNullDataRows, em.schema))
 		if err != nil {
 			return errors.Trace(err)
 		}
+		fmt.Println("selectNullDataRows")
 
 		hasRow := false
 		for nullDataRows.Next() {
@@ -877,7 +880,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		if err := nullDataRows.Close(); err != nil {
 			return errors.Trace(err)
 		}
-		if hasRow {
+		if !hasRow {
 			break
 		}
 
@@ -885,11 +888,12 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		if err := exec.Transact(ctx, "delete additionally inserted rows for conflict detection 'replace' mode",
 			func(c context.Context, txn *sql.Tx) error {
 				sb := &strings.Builder{}
-				_, err2 := common.FprintfWithIdentifiers(sb, deleteNullDataRow, em.schema, strconv.Itoa(rowLimit))
+				_, err2 := common.FprintfWithIdentifiers(sb, deleteNullDataRow, em.schema)
 				if err2 != nil {
 					return errors.Trace(err2)
 				}
-				_, err := txn.ExecContext(c, sb.String())
+				fmt.Println("deleteNullDataRow")
+				_, err := txn.ExecContext(c, sb.String(), rowLimit)
 				return errors.Trace(err)
 			}); err != nil {
 			return errors.Trace(err)
