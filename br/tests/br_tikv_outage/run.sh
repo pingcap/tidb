@@ -22,7 +22,8 @@ github.com/pingcap/tidb/br/pkg/utils/hint-get-backup-client=1*return(\"$hint_get
 
     backup_dir=${TEST_DIR:?}/"backup{test:${TEST_NAME}|with:${failure}}"
     rm -rf "${backup_dir:?}"
-    run_br backup full -s local://"$backup_dir" &
+    # Add ratelimit for backup task, otherwise the backup task will finishes too quickly.
+    run_br backup full -s local://"$backup_dir" --concurrency 1 --ratelimit 1 &
     backup_pid=$!
     single_point_fault $failure
     wait $backup_pid
