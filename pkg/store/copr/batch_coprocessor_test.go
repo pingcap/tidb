@@ -286,7 +286,7 @@ func TestTopoFetcherBackoff(t *testing.T) {
 	require.LessOrEqual(t, dura, 50*time.Second)
 }
 
-func TestGetAllUnusedTiFlashStores(t *testing.T) {
+func TestGetAllUsedTiFlashStores(t *testing.T) {
 	mockClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	defer func() {
@@ -313,9 +313,9 @@ func TestGetAllUnusedTiFlashStores(t *testing.T) {
 	allUsedTiFlashStoresMap[3] = struct{}{}
 	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 	require.Equal(t, 3, len(allTiFlashStores))
-	allUnusedTiFlashStores := getAllUsedTiFlashStores(allTiFlashStores, allUsedTiFlashStoresMap)
-	require.Equal(t, len(allUsedTiFlashStoresMap), len(allUnusedTiFlashStores))
-	for _, store := range allUnusedTiFlashStores {
+	allUsedTiFlashStores := getAllUsedTiFlashStores(allTiFlashStores, allUsedTiFlashStoresMap)
+	require.Equal(t, len(allUsedTiFlashStoresMap), len(allUsedTiFlashStores))
+	for _, store := range allUsedTiFlashStores {
 		_, ok := allUsedTiFlashStoresMap[store.StoreID()]
 		require.True(t, ok)
 	}
