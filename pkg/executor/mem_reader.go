@@ -980,7 +980,7 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 		if iter.index.Global {
 			seg := tablecodec.SplitIndexValue(value)
 			_, pid, _ := codec.DecodeInt(seg.PartitionID)
-			if _, ok := iter.partitionIDMap[pid]; !ok {
+			if _, exists := iter.partitionIDMap[pid]; !exists {
 				continue
 			}
 		}

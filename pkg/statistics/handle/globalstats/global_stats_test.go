@@ -878,7 +878,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
 			Check(testkit.Rows("1", "2", "3", "15"))
 		tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
-			Check(testkit.Rows("IndexReader_12 4.00 root partition:all index:IndexRangeScan_11",
+			Check(testkit.Rows("IndexReader_12 4.00 root  index:IndexRangeScan_11",
 				"└─IndexRangeScan_11 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 
 		// analyze table t index idx
@@ -915,7 +915,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		tk.MustExec("analyze table t index")
 		require.Nil(t, h.Update(dom.InfoSchema()))
 		tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").
-			Check(testkit.Rows("IndexReader_12 4.00 root partition:all index:IndexRangeScan_11",
+			Check(testkit.Rows("IndexReader_12 4.00 root  index:IndexRangeScan_11",
 				"└─IndexRangeScan_11 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 	}
 }
