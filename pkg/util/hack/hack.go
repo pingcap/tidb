@@ -83,3 +83,8 @@ const (
 func EstimateBucketMemoryUsage[K comparable, V any]() uint64 {
 	return (8*(1+uint64(unsafe.Sizeof(*new(K))+unsafe.Sizeof(*new(V)))) + 16) / 2 * 3
 }
+
+// EstimateBucketMemoryUsage returns the estimated memory usage of a bucket in a map with key size and value size.
+func EstimateBucketMemoryUsageWithKVSize(keySize uint64, valueSize uint64) uint64 {
+	return (8*(1+keySize+valueSize) + 16) / 2 * 3
+}

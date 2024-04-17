@@ -76,11 +76,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -1210,6 +1212,8 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
 	seVars := sctx.GetSessionVars()
+	memTracker := memory.NewTracker(memory.LabelForLock, -1)
+	memTracker.AttachTo(seVars.MemTracker)
 	forUpdateTS, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
 	if err != nil {
 		return nil, err
@@ -1246,8 +1250,16 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 		rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
 		deadlockhistory.GlobalDeadlockHistory.Push(rec)
 	}
+	lockCtx.OnMemChange = func(capacity int) uint64 {
+		bucketMemoryUsage := hack.EstimateBucketMemoryUsageWithKVSize(lockCtx.GetValuesKSize(), lockCtx.GetValuesVSize())
+		mapSize := set.EstimateMapSize(capacity, bucketMemoryUsage)
+		return mapSize
+	}
 	if lockCtx.ForUpdateTS > 0 && seVars.AssertionLevel != variable.AssertionLevelOff {
 		lockCtx.InitCheckExistence(numKeys)
+		if lockCtx.OnMemChange != nil {
+			memTracker.Consume(lockCtx.OnMemChange(numKeys))
+		}
 	}
 	return lockCtx, nil
 }
