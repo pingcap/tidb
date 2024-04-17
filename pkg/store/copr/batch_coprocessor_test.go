@@ -313,7 +313,7 @@ func TestGetAllUnusedTiflashStores(t *testing.T) {
 	allUsedTiflashStoresMap[3] = struct{}{}
 	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 	require.Equal(t, 3, len(allTiFlashStores))
-	allUnusedTiflashStores := getAllUnusedTiflashStores(allTiFlashStores, allUsedTiflashStoresMap)
+	allUnusedTiflashStores := getAllUsedTiflashStores(allTiFlashStores, allUsedTiflashStoresMap)
 	require.Equal(t, len(allUsedTiflashStoresMap), len(allUnusedTiflashStores))
 	for _, store := range allUnusedTiflashStores {
 		_, ok := allUsedTiflashStoresMap[store.StoreID()]
