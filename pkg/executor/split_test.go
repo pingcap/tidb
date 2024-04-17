@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"math"
 	"math/rand"
 	"sort"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"

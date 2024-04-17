@@ -225,9 +225,9 @@ func NewCommonHandleCols(sc *stmtctx.StatementContext, tblInfo *model.TableInfo,
 	return cols
 }
 
-// NewCommonHandleColsWithOffsetAlign NewCommonHandleCols creates a new CommonHandleCols without offset align.
+// NewCommonHandleColsWithoutOffsetAlign NewCommonHandleCols creates a new CommonHandleCols without offset align.
 // It's a substitution of &CommonHandleCols{...} before.
-func NewCommonHandleColsWithOffsetAlign(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+func NewCommonHandleColsWithoutOffsetAlign(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	alignedTableCols []*expression.Column) *CommonHandleCols {
 	return &CommonHandleCols{
 		tblInfo: tblInfo,

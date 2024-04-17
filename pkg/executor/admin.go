@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	plannercore "github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -189,7 +189,7 @@ type RecoverIndexExec struct {
 	columns       []*model.ColumnInfo
 	colFieldTypes []*types.FieldType
 	srcChunk      *chunk.Chunk
-	handleCols    plannercore.HandleCols
+	handleCols    handlecol.HandleCols
 
 	containsGenedCol bool
 	cols             []*expression.Column
@@ -386,7 +386,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 				return nil, err
 			}
 			e.idxValsBufs[result.scanRowCount] = idxVals
-			rsData := tables.TryGetHandleRestoredDataWrapper(e.table.Meta(), plannercore.GetCommonHandleDatum(e.handleCols, row), nil, e.index.Meta())
+			rsData := tables.TryGetHandleRestoredDataWrapper(e.table.Meta(), handlecol.GetCommonHandleDatum(e.handleCols, row), nil, e.index.Meta())
 			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: true})
 			result.scanRowCount++
 			result.currentHandle = handle
@@ -591,7 +591,7 @@ type CleanupIndexExec struct {
 	columns          []*model.ColumnInfo
 	idxColFieldTypes []*types.FieldType
 	idxChunk         *chunk.Chunk
-	handleCols       plannercore.HandleCols
+	handleCols       handlecol.HandleCols
 
 	idxValues   *kv.HandleMap // kv.Handle -> [][]types.Datum
 	batchSize   uint64

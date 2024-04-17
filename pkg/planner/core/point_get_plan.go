@@ -15,7 +15,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	math2 "math"
 	"strconv"
 	"strings"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"

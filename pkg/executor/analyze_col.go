@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"math"
 	"strings"
 	"time"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"

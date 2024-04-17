@@ -17,7 +17,6 @@ package core
 import (
 	"cmp"
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"math"
 	"slices"
 	"strconv"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
