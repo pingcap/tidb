@@ -2235,7 +2235,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 		// For SQL like 'select x from t partition(p0, p1) use index(idx)',
 		// we will add a `Selection` like `in(t._tidb_pid, p0, p1)` into the plan.
 		// For truncate/delete partitions, we should only return indexes where partitions still in public state.
-		tables, err := partitionPruning(p.SCtx(), p.table.GetPartitionedTable(),
+		idxArr, err := PartitionPruning(p.SCtx(), p.table.GetPartitionedTable(),
 			copTask.physPlanPartInfo.PruningConds,
 			copTask.physPlanPartInfo.PartitionNames,
 			copTask.physPlanPartInfo.Columns,
@@ -2243,8 +2243,15 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 		if err != nil {
 			return err
 		}
-		for _, table := range tables {
-			args = append(args, expression.NewInt64Const(table.GetPhysicalID()))
+		pDef := p.TableInfo().GetPartitionInfo().Definitions
+		if len(idxArr) == 1 && idxArr[0] == FullRange {
+			for _, p := range pDef {
+				args = append(args, expression.NewInt64Const(p.ID))
+			}
+		} else {
+			for _, idx := range idxArr {
+				args = append(args, expression.NewInt64Const(pDef[idx].ID))
+			}
 		}
 		inCondition, err := expression.NewFunction(p.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
 		if err != nil {
