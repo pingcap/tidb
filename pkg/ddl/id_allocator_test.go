@@ -33,33 +33,39 @@ func TestIDAllocator(t *testing.T) {
 
 	ids, err := ia.AllocIDs(1)
 	require.NoError(t, err)
-	require.Equal(t, []int64{104}, ids)
+	require.Equal(t, []int64{112}, ids)
 
+	// cache
 	ids, err = ia.AllocIDs(2)
 	require.NoError(t, err)
-	require.Equal(t, []int64{105, 106}, ids)
+	require.Equal(t, []int64{113, 114}, ids)
 
+	// cache + new alloc
 	ids, err = ia.AllocIDs(8)
 	require.NoError(t, err)
-	require.Equal(t, []int64{107, 108, 109, 110, 111, 112, 113, 114}, ids)
+	require.Equal(t, []int64{115, 116, 117, 118, 119, 120, 121, 122}, ids)
 
+	// new alloc
 	ids, err = ia.AllocIDs(11)
 	require.NoError(t, err)
-	require.Equal(t, []int64{115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125}, ids)
+	require.Equal(t, []int64{123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133}, ids)
 
+	// cache + new alloc
 	ids, err = ia.AllocIDs(19)
 	require.NoError(t, err)
-	require.Equal(t, []int64{126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144}, ids)
+	require.Equal(t, []int64{134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152}, ids)
 
+	// multiple allocators
 	ia2 := ddl.NewAllocator(store)
 	ids, err = ia2.AllocIDs(1)
 	require.NoError(t, err)
-	require.Equal(t, []int64{145}, ids)
+	require.Equal(t, []int64{153}, ids)
 	ids, err = ia.AllocIDs(1)
 	require.NoError(t, err)
-	require.Equal(t, []int64{155}, ids)
+	require.Equal(t, []int64{163}, ids)
 
+	// cache + new alloc
 	ids, err = ia2.AllocIDs(10)
 	require.NoError(t, err)
-	require.Equal(t, []int64{146, 147, 148, 149, 150, 151, 152, 153, 154, 165}, ids)
+	require.Equal(t, []int64{154, 155, 156, 157, 158, 159, 160, 161, 162, 173}, ids)
 }
