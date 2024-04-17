@@ -2025,30 +2025,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		tblCols:     ds.TblCols,
 		expectCnt:   uint64(prop.ExpectedCnt),
 	}
-	// Add a `Selection` for `IndexScan` with global index.
-	// For SQL like 'select x from t partition(p0, p1) use index(idx)',
-	// we will add a `Selection` like `in(t._tidb_pid, p0, p1)` into the plan.
-	if is.Index.Global && len(ds.partitionNames) != 0 {
-		args := make([]expression.Expression, 0, len(ds.partitionNames)+1)
-		for _, col := range is.schema.Columns {
-			if col.ID == model.ExtraPidColID {
-				args = append(args, col.Clone())
-				break
-			}
-		}
-		for _, pName := range ds.partitionNames {
-			pid := is.Table.Partition.GetPartitionIDByName(pName.L)
-			if pid == -1 {
-				return invalidTask, nil
-			}
-			args = append(args, expression.NewInt64Const(pid))
-		}
-		inCondition, err := expression.NewFunction(ds.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
-		if err != nil {
-			return invalidTask, err
-		}
-		path.IndexFilters = append(path.IndexFilters, inCondition)
-	}
 	cop.physPlanPartInfo = PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx().GetExprCtx(), ds.allConds),
 		PartitionNames: ds.partitionNames,
@@ -2197,7 +2173,6 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 	if isDoubleRead || is.Index.Global {
 		// If it's double read case, the first index must return handle. So we should add extra handle column
 		// if there isn't a handle column.
-		// If it's global index, handle and PidColID columns has to be added, so that needed pids can be filtered.
 		if !setHandle {
 			if !is.Table.IsCommonHandle {
 				indexCols = append(indexCols, &expression.Column{
@@ -2208,7 +2183,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 				})
 			}
 		}
-		// If index is global, we should add extra column for pid.
+		// If it's global index, handle and PidColID columns has to be added, so that needed pids can be filtered.
 		if is.Index.Global {
 			indexCols = append(indexCols, &expression.Column{
 				RetType:  types.NewFieldType(mysql.TypeLonglong),
@@ -2242,6 +2217,32 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 
 	tableConds, newRootConds = expression.PushDownExprs(pctx, tableConds, kv.TiKV)
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
+
+	// Add a `Selection` for `IndexScan` with global index.
+	// For SQL like 'select x from t partition(p0, p1) use index(idx)',
+	// we will add a `Selection` like `in(t._tidb_pid, p0, p1)` into the plan.
+	// And it should pushdown to TiKV, DataSource schema doesn't contain this column.
+	if is.Index.Global && len(p.partitionNames) != 0 {
+		args := make([]expression.Expression, 0, len(p.partitionNames)+1)
+		for _, col := range is.schema.Columns {
+			if col.ID == model.ExtraPidColID {
+				args = append(args, col.Clone())
+				break
+			}
+		}
+		for _, pName := range p.partitionNames {
+			pid := is.Table.Partition.GetPartitionIDByName(pName.L)
+			if pid == -1 {
+				return
+			}
+			args = append(args, expression.NewInt64Const(pid))
+		}
+		inCondition, err := expression.NewFunction(p.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
+		if err != nil {
+			return
+		}
+		indexConds = append(indexConds, inCondition)
+	}
 
 	if indexConds != nil {
 		var selectivity float64
