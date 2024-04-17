@@ -12,10 +12,11 @@ begin;
 insert into t values (5, 1);
 explain select * from t use index(idx1) where b > 2;
 id	estRows	task	access object	operator info
-Projection_5	3333.33	root		globalindex__mem_index_lookup.t.a, globalindex__mem_index_lookup.t.b
-└─UnionScan_6	3333.33	root		gt(globalindex__mem_index_lookup.t.b, 2)
-  └─IndexLookUp_9	3333.33	root		
-    ├─IndexRangeScan_7(Build)	3333.33	cop[tikv]	table:t, index:idx1(b)	range:(2,+inf], keep order:false, stats:pseudo
+Projection_5	3333.33	root	NULL	globalindex__mem_index_lookup.t.a, globalindex__mem_index_lookup.t.b
+└─UnionScan_6	3333.33	root	NULL	gt(globalindex__mem_index_lookup.t.b, 2)
+  └─IndexLookUp_11	3333.33	root	NULL	NULL
+    ├─Selection_10(Build)	3333.33	cop[tikv]	NULL	in(_tidb_pid, pid0, pid1, pid2, pid3, pid4)
+    │ └─IndexRangeScan_7	3333.33	cop[tikv]	table:t, index:idx1(b)	range:(2,+inf], keep order:false, stats:pseudo
     └─TableRowIDScan_8(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t use index(idx1) where b > 2;
 a	b
@@ -26,8 +27,8 @@ explain select * from t partition(p0) use index(idx1) where b <= 2;
 id	estRows	task	access object	operator info
 Projection_5	3323.33	root	NULL	globalindex__mem_index_lookup.t.a, globalindex__mem_index_lookup.t.b
 └─UnionScan_6	3323.33	root	NULL	le(globalindex__mem_index_lookup.t.b, 2)
-  └─IndexLookUp_10	3323.33	root	NULL	NULL
-    ├─Selection_9(Build)	3323.33	cop[tikv]	NULL	in(_tidb_pid, pid0)
+  └─IndexLookUp_11	3323.33	root	NULL	NULL
+    ├─Selection_10(Build)	3323.33	cop[tikv]	NULL	in(_tidb_pid, pid0)
     │ └─IndexRangeScan_7	3323.33	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
     └─TableRowIDScan_8(Probe)	3323.33	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t partition(p0) use index(idx1) where b <= 2;
@@ -37,10 +38,10 @@ explain select * from t partition(p1) use index(idx1) where b <= 2 and a = 10;
 id	estRows	task	access object	operator info
 Projection_5	3.32	root	NULL	globalindex__mem_index_lookup.t.a, globalindex__mem_index_lookup.t.b
 └─UnionScan_6	3.32	root	NULL	eq(globalindex__mem_index_lookup.t.a, 10), le(globalindex__mem_index_lookup.t.b, 2)
-  └─IndexLookUp_11	3.32	root	NULL	NULL
-    ├─Selection_9(Build)	3323.33	cop[tikv]	NULL	in(_tidb_pid, pid0)
+  └─IndexLookUp_12	3.32	root	NULL	NULL
+    ├─Selection_10(Build)	3323.33	cop[tikv]	NULL	in(_tidb_pid, pid0)
     │ └─IndexRangeScan_7	3323.33	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
-    └─Selection_10(Probe)	3.32	cop[tikv]	NULL	eq(globalindex__mem_index_lookup.t.a, 10)
+    └─Selection_11(Probe)	3.32	cop[tikv]	NULL	eq(globalindex__mem_index_lookup.t.a, 10)
       └─TableRowIDScan_8	3323.33	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t partition(p1) use index(idx1) where b <= 2 and a = 10;
 a	b
@@ -48,8 +49,8 @@ explain select * from t partition(p0, p1) use index(idx1) where b <= 2;
 id	estRows	task	access object	operator info
 Projection_5	3323.33	root	NULL	globalindex__mem_index_lookup.t.a, globalindex__mem_index_lookup.t.b
 └─UnionScan_6	3323.33	root	NULL	le(globalindex__mem_index_lookup.t.b, 2)
-  └─IndexLookUp_10	3323.33	root	NULL	NULL
-    ├─Selection_9(Build)	3323.33	cop[tikv]	NULL	in(_tidb_pid, pid0, pid1)
+  └─IndexLookUp_11	3323.33	root	NULL	NULL
+    ├─Selection_10(Build)	3323.33	cop[tikv]	NULL	in(_tidb_pid, pid0, pid1)
     │ └─IndexRangeScan_7	3323.33	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
     └─TableRowIDScan_8(Probe)	3323.33	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t partition(p0, p1) use index(idx1) where b <= 2;
@@ -70,10 +71,11 @@ begin;
 insert into t values (2005, 1);
 explain select * from t use index(idx1) where b > 2;
 id	estRows	task	access object	operator info
-Projection_5	3333.33	root		globalindex__mem_index_lookup.t.a, globalindex__mem_index_lookup.t.b
-└─UnionScan_6	3333.33	root		gt(globalindex__mem_index_lookup.t.b, 2)
-  └─IndexLookUp_9	3333.33	root		
-    ├─IndexRangeScan_7(Build)	3333.33	cop[tikv]	table:t, index:idx1(b)	range:(2,+inf], keep order:false, stats:pseudo
+Projection_5	3333.33	root	NULL	globalindex__mem_index_lookup.t.a, globalindex__mem_index_lookup.t.b
+└─UnionScan_6	3333.33	root	NULL	gt(globalindex__mem_index_lookup.t.b, 2)
+  └─IndexLookUp_11	3333.33	root	NULL	NULL
+    ├─Selection_10(Build)	3333.33	cop[tikv]	NULL	in(_tidb_pid, pid0, pid1, pid2, pid3, pid4)
+    │ └─IndexRangeScan_7	3333.33	cop[tikv]	table:t, index:idx1(b)	range:(2,+inf], keep order:false, stats:pseudo
     └─TableRowIDScan_8(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t use index(idx1) where b > 2;
 a	b
@@ -84,8 +86,8 @@ explain select * from t partition(p0) use index(idx1) where b <= 2;
 id	estRows	task	access object	operator info
 Projection_5	3323.33	root	NULL	globalindex__mem_index_lookup.t.a, globalindex__mem_index_lookup.t.b
 └─UnionScan_6	3323.33	root	NULL	le(globalindex__mem_index_lookup.t.b, 2)
-  └─IndexLookUp_10	3323.33	root	NULL	NULL
-    ├─Selection_9(Build)	3323.33	cop[tikv]	NULL	in(_tidb_pid, pid0)
+  └─IndexLookUp_11	3323.33	root	NULL	NULL
+    ├─Selection_10(Build)	3323.33	cop[tikv]	NULL	in(_tidb_pid, pid0)
     │ └─IndexRangeScan_7	3323.33	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
     └─TableRowIDScan_8(Probe)	3323.33	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t partition(p0) use index(idx1) where b <= 2;
@@ -95,10 +97,10 @@ explain select * from t partition(p0) use index(idx1) where b <= 2 and a = 2010;
 id	estRows	task	access object	operator info
 Projection_5	0.33	root	NULL	globalindex__mem_index_lookup.t.a, globalindex__mem_index_lookup.t.b
 └─UnionScan_6	0.33	root	NULL	eq(globalindex__mem_index_lookup.t.a, 2010), le(globalindex__mem_index_lookup.t.b, 2)
-  └─IndexLookUp_11	0.33	root	NULL	NULL
-    ├─Selection_9(Build)	3323.33	cop[tikv]	NULL	in(_tidb_pid, pid0)
+  └─IndexLookUp_12	0.33	root	NULL	NULL
+    ├─Selection_10(Build)	3323.33	cop[tikv]	NULL	in(_tidb_pid, pid0)
     │ └─IndexRangeScan_7	3323.33	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
-    └─Selection_10(Probe)	0.33	cop[tikv]	NULL	eq(globalindex__mem_index_lookup.t.a, 2010)
+    └─Selection_11(Probe)	0.33	cop[tikv]	NULL	eq(globalindex__mem_index_lookup.t.a, 2010)
       └─TableRowIDScan_8	3323.33	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t partition(p0) use index(idx1) where b <= 2 and a = 2010;
 a	b
@@ -106,8 +108,8 @@ explain select * from t partition(p0, p1) use index(idx1) where b <= 2;
 id	estRows	task	access object	operator info
 Projection_5	3323.33	root	NULL	globalindex__mem_index_lookup.t.a, globalindex__mem_index_lookup.t.b
 └─UnionScan_6	3323.33	root	NULL	le(globalindex__mem_index_lookup.t.b, 2)
-  └─IndexLookUp_10	3323.33	root	NULL	NULL
-    ├─Selection_9(Build)	3323.33	cop[tikv]	NULL	in(_tidb_pid, pid0, pid1)
+  └─IndexLookUp_11	3323.33	root	NULL	NULL
+    ├─Selection_10(Build)	3323.33	cop[tikv]	NULL	in(_tidb_pid, pid0, pid1)
     │ └─IndexRangeScan_7	3323.33	cop[tikv]	table:t, index:idx1(b)	range:[-inf,2], keep order:false, stats:pseudo
     └─TableRowIDScan_8(Probe)	3323.33	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t partition(p0, p1) use index(idx1) where b <= 2;

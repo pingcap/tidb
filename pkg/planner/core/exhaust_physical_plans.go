@@ -1378,7 +1378,9 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		is.usedStatsInfo = usedStats.GetUsedInfo(is.physicalTableID)
 	}
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
-	is.addPushedDownSelection(cop, ds, tmpPath, finalStats)
+	if err := is.addPushedDownSelection(cop, ds, tmpPath, finalStats); err != nil {
+		return nil
+	}
 	t := cop.ConvertToRootTask(ds.SCtx()).(*RootTask)
 	reader := t.GetPlan()
 	t.SetPlan(p.constructInnerByWrapper(wrapper, reader))

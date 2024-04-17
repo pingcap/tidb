@@ -14,6 +14,7 @@ insert into t values (1, 2), (2, 3), (3, 4), (4, 5);
 begin;
 insert into t values (5, 1);
 
+--replace_regex /in\(_tidb_pid, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+\)/in(_tidb_pid, pid0, pid1, pid2, pid3, pid4)/
 explain select * from t use index(idx1) where b > 2;
 --sorted_result
 select * from t use index(idx1) where b > 2;
@@ -49,6 +50,7 @@ insert into t values (2001, 2), (2002, 3), (2003, 4), (2004, 5);
 begin;
 insert into t values (2005, 1);
 
+--replace_regex /in\(_tidb_pid, [0-9]+, [0-9]+, [0-9]+, [0-9]+, [0-9]+\)/in(_tidb_pid, pid0, pid1, pid2, pid3, pid4)/
 explain select * from t use index(idx1) where b > 2;
 --sorted_result
 select * from t use index(idx1) where b > 2;

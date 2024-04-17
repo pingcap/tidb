@@ -2104,7 +2104,9 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	// prop.IsSortItemEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
 	finalStats := ds.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt)
-	is.addPushedDownSelection(cop, ds, path, finalStats)
+	if err = is.addPushedDownSelection(cop, ds, path, finalStats); err != nil {
+		return invalidTask, err
+	}
 	if prop.TaskTp == property.RootTaskType {
 		task = task.ConvertToRootTask(ds.SCtx())
 	} else if _, ok := task.(*RootTask); ok {
@@ -2206,7 +2208,7 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
-func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSource, path *util.AccessPath, finalStats *property.StatsInfo) {
+func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSource, path *util.AccessPath, finalStats *property.StatsInfo) error {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
 	tableConds, copTask.rootTaskConds = SplitSelCondsWithVirtualColumn(tableConds)
@@ -2229,22 +2231,25 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 				break
 			}
 		}
+
 		// For SQL like 'select x from t partition(p0, p1) use index(idx)',
 		// we will add a `Selection` like `in(t._tidb_pid, p0, p1)` into the plan.
-		if len(p.partitionNames) != 0 {
-			for _, pName := range p.partitionNames {
-				pid := is.Table.Partition.GetPartitionIDByName(pName.L)
-				args = append(args, expression.NewInt64Const(pid))
-			}
-		} else {
-			// This part is used to truncate/delete partitions,
-			// we should only return indexes where partitions still exist.
-			di := p.tableInfo.GetPartitionInfo().Definitions
-			for _, d := range di {
-				args = append(args, expression.NewInt64Const(d.ID))
-			}
+		// For truncate/delete partitions, we should only return indexes where partitions still in public state.
+		tables, err := partitionPruning(p.SCtx(), p.table.GetPartitionedTable(),
+			copTask.physPlanPartInfo.PruningConds,
+			copTask.physPlanPartInfo.PartitionNames,
+			copTask.physPlanPartInfo.Columns,
+			copTask.physPlanPartInfo.ColumnNames)
+		if err != nil {
+			return err
 		}
-		inCondition, _ := expression.NewFunction(p.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
+		for _, table := range tables {
+			args = append(args, expression.NewInt64Const(table.GetPhysicalID()))
+		}
+		inCondition, err := expression.NewFunction(p.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
+		if err != nil {
+			return err
+		}
 		indexConds = append(indexConds, inCondition)
 	}
 
@@ -2273,6 +2278,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
+	return nil
 }
 
 // NeedExtraOutputCol is designed for check whether need an extra column for
