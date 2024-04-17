@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/baseImpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -200,7 +200,7 @@ func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
 type baseSchemaProducer struct {
 	schema *expression.Schema
 	names  types.NameSlice
-	baseImpl.Plan
+	baseimpl.Plan
 }
 
 // OutputNames returns the outputting names of each column.

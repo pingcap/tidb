@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/baseImpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1986,7 +1986,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg base.Physica
 	}
 	cloneHashAgg := clonedAgg.(*PhysicalHashAgg)
 	// Clone(), it will share same base-plan elements from the finalAgg, including id,tp,stats. Make a new one here.
-	cloneHashAgg.Plan = baseImpl.NewBasePlan(cloneHashAgg.SCtx(), cloneHashAgg.TP(), cloneHashAgg.QueryBlockOffset())
+	cloneHashAgg.Plan = baseimpl.NewBasePlan(cloneHashAgg.SCtx(), cloneHashAgg.TP(), cloneHashAgg.QueryBlockOffset())
 	cloneHashAgg.SetStats(finalAgg.StatsInfo()) // reuse the final agg stats here.
 
 	// step1: adjust partial agg, for normal agg here, adjust it to target for specified group data.

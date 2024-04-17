@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/baseImpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -236,31 +236,31 @@ func (p PhysicalShuffleReceiverStub) Init(ctx base.PlanContext, stats *property.
 
 // Init initializes Update.
 func (p Update) Init(ctx base.PlanContext) *Update {
-	p.Plan = baseImpl.NewBasePlan(ctx, plancodec.TypeUpdate, 0)
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeUpdate, 0)
 	return &p
 }
 
 // Init initializes Delete.
 func (p Delete) Init(ctx base.PlanContext) *Delete {
-	p.Plan = baseImpl.NewBasePlan(ctx, plancodec.TypeDelete, 0)
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeDelete, 0)
 	return &p
 }
 
 // Init initializes Insert.
 func (p Insert) Init(ctx base.PlanContext) *Insert {
-	p.Plan = baseImpl.NewBasePlan(ctx, plancodec.TypeInsert, 0)
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeInsert, 0)
 	return &p
 }
 
 // Init initializes LoadData.
 func (p LoadData) Init(ctx base.PlanContext) *LoadData {
-	p.Plan = baseImpl.NewBasePlan(ctx, plancodec.TypeLoadData, 0)
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeLoadData, 0)
 	return &p
 }
 
 // Init initializes ImportInto.
 func (p ImportInto) Init(ctx base.PlanContext) *ImportInto {
-	p.Plan = baseImpl.NewBasePlan(ctx, plancodec.TypeImportInto, 0)
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeImportInto, 0)
 	return &p
 }
 
@@ -543,7 +543,7 @@ func (p PhysicalIndexHashJoin) Init(ctx base.PlanContext) *PhysicalIndexHashJoin
 
 // Init initializes BatchPointGetPlan.
 func (p *BatchPointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, schema *expression.Schema, names []*types.FieldName, offset int) *BatchPointGetPlan {
-	p.Plan = baseImpl.NewBasePlan(ctx, plancodec.TypeBatchPointGet, offset)
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeBatchPointGet, offset)
 	p.schema = schema
 	p.names = names
 	p.SetStats(stats)
@@ -554,7 +554,7 @@ func (p *BatchPointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo
 
 // Init initializes PointGetPlan.
 func (p PointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, offset int, _ ...*property.PhysicalProperty) *PointGetPlan {
-	p.Plan = baseImpl.NewBasePlan(ctx, plancodec.TypePointGet, offset)
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypePointGet, offset)
 	p.SetStats(stats)
 	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
 	return &p
@@ -562,14 +562,14 @@ func (p PointGetPlan) Init(ctx base.PlanContext, stats *property.StatsInfo, offs
 
 // Init only assigns type and context.
 func (p PhysicalExchangeSender) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalExchangeSender {
-	p.Plan = baseImpl.NewBasePlan(ctx, plancodec.TypeExchangeSender, 0)
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeExchangeSender, 0)
 	p.SetStats(stats)
 	return &p
 }
 
 // Init only assigns type and context.
 func (p PhysicalExchangeReceiver) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalExchangeReceiver {
-	p.Plan = baseImpl.NewBasePlan(ctx, plancodec.TypeExchangeReceiver, 0)
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeExchangeReceiver, 0)
 	p.SetStats(stats)
 	return &p
 }
@@ -614,7 +614,7 @@ func (p LogicalCTETable) Init(ctx base.PlanContext, offset int) *LogicalCTETable
 
 // Init only assigns type and context.
 func (p PhysicalCTETable) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTETable {
-	p.Plan = baseImpl.NewBasePlan(ctx, plancodec.TypeCTETable, 0)
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeCTETable, 0)
 	p.SetStats(stats)
 	return &p
 }
@@ -649,6 +649,6 @@ func (p PhysicalSequence) Init(ctx base.PlanContext, stats *property.StatsInfo, 
 
 // Init initializes ScalarSubqueryEvalCtx
 func (p ScalarSubqueryEvalCtx) Init(ctx base.PlanContext, offset int) *ScalarSubqueryEvalCtx {
-	p.Plan = baseImpl.NewBasePlan(ctx, plancodec.TypeScalarSubQuery, offset)
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeScalarSubQuery, offset)
 	return &p
 }

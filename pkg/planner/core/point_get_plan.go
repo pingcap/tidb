@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/baseImpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -69,7 +69,7 @@ const GlobalWithoutColumnPos = -1
 // When we detect that the statement has a unique equal access condition, this plan is used.
 // This plan is much faster to build and to execute because it avoids the optimization and coprocessor cost.
 type PointGetPlan struct {
-	baseImpl.Plan
+	baseimpl.Plan
 	dbName           string
 	schema           *expression.Schema
 	TblInfo          *model.TableInfo
@@ -1478,7 +1478,7 @@ func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint
 
 func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
 	p := &PointGetPlan{
-		Plan:         baseImpl.NewBasePlan(ctx, plancodec.TypePointGet, 0),
+		Plan:         baseimpl.NewBasePlan(ctx, plancodec.TypePointGet, 0),
 		dbName:       dbName,
 		schema:       schema,
 		TblInfo:      tbl,

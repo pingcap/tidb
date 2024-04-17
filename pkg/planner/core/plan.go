@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/baseImpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -311,7 +311,7 @@ type LogicalPlan interface {
 }
 
 type baseLogicalPlan struct {
-	baseImpl.Plan
+	baseimpl.Plan
 
 	taskMap map[string]base.Task
 	// taskMapBak forms a backlog stack of taskMap, used to roll back the taskMap.
@@ -386,7 +386,7 @@ func getActualProbeCntFromProbeParents(pps []base.PhysicalPlan, statsColl *execd
 }
 
 type basePhysicalPlan struct {
-	baseImpl.Plan
+	baseimpl.Plan
 
 	childrenReqProps []*property.PhysicalProperty
 	self             base.PhysicalPlan
@@ -602,14 +602,14 @@ func newBaseLogicalPlan(ctx base.PlanContext, tp string, self LogicalPlan, qbOff
 		taskMap:      make(map[string]base.Task),
 		taskMapBak:   make([]string, 0, 10),
 		taskMapBakTS: make([]uint64, 0, 10),
-		Plan:         baseImpl.NewBasePlan(ctx, tp, qbOffset),
+		Plan:         baseimpl.NewBasePlan(ctx, tp, qbOffset),
 		self:         self,
 	}
 }
 
 func newBasePhysicalPlan(ctx base.PlanContext, tp string, self base.PhysicalPlan, offset int) basePhysicalPlan {
 	return basePhysicalPlan{
-		Plan: baseImpl.NewBasePlan(ctx, tp, offset),
+		Plan: baseimpl.NewBasePlan(ctx, tp, offset),
 		self: self,
 	}
 }
