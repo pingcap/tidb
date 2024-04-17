@@ -15,6 +15,7 @@
 package partitionedhashjoin
 
 import (
+	"math/rand"
 	"testing"
 	"unsafe"
 
@@ -27,17 +28,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createMockRowTable(rows int) *rowTable {
+func createMockRowTable(maxRowsPerSeg int, segmentCount int, fixedSize bool) *rowTable {
 	ret := &rowTable{
 		meta: nil,
 	}
-	rowSeg := newRowTableSegment()
-	rowSeg.rawData = make([]byte, rows)
-	for i := 0; i < rows; i++ {
-		rowSeg.rowLocations = append(rowSeg.rowLocations, uintptr(unsafe.Pointer(&rowSeg.rawData[i])))
-		rowSeg.validJoinKeyPos = append(rowSeg.validJoinKeyPos, i)
+	for i := 0; i < segmentCount; i++ {
+		rowSeg := newRowTableSegment()
+		// no empty segment is allowed
+		rows := maxRowsPerSeg
+		if !fixedSize {
+			rows = int(rand.Int31n(int32(maxRowsPerSeg)) + 1)
+		}
+		rowSeg.rawData = make([]byte, rows)
+		for j := 0; j < rows; j++ {
+			rowSeg.rowLocations = append(rowSeg.rowLocations, uintptr(unsafe.Pointer(&rowSeg.rawData[j])))
+			rowSeg.validJoinKeyPos = append(rowSeg.validJoinKeyPos, j)
+		}
+		ret.segments = append(ret.segments, rowSeg)
 	}
-	ret.segments = append(ret.segments, rowSeg)
 	return ret
 }
 
@@ -80,16 +88,22 @@ func createRowTable(t *testing.T, rows int) *rowTable {
 }
 
 func TestHashTableSize(t *testing.T) {
-	rowTable := createMockRowTable(10)
+	rowTable := createMockRowTable(10, 5, true)
 	subTable := newSubTable(rowTable)
 	// min hash table size is 1024
 	require.Equal(t, 1024, len(subTable.hashTable))
-	rowTable = createMockRowTable(1024)
-	subTable = newSubTable(rowTable)
-	require.Equal(t, 1024, len(subTable.hashTable))
-	rowTable = createMockRowTable(1025)
+	rowTable = createMockRowTable(1024, 1, true)
 	subTable = newSubTable(rowTable)
 	require.Equal(t, 2048, len(subTable.hashTable))
+	rowTable = createMockRowTable(1025, 1, true)
+	subTable = newSubTable(rowTable)
+	require.Equal(t, 2048, len(subTable.hashTable))
+	rowTable = createMockRowTable(2048, 1, true)
+	subTable = newSubTable(rowTable)
+	require.Equal(t, 4096, len(subTable.hashTable))
+	rowTable = createMockRowTable(2049, 1, true)
+	subTable = newSubTable(rowTable)
+	require.Equal(t, 4096, len(subTable.hashTable))
 }
 
 func TestBuild(t *testing.T) {
@@ -174,6 +188,79 @@ func TestLookup(t *testing.T) {
 				candidate = getNextRowAddress(candidate)
 			}
 			require.True(t, found)
+		}
+	}
+}
+
+func checkRowIter(t *testing.T, table *JoinHashTable, scanConcurrency int) {
+	// first create a map containing all the row locations
+	totalRowCount := table.totalRowCount()
+	rowSet := make(map[uintptr]struct{}, totalRowCount)
+	for _, rt := range table.tables {
+		for _, seg := range rt.rowData.segments {
+			for _, loc := range seg.rowLocations {
+				_, ok := rowSet[loc]
+				require.False(t, ok)
+				rowSet[loc] = struct{}{}
+			}
+		}
+	}
+	// create row iters
+	rowIters := make([]*rowIter, 0, scanConcurrency)
+	rowPerScan := totalRowCount / uint64(scanConcurrency)
+	for i := uint64(0); i < uint64(scanConcurrency); i++ {
+		startIndex := rowPerScan * i
+		endIndex := rowPerScan * (i + 1)
+		if i == uint64(scanConcurrency-1) {
+			endIndex = totalRowCount
+		}
+		rowIters = append(rowIters, table.createRowIter(startIndex, endIndex))
+	}
+
+	locCount := uint64(0)
+	for _, it := range rowIters {
+		for !it.isEnd() {
+			locCount++
+			loc := it.getValue()
+			_, ok := rowSet[loc]
+			require.True(t, ok)
+			delete(rowSet, loc)
+			it.next()
+		}
+	}
+	require.Equal(t, table.totalRowCount(), locCount)
+	require.Equal(t, 0, len(rowSet))
+}
+
+func TestRowIter(t *testing.T) {
+	partitionNumbers := []int{1, 5, 10}
+	// normal case
+	for _, partitionNumber := range partitionNumbers {
+		// create row tables
+		rowTables := make([]*rowTable, 0, partitionNumber)
+		for i := 0; i < partitionNumber; i++ {
+			rt := createMockRowTable(1024, 16, false)
+			rowTables = append(rowTables, rt)
+		}
+		joinedHashTable := newJoinHashTable(rowTables)
+		checkRowIter(t, joinedHashTable, partitionNumber)
+	}
+	// case with empty row table
+	for _, partitionNumber := range partitionNumbers {
+		for i := 0; i < partitionNumber; i++ {
+			// the i-th row table is an empty row table
+			rowTables := make([]*rowTable, 0, partitionNumber)
+			for j := 0; j < partitionNumber; j++ {
+				if i == j {
+					rt := createMockRowTable(0, 0, true)
+					rowTables = append(rowTables, rt)
+				} else {
+					rt := createMockRowTable(1024, 16, false)
+					rowTables = append(rowTables, rt)
+				}
+			}
+			joinedHashTable := newJoinHashTable(rowTables)
+			checkRowIter(t, joinedHashTable, partitionNumber)
 		}
 	}
 }

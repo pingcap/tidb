@@ -46,7 +46,7 @@ func (st *subTable) lookup(hashValue uint64) uintptr {
 
 func nextPowerOfTwo(value uint64) uint64 {
 	ret := uint64(2)
-	for ; ret < value; ret = ret << 1 {
+	for ; ret <= value; ret = ret << 1 {
 	}
 	return ret
 }
@@ -143,8 +143,8 @@ func (ri *rowIter) next() {
 	}
 }
 
-func (ri *rowIter) hasNext() bool {
-	return ri.currentPos.subTableIndex < ri.endPos.subTableIndex || ri.currentPos.rowSegmentIndex < ri.endPos.rowSegmentIndex || ri.currentPos.rowIndex < ri.endPos.rowIndex
+func (ri *rowIter) isEnd() bool {
+	return !(ri.currentPos.subTableIndex < ri.endPos.subTableIndex || ri.currentPos.rowSegmentIndex < ri.endPos.rowSegmentIndex || ri.currentPos.rowIndex < ri.endPos.rowIndex)
 }
 
 func newJoinHashTable(partitionedRowTables []*rowTable) *JoinHashTable {
