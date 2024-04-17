@@ -1673,81 +1673,35 @@ func writeChunkToLocal(writer ingest.Writer,
 	copChunk *chunk.Chunk) (int, kv.Handle, error) {
 	sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
 	iter := chunk.NewIterator4Chunk(copChunk)
-<<<<<<< HEAD:ddl/index.go
 	idxDataBuf := make([]types.Datum, len(copCtx.idxColOutputOffsets))
 	handleDataBuf := make([]types.Datum, len(copCtx.handleOutputOffsets))
 	count := 0
 	var lastHandle kv.Handle
 	unlock := writer.LockForWrite()
 	defer unlock()
+	var restoreDataBuf []types.Datum
+	restore := tables.NeedRestoredData(index.Meta().Columns, copCtx.tblInfo.Columns)
+	if restore {
+		restoreDataBuf = make([]types.Datum, len(copCtx.handleOutputOffsets))
+	}
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		idxDataBuf, handleDataBuf = idxDataBuf[:0], handleDataBuf[:0]
 		idxDataBuf = extractDatumByOffsets(row, copCtx.idxColOutputOffsets, copCtx.expColInfos, idxDataBuf)
 		handleDataBuf := extractDatumByOffsets(row, copCtx.handleOutputOffsets, copCtx.expColInfos, handleDataBuf)
-		handle, err := buildHandle(handleDataBuf, copCtx.tblInfo, copCtx.pkInfo, sCtx)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		rsData := getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, handleDataBuf)
-		err = writeOneKVToLocal(writer, index, sCtx, writeBufs, idxDataBuf, rsData, handle)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-=======
-	c := copCtx.GetBase()
-
-	maxIdxColCnt := maxIndexColumnCount(indexes)
-	idxDataBuf := make([]types.Datum, maxIdxColCnt)
-	handleDataBuf := make([]types.Datum, len(c.HandleOutputOffsets))
-	var restoreDataBuf []types.Datum
-	count := 0
-	var lastHandle kv.Handle
-
-	unlockFns := make([]func(), 0, len(writers))
-	for _, w := range writers {
-		unlock := w.LockForWrite()
-		unlockFns = append(unlockFns, unlock)
-	}
-	defer func() {
-		for _, unlock := range unlockFns {
-			unlock()
-		}
-	}()
-	needRestoreForIndexes := make([]bool, len(indexes))
-	restore := false
-	for i, index := range indexes {
-		needRestore := tables.NeedRestoredData(index.Meta().Columns, c.TableInfo.Columns)
-		needRestoreForIndexes[i] = needRestore
-		restore = restore || needRestore
-	}
-	if restore {
-		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
-	}
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		handleDataBuf := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
 		if restore {
 			// restoreDataBuf should not truncate index values.
 			for i, datum := range handleDataBuf {
 				restoreDataBuf[i] = *datum.Clone()
 			}
 		}
-		h, err := buildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, sCtx)
+		handle, err := buildHandle(handleDataBuf, copCtx.tblInfo, copCtx.pkInfo, sCtx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		for i, index := range indexes {
-			idxID := index.Meta().ID
-			idxDataBuf = extractDatumByOffsets(
-				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
-			idxData := idxDataBuf[:len(index.Meta().Columns)]
-			var rsData []types.Datum
-			if needRestoreForIndexes[i] {
-				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
-			}
-			err = writeOneKVToLocal(ctx, writers[i], index, sCtx, writeBufs, idxData, rsData, h)
-			if err != nil {
-				return 0, nil, errors.Trace(err)
-			}
->>>>>>> 2fffb7fb29b (ddl: fix adding multi-value index (#51884)):pkg/ddl/index.go
+		rsData := getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, restoreDataBuf)
+		err = writeOneKVToLocal(writer, index, sCtx, writeBufs, idxDataBuf, rsData, handle)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
 		}
 		count++
 		lastHandle = handle

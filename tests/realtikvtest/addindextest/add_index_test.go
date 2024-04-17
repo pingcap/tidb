@@ -130,7 +130,6 @@ func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
 	tk.MustExec("alter table employee add foreign key fk_1(pid) references employee(id)")
 }
 
-<<<<<<< HEAD
 func TestAddIndexDistBasic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	if store.Name() != "TiKV" {
@@ -192,12 +191,12 @@ func TestAddIndexDistCancel(t *testing.T) {
 	tk.MustExec("admin check table t;")
 
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
-=======
+}
+
 func TestIssue51162(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_fast_table_check=0")
 	tk.MustExec(`CREATE TABLE tl (
 	 col_42 json NOT NULL,
 	 col_43 tinyint(1) DEFAULT NULL,
@@ -214,5 +213,4 @@ func TestIssue51162(t *testing.T) {
 
 	tk.MustExec("alter table tl add index idx_16(`col_48`,(cast(`col_45` as signed array)),`col_46`(5));")
 	tk.MustExec("admin check table tl")
->>>>>>> 2fffb7fb29b (ddl: fix adding multi-value index (#51884))
 }
