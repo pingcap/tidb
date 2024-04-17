@@ -68,9 +68,12 @@ func (info *binaryParamInfo) MarshalJSON() ([]byte, error) {
 }
 
 // GetPreparedStmt will be pre-init by core/pkg to avoid import cycle.
-var GetPreparedStmt func(stmt ast.StmtNode) (planCacheStmtIsNil bool, NotNilText string, binaryParams []expression.Expression)
+var GetPreparedStmt func(stmt ast.StmtNode) (planCacheStmtIsNil bool,
+	NotNilText string, binaryParams []expression.Expression)
 
 // DebugTraceReceivedCommand records the received command from the client to the debug trace.
+//
+//revive:disable:exported
 func DebugTraceReceivedCommand(s context.PlanContext, cmd byte, stmtNode ast.StmtNode) {
 	sessionVars := s.GetSessionVars()
 	trace := GetOrInitDebugTraceRoot(s)
@@ -130,6 +133,8 @@ func (b *bindingHint) MarshalJSON() ([]byte, error) {
 }
 
 // DebugTraceTryBinding records the hint that might be chosen to the debug trace.
+//
+//revive:disable:exported
 func DebugTraceTryBinding(s context.PlanContext, binding *hint.HintsSet) {
 	root := GetOrInitDebugTraceRoot(s)
 	traceInfo := &bindingHint{
@@ -140,6 +145,8 @@ func DebugTraceTryBinding(s context.PlanContext, binding *hint.HintsSet) {
 }
 
 // DebugTraceBestBinding records the chosen hint to the debug trace.
+//
+//revive:disable:exported
 func DebugTraceBestBinding(s context.PlanContext, binding *hint.HintsSet) {
 	root := GetOrInitDebugTraceRoot(s)
 	traceInfo := &bindingHint{
@@ -178,6 +185,9 @@ func convertAccessPathForDebugTrace(path *util.AccessPath, out *accessPathForDeb
 	}
 }
 
+// DebugTraceAccessPaths trace the access paths in debug.
+//
+//revive:disable:exported
 func DebugTraceAccessPaths(s context.PlanContext, paths []*util.AccessPath) {
 	root := GetOrInitDebugTraceRoot(s)
 	traceInfo := make([]accessPathForDebugTrace, len(paths))
