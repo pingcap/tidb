@@ -193,6 +193,28 @@ func TestAddIndexDistCancel(t *testing.T) {
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
 
+func TestIssue51162(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE tl (
+	 col_42 json NOT NULL,
+	 col_43 tinyint(1) DEFAULT NULL,
+	 col_44 char(168) CHARACTER SET gbk COLLATE gbk_bin DEFAULT NULL,
+	 col_45 json DEFAULT NULL,
+	 col_46 text COLLATE utf8mb4_unicode_ci NOT NULL,
+	 col_47 char(43) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'xW2YNb99pse4)',
+	 col_48 time NOT NULL DEFAULT '12:31:25',
+	 PRIMARY KEY (col_47,col_46(2)) /*T![clustered_index] CLUSTERED */
+	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`)
+
+	tk.MustExec(`INSERT INTO tl VALUES
+	('[\"1\"]',0,'1','[1]','Wxup81','1','10:14:20');`)
+
+	tk.MustExec("alter table tl add index idx_16(`col_48`,(cast(`col_45` as signed array)),`col_46`(5));")
+	tk.MustExec("admin check table tl")
+}
+
 func TestAddUKWithSmallIntHandles(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

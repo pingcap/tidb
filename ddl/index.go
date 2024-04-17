@@ -1685,15 +1685,29 @@ func writeChunkToLocal(writer ingest.Writer,
 	var lastHandle kv.Handle
 	unlock := writer.LockForWrite()
 	defer unlock()
+	var restoreDataBuf []types.Datum
+	restore := tables.NeedRestoredData(index.Meta().Columns, copCtx.tblInfo.Columns)
+	if restore {
+		restoreDataBuf = make([]types.Datum, len(copCtx.handleOutputOffsets))
+	}
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		idxDataBuf, handleDataBuf = idxDataBuf[:0], handleDataBuf[:0]
 		idxDataBuf = extractDatumByOffsets(row, copCtx.idxColOutputOffsets, copCtx.expColInfos, idxDataBuf)
 		handleDataBuf := extractDatumByOffsets(row, copCtx.handleOutputOffsets, copCtx.expColInfos, handleDataBuf)
+		if restore {
+			// restoreDataBuf should not truncate index values.
+			for i, datum := range handleDataBuf {
+				restoreDataBuf[i] = *datum.Clone()
+			}
+		}
 		handle, err := buildHandle(handleDataBuf, copCtx.tblInfo, copCtx.pkInfo, sCtx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		rsData := getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, handleDataBuf)
+		var rsData []types.Datum
+		if restore {
+			rsData = getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, restoreDataBuf)
+		}
 		err = writeOneKVToLocal(writer, index, sCtx, writeBufs, idxDataBuf, rsData, handle)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
