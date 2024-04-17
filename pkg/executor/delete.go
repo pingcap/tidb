@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -61,7 +62,7 @@ func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.deleteSingleTableByChunk(ctx)
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols plannercore.HandleCols, isExtraHandle bool, row []types.Datum) error {
+func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols handlecol.HandleCols, isExtraHandle bool, row []types.Datum) error {
 	end := len(row)
 	if isExtraHandle {
 		end--
@@ -81,7 +82,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	var (
 		tbl           table.Table
 		isExtrahandle bool
-		handleCols    plannercore.HandleCols
+		handleCols    handlecol.HandleCols
 		rowCount      int
 	)
 	for _, info := range e.tblColPosInfos {

@@ -265,3 +265,38 @@ func debugTraceTopNRange(s context.PlanContext, t *TopN, startIdx, endIdx int) {
 	traceInfo.Count = cnts
 	root.AppendStepWithNameToCurrentContext(traceInfo, "Related TopN Range")
 }
+
+/*
+ Below is debug trace for getStatsTable().
+ Part of the logic for collecting information is in statistics/debug_trace.go.
+*/
+
+type GetStatsTblInfo struct {
+	TableName         string
+	TblInfoID         int64
+	InputPhysicalID   int64
+	HandleIsNil       bool
+	UsePartitionStats bool
+	CountIsZero       bool
+	Uninitialized     bool
+	Outdated          bool
+	StatsTblInfo      *StatsTblTraceInfo
+}
+
+// Only for test.
+func StabilizeGetStatsTblInfo(info *GetStatsTblInfo) {
+	info.TblInfoID = 100
+	info.InputPhysicalID = 100
+	tbl := info.StatsTblInfo
+	if tbl == nil {
+		return
+	}
+	tbl.PhysicalID = 100
+	tbl.Version = 440930000000000000
+	for _, col := range tbl.Columns {
+		col.LastUpdateVersion = 440930000000000000
+	}
+	for _, idx := range tbl.Indexes {
+		idx.LastUpdateVersion = 440930000000000000
+	}
+}

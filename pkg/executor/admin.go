@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	plannercore "github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"

@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"math"
 	"slices"
 	"strings"
@@ -1264,8 +1265,9 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		ts.schema = is.dataSourceSchema.Clone()
 		if ds.tableInfo.IsCommonHandle {
-			commonHandle := ds.handleCols.(*CommonHandleCols)
-			for _, col := range commonHandle.columns {
+			commonHandle := ds.handleCols.(*handlecol.CommonHandleCols)
+			for i := 0; i < commonHandle.NumCols(); i++ {
+				col := commonHandle.GetCol(i)
 				if ts.schema.ColumnIndex(col) == -1 {
 					ts.Schema().Append(col)
 					ts.Columns = append(ts.Columns, col.ToInfo())

@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	math2 "math"
 	"strconv"
 	"strings"
@@ -2094,24 +2095,24 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	}
 }
 
-func buildHandleCols(ctx base.PlanContext, tbl *model.TableInfo, schema *expression.Schema) HandleCols {
+func buildHandleCols(ctx base.PlanContext, tbl *model.TableInfo, schema *expression.Schema) handlecol.HandleCols {
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				return &IntHandleCols{col: schema.Columns[i]}
+				return handlecol.NewIntHandleCols(schema.Columns[i])
 			}
 		}
 	}
 
 	if tbl.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(tbl)
-		return NewCommonHandleCols(ctx.GetSessionVars().StmtCtx, tbl, pkIdx, schema.Columns)
+		return handlecol.NewCommonHandleCols(ctx.GetSessionVars().StmtCtx, tbl, pkIdx, schema.Columns)
 	}
 
 	handleCol := colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
 	schema.Append(handleCol)
-	return &IntHandleCols{col: handleCol}
+	return handlecol.NewIntHandleCols(handleCol)
 }
 
 // TODO: Remove this, by enabling all types of partitioning

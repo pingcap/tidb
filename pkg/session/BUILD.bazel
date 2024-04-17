@@ -60,6 +60,7 @@ go_library(
         "//pkg/planner/contextimpl",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/util/debugtrace",
         "//pkg/plugin",
         "//pkg/privilege",
         "//pkg/privilege/conn",

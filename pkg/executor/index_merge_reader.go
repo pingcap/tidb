@@ -20,6 +20,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"runtime/trace"
 	"slices"
 	"sort"
@@ -135,7 +136,7 @@ type IndexMergeReaderExecutor struct {
 	partialNetDataSizes []float64
 	dataAvgRowSize      float64
 
-	handleCols plannercore.HandleCols
+	handleCols handlecol.HandleCols
 	stats      *IndexMergeRuntimeStat
 
 	// Indicates whether there is correlated column in filter or table/index range.
@@ -633,7 +634,7 @@ func (w *partialTableWorker) needPartitionHandle() (bool, error) {
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask,
-	finished <-chan struct{}, handleCols plannercore.HandleCols, parTblIdx int, partialPlanIndex int) (count int64, err error) {
+	finished <-chan struct{}, handleCols handlecol.HandleCols, parTblIdx int, partialPlanIndex int) (count int64, err error) {
 	chk := w.tableReader.NewChunkWithCapacity(w.getRetTpsForTableScan(), w.maxChunkSize, w.maxBatchSize)
 	for {
 		start := time.Now()
@@ -666,7 +667,7 @@ func (w *partialTableWorker) getRetTpsForTableScan() []*types.FieldType {
 	return exec.RetTypes(w.tableReader)
 }
 
-func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, handleCols plannercore.HandleCols) (
+func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, handleCols handlecol.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
 	if len(w.byItems) != 0 {
@@ -1701,7 +1702,7 @@ func (w *partialIndexWorker) fetchHandles(
 	exitCh <-chan struct{},
 	fetchCh chan<- *indexMergeTableTask,
 	finished <-chan struct{},
-	handleCols plannercore.HandleCols,
+	handleCols handlecol.HandleCols,
 	partialPlanIndex int) (count int64, err error) {
 	tps := w.getRetTpsForIndexScan(handleCols)
 	chk := chunk.NewChunkWithCapacity(tps, w.maxChunkSize)
@@ -1734,7 +1735,7 @@ func (w *partialIndexWorker) fetchHandles(
 	return count, nil
 }
 
-func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannercore.HandleCols) []*types.FieldType {
+func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols handlecol.HandleCols) []*types.FieldType {
 	var tps []*types.FieldType
 	if len(w.byItems) != 0 {
 		for _, item := range w.byItems {
@@ -1748,7 +1749,7 @@ func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannercore.Handle
 	return tps
 }
 
-func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleCols plannercore.HandleCols) (
+func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleCols handlecol.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
 	if len(w.byItems) != 0 {

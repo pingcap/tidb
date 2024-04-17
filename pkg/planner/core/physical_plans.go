@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -603,7 +604,7 @@ type PhysicalIndexMergeReader struct {
 
 	KeepOrder bool
 
-	HandleCols HandleCols
+	HandleCols handlecol.HandleCols
 }
 
 // GetAvgTableRowSize return the average row size of table plan.
@@ -877,7 +878,7 @@ type PhysicalTableScan struct {
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
 	HandleIdx  []int
-	HandleCols HandleCols
+	HandleCols handlecol.HandleCols
 
 	StoreType kv.StoreType
 
@@ -1759,7 +1760,7 @@ type PhysicalLock struct {
 
 	Lock *ast.SelectLockInfo
 
-	TblID2Handle       map[int64][]HandleCols
+	TblID2Handle       map[int64][]handlecol.HandleCols
 	TblID2PhysTblIDCol map[int64]*expression.Column
 }
 
@@ -2124,7 +2125,7 @@ type PhysicalUnionScan struct {
 
 	Conditions []expression.Expression
 
-	HandleCols HandleCols
+	HandleCols handlecol.HandleCols
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.

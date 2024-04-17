@@ -17,6 +17,7 @@ package core
 import (
 	"cmp"
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"math"
 	"slices"
 	"strconv"
@@ -500,6 +501,29 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 		return prepStmt.(*PlanCacheStmt), nil
 	}
 	return nil, plannererrors.ErrStmtNotFound
+}
+
+func init() {
+	debugtrace.GetPreparedStmt = GetPreparedStmt4DebugTrace
+}
+
+// GetPreparedStmt4DebugTrace is util function to avoid util/pkg depend back on core/pkg
+func GetPreparedStmt4DebugTrace(stmt ast.StmtNode) (planCacheStmtIsNil bool, NotNilText string, binaryParams []expression.Expression) {
+	var planCacheStmt *PlanCacheStmt
+	if execStmt, ok := stmt.(*ast.ExecuteStmt); ok {
+		if execStmt.PrepStmt != nil {
+			planCacheStmt, _ = execStmt.PrepStmt.(*PlanCacheStmt)
+		}
+		if execStmt.BinaryArgs != nil {
+			binaryParams, _ = execStmt.BinaryArgs.([]expression.Expression)
+		}
+	}
+	if planCacheStmt == nil {
+		planCacheStmtIsNil = true
+	} else {
+		NotNilText = planCacheStmt.StmtText
+	}
+	return planCacheStmtIsNil, NotNilText, binaryParams
 }
 
 // GetMatchOpts get options to fetch plan or generate new plan

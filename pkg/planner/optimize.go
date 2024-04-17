@@ -279,7 +279,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				continue
 			}
 			if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-				core.DebugTraceTryBinding(pctx, binding.Hint)
+				debugtrace.DebugTraceTryBinding(pctx, binding.Hint)
 			}
 			hint.BindHint(stmtNode, binding.Hint)
 			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetFirstTableHints(), setVarHintChecker, byte(kv.ReplicaReadFollower))
@@ -326,7 +326,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace && bestPlanFromBind != nil {
-		core.DebugTraceBestBinding(pctx, chosenBinding.Hint)
+		debugtrace.DebugTraceBestBinding(pctx, chosenBinding.Hint)
 	}
 	// No plan found from the bindings, or the bindings are ignored.
 	if bestPlan == nil {

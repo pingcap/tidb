@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package handlecol
 
 import (
 	"strings"
@@ -223,6 +223,18 @@ func NewCommonHandleCols(sc *stmtctx.StatementContext, tblInfo *model.TableInfo,
 		cols.columns[i] = tableColumns[idxCol.Offset]
 	}
 	return cols
+}
+
+// NewCommonHandleColsWithOffsetAlign NewCommonHandleCols creates a new CommonHandleCols without offset align.
+// It's a substitution of &CommonHandleCols{...} before.
+func NewCommonHandleColsWithOffsetAlign(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+	alignedTableCols []*expression.Column) *CommonHandleCols {
+	return &CommonHandleCols{
+		tblInfo: tblInfo,
+		idxInfo: idxInfo,
+		sc:      sc,
+		columns: alignedTableCols,
+	}
 }
 
 // IntHandleCols implements the kv.HandleCols interface.

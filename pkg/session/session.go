@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	stderrs "errors"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"math"
 	"math/rand"
 	"runtime/pprof"
@@ -2039,7 +2040,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 	}
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		plannercore.DebugTraceReceivedCommand(s.pctx, cmdByte, stmtNode)
+		debugtrace.DebugTraceReceivedCommand(s.pctx, cmdByte, stmtNode)
 	}
 
 	if err := s.validateStatementInTxn(stmtNode); err != nil {

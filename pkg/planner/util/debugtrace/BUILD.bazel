@@ -2,8 +2,18 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "debugtrace",
-    srcs = ["base.go"],
+    srcs = [
+        "base.go",
+        "debugtrace.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/planner/util/debugtrace",
     visibility = ["//visibility:public"],
-    deps = ["//pkg/planner/context"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/planner/context",
+        "//pkg/planner/util",
+        "//pkg/util/hint",
+    ],
 )

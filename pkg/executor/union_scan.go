@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	plannercore "github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"runtime/trace"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"

@@ -499,7 +499,7 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 	}
 
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugTraceAccessPaths(ds.SCtx(), ds.possibleAccessPaths)
+		debugtrace.DebugTraceAccessPaths(ds.SCtx(), ds.possibleAccessPaths)
 	}
 	ds.accessPathMinSelectivity = getMinSelectivityFromPaths(ds.possibleAccessPaths, float64(ds.TblColHists.RealtimeCount))
 

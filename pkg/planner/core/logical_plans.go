@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"math"
 	"unsafe"
 
@@ -1412,7 +1413,7 @@ type LogicalUnionScan struct {
 
 	conditions []expression.Expression
 
-	handleCols HandleCols
+	handleCols handlecol.HandleCols
 }
 
 // GetAllConds Exported for unit test.
@@ -1454,8 +1455,8 @@ type DataSource struct {
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
 	// handleCol *expression.Column
-	handleCols          HandleCols
-	unMutableHandleCols HandleCols
+	handleCols          handlecol.HandleCols
+	unMutableHandleCols handlecol.HandleCols
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
 	TblCols []*expression.Column
@@ -1515,7 +1516,7 @@ type TiKVSingleGather struct {
 type LogicalTableScan struct {
 	logicalSchemaProducer
 	Source      *DataSource
-	HandleCols  HandleCols
+	HandleCols  handlecol.HandleCols
 	AccessConds expression.CNFExprs
 	Ranges      []*ranger.Range
 }
@@ -1972,7 +1973,7 @@ type LogicalLock struct {
 	baseLogicalPlan
 
 	Lock         *ast.SelectLockInfo
-	tblID2Handle map[int64][]HandleCols
+	tblID2Handle map[int64][]handlecol.HandleCols
 
 	// tblID2phyTblIDCol is used for partitioned tables,
 	// the child executor need to return an extra column containing

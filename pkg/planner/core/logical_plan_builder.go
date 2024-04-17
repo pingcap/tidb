@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"math"
 	"math/bits"
 	"sort"
@@ -4507,6 +4508,37 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 	return statsTbl
 }
 
+func debugTraceGetStatsTbl(
+	s base.PlanContext,
+	tblInfo *model.TableInfo,
+	pid int64,
+	handleIsNil,
+	usePartitionStats,
+	countIsZero,
+	uninitialized,
+	outdated bool,
+	statsTbl *statistics.Table,
+) {
+	root := debugtrace.GetOrInitDebugTraceRoot(s)
+	traceInfo := &statistics.GetStatsTblInfo{
+		TableName:         tblInfo.Name.O,
+		TblInfoID:         tblInfo.ID,
+		InputPhysicalID:   pid,
+		HandleIsNil:       handleIsNil,
+		UsePartitionStats: usePartitionStats,
+		CountIsZero:       countIsZero,
+		Uninitialized:     uninitialized,
+		Outdated:          outdated,
+		StatsTblInfo:      statistics.TraceStatsTbl(statsTbl),
+	}
+	failpoint.Inject("DebugTraceStableStatsTbl", func(val failpoint.Value) {
+		if val.(bool) {
+			statistics.StabilizeGetStatsTblInfo(traceInfo)
+		}
+	})
+	root.AppendStepToCurrentContext(traceInfo)
+}
+
 // getLatestVersionFromStatsTable gets statistics information for a table specified by "tableID", and get the max
 // LastUpdateVersion among all Columns and Indices in it.
 // Its overall logic is quite similar to getStatsTable(). During plan cache matching, only the latest version is needed.
@@ -4963,7 +4995,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		is:                  b.is,
 		isForUpdateRead:     b.isForUpdateRead,
 	}.Init(b.ctx, b.getSelectOffset())
-	var handleCols HandleCols
+	var handleCols handlecol.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	names := make([]*types.FieldName, 0, len(columns))
 	for i, col := range columns {
@@ -4985,7 +5017,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			IsHidden: col.Hidden,
 		}
 		if col.IsPKHandleColumn(tableInfo) {
-			handleCols = &IntHandleCols{col: newCol}
+			handleCols = handlecol.NewIntHandleCols(newCol)
 		}
 		schema.Append(newCol)
 		ds.TblCols = append(ds.TblCols, newCol)
@@ -4995,10 +5027,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if handleCols == nil {
 		if tableInfo.IsCommonHandle {
 			primaryIdx := tables.FindPrimaryIndex(tableInfo)
-			handleCols = NewCommonHandleCols(b.ctx.GetSessionVars().StmtCtx, tableInfo, primaryIdx, ds.TblCols)
+			handleCols = handlecol.NewCommonHandleCols(b.ctx.GetSessionVars().StmtCtx, tableInfo, primaryIdx, ds.TblCols)
 		} else {
 			extraCol := ds.newExtraHandleSchemaCol()
-			handleCols = &IntHandleCols{col: extraCol}
+			handleCols = handlecol.NewIntHandleCols(extraCol)
 			ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 			schema.Append(extraCol)
 			names = append(names, &types.FieldName{
@@ -5012,8 +5044,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	ds.handleCols = handleCols
 	ds.unMutableHandleCols = handleCols
-	handleMap := make(map[int64][]HandleCols)
-	handleMap[tableInfo.ID] = []HandleCols{handleCols}
+	handleMap := make(map[int64][]handlecol.HandleCols)
+	handleMap[tableInfo.ID] = []handlecol.HandleCols{handleCols}
 	b.handleHelper.pushMap(handleMap)
 	ds.SetSchema(schema)
 	ds.names = names
@@ -5248,7 +5280,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 	// a stable schema and there is no online DDL on the memory table.
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	names := make([]*types.FieldName, 0, len(tableInfo.Columns))
-	var handleCols HandleCols
+	var handleCols handlecol.HandleCols
 	for _, col := range tableInfo.Columns {
 		names = append(names, &types.FieldName{
 			DBName:      dbName,
@@ -5264,14 +5296,14 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			RetType:  &col.FieldType,
 		}
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()) {
-			handleCols = &IntHandleCols{col: newCol}
+			handleCols = handlecol.NewIntHandleCols(newCol)
 		}
 		schema.Append(newCol)
 	}
 
 	if handleCols != nil {
-		handleMap := make(map[int64][]HandleCols)
-		handleMap[tableInfo.ID] = []HandleCols{handleCols}
+		handleMap := make(map[int64][]handlecol.HandleCols)
+		handleMap[tableInfo.ID] = []handlecol.HandleCols{handleCols}
 		b.handleHelper.pushMap(handleMap)
 	} else {
 		b.handleHelper.pushMap(nil)
@@ -5649,7 +5681,7 @@ type TblColPosInfo struct {
 	// Start and End represent the ordinal range [Start, End) of the consecutive columns.
 	Start, End int
 	// HandleOrdinal represents the ordinal of the handle column.
-	HandleCols HandleCols
+	HandleCols handlecol.HandleCols
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo
@@ -5700,7 +5732,7 @@ func (c TblColPosInfoSlice) FindTblIdx(colOrdinal int) (int, bool) {
 // buildColumns2Handle builds columns to handle mapping.
 func buildColumns2Handle(
 	names []*types.FieldName,
-	tblID2Handle map[int64][]HandleCols,
+	tblID2Handle map[int64][]handlecol.HandleCols,
 	tblID2Table map[int64]table.Table,
 	onlyWritableCol bool,
 ) (TblColPosInfoSlice, error) {
@@ -6328,8 +6360,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	return del, err
 }
 
-func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]HandleCols, schema *expression.Schema) (map[int64][]HandleCols, error) {
-	newMap := make(map[int64][]HandleCols, len(tblID2Handle))
+func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]handlecol.HandleCols, schema *expression.Schema) (map[int64][]handlecol.HandleCols, error) {
+	newMap := make(map[int64][]handlecol.HandleCols, len(tblID2Handle))
 	for i, cols := range tblID2Handle {
 		for _, col := range cols {
 			resolvedCol, err := col.ResolveIndices(schema)
@@ -6344,9 +6376,9 @@ func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]HandleCols, schema *
 
 func (p *Delete) cleanTblID2HandleMap(
 	tablesToDelete map[int64][]*ast.TableName,
-	tblID2Handle map[int64][]HandleCols,
+	tblID2Handle map[int64][]handlecol.HandleCols,
 	outputNames []*types.FieldName,
-) map[int64][]HandleCols {
+) map[int64][]handlecol.HandleCols {
 	for id, cols := range tblID2Handle {
 		names, ok := tablesToDelete[id]
 		if !ok {
