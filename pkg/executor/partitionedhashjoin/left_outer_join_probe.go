@@ -50,7 +50,7 @@ func (j *leftOuterJoinProbe) IsScanRowTableDone() bool {
 	if j.rightAsBuildSide {
 		panic("should not reach here")
 	}
-	return !j.rowIter.hasNext()
+	return j.rowIter.isEnd()
 }
 
 func (j *leftOuterJoinProbe) InitForScanRowTable() {
@@ -86,7 +86,7 @@ func (j *leftOuterJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult)
 	meta := j.ctx.hashTableMeta
 	insertedRows := 0
 	remainCap := joinResult.Chk.RequiredRows() - joinResult.Chk.NumRows()
-	for insertedRows < remainCap && j.rowIter.hasNext() {
+	for insertedRows < remainCap && !j.rowIter.isEnd() {
 		currentRow := j.rowIter.getValue()
 		if !meta.isCurrentRowUsed(currentRow) {
 			// append build side of this row
