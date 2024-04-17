@@ -871,6 +871,12 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		for nullDataRows.Next() {
 			hasRow = true
 		}
+		if err := nullDataRows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+		if err := nullDataRows.Close(); err != nil {
+			return errors.Trace(err)
+		}
 		if hasRow {
 			break
 		}
