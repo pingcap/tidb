@@ -69,7 +69,7 @@ const WholeTableEngineID = math.MaxInt32
 // remember to increase the version number in case of incompatible change.
 const (
 	CheckpointTableNameTask   = "task_v2"
-	CheckpointTableNameTable  = "table_v8"
+	CheckpointTableNameTable  = "table_v9"
 	CheckpointTableNameEngine = "engine_v5"
 	CheckpointTableNameChunk  = "chunk_v5"
 )
@@ -106,7 +106,7 @@ const (
 			status tinyint unsigned DEFAULT 30,
 			alloc_base bigint NOT NULL DEFAULT 0,
 			table_id bigint NOT NULL DEFAULT 0,
-		    table_info text NOT NULL,
+		    table_info longtext NOT NULL,
 			create_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			kv_bytes bigint unsigned NOT NULL DEFAULT 0,

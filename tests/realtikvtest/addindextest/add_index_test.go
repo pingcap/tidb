@@ -214,3 +214,15 @@ func TestIssue51162(t *testing.T) {
 	tk.MustExec("alter table tl add index idx_16(`col_48`,(cast(`col_45` as signed array)),`col_46`(5));")
 	tk.MustExec("admin check table tl")
 }
+
+func TestAddUKWithSmallIntHandles(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists small;")
+	tk.MustExec("create database small;")
+	tk.MustExec("use small;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
+	tk.MustExec("create table t (a bigint, b int, primary key (a) clustered)")
+	tk.MustExec("insert into t values (-9223372036854775808, 1),(-9223372036854775807, 1)")
+	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
+}

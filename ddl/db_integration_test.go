@@ -2135,6 +2135,13 @@ func TestDefaultColumnWithUUID(t *testing.T) {
 			"  `c` int(10) DEFAULT NULL,\n" +
 			"  `c1` varchar(256) DEFAULT uuid()\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// test modify column
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int(10), c1 varchar(256) default rand());")
+	tk.MustExec("alter table t alter column c1 set default 'xx';")
+	tk.MustExec("insert into t values (1, default);")
+	tk.MustQuery("select c1 from t;").Check(testkit.Rows("xx"))
 }
 
 func TestChangingDBCharset(t *testing.T) {
