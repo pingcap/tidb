@@ -98,7 +98,7 @@ restart_services
 
 # PITR restore
 echo "run pitr"
-run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full"
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1
 
 # check something in downstream cluster
 echo "check br log"
@@ -109,7 +109,7 @@ echo "" > $res_file
 echo "check sql result"
 run_sql "select * from mysql.gc_delete_range"
 run_sql "select * from mysql.gc_delete_range_done"
-run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
+run_sql "select count(*) DELETE_RANGE_CNT from (select distinct start_key, end_key, ts from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done)) del_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
 expect_delete_range=$(($incremental_delete_range_count-$prepare_delete_range_count))
 check_contains "DELETE_RANGE_CNT: $expect_delete_range"
 ## check feature compatibility between PITR and accelerate indexing
