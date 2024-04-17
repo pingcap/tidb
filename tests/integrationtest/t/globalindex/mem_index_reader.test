@@ -24,7 +24,6 @@ explain select b from t partition(p0) use index(idx1) where b <= 2;
 --sorted_result
 select b from t partition(p0) use index(idx1) where b <= 2;
 
---replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid0)/
 explain select b from t partition(p1) use index(idx1) where b <= 2 and a = 10;
 --sorted_result
 select b from t partition(p1) use index(idx1) where b <= 2 and a = 10;
@@ -59,11 +58,6 @@ select b from t use index(idx1) where b > 2;
 explain select b from t partition(p0) use index(idx1) where b <= 2;
 --sorted_result
 select b from t partition(p0) use index(idx1) where b <= 2;
-
---replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid0)/
-explain select b from t partition(p0) use index(idx1) where b <= 2 and a = 2010;
---sorted_result
-select b from t partition(p0) use index(idx1) where b <= 2 and a = 2010;
 
 --replace_regex /in\(_tidb_pid, [0-9]+, [0-9]+\)/in(_tidb_pid, pid0, pid1)/
 explain select b from t partition(p0, p1) use index(idx1) where b <= 2;

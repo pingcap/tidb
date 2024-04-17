@@ -2248,6 +2248,9 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 			for _, p := range pDef {
 				args = append(args, expression.NewInt64Const(p.ID))
 			}
+		} else if len(idxArr) == 0 {
+			// add an invalid pid as param for `IN` function
+			args = append(args, expression.NewInt64Const(-1))
 		} else {
 			for _, idx := range idxArr {
 				args = append(args, expression.NewInt64Const(pDef[idx].ID))
