@@ -241,6 +241,10 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 			task.ResultCh <- *slr
 			return nil, nil
 		}
+		if ok := updateNeededItemTaskRetryCountAndCheck(task); !ok {
+			logutil.BgLogger().Error("stats loading error", zap.Error(result.Err))
+			return nil, nil
+		}
 		return task, result.Err
 	case <-time.After(timeout):
 		if ok := updateNeededItemTaskRetryCountAndCheck(task); !ok {
