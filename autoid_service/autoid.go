@@ -322,7 +322,7 @@ func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Servic
 		// improperly use the stale map to serve the autoid requests.
 		// See https://github.com/pingcap/tidb/issues/52600
 		service.autoIDLock.Lock()
-		clear(service.autoIDMap)
+		service.autoIDMap = make(map[autoIDKey]*autoIDValue)
 		service.autoIDLock.Unlock()
 
 		logutil.BgLogger().Info("leader change of autoid service, this node become owner",
