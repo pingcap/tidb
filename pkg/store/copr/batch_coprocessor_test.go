@@ -286,7 +286,7 @@ func TestTopoFetcherBackoff(t *testing.T) {
 	require.LessOrEqual(t, dura, 50*time.Second)
 }
 
-func TestGetAllUnusedTiflashStores(t *testing.T) {
+func TestGetAllUnusedTiFlashStores(t *testing.T) {
 	mockClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	defer func() {
@@ -308,15 +308,15 @@ func TestGetAllUnusedTiflashStores(t *testing.T) {
 	cache.SetRegionCacheStore(2, "192.168.1.2", "192.168.1.3", tikvrpc.TiFlash, 0, []*metapb.StoreLabel{&label1, &label2})
 	cache.SetRegionCacheStore(3, "192.168.1.3", "192.168.1.2", tikvrpc.TiFlash, 0, []*metapb.StoreLabel{&label1, &label2})
 
-	allUsedTiflashStoresMap := make(map[uint64]struct{})
-	allUsedTiflashStoresMap[2] = struct{}{}
-	allUsedTiflashStoresMap[3] = struct{}{}
+	allUsedTiFlashStoresMap := make(map[uint64]struct{})
+	allUsedTiFlashStoresMap[2] = struct{}{}
+	allUsedTiFlashStoresMap[3] = struct{}{}
 	allTiFlashStores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 	require.Equal(t, 3, len(allTiFlashStores))
-	allUnusedTiflashStores := getAllUsedTiflashStores(allTiFlashStores, allUsedTiflashStoresMap)
-	require.Equal(t, len(allUsedTiflashStoresMap), len(allUnusedTiflashStores))
-	for _, store := range allUnusedTiflashStores {
-		_, ok := allUsedTiflashStoresMap[store.StoreID()]
+	allUnusedTiFlashStores := getAllUsedTiFlashStores(allTiFlashStores, allUsedTiFlashStoresMap)
+	require.Equal(t, len(allUsedTiFlashStoresMap), len(allUnusedTiFlashStores))
+	for _, store := range allUnusedTiFlashStores {
+		_, ok := allUsedTiFlashStoresMap[store.StoreID()]
 		require.True(t, ok)
 	}
 }
