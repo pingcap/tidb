@@ -642,6 +642,7 @@ func buildBatchCopTasksConsistentHash(
 		for _, lo := range locations {
 			tasks = append(tasks, &copTask{
 				region:         lo.Location.Region,
+				regionLoc:      lo,
 				ranges:         lo.Ranges,
 				cmdType:        cmdType,
 				storeType:      storeType,
@@ -911,6 +912,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			for _, lo := range locations {
 				tasks = append(tasks, &copTask{
 					region:         lo.Location.Region,
+					regionLoc:      lo,
 					ranges:         lo.Ranges,
 					cmdType:        cmdType,
 					storeType:      storeType,
@@ -1437,6 +1439,7 @@ func buildBatchCopTasksConsistentHashForPD(bo *backoff.Backoffer,
 			for _, lo := range locations {
 				tasks = append(tasks, &copTask{
 					region:         lo.Location.Region,
+					regionLoc:      lo,
 					ranges:         lo.Ranges,
 					cmdType:        cmdType,
 					storeType:      storeType,

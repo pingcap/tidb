@@ -249,6 +249,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 type copTask struct {
 	taskID     uint64
 	region     tikv.RegionVerID
+	regionLoc  *LocationKeyRanges
 	bucketsVer uint64
 	ranges     *KeyRanges
 
@@ -401,6 +402,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 			}
 			task := &copTask{
 				region:        loc.Location.Region,
+				regionLoc:     loc,
 				bucketsVer:    loc.getBucketVersion(),
 				ranges:        loc.Ranges.Slice(i, nextI),
 				cmdType:       cmdType,
@@ -1444,18 +1446,25 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
 
-		firstRangeStartKey := task.ranges.At(0).StartKey
-		lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
+		firstRangeStartKey := fmt.Sprintf("%X", task.ranges.At(0).StartKey)
+		lastRangeEndKey := fmt.Sprintf("%X", task.ranges.At(task.ranges.Len()-1).EndKey)
+		var startKey, endKey string
+		if task.regionLoc != nil {
+			startKey = fmt.Sprintf("%X", task.regionLoc.Location.StartKey)
+			endKey = fmt.Sprintf("%X", task.regionLoc.Location.EndKey)
+		}
 
 		logutil.Logger(bo.GetCtx()).Warn("other error",
 			zap.Uint64("txnStartTS", worker.req.StartTs),
 			zap.Uint64("regionID", task.region.GetID()),
 			zap.String("region", task.region.String()),
+			zap.String("region-start-key", startKey),
+			zap.String("region-end-key", endKey),
 			zap.Uint64("bucketsVer", task.bucketsVer),
 			zap.Uint64("latestBucketsVer", resp.pbResp.GetLatestBucketsVersion()),
 			zap.Int("rangeNums", task.ranges.Len()),
-			zap.ByteString("firstRangeStartKey", firstRangeStartKey),
-			zap.ByteString("lastRangeEndKey", lastRangeEndKey),
+			zap.String("firstRangeStartKey", firstRangeStartKey),
+			zap.String("lastRangeEndKey", lastRangeEndKey),
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
 		if strings.Contains(err.Error(), "write conflict") {
