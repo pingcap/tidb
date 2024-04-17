@@ -253,10 +253,7 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 
 func updateNeededItemTaskRetryCountAndCheck(task *statstypes.NeededItemTask) bool {
 	task.Retry++
-	if task.Retry > 3 {
-		return false
-	}
-	return true
+	return task.Retry <= 3
 }
 
 func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statstypes.NeededItemTask) (result *stmtctx.StatsLoadResult, err error) {
