@@ -151,10 +151,10 @@ const (
 	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?,?)"
 
 	selectIndexConflictKeysReplace = `
-		SELECT raw_key, index_name, raw_value, raw_handle
+		SELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND is_data_kv = 0
-		ORDER BY raw_key;
+		WHERE table_name = ? AND is_data_kv = 0 AND _tidb_rowid >= ? and _tidb_rowid < ?
+		ORDER BY _tidb_rowid LIMIT ?;
 	`
 
 	selectDataConflictKeysReplace = `
@@ -531,23 +531,28 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			defer taskWg.Done()
 
 			for start < end {
+				em.logger.Debug("got start, end",
+					zap.Int64("start", start),
+					zap.Int64("end", end))
 				// TODO: provide a detailed document to explain the algorithm and link it here
 				// demo for "replace" algorithm: https://github.com/lyzx2001/tidb-conflict-replace
 				// check index KV
 				indexKvRows, err := em.db.QueryContext(
 					gCtx, common.SprintfWithIdentifiers(selectIndexConflictKeysReplace, em.schema),
-					tableName)
+					tableName, start, end, rowLimit)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				defer indexKvRows.Close()
+
 				var lastRowID int64
 				for indexKvRows.Next() {
 					var rawKey, rawValue, rawHandle []byte
 					var indexName string
-					if err := indexKvRows.Scan(&rawKey, &indexName, &rawValue, &rawHandle); err != nil {
+					if err := indexKvRows.Scan(&lastRowID, &rawKey, &indexName, &rawValue, &rawHandle); err != nil {
 						return errors.Trace(err)
 					}
+					em.logger.Debug("got lastRowID",
+						zap.Int64("lastRowID", lastRowID))
 					em.logger.Debug("got raw_key, index_name, raw_value, raw_handle from table",
 						zap.Binary("raw_key", rawKey),
 						zap.String("index_name", indexName),
@@ -659,11 +664,16 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err := indexKvRows.Err(); err != nil {
 					return errors.Trace(err)
 				}
+				if err := indexKvRows.Close(); err != nil {
+					return errors.Trace(err)
+				}
 				start = lastRowID + 1
 				// If the remaining tasks cannot be processed at once, split the task
 				// into two subtasks and send one of them to the other idle worker if possible.
 				if end-start > rowLimit {
 					mid := start + (end-start)/2
+					em.logger.Debug("got mid",
+						zap.Int64("mid", mid))
 					taskWg.Add(1)
 					select {
 					case taskCh <- [2]int64{mid, end}:
@@ -675,6 +685,9 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			}
 			return nil
 		})
+	}
+	if err := g.Wait(); err != nil {
+		return errors.Trace(err)
 	}
 
 	// check data KV
@@ -809,7 +822,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 
 	return nil
 
-	return errors.Trace(g.Wait())
+	//return errors.Trace(g.Wait())
 }
 
 // RecordDuplicateCount reduce the counter of "duplicate entry" errors.
