@@ -75,9 +75,6 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 
 	// The local rest is not enough for alloc.
 	if uint64(alloc.base)+uint64(n1) > uint64(alloc.end) || alloc.base == 0 {
-		// consume the remain first
-		n1 = n1 - (alloc.end - alloc.base)
-
 		var newBase, newEnd int64
 		nextStep := int64(batch)
 
@@ -90,7 +87,7 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 				return err1
 			}
 			// calcNeededBatchSize calculates the total batch size needed on new base.
-			if alloc.base == 0 {
+			if alloc.base == 0 || newBase != alloc.end {
 				alloc.base = newBase
 				alloc.end = newBase
 				n1 = calcNeededBatchSize(newBase, int64(n), increment, offset, isUnsigned)
@@ -144,8 +141,6 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 	// The local rest is not enough for allocN.
 	// If alloc.base is 0, the alloc may not be initialized, force fetch from remote.
 	if alloc.base+n1 > alloc.end || alloc.base == 0 {
-		n1 = n1 - (alloc.end - alloc.base)
-
 		var newBase, newEnd int64
 		nextStep := int64(batch)
 
@@ -158,7 +153,9 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 				return err1
 			}
 			// calcNeededBatchSize calculates the total batch size needed on global base.
-			if alloc.base == 0 {
+			// alloc.base == 0 means uninitialized
+			// newBase != alloc.end means something abnormal, maybe transaction conflict and retry?
+			if alloc.base == 0 || newBase != alloc.end {
 				alloc.base = newBase
 				alloc.end = newBase
 				n1 = calcNeededBatchSize(newBase, int64(n), increment, offset, isUnsigned)
