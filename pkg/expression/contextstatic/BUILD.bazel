@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "contextstatic",
-    srcs = [
-        "evalctx.go",
-        "warn.go",
-    ],
+    srcs = ["evalctx.go"],
     importpath = "github.com/pingcap/tidb/pkg/expression/contextstatic",
     visibility = ["//visibility:public"],
     deps = [
@@ -13,10 +10,10 @@ go_library(
         "//pkg/expression/context",
         "//pkg/expression/contextopt",
         "//pkg/parser/mysql",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util/context",
+        "//pkg/util/intest",
     ],
 )
 
@@ -34,7 +31,6 @@ go_test(
         "//pkg/infoschema/context",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util/context",

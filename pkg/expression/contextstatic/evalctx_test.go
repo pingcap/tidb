@@ -26,7 +26,6 @@ import (
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -65,21 +64,9 @@ func checkDefaultStaticEvalCtx(t *testing.T, ctx *StaticEvalContext) {
 	require.Same(t, time.UTC, tm.Location())
 	require.InDelta(t, time.Now().Unix(), tm.Unix(), 5)
 
-	require.Equal(t, 0, ctx.WarningCount())
-	warn1, warn2, warn3 :=
-		errors.NewNoStackError("err1"), errors.NewNoStackError("err2"), errors.NewNoStackError("err3")
-	ctx.AppendWarning(warn1)
-	tc, ec := ctx.TypeCtx(), ctx.ErrCtx()
-	tc.AppendWarning(warn2)
-	ec.AppendWarning(warn3)
-	require.Equal(t, 3, ctx.WarningCount())
-	warns := ctx.TruncateWarnings(0)
-	require.Equal(t, 0, ctx.WarningCount())
-	require.Equal(t, []stmtctx.SQLWarn{
-		{Level: stmtctx.WarnLevelWarning, Err: warn1},
-		{Level: stmtctx.WarnLevelWarning, Err: warn2},
-		{Level: stmtctx.WarnLevelWarning, Err: warn3},
-	}, warns)
+	warnHandler, ok := ctx.warnHandler.(*contextutil.StaticWarnHandler)
+	require.True(t, ok)
+	require.Equal(t, 0, warnHandler.WarningCount())
 }
 
 func TestStaticEvalCtxOptions(t *testing.T) {
@@ -93,18 +80,20 @@ func TestStaticEvalCtxOptions(t *testing.T) {
 type evalCtxOptionsTestState struct {
 	now           time.Time
 	loc           *time.Location
+	warnHandler   *contextutil.StaticWarnHandler
 	ddlOwner      bool
 	privCheckArgs []any
 	privRet       bool
 }
 
 func getEvalCtxOptionsForTest(t *testing.T) ([]StaticEvalCtxOption, *evalCtxOptionsTestState) {
-	s := &evalCtxOptionsTestState{}
-
 	loc, err := time.LoadLocation("US/Eastern")
 	require.NoError(t, err)
-	s.now = time.Now()
-	s.loc = loc
+	s := &evalCtxOptionsTestState{
+		now:         time.Now(),
+		loc:         loc,
+		warnHandler: contextutil.NewStaticWarnHandler(8),
+	}
 
 	provider1 := contextopt.CurrentUserPropProvider(func() (*auth.UserIdentity, []*auth.RoleIdentity) {
 		return &auth.UserIdentity{Username: "user1", Hostname: "host1"},
@@ -116,10 +105,7 @@ func getEvalCtxOptionsForTest(t *testing.T) ([]StaticEvalCtxOption, *evalCtxOpti
 	})
 
 	return []StaticEvalCtxOption{
-		WithWarnings([]stmtctx.SQLWarn{
-			{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn1")},
-			{Level: stmtctx.WarnLevelError, Err: errors.NewNoStackError("warn2")},
-		}),
+		WithWarnHandler(s.warnHandler),
 		WithSQLMode(mysql.ModeNoZeroDate | mysql.ModeStrictTransTables),
 		WithTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck),
 		WithErrLevelMap(errctx.LevelMap{
@@ -149,10 +135,7 @@ func getEvalCtxOptionsForTest(t *testing.T) ([]StaticEvalCtxOption, *evalCtxOpti
 }
 
 func checkOptionsStaticEvalCtx(t *testing.T, ctx *StaticEvalContext, s *evalCtxOptionsTestState) {
-	require.Equal(t, []stmtctx.SQLWarn{
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn1")},
-		{Level: stmtctx.WarnLevelError, Err: errors.NewNoStackError("warn2")},
-	}, ctx.TruncateWarnings(0))
+	require.Same(t, ctx.warnHandler, s.warnHandler)
 	require.Equal(t, mysql.ModeNoZeroDate|mysql.ModeStrictTransTables, ctx.SQLMode())
 	require.Equal(t,
 		types.NewContext(types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck, s.loc, ctx),
@@ -302,90 +285,81 @@ func TestStaticEvalCtxCurrentTime(t *testing.T) {
 }
 
 func TestStaticEvalCtxWarnings(t *testing.T) {
-	// Nil warnings
-	ctx := NewStaticEvalContext(WithWarnings(nil))
-	require.Equal(t, 0, ctx.WarningCount())
+	// default context should have a empty StaticWarningsHandler
+	ctx := NewStaticEvalContext()
+	h, ok := ctx.warnHandler.(*contextutil.StaticWarnHandler)
+	require.True(t, ok)
+	require.Equal(t, 0, h.WarningCount())
 
-	warns := make([]stmtctx.SQLWarn, 0, 8)
-	warns = append(warns, []stmtctx.SQLWarn{
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn1")},
-		{Level: stmtctx.WarnLevelError, Err: errors.NewNoStackError("warn2")},
-		{Level: stmtctx.WarnLevelNote, Err: errors.NewNoStackError("warn3")},
-	}...)
+	// WithWarnHandler should work
+	ignoreHandler := contextutil.IgnoreWarn
+	ctx = NewStaticEvalContext(WithWarnHandler(ignoreHandler))
+	require.True(t, ctx.warnHandler == ignoreHandler)
 
-	// WithWarnings should copy the warnings
-	ctx = NewStaticEvalContext(WithWarnings(warns))
-	ctx.AppendWarning(errors.NewNoStackError("warn4"))
-	require.Equal(t, 4, ctx.WarningCount())
-	warns = warns[:4]
-	require.Nil(t, warns[3].Err)
-
-	// TypeCtx and ErrCtx should append warning to the context
+	// All contexts should use the same warning handler
+	h = contextutil.NewStaticWarnHandler(8)
+	ctx = NewStaticEvalContext(WithWarnHandler(h))
 	tc, ec := ctx.TypeCtx(), ctx.ErrCtx()
-	tc.AppendWarning(errors.NewNoStackError("warn5"))
-	ec.AppendWarning(errors.NewNoStackError("warn6"))
-	require.Equal(t, 6, ctx.WarningCount())
+	h.AppendWarning(errors.NewNoStackError("warn0"))
+	ctx.AppendWarning(errors.NewNoStackError("warn1"))
+	tc.AppendWarning(errors.NewNoStackError("warn2"))
+	ec.AppendWarning(errors.NewNoStackError("warn3"))
+	require.Equal(t, 4, h.WarningCount())
+	require.Equal(t, h.WarningCount(), ctx.WarningCount())
 
-	// Truncate warnings with out-of-range index
-	require.Empty(t, ctx.TruncateWarnings(6))
-	require.Empty(t, ctx.TruncateWarnings(7))
-	require.Equal(t, 6, ctx.WarningCount())
+	// ctx.CopyWarnings
+	warnings := ctx.CopyWarnings(nil)
+	require.Equal(t, []contextutil.SQLWarn{
+		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn0")},
+		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn1")},
+		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn2")},
+		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn3")},
+	}, warnings)
+	require.Equal(t, 4, h.WarningCount())
+	require.Equal(t, h.WarningCount(), ctx.WarningCount())
 
-	// Truncate warnings
-	gotWarnings := ctx.TruncateWarnings(2)
-	require.Equal(t, []stmtctx.SQLWarn{
-		{Level: stmtctx.WarnLevelNote, Err: errors.NewNoStackError("warn3")},
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn4")},
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn5")},
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn6")},
-	}, gotWarnings)
-	require.Equal(t, 2, ctx.WarningCount())
+	// ctx.TruncateWarnings
+	warnings = ctx.TruncateWarnings(2)
+	require.Equal(t, []contextutil.SQLWarn{
+		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn2")},
+		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn3")},
+	}, warnings)
+	require.Equal(t, 2, h.WarningCount())
+	require.Equal(t, h.WarningCount(), ctx.WarningCount())
+	warnings = ctx.CopyWarnings(nil)
+	require.Equal(t, []contextutil.SQLWarn{
+		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn0")},
+		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn1")},
+	}, warnings)
 
-	gotWarnings = ctx.TruncateWarnings(0)
-	require.Equal(t, []stmtctx.SQLWarn{
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn1")},
-		{Level: stmtctx.WarnLevelError, Err: errors.NewNoStackError("warn2")},
-	}, gotWarnings)
-	require.Equal(t, 0, ctx.WarningCount())
-
-	// Truncate warnings should do copy
-	ctx.AppendWarning(errors.NewNoStackError("warn7"))
-	require.Equal(t, []stmtctx.SQLWarn{
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn1")},
-		{Level: stmtctx.WarnLevelError, Err: errors.NewNoStackError("warn2")},
-	}, gotWarnings)
-	require.Equal(t, 1, ctx.WarningCount())
-	gotWarnings[0] = stmtctx.SQLWarn{Level: stmtctx.WarnLevelNote, Err: errors.NewNoStackError("warn8")}
-	require.Equal(t, []stmtctx.SQLWarn{
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn7")},
-	}, ctx.TruncateWarnings(0))
-	require.Equal(t, 0, ctx.WarningCount())
-
-	// warnings should be cloned
-	ctx.AppendWarning(errors.NewNoStackError("warn8"))
+	// Apply should use the old warning handler by default
 	ctx2 := ctx.Apply()
-	ctx.AppendWarning(errors.NewNoStackError("warn9"))
-	ctx2.AppendWarning(errors.NewNoStackError("warn10"))
-	require.Equal(t, []stmtctx.SQLWarn{
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn8")},
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn9")},
-	}, ctx.TruncateWarnings(0))
-	require.Equal(t, []stmtctx.SQLWarn{
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn8")},
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn10")},
-	}, ctx2.TruncateWarnings(0))
+	require.NotSame(t, ctx, ctx2)
+	require.True(t, ctx.warnHandler == ctx2.warnHandler)
+	require.True(t, ctx.warnHandler == h)
 
-	// WithWarnings should override previous warnings
-	ctx.AppendWarning(errors.NewNoStackError("warn11"))
-	ctx2 = ctx.Apply(WithWarnings([]stmtctx.SQLWarn{
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn12")},
-	}))
-	require.Equal(t, []stmtctx.SQLWarn{
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn11")},
-	}, ctx.TruncateWarnings(0))
-	require.Equal(t, []stmtctx.SQLWarn{
-		{Level: stmtctx.WarnLevelWarning, Err: errors.NewNoStackError("warn12")},
-	}, ctx2.TruncateWarnings(0))
+	// Apply with `WithWarnHandler`
+	h2 := contextutil.NewStaticWarnHandler(16)
+	ctx2 = ctx.Apply(WithWarnHandler(h2))
+	require.True(t, ctx2.warnHandler == h2)
+	require.True(t, ctx.warnHandler == h)
+
+	// The type context and error context should use the new handler.
+	ctx.TruncateWarnings(0)
+	tc, ec = ctx.TypeCtx(), ctx.ErrCtx()
+	tc2, ec2 := ctx2.TypeCtx(), ctx2.ErrCtx()
+	tc2.AppendWarning(errors.NewNoStackError("warn4"))
+	ec2.AppendWarning(errors.NewNoStackError("warn5"))
+	tc.AppendWarning(errors.NewNoStackError("warn6"))
+	ec.AppendWarning(errors.NewNoStackError("warn7"))
+	require.Equal(t, []contextutil.SQLWarn{
+		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn4")},
+		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn5")},
+	}, ctx2.CopyWarnings(nil))
+	require.Equal(t, []contextutil.SQLWarn{
+		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn6")},
+		{Level: contextutil.WarnLevelWarning, Err: errors.NewNoStackError("warn7")},
+	}, ctx.CopyWarnings(nil))
 }
 
 func TestStaticEvalContextOptionalProps(t *testing.T) {
@@ -420,31 +394,36 @@ func TestUpdateStaticEvalContext(t *testing.T) {
 	require.NotSame(t, oldCtx, ctx)
 
 	// CtxID should be different
-	require.NotEqual(t, oldCtx.CtxID(), ctx.CtxID())
+	require.Greater(t, ctx.CtxID(), oldCtx.CtxID())
 
 	// inner state should not be the same address
-	oldCtxState, ctxState := &oldCtx.staticEvalCtxState, &ctx.staticEvalCtxState
-	require.NotSame(t, oldCtxState, ctxState)
+	require.NotSame(t, &oldCtx.staticEvalCtxState, &ctx.staticEvalCtxState)
 
 	// compare a state object by excluding some changed fields
 	excludeChangedFields := func(s *staticEvalCtxState) staticEvalCtxState {
 		state := *s
 		state.typeCtx = types.DefaultStmtNoWarningContext
 		state.errCtx = errctx.StrictNoWarningContext
-		state.warnings = nil
 		state.currentTime = nil
 		return state
 	}
-	require.Equal(t, excludeChangedFields(oldCtxState), excludeChangedFields(ctxState))
+	require.Equal(t, excludeChangedFields(&oldCtx.staticEvalCtxState), excludeChangedFields(&ctx.staticEvalCtxState))
 
 	// check fields
 	checkDefaultStaticEvalCtx(t, ctx)
 
 	// apply options
 	opts, optState := getEvalCtxOptionsForTest(t)
-	ctx = oldCtx.Apply(opts...)
-	checkOptionsStaticEvalCtx(t, ctx, optState)
+	ctx2 := oldCtx.Apply(opts...)
+	require.Greater(t, ctx2.CtxID(), ctx.CtxID())
+	checkOptionsStaticEvalCtx(t, ctx2, optState)
 
 	// old ctx aren't affected
 	checkDefaultStaticEvalCtx(t, oldCtx)
+
+	// create with options
+	opts, optState = getEvalCtxOptionsForTest(t)
+	ctx3 := NewStaticEvalContext(opts...)
+	require.Greater(t, ctx3.CtxID(), ctx2.CtxID())
+	checkOptionsStaticEvalCtx(t, ctx3, optState)
 }

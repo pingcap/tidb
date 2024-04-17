@@ -16,7 +16,6 @@ package stmtctx
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -54,15 +53,6 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-const (
-	// WarnLevelError represents level "Error" for 'SHOW WARNINGS' syntax.
-	WarnLevelError = "Error"
-	// WarnLevelWarning represents level "Warning" for 'SHOW WARNINGS' syntax.
-	WarnLevelWarning = "Warning"
-	// WarnLevelNote represents level "Note" for 'SHOW WARNINGS' syntax.
-	WarnLevelNote = "Note"
-)
-
 var taskIDAlloc uint64
 
 // AllocateTaskID allocates a new unique ID for a statement execution
@@ -71,46 +61,12 @@ func AllocateTaskID() uint64 {
 }
 
 // SQLWarn relates a sql warning and it's level.
-type SQLWarn struct {
-	Level string
-	Err   error
-}
+type SQLWarn = contextutil.SQLWarn
 
 type jsonSQLWarn struct {
 	Level  string        `json:"level"`
 	SQLErr *terror.Error `json:"err,omitempty"`
 	Msg    string        `json:"msg,omitempty"`
-}
-
-// MarshalJSON implements the Marshaler.MarshalJSON interface.
-func (warn *SQLWarn) MarshalJSON() ([]byte, error) {
-	w := &jsonSQLWarn{
-		Level: warn.Level,
-	}
-	e := errors.Cause(warn.Err)
-	switch x := e.(type) {
-	case *terror.Error:
-		// Omit outter errors because only the most inner error matters.
-		w.SQLErr = x
-	default:
-		w.Msg = e.Error()
-	}
-	return json.Marshal(w)
-}
-
-// UnmarshalJSON implements the Unmarshaler.UnmarshalJSON interface.
-func (warn *SQLWarn) UnmarshalJSON(data []byte) error {
-	var w jsonSQLWarn
-	if err := json.Unmarshal(data, &w); err != nil {
-		return err
-	}
-	warn.Level = w.Level
-	if w.SQLErr != nil {
-		warn.Err = w.SQLErr
-	} else {
-		warn.Err = errors.New(w.Msg)
-	}
-	return nil
 }
 
 // ReferenceCount indicates the reference count of StmtCtx.
@@ -938,6 +894,19 @@ func (sc *StatementContext) GetWarnings() []SQLWarn {
 	return sc.mu.warnings
 }
 
+// CopyWarnings copies the warnings to the dst.
+func (sc *StatementContext) CopyWarnings(dst []SQLWarn) []SQLWarn {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if cnt := len(sc.mu.warnings); cap(dst) < cnt {
+		dst = make([]SQLWarn, cnt)
+	} else {
+		dst = dst[:cnt]
+	}
+	copy(dst, sc.mu.warnings)
+	return dst
+}
+
 // TruncateWarnings truncates warnings begin from start and returns the truncated warnings.
 func (sc *StatementContext) TruncateWarnings(start int) []SQLWarn {
 	sc.mu.Lock()
@@ -967,7 +936,7 @@ func (sc *StatementContext) NumErrorWarnings() (ec uint16, wc int) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	for _, w := range sc.mu.warnings {
-		if w.Level == WarnLevelError {
+		if w.Level == contextutil.WarnLevelError {
 			ec++
 		}
 	}
@@ -987,7 +956,7 @@ func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
-		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelWarning, warn})
+		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{Level: contextutil.WarnLevelWarning, Err: warn})
 	}
 }
 
@@ -1005,7 +974,7 @@ func (sc *StatementContext) AppendNote(warn error) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
-		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelNote, warn})
+		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{Level: contextutil.WarnLevelNote, Err: warn})
 	}
 }
 
@@ -1014,7 +983,7 @@ func (sc *StatementContext) AppendError(warn error) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
-		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelError, warn})
+		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{Level: contextutil.WarnLevelError, Err: warn})
 	}
 }
 
@@ -1037,7 +1006,7 @@ func (sc *StatementContext) AppendExtraWarning(warn error) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	if len(sc.mu.extraWarnings) < math.MaxUint16 {
-		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{WarnLevelWarning, warn})
+		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{Level: contextutil.WarnLevelWarning, Err: warn})
 	}
 }
 
@@ -1046,7 +1015,7 @@ func (sc *StatementContext) AppendExtraNote(warn error) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	if len(sc.mu.extraWarnings) < math.MaxUint16 {
-		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{WarnLevelNote, warn})
+		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{Level: contextutil.WarnLevelNote, Err: warn})
 	}
 }
 
@@ -1055,7 +1024,7 @@ func (sc *StatementContext) AppendExtraError(warn error) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	if len(sc.mu.extraWarnings) < math.MaxUint16 {
-		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{WarnLevelError, warn})
+		sc.mu.extraWarnings = append(sc.mu.extraWarnings, SQLWarn{Level: contextutil.WarnLevelError, Err: warn})
 	}
 }
 
@@ -1287,7 +1256,7 @@ func (sc *StatementContext) GetOrInitBuildPBCtxFromCache(create func() any) any 
 	return sc.buildPBCtxCache.bctx
 }
 
-func newErrCtx(tc types.Context, otherLevels errctx.LevelMap, handler contextutil.WarnHandler) errctx.Context {
+func newErrCtx(tc types.Context, otherLevels errctx.LevelMap, handler contextutil.WarnAppender) errctx.Context {
 	l := errctx.LevelError
 	if flags := tc.Flags(); flags.IgnoreTruncateErr() {
 		l = errctx.LevelIgnore

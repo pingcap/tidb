@@ -51,6 +51,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",
+        "//pkg/util/context",
         "//pkg/util/execdetails",
         "//pkg/util/hint",
         "@com_github_pingcap_errors//:errors",

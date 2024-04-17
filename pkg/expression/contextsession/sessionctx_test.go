@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	tmock "github.com/stretchr/testify/mock"
@@ -81,16 +81,32 @@ func TestSessionEvalContextBasic(t *testing.T) {
 	ec.AppendWarning(errors.New("err3"))
 	require.Equal(t, 3, impl.WarningCount())
 
+	for _, dst := range [][]contextutil.SQLWarn{
+		nil,
+		make([]contextutil.SQLWarn, 1),
+		make([]contextutil.SQLWarn, 3),
+		make([]contextutil.SQLWarn, 0, 3),
+	} {
+		warnings := impl.CopyWarnings(dst)
+		require.Equal(t, 3, len(warnings))
+		require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
+		require.Equal(t, contextutil.WarnLevelWarning, warnings[1].Level)
+		require.Equal(t, contextutil.WarnLevelWarning, warnings[2].Level)
+		require.Equal(t, "err1", warnings[0].Err.Error())
+		require.Equal(t, "err2", warnings[1].Err.Error())
+		require.Equal(t, "err3", warnings[2].Err.Error())
+	}
+
 	warnings := impl.TruncateWarnings(1)
 	require.Equal(t, 2, len(warnings))
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[1].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[1].Level)
 	require.Equal(t, "err2", warnings[0].Err.Error())
 	require.Equal(t, "err3", warnings[1].Err.Error())
 
 	warnings = impl.TruncateWarnings(0)
 	require.Equal(t, 1, len(warnings))
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err1", warnings[0].Err.Error())
 }
 

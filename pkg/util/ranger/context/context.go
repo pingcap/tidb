@@ -26,7 +26,7 @@ import (
 type RangeFallbackHandler interface {
 	RecordRangeFallback(rangeMaxSize int64)
 	SetSkipPlanCache(err error)
-	contextutil.WarnHandler
+	contextutil.WarnAppender
 }
 
 // RangerContext is the context used to build range.

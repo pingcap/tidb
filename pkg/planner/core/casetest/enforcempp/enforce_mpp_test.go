@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
 )
 
@@ -83,8 +83,8 @@ func TestEnforceMPP(t *testing.T) {
 	}
 	enforceMPPSuiteData := GetEnforceMPPSuiteData()
 	enforceMPPSuiteData.LoadTestCases(t, &input, &output)
-	filterWarnings := func(originalWarnings []stmtctx.SQLWarn) []stmtctx.SQLWarn {
-		warnings := make([]stmtctx.SQLWarn, 0, 4)
+	filterWarnings := func(originalWarnings []contextutil.SQLWarn) []contextutil.SQLWarn {
+		warnings := make([]contextutil.SQLWarn, 0, 4)
 		for _, warning := range originalWarnings {
 			// filter out warning about skyline pruning
 			if !strings.Contains(warning.Err.Error(), "remain after pruning paths for") {

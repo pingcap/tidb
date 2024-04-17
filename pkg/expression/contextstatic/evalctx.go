@@ -23,10 +23,10 @@ import (
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // StaticEvalContext should implement `EvalContext`
@@ -68,7 +68,7 @@ func (t *timeOnce) getTime(loc *time.Location) (tm time.Time, err error) {
 // staticEvalCtxState is the internal state for `StaticEvalContext`.
 // We make it as a standalone private struct here to make sure `StaticEvalCtxOption` can only be called in constructor.
 type staticEvalCtxState struct {
-	warnings                     *warnings
+	warnHandler                  contextutil.WarnHandler
 	sqlMode                      mysql.SQLMode
 	typeCtx                      types.Context
 	errCtx                       errctx.Context
@@ -85,10 +85,16 @@ type staticEvalCtxState struct {
 // StaticEvalCtxOption is the option to set `StaticEvalContext`.
 type StaticEvalCtxOption func(*staticEvalCtxState)
 
-// WithWarnings sets the warnings for the `StaticEvalContext`.
-func WithWarnings(warns []stmtctx.SQLWarn) StaticEvalCtxOption {
+// WithWarnHandler sets the warn handler for the `StaticEvalContext`.
+func WithWarnHandler(h contextutil.WarnHandler) StaticEvalCtxOption {
+	intest.AssertNotNil(h)
+	if h == nil {
+		// this should not happen, just to keep code safe
+		h = contextutil.IgnoreWarn
+	}
+
 	return func(s *staticEvalCtxState) {
-		s.warnings.SetWarnings(warns)
+		s.warnHandler = h
 	}
 }
 
@@ -108,6 +114,11 @@ func WithTypeFlags(flags types.Flags) StaticEvalCtxOption {
 
 // WithLocation sets the timezone info for the `StaticEvalContext`.
 func WithLocation(loc *time.Location) StaticEvalCtxOption {
+	intest.AssertNotNil(loc)
+	if loc == nil {
+		// this should not happen, just to keep code safe
+		loc = time.UTC
+	}
 	return func(s *staticEvalCtxState) {
 		s.typeCtx = s.typeCtx.WithLocation(loc)
 	}
@@ -129,6 +140,7 @@ func WithCurrentDB(db string) StaticEvalCtxOption {
 
 // WithCurrentTime sets the current time for the `StaticEvalContext`.
 func WithCurrentTime(fn func() (time.Time, error)) StaticEvalCtxOption {
+	intest.AssertNotNil(fn)
 	return func(s *staticEvalCtxState) {
 		s.currentTime = &timeOnce{timeFn: fn}
 	}
@@ -198,7 +210,6 @@ func NewStaticEvalContext(opt ...StaticEvalCtxOption) *StaticEvalContext {
 	ctx := &StaticEvalContext{
 		id: contextutil.GenContextID(),
 		staticEvalCtxState: staticEvalCtxState{
-			warnings:              &warnings{},
 			currentTime:           &timeOnce{},
 			sqlMode:               defaultSQLMode,
 			maxAllowedPacket:      variable.DefMaxAllowedPacket,
@@ -212,6 +223,10 @@ func NewStaticEvalContext(opt ...StaticEvalCtxOption) *StaticEvalContext {
 
 	for _, o := range opt {
 		o(&ctx.staticEvalCtxState)
+	}
+
+	if ctx.warnHandler == nil {
+		ctx.warnHandler = contextutil.NewStaticWarnHandler(0)
 	}
 
 	return ctx
@@ -244,17 +259,33 @@ func (ctx *StaticEvalContext) Location() *time.Location {
 
 // AppendWarning append warnings to the context.
 func (ctx *StaticEvalContext) AppendWarning(err error) {
-	ctx.warnings.AppendWarning(err)
+	if h := ctx.warnHandler; h != nil {
+		h.AppendWarning(err)
+	}
 }
 
 // WarningCount gets warning count.
 func (ctx *StaticEvalContext) WarningCount() int {
-	return ctx.warnings.WarningCount()
+	if h := ctx.warnHandler; h != nil {
+		return h.WarningCount()
+	}
+	return 0
 }
 
 // TruncateWarnings truncates warnings begin from start and returns the truncated warnings.
-func (ctx *StaticEvalContext) TruncateWarnings(start int) []stmtctx.SQLWarn {
-	return ctx.warnings.TruncateWarnings(start)
+func (ctx *StaticEvalContext) TruncateWarnings(start int) []contextutil.SQLWarn {
+	if h := ctx.warnHandler; h != nil {
+		return h.TruncateWarnings(start)
+	}
+	return nil
+}
+
+// CopyWarnings copies warnings to dst slice.
+func (ctx *StaticEvalContext) CopyWarnings(dst []contextutil.SQLWarn) []contextutil.SQLWarn {
+	if h := ctx.warnHandler; h != nil {
+		return h.CopyWarnings(dst)
+	}
+	return nil
 }
 
 // CurrentDB return the current database name
@@ -313,12 +344,6 @@ func (ctx *StaticEvalContext) Apply(opt ...StaticEvalCtxOption) *StaticEvalConte
 	newCtx := &StaticEvalContext{
 		id:                 contextutil.GenContextID(),
 		staticEvalCtxState: ctx.staticEvalCtxState,
-	}
-
-	// warnings should be copied
-	newCtx.warnings = &warnings{}
-	if ctx.WarningCount() > 0 {
-		newCtx.warnings.SetWarnings(ctx.warnings.warnings)
 	}
 
 	// current time should use the previous one by default
