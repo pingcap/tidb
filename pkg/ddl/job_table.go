@@ -757,7 +757,7 @@ func filterProcessingJobIDs(se *sess.Session, jobIDs []int64) ([]int64, error) {
 	if len(jobIDs) == 0 {
 		return nil, nil
 	}
-	
+
 	var sb strings.Builder
 	for i, id := range jobIDs {
 		if i != 0 {
