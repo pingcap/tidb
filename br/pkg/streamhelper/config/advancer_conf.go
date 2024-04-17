@@ -18,10 +18,7 @@ const (
 
 	DefaultConsistencyCheckTick = 5
 	DefaultTryAdvanceThreshold  = 4 * time.Minute
-<<<<<<< HEAD
-=======
 	DefaultCheckPointLagLimit   = 48 * time.Hour
->>>>>>> 8492f75086f (br: Change default check point lag limit (#51906))
 	DefaultBackOffTime          = 5 * time.Second
 	DefaultTickInterval         = 12 * time.Second
 	DefaultFullScanTick         = 4
