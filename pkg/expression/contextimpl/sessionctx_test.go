@@ -329,4 +329,8 @@ func TestSessionBuildContext(t *testing.T) {
 	vars.StmtCtx.InInsertStmt = false
 	vars.StmtCtx.InUpdateStmt = false
 	require.False(t, impl.InInsertOrUpdate())
+
+	// ConnID
+	vars.ConnectionID = 123
+	require.Equal(t, uint64(123), impl.ConnectionID())
 }

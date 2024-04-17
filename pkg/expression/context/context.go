@@ -99,6 +99,9 @@ type BuildContext interface {
 	// Deprecated: This method is deprecated and may be removed in the future because it is coupled with statement.
 	// InInsertOrUpdate returns whether when are building an expression for insert or update statement.
 	InInsertOrUpdate() bool
+	// ConnectionID indicates the connection ID of the current session.
+	// If the context is not in a session, it should return 0.
+	ConnectionID() uint64
 }
 
 // ExprContext contains full context for expression building and evaluating.

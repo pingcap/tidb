@@ -327,17 +327,17 @@ func handleZeroDatetime(ec errctx.Context, mode mysql.SQLMode, col *model.Column
 func CastValue(sctx variable.SessionVarsProvider, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	vars := sctx.GetSessionVars()
 	sc := vars.StmtCtx
-	return castColumnValue(sc.TypeCtx(), sc.ErrCtx(), vars.SQLMode, val, col, sc.InInsertStmt || sc.InUpdateStmt, returnErr, forceIgnoreTruncate)
+	return castColumnValue(sc.TypeCtx(), sc.ErrCtx(), vars.SQLMode, val, col, vars.ConnectionID, sc.InInsertStmt || sc.InUpdateStmt, returnErr, forceIgnoreTruncate)
 }
 
 // CastColumnValue casts a value based on column type with expression BuildContext
 func CastColumnValue(ctx expression.BuildContext, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	evalCtx := ctx.GetEvalCtx()
-	return castColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, col, ctx.InInsertOrUpdate(), returnErr, forceIgnoreTruncate)
+	return castColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, col, ctx.ConnectionID(), ctx.InInsertOrUpdate(), returnErr, forceIgnoreTruncate)
 }
 
 // castColumnValue casts a value based on column type.
-func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, col *model.ColumnInfo, inInsertOrUpdate, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, col *model.ColumnInfo, connID uint64, inInsertOrUpdate, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	casted, err = val.ConvertTo(tc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {
@@ -361,7 +361,7 @@ func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode,
 		}
 	} else if err != nil && charset.ErrInvalidCharacterString.Equal(err) {
 		err = convertToIncorrectStringErr(err, col.Name.O)
-		logutil.BgLogger().Debug("incorrect string value", zap.Error(err))
+		logutil.BgLogger().Debug("incorrect string value", zap.Uint64("conn", connID), zap.Error(err))
 	}
 
 	err = tc.HandleTruncate(err)
