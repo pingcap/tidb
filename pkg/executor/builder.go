@@ -57,7 +57,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -149,11 +151,11 @@ func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSch
 }
 
 // Build builds an executor tree according to `p`.
-func (b *MockExecutorBuilder) Build(p plannercore.Plan) exec.Executor {
+func (b *MockExecutorBuilder) Build(p base.Plan) exec.Executor {
 	return b.build(p)
 }
 
-func (b *executorBuilder) build(p plannercore.Plan) exec.Executor {
+func (b *executorBuilder) build(p base.Plan) exec.Executor {
 	switch v := p.(type) {
 	case nil:
 		return nil
@@ -2161,8 +2163,8 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
 
 func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor {
 	var (
-		innerPlan plannercore.PhysicalPlan
-		outerPlan plannercore.PhysicalPlan
+		innerPlan base.PhysicalPlan
+		outerPlan base.PhysicalPlan
 	)
 	if v.InnerChildIdx == 0 {
 		innerPlan = v.Children()[0]
@@ -2866,7 +2868,7 @@ func markChildrenUsedCols(outputCols []*expression.Column, childSchemas ...*expr
 	return
 }
 
-func (*executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) bool {
+func (*executorBuilder) corColInDistPlan(plans []base.PhysicalPlan) bool {
 	for _, p := range plans {
 		switch x := p.(type) {
 		case *plannercore.PhysicalSelection:
@@ -2893,7 +2895,7 @@ func (*executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) bool 
 }
 
 // corColInAccess checks whether there's correlated column in access conditions.
-func (*executorBuilder) corColInAccess(p plannercore.PhysicalPlan) bool {
+func (*executorBuilder) corColInAccess(p base.PhysicalPlan) bool {
 	var access []expression.Expression
 	switch x := p.(type) {
 	case *plannercore.PhysicalTableScan:
@@ -2909,7 +2911,7 @@ func (*executorBuilder) corColInAccess(p plannercore.PhysicalPlan) bool {
 	return false
 }
 
-func (b *executorBuilder) newDataReaderBuilder(p plannercore.PhysicalPlan) (*dataReaderBuilder, error) {
+func (b *executorBuilder) newDataReaderBuilder(p base.PhysicalPlan) (*dataReaderBuilder, error) {
 	ts, err := b.getSnapshotTS()
 	if err != nil {
 		return nil, err
@@ -3184,7 +3186,7 @@ func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIn
 func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableReader) (*TableReaderExecutor, error) {
 	tablePlans := v.TablePlans
 	if v.StoreType == kv.TiFlash {
-		tablePlans = []plannercore.PhysicalPlan{v.GetTablePlan()}
+		tablePlans = []base.PhysicalPlan{v.GetTablePlan()}
 	}
 	dagReq, err := builder.ConstructDAGReq(b.ctx, tablePlans, v.StoreType)
 	if err != nil {
@@ -3635,7 +3637,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 	return ret
 }
 
-func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, val table.Table, err error) {
+func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan) (dagReq *tipb.DAGRequest, val table.Table, err error) {
 	tableReq, err := builder.ConstructDAGReq(b.ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, nil, err
@@ -3656,7 +3658,7 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 // buildIndexReq is designed to create a DAG for index request.
 // If len(ByItems) != 0 means index request should return related columns
 // to sort result rows in TiDB side for parition tables.
-func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
+func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
 	indexReq, err := builder.ConstructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, err
@@ -3980,7 +3982,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 // 1. dataReaderBuilder calculate data range from argument, rather than plan.
 // 2. the result executor is already opened.
 type dataReaderBuilder struct {
-	plan plannercore.Plan
+	plan base.Plan
 	*executorBuilder
 
 	selectResultHook // for testing
@@ -3992,7 +3994,7 @@ type dataReaderBuilder struct {
 }
 
 type mockPhysicalIndexReader struct {
-	plannercore.PhysicalPlan
+	base.PhysicalPlan
 
 	e exec.Executor
 }
@@ -4007,7 +4009,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 	return builder.buildExecutorForIndexJoinInternal(ctx, builder.plan, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 }
 
-func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.Context, plan plannercore.Plan, lookUpContents []*indexJoinLookUpContent,
+func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.Context, plan base.Plan, lookUpContents []*indexJoinLookUpContent,
 	indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error) {
 	switch v := plan.(type) {
 	case *plannercore.PhysicalTableReader:
@@ -4462,11 +4464,20 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	canReorderHandles bool,
 	memTracker *memory.Tracker,
 	interruptSignal *atomic.Value,
-) (exec.Executor, error) {
-	childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+) (executor exec.Executor, err error) {
+	var childExec exec.Executor
+	childExec, err = builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = util.GetRecoverError(r)
+		}
+		if err != nil {
+			terror.Log(exec.Close(childExec))
+		}
+	}()
 
 	e := &ProjectionExec{
 		BaseExecutor:     exec.NewBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
@@ -4481,9 +4492,16 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	if int64(v.StatsCount()) < int64(builder.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
+	failpoint.Inject("buildProjectionForIndexJoinPanic", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			panic("buildProjectionForIndexJoinPanic")
+		}
+	})
 	err = e.open(ctx)
-
-	return e, err
+	if err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 // buildRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
@@ -5106,7 +5124,7 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 		e.sampler = &emptySampler{}
 	} else if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
 		e.sampler = newTableRegionSampler(
-			b.ctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),
+			b.ctx, v.TableInfo, startTS, v.PhysicalTableID, v.TableSampleInfo.Partitions, v.Schema(),
 			v.TableSampleInfo.FullSchema, e.RetFieldTypes(), v.Desc)
 	}
 

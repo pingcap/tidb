@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -601,7 +600,7 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 }
 
 // cleanMDLInfo cleans metadata lock info.
-func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client) {
+func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client, cleanETCD bool) {
 	if !variable.EnableMDL.Load() {
 		return
 	}
@@ -615,7 +614,7 @@ func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client) {
 		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", jobID), zap.Error(err))
 		return
 	}
-	if ec != nil {
+	if cleanETCD && ec != nil {
 		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, jobID)
 		_, err = ec.Delete(context.Background(), path, clientv3.WithPrefix())
 		if err != nil {
@@ -693,7 +692,6 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	startTime := time.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-		markJobFinish(job)
 	}()
 
 	if JobNeedGC(job) {
@@ -741,15 +739,6 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	w.removeJobCtx(job)
 	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs)
 	return errors.Trace(err)
-}
-
-func markJobFinish(job *model.Job) {
-	if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
-		job.ReorgMeta != nil &&
-		job.ReorgMeta.IsFastReorg &&
-		ingest.LitBackCtxMgr != nil {
-		ingest.LitBackCtxMgr.MarkJobFinish()
-	}
 }
 
 func (w *worker) writeDDLSeqNum(job *model.Job) {

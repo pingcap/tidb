@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -201,7 +202,7 @@ func (rf *RuntimeFilter) Clone() *RuntimeFilter {
 }
 
 // RuntimeFilterListToPB convert runtime filter list to PB list
-func RuntimeFilterListToPB(ctx *BuildPBContext, runtimeFilterList []*RuntimeFilter, client kv.Client) ([]*tipb.RuntimeFilter, error) {
+func RuntimeFilterListToPB(ctx *base.BuildPBContext, runtimeFilterList []*RuntimeFilter, client kv.Client) ([]*tipb.RuntimeFilter, error) {
 	result := make([]*tipb.RuntimeFilter, 0, len(runtimeFilterList))
 	for _, runtimeFilter := range runtimeFilterList {
 		rfPB, err := runtimeFilter.ToPB(ctx, client)
@@ -214,7 +215,7 @@ func RuntimeFilterListToPB(ctx *BuildPBContext, runtimeFilterList []*RuntimeFilt
 }
 
 // ToPB convert runtime filter to PB
-func (rf *RuntimeFilter) ToPB(ctx *BuildPBContext, client kv.Client) (*tipb.RuntimeFilter, error) {
+func (rf *RuntimeFilter) ToPB(ctx *base.BuildPBContext, client kv.Client) (*tipb.RuntimeFilter, error) {
 	pc := expression.NewPBConverter(client, ctx.GetExprCtx().GetEvalCtx())
 	srcExprListPB := make([]*tipb.Expr, 0, len(rf.srcExprList))
 	for _, srcExpr := range rf.srcExprList {

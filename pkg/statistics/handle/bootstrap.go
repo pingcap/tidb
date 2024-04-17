@@ -73,7 +73,6 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 		tbl := &statistics.Table{
 			HistColl:              newHistColl,
 			Version:               row.GetUint64(0),
-			Name:                  util.GetFullTableName(is, tableInfo),
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
 			IsPkIsHandle:          tableInfo.PKIsHandle,
 		}
