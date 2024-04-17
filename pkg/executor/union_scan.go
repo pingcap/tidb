@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	plannercore "github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"runtime/trace"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/util/handlecol"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -291,7 +291,7 @@ type compareExec struct {
 	usedIndex []int
 	desc      bool
 	// handleCols is the handle's position of the below scan plan.
-	handleCols plannercore.HandleCols
+	handleCols handlecol.HandleCols
 }
 
 func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum) (ret int, err error) {
