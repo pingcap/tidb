@@ -149,13 +149,13 @@ const (
 
 	gcLastRunTimeKey       = "tikv_gc_last_run_time"
 	gcRunIntervalKey       = "tikv_gc_run_interval"
-	gcDefaultRunInterval   = time.Minute * 10
+	gcDefaultRunInterval   = time.Minute * 1
 	gcWaitTime             = time.Minute * 1
 	gcRedoDeleteRangeDelay = 24 * time.Hour
 
 	gcLifeTimeKey        = "tikv_gc_life_time"
-	gcDefaultLifeTime    = time.Minute * 10
-	gcMinLifeTime        = time.Minute * 10
+	gcDefaultLifeTime    = time.Minute * 1
+	gcMinLifeTime        = time.Minute * 1
 	gcSafePointKey       = "tikv_gc_safe_point"
 	gcConcurrencyKey     = "tikv_gc_concurrency"
 	gcDefaultConcurrency = 2
@@ -1252,14 +1252,6 @@ func (w *GCWorker) getAllKeyspace(ctx context.Context) ([]*keyspacepb.KeyspaceMe
 	return allkeyspaces, nil
 }
 
-// IsKeyspaceMetaUseKeyspaceLevelGC return true if keyspace meta config has 'gc_management_type' is 'keyspace_level_gc'.
-func IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
-	if val, ok := keyspaceMeta.Config[gcutil.GCManagementType]; ok {
-		return val == gcutil.KeyspaceLevelGC
-	}
-	return false
-}
-
 // Do resolve locks in global gc.
 func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask.Runner, safePoint uint64) error {
 	keyspaces, err := w.getAllKeyspace(ctx)
@@ -1291,7 +1283,7 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 	for i := range keyspaces {
 		keyspaceMeta := keyspaces[i]
 		// Skip the keyspace which state is not enabled or enabled keyspace level gc.
-		if keyspaceMeta.State != keyspacepb.KeyspaceState_ENABLED || IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta) {
+		if keyspaceMeta.State != keyspacepb.KeyspaceState_ENABLED || gcutil.IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta) {
 			logutil.BgLogger().Debug("[gc worker] skip resolve locks in this keyspace range", zap.Any("keyspace-meta", keyspaceMeta))
 			continue
 		}

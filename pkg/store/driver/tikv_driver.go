@@ -36,6 +36,7 @@ import (
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
+	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	cli_config "github.com/tikv/client-go/v2/config"
@@ -264,7 +265,7 @@ func (d TiKVDriver) CheckTiDBGCManagementTypeAndKeyspaceMeta(keyspaceMeta *keysp
 	if keyspaceMeta == nil {
 		return nil
 	}
-	if !gcworker.IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta) && config.GetGlobalConfig().EnableKeyspaceLevelGC {
+	if !gcutil.IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta) && config.GetGlobalConfig().EnableKeyspaceLevelGC {
 		// If gc_management_type=keyspace_level_gc was not set in the keyspace config when the keyspace was created,
 		// then don't supported setting enable-keyspace-level-gc = true tidb config now.
 		return errors.New("If 'gc_management_type' is not set to ' keyspace_level_gc' in keyspace meta config when keyspace is created, then it is not supported enable keyspace level gc in TiDB")
@@ -277,7 +278,7 @@ func (d TiKVDriver) UpdateTiDBGCManagementTypeByKeyspaceMeta(keyspaceMeta *keysp
 	if keyspaceMeta == nil {
 		return nil
 	}
-	if gcworker.IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta) {
+	if gcutil.IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta) {
 		// If 'gc_management_type' in PD keyspace meta config is 'keyspace_level_gc',
 		// but in TiDB global config EnableKeyspaceLevelGC is not true.
 		// Set the EnableKeyspaceLevelGC = true in TiDB global config.
