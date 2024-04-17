@@ -229,3 +229,48 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		require.Greater(t, hg.Len()+topn.Num(), 0)
 	}
 }
+
+func TestRetry(t *testing.T) {
+	originConfig := config.GetGlobalConfig()
+	newConfig := config.NewConfig()
+	newConfig.Performance.StatsLoadConcurrency = 0 // no worker to consume channel
+	config.StoreGlobalConfig(newConfig)
+	defer config.StoreGlobalConfig(originConfig)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("set @@session.tidb_analyze_version=2")
+	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	defer func() {
+		dom.StatsHandle().SetLease(oriLease)
+	}()
+	testKit.MustExec("analyze table t")
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	h := dom.StatsHandle()
+
+	neededColumns := make([]model.StatsLoadItem, 1)
+	neededColumns[0] = model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[2].ID, IsIndex: false}, FullLoad: true}
+	timeout := time.Nanosecond * mathutil.MaxInt
+	h.Clear()
+	require.NoError(t, dom.StatsHandle().Update(is))
+
+	// no stats at beginning
+	stat := h.GetTableStats(tableInfo)
+	c, ok := stat.Columns[tableInfo.Columns[2].ID]
+	require.True(t, !ok || (c.Histogram.Len()+c.TopN.Num() == 0))
+
+	stmtCtx1 := stmtctx.NewStmtCtx()
+	h.SendLoadRequests(stmtCtx1, neededColumns, timeout)
+	stmtCtx2 := stmtctx.NewStmtCtx()
+	h.SendLoadRequests(stmtCtx2, neededColumns, timeout)
+}
