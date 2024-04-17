@@ -1,21 +1,6 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "base",
-    srcs = ["plan.go"],
-    importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/base",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//pkg/expression",
-        "//pkg/planner/context",
-        "//pkg/planner/property",
-        "//pkg/types",
-        "//pkg/util/stringutil",
-        "//pkg/util/tracing",
-    ],
-)
-
-go_library(
     name = "baseImpl",
     srcs = ["plan.go"],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/baseImpl",
