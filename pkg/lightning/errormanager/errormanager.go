@@ -54,8 +54,10 @@ const (
 	typeErrorTableName   = "type_error_v1"
 	// ConflictErrorTableName is the table name for duplicate detection.
 	ConflictErrorTableName = "conflict_error_v2"
-	// DupRecordTable is the table name to record duplicate data that displayed to user.
-	DupRecordTable = "conflict_records"
+	// DupRecordTableName is the table name to record duplicate data that displayed to user.
+	DupRecordTableName = "conflict_records"
+	// ConflictViewName is the view name for presenting the union information of ConflictErrorTable and DupRecordTable.
+	ConflictViewName = "conflict_view"
 
 	createSyntaxErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + syntaxErrorTableName + ` (
@@ -100,8 +102,8 @@ const (
 		);
 	`
 
-	createDupRecordTable = `
-		CREATE TABLE IF NOT EXISTS %s.` + DupRecordTable + ` (
+	createDupRecordTableName = `
+		CREATE TABLE IF NOT EXISTS %s.` + DupRecordTableName + ` (
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -112,6 +114,16 @@ const (
 			row_data    text NOT NULL COMMENT 'the row data of the conflicted row',
 			KEY (task_id, table_name)
 		);
+	`
+
+	createConflictView = `
+    	CREATE OR REPLACE VIEW %s.` + ConflictViewName + `
+			AS SELECT 0 AS is_precheck_conflict, task_id, create_time, table_name, index_name, key_data, row_data,
+			raw_key, raw_value, raw_handle, raw_row, is_data_kv, NULL AS path, NULL AS offset, NULL AS error, NULL AS row_id
+			FROM %s.` + ConflictErrorTableName + `
+			UNION ALL SELECT 1 AS is_precheck_conflict, task_id, create_time, table_name, NULL AS index_name, NULL AS key_data,
+			row_data, NULL AS raw_key, NULL AS raw_value, NULL AS raw_handle, NULL AS raw_row, NULL AS is_data_kv, path,
+			offset, error, row_id FROM %s.` + DupRecordTableName + `;
 	`
 
 	insertIntoTypeError = `
@@ -156,7 +168,7 @@ const (
 	`
 
 	insertIntoDupRecord = `
-		INSERT INTO %s.` + DupRecordTable + `
+		INSERT INTO %s.` + DupRecordTableName + `
 		(task_id, table_name, path, offset, error, row_id, row_data)
 		VALUES (?, ?, ?, ?, ?, ?, ?);
 	`
@@ -250,10 +262,10 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 		sqls = append(sqls, [2]string{"create type error table", createTypeErrorTable})
 	}
 	if em.conflictV1Enabled {
-		sqls = append(sqls, [2]string{"create conflict error v2 table", createConflictErrorTable})
+		sqls = append(sqls, [2]string{"create conflict error table", createConflictErrorTable})
 	}
 	if em.conflictV2Enabled {
-		sqls = append(sqls, [2]string{"create duplicate records table", createDupRecordTable})
+		sqls = append(sqls, [2]string{"create duplicate records table", createDupRecordTableName})
 	}
 
 	// No need to create task info schema if no error is allowed.
@@ -264,6 +276,14 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 	for _, sql := range sqls {
 		// trim spaces for unit test pattern matching
 		err := exec.Exec(ctx, sql[0], strings.TrimSpace(common.SprintfWithIdentifiers(sql[1], em.schema)))
+		if err != nil {
+			return err
+		}
+	}
+
+	// TODO: return VIEW to users regardless of the lightning configuration
+	if em.conflictV1Enabled && em.conflictV2Enabled {
+		err := exec.Exec(ctx, "create conflict view", strings.TrimSpace(common.SprintfWithIdentifiers(createConflictView, em.schema, em.schema, em.schema)))
 		if err != nil {
 			return err
 		}
@@ -904,12 +924,14 @@ func (em *ErrorManager) LogErrorDetails() {
 		// TODO: add charset table name
 		em.logger.Warn(fmtErrMsg(errCnt, "data charset", ""))
 	}
-	if errCnt := em.conflictError(); errCnt > 0 {
-		if em.conflictV1Enabled {
+	errCnt := em.conflictError()
+	if errCnt > 0 {
+		if em.conflictV1Enabled && em.conflictV2Enabled {
+			em.logger.Warn(fmtErrMsg(errCnt, "conflict", ConflictViewName))
+		} else if em.conflictV1Enabled {
 			em.logger.Warn(fmtErrMsg(errCnt, "conflict", ConflictErrorTableName))
-		}
-		if em.conflictV2Enabled {
-			em.logger.Warn(fmtErrMsg(errCnt, "conflict", DupRecordTable))
+		} else if em.conflictV2Enabled {
+			em.logger.Warn(fmtErrMsg(errCnt, "conflict", DupRecordTableName))
 		}
 	}
 }
@@ -952,11 +974,12 @@ func (em *ErrorManager) Output() string {
 	}
 	if errCnt := em.conflictError(); errCnt > 0 {
 		count++
-		if em.conflictV1Enabled {
+		if em.conflictV1Enabled && em.conflictV2Enabled {
+			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(ConflictViewName)})
+		} else if em.conflictV1Enabled {
 			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(ConflictErrorTableName)})
-		}
-		if em.conflictV2Enabled {
-			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(DupRecordTable)})
+		} else if em.conflictV2Enabled {
+			t.AppendRow(table.Row{count, "Unique Key Conflict", errCnt, em.fmtTableName(DupRecordTableName)})
 		}
 	}
 

@@ -1913,3 +1913,20 @@ func TestPanicIfPbCodeUnspecified(t *testing.T) {
 	pc := PbConverter{client: new(mock.Client), ctx: mock.NewContext()}
 	require.PanicsWithError(t, "unspecified PbCode: *expression.builtinBitAndSig", func() { pc.ExprToPB(fn) })
 }
+
+func TestProjectionColumn2Pb(t *testing.T) {
+	var colExprs []Expression
+	ctx := mock.NewContext()
+	client := new(mock.Client)
+
+	colExprs = append(colExprs, genColumn(mysql.TypeSet, 1))
+	colExprs = append(colExprs, genColumn(mysql.TypeShort, 2))
+	colExprs = append(colExprs, genColumn(mysql.TypeLong, 3))
+
+	// TypeSet column can't be converted to PB by default
+	_, err := ExpressionsToPBList(ctx, colExprs, client)
+	require.Error(t, err)
+
+	_, err = ProjectionExpressionsToPBList(ctx, colExprs, client)
+	require.NoError(t, err)
+}

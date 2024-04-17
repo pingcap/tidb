@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/stretchr/testify/require"
@@ -29,12 +30,12 @@ type mockDataSource struct {
 	baseLogicalPlan
 }
 
-func (ds mockDataSource) Init(ctx PlanContext) *mockDataSource {
+func (ds mockDataSource) Init(ctx base.PlanContext) *mockDataSource {
 	ds.baseLogicalPlan = newBaseLogicalPlan(ctx, "mockDS", &ds, 0)
 	return &ds
 }
 
-func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *coreusage.PhysicalOptimizeOp) (Task, int64, error) {
+func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *coreusage.PhysicalOptimizeOp) (base.Task, int64, error) {
 	// It can satisfy any of the property!
 	// Just use a TableDual for convenience.
 	p := PhysicalTableDual{}.Init(ds.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
@@ -66,12 +67,12 @@ type mockLogicalPlan4Test struct {
 	costOverflow bool
 }
 
-func (p mockLogicalPlan4Test) Init(ctx PlanContext) *mockLogicalPlan4Test {
+func (p mockLogicalPlan4Test) Init(ctx base.PlanContext) *mockLogicalPlan4Test {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, "mockPlan", &p, 0)
 	return &p
 }
 
-func (p *mockLogicalPlan4Test) getPhysicalPlan1(prop *property.PhysicalProperty) PhysicalPlan {
+func (p *mockLogicalPlan4Test) getPhysicalPlan1(prop *property.PhysicalProperty) base.PhysicalPlan {
 	physicalPlan1 := mockPhysicalPlan4Test{planType: 1}.Init(p.SCtx())
 	physicalPlan1.SetStats(&property.StatsInfo{RowCount: 1})
 	physicalPlan1.childrenReqProps = make([]*property.PhysicalProperty, 1)
@@ -79,7 +80,7 @@ func (p *mockLogicalPlan4Test) getPhysicalPlan1(prop *property.PhysicalProperty)
 	return physicalPlan1
 }
 
-func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty) PhysicalPlan {
+func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty) base.PhysicalPlan {
 	physicalPlan2 := mockPhysicalPlan4Test{planType: 2}.Init(p.SCtx())
 	physicalPlan2.SetStats(&property.StatsInfo{RowCount: 1})
 	physicalPlan2.childrenReqProps = make([]*property.PhysicalProperty, 1)
@@ -87,9 +88,9 @@ func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty)
 	return physicalPlan2
 }
 
-func (p *mockLogicalPlan4Test) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	plan1 := make([]PhysicalPlan, 0, 1)
-	plan2 := make([]PhysicalPlan, 0, 1)
+func (p *mockLogicalPlan4Test) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	plan1 := make([]base.PhysicalPlan, 0, 1)
+	plan2 := make([]base.PhysicalPlan, 0, 1)
 	if prop.IsSortItemEmpty() && p.canGeneratePlan2 {
 		// Generate PhysicalPlan2 when the property is empty.
 		plan2 = append(plan2, p.getPhysicalPlan2(prop))
@@ -118,13 +119,13 @@ type mockPhysicalPlan4Test struct {
 	planType int
 }
 
-func (p mockPhysicalPlan4Test) Init(ctx PlanContext) *mockPhysicalPlan4Test {
+func (p mockPhysicalPlan4Test) Init(ctx base.PlanContext) *mockPhysicalPlan4Test {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, "mockPlan", &p, 0)
 	return &p
 }
 
 // Attach2Task implements the PhysicalPlan interface.
-func (p *mockPhysicalPlan4Test) Attach2Task(tasks ...Task) Task {
+func (p *mockPhysicalPlan4Test) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
 	attachPlan2Task(p, t)
 	return t

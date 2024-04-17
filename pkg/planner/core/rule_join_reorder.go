@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -234,7 +235,7 @@ func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *core
 }
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
-func (s *joinReOrderSolver) optimizeRecursive(ctx PlanContext, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
+func (s *joinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	if _, ok := p.(*LogicalCTE); ok {
 		return p, nil
 	}
@@ -393,7 +394,7 @@ type joinGroupResult struct {
 
 // nolint:structcheck
 type baseSingleGroupJoinOrderSolver struct {
-	ctx              PlanContext
+	ctx              base.PlanContext
 	curJoinGroup     []*jrNode
 	leadingJoinGroup LogicalPlan
 	*basicJoinGroupInfo

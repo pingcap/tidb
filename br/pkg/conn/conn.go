@@ -381,11 +381,11 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 			if e != nil {
 				return e
 			}
+			defer resp.Body.Close()
 			err = fn(resp)
 			if err != nil {
 				return err
 			}
-			_ = resp.Body.Close()
 			return nil
 		}, utils.NewPDReqBackoffer())
 		if err != nil {
