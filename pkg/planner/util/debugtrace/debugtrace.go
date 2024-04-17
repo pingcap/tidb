@@ -134,7 +134,7 @@ func (b *bindingHint) MarshalJSON() ([]byte, error) {
 
 // DebugTraceTryBinding records the hint that might be chosen to the debug trace.
 //
-//revive:disable:exported
+//revive:disable-line:exported
 func DebugTraceTryBinding(s context.PlanContext, binding *hint.HintsSet) {
 	root := GetOrInitDebugTraceRoot(s)
 	traceInfo := &bindingHint{
@@ -146,7 +146,7 @@ func DebugTraceTryBinding(s context.PlanContext, binding *hint.HintsSet) {
 
 // DebugTraceBestBinding records the chosen hint to the debug trace.
 //
-//revive:disable:exported
+//revive:disable-line:exported
 func DebugTraceBestBinding(s context.PlanContext, binding *hint.HintsSet) {
 	root := GetOrInitDebugTraceRoot(s)
 	traceInfo := &bindingHint{
@@ -187,7 +187,7 @@ func convertAccessPathForDebugTrace(path *util.AccessPath, out *accessPathForDeb
 
 // DebugTraceAccessPaths trace the access paths in debug.
 //
-//revive:disable:exported
+//revive:disable-line:exported
 func DebugTraceAccessPaths(s context.PlanContext, paths []*util.AccessPath) {
 	root := GetOrInitDebugTraceRoot(s)
 	traceInfo := make([]accessPathForDebugTrace, len(paths))
