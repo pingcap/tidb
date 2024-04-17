@@ -16,6 +16,5 @@ go_library(
         "//pkg/sessionctx/sessionstates",
         "//pkg/util",
         "//pkg/util/sqlexec",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
     ],
 )

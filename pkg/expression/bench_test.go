@@ -44,7 +44,7 @@ import (
 )
 
 type benchHelper struct {
-	ctx   BuildContext
+	ctx   *mock.Context
 	exprs []Expression
 
 	inputTypes  []*types.FieldType

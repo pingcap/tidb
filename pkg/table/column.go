@@ -635,7 +635,7 @@ func getColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo, defa
 	// If the column's default value is not ZeroDatetimeStr or CurrentTimestamp, convert the default value to the current session time zone.
 	if needChangeTimeZone {
 		t := value.GetMysqlTime()
-		err = t.ConvertTimeZone(explicitTz, ctx.GetSessionVars().Location())
+		err = t.ConvertTimeZone(explicitTz, ctx.GetEvalCtx().Location())
 		if err != nil {
 			return value, err
 		}
@@ -661,19 +661,18 @@ func getColDefaultValueFromNil(ctx expression.BuildContext, col *model.ColumnInf
 		// Auto increment column doesn't have default value and we should not return error.
 		return GetZeroValue(col), nil
 	}
-	vars := ctx.GetSessionVars()
-	sc := vars.StmtCtx
+	evalCtx := ctx.GetEvalCtx()
 	var strictSQLMode bool
 	if args != nil {
 		strictSQLMode = args.StrictSQLMode
 	} else {
-		strictSQLMode = vars.SQLMode.HasStrictMode()
+		strictSQLMode = evalCtx.SQLMode().HasStrictMode()
 	}
 	if !strictSQLMode {
-		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
+		evalCtx.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
-	ec := sc.ErrCtx()
+	ec := evalCtx.ErrCtx()
 	var err error
 	if mysql.HasNoDefaultValueFlag(col.GetFlag()) {
 		err = ErrNoDefaultValue.FastGenByArgs(col.Name)
@@ -754,6 +753,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
 	iter := chunk.NewIterator4Chunk(req)
 	evalCtx := ectx.GetEvalCtx()
+	tc := evalCtx.TypeCtx()
 	for i, idx := range virtualColumnIndex {
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			datum, err := expCols[idx].EvalVirtualColumn(evalCtx, row)
@@ -768,7 +768,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 			}
 
 			// Clip to zero if get negative value after cast to unsigned.
-			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && !castDatum.IsNull() && ectx.GetSessionVars().StmtCtx.TypeFlags().AllowNegativeToUnsigned() {
+			if mysql.HasUnsignedFlag(colInfos[idx].FieldType.GetFlag()) && !castDatum.IsNull() && tc.Flags().AllowNegativeToUnsigned() {
 				switch datum.Kind() {
 				case types.KindInt64:
 					if datum.GetInt64() < 0 {

@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -863,9 +864,9 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("%v affects null check"))
+		ctx.SetSkipPlanCache(errors.NewNoStackError("%v affects null check"))
 	}
-	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
+	if ctx.IsInNullRejectCheck() {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
 		return expr
 	}
@@ -1005,9 +1006,48 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName model.CIStr, tbl *model.T
 	return schema, names, nil
 }
 
+type ignoreTruncateExprCtx struct {
+	BuildContext
+	EvalContext
+	tc types.Context
+	ec errctx.Context
+}
+
+// ignoreTruncate returns a new BuildContext that ignores the truncate error.
+func ignoreTruncate(ctx BuildContext) BuildContext {
+	evalCtx := ctx.GetEvalCtx()
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+	if tc.Flags().IgnoreTruncateErr() && ec.LevelForGroup(errctx.ErrGroupTruncate) == errctx.LevelIgnore {
+		return ctx
+	}
+
+	tc = tc.WithFlags(tc.Flags().WithIgnoreTruncateErr(true))
+	ec = ec.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
+
+	return &ignoreTruncateExprCtx{
+		BuildContext: ctx,
+		EvalContext:  evalCtx,
+		tc:           tc,
+		ec:           ec,
+	}
+}
+
+// GetEvalCtx implements the BuildContext.EvalCtx().
+func (ctx *ignoreTruncateExprCtx) GetEvalCtx() EvalContext {
+	return ctx
+}
+
+// TypeCtx implements the EvalContext.TypeCtx().
+func (ctx *ignoreTruncateExprCtx) TypeCtx() types.Context {
+	return ctx.tc
+}
+
+// ErrCtx implements the EvalContext.ErrCtx().
+func (ctx *ignoreTruncateExprCtx) ErrCtx() errctx.Context {
+	return ctx.ec
+}
+
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-// This function is **unsafe** to be called concurrently, unless the `IgnoreTruncate` has been set to `true`. The only
-// known case which will call this function concurrently is `CheckTableExec`. Ref #18408 and #42341.
 func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
@@ -1022,7 +1062,7 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, 
 		newCol := &Column{
 			RetType:  col.FieldType.Clone(),
 			ID:       col.ID,
-			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: ctx.AllocPlanColumnID(),
 			Index:    col.Offset,
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
@@ -1031,17 +1071,16 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, 
 	}
 	// Resolve virtual generated column.
 	mockSchema := NewSchema(columns...)
-	// Ignore redundant warning here.
-	flags := ctx.GetSessionVars().StmtCtx.TypeFlags()
-	if !flags.IgnoreTruncateErr() {
-		defer func() {
-			ctx.GetSessionVars().StmtCtx.SetTypeFlags(flags)
-		}()
-		ctx.GetSessionVars().StmtCtx.SetTypeFlags(flags.WithIgnoreTruncateErr(true))
-	}
 
+	truncateIgnored := false
 	for i, col := range colInfos {
 		if col.IsVirtualGenerated() {
+			if !truncateIgnored {
+				// Ignore redundant warning here.
+				ctx = ignoreTruncate(ctx)
+				truncateIgnored = true
+			}
+
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
 			if err != nil {
 				return nil, nil, errors.Trace(err)

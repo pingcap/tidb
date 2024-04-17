@@ -155,7 +155,7 @@ func (s *statsSyncLoad) removeHistLoadedColumns(neededItems []model.StatsLoadIte
 			}
 			continue
 		}
-		_, loadNeeded := tbl.ColumnIsLoadNeeded(item.ID, item.FullLoad)
+		_, loadNeeded, _ := tbl.ColumnIsLoadNeeded(item.ID, item.FullLoad)
 		if loadNeeded {
 			remainedItems = append(remainedItems, item)
 		}
@@ -213,7 +213,7 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 		}
 	}()
 	if lastTask == nil {
-		task, err = s.drainColTask(exit)
+		task, err = s.drainColTask(sctx, exit)
 		if err != nil {
 			if err != errExit {
 				logutil.BgLogger().Error("Fail to drain task for stats loading.", zap.Error(err))
@@ -239,6 +239,7 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 		}
 		return task, result.Err
 	case <-time.After(timeout):
+		task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 		return task, nil
 	}
 }
@@ -269,7 +270,7 @@ func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statsty
 			wrapper.idxInfo = tbl.ColAndIdxExistenceMap.GetIndex(item.ID)
 		}
 	} else {
-		col, loadNeeded := tbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
+		col, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
 		if !loadNeeded {
 			return result, nil
 		}
@@ -277,6 +278,20 @@ func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statsty
 			wrapper.colInfo = col.Info
 		} else {
 			wrapper.colInfo = tbl.ColAndIdxExistenceMap.GetCol(item.ID)
+		}
+		// If this column is not analyzed yet and we don't have it in memory.
+		// We create a fake one for the pseudo estimation.
+		if loadNeeded && !analyzed {
+			wrapper.col = &statistics.Column{
+				PhysicalID: item.TableID,
+				Info:       wrapper.colInfo,
+				Histogram:  *statistics.NewHistogram(item.ID, 0, 0, 0, &wrapper.colInfo.FieldType, 0, 0),
+				IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
+			}
+			if s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad) {
+				return result, nil
+			}
+			return nil, nil
 		}
 	}
 	t := time.Now()
@@ -396,7 +411,7 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 }
 
 // drainColTask will hang until a column task can return, and either task or error will be returned.
-func (s *statsSyncLoad) drainColTask(exit chan struct{}) (*statstypes.NeededItemTask, error) {
+func (s *statsSyncLoad) drainColTask(sctx sessionctx.Context, exit chan struct{}) (*statstypes.NeededItemTask, error) {
 	// select NeededColumnsCh firstly, if no task, then select TimeoutColumnsCh
 	for {
 		select {
@@ -409,6 +424,7 @@ func (s *statsSyncLoad) drainColTask(exit chan struct{}) (*statstypes.NeededItem
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
+				task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 				s.writeToTimeoutChan(s.StatsLoad.TimeoutItemsCh, task)
 				continue
 			}

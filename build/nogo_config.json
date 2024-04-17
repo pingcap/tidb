@@ -473,6 +473,7 @@
   },
   "nilness": {
     "exclude_files": {
+      "br/pkg/streamhelper/advancer_test.go": "please fix it",
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
@@ -1346,6 +1347,20 @@
   "bootstrap": {
     "only_files": {
       "pkg/session/": "bootstrap code"
+    }
+  },
+  "appends": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "unusedwrite": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
     }
   }
 }

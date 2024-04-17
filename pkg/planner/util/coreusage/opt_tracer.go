@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package coreusage
 
 import "github.com/pingcap/tidb/pkg/util/tracing"
 
@@ -20,6 +20,7 @@ import "github.com/pingcap/tidb/pkg/util/tracing"
 // logicalOptRule inside the accommodated pkg `util` should only be depended on by logical `rule` pkg.
 //
 //  rule related -----> core/util
+//********************** below logical optimize trace related *************************
 
 // LogicalOptimizeOp  is logical optimizing option for tracing.
 type LogicalOptimizeOp struct {
@@ -65,4 +66,70 @@ func (op *LogicalOptimizeOp) RecordFinalLogicalPlan(build func() *tracing.PlanTr
 		return
 	}
 	op.tracer.RecordFinalLogicalPlan(build())
+}
+
+//********************** below physical optimize trace related *************************
+
+// PhysicalOptimizeOp  is logical optimizing option for tracing.
+type PhysicalOptimizeOp struct {
+	// tracer is goring to track optimize steps during physical optimizing
+	tracer *tracing.PhysicalOptimizeTracer
+}
+
+// DefaultPhysicalOptimizeOption is default physical optimizing option.
+func DefaultPhysicalOptimizeOption() *PhysicalOptimizeOp {
+	return &PhysicalOptimizeOp{}
+}
+
+// WithEnableOptimizeTracer is utility func to append the PhysicalOptimizeTracer into current PhysicalOptimizeOp.
+func (op *PhysicalOptimizeOp) WithEnableOptimizeTracer(tracer *tracing.PhysicalOptimizeTracer) *PhysicalOptimizeOp {
+	op.tracer = tracer
+	return op
+}
+
+// AppendCandidate is utility func to append the CandidatePlanTrace into current PhysicalOptimizeOp.
+func (op *PhysicalOptimizeOp) AppendCandidate(c *tracing.CandidatePlanTrace) {
+	op.tracer.AppendCandidate(c)
+}
+
+// GetTracer returns the current op's PhysicalOptimizeTracer.
+func (op *PhysicalOptimizeOp) GetTracer() *tracing.PhysicalOptimizeTracer {
+	return op.tracer
+}
+
+// NewDefaultPlanCostOption returns PlanCostOption
+func NewDefaultPlanCostOption() *PlanCostOption {
+	return &PlanCostOption{}
+}
+
+// PlanCostOption indicates option during GetPlanCost
+type PlanCostOption struct {
+	CostFlag uint64
+	tracer   *PhysicalOptimizeOp
+}
+
+// GetTracer returns the current op's PhysicalOptimizeOp.
+func (op *PlanCostOption) GetTracer() *PhysicalOptimizeOp {
+	return op.tracer
+}
+
+// WithCostFlag set cost flag
+func (op *PlanCostOption) WithCostFlag(flag uint64) *PlanCostOption {
+	if op == nil {
+		return nil
+	}
+	op.CostFlag = flag
+	return op
+}
+
+// WithOptimizeTracer set tracer
+func (op *PlanCostOption) WithOptimizeTracer(v *PhysicalOptimizeOp) *PlanCostOption {
+	if op == nil {
+		return nil
+	}
+	op.tracer = v
+	if v != nil && v.tracer != nil {
+		op.CostFlag |= CostFlagTrace
+	}
+	return op
 }

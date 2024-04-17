@@ -73,6 +73,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
@@ -89,7 +90,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
-	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	tbctx "github.com/pingcap/tidb/pkg/table/context"
@@ -108,20 +108,18 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/pingcap/tipb/go-binlog"
 	tikverr "github.com/tikv/client-go/v2/error"
-	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -175,7 +173,7 @@ type session struct {
 	}
 
 	currentCtx  context.Context // only use for runtime.trace, Please NEVER use it.
-	currentPlan plannercore.Plan
+	currentPlan base.Plan
 
 	store kv.Storage
 
@@ -201,9 +199,6 @@ type session struct {
 
 	// indexUsageCollector collects index usage information.
 	idxUsageCollector *indexusage.SessionIndexUsageCollector
-
-	// allowed when tikv disk full happened.
-	diskFullOpt kvrpcpb.DiskFullOpt
 
 	// StmtStats is used to count various indicators of each SQL in this session
 	// at each point in time. These data will be periodically taken away by the
@@ -497,7 +492,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	defer func() {
 		s.txn.changeToInvalid()
 		s.sessionVars.SetInTxn(false)
-		s.ClearDiskFullOpt()
+		s.sessionVars.ClearDiskFullOpt()
 	}()
 	// check if the transaction is read-only
 	if s.txn.IsReadOnly() {
@@ -528,93 +523,9 @@ func (s *session) doCommit(ctx context.Context) error {
 		}
 	})
 
-	if s.sessionVars.BinlogClient != nil {
-		prewriteValue := binloginfo.GetPrewriteValue(s, false)
-		if prewriteValue != nil {
-			prewriteData, err := prewriteValue.Marshal()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			info := &binloginfo.BinlogInfo{
-				Data: &binlog.Binlog{
-					Tp:            binlog.BinlogType_Prewrite,
-					PrewriteValue: prewriteData,
-				},
-				Client: s.sessionVars.BinlogClient,
-			}
-			s.txn.SetOption(kv.BinlogInfo, info)
-		}
-	}
-
 	sessVars := s.GetSessionVars()
-	// Get the related table or partition IDs.
-	relatedPhysicalTables := sessVars.TxnCtx.TableDeltaMap
-	// Get accessed temporary tables in the transaction.
-	temporaryTables := sessVars.TxnCtx.TemporaryTables
-	physicalTableIDs := make([]int64, 0, len(relatedPhysicalTables))
-	for id := range relatedPhysicalTables {
-		// Schema change on global temporary tables doesn't affect transactions.
-		if _, ok := temporaryTables[id]; ok {
-			continue
-		}
-		physicalTableIDs = append(physicalTableIDs, id)
-	}
-	needCheckSchema := true
-	// Set this option for 2 phase commit to validate schema lease.
-	if s.GetSessionVars().TxnCtx != nil {
-		needCheckSchema = !s.GetSessionVars().TxnCtx.EnableMDL
-	}
-	if s.txn.IsPipelined() && !s.GetSessionVars().TxnCtx.EnableMDL {
-		return errors.New("cannot commit pipelined transaction without Metadata Lock: MDL is OFF")
-	}
 
-	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
-	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
-	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
-	// TODO: refactor SetOption usage to avoid race risk, should detect it in test.
-	// The pipelined txn will may be flushed in background, not touch the options to avoid races.
-	if !s.txn.IsPipelined() {
-		// to avoid session set overlap the txn set.
-		if s.GetDiskFullOpt() != kvrpcpb.DiskFullOpt_NotAllowedOnFull {
-			s.txn.SetDiskFullOpt(s.GetDiskFullOpt())
-		}
-		s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
-		s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
-		s.txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
-		s.txn.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
-		if sessVars.StmtCtx.KvExecCounter != nil {
-			// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
-			s.txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
-		}
-		// priority of the sysvar is lower than `start transaction with causal consistency only`
-		if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
-			// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
-			// because the property is naturally holds:
-			// We guarantee the commitTS of any transaction must not exceed the next timestamp from the TSO.
-			// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
-			// of any previously committed transactions.
-			s.txn.SetOption(kv.GuaranteeLinearizability,
-				sessVars.TxnCtx.IsExplicit && sessVars.GuaranteeLinearizability)
-		}
-		if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
-			s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
-		}
-	}
-
-	var txnSource uint64
-	if val := s.txn.GetOption(kv.TxnSource); val != nil {
-		txnSource, _ = val.(uint64)
-	}
-	// If the transaction is started by CDC, we need to set the CDCWriteSource option.
-	if sessVars.CDCWriteSource != 0 {
-		err := kv.SetCDCWriteSource(&txnSource, sessVars.CDCWriteSource)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		s.txn.SetOption(kv.TxnSource, txnSource)
-	}
-
+	var commitTSChecker func(uint64) bool
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
 		c := cachedTableRenewLease{tables: tables}
 		now := time.Now()
@@ -624,7 +535,10 @@ func (s *session) doCommit(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		s.txn.SetOption(kv.CommitTSUpperBoundCheck, c.commitTSCheck)
+		commitTSChecker = c.commitTSCheck
+	}
+	if err = sessiontxn.GetTxnManager(s).SetOptionsBeforeCommit(s.txn.Transaction, commitTSChecker); err != nil {
+		return err
 	}
 
 	err = s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
@@ -829,19 +743,6 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	}
 
 	return nil
-}
-
-type temporaryTableKVFilter map[int64]tableutil.TempTable
-
-func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) (bool, error) {
-	tid := tablecodec.DecodeTableID(key)
-	if _, ok := m[tid]; ok {
-		return true, nil
-	}
-
-	// This is the default filter for all tables.
-	defaultFilter := txn.TiDBKVFilter{}
-	return defaultFilter.IsUnnecessaryKeyValue(key, value, flags)
 }
 
 // errIsNoisy is used to filter DUPLCATE KEY errors.
@@ -1590,18 +1491,6 @@ func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
 		SessionEnabledRateLimitAction: s.sessionVars.EnabledRateLimitAction,
 		SessionMemQuotaQuery:          s.sessionVars.MemQuotaQuery,
 	}
-}
-
-func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	s.diskFullOpt = level
-}
-
-func (s *session) GetDiskFullOpt() kvrpcpb.DiskFullOpt {
-	return s.diskFullOpt
-}
-
-func (s *session) ClearDiskFullOpt() {
-	s.diskFullOpt = kvrpcpb.DiskFullOpt_NotAllowedOnFull
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
@@ -2609,7 +2498,7 @@ func (s *session) Close() {
 	if s.stmtStats != nil {
 		s.stmtStats.SetFinished()
 	}
-	s.ClearDiskFullOpt()
+	s.sessionVars.ClearDiskFullOpt()
 	if s.sessionPlanCache != nil {
 		s.sessionPlanCache.Close()
 	}
@@ -2626,7 +2515,7 @@ func (s *session) GetPlanCtx() planctx.PlanContext {
 }
 
 // GetExprCtx returns the expression context of the session.
-func (s *session) GetExprCtx() exprctx.BuildContext {
+func (s *session) GetExprCtx() exprctx.ExprContext {
 	return s.exprctx
 }
 
@@ -2640,7 +2529,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	vars := s.GetSessionVars()
 	sc := vars.StmtCtx
 
-	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
+	return sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
 		return &distsqlctx.DistSQLContext{
 			AppendWarning:   sc.AppendWarning,
 			InRestrictedSQL: sc.InRestrictedSQL,
@@ -2692,8 +2581,56 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			ExecDetails: &sc.SyncExecDetails,
 		}
 	})
+}
 
-	return dctx.(*distsqlctx.DistSQLContext)
+// GetRangerCtx returns the context used in `ranger` related functions
+func (s *session) GetRangerCtx() *rangerctx.RangerContext {
+	vars := s.GetSessionVars()
+	sc := vars.StmtCtx
+
+	rctx := sc.GetOrInitRangerCtxFromCache(func() any {
+		return &rangerctx.RangerContext{
+			ExprCtx: s.GetExprCtx(),
+			TypeCtx: s.GetSessionVars().StmtCtx.TypeCtx(),
+			ErrCtx:  s.GetSessionVars().StmtCtx.ErrCtx(),
+
+			InPreparedPlanBuilding:   s.GetSessionVars().StmtCtx.InPreparedPlanBuilding,
+			RegardNULLAsPoint:        s.GetSessionVars().RegardNULLAsPoint,
+			OptPrefixIndexSingleScan: s.GetSessionVars().OptPrefixIndexSingleScan,
+			OptimizerFixControl:      s.GetSessionVars().OptimizerFixControl,
+
+			// TODO: avoid using the whole `StmtCtx` here.
+			RangeFallbackHandler: s.GetSessionVars().StmtCtx,
+		}
+	})
+
+	return rctx.(*rangerctx.RangerContext)
+}
+
+// GetBuildPBCtx returns the context used in `ToPB` method
+func (s *session) GetBuildPBCtx() *planctx.BuildPBContext {
+	vars := s.GetSessionVars()
+	sc := vars.StmtCtx
+
+	bctx := sc.GetOrInitBuildPBCtxFromCache(func() any {
+		return &planctx.BuildPBContext{
+			ExprCtx: s.GetExprCtx(),
+			Client:  s.GetClient(),
+
+			TiFlashFastScan:                    s.GetSessionVars().TiFlashFastScan,
+			TiFlashFineGrainedShuffleBatchSize: s.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
+
+			// the following fields are used to build `expression.PushDownContext`.
+			// TODO: it'd be better to embed `expression.PushDownContext` in `BuildPBContext`. But `expression` already
+			// depends on this package, so we need to move `expression.PushDownContext` to a standalone package first.
+			GroupConcatMaxLen:  s.GetSessionVars().GroupConcatMaxLen,
+			InExplainStmt:      s.GetSessionVars().StmtCtx.InExplainStmt,
+			AppendWarning:      s.GetSessionVars().StmtCtx.AppendWarning,
+			AppendExtraWarning: s.GetSessionVars().StmtCtx.AppendExtraWarning,
+		}
+	})
+
+	return bctx.(*planctx.BuildPBContext)
 }
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
@@ -3110,6 +3047,7 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (types.Session, error
 		s.GetSessionVars().MaxChunkSize = 32
 		s.GetSessionVars().MinPagingSize = variable.DefMinPagingSize
 		s.GetSessionVars().EnablePaging = variable.DefTiDBEnablePaging
+		s.GetSessionVars().StmtCtx.SetTimeZone(s.GetSessionVars().Location())
 		err = s.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, "utf8mb4")
 	}
 	return s, err
@@ -4329,6 +4267,9 @@ func (s *session) DecodeSessionStates(ctx context.Context,
 func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNode ast.StmtNode) {
 	if !s.isInternal() {
 		if txn, _ := s.Txn(false); txn != nil && txn.Valid() {
+			if txn.IsPipelined() {
+				stmtLabel = "pdml"
+			}
 			txn.SetOption(kv.RequestSourceType, stmtLabel)
 		}
 		s.sessionVars.RequestSourceType = stmtLabel
