@@ -475,7 +475,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			if col.ChangeStateInfo != nil {
 				// TODO: Check overflow or ignoreTruncate.
-				value, err = t.castColumnValue(sctx, oldData[col.DependencyColumnOffset], col.ColumnInfo)
+				value, err = table.CastColumnValue(sctx.GetExprCtx(), oldData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 				if err != nil {
 					logutil.BgLogger().Info("update record cast value failed", zap.Any("col", col), zap.Uint64("txnStartTS", txn.StartTS()),
 						zap.String("handle", h.String()), zap.Any("val", oldData[col.DependencyColumnOffset]), zap.Error(err))
@@ -487,7 +487,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			if needChecksum {
 				if col.ChangeStateInfo != nil {
 					// TODO: Check overflow or ignoreTruncate.
-					v, err := t.castColumnValue(sctx, newData[col.DependencyColumnOffset], col.ColumnInfo)
+					v, err := table.CastColumnValue(sctx.GetExprCtx(), newData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 					if err != nil {
 						return err
 					}
@@ -509,7 +509,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			value = oldData[col.Offset]
 			if col.ChangeStateInfo != nil {
 				// TODO: Check overflow or ignoreTruncate.
-				value, err = t.castColumnValue(sctx, newData[col.DependencyColumnOffset], col.ColumnInfo)
+				value, err = table.CastColumnValue(sctx.GetExprCtx(), newData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 				if err != nil {
 					return err
 				}
@@ -926,7 +926,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 			if needChecksum {
 				if col.ChangeStateInfo != nil {
 					// TODO: Check overflow or ignoreTruncate.
-					v, err := t.castColumnValue(sctx, r[col.DependencyColumnOffset], col.ColumnInfo)
+					v, err := table.CastColumnValue(sctx.GetExprCtx(), r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 					if err != nil {
 						return nil, err
 					}
@@ -945,7 +945,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		// for the new insert statement, we should use the casted value of relative column to insert.
 		if col.ChangeStateInfo != nil && col.State != model.StatePublic {
 			// TODO: Check overflow or ignoreTruncate.
-			value, err = t.castColumnValue(sctx, r[col.DependencyColumnOffset], col.ColumnInfo)
+			value, err = table.CastColumnValue(sctx.GetExprCtx(), r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 			if err != nil {
 				return nil, err
 			}
@@ -1342,7 +1342,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 		// The changing column datum derived from related column should be casted here.
 		// Otherwise, the existed changing indexes will not be deleted.
 		relatedColDatum := r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset]
-		value, err := t.castColumnValue(ctx, relatedColDatum, t.Columns[len(r)].ColumnInfo)
+		value, err := table.CastColumnValue(ctx.GetExprCtx(), relatedColDatum, t.Columns[len(r)].ColumnInfo, false, false)
 		if err != nil {
 			logutil.BgLogger().Info("remove record cast value failed", zap.Any("col", t.Columns[len(r)]),
 				zap.String("handle", h.String()), zap.Any("val", relatedColDatum), zap.Error(err))
@@ -2197,10 +2197,6 @@ func (t *TableCommon) GetSequenceID() int64 {
 // GetSequenceCommon is used in test to get sequenceCommon.
 func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 	return t.sequence
-}
-
-func (t *TableCommon) castColumnValue(ctx table.MutateContext, val types.Datum, col *model.ColumnInfo) (casted types.Datum, err error) {
-	return table.CastValue(ctx, val, col, false, false)
 }
 
 // TryGetHandleRestoredDataWrapper tries to get the restored data for handle if needed. The argument can be a slice or a map.

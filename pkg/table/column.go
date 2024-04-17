@@ -327,17 +327,17 @@ func handleZeroDatetime(ec errctx.Context, mode mysql.SQLMode, col *model.Column
 func CastValue(sctx variable.SessionVarsProvider, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	vars := sctx.GetSessionVars()
 	sc := vars.StmtCtx
-	return CastColumnValue(sc.TypeCtx(), sc.ErrCtx(), vars.SQLMode, val, col, sc.InInsertStmt || sc.InUpdateStmt, returnErr, forceIgnoreTruncate)
+	return castColumnValue(sc.TypeCtx(), sc.ErrCtx(), vars.SQLMode, val, col, sc.InInsertStmt || sc.InUpdateStmt, returnErr, forceIgnoreTruncate)
 }
 
-// CastColumnValueWithExprCtx casts a value based on column type with expression BuildContext
-func CastColumnValueWithExprCtx(ctx expression.BuildContext, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+// CastColumnValue casts a value based on column type with expression BuildContext
+func CastColumnValue(ctx expression.BuildContext, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	evalCtx := ctx.GetEvalCtx()
-	return CastColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, col, ctx.InInsertOrUpdate(), returnErr, forceIgnoreTruncate)
+	return castColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, col, ctx.InInsertOrUpdate(), returnErr, forceIgnoreTruncate)
 }
 
-// CastColumnValue casts a value based on column type.
-func CastColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, col *model.ColumnInfo, inInsertOrUpdate, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+// castColumnValue casts a value based on column type.
+func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, col *model.ColumnInfo, inInsertOrUpdate, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	casted, err = val.ConvertTo(tc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {
@@ -576,7 +576,7 @@ func EvalColDefaultExpr(ctx expression.BuildContext, col *model.ColumnInfo, defa
 		return types.Datum{}, err
 	}
 	// Check the evaluated data type by cast.
-	value, err := CastColumnValueWithExprCtx(ctx, d, col, false, false)
+	value, err := CastColumnValue(ctx, d, col, false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -595,7 +595,7 @@ func getColDefaultExprValue(ctx expression.BuildContext, col *model.ColumnInfo, 
 		return types.Datum{}, err
 	}
 	// Check the evaluated data type by cast.
-	value, err := CastColumnValueWithExprCtx(ctx, d, col, false, false)
+	value, err := CastColumnValue(ctx, d, col, false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -610,7 +610,7 @@ func getColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo, defa
 	switch col.GetType() {
 	case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDatetime:
 	default:
-		value, err := CastColumnValueWithExprCtx(ctx, types.NewDatum(defaultVal), col, false, false)
+		value, err := CastColumnValue(ctx, types.NewDatum(defaultVal), col, false, false)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -765,7 +765,7 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 			}
 			// Because the expression might return different type from
 			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := CastColumnValueWithExprCtx(ectx, datum, colInfos[idx], false, true)
+			castDatum, err := CastColumnValue(ectx, datum, colInfos[idx], false, true)
 			if err != nil {
 				return err
 			}
