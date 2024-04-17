@@ -714,3 +714,17 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 		c.inResolvingLock.Store(false)
 	}()
 }
+
+func (c *CheckpointAdvancer) TEST_activeSubscriptionsFetcher() func() int {
+	subs := c.subscriber
+	return func() int { return len(subs.subscriptions) }
+}
+
+func (c *CheckpointAdvancer) TEST_registerCallbackForSubscriptions(f func()) int {
+	cnt := 0
+	for _, sub := range c.subscriber.subscriptions {
+		sub.onDaemonExit = f
+		cnt += 1
+	}
+	return cnt
+}
