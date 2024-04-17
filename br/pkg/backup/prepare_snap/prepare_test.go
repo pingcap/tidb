@@ -47,7 +47,12 @@ type mockStore struct {
 
 	successRegions []metapb.Region
 	onWaitApply    func(*metapb.Region) error
-	now            func() time.Time
+
+	waitApplyDelay     func()
+	delaiedWaitApplies sync.WaitGroup
+
+	injectConnErr <-chan error
+	now           func() time.Time
 }
 
 func (s *mockStore) Send(req *brpb.PrepareSnapshotBackupRequest) error {
@@ -67,7 +72,16 @@ func (s *mockStore) Send(req *brpb.PrepareSnapshotBackupRequest) error {
 					}
 				}
 			}
-			s.sendResp(resp)
+			if s.waitApplyDelay != nil {
+				s.delaiedWaitApplies.Add(1)
+				go func() {
+					defer s.delaiedWaitApplies.Done()
+					s.waitApplyDelay()
+					s.sendResp(resp)
+				}()
+			} else {
+				s.sendResp(resp)
+			}
 			if resp.Error == nil {
 				s.successRegions = append(s.successRegions, *region)
 			}
@@ -100,11 +114,20 @@ func (s *mockStore) sendResp(resp brpb.PrepareSnapshotBackupResponse) {
 }
 
 func (s *mockStore) Recv() (*brpb.PrepareSnapshotBackupResponse, error) {
-	out, ok := <-s.output
-	if !ok {
-		return nil, io.EOF
+	for {
+		select {
+		case out, ok := <-s.output:
+			if !ok {
+				return nil, io.EOF
+			}
+			return &out, nil
+		case err, ok := <-s.injectConnErr:
+			if ok {
+				return nil, err
+			}
+			s.injectConnErr = nil
+		}
 	}
-	return &out, nil
 }
 
 type mockStores struct {
@@ -167,7 +190,7 @@ func (m *mockStores) ConnectToStore(ctx context.Context, storeID uint64) (Prepar
 	s, ok := m.stores[storeID]
 	if !ok || s == nil {
 		m.stores[storeID] = &mockStore{
-			output:         make(chan brpb.PrepareSnapshotBackupResponse, 16),
+			output:         make(chan brpb.PrepareSnapshotBackupResponse, 20480),
 			successRegions: []metapb.Region{},
 			onWaitApply: func(r *metapb.Region) error {
 				return nil
@@ -537,4 +560,38 @@ func TestHooks(t *testing.T) {
 	ms.AssertSafeForBackup(t)
 	req.NoError(adv.Finalize(context.Background()))
 	ms.AssertIsNormalMode(t)
+}
+
+func TestManyMessagesWhenFinalizing(t *testing.T) {
+	req := require.New(t)
+	pdc := fakeCluster(t, 3, dummyRegions(10240)...)
+	ms := newTestEnv(pdc)
+	blockCh := make(chan struct{})
+	injectErr := make(chan error)
+	ms.onCreateStore = func(ms *mockStore) {
+		ms.waitApplyDelay = func() {
+			<-blockCh
+		}
+		ms.injectConnErr = injectErr
+	}
+	prep := New(ms)
+	ctx := context.Background()
+	req.NoError(prep.PrepareConnections(ctx))
+	errC := async(func() error { return prep.DriveLoopAndWaitPrepare(ctx) })
+	injectErr <- errors.NewNoStackError("whoa!")
+	req.Error(<-errC)
+	close(blockCh)
+	for _, s := range ms.stores {
+		s.delaiedWaitApplies.Wait()
+	}
+	// Closing the stream should be error.
+	req.Error(prep.Finalize(ctx))
+}
+
+func async[T any](f func() T) <-chan T {
+	ch := make(chan T)
+	go func() {
+		ch <- f()
+	}()
+	return ch
 }
