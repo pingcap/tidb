@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -26,13 +26,13 @@ import (
 )
 
 // ConstructTreeBasedDistExec constructs tree based DAGRequest
-func ConstructTreeBasedDistExec(pctx planctx.PlanContext, p plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
+func ConstructTreeBasedDistExec(pctx *planctx.BuildPBContext, p plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
 	execPB, err := p.ToPB(pctx, kv.TiFlash)
 	return []*tipb.Executor{execPB}, err
 }
 
 // ConstructListBasedDistExec constructs list based DAGRequest
-func ConstructListBasedDistExec(pctx planctx.PlanContext, plans []plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
+func ConstructListBasedDistExec(pctx *planctx.BuildPBContext, plans []plannercore.PhysicalPlan) ([]*tipb.Executor, error) {
 	executors := make([]*tipb.Executor, 0, len(plans))
 	for _, p := range plans {
 		execPB, err := p.ToPB(pctx, kv.TiKV)
@@ -60,10 +60,10 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 	}
 	if storeType == kv.TiFlash {
 		var executors []*tipb.Executor
-		executors, err = ConstructTreeBasedDistExec(ctx.GetPlanCtx(), plans[0])
+		executors, err = ConstructTreeBasedDistExec(ctx.GetBuildPBCtx(), plans[0])
 		dagReq.RootExecutor = executors[0]
 	} else {
-		dagReq.Executors, err = ConstructListBasedDistExec(ctx.GetPlanCtx(), plans)
+		dagReq.Executors, err = ConstructListBasedDistExec(ctx.GetBuildPBCtx(), plans)
 	}
 
 	distsql.SetEncodeType(ctx.GetDistSQLCtx(), dagReq)

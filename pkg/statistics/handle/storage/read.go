@@ -572,7 +572,9 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 		if item.IsIndex {
 			_, loadNeeded = tbl.IndexIsLoadNeeded(item.ID)
 		} else {
-			_, loadNeeded = tbl.ColumnIsLoadNeeded(item.ID, true)
+			var analyzed bool
+			_, loadNeeded, analyzed = tbl.ColumnIsLoadNeeded(item.ID, true)
+			loadNeeded = loadNeeded && analyzed
 		}
 		if !loadNeeded {
 			statistics.HistogramNeededItems.Delete(item)
@@ -589,8 +591,8 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		return nil
 	}
 	var colInfo *model.ColumnInfo
-	_, loadNeeded := tbl.ColumnIsLoadNeeded(col.ID, true)
-	if !loadNeeded {
+	_, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(col.ID, true)
+	if !loadNeeded || !analyzed {
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
 	}
@@ -700,10 +702,10 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 	tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	if idx.IsSyncLoadFailed {
-		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
+		logutil.BgLogger().Warn("Hist for index should already be loaded as sync but not found.",
 			zap.Int64("table_id", idx.TableID),
-			zap.Int64("column_id", idxHist.Info.ID),
-			zap.String("column_name", idxHist.Info.Name.O))
+			zap.Int64("index_id", idxHist.Info.ID),
+			zap.String("index_name", idxHist.Info.Name.O))
 	}
 	statistics.HistogramNeededItems.Delete(idx)
 	return nil
