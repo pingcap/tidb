@@ -289,9 +289,21 @@ func TestRetry(t *testing.T) {
 		task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
+		select {
+		case <-task1.ResultCh:
+			t.Logf("task1.ResultCh should not get nothing")
+			t.FailNow()
+		default:
+		}
 	}
 	task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
 	require.NoError(t, err1)
 	require.Nil(t, task1)
+	select {
+	case <-task1.ResultCh:
+	default:
+		t.Logf("task1.ResultCh should get nothing")
+		t.FailNow()
+	}
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/mockReadStatsForOneFail"))
 }
