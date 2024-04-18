@@ -3571,6 +3571,10 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		}
 	})
 	if useMPPExecution(b.ctx, v) {
+		// https://github.com/pingcap/tidb/issues/50358
+		if len(v.Schema().Columns) == 0 && len(v.GetTablePlan().Schema().Columns) > 0 {
+			v.SetSchema(v.GetTablePlan().Schema())
+		}
 		return b.buildMPPGather(v)
 	}
 	ts, err := v.GetTableScan()
