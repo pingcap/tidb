@@ -31,28 +31,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createEmptyResultChunk(ctx sessionctx.Context, probeIsLeft bool, probeTypes []*types.FieldType, buildTypes []*types.FieldType, probeUsedColumns []int, buildUsedColumns []int) *chunk.Chunk {
-	resultTypes := make([]*types.FieldType, 0, len(probeUsedColumns)+len(buildUsedColumns))
-	if probeIsLeft {
-		// first is probe column
-		for _, colIndex := range probeUsedColumns {
-			resultTypes = append(resultTypes, probeTypes[colIndex])
-		}
-		for _, colIndex := range buildUsedColumns {
-			resultTypes = append(resultTypes, buildTypes[colIndex])
-		}
-	} else {
-		// first is build columns
-		for _, colIndex := range buildUsedColumns {
-			resultTypes = append(resultTypes, buildTypes[colIndex])
-		}
-		for _, colIndex := range probeUsedColumns {
-			resultTypes = append(resultTypes, probeTypes[colIndex])
-		}
-	}
-	return chunk.New(resultTypes, ctx.GetSessionVars().MaxChunkSize, ctx.GetSessionVars().MaxChunkSize)
-}
-
 func evalOtherCondition(sessCtx sessionctx.Context, probeIsLeft bool, probeRow chunk.Row, buildRow chunk.Row, shallowRow chunk.MutRow, otherCondition expression.CNFExprs) (bool, error) {
 	if probeIsLeft {
 		shallowRow.ShallowCopyPartialRow(0, probeRow)
@@ -325,16 +303,47 @@ func TestInnerJoinProbeBasic(t *testing.T) {
 	stringTp := types.NewFieldType(mysql.TypeVarString)
 	stringTp.AddFlag(mysql.NotNullFlag)
 
-	leftKeyIndex := []int{0}
-	rightKeyIndex := leftKeyIndex
-	leftTypes := []*types.FieldType{intTp, stringTp, uintTp, stringTp}
-	rightTypes := leftTypes
-	leftKeyTypes := []*types.FieldType{intTp}
-	rightKeyTypes := leftKeyTypes
-	leftUsed := []int{0, 1, 2, 3}
-	rightUsed := []int{0, 1, 2, 3}
+	type testCase struct {
+		leftKeyIndex              []int
+		rightKeyIndex             []int
+		leftKeyTypes              []*types.FieldType
+		rightKeyTypes             []*types.FieldType
+		leftTypes                 []*types.FieldType
+		rightTypes                []*types.FieldType
+		leftUsed                  []int
+		rightUsed                 []int
+		otherCondition            expression.CNFExprs
+		leftUsedByOtherCondition  []int
+		rightUsedByOtherCondition []int
+	}
+
+	lTypes := []*types.FieldType{intTp, stringTp, uintTp, stringTp, tinyTp}
+	rTypes := []*types.FieldType{intTp, stringTp, uintTp, stringTp, tinyTp}
+	rTypes1 := []*types.FieldType{uintTp, stringTp, intTp, stringTp, tinyTp}
+
+	rightAsBuildSide := []bool{true, false}
 	partitionNumber := 3
 
-	testJoinProbe(t, leftKeyIndex, rightKeyIndex, leftKeyTypes, rightKeyTypes, leftTypes, rightTypes, true, leftUsed,
-		rightUsed, nil, nil, nil, nil, nil, partitionNumber, plannercore.InnerJoin)
+	testCases := []testCase{
+		// normal case
+		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, []int{0, 1, 2, 3}, []int{0, 1, 2, 3}, nil, nil, nil},
+		// rightUsed is empty
+		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, []int{0, 1, 2, 3}, []int{}, nil, nil, nil},
+		// leftUsed is empty
+		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, []int{}, []int{0, 1, 2, 3}, nil, nil, nil},
+		// both left/right Used are empty
+		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, []int{}, []int{}, nil, nil, nil},
+		// int join uint
+		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{uintTp}, lTypes, rTypes1, []int{0, 1, 2, 3}, []int{0, 1, 2, 3}, nil, nil, nil},
+		// multiple join keys
+		{[]int{0, 1}, []int{0, 1}, []*types.FieldType{intTp, stringTp}, []*types.FieldType{intTp, stringTp}, lTypes, rTypes, []int{0, 1, 2, 3}, []int{0, 1, 2, 3}, nil, nil, nil},
+	}
+
+	for _, tc := range testCases {
+		// inner join does not have left/right Filter
+		for _, value := range rightAsBuildSide {
+			testJoinProbe(t, tc.leftKeyIndex, tc.rightKeyIndex, tc.leftKeyTypes, tc.rightKeyTypes, tc.leftTypes, tc.rightTypes, value, tc.leftUsed,
+				tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, nil, nil, tc.otherCondition, partitionNumber, plannercore.InnerJoin)
+		}
+	}
 }
