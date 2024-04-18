@@ -858,7 +858,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			return nil
 		})
 	}
-	if err := indexG.Wait(); err != nil {
+	if err := dataG.Wait(); err != nil {
 		return errors.Trace(err)
 	}
 
