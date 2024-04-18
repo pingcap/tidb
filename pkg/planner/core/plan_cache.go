@@ -40,6 +40,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
@@ -158,10 +159,10 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	stmtCtx := sessVars.StmtCtx
 	cacheEnabled := false
 	if isNonPrepared {
-		stmtCtx.CacheType = stmtctx.SessionNonPrepared
+		stmtCtx.CacheType = contextutil.SessionNonPrepared
 		cacheEnabled = sctx.GetSessionVars().EnableNonPreparedPlanCache // plan-cache might be disabled after prepare.
 	} else {
-		stmtCtx.CacheType = stmtctx.SessionPrepared
+		stmtCtx.CacheType = contextutil.SessionPrepared
 		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache
 	}
 	stmtCtx.UseCache = stmt.StmtCacheable && cacheEnabled

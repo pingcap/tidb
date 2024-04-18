@@ -21,20 +21,12 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 )
 
-// RangeFallbackHandler is used to handle range fallback.
-// If there are too many ranges, it'll fallback and add a warning.
-type RangeFallbackHandler interface {
-	RecordRangeFallback(rangeMaxSize int64)
-	SetSkipPlanCache(err error)
-	contextutil.WarnHandler
-}
-
 // RangerContext is the context used to build range.
 type RangerContext struct {
 	TypeCtx types.Context
 	ErrCtx  errctx.Context
 	ExprCtx exprctx.BuildContext
-	RangeFallbackHandler
+	*contextutil.RangeFallbackHandler
 	OptimizerFixControl      map[uint64]string
 	UseCache                 bool
 	InPreparedPlanBuilding   bool

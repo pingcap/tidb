@@ -17,6 +17,7 @@ package ranger_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -1846,8 +1848,14 @@ func checkDetachRangeResult(t *testing.T, res *ranger.DetachRangeResult, expecte
 }
 
 func checkRangeFallbackAndReset(t *testing.T, sctx sessionctx.Context, expectedRangeFallback bool) {
-	require.Equal(t, expectedRangeFallback, sctx.GetSessionVars().StmtCtx.RangeFallback)
-	sctx.GetSessionVars().StmtCtx.RangeFallback = false
+	stmtCtx := sctx.GetSessionVars().StmtCtx
+	hasRangeFallbackWarn := false
+	for _, warn := range stmtCtx.GetWarnings() {
+		hasRangeFallbackWarn = hasRangeFallbackWarn || strings.Contains(warn.Err.Error(), "'tidb_opt_range_max_size' exceeded when building ranges")
+	}
+	require.Equal(t, expectedRangeFallback, hasRangeFallbackWarn)
+	stmtCtx.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(stmtCtx)
+	stmtCtx.SetWarnings(nil)
 }
 
 func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {

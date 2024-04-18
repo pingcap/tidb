@@ -282,7 +282,7 @@ func (c *Context) GetRangerCtx() *rangerctx.RangerContext {
 		OptimizerFixControl:      c.GetSessionVars().OptimizerFixControl,
 
 		// TODO: avoid using the whole `StmtCtx` here.
-		RangeFallbackHandler: c.GetSessionVars().StmtCtx,
+		RangeFallbackHandler: &c.GetSessionVars().StmtCtx.RangeFallbackHandler,
 	}
 }
 
