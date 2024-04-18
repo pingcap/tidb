@@ -280,6 +280,20 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 	return res, score
 }
 
+func getUsedStores(cache *RegionCache, usedTiFlashStoresMap map[uint64]struct{}) []*tikv.Store {
+	logutil.BgLogger().Info("detecting available mpp stores")
+	// decide the available stores
+	stores := cache.RegionCache.GetTiFlashStores()
+	usedStores := make([]*tikv.Store, 0)
+	for _, store := range stores {
+		_, ok := usedTiFlashStoresMap[store.StoreID()]
+		if ok {
+			usedStores = append(usedStores, store)
+		}
+	}
+	return usedStores
+}
+
 // balanceBatchCopTask balance the regions between available stores, the basic rule is
 //  1. the first region of each original batch cop task belongs to its original store because some
 //     meta data(like the rpc context) in batchCopTask is related to it
@@ -321,17 +335,8 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, usedTiFlashStore
 			storeTaskMap[taskStoreID] = batchTask
 		}
 	} else {
-		logutil.BgLogger().Info("detecting available mpp stores")
-		// decide the available stores
-		stores := cache.RegionCache.GetTiFlashStores()
-		usedStores := make([]*tikv.Store, 0)
-		for _, store := range stores {
-			_, ok := usedTiFlashStoresMap[store.StoreID()]
-			if ok {
-				usedStores = append(usedStores, store)
-			}
-		}
-		
+		usedStores := getUsedStores(cache, usedTiFlashStoresMap)
+
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		wg.Add(len(usedStores))
