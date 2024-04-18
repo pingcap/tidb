@@ -8,7 +8,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD:executor/autoidtest/BUILD.bazel
     shard_count = 30,
+=======
+    shard_count = 5,
+>>>>>>> f5e591d107b (*: fix 'Duplicate entry' error when @@auto_increment_increment and @@auto_increment_offset is set (#52626)):pkg/executor/test/autoidtest/BUILD.bazel
     deps = [
         "//autoid_service",
         "//config",
