@@ -28,8 +28,13 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
+<<<<<<< HEAD
 	fifo "github.com/scalalang2/golang-fifo"
 	"github.com/scalalang2/golang-fifo/sieve"
+=======
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
+>>>>>>> 53664d491dc (infoschema: support evict by lru cache size (#52423))
 	"github.com/tidwall/btree"
 	"golang.org/x/sync/singleflight"
 )
@@ -85,7 +90,7 @@ type Data struct {
 	// Stores the full data in memory.
 	schemaMap *btree.BTreeG[schemaItem]
 
-	tableCache fifo.Cache[tableCacheKey, table.Table]
+	tableCache *Sieve[tableCacheKey, table.Table]
 
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	mu struct {
@@ -140,11 +145,10 @@ type tableCacheKey struct {
 // NewData creates an infoschema V2 data struct.
 func NewData() *Data {
 	ret := &Data{
-		byID:      btree.NewBTreeG[tableItem](compareByID),
-		byName:    btree.NewBTreeG[tableItem](compareByName),
-		schemaMap: btree.NewBTreeG[schemaItem](compareSchemaItem),
-		// TODO: limit by size instead of by table count.
-		tableCache: sieve.New[tableCacheKey, table.Table](1000),
+		byID:       btree.NewBTreeG[tableItem](compareByID),
+		byName:     btree.NewBTreeG[tableItem](compareByName),
+		schemaMap:  btree.NewBTreeG[schemaItem](compareSchemaItem),
+		tableCache: newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
 		specials:   make(map[string]*schemaTables),
 	}
 	return ret
