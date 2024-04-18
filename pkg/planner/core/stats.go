@@ -117,21 +117,21 @@ func (p *LogicalShowDDLJobs) DeriveStats(_ []*property.StatsInfo, selfSchema *ex
 }
 
 // RecursiveDeriveStats4Test is a exporter just for test.
-func RecursiveDeriveStats4Test(p LogicalPlan) (*property.StatsInfo, error) {
-	return p.recursiveDeriveStats(nil)
+func RecursiveDeriveStats4Test(p base.LogicalPlan) (*property.StatsInfo, error) {
+	return p.RecursiveDeriveStats(nil)
 }
 
 // GetStats4Test is a exporter just for test.
-func GetStats4Test(p LogicalPlan) *property.StatsInfo {
+func GetStats4Test(p base.LogicalPlan) *property.StatsInfo {
 	return p.StatsInfo()
 }
 
-func (p *baseLogicalPlan) recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *baseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
 	childStats := make([]*property.StatsInfo, len(p.children))
 	childSchema := make([]*expression.Schema, len(p.children))
 	cumColGroups := p.self.ExtractColGroups(colGroups)
 	for i, child := range p.children {
-		childProfile, err := child.recursiveDeriveStats(cumColGroups)
+		childProfile, err := child.RecursiveDeriveStats(cumColGroups)
 		if err != nil {
 			return nil, err
 		}

@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -254,9 +255,9 @@ func wrapCastFunction(ctx expression.BuildContext, arg expression.Expression, ta
 	return expression.BuildCastFunction(ctx, arg, targetTp)
 }
 
-func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan, opt *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
+func (a *aggregationEliminator) optimize(ctx context.Context, p base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	newChildren := make([]LogicalPlan, 0, len(p.Children()))
+	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		newChild, planChanged, err := a.optimize(ctx, child, opt)
 		if err != nil {

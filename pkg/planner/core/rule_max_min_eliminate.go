@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -37,13 +38,13 @@ import (
 type maxMinEliminator struct {
 }
 
-func (a *maxMinEliminator) optimize(_ context.Context, p LogicalPlan, opt *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
+func (a *maxMinEliminator) optimize(_ context.Context, p base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return a.eliminateMaxMin(p, opt), planChanged, nil
 }
 
 // composeAggsByInnerJoin composes the scalar aggregations by cartesianJoin.
-func (*maxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, aggs []*LogicalAggregation, opt *coreusage.LogicalOptimizeOp) (plan LogicalPlan) {
+func (*maxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, aggs []*LogicalAggregation, opt *coreusage.LogicalOptimizeOp) (plan base.LogicalPlan) {
 	plan = aggs[0]
 	sctx := plan.SCtx()
 	joins := make([]*LogicalJoin, 0)
@@ -62,7 +63,7 @@ func (*maxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, a
 // checkColCanUseIndex checks whether there is an AccessPath satisfy the conditions:
 // 1. all of the selection's condition can be pushed down as AccessConds of the path.
 // 2. the path can keep order for `col` after pushing down the conditions.
-func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression.Column, conditions []expression.Expression) bool {
+func (a *maxMinEliminator) checkColCanUseIndex(plan base.LogicalPlan, col *expression.Column, conditions []expression.Expression) bool {
 	switch p := plan.(type) {
 	case *LogicalSelection:
 		conditions = append(conditions, p.Conditions...)
@@ -106,7 +107,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 
 // cloneSubPlans shallow clones the subPlan. We only consider `Selection` and `DataSource` here,
 // because we have restricted the subPlan in `checkColCanUseIndex`.
-func (a *maxMinEliminator) cloneSubPlans(plan LogicalPlan) LogicalPlan {
+func (a *maxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan {
 	switch p := plan.(type) {
 	case *LogicalSelection:
 		newConditions := make([]expression.Expression, len(p.Conditions))
@@ -156,9 +157,9 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.SCtx(), agg.QueryBlockOffset())
 		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
-		// Since LogicalAggregation doesn’t use the parent LogicalPlan, passing an incorrect parameter here won’t affect subsequent optimizations.
+		// Since LogicalAggregation doesn’t use the parent base.LogicalPlan, passing an incorrect parameter here won’t affect subsequent optimizations.
 		var (
-			p   LogicalPlan
+			p   base.LogicalPlan
 			err error
 		)
 		if p, err = newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}, opt); err != nil {
@@ -212,12 +213,12 @@ func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *cor
 }
 
 // eliminateMaxMin tries to convert max/min to Limit+Sort operators.
-func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan, opt *coreusage.LogicalOptimizeOp) LogicalPlan {
+func (a *maxMinEliminator) eliminateMaxMin(p base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	// CTE's logical optimization is indenpent.
 	if _, ok := p.(*LogicalCTE); ok {
 		return p
 	}
-	newChildren := make([]LogicalPlan, 0, len(p.Children()))
+	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		newChildren = append(newChildren, a.eliminateMaxMin(child, opt))
 	}

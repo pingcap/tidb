@@ -41,7 +41,7 @@ func (mj mockLogicalJoin) init(ctx base.PlanContext) *mockLogicalJoin {
 	return &mj
 }
 
-func (mj *mockLogicalJoin) recursiveDeriveStats(_ [][]*expression.Column) (*property.StatsInfo, error) {
+func (mj *mockLogicalJoin) (_ [][]*expression.Column) (*property.StatsInfo, error) {
 	if mj.StatsInfo() == nil {
 		mj.SetStats(mj.statsMap[mj.involvedNodeSet])
 	}

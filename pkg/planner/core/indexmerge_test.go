@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -94,9 +95,9 @@ func TestIndexMergePathGeneration(t *testing.T) {
 			continue
 		}
 		require.NoError(t, err)
-		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 		require.NoError(t, err)
-		lp := p.(LogicalPlan)
+		lp := p.(base.LogicalPlan)
 		var ds *DataSource
 		for ds == nil {
 			switch v := lp.(type) {
@@ -108,7 +109,7 @@ func TestIndexMergePathGeneration(t *testing.T) {
 		}
 		ds.SCtx().GetSessionVars().SetEnableIndexMerge(true)
 		idxMergeStartIndex := len(ds.possibleAccessPaths)
-		_, err = lp.recursiveDeriveStats(nil)
+		_, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err)
 		result := getIndexMergePathDigest(ds.possibleAccessPaths, idxMergeStartIndex)
 		testdata.OnRecord(func() {

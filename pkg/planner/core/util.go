@@ -253,7 +253,7 @@ func (p *LogicalMaxOneRow) Schema() *expression.Schema {
 	return s
 }
 
-func buildLogicalJoinSchema(joinType JoinType, join LogicalPlan) *expression.Schema {
+func buildLogicalJoinSchema(joinType JoinType, join base.LogicalPlan) *expression.Schema {
 	leftSchema := join.Children()[0].Schema()
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
