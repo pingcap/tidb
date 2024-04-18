@@ -3846,7 +3846,8 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 func TestIssue51873(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
+	tk.MustExec(`create database if not exists test1`)
+	tk.MustExec(`use test1`)
 	tk.MustExec(`CREATE TABLE h1 (
   id bigint(20) NOT NULL AUTO_INCREMENT,
   position_date date NOT NULL,
