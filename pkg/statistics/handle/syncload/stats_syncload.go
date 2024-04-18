@@ -204,6 +204,9 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 }
 
 // HandleOneTask handles last task if not nil, else handle a new task from chan, and return current task if fail somewhere.
+//   - If the task is handled successfully, return nil, nil.
+//   - If the task is timeout, return the task and nil. The caller should retry the timeout task without sleep.
+//   - If the task is failed, return the task, error. The caller should retry the timeout task with sleep.
 func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statstypes.NeededItemTask, exit chan struct{}) (task *statstypes.NeededItemTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
@@ -231,6 +234,7 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 	timeout := time.Until(task.ToTimeout)
 	select {
 	case sr := <-resultChan:
+		// sr.Val is always nil.
 		if sr.Err == nil {
 			task.ResultCh <- result
 			return nil, nil
