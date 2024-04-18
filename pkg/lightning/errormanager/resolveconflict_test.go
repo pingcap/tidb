@@ -170,12 +170,12 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v2.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
-	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 0 ORDER BY raw_key\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "index_name", "raw_value", "raw_handle"}).
-			AddRow(data2RowKey, "PRIMARY", data2RowValue, data1RowKey).
-			AddRow(data2RowKey, "PRIMARY", data3NonclusteredValue, data2NonclusteredKey).
-			AddRow(data6RowKey, "PRIMARY", data6RowValue, data5RowKey).
-			AddRow(data6RowKey, "PRIMARY", data7NonclusteredValue, data6NonclusteredKey))
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "index_name", "raw_value", "raw_handle"}).
+			AddRow(1, data2RowKey, "PRIMARY", data2RowValue, data1RowKey).
+			AddRow(2, data2RowKey, "PRIMARY", data3NonclusteredValue, data2NonclusteredKey).
+			AddRow(3, data6RowKey, "PRIMARY", data6RowValue, data5RowKey).
+			AddRow(4, data6RowKey, "PRIMARY", data7NonclusteredValue, data6NonclusteredKey))
 	mockDB.ExpectBegin()
 	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v2.*").
 		WithArgs(0, "a", nil, nil, data2NonclusteredKey, data2NonclusteredValue, 1).
@@ -186,14 +186,27 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 		WithArgs(0, "a", nil, nil, data6NonclusteredKey, data6NonclusteredValue, 1).
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
-	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 ORDER BY raw_key\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
-			AddRow(data2NonclusteredKey, data2NonclusteredValue).
-			AddRow(data6NonclusteredKey, data6NonclusteredValue))
+	for i := 0; i < 2; i++ {
+		mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+			WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "index_name", "raw_value", "raw_handle"}))
+	}
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "raw_value"}).
+			AddRow(1, data2NonclusteredKey, data2NonclusteredValue).
+			AddRow(2, data6NonclusteredKey, data6NonclusteredValue))
+	for i := 0; i < 2; i++ {
+		mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+			WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "raw_value"}))
+	}
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid FROM `lightning_task_info`.conflict_error_v2 WHERE key_data = \"\" and row_data = \"\" LIMIT 1\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid"}).
+			AddRow(1))
 	mockDB.ExpectBegin()
 	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid FROM `lightning_task_info`.conflict_error_v2 WHERE key_data = \"\" and row_data = \"\" LIMIT 1\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid"}))
 
 	cfg := config.NewConfig()
 	cfg.Conflict.Strategy = config.ReplaceOnDup
@@ -344,22 +357,35 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v2.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
-	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 0 ORDER BY raw_key\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "index_name", "raw_value", "raw_handle"}).
-			AddRow(data3IndexKey, "PRIMARY", data3IndexValue, data3RowKey).
-			AddRow(data3IndexKey, "PRIMARY", data4IndexValue, data4RowKey))
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "index_name", "raw_value", "raw_handle"}).
+			AddRow(1, data3IndexKey, "PRIMARY", data3IndexValue, data3RowKey).
+			AddRow(2, data3IndexKey, "PRIMARY", data4IndexValue, data4RowKey))
 	mockDB.ExpectBegin()
 	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v2.*").
 		WithArgs(0, "a", nil, nil, data4RowKey, data4RowValue, 1).
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
-	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 ORDER BY raw_key\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
-			AddRow(data4RowKey, data4RowValue))
+	for i := 0; i < 2; i++ {
+		mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+			WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "index_name", "raw_value", "raw_handle"}))
+	}
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "raw_value"}).
+			AddRow(1, data4RowKey, data4RowValue))
+	for i := 0; i < 2; i++ {
+		mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+			WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "raw_value"}))
+	}
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid FROM `lightning_task_info`.conflict_error_v2 WHERE key_data = \"\" and row_data = \"\" LIMIT 1\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid"}).
+			AddRow(1))
 	mockDB.ExpectBegin()
 	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid FROM `lightning_task_info`.conflict_error_v2 WHERE key_data = \"\" and row_data = \"\" LIMIT 1\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid"}))
 
 	cfg := config.NewConfig()
 	cfg.Conflict.Strategy = config.ReplaceOnDup
@@ -511,14 +537,14 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v2.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
-	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 0 ORDER BY raw_key\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "index_name", "raw_value", "raw_handle"}).
-			AddRow(data4NonclusteredKey, "uni_b", data4NonclusteredValue, data4RowKey).
-			AddRow(data4NonclusteredKey, "uni_b", data5NonclusteredValue, data5RowKey).
-			AddRow(data1NonclusteredKey, "uni_b", data1NonclusteredValue, data1RowKey).
-			AddRow(data1NonclusteredKey, "uni_b", data2NonclusteredValue, data2RowKey).
-			AddRow(data3IndexKey, "PRIMARY", data3IndexValue, data3RowKey).
-			AddRow(data3IndexKey, "PRIMARY", data4NonclusteredValue, data4RowKey))
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "index_name", "raw_value", "raw_handle"}).
+			AddRow(1, data4NonclusteredKey, "uni_b", data4NonclusteredValue, data4RowKey).
+			AddRow(2, data4NonclusteredKey, "uni_b", data5NonclusteredValue, data5RowKey).
+			AddRow(3, data1NonclusteredKey, "uni_b", data1NonclusteredValue, data1RowKey).
+			AddRow(4, data1NonclusteredKey, "uni_b", data2NonclusteredValue, data2RowKey).
+			AddRow(5, data3IndexKey, "PRIMARY", data3IndexValue, data3RowKey).
+			AddRow(6, data3IndexKey, "PRIMARY", data4NonclusteredValue, data4RowKey))
 	mockDB.ExpectBegin()
 	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v2.*").
 		WithArgs(0, "a", nil, nil, data5RowKey, data5RowValue, 1).
@@ -534,15 +560,28 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 		WithArgs(0, "a", nil, nil, data4RowKey, data4RowValue, 1).
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
-	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 ORDER BY raw_key\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
-			AddRow(data5RowKey, data5RowValue).
-			AddRow(data2RowKey, data2RowValue).
-			AddRow(data4RowKey, data4RowValue))
+	for i := 0; i < 2; i++ {
+		mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+			WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "index_name", "raw_value", "raw_handle"}))
+	}
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "raw_value"}).
+			AddRow(1, data5RowKey, data5RowValue).
+			AddRow(2, data2RowKey, data2RowValue).
+			AddRow(3, data4RowKey, data4RowValue))
+	for i := 0; i < 2; i++ {
+		mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+			WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "raw_value"}))
+	}
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid FROM `lightning_task_info`.conflict_error_v2 WHERE key_data = \"\" and row_data = \"\" LIMIT 1\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid"}).
+			AddRow(1))
 	mockDB.ExpectBegin()
 	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid FROM `lightning_task_info`.conflict_error_v2 WHERE key_data = \"\" and row_data = \"\" LIMIT 1\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid"}))
 
 	cfg := config.NewConfig()
 	cfg.Conflict.Strategy = config.ReplaceOnDup

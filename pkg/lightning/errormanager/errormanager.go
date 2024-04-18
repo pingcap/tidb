@@ -548,7 +548,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err != nil {
 					return errors.Trace(err)
 				}
-				fmt.Println("selectIndexConflictKeysReplace")
 
 				var lastRowID int64
 				hasRow := false
@@ -644,7 +643,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 									if err2 != nil {
 										return errors.Trace(err2)
 									}
-									fmt.Println("insertIntoConflictErrorData")
 									var sqlArgs []any
 									sb.WriteString(sqlValuesConflictErrorData)
 									sqlArgs = append(sqlArgs,
@@ -724,7 +722,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err != nil {
 					return errors.Trace(err)
 				}
-				fmt.Println("selectDataConflictKeysReplace")
 
 				var lastRowID int64
 				var previousRawKey, latestValue []byte
@@ -868,7 +865,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		fmt.Println("selectNullDataRows")
 
 		hasRow := false
 		for nullDataRows.Next() {
@@ -892,7 +888,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err2 != nil {
 					return errors.Trace(err2)
 				}
-				fmt.Println("deleteNullDataRow")
 				_, err := txn.ExecContext(c, sb.String(), rowLimit)
 				return errors.Trace(err)
 			}); err != nil {
