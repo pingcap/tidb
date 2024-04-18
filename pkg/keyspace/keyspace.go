@@ -138,6 +138,9 @@ func GetKeyspaceTxnRange(keyspaceID uint32) ([]byte, []byte) {
 // InitCurrentKeyspaceMeta is used to get the keyspace meta from pd during TiDB startup.
 func InitCurrentKeyspaceMeta() error {
 	cfg := config.GetGlobalConfig()
+	if IsKeyspaceNameEmpty(GetKeyspaceNameBySettings()) {
+		return nil
+	}
 	pdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
 	if err != nil {
 		return err
