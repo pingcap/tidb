@@ -79,6 +79,7 @@ go_test(
         "//domain",
         "//parser/model",
         "//parser/mysql",
+        "//sessionctx",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//statistics",

@@ -392,6 +392,8 @@ func onRenameIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	renameIndexes(tblInfo, from, to)
+	renameHiddenColumns(tblInfo, from, to)
+
 	if ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -722,6 +724,10 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 		return job.ReorgMeta.ReorgTp, nil
 	}
 	if !IsEnableFastReorg() {
+		job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
+		return model.ReorgTypeTxn, nil
+	}
+	if hasSysDB(job) {
 		job.ReorgMeta.ReorgTp = model.ReorgTypeTxn
 		return model.ReorgTypeTxn, nil
 	}
@@ -1679,15 +1685,29 @@ func writeChunkToLocal(writer ingest.Writer,
 	var lastHandle kv.Handle
 	unlock := writer.LockForWrite()
 	defer unlock()
+	var restoreDataBuf []types.Datum
+	restore := tables.NeedRestoredData(index.Meta().Columns, copCtx.tblInfo.Columns)
+	if restore {
+		restoreDataBuf = make([]types.Datum, len(copCtx.handleOutputOffsets))
+	}
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		idxDataBuf, handleDataBuf = idxDataBuf[:0], handleDataBuf[:0]
 		idxDataBuf = extractDatumByOffsets(row, copCtx.idxColOutputOffsets, copCtx.expColInfos, idxDataBuf)
 		handleDataBuf := extractDatumByOffsets(row, copCtx.handleOutputOffsets, copCtx.expColInfos, handleDataBuf)
+		if restore {
+			// restoreDataBuf should not truncate index values.
+			for i, datum := range handleDataBuf {
+				restoreDataBuf[i] = *datum.Clone()
+			}
+		}
 		handle, err := buildHandle(handleDataBuf, copCtx.tblInfo, copCtx.pkInfo, sCtx)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		rsData := getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, handleDataBuf)
+		var rsData []types.Datum
+		if restore {
+			rsData = getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, restoreDataBuf)
+		}
 		err = writeOneKVToLocal(writer, index, sCtx, writeBufs, idxDataBuf, rsData, handle)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
@@ -2281,6 +2301,15 @@ func renameIndexes(tblInfo *model.TableInfo, from, to model.CIStr) {
 		} else if isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == from.O {
 			idx.Name.L = strings.Replace(idx.Name.L, from.L, to.L, 1)
 			idx.Name.O = strings.Replace(idx.Name.O, from.O, to.O, 1)
+		}
+	}
+}
+
+func renameHiddenColumns(tblInfo *model.TableInfo, from, to model.CIStr) {
+	for _, col := range tblInfo.Columns {
+		if col.Hidden && getExpressionIndexOriginName(col) == from.O {
+			col.Name.L = strings.Replace(col.Name.L, from.L, to.L, 1)
+			col.Name.O = strings.Replace(col.Name.O, from.O, to.O, 1)
 		}
 	}
 }

@@ -39,7 +39,7 @@ go_test(
     ],
     embed = [":extension"],
     flaky = True,
-    shard_count = 14,
+    shard_count = 15,
     deps = [
         "//expression",
         "//parser/ast",
@@ -55,6 +55,7 @@ go_test(
         "//testkit/testsetup",
         "//types",
         "//util/chunk",
+        "//util/mock",
         "//util/sem",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
