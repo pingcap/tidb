@@ -17,7 +17,6 @@ package contextsession
 import (
 	"context"
 	"math"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -52,7 +51,6 @@ var _ exprctx.ExprContext = struct {
 type ExprCtxExtendedImpl struct {
 	sctx sessionctx.Context
 	*SessionEvalContext
-	inUnionCast atomic.Bool
 }
 
 // NewExprExtendedImpl creates a new ExprCtxExtendedImpl.
@@ -119,16 +117,6 @@ func (ctx *ExprCtxExtendedImpl) AllocPlanColumnID() int64 {
 // IsInNullRejectCheck returns whether the expression is in null reject check.
 func (ctx *ExprCtxExtendedImpl) IsInNullRejectCheck() bool {
 	return false
-}
-
-// SetInUnionCast sets the flag to indicate whether the expression is in union cast.
-func (ctx *ExprCtxExtendedImpl) SetInUnionCast(in bool) {
-	ctx.inUnionCast.Store(in)
-}
-
-// IsInUnionCast indicates whether executing in special cast context that negative unsigned num will be zero.
-func (ctx *ExprCtxExtendedImpl) IsInUnionCast() bool {
-	return ctx.inUnionCast.Load()
 }
 
 // GetWindowingUseHighPrecision determines whether to compute window operations without loss of precision.
