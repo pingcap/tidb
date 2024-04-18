@@ -1221,15 +1221,15 @@ func ConstructPositionExpr(p *driver.ParamMarkerExpr) *ast.PositionExpr {
 }
 
 // PosFromPositionExpr generates a position value from PositionExpr.
-func PosFromPositionExpr(ctx BuildContext, v *ast.PositionExpr) (int, bool, error) {
+func PosFromPositionExpr(ctx BuildContext, vars variable.SessionVarsProvider, v *ast.PositionExpr) (int, bool, error) {
 	if v.P == nil {
 		return v.N, false, nil
 	}
-	value, err := ParamMarkerExpression(ctx, v.P.(*driver.ParamMarkerExpr), false)
+	value, err := ParamMarkerExpression(vars, v.P.(*driver.ParamMarkerExpr), false)
 	if err != nil {
 		return 0, true, err
 	}
-	pos, isNull, err := GetIntFromConstant(ctx, value)
+	pos, isNull, err := GetIntFromConstant(ctx.GetEvalCtx(), value)
 	if err != nil || isNull {
 		return 0, true, err
 	}
@@ -1237,13 +1237,13 @@ func PosFromPositionExpr(ctx BuildContext, v *ast.PositionExpr) (int, bool, erro
 }
 
 // GetStringFromConstant gets a string value from the Constant expression.
-func GetStringFromConstant(ctx BuildContext, value Expression) (string, bool, error) {
+func GetStringFromConstant(ctx EvalContext, value Expression) (string, bool, error) {
 	con, ok := value.(*Constant)
 	if !ok {
 		err := errors.Errorf("Not a Constant expression %+v", value)
 		return "", true, err
 	}
-	str, isNull, err := con.EvalString(ctx.GetEvalCtx(), chunk.Row{})
+	str, isNull, err := con.EvalString(ctx, chunk.Row{})
 	if err != nil || isNull {
 		return "", true, err
 	}
@@ -1251,7 +1251,7 @@ func GetStringFromConstant(ctx BuildContext, value Expression) (string, bool, er
 }
 
 // GetIntFromConstant gets an interger value from the Constant expression.
-func GetIntFromConstant(ctx BuildContext, value Expression) (int, bool, error) {
+func GetIntFromConstant(ctx EvalContext, value Expression) (int, bool, error) {
 	str, isNull, err := GetStringFromConstant(ctx, value)
 	if err != nil || isNull {
 		return 0, true, err
@@ -1465,7 +1465,7 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // TODO: Do more careful check here.
 func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs []Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
-	if !ctx.GetSessionVars().StmtCtx.UseCache {
+	if !ctx.IsUseCache() {
 		return false
 	}
 	return containMutableConst(ctx.GetEvalCtx(), exprs)

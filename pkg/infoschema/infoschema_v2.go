@@ -28,9 +28,11 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	fifo "github.com/scalalang2/golang-fifo"
 	"github.com/scalalang2/golang-fifo/sieve"
 	"github.com/tidwall/btree"
+	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -827,17 +829,59 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
 	if b.deltaUpdate {
 		b.completeUpdateTablesV2(is)
 		for tblID := range b.updateTables {
-			b.updateTableBundles(is, tblID)
+			b.updateTableBundlesV2(is, tblID)
 		}
 		return
 	}
 
-	// do full update bundles
+	// do full update bundles and policyRefs.
 	// TODO: This is quite inefficient! we need some better way or avoid this API.
 	is.ruleBundleMap = make(map[int64]*placement.Bundle)
 	for _, dbInfo := range is.AllSchemas() {
 		for _, tbl := range is.SchemaTables(dbInfo.Name) {
-			b.updateTableBundles(is, tbl.Meta().ID)
+			b.updateTableBundlesV2(is, tbl.Meta().ID)
+		}
+	}
+}
+
+func (b *bundleInfoBuilder) updateTableBundlesV2(infoSchemaInterface InfoSchema, tableID int64) {
+	is := infoSchemaInterface.base()
+	tbl, ok := infoSchemaInterface.TableByID(tableID)
+	if !ok {
+		b.deleteBundle(is, tableID)
+		delete(is.policyRefMap, tableID)
+		return
+	}
+
+	getter := &policyGetter{is: is}
+	bundle, err := placement.NewTableBundle(getter, tbl.Meta())
+	if err != nil {
+		logutil.BgLogger().Error("create table bundle failed", zap.Error(err))
+	} else if bundle != nil {
+		is.policyRefMap[tableID] = tbl.Meta().PlacementPolicyRef
+		is.ruleBundleMap[tableID] = bundle
+	} else {
+		b.deleteBundle(is, tableID)
+		delete(is.policyRefMap, tableID)
+	}
+
+	if tbl.Meta().Partition == nil {
+		return
+	}
+
+	for _, par := range tbl.Meta().Partition.Definitions {
+		bundle, err = placement.NewPartitionBundle(getter, par)
+		if err != nil {
+			logutil.BgLogger().Error("create partition bundle failed",
+				zap.Error(err),
+				zap.Int64("partition id", par.ID),
+			)
+		} else if bundle != nil {
+			is.policyRefMap[par.ID] = par.PlacementPolicyRef
+			is.ruleBundleMap[par.ID] = bundle
+		} else {
+			b.deleteBundle(is, par.ID)
+			delete(is.policyRefMap, par.ID)
 		}
 	}
 }
@@ -847,23 +891,15 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 		return
 	}
 
-	// TODO: This is quite inefficient! we need some better way or avoid this API.
-	for _, dbInfo := range is.AllSchemas() {
-		for _, tbl := range is.SchemaTables(dbInfo.Name) {
-			tblInfo := tbl.Meta()
-			if tblInfo.PlacementPolicyRef != nil {
-				if _, ok := b.updatePolicies[tblInfo.PlacementPolicyRef.ID]; ok {
-					b.markTableBundleShouldUpdate(tblInfo.ID)
-				}
-			}
+	for id := range b.updatePolicies {
+		if _, ok := is.policyRefMap[id]; ok {
+			b.markTableBundleShouldUpdate(id)
+		}
+	}
 
-			if tblInfo.Partition != nil {
-				for _, par := range tblInfo.Partition.Definitions {
-					if _, ok := b.updatePartitions[par.ID]; ok {
-						b.markTableBundleShouldUpdate(tblInfo.ID)
-					}
-				}
-			}
+	for id := range b.updatePartitions {
+		if _, ok := is.policyRefMap[id]; ok {
+			b.markTableBundleShouldUpdate(id)
 		}
 	}
 }

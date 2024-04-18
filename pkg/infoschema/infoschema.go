@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
-var _ Misc = &infoSchemaMisc{}
+var _ context.Misc = &infoSchemaMisc{}
 
 type sortedTables []table.Table
 
@@ -67,6 +67,9 @@ type infoSchemaMisc struct {
 
 	// ruleBundleMap stores all placement rules
 	ruleBundleMap map[int64]*placement.Bundle
+
+	// policyRefMap stores all policyRefInfo for tables.
+	policyRefMap map[int64]*model.PolicyRefInfo
 
 	// policyMap stores all placement policies.
 	policyMutex sync.RWMutex

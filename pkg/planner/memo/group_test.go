@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -177,13 +178,13 @@ func TestGroupGetFirstElem(t *testing.T) {
 }
 
 type fakeImpl struct {
-	plan plannercore.PhysicalPlan
+	plan base.PhysicalPlan
 }
 
 func (impl *fakeImpl) CalcCost(float64, ...Implementation) float64     { return 0 }
 func (impl *fakeImpl) SetCost(float64)                                 {}
 func (impl *fakeImpl) GetCost() float64                                { return 0 }
-func (impl *fakeImpl) GetPlan() plannercore.PhysicalPlan               { return impl.plan }
+func (impl *fakeImpl) GetPlan() base.PhysicalPlan                      { return impl.plan }
 func (impl *fakeImpl) AttachChildren(...Implementation) Implementation { return nil }
 func (impl *fakeImpl) GetCostLimit(float64, ...Implementation) float64 { return 0 }
 

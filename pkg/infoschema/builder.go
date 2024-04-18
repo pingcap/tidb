@@ -782,7 +782,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) (*Builder, error) 
 	// Do not mix infoschema v1 and infoschema v2 building, this can simplify the logic.
 	// If we want to build infoschema v2, but the old infoschema is v1, just return error to trigger a full load.
 	if b.enableV2 != IsV2(oldSchema) {
-		return nil, errors.New("builder's infoschema mismatch, return error to trigger full reload")
+		return nil, errors.Errorf("builder's (v2=%v) infoschema mismatch, return error to trigger full reload", b.enableV2)
 	}
 
 	if schemaV2, ok := oldSchema.(*infoschemaV2); ok {

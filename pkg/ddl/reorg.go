@@ -906,14 +906,23 @@ func CleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
 func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
 	element, startKey, endKey, physicalTableID, err = getDDLReorgHandle(r.s, job)
-	if job.ReorgMeta != nil && job.ReorgMeta.Version == model.ReorgMetaVersion0 && err == nil {
-		logutil.BgLogger().Info("job get table range for old version ReorgMetas", zap.String("category", "ddl"),
-			zap.Int64("jobID", job.ID), zap.Int64("job ReorgMeta version", job.ReorgMeta.Version), zap.Int64("physical table ID", physicalTableID),
-			zap.String("startKey", hex.EncodeToString(startKey)),
-			zap.String("current endKey", hex.EncodeToString(endKey)),
-			zap.String("endKey next", hex.EncodeToString(endKey.Next())))
-		endKey = endKey.Next()
+	if err != nil {
+		return element, startKey, endKey, physicalTableID, err
 	}
+	adjustedEndKey := adjustEndKeyAcrossVersion(job, endKey)
+	return element, startKey, adjustedEndKey, physicalTableID, nil
+}
 
-	return
+// #46306 changes the table range from [start_key, end_key] to [start_key, end_key.next).
+// For old version TiDB, the semantic is still [start_key, end_key], we need to adjust it in new version TiDB.
+func adjustEndKeyAcrossVersion(job *model.Job, endKey kv.Key) kv.Key {
+	if job.ReorgMeta != nil && job.ReorgMeta.Version == model.ReorgMetaVersion0 {
+		logutil.BgLogger().Info("adjust range end key for old version ReorgMetas",
+			zap.String("category", "ddl"),
+			zap.Int64("jobID", job.ID),
+			zap.Int64("reorgMetaVersion", job.ReorgMeta.Version),
+			zap.String("endKey", hex.EncodeToString(endKey)))
+		return endKey.Next()
+	}
+	return endKey
 }

@@ -781,7 +781,7 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 				minLocalStreamMs:          summary.GetTiflashScanContext().GetMinLocalStreamMs(),
 				maxLocalStreamMs:          summary.GetTiflashScanContext().GetMaxLocalStreamMs(),
 				minRemoteStreamMs:         summary.GetTiflashScanContext().GetMinRemoteStreamMs(),
-				maxRemoteStreamMs:         summary.GetTiflashScanContext().GetMaxLocalStreamMs(),
+				maxRemoteStreamMs:         summary.GetTiflashScanContext().GetMaxRemoteStreamMs(),
 				regionsOfInstance:         make(map[string]uint64),
 			}}, threads: int32(summary.GetConcurrency()),
 		totalTasks: 1,
