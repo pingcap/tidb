@@ -508,7 +508,7 @@ func init() {
 }
 
 // GetPreparedStmt4DebugTrace is util function to avoid util/pkg depend back on core/pkg
-func GetPreparedStmt4DebugTrace(stmt ast.StmtNode) (planCacheStmtIsNil bool, NotNilText string, binaryParams []expression.Expression) {
+func GetPreparedStmt4DebugTrace(stmt ast.StmtNode) (planCacheStmtIsNil bool, notNilText string, binaryParams []expression.Expression) {
 	var planCacheStmt *PlanCacheStmt
 	if execStmt, ok := stmt.(*ast.ExecuteStmt); ok {
 		if execStmt.PrepStmt != nil {
@@ -521,9 +521,9 @@ func GetPreparedStmt4DebugTrace(stmt ast.StmtNode) (planCacheStmtIsNil bool, Not
 	if planCacheStmt == nil {
 		planCacheStmtIsNil = true
 	} else {
-		NotNilText = planCacheStmt.StmtText
+		notNilText = planCacheStmt.StmtText
 	}
-	return planCacheStmtIsNil, NotNilText, binaryParams
+	return planCacheStmtIsNil, notNilText, binaryParams
 }
 
 // GetMatchOpts get options to fetch plan or generate new plan
