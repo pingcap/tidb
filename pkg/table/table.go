@@ -27,6 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	tbctx "github.com/pingcap/tidb/pkg/table/context"
+>>>>>>> f5e591d107b (*: fix 'Duplicate entry' error when @@auto_increment_increment and @@auto_increment_offset is set (#52626))
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -206,13 +211,30 @@ type Table interface {
 	GetPartitionedTable() PartitionedTable
 }
 
+func getIncrementAndOffset(vars *variable.SessionVars) (int, int) {
+	increment := vars.AutoIncrementIncrement
+	offset := vars.AutoIncrementOffset
+	// When the value of auto_increment_offset is greater than that of auto_increment_increment,
+	// the value of auto_increment_offset is ignored.
+	// Ref https://dev.mysql.com/doc/refman/8.0/en/replication-options-source.html
+	if offset > increment {
+		offset = 1
+	}
+	return increment, offset
+}
+
 // AllocAutoIncrementValue allocates an auto_increment value for a new row.
 func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context) (int64, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "table.AllocAutoIncrementValue")
 	defer r.End()
+<<<<<<< HEAD
 	increment := sctx.GetSessionVars().AutoIncrementIncrement
 	offset := sctx.GetSessionVars().AutoIncrementOffset
 	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
+=======
+	increment, offset := getIncrementAndOffset(sctx.GetSessionVars())
+	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
+>>>>>>> f5e591d107b (*: fix 'Duplicate entry' error when @@auto_increment_increment and @@auto_increment_offset is set (#52626))
 	_, max, err := alloc.Alloc(ctx, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
@@ -222,18 +244,25 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 
 // AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.
 // The caller can derive the autoID by adding increment to firstID for N-1 times.
+<<<<<<< HEAD
 func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
 	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
 	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
 	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
 	min, max, err := alloc.Alloc(ctx, uint64(N), increment, offset)
+=======
+func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) ( /* firstID */ int64 /* increment */, int64 /* err */, error) {
+	increment1, offset := getIncrementAndOffset(sctx.GetSessionVars())
+	alloc := t.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
+	min, max, err := alloc.Alloc(ctx, uint64(N), int64(increment1), int64(offset))
+>>>>>>> f5e591d107b (*: fix 'Duplicate entry' error when @@auto_increment_increment and @@auto_increment_offset is set (#52626))
 	if err != nil {
 		return min, max, err
 	}
 	// SeekToFirstAutoIDUnSigned seeks to first autoID. Because AutoIncrement always allocate from 1,
 	// signed and unsigned value can be unified as the unsigned handle.
-	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset)))
-	return nr, increment, nil
+	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment1), uint64(offset)))
+	return nr, int64(increment1), nil
 }
 
 // PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
