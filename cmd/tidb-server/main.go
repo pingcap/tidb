@@ -279,7 +279,9 @@ func main() {
 		os.Exit(0)
 	}
 	registerStores()
-	err := metricsutil.RegisterMetrics()
+	err := keyspace.InitCurrentKeyspaceMeta()
+	terror.MustNil(err)
+	err = metricsutil.RegisterMetrics()
 	terror.MustNil(err)
 
 	if variable.EnableTmpStorageOnOOM.Load() {

@@ -315,8 +315,6 @@ type Config struct {
 	InMemSlowQueryTopNNum int `toml:"in-mem-slow-query-topn-num" json:"in-mem-slow-query-topn-num"`
 	// InMemSlowQueryRecentNum indicates the number of recent slow queries stored in memory.
 	InMemSlowQueryRecentNum int `toml:"in-mem-slow-query-recent-num" json:"in-mem-slow-query-recent-num"`
-	// EnableKeyspaceLevelGC is used to control whether current keyspace computes GC independently.
-	EnableKeyspaceLevelGC bool `toml:"enable-keyspace-level-gc" json:"enable-keyspace-level-gc"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed

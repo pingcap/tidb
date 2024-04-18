@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -725,7 +726,7 @@ func (is *InfoSyncer) GetMinStartTS() uint64 {
 }
 
 func (is *InfoSyncer) getMinStartTsEtcdCli() *clientv3.Client {
-	if config.GetGlobalConfig().EnableKeyspaceLevelGC {
+	if keyspace.IsKeyspaceMetaUseKeyspaceLevelGC(keyspace.CurrentKeyspaceMeta) {
 		// If `EnableKeyspaceLevelGC` is true, we should use etcd client with keyspace prefix to access min start timestamp of the current keyspace.
 		return is.etcdCli
 	}

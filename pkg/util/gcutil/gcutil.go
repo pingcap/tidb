@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -29,10 +28,6 @@ import (
 
 const (
 	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?`
-	// KeyspaceMetaConfigGCManagementType is gc management type in keyspace meta config.
-	KeyspaceMetaConfigGCManagementType = "gc_management_type"
-	// KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC is a type of GC management in keyspace meta config, it means this keyspace will calculate GC safe point by its own.
-	KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC = "keyspace_level_gc"
 )
 
 // CheckGCEnable is use to check whether GC is enable.
@@ -92,12 +87,4 @@ func GetGCSafePoint(sctx sessionctx.Context) (uint64, error) {
 	}
 	ts := oracle.GoTimeToTS(safePointTime)
 	return ts, nil
-}
-
-// IsKeyspaceMetaUseKeyspaceLevelGC return true if keyspace meta config has 'gc_management_type' is 'keyspace_level_gc'.
-func IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
-	if val, ok := keyspaceMeta.Config[KeyspaceMetaConfigGCManagementType]; ok {
-		return val == KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC
-	}
-	return false
 }

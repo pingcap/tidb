@@ -25,9 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -36,7 +34,6 @@ import (
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
-	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	cli_config "github.com/tikv/client-go/v2/config"
@@ -189,8 +186,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 
 	// ---------------- keyspace logic  ----------------
 	var (
-		pdClient     *tikv.CodecPDClient
-		keyspaceMeta *keyspacepb.KeyspaceMeta
+		pdClient *tikv.CodecPDClient
 	)
 
 	if keyspaceName == "" {
@@ -199,11 +195,6 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 	} else {
 		logutil.BgLogger().Info("using API V2.", zap.String("keyspaceName", keyspaceName))
 		pdClient, err = tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, pdCli, keyspaceName)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		keyspaceMeta, err = keyspace.GetKeyspaceMeta(pdCli, keyspaceName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -227,15 +218,6 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		return nil, errors.Trace(err)
 	}
 
-	err = d.CheckTiDBGCManagementTypeAndKeyspaceMeta(keyspaceMeta)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	err = d.UpdateTiDBGCManagementTypeByKeyspaceMeta(keyspaceMeta)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	// ---------------- keyspace logic  ----------------
 	if d.txnLocalLatches.Enabled {
 		s.EnableTxnLocalLatches(d.txnLocalLatches.Capacity)
@@ -258,39 +240,6 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 
 	mc.cache[uuid] = store
 	return store, nil
-}
-
-// CheckTiDBGCManagementTypeAndKeyspaceMeta check TiDB config and 'gc_management_type' in keyspace meta config.
-func (d TiKVDriver) CheckTiDBGCManagementTypeAndKeyspaceMeta(keyspaceMeta *keyspacepb.KeyspaceMeta) error {
-	if keyspaceMeta == nil {
-		return nil
-	}
-	if !gcutil.IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta) && config.GetGlobalConfig().EnableKeyspaceLevelGC {
-		// If gc_management_type=keyspace_level_gc was not set in the keyspace config when the keyspace was created,
-		// then don't supported setting enable-keyspace-level-gc = true tidb config now.
-		return errors.New("If 'gc_management_type' is not set to ' keyspace_level_gc' in keyspace meta config when keyspace is created, then it is not supported enable keyspace level gc in TiDB")
-	}
-	return nil
-}
-
-// UpdateTiDBGCManagementTypeByKeyspaceMeta update 'EnableKeyspaceLevelGC' in TiDB config by keyspace meta config.
-func (d TiKVDriver) UpdateTiDBGCManagementTypeByKeyspaceMeta(keyspaceMeta *keyspacepb.KeyspaceMeta) error {
-	if keyspaceMeta == nil {
-		return nil
-	}
-	if gcutil.IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta) {
-		// If 'gc_management_type' in PD keyspace meta config is 'keyspace_level_gc',
-		// but in TiDB global config EnableKeyspaceLevelGC is not true.
-		// Set the EnableKeyspaceLevelGC = true in TiDB global config.
-		// The gc management type of this keyspace cannot fall back to the global gc.
-		if !config.GetGlobalConfig().EnableKeyspaceLevelGC {
-			logutil.BgLogger().Info("keyspace meta config set gc_management_type = keyspace_level_gc, have to set EnableKeyspaceLevelGC = true in TiDB.")
-			config.UpdateGlobal(func(c *config.Config) {
-				c.EnableKeyspaceLevelGC = true
-			})
-		}
-	}
-	return nil
 }
 
 type tikvStore struct {
@@ -428,7 +377,7 @@ func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 	return kv.NewVersion(ver), derr.ToTiDBErr(err)
 }
 
-// CurrentMinTimestamp returns current minimum timestamp across all keyspace groups.
+// CurrentAllTSOKeyspaceGroupMinTs returns current minimum timestamp across all keyspace groups.
 func (s *tikvStore) CurrentAllTSOKeyspaceGroupMinTs() (uint64, error) {
 	ts, err := s.KVStore.CurrentAllTSOKeyspaceGroupMinTs()
 	return ts, derr.ToTiDBErr(err)

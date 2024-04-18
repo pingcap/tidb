@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	tikvconfig "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -36,10 +38,18 @@ import (
 const (
 	// tidbKeyspaceEtcdPathPrefix is the keyspace prefix for etcd namespace
 	tidbKeyspaceEtcdPathPrefix = "/keyspaces/tidb/"
+
+	// KeyspaceMetaConfigGCManagementType is gc management type in keyspace meta config.
+	KeyspaceMetaConfigGCManagementType = "gc_management_type"
+	// KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC is a type of GC management in keyspace meta config, it means this keyspace will calculate GC safe point by its own.
+	KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC = "keyspace_level_gc"
 )
 
 // CodecV1 represents api v1 codec.
 var CodecV1 = tikv.NewCodecV1(tikv.ModeTxn)
+
+// CurrentKeyspaceMeta is the keyspace meta of the current TiDB, if keyspace-name is not set then CurrentKeyspaceMeta == nil.
+var CurrentKeyspaceMeta *keyspacepb.KeyspaceMeta
 
 // MakeKeyspaceEtcdNamespace return the keyspace prefix path for etcd namespace
 func MakeKeyspaceEtcdNamespace(c tikv.Codec) string {
@@ -82,10 +92,21 @@ func WrapZapcoreWithKeyspace() zap.Option {
 // NewEtcdSafePointKV is used to add prefix when set keyspace.
 func NewEtcdSafePointKV(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
 	var etcdNameSpace string
-	if config.GetGlobalConfig().EnableKeyspaceLevelGC {
+	if IsKeyspaceMetaUseKeyspaceLevelGC(CurrentKeyspaceMeta) {
 		etcdNameSpace = MakeKeyspaceEtcdNamespace(codec)
 	}
 	return tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig, tikv.WithPrefix(etcdNameSpace))
+}
+
+// IsKeyspaceMetaUseKeyspaceLevelGC return true if keyspace meta config has 'gc_management_type' is 'keyspace_level_gc'.
+func IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
+	if keyspaceMeta == nil {
+		return false
+	}
+	if val, ok := keyspaceMeta.Config[KeyspaceMetaConfigGCManagementType]; ok {
+		return val == KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC
+	}
+	return false
 }
 
 // GetKeyspaceTxnPrefix return the keyspace txn prefix
@@ -112,6 +133,28 @@ func GetKeyspaceTxnRange(keyspaceID uint32) ([]byte, []byte) {
 	}
 
 	return txnLeftBound, txnRightBound
+}
+
+// InitCurrentKeyspaceMeta is used to get the keyspace meta from pd during TiDB startup.
+func InitCurrentKeyspaceMeta() error {
+	cfg := config.GetGlobalConfig()
+	pdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
+	if err != nil {
+		return err
+	}
+	timeoutSec := time.Duration(cfg.PDClient.PDServerTimeout) * time.Second
+	pdCli, err := pd.NewClient(pdAddrs, pd.SecurityOption{
+		CAPath:   cfg.Security.ClusterSSLCA,
+		CertPath: cfg.Security.ClusterSSLCert,
+		KeyPath:  cfg.Security.ClusterSSLKey,
+	}, pd.WithCustomTimeoutOption(timeoutSec))
+	if err != nil {
+		return err
+	}
+	defer pdCli.Close()
+
+	CurrentKeyspaceMeta, err = GetKeyspaceMeta(pdCli, cfg.KeyspaceName)
+	return err
 }
 
 // GetKeyspaceMeta return keyspace meta of the given keyspace name.

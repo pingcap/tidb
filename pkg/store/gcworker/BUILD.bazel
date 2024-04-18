@@ -6,7 +6,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/store/gcworker",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/config",
         "//pkg/ddl",
         "//pkg/ddl/label",
         "//pkg/ddl/placement",
@@ -24,7 +23,6 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/util/codec",
         "//pkg/util/dbterror",
-        "//pkg/util/gcutil",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
