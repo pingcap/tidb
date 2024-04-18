@@ -16,12 +16,13 @@ package context
 
 import (
 	"fmt"
-
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -35,8 +36,29 @@ type MutateContext interface {
 	GetExprCtx() exprctx.ExprContext
 	// Value returns the value associated with this context for key.
 	Value(key fmt.Stringer) any
-	// GetSessionVars returns the session variables.
-	GetSessionVars() *variable.SessionVars
+	// ShouldWriteBinlog returns whether the statement should write binlog
+	ShouldWriteBinlog() bool
+	BatchCheck() bool
+	LazyCheckKeyNotExists() bool
+	ConstraintCheckInPlacePessimistic() bool
+	ConstraintCheckInPlace() bool
+	SetPresumeKeyNotExists(val bool)
+	PresumeKeyNotExists() bool
+	InTxn() bool
+	RowEncoder() *rowcodec.Encoder
+	IsPessimistic() bool
+	InRestrictedSQL() bool
+	ConnectionID() uint64
+	TxnStartTS() uint64
+	IsRowLevelChecksumEnabled() bool
+	EnableMutationChecker() bool
+	AssertionLevel() variable.AssertionLevel
+	GetWriteStmtBufs() *variable.WriteStmtBufs
+	UpdateDeltaForTable(physicalTableID int64, delta int64, count int64, colSize map[int64]int64)
+	OnMutateCachedTable(tid int64, handle any) error
+	ReserveRowID(baseID int64, maxID int64)
+	ConsumeReservedRowID() (int64, bool)
+	ShardNextIDs(rowCnt int) int64
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
 	// If the active parameter is true, call this function will wait for the pending txn
@@ -49,11 +71,12 @@ type MutateContext interface {
 	// TxnRecordTempTable record the temporary table to the current transaction.
 	// This method will be called when the temporary table is modified or should allocate id in the transaction.
 	TxnRecordTempTable(tbl *model.TableInfo) tableutil.TempTable
+	CheckTempTableSize(tmpTable tableutil.TempTable, tblInfo *model.TableInfo) error
+	IncreaseTTLMetricsCount(cnt int)
+	SkipWriteUntouchedKeys() bool
 }
 
 // AllocatorContext is used to provide context for method `table.Allocators`.
 type AllocatorContext interface {
-	// TxnRecordTempTable record the temporary table to the current transaction.
-	// This method will be called when the temporary table is modified or should allocate id in the transaction.
-	TxnRecordTempTable(tbl *model.TableInfo) tableutil.TempTable
+	TemporaryTableIDAllocator(tbl *model.TableInfo) (autoid.Allocator, bool)
 }

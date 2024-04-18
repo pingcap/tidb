@@ -243,18 +243,10 @@ func (c *cachedTable) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
 		return nil, table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
-	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
+	if err = sctx.OnMutateCachedTable(c.Meta().ID, c); err != nil {
+		return nil, err
+	}
 	return c.TableCommon.AddRecord(sctx, r, opts...)
-}
-
-func txnCtxAddCachedTable(sctx table.MutateContext, tid int64, handle *cachedTable) {
-	txnCtx := sctx.GetSessionVars().TxnCtx
-	if txnCtx.CachedTables == nil {
-		txnCtx.CachedTables = make(map[int64]any)
-	}
-	if _, ok := txnCtx.CachedTables[tid]; !ok {
-		txnCtx.CachedTables[tid] = handle
-	}
 }
 
 // UpdateRecord implements table.Table
@@ -263,13 +255,17 @@ func (c *cachedTable) UpdateRecord(ctx context.Context, sctx table.MutateContext
 	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
 		return table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
-	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
+	if err := sctx.OnMutateCachedTable(c.Meta().ID, c); err != nil {
+		return err
+	}
 	return c.TableCommon.UpdateRecord(ctx, sctx, h, oldData, newData, touched)
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (c *cachedTable) RemoveRecord(sctx table.MutateContext, h kv.Handle, r []types.Datum) error {
-	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
+	if err := sctx.OnMutateCachedTable(c.Meta().ID, c); err != nil {
+		return err
+	}
 	return c.TableCommon.RemoveRecord(sctx, h, r)
 }
 

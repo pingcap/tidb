@@ -171,12 +171,11 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	} else {
 		ctx = context.TODO()
 	}
-	vars := sctx.GetSessionVars()
-	writeBufs := vars.GetWriteStmtBufs()
-	skipCheck := vars.StmtCtx.BatchCheck
-	sc := sctx.GetSessionVars().StmtCtx
+	writeBufs := sctx.GetWriteStmtBufs()
+	skipCheck := sctx.BatchCheck()
+	ec, loc := errCtx(sctx), location(sctx)
 	for _, value := range indexedValues {
-		key, distinct, err := c.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), value, h, writeBufs.IndexKeyBuf)
+		key, distinct, err := c.GenIndexKey(ec, loc, value, h, writeBufs.IndexKeyBuf)
 		if err != nil {
 			return nil, err
 		}
@@ -233,9 +232,10 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		c.initNeedRestoreData.Do(func() {
 			c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 		})
-		idxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx.TimeZone(), c.tblInfo, c.idxInfo,
+		idxVal, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo,
 			c.needRestoredData, distinct, opt.Untouched, value, h, c.phyTblID, handleRestoreData, nil)
-		err = sctx.GetSessionVars().StmtCtx.HandleError(err)
+		ec := errCtx(sctx)
+		err = ec.HandleError(err)
 		if err != nil {
 			return nil, err
 		}
@@ -266,7 +266,7 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				}
 			}
 			if !opt.IgnoreAssertion && (!opt.Untouched) {
-				if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
+				if sctx.LazyCheckKeyNotExists() && !txn.IsPessimistic() {
 					err = txn.SetAssertion(key, kv.SetAssertUnknown)
 				} else {
 					err = txn.SetAssertion(key, kv.SetAssertNotExist)
@@ -282,7 +282,7 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
 			value, err = txn.Get(ctx, key)
-		} else if (txn.IsPipelined() || sctx.GetSessionVars().LazyCheckKeyNotExists()) && !keyIsTempIdxKey {
+		} else if (txn.IsPipelined() || sctx.LazyCheckKeyNotExists()) && !keyIsTempIdxKey {
 			// For temp index keys, we can't get the temp value from memory buffer, even if the lazy check is enabled.
 			// Otherwise, it may cause the temp index value to be overwritten, leading to data inconsistency.
 			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
@@ -302,7 +302,7 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		// The index key value is not found or deleted.
 		if err != nil || len(value) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().Delete) {
 			val := idxVal
-			lazyCheck := (txn.IsPipelined() || sctx.GetSessionVars().LazyCheckKeyNotExists()) && err != nil
+			lazyCheck := (txn.IsPipelined() || sctx.LazyCheckKeyNotExists()) && err != nil
 			if keyIsTempIdxKey {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
 				val = tempVal.Encode(value)
@@ -317,8 +317,8 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				if needPresumeNotExists {
 					flags = []kv.FlagsOp{kv.SetPresumeKeyNotExists}
 				}
-				if !vars.ConstraintCheckInPlacePessimistic && vars.TxnCtx.IsPessimistic && vars.InTxn() &&
-					!vars.InRestrictedSQL && vars.ConnectionID > 0 {
+				if !sctx.ConstraintCheckInPlacePessimistic() && sctx.IsPessimistic() && sctx.InTxn() &&
+					!sctx.InRestrictedSQL() && sctx.ConnectionID() > 0 {
 					flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
 				}
 				err = txn.GetMemBuffer().SetWithFlags(key, val, flags...)
@@ -388,9 +388,9 @@ func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, t
 // Delete removes the entry for handle h and indexedValues from KV index.
 func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) error {
 	indexedValues := c.getIndexedValue(indexedValue)
-	sc := ctx.GetSessionVars().StmtCtx
+	ec, loc := errCtx(ctx), location(ctx)
 	for _, value := range indexedValues {
-		key, distinct, err := c.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), value, h, nil)
+		key, distinct, err := c.GenIndexKey(ec, loc, value, h, nil)
 		if err != nil {
 			return err
 		}
