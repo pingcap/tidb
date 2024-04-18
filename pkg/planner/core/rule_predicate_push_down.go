@@ -424,16 +424,12 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
 func isNullRejected(ctx base.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
-	exprCtx := ctx.GetExprCtx()
+	exprCtx := ctx.GetNullRejectCheckExprCtx()
 	expr = expression.PushDownNot(exprCtx, expr)
 	if expression.ContainOuterNot(expr) {
 		return false
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	if !exprCtx.IsInNullRejectCheck() {
-		exprCtx.SetInNullRejectCheck(true)
-		defer exprCtx.SetInNullRejectCheck(false)
-	}
 	for _, cond := range expression.SplitCNFItems(expr) {
 		if isNullRejectedSpecially(ctx, schema, expr) {
 			return true
