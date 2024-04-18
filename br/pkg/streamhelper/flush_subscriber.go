@@ -101,9 +101,6 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 
 // Clear clears all the subscriptions.
 func (f *FlushSubscriber) Clear() {
-<<<<<<< HEAD
-	log.Info("[log backup flush subscriber] Clearing.")
-=======
 	timeout := clearSubscriberTimeOut
 	failpoint.Inject("FlushSubscriber.Clear.timeoutMs", func(v failpoint.Value) {
 		//nolint:durationcheck
@@ -114,7 +111,6 @@ func (f *FlushSubscriber) Clear() {
 		zap.Duration("timeout", timeout))
 	cx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
->>>>>>> f01f305fabb (log_backup: fix panic during advancer owner transfer (#52671))
 	for id := range f.subscriptions {
 		f.removeSubscription(cx, id)
 	}
@@ -335,14 +331,9 @@ func (f *FlushSubscriber) addSubscription(ctx context.Context, toStore Store) {
 func (f *FlushSubscriber) removeSubscription(ctx context.Context, toStore uint64) {
 	subs, ok := f.subscriptions[toStore]
 	if ok {
-<<<<<<< HEAD
-		log.Info("[log backup subscription manager] Removing subscription.", zap.Uint64("store", toStore))
-		subs.close()
-=======
 		log.Info("Removing subscription.", zap.String("category", "log backup subscription manager"),
 			zap.Uint64("store", toStore))
 		subs.close(ctx)
->>>>>>> f01f305fabb (log_backup: fix panic during advancer owner transfer (#52671))
 		delete(f.subscriptions, toStore)
 	}
 }
