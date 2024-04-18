@@ -648,6 +648,7 @@ func TestMppJoinExchangeColumnPrune(t *testing.T) {
 	}
 
 	tk.MustExec("set @@tidb_allow_mpp=1;")
+	tk.MustExec("set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 1")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 1")
 
@@ -707,6 +708,7 @@ func TestMppFineGrainedJoinAndAgg(t *testing.T) {
 	}
 
 	tk.MustExec("set @@tidb_allow_mpp=1;")
+	tk.MustExec("set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 1")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 1")
 

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
@@ -95,8 +96,12 @@ type BuildContext interface {
 	SetInUnionCast(in bool)
 	// IsInUnionCast indicates whether executing in special cast context that negative unsigned num will be zero.
 	IsInUnionCast() bool
-	// GetSessionVars gets the session variables.
-	GetSessionVars() *variable.SessionVars
+	// Deprecated: This method is deprecated and may be removed in the future because it is coupled with statement.
+	// InInsertOrUpdate returns whether when are building an expression for insert or update statement.
+	InInsertOrUpdate() bool
+	// ConnectionID indicates the connection ID of the current session.
+	// If the context is not in a session, it should return 0.
+	ConnectionID() uint64
 }
 
 // ExprContext contains full context for expression building and evaluating.
@@ -108,4 +113,15 @@ type ExprContext interface {
 	GetWindowingUseHighPrecision() bool
 	// GetGroupConcatMaxLen returns the value of the 'group_concat_max_len' system variable.
 	GetGroupConcatMaxLen() uint64
+}
+
+// AssertLocationWithSessionVars asserts the location in the context and session variables are the same.
+// It is only used for testing.
+func AssertLocationWithSessionVars(ctxLoc *time.Location, vars *variable.SessionVars) {
+	varsLoc := vars.Location()
+	stmtLoc := vars.StmtCtx.TimeZone()
+	intest.Assert(ctxLoc == varsLoc && ctxLoc == stmtLoc,
+		"location mismatch, ctxLoc: %s, varsLoc: %s, stmtLoc: %s",
+		ctxLoc.String(), varsLoc.String(), stmtLoc.String(),
+	)
 }

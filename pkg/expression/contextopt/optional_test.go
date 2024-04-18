@@ -16,6 +16,7 @@ package contextopt
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/context"
@@ -37,6 +38,10 @@ func (p mockSessionVarsProvider) GetSessionVars() *variable.SessionVars {
 type mockEvalCtx struct {
 	context.EvalContext
 	props OptionalEvalPropProviders
+}
+
+func (ctx *mockEvalCtx) Location() *time.Location {
+	return time.UTC
 }
 
 func (ctx *mockEvalCtx) GetOptionalPropProvider(
@@ -92,6 +97,8 @@ func TestOptionalEvalPropProviders(t *testing.T) {
 			}
 		case context.OptPropSessionVars:
 			vars := variable.NewSessionVars(nil)
+			vars.TimeZone = time.UTC
+			vars.StmtCtx.SetTimeZone(time.UTC)
 			p = NewSessionVarsProvider(mockSessionVarsProvider{vars: vars})
 			r := SessionVarsPropReader{}
 			reader = r
@@ -99,8 +106,6 @@ func TestOptionalEvalPropProviders(t *testing.T) {
 				assertReaderFuncReturnErr(t, ctx, r.GetSessionVars)
 			}
 			verifyProvider = func(ctx context.EvalContext, val context.OptionalEvalPropProvider) {
-				got := val.(*SessionVarsPropProvider).GetSessionVars()
-				require.Same(t, vars, got)
 				require.Same(t, vars, assertReaderFuncValue(t, ctx, r.GetSessionVars))
 			}
 		case context.OptPropInfoSchema:

@@ -228,7 +228,10 @@ func TestSessionEvalContextOptProps(t *testing.T) {
 	require.Equal(t, ctx.GetSessionVars().ActiveRoles, roles)
 
 	// test for OptPropSessionVars
-	gotVars := getProvider[*contextopt.SessionVarsPropProvider](t, impl, context.OptPropSessionVars).GetSessionVars()
+	sessVarsProvider := getProvider[*contextopt.SessionVarsPropProvider](t, impl, context.OptPropSessionVars)
+	require.NotNil(t, sessVarsProvider)
+	gotVars, err := contextopt.SessionVarsPropReader{}.GetSessionVars(impl)
+	require.NoError(t, err)
 	require.Same(t, ctx.GetSessionVars(), gotVars)
 
 	// test for OptPropAdvisoryLock
@@ -307,4 +310,27 @@ func TestSessionBuildContext(t *testing.T) {
 	require.True(t, impl.IsInUnionCast())
 	impl.SetInUnionCast(false)
 	require.False(t, impl.IsInUnionCast())
+
+	// InInsertOrUpdate
+	vars.StmtCtx.InInsertStmt = false
+	vars.StmtCtx.InUpdateStmt = false
+	require.False(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = true
+	require.True(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = false
+	vars.StmtCtx.InUpdateStmt = true
+	require.True(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = true
+	require.True(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = false
+	vars.StmtCtx.InUpdateStmt = false
+	require.False(t, impl.InInsertOrUpdate())
+
+	// ConnID
+	vars.ConnectionID = 123
+	require.Equal(t, uint64(123), impl.ConnectionID())
 }

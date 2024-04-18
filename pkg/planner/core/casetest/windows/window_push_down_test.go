@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/planner/core/internal"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -63,7 +63,7 @@ func TestWindowFunctionDescCanPushDown(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists employee")
 	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
-	internal.SetTiFlashReplica(t, dom, "test", "employee")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "employee")
 
 	var input Input
 	var output Output
@@ -80,7 +80,7 @@ func TestWindowPushDownPlans(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists employee")
 	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
-	internal.SetTiFlashReplica(t, dom, "test", "employee")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "employee")
 
 	var input Input
 	var output Output
@@ -98,7 +98,7 @@ func TestWindowPlanWithOtherOperators(t *testing.T) {
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists employee")
 	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
-	internal.SetTiFlashReplica(t, dom, "test", "employee")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "employee")
 
 	var input Input
 	var output Output
@@ -116,8 +116,8 @@ func TestIssue34765(t *testing.T) {
 	tk.MustExec("create table t1(c1 varchar(32), c2 datetime, c3 bigint, c4 varchar(64));")
 	tk.MustExec("create table t2(b2 varchar(64));")
 	tk.MustExec("set tidb_enforce_mpp=1;")
-	internal.SetTiFlashReplica(t, dom, "test", "t1")
-	internal.SetTiFlashReplica(t, dom, "test", "t2")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
+	coretestsdk.SetTiFlashReplica(t, dom, "test", "t2")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/CheckMPPWindowSchemaLength", "return"))
 	defer func() {

@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/planner/context"
-	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -34,14 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
-// PlanContext is the context for building plan.
-type PlanContext = context.PlanContext
-
-// BuildPBContext is the context for building `*tipb.Executor`.
-type BuildPBContext = context.BuildPBContext
-
 // AsSctx converts PlanContext to sessionctx.Context.
-func AsSctx(pctx PlanContext) (sessionctx.Context, error) {
+func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
 	sctx, ok := pctx.(sessionctx.Context)
 	if !ok {
 		return nil, errors.New("the current PlanContext cannot be converted to sessionctx.Context")
@@ -49,9 +43,9 @@ func AsSctx(pctx PlanContext) (sessionctx.Context, error) {
 	return sctx, nil
 }
 
-func enforceProperty(p *property.PhysicalProperty, tsk Task, ctx PlanContext) Task {
+func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanContext) base.Task {
 	if p.TaskTp == property.MppTaskType {
-		mpp, ok := tsk.(*mppTask)
+		mpp, ok := tsk.(*MppTask)
 		if !ok || mpp.Invalid() {
 			return invalidTask
 		}
@@ -81,7 +75,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk Task, ctx PlanContext) Ta
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
-func optimizeByShuffle(tsk Task, ctx PlanContext) Task {
+func optimizeByShuffle(tsk base.Task, ctx base.PlanContext) base.Task {
 	if tsk.Plan() == nil {
 		return tsk
 	}
@@ -103,7 +97,7 @@ func optimizeByShuffle(tsk Task, ctx PlanContext) Task {
 	return tsk
 }
 
-func optimizeByShuffle4Window(pp *PhysicalWindow, ctx PlanContext) *PhysicalShuffle {
+func optimizeByShuffle4Window(pp *PhysicalWindow, ctx base.PlanContext) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().WindowConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -134,15 +128,15 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx PlanContext) *PhysicalShuf
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
-		Tails:        []PhysicalPlan{tail},
-		DataSources:  []PhysicalPlan{dataSource},
+		Tails:        []base.PhysicalPlan{tail},
+		DataSources:  []base.PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{byItems},
 	}.Init(ctx, pp.StatsInfo(), pp.QueryBlockOffset(), reqProp)
 	return shuffle
 }
 
-func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx PlanContext) *PhysicalShuffle {
+func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx base.PlanContext) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().StreamAggConcurrency()
 	if concurrency <= 1 {
 		return nil
@@ -171,23 +165,23 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx PlanContext) *Physic
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
-		Tails:        []PhysicalPlan{tail},
-		DataSources:  []PhysicalPlan{dataSource},
+		Tails:        []base.PhysicalPlan{tail},
+		DataSources:  []base.PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{util.CloneExprs(pp.GroupByItems)},
 	}.Init(ctx, pp.StatsInfo(), pp.QueryBlockOffset(), reqProp)
 	return shuffle
 }
 
-func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx PlanContext) *PhysicalShuffle {
+func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx base.PlanContext) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().MergeJoinConcurrency()
 	if concurrency <= 1 {
 		return nil
 	}
 
 	children := pp.Children()
-	dataSources := make([]PhysicalPlan, len(children))
-	tails := make([]PhysicalPlan, len(children))
+	dataSources := make([]base.PhysicalPlan, len(children))
+	tails := make([]base.PhysicalPlan, len(children))
 
 	for i := range children {
 		sort, ok := children[i].(*PhysicalSort)
@@ -221,7 +215,7 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx PlanContext) *Physic
 // LogicalPlan is a tree of logical operators.
 // We can do a lot of logical optimizations to it, like predicate pushdown and column pruning.
 type LogicalPlan interface {
-	Plan
+	base.Plan
 
 	// HashCode encodes a LogicalPlan to fast compare whether a LogicalPlan equals to another.
 	// We use a strict encode method here which ensures there is no conflict.
@@ -243,7 +237,7 @@ type LogicalPlan interface {
 	// If planCounter > 0, the clock_th plan generated in this function will be returned.
 	// If planCounter = 0, the plan generated in this function will not be considered.
 	// If planCounter = -1, then we will not force plan.
-	findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *coreusage.PhysicalOptimizeOp) (Task, int64, error)
+	findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *coreusage.PhysicalOptimizeOp) (base.Task, int64, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use
@@ -289,7 +283,7 @@ type LogicalPlan interface {
 	// It will return:
 	// 1. All possible plans that can match the required property.
 	// 2. Whether the SQL hint can work. Return true if there is no hint.
-	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []PhysicalPlan, hintCanWork bool, err error)
+	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []base.PhysicalPlan, hintCanWork bool, err error)
 
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
@@ -317,9 +311,9 @@ type LogicalPlan interface {
 }
 
 type baseLogicalPlan struct {
-	base.Plan
+	baseimpl.Plan
 
-	taskMap map[string]Task
+	taskMap map[string]base.Task
 	// taskMapBak forms a backlog stack of taskMap, used to roll back the taskMap.
 	taskMapBak []string
 	// taskMapBakTS stores the timestamps of logs.
@@ -355,7 +349,7 @@ func (*baseLogicalPlan) ExplainInfo() string {
 	return ""
 }
 
-func getEstimatedProbeCntFromProbeParents(probeParents []PhysicalPlan) float64 {
+func getEstimatedProbeCntFromProbeParents(probeParents []base.PhysicalPlan) float64 {
 	res := float64(1)
 	for _, pp := range probeParents {
 		switch pp.(type) {
@@ -369,7 +363,7 @@ func getEstimatedProbeCntFromProbeParents(probeParents []PhysicalPlan) float64 {
 	return res
 }
 
-func getActualProbeCntFromProbeParents(pps []PhysicalPlan, statsColl *execdetails.RuntimeStatsColl) int64 {
+func getActualProbeCntFromProbeParents(pps []base.PhysicalPlan, statsColl *execdetails.RuntimeStatsColl) int64 {
 	res := int64(1)
 	for _, pp := range pps {
 		switch pp.(type) {
@@ -392,11 +386,11 @@ func getActualProbeCntFromProbeParents(pps []PhysicalPlan, statsColl *execdetail
 }
 
 type basePhysicalPlan struct {
-	base.Plan
+	baseimpl.Plan
 
 	childrenReqProps []*property.PhysicalProperty
-	self             PhysicalPlan
-	children         []PhysicalPlan
+	self             base.PhysicalPlan
+	children         []base.PhysicalPlan
 
 	// used by the new cost interface
 	planCostInit bool
@@ -405,7 +399,7 @@ type basePhysicalPlan struct {
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in op.PhysicalPlan for details.
-	probeParents []PhysicalPlan
+	probeParents []base.PhysicalPlan
 
 	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
 	// 1. For ExchangeSender, means its output will be partitioned by hash key.
@@ -413,7 +407,7 @@ type basePhysicalPlan struct {
 	TiFlashFineGrainedShuffleStreamCount uint64
 }
 
-func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
+func (p *basePhysicalPlan) cloneWithSelf(newSelf base.PhysicalPlan) (*basePhysicalPlan, error) {
 	base := &basePhysicalPlan{
 		Plan:                                 p.Plan,
 		self:                                 newSelf,
@@ -437,7 +431,7 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPla
 }
 
 // Clone implements op.PhysicalPlan interface.
-func (p *basePhysicalPlan) Clone() (PhysicalPlan, error) {
+func (p *basePhysicalPlan) Clone() (base.PhysicalPlan, error) {
 	return nil, errors.Errorf("%T doesn't support cloning", p.self)
 }
 
@@ -493,7 +487,7 @@ func (p *basePhysicalPlan) GetActualProbeCnt(statsColl *execdetails.RuntimeStats
 	return getActualProbeCntFromProbeParents(p.probeParents, statsColl)
 }
 
-func (p *basePhysicalPlan) SetProbeParents(probeParents []PhysicalPlan) {
+func (p *basePhysicalPlan) SetProbeParents(probeParents []base.PhysicalPlan) {
 	p.probeParents = probeParents
 }
 
@@ -531,12 +525,12 @@ func (p *baseLogicalPlan) rollBackTaskMap(ts uint64) {
 	}
 }
 
-func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) Task {
+func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) base.Task {
 	key := prop.HashCode()
 	return p.taskMap[string(key)]
 }
 
-func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task Task) {
+func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task base.Task) {
 	key := prop.HashCode()
 	if p.SCtx().GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		// Empty string for useless change.
@@ -603,19 +597,19 @@ func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 	}
 }
 
-func newBaseLogicalPlan(ctx PlanContext, tp string, self LogicalPlan, qbOffset int) baseLogicalPlan {
+func newBaseLogicalPlan(ctx base.PlanContext, tp string, self LogicalPlan, qbOffset int) baseLogicalPlan {
 	return baseLogicalPlan{
-		taskMap:      make(map[string]Task),
+		taskMap:      make(map[string]base.Task),
 		taskMapBak:   make([]string, 0, 10),
 		taskMapBakTS: make([]uint64, 0, 10),
-		Plan:         base.NewBasePlan(ctx, tp, qbOffset),
+		Plan:         baseimpl.NewBasePlan(ctx, tp, qbOffset),
 		self:         self,
 	}
 }
 
-func newBasePhysicalPlan(ctx PlanContext, tp string, self PhysicalPlan, offset int) basePhysicalPlan {
+func newBasePhysicalPlan(ctx base.PlanContext, tp string, self base.PhysicalPlan, offset int) basePhysicalPlan {
 	return basePhysicalPlan{
-		Plan: base.NewBasePlan(ctx, tp, offset),
+		Plan: baseimpl.NewBasePlan(ctx, tp, offset),
 		self: self,
 	}
 }
@@ -661,7 +655,7 @@ func (p *baseLogicalPlan) Children() []LogicalPlan {
 }
 
 // Children implements op.PhysicalPlan Children interface.
-func (p *basePhysicalPlan) Children() []PhysicalPlan {
+func (p *basePhysicalPlan) Children() []base.PhysicalPlan {
 	return p.children
 }
 
@@ -671,7 +665,7 @@ func (p *baseLogicalPlan) SetChildren(children ...LogicalPlan) {
 }
 
 // SetChildren implements op.PhysicalPlan SetChildren interface.
-func (p *basePhysicalPlan) SetChildren(children ...PhysicalPlan) {
+func (p *basePhysicalPlan) SetChildren(children ...base.PhysicalPlan) {
 	p.children = children
 }
 
@@ -681,7 +675,7 @@ func (p *baseLogicalPlan) SetChild(i int, child LogicalPlan) {
 }
 
 // SetChild implements op.PhysicalPlan SetChild interface.
-func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
+func (p *basePhysicalPlan) SetChild(i int, child base.PhysicalPlan) {
 	p.children[i] = child
 }
 
