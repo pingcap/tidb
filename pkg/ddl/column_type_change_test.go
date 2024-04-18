@@ -487,6 +487,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	hook := &callback.TestDDLCallback{Do: dom}
 	var checkErr error
+	var firstJobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if checkErr != nil {
 			return
@@ -495,6 +496,9 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 			return
 		}
 
+		if firstJobID == 0 {
+			firstJobID = job.ID
+		}
 		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
 			tbl := external.GetTableByName(t, tk, "test", "t")
 			if len(tbl.WritableCols()) != 4 {
@@ -503,7 +507,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 				return
 			}
 			// modify column x
-			if job.ID == 107 {
+			if job.ID == firstJobID {
 				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
 				expectVal := "0000-00-00 00:00:00"
 				if originalDV != expectVal {
@@ -519,7 +523,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 				}
 			}
 			// modify column b
-			if job.ID == 108 {
+			if job.ID == firstJobID+1 {
 				originalDV := fmt.Sprintf("%v", tbl.WritableCols()[3].OriginDefaultValue)
 				expectVal := ""
 				if originalDV != expectVal {
