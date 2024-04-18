@@ -296,9 +296,9 @@ func TestRetry(t *testing.T) {
 		default:
 		}
 	}
-	task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+	result, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
 	require.NoError(t, err1)
-	require.Nil(t, task1)
+	require.Nil(t, result)
 	select {
 	case <-task1.ResultCh:
 	default:
