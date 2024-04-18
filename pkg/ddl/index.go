@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -853,6 +854,9 @@ func cleanupSortPath(ctx context.Context, currentJobID int64) error {
 				logutil.Logger(ctx).Warn(ingest.LitErrCleanSortPath, zap.Error(err))
 				return nil
 			}
+			failpoint.Inject("ownerResignAfterDispatchLoopCheck", func() {
+				close(local.WaitRMFolderChForTest)
+			})
 		}
 	}
 	return nil

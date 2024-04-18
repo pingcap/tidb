@@ -963,3 +963,25 @@ Projection_8	6.66	root		planner__core__indexmerge_path.t.col_37->Column#7
     └─TableRowIDScan_11	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 SELECT /*+ use_index_merge(t)*/ MIN(col_37)  FROM t WHERE col_38 BETWEEN '1984-12-13' AND '1975-01-28' OR JSON_CONTAINS(col_37, '138480458355390957') GROUP BY col_38 HAVING col_38 != '1988-03-22';
 MIN(col_37)
+drop table if exists t1;
+CREATE TABLE `t1` (
+`col_44` date NOT NULL,
+`col_45` json DEFAULT NULL,
+`col_46` blob NOT NULL,
+PRIMARY KEY (`col_44`) /*T![clustered_index] CLUSTERED */,
+UNIQUE KEY `idx_16` (`col_46`(3)),
+KEY `idx_17` ((cast(`col_45` as double array)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+INSERT INTO t1 VALUES('1988-07-19','[0.9233398239291353, 0.9396459773262974, 0.540018481999012, 0.181978533893545]',x'652539286c5f7e6b482a7265575a');
+SELECT col_44, col_45 FROM t1 WHERE NOT (col_44 BETWEEN '1980-03-18' AND '2011-10-24') GROUP BY col_46,col_45 HAVING JSON_CONTAINS(col_45, '0.540018481999012') OR JSON_OVERLAPS(col_45, '[0.5785147169732324,0.8314968898215304,0.5226516826882698]');
+col_44	col_45
+EXPLAIN format=brief SELECT /*+ use_index_merge(t1) */ col_44, col_45 FROM t1 WHERE NOT (col_44 BETWEEN '1980-03-18' AND '2011-10-24') GROUP BY col_46,col_45 HAVING JSON_CONTAINS(col_45, '0.540018481999012') OR JSON_OVERLAPS(col_45, '[0.5785147169732324,0.8314968898215304,0.5226516826882698]');
+id	estRows	task	access object	operator info
+Selection	31.95	root		or(json_contains(planner__core__indexmerge_path.t1.col_45, cast(cast("0.540018481999012", json BINARY), json BINARY)), json_overlaps(planner__core__indexmerge_path.t1.col_45, cast(cast("[0.5785147169732324,0.8314968898215304,0.5226516826882698]", json BINARY), json BINARY)))
+└─IndexMerge	26.59	root		type: union
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:idx_17(cast(`col_45` as double array))	range:[0.540018481999012,0.540018481999012], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:idx_17(cast(`col_45` as double array))	range:[0.5785147169732324,0.5785147169732324], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:idx_17(cast(`col_45` as double array))	range:[0.8314968898215304,0.8314968898215304], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:idx_17(cast(`col_45` as double array))	range:[0.5226516826882698,0.5226516826882698], keep order:false, stats:pseudo
+  └─Selection(Probe)	26.59	cop[tikv]		or(lt(planner__core__indexmerge_path.t1.col_44, 1980-03-18 00:00:00.000000), gt(planner__core__indexmerge_path.t1.col_44, 2011-10-24 00:00:00.000000))
+    └─TableRowIDScan	39.94	cop[tikv]	table:t1	keep order:false, stats:pseudo

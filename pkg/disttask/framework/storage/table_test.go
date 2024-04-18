@@ -547,7 +547,6 @@ func TestSubTaskTable(t *testing.T) {
 	ok, err = sm.HasSubtasksInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
 	require.False(t, ok)
-
 	require.NoError(t, testutil.DeleteSubtasksByTaskID(ctx, sm, 1))
 
 	ok, err = sm.HasSubtasksInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending, proto.SubtaskStateRunning)
@@ -560,7 +559,11 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, subtasks, 0)
 
-	require.NoError(t, sm.FinishSubtask(ctx, "tidb1", 2, []byte{}))
+	subtasks, err = testutil.GetSubtasksByTaskID(ctx, sm, 2)
+	require.NoError(t, err)
+	require.Len(t, subtasks, 1)
+	subtaskID := subtasks[0].ID
+	require.NoError(t, sm.FinishSubtask(ctx, "tidb1", subtaskID, []byte{}))
 
 	subtasks, err = sm.GetAllSubtasksByStepAndState(ctx, 2, proto.StepOne, proto.SubtaskStateSucceed)
 	require.NoError(t, err)
@@ -569,7 +572,7 @@ func TestSubTaskTable(t *testing.T) {
 	rowCount, err := sm.GetSubtaskRowCount(ctx, 2, proto.StepOne)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), rowCount)
-	require.NoError(t, sm.UpdateSubtaskRowCount(ctx, 2, 100))
+	require.NoError(t, sm.UpdateSubtaskRowCount(ctx, subtaskID, 100))
 	rowCount, err = sm.GetSubtaskRowCount(ctx, 2, proto.StepOne)
 	require.NoError(t, err)
 	require.Equal(t, int64(100), rowCount)

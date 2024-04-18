@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/internal"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -56,7 +56,7 @@ func TestWrapCastForAggFuncs(t *testing.T) {
 		orgAggFuncs = append(orgAggFuncs, agg.Clone())
 	}
 
-	internal.WrapCastForAggFuncs(mock.NewContext(), aggFuncs)
+	coreusage.WrapCastForAggFuncs(mock.NewContext(), aggFuncs)
 	for i := range aggFuncs {
 		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
 			require.Equal(t, aggFuncs[i].Args[0].GetType().GetType(), aggFuncs[i].RetTp.GetType())

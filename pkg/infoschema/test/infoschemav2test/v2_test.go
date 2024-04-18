@@ -27,13 +27,11 @@ import (
 )
 
 func TestSpecialSchemas(t *testing.T) {
-	t.Skip("This feature is not enabled yet")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 
-	tk.MustQuery("select @@global.tidb_schema_cache_size;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@global.tidb_schema_cache_size = 1024;")
 	tk.MustQuery("select @@global.tidb_schema_cache_size;").Check(testkit.Rows("1024"))
 	tk.MustExec("create table t (id int);")

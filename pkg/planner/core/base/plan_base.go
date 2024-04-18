@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package base
 
 import (
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
@@ -26,6 +27,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+// PlanContext is the context for building plan.
+type PlanContext = context.PlanContext
+
+// BuildPBContext is the context for building `*tipb.Executor`.
+type BuildPBContext = context.BuildPBContext
 
 // Plan is the description of an execution flow.
 // It is created from ast.Node first, then optimized by the optimizer,

@@ -140,11 +140,11 @@ func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreTyp
 	}
 	switch x := expr.(type) {
 	case *CorrelatedColumn:
-		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column) != nil
+		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column, true) != nil
 	case *Constant:
 		return pc.conOrCorColToPBExpr(expr) != nil
 	case *Column:
-		return pc.columnToPBExpr(x) != nil
+		return pc.columnToPBExpr(x, true) != nil
 	case *ScalarFunction:
 		return canScalarFuncPushDown(ctx, x, storeType)
 	}

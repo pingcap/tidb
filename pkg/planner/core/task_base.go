@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -27,44 +28,27 @@ import (
 )
 
 var (
-	_ Task = &RootTask{}
-	_ Task = &MppTask{}
-	_ Task = &CopTask{}
+	_ base.Task = &RootTask{}
+	_ base.Task = &MppTask{}
+	_ base.Task = &CopTask{}
 )
-
-// Task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
-// A task may be CopTask, RootTask, MPPTaskMeta or a ParallelTask.
-type Task interface {
-	// Count returns current task's row count.
-	Count() float64
-	// Copy return a shallow copy of current task with the same pointer to p.
-	Copy() Task
-	// Plan returns current task's plan.
-	Plan() PhysicalPlan
-	// Invalid returns whether current task is invalid.
-	Invalid() bool
-	// ConvertToRootTask will convert current task as root type.
-	ConvertToRootTask(ctx PlanContext) *RootTask
-	// MemoryUsage returns the memory usage of current task.
-	MemoryUsage() int64
-}
 
 // ************************************* RootTask Start ******************************************
 
 // RootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
 type RootTask struct {
-	p       PhysicalPlan
+	p       base.PhysicalPlan
 	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
 	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
 }
 
 // GetPlan returns the root task's plan.
-func (t *RootTask) GetPlan() PhysicalPlan {
+func (t *RootTask) GetPlan() base.PhysicalPlan {
 	return t.p
 }
 
 // SetPlan sets the root task' plan.
-func (t *RootTask) SetPlan(p PhysicalPlan) {
+func (t *RootTask) SetPlan(p base.PhysicalPlan) {
 	t.p = p
 }
 
@@ -79,14 +63,14 @@ func (t *RootTask) SetEmpty(x bool) {
 }
 
 // Copy implements Task interface.
-func (t *RootTask) Copy() Task {
+func (t *RootTask) Copy() base.Task {
 	return &RootTask{
 		p: t.p,
 	}
 }
 
 // ConvertToRootTask implements Task interface.
-func (t *RootTask) ConvertToRootTask(_ PlanContext) *RootTask {
+func (t *RootTask) ConvertToRootTask(_ base.PlanContext) base.Task {
 	return t.Copy().(*RootTask)
 }
 
@@ -101,7 +85,7 @@ func (t *RootTask) Count() float64 {
 }
 
 // Plan implements Task interface.
-func (t *RootTask) Plan() PhysicalPlan {
+func (t *RootTask) Plan() base.PhysicalPlan {
 	return t.p
 }
 
@@ -127,7 +111,7 @@ func (t *RootTask) MemoryUsage() (sum int64) {
 // 3. consider virtual columns.
 // 4. TODO: partition prune after close
 type MppTask struct {
-	p PhysicalPlan
+	p base.PhysicalPlan
 
 	partTp   property.MPPPartitionType
 	hashCols []*property.MPPPartitionColumn
@@ -152,13 +136,13 @@ func (t *MppTask) Count() float64 {
 }
 
 // Copy implements Task interface.
-func (t *MppTask) Copy() Task {
+func (t *MppTask) Copy() base.Task {
 	nt := *t
 	return &nt
 }
 
 // Plan implements Task interface.
-func (t *MppTask) Plan() PhysicalPlan {
+func (t *MppTask) Plan() base.PhysicalPlan {
 	return t.p
 }
 
@@ -168,7 +152,7 @@ func (t *MppTask) Invalid() bool {
 }
 
 // ConvertToRootTask implements Task interface.
-func (t *MppTask) ConvertToRootTask(ctx PlanContext) *RootTask {
+func (t *MppTask) ConvertToRootTask(ctx base.PlanContext) base.Task {
 	return t.Copy().(*MppTask).ConvertToRootTaskImpl(ctx)
 }
 
@@ -186,7 +170,7 @@ func (t *MppTask) MemoryUsage() (sum int64) {
 }
 
 // ConvertToRootTaskImpl implements Task interface.
-func (t *MppTask) ConvertToRootTaskImpl(ctx PlanContext) *RootTask {
+func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 	// In disaggregated-tiflash mode, need to consider generated column.
 	tryExpandVirtualColumn(t.p)
 	sender := PhysicalExchangeSender{
@@ -238,8 +222,8 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx PlanContext) *RootTask {
 // CopTask is a task that runs in a distributed kv store.
 // TODO: In future, we should split copTask to indexTask and tableTask.
 type CopTask struct {
-	indexPlan PhysicalPlan
-	tablePlan PhysicalPlan
+	indexPlan base.PhysicalPlan
+	tablePlan base.PhysicalPlan
 	// indexPlanFinished means we have finished index plan.
 	indexPlanFinished bool
 	// keepOrder indicates if the plan scans data by order.
@@ -259,7 +243,7 @@ type CopTask struct {
 	// is used to compute average row width when computing scan cost.
 	tblCols []*expression.Column
 
-	idxMergePartPlans      []PhysicalPlan
+	idxMergePartPlans      []base.PhysicalPlan
 	idxMergeIsIntersection bool
 	idxMergeAccessMVIndex  bool
 
@@ -289,7 +273,7 @@ func (t *CopTask) Count() float64 {
 }
 
 // Copy implements Task interface.
-func (t *CopTask) Copy() Task {
+func (t *CopTask) Copy() base.Task {
 	nt := *t
 	return &nt
 }
@@ -297,7 +281,7 @@ func (t *CopTask) Copy() Task {
 // Plan implements Task interface.
 // copTask plan should be careful with indexMergeReader, whose real plan is stored in
 // idxMergePartPlans, when its indexPlanFinished is marked with false.
-func (t *CopTask) Plan() PhysicalPlan {
+func (t *CopTask) Plan() base.PhysicalPlan {
 	if t.indexPlanFinished {
 		return t.tablePlan
 	}
@@ -341,12 +325,12 @@ func (t *CopTask) MemoryUsage() (sum int64) {
 }
 
 // ConvertToRootTask implements Task interface.
-func (t *CopTask) ConvertToRootTask(ctx PlanContext) *RootTask {
+func (t *CopTask) ConvertToRootTask(ctx base.PlanContext) base.Task {
 	// copy one to avoid changing itself.
 	return t.Copy().(*CopTask).convertToRootTaskImpl(ctx)
 }
 
-func (t *CopTask) convertToRootTaskImpl(ctx PlanContext) *RootTask {
+func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
