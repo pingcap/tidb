@@ -206,7 +206,8 @@ type clientConn struct {
 	ppEnabled bool
 
 	writeChunksOnce sync.Once
-	writeChunksCh   chan chunkErrorChan
+	writeChunksCh   chan *chunkErrorChan
+	chunkError      chunkErrorChan
 	errCh           chan error
 	tickerCheckExit *time.Ticker
 }
@@ -2345,8 +2346,8 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 			if returnErr := <-cc.errCh; err == nil {
 				err = returnErr
 			}
+			cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusWaitQueryFinished, false)
 		}
-		cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusWaitQueryFinished, false)
 	}()
 
 	for {
@@ -2398,7 +2399,8 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 		}
 		validNextCount++
 		firstNext = false
-		cc.writeChunksCh <- chunkErrorChan{ctx, rs, binary, stmtDetail, req}
+		cc.chunkError = chunkErrorChan{ctx, rs, binary, stmtDetail, req}
+		cc.writeChunksCh <- &cc.chunkError
 	InnerFor:
 		for {
 			select {
@@ -2422,31 +2424,21 @@ func (cc *clientConn) writeChunksToConn(ctx context.Context, rs resultset.Result
 
 func (cc *clientConn) createWriteChunksGoroutine() {
 	cc.writeChunksOnce.Do(func() {
-		cc.writeChunksCh = make(chan chunkErrorChan, 1)
-		cc.tickerCheckExit = time.NewTicker(3 * time.Second)
+		cc.writeChunksCh = make(chan *chunkErrorChan, 1)
+		cc.tickerCheckExit = time.NewTicker(60 * time.Second)
 		cc.errCh = make(chan error, 1)
 		go func() {
 			defer close(cc.errCh)
 			var (
-				err        error
-				ctx        context.Context
-				start      time.Time
-				data       = cc.alloc.AllocWithLen(4, 1024)
-				rs         resultset.ResultSet
-				req        *chunk.Chunk
-				stmtDetail *execdetails.StmtExecDetails
-				binary     bool
+				err   error
+				start time.Time
+				data  = cc.alloc.AllocWithLen(4, 1024)
 			)
 			for {
 				chkerror, ok := <-cc.writeChunksCh
 				if !ok {
 					return
 				}
-				ctx = chkerror.ctx
-				rs = chkerror.rs
-				stmtDetail = chkerror.stmtDetail
-				binary = chkerror.binary
-				req = chkerror.chk
 
 				func() {
 					defer func() {
@@ -2455,17 +2447,17 @@ func (cc *clientConn) createWriteChunksGoroutine() {
 							cc.errCh <- err
 						}
 					}()
-					reg := trace.StartRegion(ctx, "WriteClientConn")
-					if stmtDetail != nil {
+					reg := trace.StartRegion(chkerror.ctx, "WriteClientConn")
+					if chkerror.stmtDetail != nil {
 						start = time.Now()
 					}
-					rowCount := req.NumRows()
+					rowCount := chkerror.chk.NumRows()
 					for i := 0; i < rowCount; i++ {
 						data = data[0:4]
-						if binary {
-							data, err = column.DumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+						if chkerror.binary {
+							data, err = column.DumpBinaryRow(data, chkerror.rs.Columns(), chkerror.chk.GetRow(i), cc.rsEncoder)
 						} else {
-							data, err = column.DumpTextRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+							data, err = column.DumpTextRow(data, chkerror.rs.Columns(), chkerror.chk.GetRow(i), cc.rsEncoder)
 						}
 						if err != nil {
 							reg.End()
@@ -2479,8 +2471,8 @@ func (cc *clientConn) createWriteChunksGoroutine() {
 						}
 					}
 					reg.End()
-					if stmtDetail != nil {
-						stmtDetail.WriteSQLRespDuration += time.Since(start)
+					if chkerror.stmtDetail != nil {
+						chkerror.stmtDetail.WriteSQLRespDuration += time.Since(start)
 					}
 					cc.errCh <- err
 				}()
