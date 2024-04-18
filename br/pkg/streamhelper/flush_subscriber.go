@@ -103,6 +103,7 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 func (f *FlushSubscriber) Clear() {
 	timeout := clearSubscriberTimeOut
 	failpoint.Inject("FlushSubscriber.Clear.timeoutMs", func(v failpoint.Value) {
+		//nolint:durationcheck
 		timeout = time.Duration(v.(int)) * time.Millisecond
 	})
 	log.Info("Clearing.",
