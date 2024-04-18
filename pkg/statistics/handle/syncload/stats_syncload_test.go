@@ -207,6 +207,18 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		task1, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
+		select {
+		case <-stmtCtx1.StatsLoad.ResultCh:
+			t.Logf("stmtCtx1.ResultCh should not get anything")
+			t.FailNow()
+		case <-stmtCtx2.StatsLoad.ResultCh:
+			t.Logf("stmtCtx2.ResultCh should not get anything")
+			t.FailNow()
+		case <-task1.ResultCh:
+			t.Logf("task1.ResultCh should not get anything")
+			t.FailNow()
+		default:
+		}
 
 		require.NoError(t, failpoint.Disable(fp.failPath))
 		task3, err3 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
