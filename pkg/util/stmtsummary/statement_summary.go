@@ -208,9 +208,11 @@ type stmtSummaryByDigestElement struct {
 	// The last time this type of SQL executes.
 	lastSeen time.Time
 	// plan cache
-	planInCache   bool
-	planCacheHits int64
-	planInBinding bool
+	planInCache               bool
+	planCacheHits             int64
+	planCacheUnqualifiedCount int64
+	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
+	planInBinding             bool
 	// pessimistic execution retry information.
 	execRetryCount uint
 	execRetryTime  time.Duration
@@ -250,13 +252,14 @@ type StmtExecInfo struct {
 	ExecRetryCount      uint
 	ExecRetryTime       time.Duration
 	execdetails.StmtExecDetails
-	ResultRows        int64
-	TiKVExecDetails   util.ExecDetails
-	Prepared          bool
-	KeyspaceName      string
-	KeyspaceID        uint32
-	ResourceGroupName string
-	RUDetail          *util.RUDetails
+	ResultRows           int64
+	TiKVExecDetails      util.ExecDetails
+	Prepared             bool
+	KeyspaceName         string
+	KeyspaceID           uint32
+	ResourceGroupName    string
+	RUDetail             *util.RUDetails
+	PlanCacheUnqualified string
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -854,6 +857,10 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.planCacheHits++
 	} else {
 		ssElement.planInCache = false
+	}
+	if sei.PlanCacheUnqualified != "" {
+		ssElement.planCacheUnqualifiedCount++
+		ssElement.lastPlanCacheUnqualified = sei.PlanCacheUnqualified
 	}
 
 	// SPM
