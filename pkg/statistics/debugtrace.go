@@ -271,7 +271,9 @@ func debugTraceTopNRange(s context.PlanContext, t *TopN, startIdx, endIdx int) {
  Part of the logic for collecting information is in statistics/debug_trace.go.
 */
 
+// GetStatsTblInfo is used for debug trace of getStatsTable
 type GetStatsTblInfo struct {
+	StatsTblInfo      *StatsTblTraceInfo
 	TableName         string
 	TblInfoID         int64
 	InputPhysicalID   int64
@@ -280,10 +282,9 @@ type GetStatsTblInfo struct {
 	CountIsZero       bool
 	Uninitialized     bool
 	Outdated          bool
-	StatsTblInfo      *StatsTblTraceInfo
 }
 
-// Only for test.
+// StabilizeGetStatsTblInfo is only used for test
 func StabilizeGetStatsTblInfo(info *GetStatsTblInfo) {
 	info.TblInfoID = 100
 	info.InputPhysicalID = 100
