@@ -245,7 +245,7 @@ func TestReplaceConflictKeysIndexKvChecking(t *testing.T) {
 		State:      model.StatePublic,
 	}
 
-	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), table)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(table.SepAutoInc(), 0), table)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{
@@ -401,7 +401,7 @@ func TestReplaceConflictKeys(t *testing.T) {
 		State:      model.StatePublic,
 	}
 
-	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), table)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(table.SepAutoInc(), 0), table)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{

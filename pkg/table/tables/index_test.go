@@ -168,3 +168,47 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	require.NoError(t, err)
 	return tblInfo
 }
+<<<<<<< HEAD
+=======
+
+func TestGenIndexValueFromIndex(t *testing.T) {
+	tblInfo := buildTableInfo(t, "create table a (a int primary key, b int not null, c text, unique key key_b(b));")
+	tblInfo.State = model.StatePublic
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	require.NoError(t, err)
+
+	sessionOpts := encode.SessionOptions{
+		SQLMode:   mysql.ModeStrictAllTables,
+		Timestamp: 1234567890,
+	}
+
+	encoder, err := lkv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table:          tbl,
+		SessionOptions: sessionOpts,
+	})
+	require.NoError(t, err)
+	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+
+	data1 := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewIntDatum(23),
+		types.NewStringDatum("4.csv"),
+	}
+	tctx := encoder.SessionCtx.GetTableCtx()
+	_, err = encoder.Table.AddRecord(tctx, data1)
+	require.NoError(t, err)
+	kvPairs := encoder.SessionCtx.TakeKvPairs()
+
+	indexKey := kvPairs.Pairs[1].Key
+	indexValue := kvPairs.Pairs[1].Val
+
+	_, idxID, _, err := tablecodec.DecodeIndexKey(indexKey)
+	require.NoError(t, err)
+
+	idxInfo := model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
+
+	valueStr, err := tables.GenIndexValueFromIndex(indexKey, indexValue, tbl.Meta(), idxInfo)
+	require.NoError(t, err)
+	require.Equal(t, []string{"23"}, valueStr)
+}
+>>>>>>> 72e5460ee85 (lightning/importinto: fix insert err after import for AUTO_ID_CACHE=1 and SHARD_ROW_ID_BITS (#52712))

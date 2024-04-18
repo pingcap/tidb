@@ -42,7 +42,7 @@ func TestIterRawIndexKeysClusteredPK(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.True(t, info.IsCommonHandle)
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), info)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
 	require.NoError(t, err)
 
 	sessionOpts := &encode.SessionOptions{
@@ -81,7 +81,7 @@ func TestIterRawIndexKeysIntPK(t *testing.T) {
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.True(t, info.PKIsHandle)
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), info)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
 	require.NoError(t, err)
 
 	sessionOpts := &encode.SessionOptions{
