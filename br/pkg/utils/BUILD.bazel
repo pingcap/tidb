@@ -92,7 +92,11 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 37,
+=======
+    shard_count = 33,
+>>>>>>> cc3c1baf306 (operator: make an infinity retry for connecting to store (#52177))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",
