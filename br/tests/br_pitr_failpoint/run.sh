@@ -56,7 +56,7 @@ echo "run snapshot backup"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full-2"
 
 # advance the progress of index creation, generate ddl history
-touch $hint_sig_file_public
+touch $hint_sig_file_history
 
 # wait index creation done
 wait $sql_pid
