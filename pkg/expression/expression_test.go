@@ -61,7 +61,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
 
-	ctx.GetSessionVars().StmtCtx.UseCache = true
+	ctx.GetSessionVars().StmtCtx.SetUseCache(true)
 
 	// cases for parameters
 	ltWithoutParam, err := newFunctionForTest(ctx, ast.LT, col0, NewOne())
@@ -76,7 +76,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	res = EvaluateExprWithNull(ctx, schema, ltWithParam)
 	_, isConst := res.(*Constant)
 	require.True(t, isConst) // this expression is evaluated and skip-plan cache flag is set.
-	require.True(t, !ctx.GetSessionVars().StmtCtx.UseCache)
+	require.True(t, !ctx.GetSessionVars().StmtCtx.UseCache())
 }
 
 func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {

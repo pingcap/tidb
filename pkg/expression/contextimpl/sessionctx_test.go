@@ -282,7 +282,7 @@ func TestSessionBuildContext(t *testing.T) {
 	require.Same(t, vars.Rng, impl.Rng())
 
 	// PlanCache
-	vars.StmtCtx.UseCache = true
+	vars.StmtCtx.SetUseCache(true)
 	require.True(t, impl.IsUseCache())
 	impl.SetSkipPlanCache(errors.New("mockReason"))
 	require.False(t, impl.IsUseCache())

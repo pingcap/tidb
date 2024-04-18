@@ -209,7 +209,7 @@ type StatementContext struct {
 	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
 	InShowWarning          bool
-	UseCache               bool
+	useCache               atomic.Bool
 	ForcePlanCache         bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
 	CacheType              PlanCacheType
 	BatchCheck             bool
@@ -563,6 +563,16 @@ func (sc *StatementContext) HandleErrorWithAlias(internalErr, err, warnErr error
 	return errCtx.HandleErrorWithAlias(internalErr, err, warnErr)
 }
 
+// UseCache returns whether the current stmt can use plan cache
+func (sc *StatementContext) UseCache() bool {
+	return sc.useCache.Load()
+}
+
+// SetUseCache sets whether the current stmt can use plan cache
+func (sc *StatementContext) SetUseCache(use bool) {
+	sc.useCache.Store(use)
+}
+
 // StmtCacheKey represents the key type in the StmtCache.
 type StmtCacheKey int
 
@@ -760,7 +770,7 @@ const (
 
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
 func (sc *StatementContext) SetSkipPlanCache(reason error) {
-	if !sc.UseCache {
+	if !sc.UseCache() {
 		return // avoid unnecessary warnings
 	}
 
@@ -790,7 +800,7 @@ func (sc *StatementContext) ForceSetSkipPlanCache(reason error) {
 }
 
 func (sc *StatementContext) setSkipPlanCache(reason error) {
-	sc.UseCache = false
+	sc.useCache.Store(false)
 	switch sc.CacheType {
 	case DefaultNoCache:
 		sc.AppendWarning(errors.NewNoStackError("unknown cache type"))
@@ -1165,7 +1175,7 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
 	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
 	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
-	if sc.UseCache {
+	if sc.UseCache() {
 		sc.SetSkipPlanCache(errors.NewNoStackError("in-list is too long"))
 	}
 	if !sc.RangeFallback {
