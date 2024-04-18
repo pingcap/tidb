@@ -19,9 +19,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -32,6 +32,7 @@ func TestSpecialSchemas(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("use test")
 
+	tk.MustQuery("select @@global.tidb_schema_cache_size;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@global.tidb_schema_cache_size = 1024;")
 	tk.MustQuery("select @@global.tidb_schema_cache_size;").Check(testkit.Rows("1024"))
 	tk.MustExec("create table t (id int);")
@@ -67,33 +68,82 @@ func TestSpecialSchemas(t *testing.T) {
 	tk.MustExec("set @@global.tidb_schema_cache_size = default;")
 }
 
-func TestTableSize(t *testing.T) {
+func checkPIDNotExist(t *testing.T, dom *domain.Domain, pid int64) {
+	is := dom.InfoSchema()
+	ptbl, dbInfo, pdef := is.FindTableByPartitionID(pid)
+	require.Nil(t, ptbl)
+	require.Nil(t, dbInfo)
+	require.Nil(t, pdef)
+}
+
+func getPIDForP3(t *testing.T, dom *domain.Domain) (int64, table.Table) {
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("pt"))
+	require.NoError(t, err)
+	pi := tbl.Meta().GetPartitionInfo()
+	pid := pi.GetPartitionIDByName("p3")
+	ptbl, _, _ := is.FindTableByPartitionID(pid)
+	require.Equal(t, ptbl.Meta().ID, tbl.Meta().ID)
+	return pid, tbl
+}
+
+func TestFindTableByPartitionID(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (id int)")
-	tk.MustExec("create table pt (id int) partition by hash(id) partitions 1024")
+	tk.MustExec(`create table pt (id int) partition by range (id) (
+partition p0 values less than (10),
+partition p1 values less than (20),
+partition p2 values less than (30),
+partition p3 values less than (40))`)
 
+	pid, tbl := getPIDForP3(t, dom)
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl1, dbInfo, pdef := is.FindTableByPartitionID(pid)
+	require.Equal(t, tbl1.Meta().ID, tbl.Meta().ID)
+	require.Equal(t, dbInfo.Name.L, "test")
+	require.Equal(t, pdef.ID, pid)
+
+	// Test FindTableByPartitionID after dropping a unrelated partition.
+	tk.MustExec("alter table pt drop partition p2")
+	is = dom.InfoSchema()
+	tbl2, dbInfo, pdef := is.FindTableByPartitionID(pid)
+	require.Equal(t, tbl2.Meta().ID, tbl.Meta().ID)
+	require.Equal(t, dbInfo.Name.L, "test")
+	require.Equal(t, pdef.ID, pid)
+
+	// Test FindTableByPartitionID after dropping that partition.
+	tk.MustExec("alter table pt drop partition p3")
+	checkPIDNotExist(t, dom, pid)
+
+	// Test FindTableByPartitionID after adding back the partition.
+	tk.MustExec("alter table pt add partition (partition p3 values less than (35))")
+	checkPIDNotExist(t, dom, pid)
+	pid, _ = getPIDForP3(t, dom)
+
+	// Test FindTableByPartitionID after truncate partition.
+	tk.MustExec("alter table pt truncate partition p3")
+	checkPIDNotExist(t, dom, pid)
+	pid, _ = getPIDForP3(t, dom)
+
+	// Test FindTableByPartitionID after reorganize partition.
+	tk.MustExec(`alter table pt reorganize partition p1,p3 INTO (
+PARTITION p3 VALUES LESS THAN (1970),
+PARTITION p5 VALUES LESS THAN (1980))`)
+	checkPIDNotExist(t, dom, pid)
+	pid, _ = getPIDForP3(t, dom)
+
+	// Test FindTableByPartitionID after exchange partition.
+	tk.MustExec("create table nt (id int)")
+	is = dom.InfoSchema()
+	ntbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("nt"))
 	require.NoError(t, err)
 
-	pt, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("pt"))
+	tk.MustExec("alter table pt exchange partition p3 with table nt")
+	is = dom.InfoSchema()
+	ptbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("pt"))
 	require.NoError(t, err)
-
-	// Currently, the size of a table is 1721, the value may change with the code evolve
-	// So when CI fail, check here and update the code.
-	sz := internal.Sizeof(tbl)
-	require.Less(t, sz, 1800)
-
-	// The size of a partition table is 265559
-	sz = internal.Sizeof(pt)
-	require.Less(t, sz, 266000)
-
-	// Size of a partition is basically the same with the whole partition (now 265511), because
-	// it references the partition table object.
-	ptt := pt.GetPartitionedTable()
-	p0 := ptt.GetPartition(ptt.GetAllPartitionIDs()[0])
-	sz = internal.Sizeof(p0)
-	require.Less(t, sz, 266000)
+	pi := ptbl.Meta().GetPartitionInfo()
+	pid = pi.GetPartitionIDByName("p3")
+	require.Equal(t, pid, ntbl.Meta().ID)
 }
