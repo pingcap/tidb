@@ -147,13 +147,13 @@ const (
 
 	gcLastRunTimeKey       = "tikv_gc_last_run_time"
 	gcRunIntervalKey       = "tikv_gc_run_interval"
-	gcDefaultRunInterval   = time.Minute * 1
+	gcDefaultRunInterval   = time.Minute * 10
 	gcWaitTime             = time.Minute * 1
 	gcRedoDeleteRangeDelay = 24 * time.Hour
 
 	gcLifeTimeKey        = "tikv_gc_life_time"
-	gcDefaultLifeTime    = time.Minute * 1
-	gcMinLifeTime        = time.Minute * 1
+	gcDefaultLifeTime    = time.Minute * 10
+	gcMinLifeTime        = time.Minute * 10
 	gcSafePointKey       = "tikv_gc_safe_point"
 	gcConcurrencyKey     = "tikv_gc_concurrency"
 	gcDefaultConcurrency = 2
