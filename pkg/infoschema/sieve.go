@@ -93,7 +93,7 @@ func (s *Sieve[K, V]) Set(key K, value V) {
 		key:   key,
 		value: value,
 	}
-	s.size += uint64(e.Size()) // calculate the size first without putting to the list.
+	s.size += e.Size() // calculate the size first without putting to the list.
 	e.element = s.ll.PushFront(key)
 
 	s.items[key] = e
