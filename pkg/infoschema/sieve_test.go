@@ -109,7 +109,7 @@ func TestCacheSize(t *testing.T) {
 	sz := e.Size()
 
 	cache := newSieve[int, int](10 * size.MB)
-	require.Equal(t, 0, cache.Size())
+	require.Equal(t, uint64(0), cache.Size())
 
 	cache.Set(1, 1)
 	require.Equal(t, 1*sz, cache.Size())
