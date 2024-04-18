@@ -135,7 +135,7 @@ func sizeOf(v reflect.Value, cache map[uintptr]bool) int {
 		// For mockstore.Storage instance (unistore), it's too large to follow the references.
 		// So just take it as a pointer.
 		switch v.Type().Name() {
-		case "Storage", "Client":
+		case "Storage", "Client", "Allocator":
 			return 8
 		}
 		return sizeOf(v.Elem(), cache) + int(v.Type().Size())
