@@ -20,7 +20,21 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"go.uber.org/goleak"
 )
+
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m, 
+		goleak.IgnoreCurrent(),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/br/pkg/utils.StartExitSingleListener.func1"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/br/pkg/utils.StartDynamicPProfListener.func1"),
+		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/v3.waitRetryBackoff"),
+	)
+	os.Exit(m.Run())
+}
 
 func TestRunMain(*testing.T) {
 	var args []string
@@ -42,4 +56,5 @@ func TestRunMain(*testing.T) {
 	}()
 
 	<-waitCh
+	time.Sleep(11 * time.Second)
 }
