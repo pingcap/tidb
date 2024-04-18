@@ -131,7 +131,7 @@ partition p3 values less than (40))`)
 PARTITION p3 VALUES LESS THAN (1970),
 PARTITION p5 VALUES LESS THAN (1980))`)
 	checkPIDNotExist(t, dom, pid)
-	pid, _ = getPIDForP3(t, dom)
+	_, _ = getPIDForP3(t, dom)
 
 	// Test FindTableByPartitionID after exchange partition.
 	tk.MustExec("create table nt (id int)")
