@@ -768,6 +768,7 @@ func TestIssue39528(t *testing.T) {
 	require.False(t, codeRun)
 }
 
+<<<<<<< HEAD:executor/autoidtest/autoid_test.go
 func TestAutoIDConstraint(t *testing.T) {
 	// Remove the constraint that auto id column must be defined as a key
 	// See https://github.com/pingcap/tidb/issues/40580
@@ -805,4 +806,44 @@ func TestAutoIDConstraint(t *testing.T) {
 	// Cover case: create table with auto id column as key, and remove it later
 	tk.MustExec("create table tt2 (id int, c int auto_increment, key c_idx(c))")
 	tk.MustExec("alter table tt2 drop index c_idx")
+=======
+func TestIssue52622(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@auto_increment_increment = 66;`)
+	tk.MustExec(`set @@auto_increment_offset = 9527;`)
+
+	tk.MustQuery(`select @@auto_increment_increment;`).Check(testkit.Rows("66"))
+	tk.MustQuery(`select @@auto_increment_offset;`).Check(testkit.Rows("9527"))
+
+	for i := 0; i < 2; i++ {
+		createTableSQL := "create table issue52622 (id int primary key auto_increment, k int)"
+		if i == 0 {
+			createTableSQL = createTableSQL + " AUTO_ID_CACHE 1"
+		}
+
+		tk.MustExec(createTableSQL)
+		tk.MustExec("insert into issue52622 (k) values (1),(2),(3);")
+		tk.MustQuery("select * from issue52622").Check(testkit.Rows("1 1", "67 2", "133 3"))
+		if i == 0 {
+			tk.MustQuery("show create table issue52622").CheckContain("134")
+		}
+		tk.MustExec("insert into issue52622 (k) values (4);")
+		tk.MustQuery("select * from issue52622").Check(testkit.Rows("1 1", "67 2", "133 3", "199 4"))
+
+		tk.MustExec("truncate table issue52622;")
+		tk.MustExec("insert into issue52622 (k) values (1)")
+		tk.MustExec("insert into issue52622 (k) values (2)")
+		tk.MustExec("insert into issue52622 (k) values (3)")
+		if i == 0 {
+			tk.MustQuery("show create table issue52622").CheckContain("134")
+		}
+		tk.MustExec("insert into issue52622 (k) values (4);")
+		tk.MustQuery("select * from issue52622").Check(testkit.Rows("1 1", "67 2", "133 3", "199 4"))
+
+		tk.MustExec("drop table issue52622;")
+	}
+>>>>>>> f5e591d107b (*: fix 'Duplicate entry' error when @@auto_increment_increment and @@auto_increment_offset is set (#52626)):pkg/executor/test/autoidtest/autoid_test.go
 }
