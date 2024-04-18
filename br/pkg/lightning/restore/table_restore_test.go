@@ -357,7 +357,18 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	err := s.tr.populateChunks(ctx, rc, cp)
 	require.NoError(s.T(), err)
 
+<<<<<<< HEAD:br/pkg/lightning/restore/table_restore_test.go
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), s.tableInfo.Core)
+=======
+	mockChunkFlushStatus := mock.NewMockChunkFlushStatus(ctrl)
+	mockChunkFlushStatus.EXPECT().Flushed().Return(true).AnyTimes()
+	mockEngineWriter := mock.NewMockEngineWriter(ctrl)
+	mockEngineWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockEngineWriter.EXPECT().IsSynced().Return(true).AnyTimes()
+	mockEngineWriter.EXPECT().Close(gomock.Any()).Return(mockChunkFlushStatus, nil).AnyTimes()
+
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(s.tableInfo.Core.SepAutoInc(), 0), s.tableInfo.Core)
+>>>>>>> 72e5460ee85 (lightning/importinto: fix insert err after import for AUTO_ID_CACHE=1 and SHARD_ROW_ID_BITS (#52712)):lightning/pkg/importer/table_import_test.go
 	require.NoError(s.T(), err)
 	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
 	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
@@ -1409,8 +1420,13 @@ func (s *tableRestoreSuite) TestEstimate() {
 	ctx := context.Background()
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
+<<<<<<< HEAD:br/pkg/lightning/restore/table_restore_test.go
 	mockBackend := mock.NewMockAbstractBackend(controller)
 	idAlloc := kv.NewPanickingAllocators(0)
+=======
+	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
+	idAlloc := kv.NewPanickingAllocators(s.tableInfo.Core.SepAutoInc(), 0)
+>>>>>>> 72e5460ee85 (lightning/importinto: fix insert err after import for AUTO_ID_CACHE=1 and SHARD_ROW_ID_BITS (#52712)):lightning/pkg/importer/table_import_test.go
 	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
 	require.NoError(s.T(), err)
 

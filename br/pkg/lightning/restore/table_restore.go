@@ -75,8 +75,13 @@ func NewTableRestore(
 	kvStore tidbkv.Storage,
 	etcdCli *clientv3.Client,
 	logger log.Logger,
+<<<<<<< HEAD:br/pkg/lightning/restore/table_restore.go
 ) (*TableRestore, error) {
 	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
+=======
+) (*TableImporter, error) {
+	idAlloc := kv.NewPanickingAllocators(tableInfo.Core.SepAutoInc(), cp.AllocBase)
+>>>>>>> 72e5460ee85 (lightning/importinto: fix insert err after import for AUTO_ID_CACHE=1 and SHARD_ROW_ID_BITS (#52712)):lightning/pkg/importer/table_import.go
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
@@ -754,12 +759,14 @@ func (tr *TableRestore) postProcess(
 	if cp.Status < checkpoints.CheckpointStatusAlteredAutoInc {
 		tblInfo := tr.tableInfo.Core
 		var err error
+		// TODO why we have to rebase id for tidb backend??? remove it later.
 		if tblInfo.ContainsAutoRandomBits() {
 			ft := &common.GetAutoRandomColumn(tblInfo).FieldType
 			shardFmt := autoid.NewShardIDFormat(ft, tblInfo.AutoRandomBits, tblInfo.AutoRandomRangeBits)
 			maxCap := shardFmt.IncrementalBitsCapacity()
 			err = AlterAutoRandom(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
+<<<<<<< HEAD:br/pkg/lightning/restore/table_restore.go
 			// only alter auto increment id iff table contains auto-increment column or generated handle.
 			// ALTER TABLE xxx AUTO_INCREMENT = yyy has a bad naming.
 			// if a table has implicit _tidb_rowid column & tbl.SepAutoID=false, then it works on _tidb_rowid
@@ -768,12 +775,29 @@ func (tr *TableRestore) postProcess(
 			err = AlterAutoIncrement(ctx, rc.tidbGlue.GetSQLExecutor(), tr.tableName, newBase)
 
 			if err == nil && isLocalBackend(rc.cfg) {
+=======
+			if isLocalBackend(rc.cfg) {
+>>>>>>> 72e5460ee85 (lightning/importinto: fix insert err after import for AUTO_ID_CACHE=1 and SHARD_ROW_ID_BITS (#52712)):lightning/pkg/importer/table_import.go
 				// for TiDB version >= 6.5.0, a table might have separate allocators for auto_increment column and _tidb_rowid,
 				// especially when a table has auto_increment non-clustered PK, it will use both allocators.
 				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
 				// not for allocator of _tidb_rowid.
 				// So we need to rebase IDs for those 2 allocators explicitly.
+<<<<<<< HEAD:br/pkg/lightning/restore/table_restore.go
 				err = rebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr, tr.dbInfo.ID, tr.tableInfo.Core)
+=======
+				err = common.RebaseTableAllocators(ctx, map[autoid.AllocatorType]int64{
+					autoid.RowIDAllocType:    tr.alloc.Get(autoid.RowIDAllocType).Base(),
+					autoid.AutoIncrementType: tr.alloc.Get(autoid.AutoIncrementType).Base(),
+				}, tr, tr.dbInfo.ID, tr.tableInfo.Core)
+			} else {
+				// only alter auto increment id iff table contains auto-increment column or generated handle.
+				// ALTER TABLE xxx AUTO_INCREMENT = yyy has a bad naming.
+				// if a table has implicit _tidb_rowid column & tbl.SepAutoID=false, then it works on _tidb_rowid
+				// allocator, even if the table has NO auto-increment column.
+				newBase := uint64(tr.alloc.Get(autoid.RowIDAllocType).Base()) + 1
+				err = AlterAutoIncrement(ctx, rc.db, tr.tableName, newBase)
+>>>>>>> 72e5460ee85 (lightning/importinto: fix insert err after import for AUTO_ID_CACHE=1 and SHARD_ROW_ID_BITS (#52712)):lightning/pkg/importer/table_import.go
 			}
 		}
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)

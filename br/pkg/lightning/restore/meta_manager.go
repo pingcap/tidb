@@ -254,7 +254,13 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 			if curStatus == metaStatusInitial {
 				if needAutoID {
 					// maxRowIDMax is the max row_id that other tasks has allocated, we need to rebase the global autoid base first.
+<<<<<<< HEAD:br/pkg/lightning/restore/meta_manager.go
 					if err := rebaseGlobalAutoID(ctx, maxRowIDMax, m.tr, m.tr.dbInfo.ID, m.tr.tableInfo.Core); err != nil {
+=======
+					// TODO this is not right when AUTO_ID_CACHE=1 and have auto row id,
+					// the id allocators are separated in this case.
+					if err := common.RebaseGlobalAutoID(ctx, maxRowIDMax, m.tr, m.tr.dbInfo.ID, m.tr.tableInfo.Core); err != nil {
+>>>>>>> 72e5460ee85 (lightning/importinto: fix insert err after import for AUTO_ID_CACHE=1 and SHARD_ROW_ID_BITS (#52712)):lightning/pkg/importer/meta_manager.go
 						return errors.Trace(err)
 					}
 					newRowIDBase, newRowIDMax, err = allocGlobalAutoID(ctx, rawRowIDMax, m.tr, m.tr.dbInfo.ID, m.tr.tableInfo.Core)
