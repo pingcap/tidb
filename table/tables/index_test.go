@@ -170,7 +170,6 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	return tblInfo
 }
 
-<<<<<<< HEAD:table/tables/index_test.go
 func TestIssue29520(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -199,45 +198,4 @@ func TestAssertionWithLazyCheck(t *testing.T) {
 	// assertion on the index key. Even it's set, TiKV will skip checking assertion for mutation types `Insert` and
 	// `CheckNotExist`. Anyway there should never be assertion failure.
 	tk.MustGetErrCode("insert into t values (4, 3, 3)", errno.ErrDupEntry)
-=======
-func TestGenIndexValueFromIndex(t *testing.T) {
-	tblInfo := buildTableInfo(t, "create table a (a int primary key, b int not null, c text, unique key key_b(b));")
-	tblInfo.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
-	require.NoError(t, err)
-
-	sessionOpts := encode.SessionOptions{
-		SQLMode:   mysql.ModeStrictAllTables,
-		Timestamp: 1234567890,
-	}
-
-	encoder, err := lkv.NewBaseKVEncoder(&encode.EncodingConfig{
-		Table:          tbl,
-		SessionOptions: sessionOpts,
-	})
-	require.NoError(t, err)
-	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
-
-	data1 := []types.Datum{
-		types.NewIntDatum(1),
-		types.NewIntDatum(23),
-		types.NewStringDatum("4.csv"),
-	}
-	tctx := encoder.SessionCtx.GetTableCtx()
-	_, err = encoder.Table.AddRecord(tctx, data1)
-	require.NoError(t, err)
-	kvPairs := encoder.SessionCtx.TakeKvPairs()
-
-	indexKey := kvPairs.Pairs[1].Key
-	indexValue := kvPairs.Pairs[1].Val
-
-	_, idxID, _, err := tablecodec.DecodeIndexKey(indexKey)
-	require.NoError(t, err)
-
-	idxInfo := model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
-
-	valueStr, err := tables.GenIndexValueFromIndex(indexKey, indexValue, tbl.Meta(), idxInfo)
-	require.NoError(t, err)
-	require.Equal(t, []string{"23"}, valueStr)
->>>>>>> 72e5460ee85 (lightning/importinto: fix insert err after import for AUTO_ID_CACHE=1 and SHARD_ROW_ID_BITS (#52712)):pkg/table/tables/index_test.go
 }
