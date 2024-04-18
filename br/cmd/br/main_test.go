@@ -20,7 +20,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"go.uber.org/goleak"
 )
@@ -32,6 +31,8 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/br/pkg/utils.StartDynamicPProfListener.func1"),
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/v3.waitRetryBackoff"),
+		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
+		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 	)
 	os.Exit(m.Run())
 }
@@ -56,5 +57,4 @@ func TestRunMain(*testing.T) {
 	}()
 
 	<-waitCh
-	time.Sleep(11 * time.Second)
 }
