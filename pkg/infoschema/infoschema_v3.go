@@ -15,6 +15,9 @@
 package infoschema
 
 import (
+	"slices"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -150,6 +153,12 @@ func (is *infoschemaV3) SchemaTables(schema model.CIStr) (tables []table.Table) 
 	if len(tbl1) != len(tbl2) {
 		panic("inconsistent infoschema")
 	}
+	slices.SortFunc(tbl1, func(i, j table.Table) int {
+		return strings.Compare(i.Meta().Name.O, j.Meta().Name.O)
+	})
+	slices.SortFunc(tbl2, func(i, j table.Table) int {
+		return strings.Compare(i.Meta().Name.O, j.Meta().Name.O)
+	})
 	for i := range tbl1 {
 		if !tblEqual(tbl1[i], tbl2[i]) {
 			panic("inconsistent infoschema")
@@ -164,6 +173,12 @@ func (is *infoschemaV3) SchemaTableInfos(schema model.CIStr) []*model.TableInfo 
 	if len(tbl1) != len(tbl2) {
 		panic("inconsistent infoschema")
 	}
+	slices.SortFunc(tbl1, func(i, j *model.TableInfo) int {
+		return strings.Compare(i.Name.O, j.Name.O)
+	})
+	slices.SortFunc(tbl2, func(i, j *model.TableInfo) int {
+		return strings.Compare(i.Name.O, j.Name.O)
+	})
 	for i := range tbl1 {
 		if !tblInfoEqual(tbl1[i], tbl2[i]) {
 			panic("inconsistent infoschema")
@@ -210,6 +225,12 @@ func (is *infoschemaV3) AllSchemas() (schemas []*model.DBInfo) {
 	if len(db1) != len(db2) {
 		panic("inconsistent infoschema")
 	}
+	slices.SortFunc(db1, func(i, j *model.DBInfo) int {
+		return strings.Compare(i.Name.O, j.Name.O)
+	})
+	slices.SortFunc(db2, func(i, j *model.DBInfo) int {
+		return strings.Compare(i.Name.O, j.Name.O)
+	})
 	for i := range db1 {
 		if !dbInfoEqual(db1[i], db2[i]) {
 			panic("inconsistent infoschema")
@@ -224,6 +245,12 @@ func (is *infoschemaV3) AllSchemaNames() []model.CIStr {
 	if len(names1) != len(names2) {
 		panic("inconsistent infoschema")
 	}
+	slices.SortFunc(names1, func(i, j model.CIStr) int {
+		return strings.Compare(i.O, j.O)
+	})
+	slices.SortFunc(names2, func(i, j model.CIStr) int {
+		return strings.Compare(i.O, j.O)
+	})
 	for i := range names1 {
 		if names1[i] != names2[i] {
 			panic("inconsistent infoschema")
