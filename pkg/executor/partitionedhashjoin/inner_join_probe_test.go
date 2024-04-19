@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -163,10 +164,10 @@ func checkChunksEqual(t *testing.T, expectedChunks []*chunk.Chunk, resultChunks 
 	}
 }
 
-func testJoinProbe(t *testing.T, leftKeyIndex []int, rightKeyIndex []int, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType,
+func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex []int, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType,
 	leftTypes []*types.FieldType, rightTypes []*types.FieldType, rightAsBuildSide bool, leftUsed []int, rightUsed []int,
 	leftUsedByOtherCondition []int, rightUsedByOtherCondition []int, leftFilter expression.CNFExprs, rightFilter expression.CNFExprs,
-	otherCondition expression.CNFExprs, partitionNumber int, joinType plannercore.JoinType) {
+	otherCondition expression.CNFExprs, partitionNumber int, joinType plannercore.JoinType, inputRowNumber int) {
 	buildKeyIndex, probeKeyIndex := leftKeyIndex, rightKeyIndex
 	buildKeyTypes, probeKeyTypes := leftKeyTypes, rightKeyTypes
 	buildTypes, probeTypes := leftTypes, rightTypes
@@ -229,8 +230,8 @@ func testJoinProbe(t *testing.T, leftKeyIndex []int, rightKeyIndex []int, leftKe
 	chunkNumber := 3
 	buildChunks := make([]*chunk.Chunk, 0, chunkNumber)
 	probeChunks := make([]*chunk.Chunk, 0, chunkNumber)
-	selected := make([]bool, 0, 200)
-	for i := 0; i < 200; i++ {
+	selected := make([]bool, 0, inputRowNumber)
+	for i := 0; i < inputRowNumber; i++ {
 		if i%3 == 0 {
 			selected = append(selected, true)
 		} else {
@@ -244,12 +245,28 @@ func testJoinProbe(t *testing.T, leftKeyIndex []int, rightKeyIndex []int, leftKe
 		require.Equal(t, buildLength, probeLength, "build type and probe type is not compatible")
 	}
 	for i := 0; i < chunkNumber; i++ {
-		buildChunks = append(buildChunks, chunk.GenRandomChunks(buildTypes, 200))
-		probeChunk := chunk.GenRandomChunks(probeTypes, 200*2/3)
+		buildChunks = append(buildChunks, chunk.GenRandomChunks(buildTypes, inputRowNumber))
+		probeChunk := chunk.GenRandomChunks(probeTypes, inputRowNumber*2/3)
 		// copy some build data to probe side, to make sure there is some matched rows
 		_, err := chunk.CopySelectedJoinRowsDirect(buildChunks[i], selected, probeChunk)
 		probeChunks = append(probeChunks, probeChunk)
 		require.NoError(t, err)
+	}
+
+	if withSel {
+		sel := make([]int, 0, 2049)
+		for i := 0; i < inputRowNumber; i++ {
+			if i%9 == 0 {
+				continue
+			}
+			sel = append(sel, i)
+		}
+		for _, chk := range buildChunks {
+			chk.SetSel(sel)
+		}
+		for _, chk := range probeChunks {
+			chk.SetSel(sel)
+		}
 	}
 
 	leftChunks, rightChunks := probeChunks, buildChunks
@@ -262,6 +279,12 @@ func testJoinProbe(t *testing.T, leftKeyIndex []int, rightKeyIndex []int, leftKe
 		require.NoError(t, err)
 	}
 	builder.appendRemainingRowLocations(rowTables)
+	// make sure there is no nil rowTable
+	for index := range rowTables {
+		if rowTables[index] == nil {
+			rowTables[index] = newRowTable(meta)
+		}
+	}
 	// build hash table
 	hashJoinCtx.joinHashTable = newJoinHashTable(rowTables)
 	for i := 0; i < partitionNumber; i++ {
@@ -291,6 +314,20 @@ func testJoinProbe(t *testing.T, leftKeyIndex []int, rightKeyIndex []int, leftKe
 	checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
 }
 
+type testCase struct {
+	leftKeyIndex              []int
+	rightKeyIndex             []int
+	leftKeyTypes              []*types.FieldType
+	rightKeyTypes             []*types.FieldType
+	leftTypes                 []*types.FieldType
+	rightTypes                []*types.FieldType
+	leftUsed                  []int
+	rightUsed                 []int
+	otherCondition            expression.CNFExprs
+	leftUsedByOtherCondition  []int
+	rightUsedByOtherCondition []int
+}
+
 func TestInnerJoinProbeBasic(t *testing.T) {
 	// todo test nullable type after builder support nullable type
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
@@ -302,20 +339,6 @@ func TestInnerJoinProbeBasic(t *testing.T) {
 	uintTp.AddFlag(mysql.UnsignedFlag)
 	stringTp := types.NewFieldType(mysql.TypeVarString)
 	stringTp.AddFlag(mysql.NotNullFlag)
-
-	type testCase struct {
-		leftKeyIndex              []int
-		rightKeyIndex             []int
-		leftKeyTypes              []*types.FieldType
-		rightKeyTypes             []*types.FieldType
-		leftTypes                 []*types.FieldType
-		rightTypes                []*types.FieldType
-		leftUsed                  []int
-		rightUsed                 []int
-		otherCondition            expression.CNFExprs
-		leftUsedByOtherCondition  []int
-		rightUsedByOtherCondition []int
-	}
 
 	lTypes := []*types.FieldType{intTp, stringTp, uintTp, stringTp, tinyTp}
 	rTypes := []*types.FieldType{intTp, stringTp, uintTp, stringTp, tinyTp}
@@ -333,6 +356,8 @@ func TestInnerJoinProbeBasic(t *testing.T) {
 		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, []int{}, []int{0, 1, 2, 3}, nil, nil, nil},
 		// both left/right Used are empty
 		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, []int{}, []int{}, nil, nil, nil},
+		// both left/right used is part of all columns
+		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, []int{0, 2}, []int{1, 3}, nil, nil, nil},
 		// int join uint
 		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{uintTp}, lTypes, rTypes1, []int{0, 1, 2, 3}, []int{0, 1, 2, 3}, nil, nil, nil},
 		// multiple join keys
@@ -342,8 +367,123 @@ func TestInnerJoinProbeBasic(t *testing.T) {
 	for _, tc := range testCases {
 		// inner join does not have left/right Filter
 		for _, value := range rightAsBuildSide {
-			testJoinProbe(t, tc.leftKeyIndex, tc.rightKeyIndex, tc.leftKeyTypes, tc.rightKeyTypes, tc.leftTypes, tc.rightTypes, value, tc.leftUsed,
-				tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, nil, nil, tc.otherCondition, partitionNumber, plannercore.InnerJoin)
+			testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, tc.leftKeyTypes, tc.rightKeyTypes, tc.leftTypes, tc.rightTypes, value, tc.leftUsed,
+				tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, nil, nil, tc.otherCondition, partitionNumber, plannercore.InnerJoin, 200)
 		}
 	}
+}
+
+func TestInnerJoinProbeAllJoinKeys(t *testing.T) {
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	tinyTp.AddFlag(mysql.NotNullFlag)
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	intTp.AddFlag(mysql.NotNullFlag)
+	uintTp := types.NewFieldType(mysql.TypeLonglong)
+	uintTp.AddFlag(mysql.UnsignedFlag)
+	uintTp.AddFlag(mysql.NotNullFlag)
+	yearTp := types.NewFieldType(mysql.TypeYear)
+	yearTp.AddFlag(mysql.NotNullFlag)
+	durationTp := types.NewFieldType(mysql.TypeDuration)
+	durationTp.AddFlag(mysql.NotNullFlag)
+	enumTp := types.NewFieldType(mysql.TypeEnum)
+	enumTp.AddFlag(mysql.NotNullFlag)
+	enumWithIntFlag := types.NewFieldType(mysql.TypeEnum)
+	enumWithIntFlag.AddFlag(mysql.EnumSetAsIntFlag)
+	enumWithIntFlag.AddFlag(mysql.NotNullFlag)
+	setTp := types.NewFieldType(mysql.TypeSet)
+	setTp.AddFlag(mysql.NotNullFlag)
+	bitTp := types.NewFieldType(mysql.TypeBit)
+	bitTp.AddFlag(mysql.NotNullFlag)
+	jsonTp := types.NewFieldType(mysql.TypeJSON)
+	jsonTp.AddFlag(mysql.NotNullFlag)
+	floatTp := types.NewFieldType(mysql.TypeFloat)
+	floatTp.AddFlag(mysql.NotNullFlag)
+	doubleTp := types.NewFieldType(mysql.TypeDouble)
+	doubleTp.AddFlag(mysql.NotNullFlag)
+	stringTp := types.NewFieldType(mysql.TypeVarString)
+	stringTp.AddFlag(mysql.NotNullFlag)
+	datetimeTp := types.NewFieldType(mysql.TypeDatetime)
+	datetimeTp.AddFlag(mysql.NotNullFlag)
+	decimalTp := types.NewFieldType(mysql.TypeNewDecimal)
+	decimalTp.AddFlag(mysql.NotNullFlag)
+	timestampTp := types.NewFieldType(mysql.TypeTimestamp)
+	timestampTp.AddFlag(mysql.NotNullFlag)
+	dateTp := types.NewFieldType(mysql.TypeDate)
+	dateTp.AddFlag(mysql.NotNullFlag)
+	binaryStringTp := types.NewFieldType(mysql.TypeBlob)
+	binaryStringTp.AddFlag(mysql.NotNullFlag)
+
+	lTypes := []*types.FieldType{tinyTp, intTp, uintTp, yearTp, durationTp, enumTp, enumWithIntFlag, setTp, bitTp, jsonTp, floatTp, doubleTp, stringTp, datetimeTp, decimalTp, timestampTp, dateTp, binaryStringTp}
+	rTypes := lTypes
+	lUsed := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
+	rUsed := lUsed
+
+	// single key
+	for i := 0; i < len(lTypes); i++ {
+		testJoinProbe(t, false, []int{i}, []int{i}, []*types.FieldType{lTypes[i]}, []*types.FieldType{rTypes[i]}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+		testJoinProbe(t, false, []int{i}, []int{i}, []*types.FieldType{lTypes[i]}, []*types.FieldType{rTypes[i]}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	}
+	// composed key
+	// fixed size, inlined
+	testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, []*types.FieldType{intTp, uintTp}, []*types.FieldType{intTp, uintTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, []*types.FieldType{intTp, uintTp}, []*types.FieldType{intTp, uintTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	// variable size, inlined
+	testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	// fixed size, not inlined
+	testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, []*types.FieldType{intTp, datetimeTp}, []*types.FieldType{intTp, datetimeTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, []*types.FieldType{intTp, datetimeTp}, []*types.FieldType{intTp, datetimeTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	// variable size, not inlined
+	testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, []*types.FieldType{intTp, decimalTp}, []*types.FieldType{intTp, decimalTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, []*types.FieldType{intTp, decimalTp}, []*types.FieldType{intTp, decimalTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+}
+
+func TestInnerJoinProbeOtherCondition(t *testing.T) {
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	intTp.AddFlag(mysql.NotNullFlag)
+	uintTp := types.NewFieldType(mysql.TypeLonglong)
+	uintTp.AddFlag(mysql.NotNullFlag)
+	uintTp.AddFlag(mysql.UnsignedFlag)
+	stringTp := types.NewFieldType(mysql.TypeVarString)
+	stringTp.AddFlag(mysql.NotNullFlag)
+
+	lTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
+	rTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
+
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	a := &expression.Column{Index: 1, RetType: intTp}
+	b := &expression.Column{Index: 8, RetType: intTp}
+	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
+	require.NoError(t, err, "error when create other condition")
+	otherCondition := make(expression.CNFExprs, 0)
+	otherCondition = append(otherCondition, sf)
+
+	testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, true, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 200)
+	testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, false, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 200)
+}
+
+func TestInnerJoinProbeWithSel(t *testing.T) {
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	intTp.AddFlag(mysql.NotNullFlag)
+	uintTp := types.NewFieldType(mysql.TypeLonglong)
+	uintTp.AddFlag(mysql.NotNullFlag)
+	uintTp.AddFlag(mysql.UnsignedFlag)
+	stringTp := types.NewFieldType(mysql.TypeVarString)
+	stringTp.AddFlag(mysql.NotNullFlag)
+
+	lTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
+	rTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
+
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+	a := &expression.Column{Index: 1, RetType: intTp}
+	b := &expression.Column{Index: 8, RetType: intTp}
+	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
+	require.NoError(t, err, "error when create other condition")
+	otherCondition := make(expression.CNFExprs, 0)
+	otherCondition = append(otherCondition, sf)
+
+	testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, true, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 500)
+	testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, false, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 500)
+	testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, true, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, nil, 3, plannercore.InnerJoin, 500)
+	testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, false, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, nil, 3, plannercore.InnerJoin, 500)
 }
