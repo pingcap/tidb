@@ -148,6 +148,7 @@ func (ri *rowIter) isEnd() bool {
 }
 
 func newJoinHashTable(partitionedRowTables []*rowTable) *JoinHashTable {
+	// first make sure there is no nil rowTable
 	jht := &JoinHashTable{
 		tables:          make([]*subTable, len(partitionedRowTables)),
 		partitionNumber: uint64(len(partitionedRowTables)),
