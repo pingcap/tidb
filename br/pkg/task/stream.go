@@ -948,6 +948,7 @@ func RunStreamStatus(
 	if err != nil {
 		return err
 	}
+	defer ctl.Close()
 	return ctl.PrintStatusOfTask(ctx, cfg.TaskName)
 }
 
