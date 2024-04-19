@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "handler",
     srcs = [
+        "autoid_handler.go",
         "tikv_handler.go",
         "upgrade_handler.go",
         "util.go",
@@ -13,6 +14,7 @@ go_library(
         "//pkg/domain/infosync",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/owner",
         "//pkg/parser/model",
         "//pkg/parser/terror",
         "//pkg/session",

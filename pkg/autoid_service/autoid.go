@@ -357,6 +357,11 @@ func (m *mockClient) Rebase(ctx context.Context, in *autoid.RebaseRequest, _ ...
 
 var global = make(map[string]*mockClient)
 
+// OwnerManager returns the owner manager of the autoid service.
+func (s *Service) OwnerManager() owner.Manager {
+	return s.leaderShip
+}
+
 // MockForTest is used for testing, the UT test and unistore use this.
 func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 	uuid := store.UUID()

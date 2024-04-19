@@ -687,3 +687,24 @@ timezone.*
    $curl -X POST http://127.0.0.1:10080/upgrade/start
    "success!"
    ```
+
+1. Get the leader of the autoid service.
+
+    ```shell
+    curl http://{TiDBIP}:10080/autoid/leader
+    ```
+
+    ```shell
+    $curl http://127.0.0.1:10080/autoid/leader
+	127.0.0.1:10080
+    ```
+1. Resign the leader of the autoid service.
+
+    ```shell
+    curl http://{TiDBIP}:10080/autoid/leader/resign
+    ```
+
+    ```shell
+    $curl http://127.0.0.1:10080/autoid/leader/resign
+	success
+    ```

@@ -42,6 +42,7 @@ import (
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server/handler"
@@ -237,6 +238,10 @@ func (s *Server) startHTTPServer() {
 
 	router.Handle("/ddl/history", tikvhandler.NewDDLHistoryJobHandler(tikvHandlerTool)).Name("DDL_History")
 	router.Handle("/ddl/owner/resign", tikvhandler.NewDDLResignOwnerHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Owner_Resign")
+
+	// HTTP path for autoid service
+	router.Handle("/autoid/leader", handler.AutoIDLeaderHandler(s.autoIDServiceOwnerManager))
+	router.Handle("/autoid/leader/resign", handler.AutoIDResignHandler(s.autoIDServiceOwnerManager))
 
 	// HTTP path for get the TiDB config
 	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
@@ -530,6 +535,10 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	if err != nil {
 		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
 	}
+}
+
+func (s *Server) autoIDServiceOwnerManager() owner.Manager {
+	return s.autoIDService.OwnerManager()
 }
 
 // SetCNChecker set the CN checker for server.
