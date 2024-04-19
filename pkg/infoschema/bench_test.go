@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -44,7 +45,8 @@ var (
 //
 // ./bench.test -test.v -run ^$ -test.bench=BenchmarkInfoschemaOverhead --with-tikv "upstream-pd:2379?disableGC=true"
 func BenchmarkInfoschemaOverhead(b *testing.B) {
-	wg := testkit.MockTiDBStatusPort(context.Background(), b, *port)
+	ctx, cancel := context.WithCancel(context.Background())
+	wg := testkit.MockTiDBStatusPort(ctx, b, *port)
 
 	var d driver.TiKVDriver
 	var err error
@@ -77,5 +79,32 @@ func BenchmarkInfoschemaOverhead(b *testing.B) {
 	}
 	logutil.BgLogger().Info("all table created", zap.Duration("cost time", time.Since(startTime)))
 	// TODO: add more scenes.
+
+	txn, err := store.Begin()
+	require.NoError(b, err)
+
+	m := meta.NewMeta(txn)
+	b.Run("listTable", func(b *testing.B) {
+		b.ResetTimer()
+		b.N = 100
+		for i := 0; i < b.N; i++ {
+			b.StartTimer()
+			m.ListTables(tc.dbInfo.ID)
+			b.StopTimer()
+		}
+	})
+
+	b.Run("listSimple", func(b *testing.B) {
+		b.ResetTimer()
+		b.N = 100
+		for i := 0; i < b.N; i++ {
+			b.StartTimer()
+			m.ListSimpleTables(tc.dbInfo.ID)
+			b.StopTimer()
+		}
+	})
+
+	cancel()
+
 	wg.Wait()
 }
