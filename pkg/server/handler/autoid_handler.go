@@ -25,7 +25,7 @@ import (
 type AutoIDResignHandler func() owner.Manager
 
 // ServeHTTP implements http.Handler
-func (h AutoIDResignHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h AutoIDResignHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	om := h()
 	if om.IsOwner() {
 		err := om.ResignOwner(context.Background())
@@ -43,7 +43,7 @@ func (h AutoIDResignHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 type AutoIDLeaderHandler func() owner.Manager
 
 // ServeHTTP implements http.Handler
-func (h AutoIDLeaderHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h AutoIDLeaderHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	om := h()
 	ddlOwnerID, err := om.GetOwnerID(context.Background())
 	if err != nil {
