@@ -46,7 +46,7 @@ run_br --pd $PD_ADDR log start --task-name integration_test -s "local://$TEST_DI
 
 # wait until the index creation is running
 while true; do
-    run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'running' AND SCHEMA_STATE = 'write reorganization';"
+    run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'running' AND SCHEMA_STATE = 'write reorganization' AND JOB_TYPE = 'add index /* ingest */';"
     if grep -Fq "1. row" $res_file; then
         break
     fi
@@ -61,19 +61,35 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full-1"
 # advance the progress of index creation, make the index become public
 touch $hint_sig_file_public
 
+# wait until the index creation is done
+while true; do
+    run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'done' AND SCHEMA_STATE = 'public' AND JOB_TYPE = 'add index /* ingest */';"
+    if grep -Fq "1. row" $res_file; then
+        break
+    fi
+
+    sleep 1
+done
+
 # run snapshot backup 2 -- before the ddl history is generated
 echo "run snapshot backup"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full-2"
 
 # advance the progress of index creation, generate ddl history
-run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'done' AND SCHEMA_STATE = 'public';"
-check_contains "1. row"
 touch $hint_sig_file_history
 
 # wait index creation done
 wait $sql_pid
-run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'sync' AND SCHEMA_STATE = 'public';"
-check_contains "1. row"
+
+# wait until the index creation is done
+while true; do
+    run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'synced' AND SCHEMA_STATE = 'public' AND JOB_TYPE = 'add index /* ingest */';"
+    if grep -Fq "1. row" $res_file; then
+        break
+    fi
+
+    sleep 1
+done
 
 # clean the failpoints
 export GO_FAILPOINTS=""
