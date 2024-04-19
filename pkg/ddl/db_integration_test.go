@@ -3044,10 +3044,11 @@ func TestIssue52680(t *testing.T) {
 		sql    string
 		expect meta.AutoIDGroup
 	}{
-		{"", meta.AutoIDGroup{0, 4000, 0}},
-		{"drop table issue52680", meta.AutoIDGroup{0, 0, 0}},
-		{"recover table issue52680", meta.AutoIDGroup{0, 4000, 0}},
+		{sql: "", expect: meta.AutoIDGroup{0, 4000, 0}},
+		{sql: "drop table issue52680", expect: meta.AutoIDGroup{0, 0, 0}},
+		{sql: "recover table issue52680", expect: meta.AutoIDGroup{0, 4000, 0}},
 	}
+
 	for _, step := range testSteps {
 		if step.sql != "" {
 			tk.MustExec(step.sql)
