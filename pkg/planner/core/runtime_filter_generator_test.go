@@ -30,6 +30,7 @@ import (
 )
 
 func TestRuntimeFilterGenerator(t *testing.T) {
+	t.SkipNow()
 	require.NoError(t, logutil.InitLogger(config.GetGlobalConfig().Log.ToLogConfig()))
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

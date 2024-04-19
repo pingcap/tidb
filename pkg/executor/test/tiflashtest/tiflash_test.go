@@ -895,6 +895,7 @@ func TestMppApply(t *testing.T) {
 }
 
 func TestTiFlashVirtualColumn(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

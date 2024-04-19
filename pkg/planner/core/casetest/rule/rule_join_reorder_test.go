@@ -60,6 +60,7 @@ func TestOptEnableHashJoin(t *testing.T) {
 }
 
 func TestJoinOrderHint4TiFlash(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

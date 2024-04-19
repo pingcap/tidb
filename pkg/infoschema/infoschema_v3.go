@@ -16,6 +16,8 @@ package infoschema
 
 import (
 	"encoding/json"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"slices"
 	"strings"
 
@@ -34,15 +36,26 @@ func tblEqual(tbl1, tbl2 table.Table) bool {
 	if tbl1 == nil && tbl2 == nil {
 		return true
 	}
+
+	tbl1m := tbl1.Meta()
+	save1 := tbl1m.TiFlashReplica
+	tbl1m.TiFlashReplica = nil
 	m1, err := json.Marshal(tbl1.Meta())
 	if err != nil {
 		panic(err)
 	}
+	tbl1m.TiFlashReplica = save1
+
+	tbl2m := tbl2.Meta()
+	save := tbl2m.TiFlashReplica
+	tbl2m.TiFlashReplica = nil
 	m2, err := json.Marshal(tbl2.Meta())
 	if err != nil {
 		panic(err)
 	}
+	tbl2m.TiFlashReplica = save
 	if string(m1) != string(m2) {
+		logutil.BgLogger().Warn("table not equal", zap.String("tbl1", string(m1)), zap.String("tbl2", string(m2)))
 		return false
 	}
 	return true
