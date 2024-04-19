@@ -455,25 +455,6 @@ func (ds *DataSource) buildIndexMergeOrPath(
 	indexMergePath := &util.AccessPath{PartialAlternativeIndexPaths: partialAlternativePaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current+1:]...)
-	// If global index exists, index merge is not allowed.
-	// Global index is not compatible with IndexMergeReaderExecutor.
-	for i := range partialAlternativePaths {
-		// if one path's all alternatives are global index, warning it.
-		allGlobal := true
-		for _, oneAlternative := range partialAlternativePaths[i] {
-			// once we have a table alternative path
-			if oneAlternative.IsTablePath() {
-				allGlobal = false
-			}
-			if oneAlternative.Index != nil && !oneAlternative.Index.Global {
-				allGlobal = false
-			}
-		}
-		if allGlobal {
-			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("global index is not compatible with index merge, so ignore it"))
-			return nil
-		}
-	}
 	// since shouldKeepCurrentFilter may be changed in alternative paths converging, kept the filer expression anyway here.
 	indexMergePath.KeepIndexMergeORSourceFilter = shouldKeepCurrentFilter
 	// this filter will be merged into indexPath's table filters when converging.
