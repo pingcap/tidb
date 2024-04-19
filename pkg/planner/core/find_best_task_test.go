@@ -88,6 +88,7 @@ func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty)
 	return physicalPlan2
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *mockLogicalPlan4Test) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	plan1 := make([]base.PhysicalPlan, 0, 1)
 	plan2 := make([]base.PhysicalPlan, 0, 1)

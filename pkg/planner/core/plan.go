@@ -398,6 +398,7 @@ func (p *baseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
 	return p.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS
 }
 
+// RollBackTaskMap implements LogicalPlan interface.
 func (p *baseLogicalPlan) RollBackTaskMap(ts uint64) {
 	if !p.SCtx().GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		return

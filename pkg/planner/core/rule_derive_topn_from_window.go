@@ -123,6 +123,7 @@ func (*deriveTopNFromWindow) optimize(_ context.Context, p base.LogicalPlan, opt
 	return p.DeriveTopN(opt), planChanged, nil
 }
 
+// DeriveTopN implements the LogicalPlan interface.
 func (s *baseLogicalPlan) DeriveTopN(opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	p := s.self
 	if p.SCtx().GetSessionVars().AllowDeriveTopN {
@@ -134,6 +135,7 @@ func (s *baseLogicalPlan) DeriveTopN(opt *coreusage.LogicalOptimizeOp) base.Logi
 	return p
 }
 
+// DeriveTopN implements the LogicalPlan interface.
 func (s *LogicalSelection) DeriveTopN(opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	p := s.self.(*LogicalSelection)
 	windowIsTopN, limitValue := windowIsTopN(p)

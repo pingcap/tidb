@@ -71,6 +71,7 @@ func (*predicateSimplification) optimize(_ context.Context, p base.LogicalPlan, 
 	return p.PredicateSimplification(opt), planChanged, nil
 }
 
+// PredicateSimplification implements the LogicalPlan interface.
 func (s *baseLogicalPlan) PredicateSimplification(opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	p := s.self
 	for i, child := range p.Children() {
@@ -156,6 +157,7 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	return newValues
 }
 
+// PredicateSimplification implements the LogicalPlan interface.
 func (ds *DataSource) PredicateSimplification(*coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	p := ds.self.(*DataSource)
 	p.pushedDownConds = applyPredicateSimplification(p.SCtx(), p.pushedDownConds)

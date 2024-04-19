@@ -180,7 +180,7 @@ func (c *PlanCounterTp) IsForce() bool {
 }
 
 // LogicalPlan is a tree of logical operators.
-// We can do a lot of logical optimizations to it, like predicate pushdown and column pruning.
+// We can do a lot of logical optimizations to it, like predicate push-down and column pruning.
 type LogicalPlan interface {
 	Plan
 
@@ -216,7 +216,7 @@ type LogicalPlan interface {
 	// interface definition should depend on concrete implementation type.
 	PushDownTopN(topN LogicalPlan, opt *coreusage.LogicalOptimizeOp) LogicalPlan
 
-	// DeriveTopN derives an implicit TopN from a filter on row_number window function..
+	// DeriveTopN derives an implicit TopN from a filter on row_number window function...
 	DeriveTopN(opt *coreusage.LogicalOptimizeOp) LogicalPlan
 
 	// PredicateSimplification consolidates different predcicates on a column and its equivalence classes.

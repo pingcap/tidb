@@ -86,6 +86,7 @@ func (*constantPropagationSolver) name() string {
 	return "constant_propagation"
 }
 
+// ConstantPropagation implements the LogicalPlan interface.
 func (*baseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int, _ *coreusage.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
 	// Only LogicalJoin can apply constant propagation
 	// Other Logical plan do nothing
@@ -174,12 +175,14 @@ func (logicalJoin *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan,
 	return addCandidateSelection(logicalJoin, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
 }
 
+// PullUpConstantPredicates implements the LogicalPlan interface.
 func (*baseLogicalPlan) PullUpConstantPredicates() []expression.Expression {
 	// Only LogicalProjection and LogicalSelection can get constant predicates
 	// Other Logical plan return nil
 	return nil
 }
 
+// PullUpConstantPredicates implements the LogicalPlan interface.
 func (selection *LogicalSelection) PullUpConstantPredicates() []expression.Expression {
 	var result []expression.Expression
 	for _, candidatePredicate := range selection.Conditions {
@@ -192,6 +195,7 @@ func (selection *LogicalSelection) PullUpConstantPredicates() []expression.Expre
 	return result
 }
 
+// PullUpConstantPredicates implements LogicalPlan interface.
 func (projection *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 	// projection has no column expr
 	if !canProjectionBeEliminatedLoose(projection) {

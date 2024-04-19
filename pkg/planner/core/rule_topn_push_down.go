@@ -34,6 +34,7 @@ func (*pushDownTopNOptimizer) optimize(_ context.Context, p base.LogicalPlan, op
 	return p.PushDownTopN(nil, opt), planChanged, nil
 }
 
+// PushDownTopN implements the LogicalPlan interface.
 func (s *baseLogicalPlan) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
@@ -49,6 +50,7 @@ func (s *baseLogicalPlan) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *co
 	return p
 }
 
+// PushDownTopN implements the LogicalPlan interface.
 func (p *LogicalCTE) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
@@ -113,6 +115,7 @@ func (p *LogicalLimit) convertToTopN(opt *coreusage.LogicalOptimizeOp) *LogicalT
 	return topn
 }
 
+// PushDownTopN implements the LogicalPlan interface.
 func (p *LogicalLimit) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
@@ -125,6 +128,7 @@ func (p *LogicalLimit) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreu
 	return child
 }
 
+// PushDownTopN implements the LogicalPlan interface.
 func (p *LogicalUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
@@ -190,6 +194,7 @@ func (p *LogicalProjection) pushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 	return p
 }
 
+// PushDownTopN implements the LogicalPlan interface.
 func (p *LogicalLock) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {

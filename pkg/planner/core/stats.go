@@ -126,6 +126,7 @@ func GetStats4Test(p base.LogicalPlan) *property.StatsInfo {
 	return p.StatsInfo()
 }
 
+// RecursiveDeriveStats implements LogicalPlan interface.
 func (p *baseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
 	childStats := make([]*property.StatsInfo, len(p.children))
 	childSchema := make([]*expression.Schema, len(p.children))

@@ -50,6 +50,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalUnionScan) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
@@ -2602,6 +2603,7 @@ func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	return nil, true, nil
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalProjection) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	newProp, ok := p.TryToGetChildProp(prop)
 	if !ok {
@@ -2724,6 +2726,7 @@ func MatchItems(p *property.PhysicalProperty, items []*util.ByItems) bool {
 	return true
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (lt *LogicalTopN) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if MatchItems(prop, lt.ByItems) {
 		return append(lt.getPhysTopN(prop), lt.getPhysLimits(prop)...), true, nil
@@ -2736,6 +2739,7 @@ func (la *LogicalApply) GetHashJoin(prop *property.PhysicalProperty) *PhysicalHa
 	return la.LogicalJoin.getHashJoin(prop, 1, false)
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if !prop.AllColsFromSchema(la.children[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
@@ -2914,6 +2918,7 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []b
 	return []base.PhysicalPlan{window}
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (lw *LogicalWindow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	windows := make([]base.PhysicalPlan, 0, 2)
 
@@ -3037,6 +3042,7 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 	return ret
 }
 
+// CanPushToCop implements LogicalPlan interface.
 func (la *LogicalAggregation) CanPushToCop(storeTp kv.StoreType) bool {
 	return la.baseLogicalPlan.CanPushToCop(storeTp) && !la.noCopPushDown
 }
@@ -3403,6 +3409,7 @@ func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferSt
 	return
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (la *LogicalAggregation) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if la.PreferAggToCop {
 		if !la.CanPushToCop(kv.TiKV) {
@@ -3433,6 +3440,7 @@ func (la *LogicalAggregation) ExhaustPhysicalPlans(prop *property.PhysicalProper
 	return aggs, !(preferStream || preferHash), nil
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalSelection) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	newProps := make([]*property.PhysicalProperty, 0, 2)
 	childProp := prop.CloneEssentialFields()
@@ -3463,6 +3471,7 @@ func (p *LogicalSelection) canPushDown(storeTp kv.StoreType) bool {
 		expression.CanExprsPushDown(GetPushDownCtx(p.SCtx()), p.Conditions, storeTp)
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalLimit) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if !prop.IsSortItemEmpty() {
 		return nil, true, nil
@@ -3489,6 +3498,7 @@ func (p *LogicalLimit) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 	return ret, true, nil
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalLock) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
@@ -3504,6 +3514,7 @@ func (p *LogicalLock) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]b
 	return []base.PhysicalPlan{lock}, true, nil
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
 	if !prop.IsSortItemEmpty() || (prop.IsFlashProp() && prop.TaskTp != property.MppTaskType) {
@@ -3548,6 +3559,7 @@ func (p *LogicalUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	return []base.PhysicalPlan{ua}, true, nil
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalPartitionUnionAll) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	uas, flagHint, err := p.LogicalUnionAll.ExhaustPhysicalPlans(prop)
 	if err != nil {
@@ -3576,6 +3588,7 @@ func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *Nomin
 	return ps
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (ls *LogicalSort) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if prop.TaskTp == property.RootTaskType {
 		if MatchItems(prop, ls.ByItems) {
@@ -3599,6 +3612,7 @@ func (ls *LogicalSort) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 	return nil, true, nil
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalMaxOneRow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	if !prop.IsSortItemEmpty() || prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
@@ -3608,6 +3622,7 @@ func (p *LogicalMaxOneRow) ExhaustPhysicalPlans(prop *property.PhysicalProperty)
 	return []base.PhysicalPlan{mor}, true, nil
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalCTE) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	pcte := PhysicalCTE{CTE: p.cte}.Init(p.SCtx(), p.StatsInfo())
 	if prop.IsFlashProp() {
@@ -3620,6 +3635,7 @@ func (p *LogicalCTE) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]ba
 	return []base.PhysicalPlan{(*PhysicalCTEStorage)(pcte)}, true, nil
 }
 
+// ExhaustPhysicalPlans implements LogicalPlan interface.
 func (p *LogicalSequence) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	possibleChildrenProps := make([][]*property.PhysicalProperty, 0, 2)
 	anyType := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
