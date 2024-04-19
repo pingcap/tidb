@@ -25,3 +25,4 @@ check_contains "Column_name: z"
 # check index data
 run_sql "select count(*) AS RESCNT from test.pairs use index(i1) where y = 0 and z = 0;"
 check_not_contains "RESCNT: 0"
+run_sql "admin check table test.pairs;"
