@@ -41,15 +41,15 @@ func (mj mockLogicalJoin) init(ctx base.PlanContext) *mockLogicalJoin {
 	return &mj
 }
 
-func (mj *mockLogicalJoin) (_ [][]*expression.Column) (*property.StatsInfo, error) {
+func (mj *mockLogicalJoin) RecursiveDeriveStats(_ [][]*expression.Column) (*property.StatsInfo, error) {
 	if mj.StatsInfo() == nil {
 		mj.SetStats(mj.statsMap[mj.involvedNodeSet])
 	}
 	return mj.statsMap[mj.involvedNodeSet], nil
 }
 
-func newMockJoin(ctx base.PlanContext, statsMap map[int]*property.StatsInfo) func(lChild, rChild LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) LogicalPlan {
-	return func(lChild, rChild LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) LogicalPlan {
+func newMockJoin(ctx base.PlanContext, statsMap map[int]*property.StatsInfo) func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) base.LogicalPlan {
+	return func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) base.LogicalPlan {
 		retJoin := mockLogicalJoin{}.init(ctx)
 		retJoin.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
 		retJoin.statsMap = statsMap
@@ -134,7 +134,7 @@ func makeStatsMapForTPCHQ5() map[int]*property.StatsInfo {
 	return statsMap
 }
 
-func newDataSource(ctx base.PlanContext, name string, count int) LogicalPlan {
+func newDataSource(ctx base.PlanContext, name string, count int) base.LogicalPlan {
 	ds := DataSource{}.Init(ctx, 0)
 	tan := model.NewCIStr(name)
 	ds.TableAsName = &tan
@@ -149,7 +149,7 @@ func newDataSource(ctx base.PlanContext, name string, count int) LogicalPlan {
 	return ds
 }
 
-func planToString(plan LogicalPlan) string {
+func planToString(plan base.LogicalPlan) string {
 	switch x := plan.(type) {
 	case *mockLogicalJoin:
 		return fmt.Sprintf("MockJoin{%v, %v}", planToString(x.children[0]), planToString(x.children[1]))
@@ -168,7 +168,7 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 		do.StatsHandle().Close()
 	}()
 	ctx.GetSessionVars().PlanID.Store(-1)
-	joinGroups := make([]LogicalPlan, 0, 6)
+	joinGroups := make([]base.LogicalPlan, 0, 6)
 	joinGroups = append(joinGroups, newDataSource(ctx, "lineitem", 59986052))
 	joinGroups = append(joinGroups, newDataSource(ctx, "orders", 15000000))
 	joinGroups = append(joinGroups, newDataSource(ctx, "customer", 1500000))
@@ -217,7 +217,7 @@ func TestDPReorderAllCartesian(t *testing.T) {
 	}()
 	ctx.GetSessionVars().PlanID.Store(-1)
 
-	joinGroup := make([]LogicalPlan, 0, 4)
+	joinGroup := make([]base.LogicalPlan, 0, 4)
 	joinGroup = append(joinGroup, newDataSource(ctx, "a", 100))
 	joinGroup = append(joinGroup, newDataSource(ctx, "b", 100))
 	joinGroup = append(joinGroup, newDataSource(ctx, "c", 100))
