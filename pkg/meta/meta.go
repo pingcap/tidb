@@ -828,7 +828,7 @@ func (m *Meta) CreateTableAndSetAutoID(dbID int64, dbName string, tableInfo *mod
 			return errors.Trace(err)
 		}
 	}
-	if tableInfo.SepAutoInc() {
+	if tableInfo.SepAutoInc() && tableInfo.GetAutoIncrementColInfo() != nil {
 		_, err = m.txn.HInc(m.dbKey(dbID), m.autoIncrementIDKey(tableInfo.ID), autoIDs.IncrementID)
 		if err != nil {
 			return errors.Trace(err)
