@@ -20,9 +20,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	lkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -64,15 +67,15 @@ func TestMultiColumnCommonHandle(t *testing.T) {
 	// create index for "insert t values (3, 2, "abc", "abc")
 	idxColVals := types.MakeDatums("abc")
 	handleColVals := types.MakeDatums(3, 2)
-	encodedHandle, err := codec.EncodeKey(sc, nil, handleColVals...)
+	encodedHandle, err := codec.EncodeKey(sc.TimeZone(), nil, handleColVals...)
 	require.NoError(t, err)
 	commonHandle, err := kv.NewCommonHandle(encodedHandle)
 	require.NoError(t, err)
 	_ = idxNonUnique
 	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
-		key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
+		key, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxColVals, commonHandle, nil)
 		require.NoError(t, err)
-		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
+		_, err = idx.Create(mockCtx.GetTableCtx(), txn, idxColVals, commonHandle, nil)
 		require.NoError(t, err)
 		val, err := txn.Get(context.Background(), key)
 		require.NoError(t, err)
@@ -126,15 +129,15 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 	// create index for "insert t values ('abc', 1, 1)"
 	idxColVals := types.MakeDatums(1)
 	handleColVals := types.MakeDatums("abc")
-	encodedHandle, err := codec.EncodeKey(sc, nil, handleColVals...)
+	encodedHandle, err := codec.EncodeKey(sc.TimeZone(), nil, handleColVals...)
 	require.NoError(t, err)
 	commonHandle, err := kv.NewCommonHandle(encodedHandle)
 	require.NoError(t, err)
 
 	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
-		key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
+		key, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxColVals, commonHandle, nil)
 		require.NoError(t, err)
-		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
+		_, err = idx.Create(mockCtx.GetTableCtx(), txn, idxColVals, commonHandle, nil)
 		require.NoError(t, err)
 		val, err := txn.Get(context.Background(), key)
 		require.NoError(t, err)
@@ -167,4 +170,45 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 	return tblInfo
+}
+
+func TestGenIndexValueFromIndex(t *testing.T) {
+	tblInfo := buildTableInfo(t, "create table a (a int primary key, b int not null, c text, unique key key_b(b));")
+	tblInfo.State = model.StatePublic
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	require.NoError(t, err)
+
+	sessionOpts := encode.SessionOptions{
+		SQLMode:   mysql.ModeStrictAllTables,
+		Timestamp: 1234567890,
+	}
+
+	encoder, err := lkv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table:          tbl,
+		SessionOptions: sessionOpts,
+	})
+	require.NoError(t, err)
+	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+
+	data1 := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewIntDatum(23),
+		types.NewStringDatum("4.csv"),
+	}
+	tctx := encoder.SessionCtx.GetTableCtx()
+	_, err = encoder.Table.AddRecord(tctx, data1)
+	require.NoError(t, err)
+	kvPairs := encoder.SessionCtx.TakeKvPairs()
+
+	indexKey := kvPairs.Pairs[1].Key
+	indexValue := kvPairs.Pairs[1].Val
+
+	_, idxID, _, err := tablecodec.DecodeIndexKey(indexKey)
+	require.NoError(t, err)
+
+	idxInfo := model.FindIndexInfoByID(tbl.Meta().Indices, idxID)
+
+	valueStr, err := tables.GenIndexValueFromIndex(indexKey, indexValue, tbl.Meta(), idxInfo)
+	require.NoError(t, err)
+	require.Equal(t, []string{"23"}, valueStr)
 }

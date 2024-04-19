@@ -67,6 +67,7 @@ func TestDAGPlanBuilderSimpleCase(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+		tk.Session().GetSessionVars().StmtCtx.OriginalSQL = tt
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NoError(t, err)
 		testdata.OnRecord(func() {

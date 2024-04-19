@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -35,19 +34,19 @@ func TestBaseBuiltin(t *testing.T) {
 	ctx := mock.NewContext()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
 	require.NoError(t, err)
-	_, _, err = bf.evalInt(chunk.Row{})
+	_, _, err = bf.evalInt(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalReal(chunk.Row{})
+	_, _, err = bf.evalReal(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalString(chunk.Row{})
+	_, _, err = bf.evalString(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalDecimal(chunk.Row{})
+	_, _, err = bf.evalDecimal(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalTime(chunk.Row{})
+	_, _, err = bf.evalTime(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalDuration(chunk.Row{})
+	_, _, err = bf.evalDuration(ctx, chunk.Row{})
 	require.Error(t, err)
-	_, _, err = bf.evalJSON(chunk.Row{})
+	_, _, err = bf.evalJSON(ctx, chunk.Row{})
 	require.Error(t, err)
 }
 
@@ -154,37 +153,37 @@ func TestClone(t *testing.T) {
 }
 
 func TestGetUint64FromConstant(t *testing.T) {
+	ctx := mock.NewContext()
 	con := &Constant{
 		Value: types.NewDatum(nil),
 	}
-	_, isNull, ok := GetUint64FromConstant(con)
+	_, isNull, ok := GetUint64FromConstant(ctx, con)
 	require.True(t, ok)
 	require.True(t, isNull)
 
 	con = &Constant{
 		Value: types.NewIntDatum(-1),
 	}
-	_, _, ok = GetUint64FromConstant(con)
+	_, _, ok = GetUint64FromConstant(ctx, con)
 	require.False(t, ok)
 
 	con.Value = types.NewIntDatum(1)
-	num, isNull, ok := GetUint64FromConstant(con)
+	num, isNull, ok := GetUint64FromConstant(ctx, con)
 	require.True(t, ok)
 	require.False(t, isNull)
 	require.Equal(t, uint64(1), num)
 
 	con.Value = types.NewUintDatum(1)
-	num, _, _ = GetUint64FromConstant(con)
+	num, _, _ = GetUint64FromConstant(ctx, con)
 	require.Equal(t, uint64(1), num)
 
 	con.DeferredExpr = &Constant{Value: types.NewIntDatum(1)}
-	num, _, _ = GetUint64FromConstant(con)
+	num, _, _ = GetUint64FromConstant(ctx, con)
 	require.Equal(t, uint64(1), num)
 
-	ctx := mock.NewContext()
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewUintDatum(100))
 	con.ParamMarker = &ParamMarker{order: 0, ctx: ctx}
-	num, _, _ = GetUint64FromConstant(con)
+	num, _, _ = GetUint64FromConstant(ctx, con)
 	require.Equal(t, uint64(100), num)
 }
 
@@ -192,7 +191,8 @@ func TestSetExprColumnInOperand(t *testing.T) {
 	col := &Column{RetType: newIntFieldType()}
 	require.True(t, SetExprColumnInOperand(col).(*Column).InOperand)
 
-	f, err := funcs[ast.Abs].getFunction(mock.NewContext(), []Expression{col})
+	ctx := mock.NewContext()
+	f, err := funcs[ast.Abs].getFunction(ctx, []Expression{col})
 	require.NoError(t, err)
 	fun := &ScalarFunction{Function: f}
 	SetExprColumnInOperand(fun)
@@ -200,8 +200,9 @@ func TestSetExprColumnInOperand(t *testing.T) {
 }
 
 func TestPopRowFirstArg(t *testing.T) {
+	ctx := mock.NewContext()
 	c1, c2, c3 := &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}, &Column{RetType: newIntFieldType()}
-	f, err := funcs[ast.RowFunc].getFunction(mock.NewContext(), []Expression{c1, c2, c3})
+	f, err := funcs[ast.RowFunc].getFunction(ctx, []Expression{c1, c2, c3})
 	require.NoError(t, err)
 	fun := &ScalarFunction{Function: f, FuncName: model.NewCIStr(ast.RowFunc), RetType: newIntFieldType()}
 	fun2, err := PopRowFirstArg(mock.NewContext(), fun)
@@ -243,21 +244,21 @@ func TestSubstituteCorCol2Constant(t *testing.T) {
 	corCol2 := &CorrelatedColumn{Data: &NewOne().Value}
 	corCol2.RetType = types.NewFieldType(mysql.TypeLonglong)
 	cast := BuildCastFunction(ctx, corCol1, types.NewFieldType(mysql.TypeLonglong))
-	plus := newFunction(ast.Plus, cast, corCol2)
-	plus2 := newFunction(ast.Plus, plus, NewOne())
+	plus := newFunctionWithMockCtx(ast.Plus, cast, corCol2)
+	plus2 := newFunctionWithMockCtx(ast.Plus, plus, NewOne())
 	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
-	ret, err := SubstituteCorCol2Constant(plus2)
+	ret, err := SubstituteCorCol2Constant(ctx, plus2)
 	require.NoError(t, err)
 	require.True(t, ret.Equal(ctx, ans1))
 	col1 := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	ret, err = SubstituteCorCol2Constant(col1)
+	ret, err = SubstituteCorCol2Constant(ctx, col1)
 	require.NoError(t, err)
 	ans2 := col1
 	require.True(t, ret.Equal(ctx, ans2))
-	plus3 := newFunction(ast.Plus, plus2, col1)
-	ret, err = SubstituteCorCol2Constant(plus3)
+	plus3 := newFunctionWithMockCtx(ast.Plus, plus2, col1)
+	ret, err = SubstituteCorCol2Constant(ctx, plus3)
 	require.NoError(t, err)
-	ans3 := newFunction(ast.Plus, ans1, col1)
+	ans3 := newFunctionWithMockCtx(ast.Plus, ans1, col1)
 	require.True(t, ret.Equal(ctx, ans3))
 }
 
@@ -265,14 +266,14 @@ func TestPushDownNot(t *testing.T) {
 	ctx := mock.NewContext()
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
-	eqFunc := newFunction(ast.EQ, col, NewOne())
-	orFunc := newFunction(ast.LogicOr, eqFunc, eqFunc)
-	andFunc := newFunction(ast.LogicAnd, orFunc, eqFunc)
-	notFunc := newFunction(ast.UnaryNot, andFunc)
+	eqFunc := newFunctionWithMockCtx(ast.EQ, col, NewOne())
+	orFunc := newFunctionWithMockCtx(ast.LogicOr, eqFunc, eqFunc)
+	andFunc := newFunctionWithMockCtx(ast.LogicAnd, orFunc, eqFunc)
+	notFunc := newFunctionWithMockCtx(ast.UnaryNot, andFunc)
 	// (a!=1&&a!=1)||a=1
-	neFunc := newFunction(ast.NE, col, NewOne())
-	andFunc2 := newFunction(ast.LogicAnd, neFunc, neFunc)
-	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
+	neFunc := newFunctionWithMockCtx(ast.NE, col, NewOne())
+	andFunc2 := newFunctionWithMockCtx(ast.LogicAnd, neFunc, neFunc)
+	orFunc2 := newFunctionWithMockCtx(ast.LogicOr, andFunc2, neFunc)
 	notFuncCopy := notFunc.Clone()
 	ret := PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, orFunc2))
@@ -280,37 +281,37 @@ func TestPushDownNot(t *testing.T) {
 
 	// issue 15725
 	// (not not a) should be optimized to (a is true)
-	notFunc = newFunction(ast.UnaryNot, col)
-	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)))
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, col)))
 
 	// (not not (a+1)) should be optimized to (a+1 is true)
-	plusFunc := newFunction(ast.Plus, col, NewOne())
-	notFunc = newFunction(ast.UnaryNot, plusFunc)
-	notFunc = newFunction(ast.UnaryNot, notFunc)
+	plusFunc := newFunctionWithMockCtx(ast.Plus, col, NewOne())
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, plusFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunction(ast.IsTruthWithNull, plusFunc)))
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, plusFunc)))
 	// (not not not a) should be optimized to (not (a is true))
-	notFunc = newFunction(ast.UnaryNot, col)
-	notFunc = newFunction(ast.UnaryNot, notFunc)
-	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruthWithNull, col))))
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.UnaryNot, newFunctionWithMockCtx(ast.IsTruthWithNull, col))))
 	// (not not not not a) should be optimized to (a is true)
-	notFunc = newFunction(ast.UnaryNot, col)
-	notFunc = newFunction(ast.UnaryNot, notFunc)
-	notFunc = newFunction(ast.UnaryNot, notFunc)
-	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	require.True(t, ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)))
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.IsTruthWithNull, col)))
 }
 
 func TestFilter(t *testing.T) {
 	conditions := []Expression{
-		newFunction(ast.EQ, newColumn(0), newColumn(1)),
-		newFunction(ast.EQ, newColumn(1), newColumn(2)),
-		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(1), newColumn(2)),
+		newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
 	}
 	result := make([]Expression, 0, 5)
 	result = Filter(result, conditions, isLogicOrFunction)
@@ -319,9 +320,9 @@ func TestFilter(t *testing.T) {
 
 func TestFilterOutInPlace(t *testing.T) {
 	conditions := []Expression{
-		newFunction(ast.EQ, newColumn(0), newColumn(1)),
-		newFunction(ast.EQ, newColumn(1), newColumn(2)),
-		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(1), newColumn(2)),
+		newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
 	}
 	remained, filtered := FilterOutInPlace(conditions, isLogicOrFunction)
 	require.Equal(t, 2, len(remained))
@@ -350,16 +351,16 @@ func TestHashGroupKey(t *testing.T) {
 			bufs[j] = bufs[j][:0]
 		}
 		var err error
-		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
+		err = EvalExpr(ctx, ctx.GetSessionVars().EnableVectorizedExpression, colExpr, colExpr.GetType().EvalType(), input, colBuf)
 		require.NoError(t, err)
-		bufs, err = codec.HashGroupKey(sc, 1024, colBuf, bufs, ft)
+		bufs, err = codec.HashGroupKey(sc.TimeZone(), 1024, colBuf, bufs, ft)
 		require.NoError(t, err)
 
 		var buf []byte
 		for j := 0; j < input.NumRows(); j++ {
-			d, err := colExpr.Eval(input.GetRow(j))
+			d, err := colExpr.Eval(ctx, input.GetRow(j))
 			require.NoError(t, err)
-			buf, err = codec.EncodeValue(sc, buf[:0], d)
+			buf, err = codec.EncodeValue(sc.TimeZone(), buf[:0], d)
 			require.NoError(t, err)
 			require.Equal(t, string(bufs[j]), string(buf))
 		}
@@ -457,11 +458,11 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 
 func BenchmarkExtractColumns(b *testing.B) {
 	conditions := []Expression{
-		newFunction(ast.EQ, newColumn(0), newColumn(1)),
-		newFunction(ast.EQ, newColumn(1), newColumn(2)),
-		newFunction(ast.EQ, newColumn(2), newColumn(3)),
-		newFunction(ast.EQ, newColumn(3), newLonglong(1)),
-		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(1), newColumn(2)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(2), newColumn(3)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(3), newLonglong(1)),
+		newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
 	}
 	expr := ComposeCNFCondition(mock.NewContext(), conditions...)
 
@@ -474,11 +475,11 @@ func BenchmarkExtractColumns(b *testing.B) {
 
 func BenchmarkExprFromSchema(b *testing.B) {
 	conditions := []Expression{
-		newFunction(ast.EQ, newColumn(0), newColumn(1)),
-		newFunction(ast.EQ, newColumn(1), newColumn(2)),
-		newFunction(ast.EQ, newColumn(2), newColumn(3)),
-		newFunction(ast.EQ, newColumn(3), newLonglong(1)),
-		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(0), newColumn(1)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(1), newColumn(2)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(2), newColumn(3)),
+		newFunctionWithMockCtx(ast.EQ, newColumn(3), newLonglong(1)),
+		newFunctionWithMockCtx(ast.LogicOr, newLonglong(1), newColumn(0)),
 	}
 	expr := ComposeCNFCondition(mock.NewContext(), conditions...)
 	schema := &Schema{Columns: ExtractColumns(expr)}
@@ -494,101 +495,104 @@ func BenchmarkExprFromSchema(b *testing.B) {
 type MockExpr struct {
 	err error
 	t   *types.FieldType
-	i   interface{}
+	i   any
 }
 
-func (m *MockExpr) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-func (m *MockExpr) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-func (m *MockExpr) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-func (m *MockExpr) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-func (m *MockExpr) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-func (m *MockExpr) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-func (m *MockExpr) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (m *MockExpr) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
 
-func (m *MockExpr) String() string                          { return "" }
-func (m *MockExpr) MarshalJSON() ([]byte, error)            { return nil, nil }
-func (m *MockExpr) Eval(row chunk.Row) (types.Datum, error) { return types.NewDatum(m.i), m.err }
-func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
+func (m *MockExpr) String() string               { return "" }
+func (m *MockExpr) MarshalJSON() ([]byte, error) { return nil, nil }
+func (m *MockExpr) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
+	return types.NewDatum(m.i), m.err
+}
+func (m *MockExpr) EvalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
 	if x, ok := m.i.(int64); ok {
 		return x, false, m.err
 	}
 	return 0, m.i == nil, m.err
 }
-func (m *MockExpr) EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error) {
+func (m *MockExpr) EvalReal(ctx EvalContext, row chunk.Row) (val float64, isNull bool, err error) {
 	if x, ok := m.i.(float64); ok {
 		return x, false, m.err
 	}
 	return 0, m.i == nil, m.err
 }
-func (m *MockExpr) EvalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error) {
+func (m *MockExpr) EvalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error) {
 	if x, ok := m.i.(string); ok {
 		return x, false, m.err
 	}
 	return "", m.i == nil, m.err
 }
-func (m *MockExpr) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (val *types.MyDecimal, isNull bool, err error) {
+func (m *MockExpr) EvalDecimal(ctx EvalContext, row chunk.Row) (val *types.MyDecimal, isNull bool, err error) {
 	if x, ok := m.i.(*types.MyDecimal); ok {
 		return x, false, m.err
 	}
 	return nil, m.i == nil, m.err
 }
-func (m *MockExpr) EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Time, isNull bool, err error) {
+func (m *MockExpr) EvalTime(ctx EvalContext, row chunk.Row) (val types.Time, isNull bool, err error) {
 	if x, ok := m.i.(types.Time); ok {
 		return x, false, m.err
 	}
 	return types.ZeroTime, m.i == nil, m.err
 }
-func (m *MockExpr) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error) {
+func (m *MockExpr) EvalDuration(ctx EvalContext, row chunk.Row) (val types.Duration, isNull bool, err error) {
 	if x, ok := m.i.(types.Duration); ok {
 		return x, false, m.err
 	}
 	return types.Duration{}, m.i == nil, m.err
 }
-func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error) {
+func (m *MockExpr) EvalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSON, isNull bool, err error) {
 	if x, ok := m.i.(types.BinaryJSON); ok {
 		return x, false, m.err
 	}
 	return types.BinaryJSON{}, m.i == nil, m.err
 }
-func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
-	return types.Datum{}, m.err
+func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
+func (m *MockExpr) Clone() Expression                                 { return nil }
+func (m *MockExpr) Equal(ctx EvalContext, e Expression) bool          { return false }
+func (m *MockExpr) IsCorrelated() bool                                { return false }
+func (m *MockExpr) ConstLevel() ConstLevel                            { return ConstNone }
+func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
+func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
+func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
+func (m *MockExpr) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool) {
+	return m, true
 }
-func (m *MockExpr) GetType() *types.FieldType                                     { return m.t }
-func (m *MockExpr) Clone() Expression                                             { return nil }
-func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool               { return false }
-func (m *MockExpr) IsCorrelated() bool                                            { return false }
-func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool                    { return false }
-func (m *MockExpr) Decorrelate(schema *Schema) Expression                         { return m }
-func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error)             { return m, nil }
-func (m *MockExpr) resolveIndices(schema *Schema) error                           { return nil }
-func (m *MockExpr) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) { return m, true }
-func (m *MockExpr) resolveIndicesByVirtualExpr(schema *Schema) bool               { return true }
-func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error)           { return m, nil }
-func (m *MockExpr) ExplainInfo() string                                           { return "" }
-func (m *MockExpr) ExplainNormalizedInfo() string                                 { return "" }
-func (m *MockExpr) ExplainNormalizedInfo4InList() string                          { return "" }
-func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte                  { return nil }
-func (m *MockExpr) Vectorized() bool                                              { return false }
-func (m *MockExpr) SupportReverseEval() bool                                      { return false }
-func (m *MockExpr) HasCoercibility() bool                                         { return false }
-func (m *MockExpr) Coercibility() Coercibility                                    { return 0 }
-func (m *MockExpr) SetCoercibility(Coercibility)                                  {}
-func (m *MockExpr) Repertoire() Repertoire                                        { return UNICODE }
-func (m *MockExpr) SetRepertoire(Repertoire)                                      {}
+func (m *MockExpr) resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool {
+	return true
+}
+func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error) { return m, nil }
+func (m *MockExpr) ExplainInfo(EvalContext) string                      { return "" }
+func (m *MockExpr) ExplainNormalizedInfo() string                       { return "" }
+func (m *MockExpr) ExplainNormalizedInfo4InList() string                { return "" }
+func (m *MockExpr) HashCode() []byte                                    { return nil }
+func (m *MockExpr) CanonicalHashCode() []byte                           { return nil }
+func (m *MockExpr) Vectorized() bool                                    { return false }
+func (m *MockExpr) HasCoercibility() bool                               { return false }
+func (m *MockExpr) Coercibility() Coercibility                          { return 0 }
+func (m *MockExpr) SetCoercibility(Coercibility)                        {}
+func (m *MockExpr) Repertoire() Repertoire                              { return UNICODE }
+func (m *MockExpr) SetRepertoire(Repertoire)                            {}
 
 func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""

@@ -62,7 +62,7 @@ func TestRowDecoder(t *testing.T) {
 		}
 		decodeColsMap2[col.ID] = tpExpr
 		if col.GeneratedExprString != "" {
-			expr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, col.GeneratedExprString, tblInfo, &col.FieldType)
+			expr, err := expression.ParseSimpleExpr(ctx, col.GeneratedExprString, expression.WithTableInfo("", tblInfo), expression.WithCastExprTo(&col.FieldType))
 			require.NoError(t, err)
 			tpExpr.GenExpr = expr
 		}
@@ -112,7 +112,7 @@ func TestRowDecoder(t *testing.T) {
 		if i > 0 {
 			c7.AddFlag(mysql.UnsignedFlag)
 		}
-		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil, &rd)
+		bs, err := tablecodec.EncodeRow(sc.TimeZone(), row.input, row.cols, nil, nil, &rd)
 		require.NoError(t, err)
 		require.NotNil(t, bs)
 
@@ -187,7 +187,7 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	for _, row := range testRows {
-		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil, &rd)
+		bs, err := tablecodec.EncodeRow(sc.TimeZone(), row.input, row.cols, nil, nil, &rd)
 		require.NoError(t, err)
 		require.NotNil(t, bs)
 

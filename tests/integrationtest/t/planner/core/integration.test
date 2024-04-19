@@ -234,31 +234,6 @@ INSERT INTO t0(c0) VALUES (3);
 SELECT /*+ MERGE_JOIN(t1, t0, v0)*/v0.c2, t1.c0 FROM v0,  t0 CROSS JOIN t1 ORDER BY -v0.c1;
 
 
-# TestInvisibleIndex
-drop table if exists t;
-create table t(a int, b int, unique index i_a (a) invisible, unique index i_b(b));
-insert into t values (1,2);
-admin check table t;
-select a from t order by a;
-explain select a from t order by a;
-select a from t where a > 0;
-explain select a from t where a > 1;
---error 1176
-select * from t use index(i_a);
---error 1176
-select * from t force index(i_a);
---error 1176
-select * from t ignore index(i_a);
---enable_warnings
-select /*+ USE_INDEX(t, i_a) */ * from t;
-select /*+ IGNORE_INDEX(t, i_a), USE_INDEX(t, i_b) */ a from t order by a;
-select /*+ FORCE_INDEX(t, i_a), USE_INDEX(t, i_b) */ a from t order by a;
-select /*+ FORCE_INDEX(aaa) */ * from t;
---disable_warnings
-admin check table t;
-admin check index t i_a;
-
-
 # TestTopNByConstFunc
 select max(t.col) from (select 'a' as col union all select '' as col) as t;
 
@@ -789,23 +764,23 @@ drop table if exists tc;
 drop view if exists v;
 CREATE TABLE `ta`  (
   `id` varchar(36) NOT NULL ,
-  `status` varchar(1) NOT NULL 
+  `status` varchar(1) NOT NULL
 );
 CREATE TABLE `tb`  (
   `id` varchar(36) NOT NULL ,
-  `status` varchar(1) NOT NULL 
+  `status` varchar(1) NOT NULL
 );
 CREATE TABLE `tc`  (
   `id` varchar(36) NOT NULL ,
-  `status` varchar(1) NOT NULL 
+  `status` varchar(1) NOT NULL
 );
 insert into ta values('1','1');
 insert into tb values('1','1');
 insert into tc values('1','1');
 create definer='root'@'localhost' view v as
-select 
-concat(`ta`.`status`,`tb`.`status`) AS `status`, 
-`ta`.`id` AS `id`  from (`ta` join `tb`) 
+select
+concat(`ta`.`status`,`tb`.`status`) AS `status`,
+`ta`.`id` AS `id`  from (`ta` join `tb`)
 where (`ta`.`id` = `tb`.`id`);
 SELECT tc.status,v.id FROM tc, v WHERE tc.id = v.id AND v.status = '11';
 
@@ -1744,7 +1719,7 @@ drop table if exists t;
 # TestIssues29711
 drop table if exists tbl_29711;
 CREATE TABLE `tbl_29711` (`col_250` text COLLATE utf8_unicode_ci NOT NULL,`col_251` enum('Alice','Bob','Charlie','David') COLLATE utf8_unicode_ci NOT NULL DEFAULT 'Charlie',PRIMARY KEY (`col_251`,`col_250`(1)) NONCLUSTERED);
-explain format=brief select col_250,col_251 from tbl_29711 where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;
+explain format=brief select col_250,col_251 from tbl_29711 use index (primary) where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;
 drop table if exists t29711;
 CREATE TABLE `t29711` (`a` varchar(10) DEFAULT NULL,`b` int(11) DEFAULT NULL,`c` int(11) DEFAULT NULL,KEY `ia` (`a`(2)));
 explain format=brief select * from t29711 use index (ia) order by a limit 10;
@@ -2008,7 +1983,7 @@ create table t1 (a int, c int);
 insert into t1 values (1, 1), (1, 2), (2, 3), (2, 4);
 create table t2 (a int, c int);
 insert into t2 values (1, 1), (1, 2), (2, 3), (2, 4);
-select group_concat(c order by (select group_concat(c order by a) from t2 where a=t1.a)) from t1; ;
+select group_concat(c order by (select group_concat(c order by a) from t2 where a=t1.a)) from t1;
 select group_concat(c order by (select group_concat(c order by c) from t2 where a=t1.a), c desc) from t1;
 
 
@@ -2072,3 +2047,325 @@ select *, first_value(v) over (partition by p order by o range between 3.1 prece
 set @@tidb_enable_pipelined_window_function=DEFAULT;
 
 
+# TestPartitionPruningWithDateType
+drop table if exists t;
+create table t(a datetime) partition by range columns (a) (partition p1 values less than ('20000101'), partition p2 values less than ('2000-10-01'));
+insert into t values ('20000201'), ('19000101');
+analyze table t;
+desc format='brief' select * from t where a < '2000-01-01';
+
+
+# TestErrNoDB
+drop user if exists test;
+
+connect (conn1, localhost, root,,);
+create user test;
+--error 1046
+grant select on test1111 to test@'%';
+--error 1046
+grant select on * to test@'%';
+--error 1046
+revoke select on * from test@'%';
+
+use planner__core__integration;
+create table test1111 (id int);
+grant select on test1111 to test@'%';
+disconnect conn1;
+
+
+# TestExplainAnalyzePointGet
+drop table if exists t;
+create table t(a int primary key, b varchar(20));
+insert into t values (1,1);
+--replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}/
+explain analyze select * from t where a=1;
+--replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}/
+explain analyze select * from t where a in (1,2,3);
+
+
+# TestExplainAnalyzeDML
+drop table if exists t;
+create table t (a int, b int, unique index (a));
+insert into t values (1,1);
+--replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}/
+explain analyze select * from t where a=1;
+--replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}}}/ /[0-9]+ Bytes/<num> Bytes/
+explain analyze insert ignore into t values (1,1),(2,2),(3,3),(4,4);
+
+
+# TestConditionColPruneInPhysicalUnionScan
+# https://github.com/pingcap/tidb/issues/21607
+drop table if exists t;
+create table t (a int, b int);
+insert into t values (1, 2);
+select count(*) from t where b = 1 and b in (3);
+drop table t;
+create table t (a int, b int as (a + 1), c int as (b + 1));
+begin;
+insert into t (a) values (1);
+select count(*) from t where b = 1 and b in (3);
+select count(*) from t where c = 1 and c in (3);
+
+
+# TestCreateViewIsolationRead
+drop table if exists t;
+drop view if exists v0;
+create table t(a int, b int);
+set session tidb_isolation_read_engines='tiflash,tidb';
+create view v0 (a, avg_b) as select a, avg(b) from t group by a;
+--error 1815
+select * from v0;
+set session tidb_isolation_read_engines='tikv,tiflash,tidb';
+select * from v0;
+set session tidb_isolation_read_engines=default;
+
+
+# TestSelectIgnoreTemporaryTableInView
+drop table if exists t1, t2;
+drop view if exists v1, v2, v3, v4, v5;
+create table t1 (a int, b int);
+create table t2 (c int, d int);
+create view v1 as select * from t1 order by a limit 5;
+create view v2 as select * from ((select * from t1) union (select * from t2)) as tt order by a, b limit 5;
+create view v3 as select * from v1 order by a limit 5;
+create view v4 as select * from t1, t2 where t1.a = t2.c order by a, b limit 5;
+create view v5 as select * from (select * from t1) as t1 order by a limit 5;
+insert into t1 values (1, 2), (3, 4);
+insert into t2 values (3, 5), (6, 7);
+create temporary table t1 (a int, b int);
+create temporary table t2 (c int, d int);
+select * from t1;
+select * from t2;
+select * from v1;
+select * from v2;
+select * from v3;
+select * from v4;
+select * from v5;
+drop table t1, t2;
+
+
+# TestIssue27949
+drop table if exists t27949;
+create table t27949 (a int, b int, key(b));
+explain format = 'brief' select * from t27949 where b=1;
+create global binding for select * from t27949 where b=1 using select * from t27949 ignore index(b) where b=1;
+explain format = 'brief' select * from t27949 where b=1;
+set @@sql_select_limit=100;
+explain format = 'brief' select * from t27949 where b=1;
+drop table if exists t;
+create table t(a int, index idx_a(a));
+create binding for select * from t  using select * from t use index(idx_a);
+select * from t;
+select @@last_plan_from_binding;
+prepare stmt from 'select * from t';
+execute stmt;
+select @@last_plan_from_binding;
+drop global binding for select * from t27949 where b=1;
+
+set @@sql_select_limit=default;
+
+# TestIssue30804
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+select avg(0) over w from t1 window w as (order by (select 1));
+-- error 3579
+select avg(0) over w from t1 where b > (select sum(t2.a) over w from t2) window w as (partition by t1.b);
+select avg(0) over w1 from t1 where b > (select sum(t2.a) over w2 from t2 window w2 as (partition by t2.b)) window w1 as (partition by t1.b);
+
+
+# TestNaturalJoinUpdateSameTable
+drop table if exists t1;
+create table t1(a int, b int);
+insert into t1 values (1,1),(2,2);
+update t1 as a natural join t1 b SET a.a = 2, b.b = 3;
+select * from t1;
+drop table t1;
+create table t1 (a int primary key, b int);
+insert into t1 values (1,1),(2,2);
+-- error 1706
+update t1 as a natural join t1 b SET a.a = 2, b.b = 3;
+drop table t1;
+create table t1 (a int, b int) partition by hash (a) partitions 3;
+insert into t1 values (1,1),(2,2);
+-- error 1706
+update t1 as a natural join t1 b SET a.a = 2, b.b = 3;
+drop table t1;
+create table t1 (A int, b int) partition by hash (b) partitions 3;
+insert into t1 values (1,1),(2,2);
+-- error 1706
+update t1 as a natural join t1 B SET a.A = 2, b.b = 3;
+-- error 1706
+update t1 as a natural join t1 B SET a.A = 2, b.b = 3;
+drop table t1;
+create table t1 (A int, b int) partition by RANGE COLUMNS (b) (partition `pNeg` values less than (0),partition `pPos` values less than MAXVALUE);
+insert into t1 values (1,1),(2,2);
+-- error 1706
+update t1 as a natural join t1 B SET a.A = 2, b.b = 3;
+drop table t1;
+
+
+# TestIssue36609
+drop table if exists t1, t2, t3, t4, t5;
+create table t1(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+create table t2(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+create table t3(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+create table t4(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+create table t5(a int, b int, c int, d int, index ia(a), index ib(b), index ic(c), index id(d));
+select * from t3 straight_join t4 on t3.a = t4.b straight_join t2 on t3.d = t2.c straight_join t1 on t1.a = t2.b straight_join t5 on t4.c = t5.d where t2.b < 100 and t4.a = 10;
+--disable_result_log
+select * from information_schema.statements_summary;
+--enable_result_log
+
+
+# TestIssue38295
+# https://github.com/pingcap/tidb/issues/38295.
+drop table if exists t0;
+drop view if exists v0;
+CREATE TABLE t0(c0 BLOB(298) , c1 BLOB(182) , c2 NUMERIC);
+CREATE VIEW v0(c0) AS SELECT t0.c1 FROM t0;
+INSERT INTO t0 VALUES (-1, 'a', '2046549365');
+CREATE INDEX i0 ON t0(c2);
+--replace_regex /#2/#1/ /c2/c1/
+-- error 1055
+SELECT t0.c1, t0.c2 FROM t0 GROUP BY MOD(t0.c0, DEFAULT(t0.c2));
+UPDATE t0 SET c2=1413;
+
+
+# TestIssue41273
+drop table if exists t;
+CREATE TABLE t (
+	a set('nwbk','r5','1ad3u','van','ir1z','y','9m','f1','z','e6yd','wfev') NOT NULL DEFAULT 'ir1z,f1,e6yd',
+	b enum('soo2','4s4j','qi9om','8ue','i71o','qon','3','3feh','6o1i','5yebx','d') NOT NULL DEFAULT '8ue',
+	c varchar(66) DEFAULT '13mdezixgcn',
+	PRIMARY KEY (a,b) /*T![clustered_index] CLUSTERED */,
+	UNIQUE KEY ib(b),
+	KEY ia(a)
+)ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin;
+INSERT INTO t VALUES('ir1z,f1,e6yd','i71o','13mdezixgcn'),('ir1z,f1,e6yd','d','13mdezixgcn'),('nwbk','8ue','13mdezixgcn');
+--sorted_result
+select * from t where a between 'e6yd' and 'z' or b <> '8ue';
+--sorted_result
+select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue';
+
+--echo ## For now tidb doesn't support push set type to TiKV, and column a is a set type, so we shouldn't generate a IndexMerge path.
+explain format='brief' select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue';
+
+
+# TestIssue46298
+drop table if exists planner__core__integration.first_range;
+create table planner__core__integration.first_range(p int not null, o tinyint not null, v int not null);
+insert into planner__core__integration.first_range (p, o, v) values (0, 0, 0), (1, 1, 1), (1, 2, 2), (1, 4, 4), (1, 8, 8), (2, 0, 0), (2, 3, 3), (2, 10, 10), (2, 13, 13), (2, 15, 15), (3, 1, 1), (3, 3, 3), (3, 5, 5), (3, 9, 9), (3, 15, 15), (3, 20, 20), (3, 31, 31);
+--sorted_result
+select *, first_value(v) over (partition by p order by o range between 3.1 preceding and 2.9 following) as a from planner__core__integration.first_range;
+set @@tidb_enable_pipelined_window_function=0;
+--sorted_result
+select *, first_value(v) over (partition by p order by o range between 3.1 preceding and 2.9 following) as a from planner__core__integration.first_range;
+set @@tidb_enable_pipelined_window_function=DEFAULT;
+
+
+# TestIssue45044
+drop table if exists t1;
+set tidb_enable_ordered_result_mode = on;
+create table t1(c1 int);
+select * from t1 group by t1.c1 having count(1) > 1 order by count(1) limit 10;
+set tidb_enable_ordered_result_mode = DEFAULT;
+
+
+# TestViewHintWithBinding
+set tidb_cost_model_version=2;
+drop view if exists v, v1, v2;
+drop table if exists t, t1, t2, t3;
+create table t(a int, b int);
+create table t1(a int, b int);
+create table t2(a int, b int);
+create table t3(a int, b int);
+create definer='root'@'localhost' view v as select t.a, t.b from t join (select count(*) as a from t1 join t2 join t3 where t1.b=t2.b and t2.a = t3.a group by t2.a) tt on t.a = tt.a;
+create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select count(*) as a from t1 join v on t1.b=v.b group by v.a) tt on t.a = tt.a;
+create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;
+select * from v2;
+select @@last_plan_from_binding;
+create global binding for select * from v2 using select /*+ qb_name(qb_v_2, v2.v1@sel_2 .v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v2. v1@sel_2 .v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v2;
+select * from v2;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+drop global binding for select * from v2;
+select * from v2;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+
+set tidb_cost_model_version=default;
+
+
+# TestKeepOrderHintWithBinding
+set tidb_cost_model_version=2;
+drop table if exists t1;
+create table t1(a int, b int, index idx_a(a));
+--echo
+--echo ## create binding for order_index hint
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+--echo
+drop global binding for select * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+--echo
+--echo ## create binding for no_order_index hint
+create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+--echo
+drop global binding for select * from t1 where a<10 order by a limit 1;
+select * from t1 where a<10 order by a limit 1;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__integration%';
+
+set tidb_cost_model_version=default;
+
+
+# TestIssue20139
+drop table if exists t;
+set tidb_opt_fix_control='44262:ON';
+create table t (id int, c int) partition by range (id) (partition p0 values less than (4), partition p1 values less than (7));
+insert into t values(3, 3), (5, 5);
+explain format = 'brief' select * from t where c = 1 and id = c;
+
+
+# TestIssue46177
+drop table if exists sbtest;
+CREATE TABLE sbtest (
+  id int(10) unsigned NOT NULL AUTO_INCREMENT,
+  k int(10) unsigned NOT NULL DEFAULT '0',
+  c char(120) NOT NULL DEFAULT '',
+  pad char(60) NOT NULL DEFAULT '',
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY k (k)
+);
+## cannot choose the best plan with RangeScan.
+set @@tidb_opt_fix_control = '46177:off';
+explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
+explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
+set @@tidb_opt_fix_control = '46177:on';
+explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
+explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
+set @@tidb_opt_fix_control = default;
+
+# TestSysIsAccessibleWithTiFlashReadIsolation
+create table sys.t (id int);
+insert into sys.t values (1),(2);
+set tidb_isolation_read_engines='tiflash';
+select * from sys.t;
+drop table sys.t;
+set tidb_isolation_read_engines=DEFAULT;

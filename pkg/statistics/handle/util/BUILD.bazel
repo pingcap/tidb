@@ -1,9 +1,12 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "util",
     srcs = [
-        "interfaces.go",
+        "auto_analyze_proc_id_generator.go",
+        "ddl_event.go",
+        "lease_getter.go",
+        "pool.go",
         "table_info.go",
         "util.go",
     ],
@@ -16,11 +19,9 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
-        "//pkg/statistics",
+        "//pkg/statistics/handle/logutil",
         "//pkg/table",
-        "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/intest",
@@ -31,5 +32,19 @@ go_library(
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tiancaiamao_gp//:gp",
         "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "util_test",
+    timeout = "short",
+    srcs = ["ddl_event_test.go"],
+    embed = [":util"],
+    flaky = True,
+    deps = [
+        "//pkg/parser/model",
+        "@com_github_stretchr_testify//require",
     ],
 )

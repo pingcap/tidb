@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -37,26 +36,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
-
-func TestForUpdateRetry(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	_, err := tk.Exec("drop table if exists t")
-	require.NoError(t, err)
-	tk.MustExec("create table t(pk int primary key, c int)")
-	tk.MustExec("insert into t values (1, 1), (2, 2)")
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("begin")
-	tk.MustQuery("select * from t where pk = 1 for update")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustExec("update t set c = c + 1 where pk = 1")
-	tk.MustExec("update t set c = c + 1 where pk = 2")
-	tk.MustGetErrCode("commit", errno.ErrForUpdateCantRetry)
-}
 
 func TestSelectCheckVisibility(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -103,7 +82,7 @@ func TestReturnValues(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t where a = 'b' for update").Check(testkit.Rows("b 2"))
 	tid := external.GetTableByName(t, tk, "test", "t").Meta().ID
-	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewStringDatum("b"))
+	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewStringDatum("b"))
 	require.NoError(t, err)
 	pk := tablecodec.EncodeIndexSeekKey(tid, 1, idxVal)
 	txnCtx := tk.Session().GetSessionVars().TxnCtx
@@ -247,39 +226,6 @@ func TestPartitionMemCacheReadLock(t *testing.T) {
 	tk.MustQuery("select _tidb_rowid from point where id = -2").Check(testkit.Rows("2"))
 
 	mustExecDDL(tk, t, "unlock tables", dom)
-}
-
-func TestPointGetWriteLock(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableTableLock = true
-	})
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
-	tk.MustExec("insert point values (1, 1, 'a')")
-	tk.MustExec("insert point values (2, 2, 'b')")
-	tk.MustExec("lock tables point write")
-	tk.MustQuery(`select * from point where id = 1;`).Check(testkit.Rows(
-		`1 1 a`,
-	))
-	rows := tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	require.Len(t, rows, 1)
-	explain := fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*num_rpc.*", explain)
-	tk.MustExec("unlock tables")
-
-	tk.MustExec("update point set c = 3 where id = 1")
-	tk.MustExec("lock tables point write")
-	tk.MustQuery(`select * from point where id = 1;`).Check(testkit.Rows(
-		`1 3 a`,
-	))
-	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	require.Len(t, rows, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*num_rpc.*", explain)
-	tk.MustExec("unlock tables")
 }
 
 func TestPointGetLockExistKey(t *testing.T) {
@@ -428,4 +374,41 @@ func TestWithTiDBSnapshot(t *testing.T) {
 	tk.MustQuery("select * from xx where id = 8").Check(testkit.Rows())
 
 	tk.MustQuery("select * from xx").Check(testkit.Rows("1", "7"))
+}
+
+func TestGlobalIndexPointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
+
+	tk.MustExec(`CREATE TABLE t ( a int, b int, c int default 0)
+						PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20),
+		PARTITION p2 VALUES LESS THAN (30),
+		PARTITION p3 VALUES LESS THAN (40))`)
+	tk.MustExec("INSERT INTO t(a, b) values(1, 1), (2, 2), (3, 3), (15, 15), (25, 25), (35, 35)")
+	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
+	tk.MustExec("analyze table t")
+
+	tk.MustQuery("select * from t use index(idx) where b in (15, 25, 35)").Sort().Check(testkit.Rows("15 15 0", "25 25 0", "35 35 0"))
+	tk.MustQuery("explain select * from t use index(idx) where b in (15, 25, 35)").Check(
+		testkit.Rows("Batch_Point_Get_1 3.00 root table:t, index:idx(b) keep order:false, desc:false"))
+
+	tk.MustQuery("select * from t use index(idx) where b in (select b from t use index(idx) where b>10)").Sort().Check(testkit.Rows("15 15 0", "25 25 0", "35 35 0"))
+
+	tk.MustQuery("select * from t use index(idx) where b = 15").Check(testkit.Rows("15 15 0"))
+	tk.MustQuery("explain select * from t use index(idx) where b = 15").Check(
+		testkit.Rows("Point_Get_1 1.00 root table:t, index:idx(b) "))
+
+	tk.MustQuery("select * from t use index(idx) where b in (select b from t use index(idx) where b > 10)").Sort().Check(
+		testkit.Rows("15 15 0", "25 25 0", "35 35 0"))
+
+	tk.MustQuery("explain format='brief' select * from t partition(p1) use index(idx) where b = 3").Check(testkit.Rows("Point_Get 1.00 root table:t, index:idx(b) "))
+	tk.MustQuery("select * from t partition(p1) use index(idx) where b = 3").Check(testkit.Rows())
+	tk.MustQuery("select * from t partition(p1) use index(idx) where b in (15, 25, 35)").Check(testkit.Rows("15 15 0"))
 }

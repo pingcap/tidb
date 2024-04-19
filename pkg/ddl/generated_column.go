@@ -252,7 +252,7 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName model.CIStr,
 
 	if newCol.IsGenerated() {
 		// rule 3.
-		if err := checkIllegalFn4Generated(newCol.Name.L, typeColumn, newCol.GeneratedExpr); err != nil {
+		if err := checkIllegalFn4Generated(newCol.Name.L, typeColumn, newCol.GeneratedExpr.Internal()); err != nil {
 			return errors.Trace(err)
 		}
 
@@ -289,6 +289,11 @@ type illegalFunctionChecker struct {
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
 	switch node := inNode.(type) {
 	case *ast.FuncCallExpr:
+		// Grouping function is not allowed, issue #49909.
+		if node.FnName.L == ast.Grouping {
+			c.hasAggFunc = true
+			return inNode, true
+		}
 		// Blocked functions & non-builtin functions is not allowed
 		_, isFunctionBlocked := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]
 		if isFunctionBlocked || !expression.IsFunctionSupported(node.FnName.L) {

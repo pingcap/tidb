@@ -44,7 +44,7 @@ type RecordData struct {
 	Values []types.Datum
 }
 
-func getCount(exec sqlexec.RestrictedSQLExecutor, snapshot uint64, sql string, args ...interface{}) (int64, error) {
+func getCount(exec sqlexec.RestrictedSQLExecutor, snapshot uint64, sql string, args ...any) (int64, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnAdmin)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(snapshot)}, sql, args...)
 	if err != nil {
@@ -70,9 +70,10 @@ const (
 // otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Here we need check all indexes, includes invisible index
+	originOptUseInvisibleIdx := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
 	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	defer func() {
-		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = false
+		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
 	}()
 
 	var snapshot uint64
@@ -88,7 +89,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	}
 
 	// Add `` for some names like `table name`.
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := ctx.GetRestrictedSQLExecutor()
 	tblCnt, err := getCount(exec, snapshot, "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
@@ -139,7 +140,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 				if matchingIdx == nil {
 					return nil
 				}
-				k, _, err := matchingIdx.GenIndexKey(sessCtx.GetSessionVars().StmtCtx, idxRow.Values, idxRow.Handle, nil)
+				k, _, err := matchingIdx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow.Values, idxRow.Handle, nil)
 				if err != nil {
 					return nil
 				}
@@ -160,14 +161,14 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
 				}
 				// NULL value is regarded as its default value.
-				colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
+				colDefVal, err := table.GetColOriginDefaultValue(sessCtx.GetExprCtx(), col.ToInfo())
 				if err != nil {
 					return false, errors.Trace(err)
 				}
 				vals1[i] = colDefVal
 			}
 		}
-		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
+		isExist, h2, err := idx.Exist(sc.ErrCtx(), sc.TimeZone(), txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &consistency.RecordData{Handle: h1, Values: vals1}
 			record2 := &consistency.RecordData{Handle: h2, Values: vals1}
@@ -193,7 +194,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 
 func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder, error) {
 	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
-	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Cols(), t.Meta())
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx.GetExprCtx(), dbName, t.Meta().Name, t.Meta().Cols(), t.Meta())
 	if err != nil {
 		return nil, err
 	}

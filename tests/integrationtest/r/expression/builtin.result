@@ -1430,7 +1430,7 @@ select char(97, null, 100, 256, 89 using ascii);
 char(97, null, 100, 256, 89 using ascii)
 ad Y
 select char(97, null, 100, 256, 89 using tidb);
-[parser:1115]Unknown character set: 'tidb'
+Error 1115 (42000): Unknown character set: 'tidb'
 drop table if exists t;
 CREATE TABLE t (c1 date, c2 datetime, c3 timestamp, c4 time, c5 year);
 INSERT INTO t values ('2000-01-01', '2000-01-01 12:12:12', '2000-01-01 12:12:12', '12:12:12', '2000');
@@ -2037,7 +2037,7 @@ select convert("123" using "binary"), convert("中文" using "binary"), convert(
 convert("123" using "binary")	convert("中文" using "binary")	convert("中文" using "utf8")	convert("中文" using "utf8mb4")	convert(cast("中文" as binary) using "utf8")
 123	中文	中文	中文	中文
 select convert("123" using "866");
-[parser:1115]Unknown character set: '866'
+Error 1115 (42000): Unknown character set: '866'
 select hex(insert("中文", 1, 1, cast("aaa" as binary))), hex(insert("ba", -1, 1, "aaa")), hex(insert("ba", 1, 100, "aaa")), hex(insert("ba", 100, 1, "aaa"));
 hex(insert("中文", 1, 1, cast("aaa" as binary)))	hex(insert("ba", -1, 1, "aaa"))	hex(insert("ba", 1, 100, "aaa"))	hex(insert("ba", 100, 1, "aaa"))
 616161B8ADE69687	6261	616161	6261
@@ -3287,3 +3287,49 @@ RELEASE_LOCK('test_lock3')
 SELECT RELEASE_ALL_LOCKS();
 RELEASE_ALL_LOCKS()
 0
+drop table if exists t;
+create table t (col bit(37) NOT NULL);
+insert into t (col) values(x'05d3a46d88'), (x'04dba3570c'), (x'0ed284dfee'), (x'12657141bf');
+select hex(col), hex(reverse(col)) from t order by reverse(col);
+hex(col)	hex(reverse(col))
+4DBA3570C	0C57A3DB04
+5D3A46D88	886DA4D305
+12657141BF	BF41716512
+ED284DFEE	EEDF84D20E
+drop table if exists t2;
+create table t2 (col bit(45) NOT NULL);
+insert into t2 (col) values (x'09a1441d083c');
+select hex(r) from (select REVERSE(col) as r from t2 group by REVERSE(col)) as t;
+hex(r)
+3C081D44A109
+select hex(r) from (select distinct REVERSE(col) as r from t2) as t;
+hex(r)
+3C081D44A109
+drop table if exists t3;
+create table t3 (col1 double NOT NULL, col2 bit(8) NOT NULL);
+insert into t3 (col1, col2) values (2306.9705216860984, x'31'), (6779.239615471537, x'65'), (7601.530447792593, x'd5'), (7058.842877388801, x'a5'), (615.6011553350702, x'34'), (5613.036187642952, x'01'), (7047.649466854864, x'a6'), (8632.659024782468, x'5d'), (9546.629394674586, x'ff'), (2972.7118048537704, x'b1');
+select hex(r) as r0 from (select ELT(2, col1, col2) as r from t3 group by ELT(2, col1, col2)) as t order by r0;
+r0
+01
+31
+34
+5D
+65
+A5
+A6
+B1
+D5
+FF
+select hex(r) as r0 from (select distinct ELT(2, col1, col2) as r from t3) as t order by r0;
+r0
+01
+31
+34
+5D
+65
+A5
+A6
+B1
+D5
+FF
+drop table t, t2, t3;

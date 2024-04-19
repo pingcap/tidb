@@ -137,9 +137,7 @@ create table t (a blob(10000), b timestamp, index idx(a(3069), b));
 Error 1071 (42000): Specified key was too long (3073 bytes); max key length is 3072 bytes
 create table t (a blob(10000), b timestamp, index idx(a(3068), b));
 drop table if exists t;
-drop table if exists t1;
- create table t1(id int );
- insert into t1 values (1);
+drop table if exists t1; create table t1(id int ); insert into t1 values (1);
 select * from t1;
 id
 1
@@ -306,44 +304,3 @@ count(ORDINAL_POSITION)
 SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4';
 CHARACTER_SET_NAME
 utf8mb4
-drop table if exists t;
-set global tidb_txn_mode='';
-set session tidb_txn_mode='';
-create table t (i int auto_increment not null key);
-insert into t values (1);
-set @@tidb_disable_txn_auto_retry = 0;
-begin;
-insert into t values (10);
-update t set i = i + row_count();
-select * from t;
-i
-2
-11
-update t set i = 0 where i = 1;
-select * from t;
-i
-0
-commit;
-select * from t;
-i
-1
-11
-delete from t where i = 11;
-begin;
-insert into t values ();
-update t set i = i + last_insert_id() + 1;
-select * from t;
-i
-14
-25
-update t set i = 0 where i = 1;
-select * from t;
-i
-0
-commit;
-select * from t;
-i
-13
-25
-set tidb_txn_mode=default;
-set global tidb_txn_mode=default;

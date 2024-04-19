@@ -47,6 +47,7 @@ func TestMain(m *testing.M) {
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -105,10 +106,9 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 	}
 	sc := stmtctx.NewStmtCtx()
 
-	var err error
-	s.samples, err = SortSampleItems(sc, samples)
+	err := sortSampleItems(sc, samples)
 	require.NoError(t, err)
-
+	s.samples = samples
 	rc := &recordSet{
 		data:   make([]types.Datum, s.count),
 		count:  s.count,

@@ -15,6 +15,8 @@
 package privilege
 
 import (
+	"fmt"
+
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
@@ -127,8 +129,13 @@ func BindPrivilegeManager(ctx sessionctx.Context, pc Manager) {
 	ctx.SetValue(key, pc)
 }
 
+type privilegeManagerKeyProvider interface {
+	// Value returns the value associated with this context for key.
+	Value(key fmt.Stringer) any
+}
+
 // GetPrivilegeManager gets Checker from context.
-func GetPrivilegeManager(ctx sessionctx.Context) Manager {
+func GetPrivilegeManager(ctx privilegeManagerKeyProvider) Manager {
 	if v, ok := ctx.Value(key).(Manager); ok {
 		return v
 	}

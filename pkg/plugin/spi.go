@@ -57,7 +57,7 @@ type Manifest struct {
 
 // ExportManifest exports a manifest to TiDB as a known format.
 // it just casts sub-manifest to manifest.
-func ExportManifest(m interface{}) *Manifest {
+func ExportManifest(m any) *Manifest {
 	v := reflect.ValueOf(m)
 	return (*Manifest)(unsafe.Pointer(v.Pointer()))
 }

@@ -26,7 +26,7 @@ import (
 )
 
 func TestQueryWatch(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a int)")
@@ -35,14 +35,19 @@ func TestQueryWatch(t *testing.T) {
 	tk.MustExec("insert into t2 values(1)")
 	tk.MustExec("create table t3(a int)")
 	tk.MustExec("insert into t3 values(1)")
-	_, err := tk.Exec("query watch add sql text exact to 'select * from test.t1'")
+
+	require.Eventually(t, func() bool {
+		return dom.RunawayManager().IsSyncerInitialized()
+	}, 20*time.Second, 300*time.Millisecond)
+
+	err := tk.QueryToErr("query watch add sql text exact to 'select * from test.t1'")
 	require.ErrorContains(t, err, "must set runaway config for resource group `default`")
-	_, err = tk.Exec("query watch add resource group rg2 action DRYRUN sql text exact to 'select * from test.t1'")
+	err = tk.QueryToErr("query watch add resource group rg2 action DRYRUN sql text exact to 'select * from test.t1'")
 	require.ErrorContains(t, err, "the group rg2 does not exist")
 
 	tk.MustExec("alter resource group default QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=DRYRUN)")
-	tk.MustExec("query watch add sql text exact to 'select * from test.t1'")
-	tk.MustExec("QUERY WATCH ADD ACTION COOLDOWN SQL TEXT EXACT TO 'select * from test.t2'")
+	tk.MustQuery("query watch add sql text exact to 'select * from test.t1'").Check(testkit.Rows("1"))
+	tk.MustQuery("QUERY WATCH ADD ACTION COOLDOWN SQL TEXT EXACT TO 'select * from test.t2'").Check(testkit.Rows("2"))
 	tryInterval := time.Millisecond * 200
 	maxWaitDuration := time.Second * 5
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, watch_text, action, watch from mysql.tidb_runaway_watch", nil,
@@ -50,13 +55,13 @@ func TestQueryWatch(t *testing.T) {
 
 	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
 
-	tk.MustExec("query watch add resource group rg1 sql text exact to 'select * from test.t1'")
-	tk.MustExec("query watch add resource group rg1 sql text similar to 'select * from test.t2'")
+	tk.MustQuery("query watch add resource group rg1 sql text exact to 'select * from test.t1'").Check(testkit.Rows("3"))
+	tk.MustQuery("query watch add resource group rg1 sql text similar to 'select * from test.t2'").Check(testkit.Rows("4"))
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	tk.MustExecWithContext(ctx, "query watch add resource group rg1 sql text plan to 'select * from test.t3'")
+	tk.MustQueryWithContext(ctx, "query watch add resource group rg1 sql text plan to 'select * from test.t3'").Check(testkit.Rows("5"))
 
-	tk.MustExec("query watch add action KILL SQL DIGEST '4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0'")
-	tk.MustExec("query watch add action KILL PLAN DIGEST 'd08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57'")
+	tk.MustQuery("query watch add action KILL SQL DIGEST '4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0'").Check(testkit.Rows("6"))
+	tk.MustQuery("query watch add action KILL PLAN DIGEST 'd08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57'").Check(testkit.Rows("7"))
 
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, watch_text, action, watch from mysql.tidb_runaway_watch order by id", nil,
 		testkit.Rows("default select * from test.t1 1 1",
@@ -67,7 +72,7 @@ func TestQueryWatch(t *testing.T) {
 			"default 4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0 3 2",
 			"default d08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57 3 3",
 		), maxWaitDuration, tryInterval)
-	tk.MustExec("query watch add action COOLDOWN sql text similar to 'select * from test.t1'")
+	tk.MustQuery("query watch add action COOLDOWN sql text similar to 'select * from test.t1'").Check(testkit.Rows("8"))
 
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, watch_text, action, watch from mysql.tidb_runaway_watch order by id", nil,
 		testkit.Rows("default select * from test.t1 1 1",

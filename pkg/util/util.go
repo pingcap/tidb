@@ -34,8 +34,8 @@ import (
 
 // SliceToMap converts slice to map
 // nolint:unused
-func SliceToMap(slice []string) map[string]interface{} {
-	sMap := make(map[string]interface{})
+func SliceToMap(slice []string) map[string]any {
+	sMap := make(map[string]any)
 	for _, str := range slice {
 		sMap[str] = struct{}{}
 	}
@@ -43,8 +43,8 @@ func SliceToMap(slice []string) map[string]interface{} {
 }
 
 // StringsToInterfaces converts string slice to interface slice
-func StringsToInterfaces(strs []string) []interface{} {
-	is := make([]interface{}, 0, len(strs))
+func StringsToInterfaces(strs []string) []any {
+	is := make([]any, 0, len(strs))
 	for _, str := range strs {
 		is = append(is, str)
 	}
@@ -66,7 +66,7 @@ func StringsToInterfaces(strs []string) []interface{} {
 //	fmt.Println(resp.IP)
 //
 // nolint:unused
-func GetJSON(client *http.Client, url string, v interface{}) error {
+func GetJSON(client *http.Client, url string, v any) error {
 	resp, err := client.Get(url)
 	if err != nil {
 		return errors.Trace(err)
@@ -170,15 +170,14 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	var sql string
 	if len(info.Info) > 0 {
 		sql = info.Info
-		if info.RedactSQL {
-			sql = parser.Normalize(sql)
-		}
+		sql = parser.Normalize(sql, info.RedactSQL)
 	}
 	if len(sql) > logSQLLen && needTruncateSQL {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
 	logFields = append(logFields, zap.String("sql", sql))
 	logFields = append(logFields, zap.String("session_alias", info.SessionAlias))
+	logFields = append(logFields, zap.Uint64("affected rows", info.StmtCtx.AffectedRows()))
 	return logFields
 }
 
@@ -298,9 +297,11 @@ func IsInCorrectIdentifierName(name string) bool {
 }
 
 // GetRecoverError gets the error from recover.
-func GetRecoverError(r interface{}) error {
+func GetRecoverError(r any) error {
 	if err, ok := r.(error); ok {
-		return err
+		// Runtime panic also implements error interface.
+		// So do not forget to add stack info for it.
+		return errors.Trace(err)
 	}
 	return errors.Errorf("%v", r)
 }

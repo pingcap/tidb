@@ -24,7 +24,7 @@ import (
 )
 
 func newUnistore(opts *mockOptions) (kv.Storage, error) {
-	client, pdClient, cluster, err := unistore.New(opts.path)
+	client, pdClient, cluster, err := unistore.New(opts.path, opts.pdAddrs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -33,7 +33,10 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 		Client: pdClient,
 	}
 
-	kvstore, err := tikv.NewTestTiKVStore(newClientRedirector(client), pdClient, opts.clientHijacker, opts.pdClientHijacker, opts.txnLocalLatches)
+	kvstore, err := tikv.NewTestTiKVStore(
+		newClientRedirector(client), pdClient,
+		opts.clientHijacker, opts.pdClientHijacker,
+		opts.txnLocalLatches, opts.tikvOptions...)
 	if err != nil {
 		return nil, err
 	}

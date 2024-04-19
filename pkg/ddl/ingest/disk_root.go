@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	lcom "github.com/pingcap/tidb/br/pkg/lightning/common"
+	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -130,7 +130,10 @@ func (d *diskRootImpl) PreCheckUsage() error {
 	}
 	if RiskOfDiskFull(sz.Available, sz.Capacity) {
 		sortPath := ConfigSortPath()
-		msg := fmt.Sprintf("sort path: %s, %s, please clean up the disk and retry", sortPath, d.UsageInfo())
+		logutil.BgLogger().Warn("available disk space is less than 10%, cannot use ingest mode",
+			zap.String("sort path", sortPath),
+			zap.String("usage", d.usageInfo()))
+		msg := fmt.Sprintf("no enough space in %s", sortPath)
 		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(msg)
 	}
 	return nil

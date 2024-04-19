@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
-func genCastIntAsInt() (*builtinCastIntAsIntSig, *chunk.Chunk, *chunk.Column) {
+func genCastIntAsInt(ctx BuildContext) (*builtinCastIntAsIntSig, *chunk.Chunk, *chunk.Column) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}
-	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, types.NewFieldType(mysql.TypeLonglong))
+	baseFunc, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeLonglong))
 	if err != nil {
 		panic(err)
 	}
@@ -41,12 +41,13 @@ func genCastIntAsInt() (*builtinCastIntAsIntSig, *chunk.Chunk, *chunk.Column) {
 }
 
 func BenchmarkCastIntAsIntRow(b *testing.B) {
-	cast, input, _ := genCastIntAsInt()
+	ctx := mock.NewContext()
+	cast, input, _ := genCastIntAsInt(ctx)
 	it := chunk.NewIterator4Chunk(input)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			if _, _, err := cast.evalInt(row); err != nil {
+			if _, _, err := cast.evalInt(ctx, row); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -54,10 +55,11 @@ func BenchmarkCastIntAsIntRow(b *testing.B) {
 }
 
 func BenchmarkCastIntAsIntVec(b *testing.B) {
-	cast, input, result := genCastIntAsInt()
+	ctx := mock.NewContext()
+	cast, input, result := genCastIntAsInt(ctx)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := cast.vecEvalInt(input, result); err != nil {
+		if err := cast.vecEvalInt(ctx, input, result); err != nil {
 			b.Fatal(err)
 		}
 	}

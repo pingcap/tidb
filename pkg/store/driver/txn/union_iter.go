@@ -119,18 +119,17 @@ func (iter *UnionIter) updateCur() error {
 				// record from snapshot comes first
 				iter.curIsDirty = false
 				break
-			} else {
-				// record from dirty comes first
-				if len(iter.dirtyIt.Value()) == 0 {
-					// jump over this deletion
-					if err := iter.dirtyNext(); err != nil {
-						return err
-					}
-					continue
-				}
-				iter.curIsDirty = true
-				break
 			}
+			// record from dirty comes first
+			if len(iter.dirtyIt.Value()) == 0 {
+				// jump over this deletion
+				if err := iter.dirtyNext(); err != nil {
+					return err
+				}
+				continue
+			}
+			iter.curIsDirty = true
+			break
 		}
 	}
 	return nil

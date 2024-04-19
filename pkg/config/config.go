@@ -231,7 +231,7 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// SkipRegisterToDashboard tells TiDB don't register itself to the dashboard.
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
-	// EnableTelemetry enables the usage data report to PingCAP.
+	// EnableTelemetry enables the usage data report to PingCAP. Deprecated: Telemetry has been removed.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 	// Labels indicates the labels set for the tidb server. The labels describe some specific properties for the tidb
 	// server like `zone`/`rack`/`host`. Currently, labels won't affect the tidb server except for some special
@@ -241,8 +241,10 @@ type Config struct {
 	// 2. 'zone' is a special key that indicates the DC location of this tidb-server. If it is set, the value for this
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
-	// EnableGlobalIndex enables creating global index.
+
+	// EnableGlobalIndex is deprecated.
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
+
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
 	// EnableEnumLengthLimit indicates whether the enum/set element length is limited.
@@ -410,7 +412,7 @@ func (b nullableBool) MarshalText() ([]byte, error) {
 
 func (b *nullableBool) UnmarshalJSON(data []byte) error {
 	var err error
-	var v interface{}
+	var v any
 	if err = json.Unmarshal(data, &v); err != nil {
 		return err
 	}
@@ -487,6 +489,8 @@ type Log struct {
 	SlowQueryFile string `toml:"slow-query-file" json:"slow-query-file"`
 	// ExpensiveThreshold is deprecated.
 	ExpensiveThreshold uint `toml:"expensive-threshold" json:"expensive-threshold"`
+
+	GeneralLogFile string `toml:"general-log-file" json:"general-log-file"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -692,9 +696,10 @@ type Status struct {
 type Performance struct {
 	MaxProcs uint `toml:"max-procs" json:"max-procs"`
 	// Deprecated: use ServerMemoryQuota instead
-	MaxMemory           uint64  `toml:"max-memory" json:"max-memory"`
-	ServerMemoryQuota   uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
-	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
+	MaxMemory         uint64 `toml:"max-memory" json:"max-memory"`
+	ServerMemoryQuota uint64 `toml:"server-memory-quota" json:"server-memory-quota"`
+	StatsLease        string `toml:"stats-lease" json:"stats-lease"`
+	// Deprecated: transaction auto retry is deprecated.
 	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
@@ -710,6 +715,7 @@ type Performance struct {
 	// Deprecated
 	MemProfileInterval string `toml:"-" json:"-"`
 
+	// Deprecated: this config will not have any effect
 	IndexUsageSyncLease               string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
 	PlanReplayerGCLease               string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                              int    `toml:"gogc" json:"gogc"`
@@ -732,12 +738,20 @@ type Performance struct {
 
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
 
+	// LiteInitStats indicates whether to use the lite version of stats.
+	// 1. Basic stats meta data is loaded.(count, modify count, etc.)
+	// 2. Column/index stats are loaded. (only histogram)
+	// 3. TopN, Bucket, FMSketch are not loaded.
+	// The lite version of stats is enabled by default.
 	LiteInitStats bool `toml:"lite-init-stats" json:"lite-init-stats"`
 
 	// If ForceInitStats is true, when tidb starts up, it doesn't provide service until init stats is finished.
 	// If ForceInitStats is false, tidb can provide service before init stats is finished. Note that during the period
 	// of init stats the optimizer may make bad decisions due to pseudo stats.
 	ForceInitStats bool `toml:"force-init-stats" json:"force-init-stats"`
+
+	// ConcurrentlyInitStats indicates whether to use concurrency to init stats.
+	ConcurrentlyInitStats bool `toml:"concurrently-init-stats" json:"concurrently-init-stats"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -976,25 +990,23 @@ var defaultConf = Config{
 		GRPCMaxSendMsgSize:    math.MaxInt32,
 	},
 	Performance: Performance{
-		MaxMemory:             0,
-		ServerMemoryQuota:     0,
-		MemoryUsageAlarmRatio: DefMemoryUsageAlarmRatio,
-		TCPKeepAlive:          true,
-		TCPNoDelay:            true,
-		CrossJoin:             true,
-		StatsLease:            "3s",
-		StmtCountLimit:        5000,
-		PseudoEstimateRatio:   0.8,
-		ForcePriority:         "NO_PRIORITY",
-		BindInfoLease:         "3s",
-		TxnEntrySizeLimit:     DefTxnEntrySizeLimit,
-		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
-		DistinctAggPushDown:   false,
-		ProjectionPushDown:    false,
-		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
-		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
-		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease:               "0s",
+		MaxMemory:                         0,
+		ServerMemoryQuota:                 0,
+		MemoryUsageAlarmRatio:             DefMemoryUsageAlarmRatio,
+		TCPKeepAlive:                      true,
+		TCPNoDelay:                        true,
+		CrossJoin:                         true,
+		StatsLease:                        "3s",
+		StmtCountLimit:                    5000,
+		PseudoEstimateRatio:               0.8,
+		ForcePriority:                     "NO_PRIORITY",
+		BindInfoLease:                     "3s",
+		TxnEntrySizeLimit:                 DefTxnEntrySizeLimit,
+		TxnTotalSizeLimit:                 DefTxnTotalSizeLimit,
+		DistinctAggPushDown:               false,
+		ProjectionPushDown:                false,
+		CommitterConcurrency:              defTiKVCfg.CommitterConcurrency,
+		MaxTxnTTL:                         defTiKVCfg.MaxTxnTTL, // 1hour
 		GOGC:                              100,
 		EnforceMPP:                        false,
 		PlanReplayerGCLease:               "10m",
@@ -1007,6 +1019,7 @@ var defaultConf = Config{
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
+		ConcurrentlyInitStats:             true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -1076,7 +1089,7 @@ var defaultConf = Config{
 }
 
 var (
-	globalConf atomic.Value
+	globalConf atomic.Pointer[Config]
 )
 
 // NewConfig creates a new config instance with default value.
@@ -1089,7 +1102,7 @@ func NewConfig() *Config {
 // It should store configuration from command line and configuration file.
 // Other parts of the system can read the global configuration use this function.
 func GetGlobalConfig() *Config {
-	return globalConf.Load().(*Config)
+	return globalConf.Load()
 }
 
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
@@ -1154,6 +1167,7 @@ var removedConfig = map[string]struct{}{
 	"max-server-connections":                 {}, // use sysvar max_connections
 	"run-ddl":                                {}, // use sysvar tidb_enable_ddl
 	"instance.tidb_memory_usage_alarm_ratio": {}, // use sysvar tidb_memory_usage_alarm_ratio
+	"enable-global-index":                    {}, // use sysvar tidb_enable_global_index
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate
@@ -1256,13 +1270,16 @@ func (c *Config) RemovedVariableCheck(confFile string) error {
 // Load loads config options from a toml file.
 func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
+	if err != nil {
+		return err
+	}
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
 	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
 	undecoded := metaData.Undecoded()
-	if len(undecoded) > 0 && err == nil {
+	if len(undecoded) > 0 {
 		var undecodedItems []string
 		for _, item := range undecoded {
 			undecodedItems = append(undecodedItems, item.String())
@@ -1433,7 +1450,7 @@ var TableLockDelayClean = func() uint64 {
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.getDisableTimestamp(),
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.GeneralLogFile, l.File, l.getDisableTimestamp(),
 		func(config *zaplog.Config) { config.DisableErrorVerbose = l.getDisableErrorStack() },
 		func(config *zaplog.Config) { config.Timeout = l.Timeout },
 	)
@@ -1465,9 +1482,6 @@ func init() {
 }
 
 func initByLDFlags(edition, checkBeforeDropLDFlag string) {
-	if edition != versioninfo.CommunityEdition {
-		defaultConf.EnableTelemetry = false
-	}
 	conf := defaultConf
 	StoreGlobalConfig(&conf)
 	if checkBeforeDropLDFlag == "1" {
@@ -1489,7 +1503,7 @@ func GetJSONConfig() (string, error) {
 		return "", err
 	}
 
-	jsonValue := make(map[string]interface{})
+	jsonValue := make(map[string]any)
 	err = json.Unmarshal(j, &jsonValue)
 	if err != nil {
 		return "", err
@@ -1511,7 +1525,7 @@ func GetJSONConfig() (string, error) {
 			if curValue[key] == nil {
 				break
 			}
-			mapValue, ok := curValue[key].(map[string]interface{})
+			mapValue, ok := curValue[key].(map[string]any)
 			if !ok {
 				break
 			}

@@ -349,9 +349,9 @@ create database list_partition_temp_table;
 use list_partition_temp_table;
 drop table if exists tlist;
 set tidb_enable_list_partition = 1;
---error 1526
+--error 1562
 create global temporary table t(a int, b int) partition by list(a) (partition p0 values in (0)) on commit delete rows;
---error 1526
+--error 1562
 create global temporary table t(a int, b int) partition by list columns (a) (partition p0 values in (0)) on commit delete rows;
 
 
@@ -565,7 +565,7 @@ drop table t1;
 # TestRangeColumnsMultiColumn
 create database RangeColumnsMulti;
 use RangeColumnsMulti;
--- error 1064
+-- error 1566
 create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p0 values less than (NULL,NULL,NULL));
 -- error 1654
 create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p1 values less than (-2147483649,'0000-00-00',""));
@@ -817,6 +817,7 @@ explain format=brief select * from t1 where a = 'a' AND c = 'd';
 select * from t1 where a = 'a' AND c = 'd';
 drop table t1;
 
+
 # TestPartitionProcessorWithUninitializedTable
 drop table if exists q1, q2;
 create table q1(a int, b int, key (a)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20));
@@ -826,6 +827,7 @@ analyze table q1;
 explain format=brief select * from q1,q2;
 analyze table q2;
 explain format=brief select * from q1,q2;
+
 
 # TestIssue42323
 create database issue42323;
@@ -841,4 +843,29 @@ select * from t where col1 = 202303;
 select * from t where col1 = floor(202303);
 drop database issue42323;
 
+
+# TestListPartitionPrivilege
+drop database if exists list_partition_pri;
+create database list_partition_pri;
+use list_partition_pri;
+set tidb_enable_list_partition = 1;
+create table tlist (a int) partition by list (a) (partition p0 values in (0), partition p1 values in (1));
+drop user if exists 'priv_test'@'%';
+create user 'priv_test'@'%';
+grant select on list_partition_pri.tlist to 'priv_test';
+
+connect (conn1, localhost, priv_test,,);
+use list_partition_pri;
+--error 1142
+alter table tlist truncate partition p0;
+--error 1142
+alter table tlist drop partition p0;
+--error 1142
+alter table tlist add partition (partition p2 values in (2));
+--error 1142
+insert into tlist values (1);
+disconnect conn1;
+
+use planner__core__integration_partition;
+set tidb_enable_list_partition = DEFAULT;
 

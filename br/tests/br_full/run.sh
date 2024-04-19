@@ -53,7 +53,7 @@ test_log="${TEST_DIR}/${DB}_test.log"
 error_str="not read from or written to within the timeout period"
 unset BR_LOG_TO_TERM
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/backup-storage-error=1*return(\"connection refused\")->1*return(\"InternalError\");github.com/pingcap/tidb/br/pkg/backup/backup-timeout-error=1*return(\"<Code>RequestTimeout</Code>\")->1*return(\"not read from or written to within the timeout period\")->1*return(\"<Code>InvalidPart</Code>\")"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/backup-storage-error=1*return(\"connection refused\")->1*return(\"InternalError\");github.com/pingcap/tidb/br/pkg/backup/backup-timeout-error=1*return(\"<Code>RequestTimeout</Code>\")->1*return(\"not read from or written to within the timeout period\")->1*return(\"<Code>InvalidPart</Code>\")->1*return(\"end of file before message length reached\")->1*return(\"timeout after\")"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB-lz4" --concurrency 4 --compression lz4 --log-file $test_log
 export GO_FAILPOINTS=""
 size_lz4=$(du -d 0 $TEST_DIR/$DB-lz4 | awk '{print $1}')
@@ -100,6 +100,37 @@ for ct in limit lz4 zstd; do
 
   if $fail; then
       echo "TEST: [$TEST_NAME] failed!"
+      exit 1
+  fi
+done
+
+for granularity in "fine-grained" "coarse-grained"; do
+  for i in $(seq $DB_COUNT); do
+      run_sql "DROP DATABASE $DB${i};"
+  done
+
+  # restore full
+  echo "restore with $ct backup start..."
+  export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/restore-storage-error=1*return(\"connection refused\");github.com/pingcap/tidb/br/pkg/restore/restore-gRPC-error=1*return(true)"
+  export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/br/pkg/restore/no-leader-error=3*return(true)"
+  run_br restore full -s "local://$TEST_DIR/$DB-$ct" --pd $PD_ADDR --ratelimit 1024 --granularity=$granularity
+  export GO_FAILPOINTS=""
+
+  for i in $(seq $DB_COUNT); do
+      row_count_new[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
+  done
+
+  fail=false
+  for i in $(seq $DB_COUNT); do
+      if [ "${row_count_ori[i]}" != "${row_count_new[i]}" ];then
+          fail=true
+          echo "TEST: [$TEST_NAME] fail on database $DB${i}"
+      fi
+      echo "database $DB${i} [original] row count: ${row_count_ori[i]}, [after br] row count: ${row_count_new[i]}"
+  done
+
+  if $fail; then
+      echo "TEST: [$TEST_NAME] [$granularity] failed!"
       exit 1
   fi
 done

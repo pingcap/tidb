@@ -4,7 +4,6 @@ package backup
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/opentracing/opentracing-go"
@@ -16,9 +15,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 )
 
@@ -73,6 +72,7 @@ func (push *pushDown) pushBackup(
 	})
 
 	wg := new(sync.WaitGroup)
+	errContext := utils.NewErrorContext("pushBackup", 10)
 	for _, s := range stores {
 		store := s
 		storeID := s.GetId()
@@ -183,43 +183,22 @@ func (push *pushDown) pushBackup(
 				progressCallBack(RegionUnit)
 			} else {
 				errPb := resp.GetError()
-				switch v := errPb.Detail.(type) {
-				case *backuppb.Error_KvError:
-					logutil.CL(ctx).Warn("backup occur kv error", zap.Reflect("error", v))
-
-				case *backuppb.Error_RegionError:
-					logutil.CL(ctx).Warn("backup occur region error", zap.Reflect("error", v))
-
-				case *backuppb.Error_ClusterIdError:
-					logutil.CL(ctx).Error("backup occur cluster ID error", zap.Reflect("error", v))
-					return errors.Annotatef(berrors.ErrKVClusterIDMismatch, "%v", errPb)
-				default:
-					if utils.MessageIsRetryableStorageError(errPb.GetMsg()) {
-						logutil.CL(ctx).Warn("backup occur storage error", zap.String("error", errPb.GetMsg()))
-						continue
-					}
-					var errMsg string
-					if utils.MessageIsNotFoundStorageError(errPb.GetMsg()) {
-						errMsg = fmt.Sprintf("File or directory not found on TiKV Node (store id: %v; Address: %s). "+
-							"work around:please ensure br and tikv nodes share a same storage and the user of br and tikv has same uid.",
-							store.GetId(), redact.String(store.GetAddress()))
-						logutil.CL(ctx).Error("", zap.String("error", berrors.ErrKVStorage.Error()+": "+errMsg))
-					}
-					if utils.MessageIsPermissionDeniedStorageError(errPb.GetMsg()) {
-						errMsg = fmt.Sprintf("I/O permission denied error occurs on TiKV Node(store id: %v; Address: %s). "+
-							"work around:please ensure tikv has permission to read from & write to the storage.",
-							store.GetId(), redact.String(store.GetAddress()))
-						logutil.CL(ctx).Error("", zap.String("error", berrors.ErrKVStorage.Error()+": "+errMsg))
-					}
-
+				res := errContext.HandleIgnorableError(errPb, store.GetId())
+				switch res.Strategy {
+				case utils.GiveUpStrategy:
+					errMsg := res.Reason
 					if len(errMsg) <= 0 {
 						errMsg = errPb.Msg
 					}
 					return errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v at %s: %s",
 						store.GetId(),
-						redact.String(store.GetAddress()),
+						redact.Value(store.GetAddress()),
 						errMsg,
 					)
+				default:
+					// other type just continue for next response
+					// and finally handle the range in fineGrainedBackup
+					continue
 				}
 			}
 		case err := <-push.errCh:

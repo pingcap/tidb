@@ -1,0 +1,294 @@
+# TestSingleTableRead
+drop table if exists t1, t2;
+create table t1(id int primary key, a int, b int, c int, d int);
+create index t1a on t1(a);
+create index t1b on t1(b);
+insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5);
+select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by id;
+select /*+ use_index_merge(t1, primary, t1a) */ a from t1 where id < 2 or a > 4 order by a;
+select /*+ use_index_merge(t1, primary, t1a) */ sum(a) from t1 where id < 2 or a > 4;
+select /*+ use_index_merge(t1, t1a, t1b) */ * from t1 where a < 2 or b > 4 order by a;
+select /*+ use_index_merge(t1, t1a, t1b) */ a from t1 where a < 2 or b > 4 order by a;
+select /*+ use_index_merge(t1, t1a, t1b) */ sum(a) from t1 where a < 2 or b > 4;
+
+# TestJoin
+drop table if exists t1, t2;
+create table t1(id int primary key, a int, b int, c int, d int);
+create index t1a on t1(a);
+create index t1b on t1(b);
+create table t2(id int primary key, a int);
+create index t2a on t2(a);
+insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5);
+insert into t2 values(1,1),(5,5);
+select /*+ use_index_merge(t1, t1a, t1b) */ sum(t1.a) from t1 join t2 on t1.id = t2.id where t1.a < 2 or t1.b > 4;
+select /*+ use_index_merge(t1, t1a, t1b) */ sum(t1.a) from t1 join t2 on t1.id = t2.id where t1.a < 2 or t1.b > 5;
+
+# TestIndexMergeReaderAndGeneratedColumn
+drop table if exists t0;
+CREATE TABLE t0(c0 INT AS (1), c1 INT PRIMARY KEY);
+INSERT INTO t0(c1) VALUES (0);
+CREATE INDEX i0 ON t0(c0);
+SELECT /*+ USE_INDEX_MERGE(t0, i0, PRIMARY)*/ t0.c0 FROM t0 WHERE t0.c1 OR t0.c0;
+SELECT t0.c0 FROM t0 WHERE t0.c1 OR t0.c0;
+
+# TestIndexMergeReaderIssue25045
+drop table if exists t1;
+create table t1(a int primary key, b int, c int, key(b), key(c));
+INSERT INTO t1 VALUES (10, 10, 10), (11, 11, 11);
+explain format='brief' select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);
+select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);
+
+# TestIssue16910
+drop table if exists t1, t2, t3;
+create table t1 (a int not null, b tinyint not null, index (a), index (b)) partition by range (a) (partition p0 values less than (10),partition p1 values less than (20),partition p2 values less than (30),partition p3 values less than (40),partition p4 values less than MAXVALUE);
+insert into t1 values(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (10, 10), (11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (20, 20), (21, 21), (22, 22), (23, 23), (24, 24), (25, 25), (30, 30), (31, 31), (32, 32), (33, 33), (34, 34), (35, 35), (36, 36), (40, 40), (50, 50), (80, 80), (90, 90), (100, 100);
+create table t2 (a int not null, b bigint not null, index (a), index (b)) partition by hash(a) partitions 10;
+insert into t2 values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (17, 17), (18, 18), (19, 19), (20, 20), (21, 21), (22, 22), (23, 23);
+select /*+ USE_INDEX_MERGE(t1, a, b) */ * from t1 partition (p0) join t2 partition (p1) on t1.a = t2.a where t1.a < 40 or t1.b < 30;
+
+# TestIndexMergeCausePanic
+drop table if exists t;
+set @@tidb_enable_index_merge = 1;
+create table t (a int, b int, c int, primary key(a), key(b));
+explain format='brief' select /*+ inl_join(t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.c = t2.c where t2.a = 1 or t2.b = 1;
+set @@tidb_enable_index_merge = default;
+
+# TestIndexMergeInTransaction
+drop table if exists t1;
+create table t1(c1 int, c2 int, c3 int, pk int, key(c1), key(c2), key(c3), primary key(pk));
+begin;
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;
+explain select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10;
+explain select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where c1 < 10 and c2 < 10 and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < -1 and c2 < 10) and c3 < 10;
+insert into t1 values(1, 1, 1, 1);
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 > 10;
+update t1 set c3 = 100 where c3 = 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 > 10;
+delete from t1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 > 10;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < -1 and c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < 10 and c2 < -1) and c3 < 10;
+insert into t1 values(1, 1, 1, 1);
+select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < 10 and c2 < 10) and c3 < 10;
+update t1 set c3 = 100 where c3 = 1;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < 10 and c2 < 10) and c3 > 10;
+delete from t1;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < 10 and c2 < 10) and c3 > 10;
+commit;
+drop table if exists t1;
+create table t1(c1 int, c2 int, c3 int, pk int, key(c1), key(c2), key(c3), primary key(pk));
+set tx_isolation = 'READ-COMMITTED';
+begin;
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;
+explain select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10;
+explain select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where c1 < 10 and c2 < 10 and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < -1 and c2 < 10) and c3 < 10;
+insert into t1 values(1, 1, 1, 1);
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 > 10;
+update t1 set c3 = 100 where c3 = 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 > 10;
+delete from t1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 > 10;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < -1 and c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < 10 and c2 < -1) and c3 < 10;
+insert into t1 values(1, 1, 1, 1);
+select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < 10 and c2 < 10) and c3 < 10;
+update t1 set c3 = 100 where c3 = 1;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < 10 and c2 < 10) and c3 > 10;
+delete from t1;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;
+select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < 10 and c2 < 10) and c3 > 10;
+commit;
+set tx_isolation = 'REPEATABLE-READ';
+drop table if exists t1;
+create table t1(c1 int, c2 int, c3 int, pk int, key(c1), key(c2), key(c3), primary key(pk));
+begin;
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 for update;
+explain select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10 for update;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 for update;
+insert into t1 values(1, 1, 1, 1);
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 for update;
+update t1 set c3 = 100 where c3 = 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 for update;
+delete from t1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 for update;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10 for update;
+insert into t1 values(1, 1, 1, 1);
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10 for update;
+update t1 set c3 = 100 where c3 = 1;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10 for update;
+delete from t1;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10 for update;
+commit;
+drop table if exists t1;
+create table t1(c1 int, c2 int, c3 int, pk int, part int, key(c1), key(c2), key(c3), primary key(pk, part))
+			partition by range(part) (
+			partition p0 values less than (10),
+			partition p1 values less than (20),
+			partition p2 values less than (maxvalue));
+begin;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 20 or c2 < 20) and c3 < 20;
+insert into t1 values(1, 1, 1, 1, 1);
+insert into t1 values(11, 11, 11, 11, 11);
+insert into t1 values(21, 21, 21, 21, 21);
+insert into t1 values(31, 31, 31, 31, 31);
+--sorted_result
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 20) and c3 < 20;
+--sorted_result
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 20 or c2 < -1) and c3 < 20;
+--sorted_result
+select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 20) and c3 < 20;
+--sorted_result
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 20 or c2 < -1) and c3 < 20;
+update t1 set c3 = 100 where c3 = 1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 20) and c3 < 20;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 20 or c2 < -1) and c3 < 20;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 20) and c3 < 20;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 20 or c2 < -1) and c3 < 20;
+delete from t1;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 20) and c3 < 20;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 20 or c2 < -1) and c3 < 20;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 20) and c3 < 20;
+select /*+ use_index_merge(t1) */ * from t1 where (pk < 20 or c2 < -1) and c3 < 20;
+commit;
+set tx_isolation = default;
+
+# TestIndexMergeReaderInTransIssue30685
+# This is a case generated by sqlgen to test if clustered index is ok.
+# Detect the bugs in memIndexMergeReader.getMemRowsHandle().
+drop table if exists t1;
+create table t1 (col_30 decimal default 0 ,
+				      col_31 char(99) collate utf8_bin default 'sVgzHblmYYtEjVg' not null ,
+				      col_37 int unsigned default 377206828 ,
+				      primary key idx_16 ( col_37 ) , key idx_19 ( col_31) ) collate utf8mb4_general_ci ;
+begin;
+insert ignore into t1 values (388021, '', 416235653);
+select /*+ use_index_merge( t1 ) */ 1 from t1 where ( t1.col_31 in ( 'OiOXzpCs' , 'oaVv' ) or t1.col_37 <= 4059907010 ) and t1.col_30 ;
+commit;
+drop table if exists tbl_3;
+create table tbl_3 ( col_30 decimal , col_31 char(99) , col_32 smallint ,
+				  col_33 tinyint unsigned not null , col_34 char(209) ,
+				  col_35 char(110) , col_36 int unsigned , col_37 int unsigned ,
+				  col_38 decimal(50,15) not null , col_39 char(104),
+				  primary key ( col_37 ) , unique key ( col_33,col_30,col_36,col_39 ) ,
+				  unique key ( col_32,col_35 ) , key ( col_31,col_38 ) ,
+				  key ( col_31,col_33,col_32,col_35,col_36 ) ,
+				  unique key ( col_38,col_34,col_33,col_31,col_30,col_36,col_35,col_37,col_39 ) ,
+				  unique key ( col_39,col_32 ) , unique key ( col_30,col_35,col_31,col_38 ) ,
+				  key ( col_38,col_32,col_33 ) );
+begin;
+insert ignore into tbl_3 values ( 71,'Fipc',-6676,30,'','FgfK',2464927398,4084082400,5602.5868,'' );
+select /*+ use_index_merge( tbl_3 ) */ 1 from tbl_3 where ( tbl_3.col_37 not in ( 1626615245 , 2433569159 ) or tbl_3.col_38 = 0.06 ) ;
+commit;
+drop table if exists t1;
+create table t1(c1 int, c2 int, c3 int, c4 int, primary key(c1, c2) /*T![clustered_index] CLUSTERED */, key(c3));
+begin;
+insert into t1 values(1, 1, 1, 1);
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c3 < 10) and c4 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c3 < 10) and c4 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c3 < -1) and c4 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c3 < -1) and c4 < 10;
+commit;
+drop table if exists t1;
+create table t1(c1 varchar(100), c2 int, c3 int, c4 int, primary key(c1) /*T![clustered_index] CLUSTERED */, key(c3));
+begin;
+insert into t1 values('b', 1, 1, 1);
+explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 'a' or c3 < 10) and c4 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 'a' or c3 < 10) and c4 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 <= 'b' or c3 < -1) and c4 < 10;
+select /*+ use_index_merge(t1) */ * from t1 where (c1 < 'a' or c3 < -1) and c4 < 10;
+commit;
+
+# TestIndexMergeSplitTable
+DROP TABLE IF EXISTS tab2;
+CREATE TABLE tab2(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);
+CREATE INDEX idx_tab2_0 ON tab2 (col0 DESC,col3 DESC);
+CREATE UNIQUE INDEX idx_tab2_3 ON tab2 (col4,col0 DESC);
+CREATE INDEX idx_tab2_4 ON tab2 (col3,col1 DESC);
+INSERT INTO tab2 VALUES(0,146,632.63,'shwwd',703,412.47,'xsppr');
+INSERT INTO tab2 VALUES(1,81,536.29,'trhdh',49,726.3,'chuxv');
+INSERT INTO tab2 VALUES(2,311,541.72,'txrvb',493,581.92,'xtrra');
+INSERT INTO tab2 VALUES(3,669,293.27,'vcyum',862,415.14,'nbutk');
+INSERT INTO tab2 VALUES(4,681,49.46,'odzhp',106,324.65,'deudp');
+INSERT INTO tab2 VALUES(5,319,769.65,'aeqln',855,197.9,'apipa');
+INSERT INTO tab2 VALUES(6,610,302.62,'bixap',184,840.31,'vggit');
+INSERT INTO tab2 VALUES(7,253,453.21,'gjccm',107,104.5,'lvunv');
+SPLIT TABLE tab2 BY (5);
+SELECT /*+ use_index_merge(tab2) */ pk FROM tab2 WHERE (col4 > 565.89 OR col0 > 68 ) and col0 > 10 order by 1;
+
+# TestIndexMergeNoOrderLimitPushed
+drop table if exists t;
+create table t(a int, b int, c int, index idx(a, c), index idx2(b, c));
+insert into t values(1, 1, 1), (2, 2, 2);
+explain format='brief' select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a = 1 or b = 1 limit 1;
+select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a = 1 or b = 1 limit 1;
+
+# TestIndexMergeKeepOrderDirtyRead
+drop table if exists t;
+create table t(a int, b int, c int, index idx1(a, c), index idx2(b, c));
+insert into t values(1, 1, 1), (1, 2, -1), (2, 1, -2);
+begin;
+insert into t values(1, 1, -3);
+explain select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 2;
+select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 2;
+rollback;
+begin;
+insert into t values(1, 2, 4);
+explain select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c desc limit 2;
+select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c desc limit 2;
+rollback;
+
+# TestIntersectionMemQuota
+drop table if exists t1;
+create table t1(pk varchar(100) primary key, c1 int, c2 int, index idx1(c1), index idx2(c2));
+insert into t1 values('TXwuGSfZfrgVbTksgvQBilqiUXlNEXzyXNqWRTCidzXFbrkpGFJalRMdVGQOAOojditwludthMcitNqNtvirGAudSNBtdIkpJIHQ', 1, 1), ('LSiKhgTNnuyjdBtuKKuRgzrcxbHrIlfxSkEuooaPYwfOBVQfNYAyatHiWvmUWRUvBLvXmpqAJUWRXXHFCLCjuJqFbVxQdUxqRuqW', 1, 1), ('qCOSFbvtmansHENQaAQbnyYOwCTPctlejpbpueHbtzskmPOazrMWdcMLaYjyfxYQUgDDjCnAnnExepNqwYIzHVjNVndlOzFaAOcf', 1, 1), ('qBqdtPyXIqLKynGNHnRlrufuUCZPqhxUYEqIrYERnQdqXRjVWcoYclxYXoqdpQboKydzhOHOWBwtmcXzGwCWQVdbpozvIaXxiBQj', 1, 1), ('TXZlGHnXOiSWGyRafAqworFmxuadHRTHcYyzLqZMzIMGUUBQmgiIJKQOqbHhoPEKbYBgfPDZJwwqgnCbMxZKaZfvGyVRRUOgRhoq', 1, 1), ('SwFEtKDfPDQpsyxTdTruPyNDLvEOLRdQtSttxJmgBuZiVKsflHCDZaGvkLHMqhHqLayfbZFrxUHzWHgfoPFCWCdCHScabWRNCHCL', 1, 1), ('BuZhnsTMGNtMJtrjjdMMrguutSpiLnZNCdgiNkWDPymzIymcujjBtsnKCAVRSErvbzPaOwLTTPWkGmbXltqOJXmkXnSWWlWaaBqe', 1, 1), ('LuJCpJrLUwDJutwBDtGEsGduteBWPHeGLVhmVJYVrmjunKNuplEeWDCMIAxHPoiRmdPnXneQEQWRvJkPBoXOPaGZhhFLFgGraLmH', 1, 1), ('JKJwMlPmymduJWOmKLFBmZyCFrcUvKcGQkzJmzGjuFoZweyCBptswEPHTkaIhWEEBMWzNBawtfYKKAugBNlxcwmpJSfuIAUSIxeG', 1, 1), ('IqQbehKwleoSUnwxrVLKSbzRqlEFfkwQtRtIfaVpEGfESyGjDJeAOWQPRYVQYvlPNPROQEraCqwQTzanPSrsnUvEXHSxcYjUJvzk', 1, 1), ('zNHmiBGCLUUEDgMAeIGuTgNJFPBtePpxcQrQlgnRlvosJfeYbhRfJdfMwXIRlXxVoOowhEvPhMQPlplzkUfjjmzdJKwGATvfDAiT', 1, 1), ('OjQvpfdsHSdZUAmGfmtQaYKYONAFHGNLeLKRYECqshxygiOzfKkqRwSYGgClqqnpHqPMZpqsjIYSalziqSfMbbtmmzxkOVgglVOh', 1, 1), ('dXXZaWDwdfhjIysLTNMSfwvoEBJhWOVpJnfXFofWSWMfMbUlRgAkobxoCxXPXNUWzAQczbQclQpvIvvATHHcQgdXUvwSTHqLXZny', 1, 1), ('haPqYVwFNUkedfIKPOPyUxIvbSkaUbsEWNvnDtXZsQQqafIhDXlajYpuXOSYiOwGJYAMVLUvXfwOIuyHKElzJHpOUdCiQiXRHubI', 1, 1), ('nQzOwSsVBjCpehVVmLeyYwyVEwYGAfkhCtkkaKyiXzYCRPRVZpNVnOXGbuWrQEgTuPEPFPApUaYLdCtyBEQulFEwyHlORrMfIJxr', 1, 1), ('ksGDopwNPvpjeCtAMaTrznDSgCLpRDQoCdsahWSjwumVEJITbNBPAAtkoxHuwmNQsryoILqCPBPiUSxAWjnFEdtxDIgEtqDiFvpO', 1, 1), ('AdWEZYzxCMhfcZseNVmNQpyqJrVKcKaZpKKcwZXfDPeIBMzkLzpJpOenidMBtBPBIbaiqfpSxBnGtRHAksBOgpigQTVomZzJhCFb', 1, 1), ('bVMNkLOAuRHqnCtGvVPLvmVSKihYFotmHTjObiAIARHawZTruAabGpFxeYxYTTFRxteFYyBfkBfiSEIFvOPquDnlVRNUUubssEMz', 1, 1), ('kXmcjqMYzGxvHBRRCovSTWavDnVajKLlxguJgniJeNkWQUxjHjYjBsveLfojybWkbqHBVzrOoqgXFrDnnRJPcybmnuAEUTPUoIjO', 1, 1), ('rVXzZDKudOpWCBuRCoQCpukHxenZnsaptDeJCCFzxMVvNucFwLKIiSceLsqUHHQuEfAIygjQCCkIbfInGthSnoLdNGWbsLDsxnrY', 1, 1);
+explain format='brief' select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024;
+set global tidb_mem_oom_action='CANCEL';
+set @@tidb_mem_quota_query = 4000;
+-- replace_regex /conn=[0-9]+/conn=<num>/
+-- error 8175
+select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024;
+set global tidb_mem_oom_action = DEFAULT;
+set @@tidb_mem_quota_query = default;
+
+# TestFix51188
+drop table if exists t;
+create table t(a int, b int, c int, index(b, a), index(c, a));
+## Will not OOM.
+select * from t use index(b, c) where b=2 or c=3 order by a limit 10000000000000000;

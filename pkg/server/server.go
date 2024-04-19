@@ -49,9 +49,11 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -83,6 +85,8 @@ var (
 	osVersion string
 	// RunInGoTest represents whether we are run code in test.
 	RunInGoTest bool
+	// RunInGoTestChan is used to control the RunInGoTest.
+	RunInGoTestChan chan struct{}
 )
 
 func init() {
@@ -131,7 +135,7 @@ type Server struct {
 	health         *uatomic.Bool
 
 	sessionMapMutex     sync.Mutex
-	internalSessions    map[interface{}]struct{}
+	internalSessions    map[any]struct{}
 	autoIDService       *autoid.Service
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
@@ -240,8 +244,8 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
-		internalSessions:  make(map[interface{}]struct{}, 100),
-		health:            uatomic.NewBool(true),
+		internalSessions:  make(map[any]struct{}, 100),
+		health:            uatomic.NewBool(false),
 		inShutdownMode:    uatomic.NewBool(false),
 		printMDLLogTime:   time.Now(),
 	}
@@ -287,7 +291,11 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
+	variable.RegisterStatistics(s)
+	return s, nil
+}
 
+func (s *Server) initTiDBListener() (err error) {
 	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
 		addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(int(s.cfg.Port)))
 		tcpProto := "tcp"
@@ -295,7 +303,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			tcpProto = "tcp4"
 		}
 		if s.listener, err = net.Listen(tcpProto, addr); err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
 		if RunInGoTest && s.cfg.Port == 0 {
@@ -305,18 +313,18 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	if s.cfg.Socket != "" {
 		if err := cleanupStaleSocket(s.cfg.Socket); err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 
 		if s.socket, err = net.Listen("unix", s.cfg.Socket); err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("socket", s.cfg.Socket))
 	}
 
 	if s.socket == nil && s.listener == nil {
 		err = errors.New("Server not configured to listen on either -socket or -host and -port")
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	if s.cfg.ProxyProtocol.Networks != "" {
@@ -328,7 +336,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			int(s.cfg.ProxyProtocol.HeaderTimeout), s.cfg.ProxyProtocol.Fallbackable)
 		if err != nil {
 			logutil.BgLogger().Error("ProxyProtocol networks parameter invalid")
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if s.listener != nil {
 			s.listener = ppListener
@@ -338,10 +346,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			logutil.BgLogger().Info("server is running MySQL protocol (through PROXY protocol)", zap.String("socket", s.cfg.Socket))
 		}
 	}
+	return nil
+}
 
+func (s *Server) initHTTPListener() (err error) {
 	if s.cfg.Status.ReportStatus {
 		if err = s.listenStatusHTTPServer(); err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 
@@ -362,10 +373,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			logutil.BgLogger().Error("Fail to load JWKS from the path", zap.String("jwks", s.cfg.Security.AuthTokenJWKS))
 		}
 	}
-
-	variable.RegisterStatistics(s)
-
-	return s, nil
+	return
 }
 
 func cleanupStaleSocket(socket string) error {
@@ -418,24 +426,56 @@ func (s *Server) reportConfig() {
 }
 
 // Run runs the server.
-func (s *Server) Run() error {
-	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
+func (s *Server) Run(dom *domain.Domain) error {
+	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
 	s.reportConfig()
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {
-		s.startStatusHTTP()
+		err := s.startStatusHTTP()
+		if err != nil {
+			log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
+			return err
+		}
+		mppcoordmanager.InstanceMPPCoordinatorManager.InitServerAddr(s.GetStatusServerAddr())
+	}
+	if config.GetGlobalConfig().Performance.ForceInitStats && dom != nil {
+		<-dom.StatsHandle().InitStatsDone
 	}
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
 	errChan := make(chan error, 2)
+	err := s.initTiDBListener()
+	if err != nil {
+		log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
+		return err
+	}
+	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
+	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
+	// For regression of issue like https://github.com/pingcap/tidb/issues/28190
+	terror.RegisterFinish()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
-	err := <-errChan
+	if RunInGoTest && !isClosed(RunInGoTestChan) {
+		close(RunInGoTestChan)
+	}
+	s.health.Store(true)
+	err = <-errChan
 	if err != nil {
 		return err
 	}
 	return <-errChan
+}
+
+// isClosed is to check if the channel is closed
+func isClosed(ch chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+	}
+
+	return false
 }
 
 func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, errChan chan error) {
@@ -579,7 +619,7 @@ func (s *Server) closeListener() {
 		s.authTokenCancelFunc()
 	}
 	s.wg.Wait()
-	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
+	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStop).Inc()
 }
 
 // Close closes the server.
@@ -594,17 +634,15 @@ func (s *Server) Close() {
 func (s *Server) registerConn(conn *clientConn) bool {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
-	connections := len(s.clients)
 
 	logger := logutil.BgLogger()
 	if s.inShutdownMode.Load() {
 		logger.Info("close connection directly when shutting down")
-		terror.Log(closeConn(conn, connections))
+		terror.Log(closeConn(conn))
 		return false
 	}
 	s.clients[conn.connectionID] = conn
-	connections = len(s.clients)
-	metrics.ConnGauge.Set(float64(connections))
+	metrics.ConnGauge.WithLabelValues(conn.getCtx().GetSessionVars().ResourceGroupName).Inc()
 	return true
 }
 
@@ -725,10 +763,6 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		connType = variable.ConnTypeTLS
 		sslVersionNum := cc.tlsConn.ConnectionState().Version
 		switch sslVersionNum {
-		case tls.VersionTLS10:
-			sslVersion = "TLSv1.0"
-		case tls.VersionTLS11:
-			sslVersion = "TLSv1.1"
 		case tls.VersionTLS12:
 			sslVersion = "TLSv1.2"
 		case tls.VersionTLS13:
@@ -996,7 +1030,7 @@ func (s *Server) GetAutoAnalyzeProcID() uint64 {
 
 // StoreInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
-func (s *Server) StoreInternalSession(se interface{}) {
+func (s *Server) StoreInternalSession(se any) {
 	s.sessionMapMutex.Lock()
 	s.internalSessions[se] = struct{}{}
 	s.sessionMapMutex.Unlock()
@@ -1004,7 +1038,7 @@ func (s *Server) StoreInternalSession(se interface{}) {
 
 // DeleteInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
-func (s *Server) DeleteInternalSession(se interface{}) {
+func (s *Server) DeleteInternalSession(se any) {
 	s.sessionMapMutex.Lock()
 	delete(s.internalSessions, se)
 	s.sessionMapMutex.Unlock()
@@ -1028,7 +1062,7 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 }
 
 // InternalSessionExists is used for test
-func (s *Server) InternalSessionExists(se interface{}) bool {
+func (s *Server) InternalSessionExists(se any) bool {
 	s.sessionMapMutex.Lock()
 	_, ok := s.internalSessions[se]
 	s.sessionMapMutex.Unlock()

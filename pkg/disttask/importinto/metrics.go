@@ -18,8 +18,8 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -33,7 +33,7 @@ type taskMetrics struct {
 // taskMetricManager manages the metrics of IMPORT INTO tasks.
 // we have a set of metrics for each task, with different task_id const label.
 // metrics is passed by context value to avoid passing parameters everywhere.
-// both dispatcher and scheduler might use it, to avoid registered again,
+// both scheduler and taskExecutor might use it, to avoid registered again,
 // we add a manager to manage lifecycle of metrics for tasks.
 type taskMetricManager struct {
 	sync.RWMutex

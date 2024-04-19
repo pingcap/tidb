@@ -58,14 +58,14 @@ const builtinStringImports = `import (
 var builtinStringVecTpl = template.Must(template.New("").Parse(`
 // vecEvalInt evals FIELD(str,str1,str2,str3,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
-func (b *builtinField{{ .TypeName }}Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinField{{ .TypeName }}Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEval{{ .TypeName }}(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEval{{ .TypeName }}(ctx, input, buf0); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -82,7 +82,7 @@ func (b *builtinField{{ .TypeName }}Sig) vecEvalInt(input *chunk.Chunk, result *
 		i64s[i] = 0
 	}
 	for i := 1; i < len(b.args); i++ {
-		if err := b.args[i].VecEval{{ .TypeName }}(b.ctx, input, buf1); err != nil {
+		if err := b.args[i].VecEval{{ .TypeName }}(ctx, input, buf1); err != nil {
 			return err
 		}
 {{ if .Fixed }}

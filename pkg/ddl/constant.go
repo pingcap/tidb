@@ -40,11 +40,35 @@ const (
 	BackgroundSubtaskHistoryTableID = meta.MaxInt48 - 6
 
 	// JobTableSQL is the CREATE TABLE SQL of `tidb_ddl_job`.
-	JobTableSQL = "create table " + JobTable + "(job_id bigint not null, reorg int, schema_ids text(65535), table_ids text(65535), job_meta longblob, type int, processing int, primary key(job_id))"
+	JobTableSQL = "create table " + JobTable + `(
+		job_id bigint not null,
+		reorg int,
+		schema_ids text(65535),
+		table_ids text(65535),
+		job_meta longblob,
+		type int,
+		processing int,
+		primary key(job_id))`
 	// ReorgTableSQL is the CREATE TABLE SQL of `tidb_ddl_reorg`.
-	ReorgTableSQL = "create table " + ReorgTable + "(job_id bigint not null, ele_id bigint, ele_type blob, start_key blob, end_key blob, physical_id bigint, reorg_meta longblob, unique key(job_id, ele_id, ele_type(20)))"
+	ReorgTableSQL = "create table " + ReorgTable + `(
+		job_id bigint not null,
+		ele_id bigint,
+		ele_type blob,
+		start_key blob,
+		end_key blob,
+		physical_id bigint,
+		reorg_meta longblob,
+		unique key(job_id, ele_id, ele_type(20)))`
 	// HistoryTableSQL is the CREATE TABLE SQL of `tidb_ddl_history`.
-	HistoryTableSQL = "create table " + HistoryTable + "(job_id bigint not null, job_meta longblob, db_name char(64), table_name char(64), schema_ids text(65535), table_ids text(65535), create_time datetime, primary key(job_id))"
+	HistoryTableSQL = "create table " + HistoryTable + `(
+		job_id bigint not null,
+		job_meta longblob,
+		db_name char(64),
+		table_name char(64),
+		schema_ids text(65535),
+		table_ids text(65535),
+		create_time datetime,
+		primary key(job_id))`
 	// BackgroundSubtaskTableSQL is the CREATE TABLE SQL of `tidb_background_subtask`.
 	BackgroundSubtaskTableSQL = `create table tidb_background_subtask (
 		id bigint not null auto_increment primary key,
@@ -53,16 +77,23 @@ const (
 		task_key varchar(256),
 		ddl_physical_tid bigint(20),
 		type int,
-		exec_id varchar(256),
+		exec_id varchar(261),
 		exec_expired timestamp,
 		state varchar(64) not null,
 		checkpoint longblob not null,
+		concurrency int,
+		create_time timestamp,
 		start_time bigint,
 		state_update_time bigint,
+		end_time TIMESTAMP,
 		meta longblob,
+		ordinal int,
 		error BLOB,
 		summary json,
-		key idx_task_key(task_key))`
+		key idx_task_key(task_key),
+		key idx_exec_id(exec_id),
+		unique uk_task_key_step_ordinal(task_key, step, ordinal)
+	)`
 	// BackgroundSubtaskHistoryTableSQL is the CREATE TABLE SQL of `tidb_background_subtask_history`.
 	BackgroundSubtaskHistoryTableSQL = `create table tidb_background_subtask_history (
 	 	id bigint not null auto_increment primary key,
@@ -71,13 +102,17 @@ const (
 		task_key varchar(256),
 		ddl_physical_tid bigint(20),
 		type int,
-		exec_id varchar(256),
+		exec_id varchar(261),
 		exec_expired timestamp,
 		state varchar(64) not null,
 		checkpoint longblob not null,
+		concurrency int,
+		create_time timestamp,
 		start_time bigint,
 		state_update_time bigint,
+		end_time TIMESTAMP,
 		meta longblob,
+		ordinal int,
 		error BLOB,
 		summary json,
 		key idx_task_key(task_key),

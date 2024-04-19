@@ -15,77 +15,42 @@
 package proto
 
 import (
-	"fmt"
 	"time"
 )
 
 // task state machine
 //
-//		                ┌──────────────────────────────┐
-//		                │           ┌───────┐       ┌──┴───┐
-//		                │ ┌────────►│pausing├──────►│paused│
-//		                │ │         └───────┘       └──────┘
-//		                ▼ │
-//		┌───────┐     ┌───┴───┐     ┌────────┐
-//		│pending├────►│running├────►│succeed │
-//		└──┬────┘     └───┬───┘     └────────┘
-//		   ▼              │         ┌──────────┐
-//		┌──────┐          ├────────►│cancelling│
-//		│failed│          │         └────┬─────┘
-//		└──────┘          │              ▼
-//		                  │         ┌─────────┐     ┌────────┐
-//		                  └────────►│reverting├────►│reverted│
-//		                            └────┬────┘     └────────┘
-//		                                 │          ┌─────────────┐
-//		                                 └─────────►│revert_failed│
-//		                                            └─────────────┘
-//	 1. succeed:		pending -> running -> succeed
-//	 2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
-//	 3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
-//	 3. pause/resume:	pending -> running -> pausing -> paused -> running
+// Note: if a task fails during running, it will end with `reverted` state.
+// The `failed` state is used to mean the framework cannot run the task, such as
+// invalid task type, scheduler init error(fatal), etc.
 //
-// subtask state machine for normal subtask:
-//
-//	               ┌──────────────┐
-//	               │          ┌───┴──┐
-//	               │ ┌───────►│paused│
-//	               ▼ │        └──────┘
-//	┌───────┐    ┌───┴───┐    ┌───────┐
-//	│pending├───►│running├───►│succeed│
-//	└───────┘    └───┬───┘    └───────┘
-//	                 │        ┌──────┐
-//	                 ├───────►│failed│
-//	                 │        └──────┘
-//	                 │        ┌────────┐
-//	                 └───────►│canceled│
-//	                          └────────┘
-//
-// for reverting subtask:
-//
-//	┌──────────────┐    ┌─────────┐   ┌─────────┐
-//	│revert_pending├───►│reverting├──►│ reverted│
-//	└──────────────┘    └────┬────┘   └─────────┘
-//	                         │         ┌─────────────┐
-//	                         └────────►│revert_failed│
-//	                                   └─────────────┘
-//	 1. succeed/failed:	pending -> running -> succeed/failed
-//	 2. canceled:		pending -> running -> canceled
-//	 3. rollback:		revert_pending -> reverting -> reverted/revert_failed
-//	 4. pause/resume:	pending -> running -> paused -> running
+//	                            ┌────────┐
+//	                ┌───────────│resuming│◄────────┐
+//	                │           └────────┘         │
+//	┌──────┐        │           ┌───────┐       ┌──┴───┐
+//	│failed│        │ ┌────────►│pausing├──────►│paused│
+//	└──────┘        │ │         └───────┘       └──────┘
+//	   ▲            ▼ │
+//	┌──┴────┐     ┌───┴───┐     ┌────────┐
+//	│pending├────►│running├────►│succeed │
+//	└──┬────┘     └──┬┬───┘     └────────┘
+//	   │             ││         ┌─────────┐     ┌────────┐
+//	   │             │└────────►│reverting├────►│reverted│
+//	   │             ▼          └─────────┘     └────────┘
+//	   │          ┌──────────┐    ▲
+//	   └─────────►│cancelling├────┘
+//	              └──────────┘
 const (
-	TaskStatePending       TaskState = "pending"
-	TaskStateRunning       TaskState = "running"
-	TaskStateSucceed       TaskState = "succeed"
-	TaskStateReverting     TaskState = "reverting"
-	TaskStateFailed        TaskState = "failed"
-	TaskStateRevertFailed  TaskState = "revert_failed"
-	TaskStateCancelling    TaskState = "cancelling"
-	TaskStateCanceled      TaskState = "canceled"
-	TaskStatePausing       TaskState = "pausing"
-	TaskStatePaused        TaskState = "paused"
-	TaskStateResuming      TaskState = "resuming"
-	TaskStateRevertPending TaskState = "revert_pending"
-	TaskStateReverted      TaskState = "reverted"
+	TaskStatePending    TaskState = "pending"
+	TaskStateRunning    TaskState = "running"
+	TaskStateSucceed    TaskState = "succeed"
+	TaskStateFailed     TaskState = "failed"
+	TaskStateReverting  TaskState = "reverting"
+	TaskStateReverted   TaskState = "reverted"
+	TaskStateCancelling TaskState = "cancelling"
+	TaskStatePausing    TaskState = "pausing"
+	TaskStatePaused     TaskState = "paused"
+	TaskStateResuming   TaskState = "resuming"
 )
 
 type (
@@ -93,8 +58,6 @@ type (
 	TaskState string
 	// TaskType is the type of task.
 	TaskType string
-	// Step is the step of task.
-	Step int64
 )
 
 func (t TaskType) String() string {
@@ -105,130 +68,92 @@ func (s TaskState) String() string {
 	return string(s)
 }
 
-// TaskStep is the step of task.
-// DO NOT change the value of the constants, will break backward compatibility.
-// successfully task MUST go from StepInit to business steps, then StepDone.
 const (
-	StepInit  Step = -1
-	StepDone  Step = -2
-	StepOne   Step = 1
-	StepTwo   Step = 2
-	StepThree Step = 3
+	// TaskIDLabelName is the label name of task id.
+	TaskIDLabelName = "task_id"
+	// NormalPriority represents the normal priority of task.
+	NormalPriority = 512
 )
 
-// TaskIDLabelName is the label name of task id.
-const TaskIDLabelName = "task_id"
+// MaxConcurrentTask is the max concurrency of task.
+// TODO: remove this limit later.
+var MaxConcurrentTask = 16
 
-// Task represents the task of distributed framework.
-type Task struct {
+// TaskBase contains the basic information of a task.
+// we define this to avoid load task meta which might be very large into memory.
+type TaskBase struct {
 	ID    int64
 	Key   string
 	Type  TaskType
 	State TaskState
 	Step  Step
-	// DispatcherID is not used now.
-	DispatcherID    string
-	Concurrency     uint64
+	// Priority is the priority of task, the smaller value means the higher priority.
+	// valid range is [1, 1024], default is NormalPriority.
+	Priority int
+	// Concurrency controls the max resource usage of the task, i.e. the max number
+	// of slots the task can use on each node.
+	Concurrency int
+	CreateTime  time.Time
+}
+
+// IsDone checks if the task is done.
+func (t *TaskBase) IsDone() bool {
+	return t.State == TaskStateSucceed || t.State == TaskStateReverted ||
+		t.State == TaskStateFailed
+}
+
+// CompareTask a wrapper of Compare.
+func (t *TaskBase) CompareTask(other *Task) int {
+	return t.Compare(&other.TaskBase)
+}
+
+// Compare compares two tasks by task rank.
+// returns < 0 represents rank of t is higher than 'other'.
+func (t *TaskBase) Compare(other *TaskBase) int {
+	if t.Priority != other.Priority {
+		return t.Priority - other.Priority
+	}
+	if t.CreateTime != other.CreateTime {
+		if t.CreateTime.Before(other.CreateTime) {
+			return -1
+		}
+		return 1
+	}
+	return int(t.ID - other.ID)
+}
+
+// Task represents the task of distributed framework.
+// A task is abstracted as multiple steps that runs in sequence, each step contains
+// multiple sub-tasks that runs in parallel, such as:
+//
+//	task
+//	├── step1
+//	│   ├── subtask1
+//	│   ├── subtask2
+//	│   └── subtask3
+//	└── step2
+//	    ├── subtask1
+//	    ├── subtask2
+//	    └── subtask3
+//
+// tasks are run in the order of rank, and the rank is defined by:
+//
+//	priority asc, create_time asc, id asc.
+type Task struct {
+	TaskBase
+	// SchedulerID is not used now.
+	SchedulerID     string
 	StartTime       time.Time
 	StateUpdateTime time.Time
-	Meta            []byte
-	Error           error
+	// Meta is the metadata of task, it's read-only in most cases, but it can be
+	// changed in below case, and framework will update the task meta in the storage.
+	// 	- task switches to next step in Scheduler.OnNextSubtasksBatch
+	// 	- on task cleanup, we might do some redaction on the meta.
+	Meta  []byte
+	Error error
 }
 
-// IsFinished checks if the task is finished.
-func (t *Task) IsFinished() bool {
-	return t.State == TaskStateSucceed || t.State == TaskStateReverted
-}
-
-// Subtask represents the subtask of distribute framework.
-// Each task is divided into multiple subtasks by dispatcher.
-type Subtask struct {
-	ID   int64
-	Step Step
-	Type TaskType
-	// taken from task_key of the subtask table
-	TaskID int64
-	State  TaskState
-	// SchedulerID is the ID of scheduler, right now it's the same as instance_id, exec_id.
-	// its value is IP:PORT, see GenerateExecID
-	SchedulerID string
-	// StartTime is the time when the subtask is started.
-	// it's 0 if it hasn't started yet.
-	StartTime time.Time
-	// UpdateTime is the time when the subtask is updated.
-	// it can be used as subtask end time if the subtask is finished.
-	// it's 0 if it hasn't started yet.
-	UpdateTime time.Time
-	Meta       []byte
-	Summary    string
-}
-
-// IsFinished checks if the subtask is finished.
-func (t *Subtask) IsFinished() bool {
-	return t.State == TaskStateSucceed || t.State == TaskStateReverted || t.State == TaskStateCanceled ||
-		t.State == TaskStateFailed || t.State == TaskStateRevertFailed
-}
-
-// NewSubtask create a new subtask.
-func NewSubtask(step Step, taskID int64, tp TaskType, schedulerID string, meta []byte) *Subtask {
-	return &Subtask{
-		Step:        step,
-		Type:        tp,
-		TaskID:      taskID,
-		SchedulerID: schedulerID,
-		Meta:        meta,
-	}
-}
-
-// MinimalTask is the minimal task of distribute framework.
-// Each subtask is divided into multiple minimal tasks by scheduler.
-type MinimalTask interface {
-	// IsMinimalTask is a marker to check if it is a minimal task for compiler.
-	IsMinimalTask()
-	fmt.Stringer
-}
-
-const (
-	// TaskTypeExample is TaskType of Example.
-	TaskTypeExample TaskType = "Example"
-	// TaskTypeExample2 is TaskType of Example.
-	TaskTypeExample2 TaskType = "Example1"
-	// TaskTypeExample3 is TaskType of Example.
-	TaskTypeExample3 TaskType = "Example2"
-	// ImportInto is TaskType of ImportInto.
-	ImportInto TaskType = "ImportInto"
-	// Backfill is TaskType of add index Backfilling process.
-	Backfill TaskType = "backfill"
+var (
+	// EmptyMeta is the empty meta of task/subtask.
+	EmptyMeta = []byte("{}")
 )
-
-// Type2Int converts task type to int.
-func Type2Int(t TaskType) int {
-	switch t {
-	case TaskTypeExample:
-		return 1
-	case ImportInto:
-		return 2
-	case TaskTypeExample2:
-		return 3
-	case TaskTypeExample3:
-		return 4
-	default:
-		return 0
-	}
-}
-
-// Int2Type converts int to task type.
-func Int2Type(i int) TaskType {
-	switch i {
-	case 1:
-		return TaskTypeExample
-	case 2:
-		return ImportInto
-	case 3:
-		return TaskTypeExample2
-	case 4:
-		return TaskTypeExample3
-	default:
-		return ""
-	}
-}

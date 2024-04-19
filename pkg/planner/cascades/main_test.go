@@ -25,7 +25,7 @@ import (
 	"go.uber.org/goleak"
 )
 
-var testDataMap = make(testdata.BookKeeper, 3)
+var testDataMap = make(testdata.BookKeeper, 2)
 var stringerSuiteData testdata.TestData
 var transformationRulesSuiteData testdata.TestData
 
@@ -36,7 +36,6 @@ func TestMain(m *testing.M) {
 
 	testDataMap.LoadTestSuiteData("testdata", "stringer_suite")
 	testDataMap.LoadTestSuiteData("testdata", "transformation_rules_suite")
-	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
 	stringerSuiteData = testDataMap["stringer_suite"]
 	transformationRulesSuiteData = testDataMap["transformation_rules_suite"]
 
@@ -48,6 +47,7 @@ func TestMain(m *testing.M) {
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -57,8 +57,4 @@ func TestMain(m *testing.M) {
 		_, _ = fmt.Fprintf(os.Stderr, "goleak: Errors on successful test run: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-func GetIntegrationSuiteData() testdata.TestData {
-	return testDataMap["integration_suite"]
 }

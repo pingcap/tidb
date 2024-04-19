@@ -44,10 +44,10 @@ func (p *LogicalProjection) HashCode() []byte {
 	// we pre-alloc 10 bytes for each expr's hashcode.
 	result := make([]byte, 0, 12+len(p.Exprs)*10)
 	result = encodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.TP()))
-	result = encodeIntAsUint32(result, p.SelectBlockOffset())
+	result = encodeIntAsUint32(result, p.QueryBlockOffset())
 	result = encodeIntAsUint32(result, len(p.Exprs))
 	for _, expr := range p.Exprs {
-		exprHashCode := expr.HashCode(p.SCtx().GetSessionVars().StmtCtx)
+		exprHashCode := expr.HashCode()
 		result = encodeIntAsUint32(result, len(exprHashCode))
 		result = append(result, exprHashCode...)
 	}
@@ -59,7 +59,7 @@ func (p *LogicalTableDual) HashCode() []byte {
 	// PlanType + SelectOffset + RowCount
 	result := make([]byte, 0, 12)
 	result = encodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.TP()))
-	result = encodeIntAsUint32(result, p.SelectBlockOffset())
+	result = encodeIntAsUint32(result, p.QueryBlockOffset())
 	result = encodeIntAsUint32(result, p.RowCount)
 	return result
 }
@@ -71,12 +71,12 @@ func (p *LogicalSelection) HashCode() []byte {
 	// length larger than 20, so we pre-alloc 25 bytes for each expr's hashcode.
 	result := make([]byte, 0, 12+len(p.Conditions)*25)
 	result = encodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.TP()))
-	result = encodeIntAsUint32(result, p.SelectBlockOffset())
+	result = encodeIntAsUint32(result, p.QueryBlockOffset())
 	result = encodeIntAsUint32(result, len(p.Conditions))
 
 	condHashCodes := make([][]byte, len(p.Conditions))
 	for i, expr := range p.Conditions {
-		condHashCodes[i] = expr.HashCode(p.SCtx().GetSessionVars().StmtCtx)
+		condHashCodes[i] = expr.HashCode()
 	}
 	// Sort the conditions, so `a > 1 and a < 100` can equal to `a < 100 and a > 1`.
 	slices.SortFunc(condHashCodes, func(i, j []byte) int { return bytes.Compare(i, j) })
@@ -93,7 +93,7 @@ func (p *LogicalLimit) HashCode() []byte {
 	// PlanType + SelectOffset + Offset + Count
 	result := make([]byte, 24)
 	binary.BigEndian.PutUint32(result, uint32(plancodec.TypeStringToPhysicalID(p.TP())))
-	binary.BigEndian.PutUint32(result[4:], uint32(p.SelectBlockOffset()))
+	binary.BigEndian.PutUint32(result[4:], uint32(p.QueryBlockOffset()))
 	binary.BigEndian.PutUint64(result[8:], p.Offset)
 	binary.BigEndian.PutUint64(result[16:], p.Count)
 	return result

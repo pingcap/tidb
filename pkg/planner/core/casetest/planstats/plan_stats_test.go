@@ -29,10 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -66,11 +67,11 @@ func TestPlanStatsLoad(t *testing.T) {
 	testCases := []struct {
 		sql   string
 		skip  bool
-		check func(p plannercore.Plan, tableInfo *model.TableInfo)
+		check func(p base.Plan, tableInfo *model.TableInfo)
 	}{
 		{ // DataSource
 			sql: "select * from t where c>1",
-			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				switch pp := p.(type) {
 				case *plannercore.PhysicalTableReader:
 					stats := pp.StatsInfo().HistColl
@@ -83,7 +84,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // PartitionTable
 			sql: "select * from pt where a < 15 and c > 1",
-			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				pua, ok := p.(*plannercore.PhysicalUnionAll)
 				require.True(t, ok)
 				for _, child := range pua.Children() {
@@ -93,8 +94,8 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // Join
 			sql: "select * from t t1 inner join t t2 on t1.b=t2.b where t1.d=3",
-			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
-				pp, ok := p.(plannercore.PhysicalPlan)
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
+				pp, ok := p.(base.PhysicalPlan)
 				require.True(t, ok)
 				require.Greater(t, countFullStats(pp.Children()[0].StatsInfo().HistColl, tableInfo.Columns[3].ID), 0)
 				require.Greater(t, countFullStats(pp.Children()[1].StatsInfo().HistColl, tableInfo.Columns[3].ID), 0)
@@ -102,7 +103,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // Apply
 			sql: "select * from t t1 where t1.b > (select count(*) from t t2 where t2.c > t1.a and t2.d>1) and t1.c>2",
-			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				pp, ok := p.(*plannercore.PhysicalProjection)
 				require.True(t, ok)
 				pa, ok := pp.Children()[0].(*plannercore.PhysicalApply)
@@ -115,7 +116,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // > Any
 			sql: "select * from t where t.b > any(select d from t where t.c > 2)",
-			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				ph, ok := p.(*plannercore.PhysicalHashJoin)
 				require.True(t, ok)
 				ptr, ok := ph.Children()[0].(*plannercore.PhysicalTableReader)
@@ -125,7 +126,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // in
 			sql: "select * from t where t.b in (select d from t where t.c > 2)",
-			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				ph, ok := p.(*plannercore.PhysicalHashJoin)
 				require.True(t, ok)
 				ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
@@ -135,7 +136,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // not in
 			sql: "select * from t where t.b not in (select d from t where t.c > 2)",
-			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				ph, ok := p.(*plannercore.PhysicalHashJoin)
 				require.True(t, ok)
 				ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
@@ -145,7 +146,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // exists
 			sql: "select * from t t1 where exists (select * from t t2 where t1.b > t2.d and t2.c>1)",
-			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				ph, ok := p.(*plannercore.PhysicalHashJoin)
 				require.True(t, ok)
 				ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
@@ -155,7 +156,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // not exists
 			sql: "select * from t t1 where not exists (select * from t t2 where t1.b > t2.d and t2.c>1)",
-			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				ph, ok := p.(*plannercore.PhysicalHashJoin)
 				require.True(t, ok)
 				ptr, ok := ph.Children()[1].(*plannercore.PhysicalTableReader)
@@ -165,21 +166,21 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // CTE
 			sql: "with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3",
-			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
-				ps, ok := p.(*plannercore.PhysicalSelection)
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
+				ps, ok := p.(*plannercore.PhysicalProjection)
 				require.True(t, ok)
-				pc, ok := ps.Children()[0].(*plannercore.PhysicalCTE)
+				pc, ok := ps.Children()[0].(*plannercore.PhysicalTableReader)
 				require.True(t, ok)
-				pp, ok := pc.SeedPlan.(*plannercore.PhysicalProjection)
+				pp, ok := pc.GetTablePlan().(*plannercore.PhysicalSelection)
 				require.True(t, ok)
-				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableReader)
+				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableScan)
 				require.True(t, ok)
 				require.Greater(t, countFullStats(reader.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 			},
 		},
 		{ // recursive CTE
 			sql: "with recursive cte(x, y) as (select a, b from t where c > 1 union select x + 1, y from cte where x < 5) select * from cte",
-			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				pc, ok := p.(*plannercore.PhysicalCTE)
 				require.True(t, ok)
 				pp, ok := pc.SeedPlan.(*plannercore.PhysicalProjection)
@@ -191,7 +192,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		},
 		{ // check idx(b)
 			sql: "select * from t USE INDEX(idx) where b >= 10",
-			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
+			check: func(p base.Plan, tableInfo *model.TableInfo) {
 				pr, ok := p.(*plannercore.PhysicalIndexLookUpReader)
 				require.True(t, ok)
 				pis, ok := pr.IndexPlans[0].(*plannercore.PhysicalIndexScan)
@@ -265,16 +266,16 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	neededColumn := model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}
+	neededColumn := model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}, FullLoad: true}
 	resultCh := make(chan stmtctx.StatsLoadResult, 1)
 	timeout := time.Duration(1<<63 - 1)
-	task := &utilstats.NeededItemTask{
-		TableItemID: neededColumn,
-		ResultCh:    resultCh,
-		ToTimeout:   time.Now().Local().Add(timeout),
+	task := &types.NeededItemTask{
+		Item:      neededColumn,
+		ResultCh:  resultCh,
+		ToTimeout: time.Now().Local().Add(timeout),
 	}
 	dom.StatsHandle().AppendNeededItem(task, timeout) // make channel queue full
-	sql := "select * from t where c>1"
+	sql := "select /*+ MAX_EXECUTION_TIME(1000) */ * from t where c>1"
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=false")
@@ -285,6 +286,11 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/executor/assertSyncStatsFailed", `return(true)`))
 	tk.MustExec(sql) // not fail sql for timeout when pseudo=true
 	failpoint.Disable("github.com/pingcap/executor/assertSyncStatsFailed")
+
+	// Test Issue #50872.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/assertSyncWaitFailed", `return(true)`))
+	tk.MustExec(sql)
+	failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/assertSyncWaitFailed")
 
 	plan, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 	require.NoError(t, err) // not fail sql for timeout when pseudo=true
@@ -315,7 +321,7 @@ func TestPlanStatsStatusRecord(t *testing.T) {
 	// drop stats in order to change status
 	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
 	tk.MustQuery("select * from t where b >= 1")
-	for _, usedStatsForTbl := range tk.Session().GetSessionVars().StmtCtx.GetUsedStatsInfo(false) {
+	for _, usedStatsForTbl := range tk.Session().GetSessionVars().StmtCtx.GetUsedStatsInfo(false).Values() {
 		if usedStatsForTbl == nil {
 			continue
 		}
@@ -374,11 +380,11 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 		// prepare the input
 		tbl := tblID2Tbl[tblName2TblID[testCase.TableName]]
 		require.NotNil(t, tbl)
-		neededItems := make([]model.TableItemID, 0, len(testCase.InputColNames))
+		neededItems := make([]model.StatsLoadItem, 0, len(testCase.InputColNames))
 		for _, colName := range testCase.InputColNames {
 			col := tbl.Meta().FindPublicColumnByName(colName)
 			require.NotNil(t, col)
-			neededItems = append(neededItems, model.TableItemID{TableID: tbl.Meta().ID, ID: col.ID})
+			neededItems = append(neededItems, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tbl.Meta().ID, ID: col.ID}, FullLoad: true})
 		}
 
 		// call the function
@@ -398,5 +404,50 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 			output[i].OutputColNames = cols
 		})
 		require.Equal(t, output[i].OutputColNames, cols)
+	}
+}
+
+func TestPartialStatsInExplain(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	tk.MustExec("create table t2(a int, primary key(a))")
+	tk.MustExec("insert into t2 values (1),(2),(3)")
+	tk.MustExec(
+		"create table tp(a int, b int, c int, index ic(c)) partition by range(a)" +
+			"(partition p0 values less than (10)," +
+			"partition p1 values less than (20)," +
+			"partition p2 values less than maxvalue)",
+	)
+	tk.MustExec("insert into tp values (1,1,1),(2,2,2),(13,13,13),(14,14,14),(25,25,25),(36,36,36)")
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	defer func() {
+		dom.StatsHandle().SetLease(oriLease)
+	}()
+	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table tp")
+	tk.RequireNoError(dom.StatsHandle().Update(dom.InfoSchema()))
+	tk.MustQuery("explain select * from tp where a = 1")
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
+	var (
+		input  []string
+		output []struct {
+			Query  string
+			Result []string
+		}
+	)
+	testData := GetPlanStatsData()
+	testData.LoadTestCases(t, &input, &output)
+	for i, sql := range input {
+		testdata.OnRecord(func() {
+			output[i].Query = input[i]
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }

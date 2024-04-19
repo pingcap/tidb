@@ -58,6 +58,7 @@ func TestInfo(t *testing.T) {
 		t.Skip("ETCD use ip:port as unix socket address, skip when it is unavailable.")
 	}
 
+	// NOTICE: this failpoint has been REMOVED, be aware of this if you want to reopen this test.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/FailPlacement", `return(true)`))
 
 	s, err := mockstore.NewMockStore()
@@ -70,7 +71,7 @@ func TestInfo(t *testing.T) {
 		Storage: s,
 		pdAddrs: []string{cluster.Members[0].GRPCURL()}}
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(mockStore, ddlLease, 0, 0, 0, mockFactory)
+	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory)
 	defer func() {
 		dom.Close()
 		err := s.Close()
@@ -173,7 +174,7 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	require.NoError(t, err)
 
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
 
 	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
@@ -251,7 +252,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	require.NoError(t, err)
 
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
 	defer func() {
 		dom.Close()
 		require.Nil(t, store.Close())
@@ -262,7 +263,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}
 	dom.sysVarCache.Unlock()
 
-	makeFailpointRes := func(v interface{}) string {
+	makeFailpointRes := func(v any) string {
 		bytes, err := json.Marshal(v)
 		require.NoError(t, err)
 		return fmt.Sprintf("return(`%s`)", string(bytes))
@@ -422,4 +423,47 @@ type mockInfoPdClient struct {
 
 func (c *mockInfoPdClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	return c.stores, c.err
+}
+
+func TestIsAnalyzeTableSQL(t *testing.T) {
+	tests := []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "normal sql",
+			sql:  "analyze table test.t",
+		},
+		{
+			name: "normal sql with extra space",
+			sql:  " analyze table test.t ",
+		},
+		{
+			name: "normal capital sql with extra space",
+			sql:  " ANALYZE TABLE test.t ",
+		},
+		{
+			name: "single line comment",
+			sql:  "/* axxxx */ analyze table test.t",
+		},
+		{
+			name: "multi-line comment",
+			sql: `/*
+		/*> this is a
+		/*> multiple-line comment
+		/*> */ analyze table test.t`,
+		},
+		{
+			name: "hint comment",
+			sql:  "/*+ hint */ analyze table test.t",
+		},
+		{
+			name: "no space",
+			sql:  "/*+ hint */analyze table test.t",
+		},
+	}
+
+	for _, tt := range tests {
+		require.True(t, isAnalyzeTableSQL(tt.sql))
+	}
 }

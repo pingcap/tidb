@@ -16,6 +16,7 @@ package testserverclient
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,11 +39,13 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -71,7 +75,12 @@ func NewTestServerClient() *TestServerClient {
 	}
 }
 
-// statusURL return the full URL of a status path
+// Addr returns the address of the server.
+func (cli *TestServerClient) Addr() string {
+	return fmt.Sprintf("%s://localhost:%d", cli.StatusScheme, cli.Port)
+}
+
+// StatusURL returns the full URL of a status path
 func (cli *TestServerClient) StatusURL(path string) string {
 	return fmt.Sprintf("%s://localhost:%d%s", cli.StatusScheme, cli.StatusPort, path)
 }
@@ -379,11 +388,11 @@ func (cli *TestServerClient) RunTestLoadDataWithSelectIntoOutfile(t *testing.T) 
 		dbt.MustExec("create table t1 (i int, r real, d decimal(10, 5), s varchar(100), dt datetime, ts timestamp, j json)")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t1 with thread=1", outfile))
 
-		fetchResults := func(table string) [][]interface{} {
-			var res [][]interface{}
+		fetchResults := func(table string) [][]any {
+			var res [][]any
 			row := dbt.MustQuery("select * from " + table + " order by i")
 			for row.Next() {
-				r := make([]interface{}, 7)
+				r := make([]any, 7)
 				require.NoError(t, row.Scan(&r[0], &r[1], &r[2], &r[3], &r[4], &r[5], &r[6]))
 				res = append(res, r)
 			}
@@ -824,7 +833,7 @@ func (*TestServerClient) Rows(t *testing.T, rows *sql.Rows) []string {
 		cols, err := rows.Columns()
 		require.NoError(t, err)
 		rawResult := make([][]byte, len(cols))
-		dest := make([]interface{}, len(cols))
+		dest := make([]any, len(cols))
 		for i := range rawResult {
 			dest[i] = &rawResult[i]
 		}
@@ -1000,6 +1009,204 @@ func columnsAsExpected(t *testing.T, columns []*sql.NullString, expected []strin
 	for i := 0; i < len(columns); i++ {
 		require.Equal(t, expected[i], columns[i].String)
 	}
+}
+
+func (cli *TestServerClient) RunTestLoadDataInTransaction(t *testing.T) {
+	fp, err := os.CreateTemp("", "load_data_test.csv")
+	require.NoError(t, err)
+	path := fp.Name()
+
+	require.NotNil(t, fp)
+	defer func() {
+		err = fp.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+
+	_, err = fp.WriteString("1")
+	require.NoError(t, err)
+
+	// load file in transaction can be rolled back
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataInTransaction", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			txn.Exec("insert into t values (100)") // `load data` doesn't commit current txn
+			_, err = txn.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			rows, err := txn.Query("select * from t")
+			require.NoError(t, err)
+			cli.CheckRows(t, rows, "100\n1")
+			err = txn.Rollback()
+			require.NoError(t, err)
+			rows = dbt.MustQuery("select * from t")
+			cli.CheckRows(t, rows)
+		},
+	)
+
+	// load file in transaction doesn't commit until the transaction is committed
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataInTransaction", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			rows, err := txn.Query("select * from t")
+			require.NoError(t, err)
+			cli.CheckRows(t, rows, "1")
+			err = txn.Commit()
+			require.NoError(t, err)
+			rows = dbt.MustQuery("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
+
+	// load file in auto commit mode should succeed
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataInAutoCommit", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			rows, _ := txn.Query("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
+
+	// load file in a pessimistic transaction,
+	// should acquire locks when after its execution and before it commits.
+	// The lock should be observed by another transaction that is attempting to acquire the same
+	// lock.
+	dbName := "LoadDataInPessimisticTransaction"
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, dbName, func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("set @@global.tidb_txn_mode = 'pessimistic'")
+			dbt.MustExec("create table t (a int primary key)")
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn.Exec(fmt.Sprintf("USE `%s`;", dbName))
+			require.NoError(t, err)
+			_, err = txn.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			rows, err := txn.Query("select * from t")
+			require.NoError(t, err)
+			cli.CheckRows(t, rows, "1")
+
+			var wg sync.WaitGroup
+			wg.Add(1)
+			txn2Locked := make(chan struct{}, 1)
+			failed := make(chan struct{}, 1)
+			go func() {
+				time.Sleep(2 * time.Second)
+				select {
+				case <-txn2Locked:
+					failed <- struct{}{}
+				default:
+				}
+
+				err2 := txn.Commit()
+				require.NoError(t, err2)
+				wg.Done()
+			}()
+			txn2, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn2.Exec(fmt.Sprintf("USE `%s`;", dbName))
+			require.NoError(t, err)
+			_, err = txn2.Exec("select * from t where a = 1 for update")
+			require.NoError(t, err)
+			txn2Locked <- struct{}{}
+			wg.Wait()
+			txn2.Rollback()
+			select {
+			case <-failed:
+				require.Fail(t, "txn2 should not be able to acquire the lock")
+			default:
+			}
+
+			require.NoError(t, err)
+			rows = dbt.MustQuery("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
+
+	dbName = "LoadDataInExplicitTransaction"
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, dbName, func(dbt *testkit.DBTestKit) {
+			// in optimistic txn, one should not block another
+			dbt.MustExec("set @@global.tidb_txn_mode = 'optimistic'")
+			dbt.MustExec("create table t (a int primary key)")
+			txn1, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			txn2, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn1.Exec(fmt.Sprintf("USE `%s`;", dbName))
+			require.NoError(t, err)
+			_, err = txn2.Exec(fmt.Sprintf("USE `%s`;", dbName))
+			require.NoError(t, err)
+			_, err = txn1.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			_, err = txn2.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			err = txn1.Commit()
+			require.NoError(t, err)
+			err = txn2.Commit()
+			require.ErrorContains(t, err, "Write conflict")
+			rows := dbt.MustQuery("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
+
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataFromServerFile", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			_, err = dbt.GetDB().Exec(fmt.Sprintf("load data infile %q into table t", path))
+			require.ErrorContains(t, err, "Don't support load data from tidb-server's disk.")
+		},
+	)
+
+	// The test is intended to test if the load data statement correctly cleans up its
+	//  resources after execution, and does not affect following statements.
+	// For example, the 1st load data builds the reader and finishes.
+	// The 2nd load data should not be able to access the reader, especially when it should fail
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataCleanup", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			_, err = txn.Exec("load data local infile '/tmp/does_not_exist' into table t")
+			require.ErrorContains(t, err, "no such file or directory")
+			err = txn.Commit()
+			require.NoError(t, err)
+			rows := dbt.MustQuery("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
 }
 
 func (cli *TestServerClient) RunTestLoadData(t *testing.T, server *server.Server) {
@@ -1569,39 +1776,6 @@ func (cli *TestServerClient) RunTestLoadData(t *testing.T, server *server.Server
 	})
 }
 
-func (cli *TestServerClient) RunTestConcurrentUpdate(t *testing.T) {
-	dbName := "Concurrent"
-	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
-		config.Params["sql_mode"] = "''"
-	}, dbName, func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("drop table if exists test2")
-		dbt.MustExec("create table test2 (a int, b int)")
-		dbt.MustExec("insert test2 values (1, 1)")
-		dbt.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-
-		txn1, err := dbt.GetDB().Begin()
-		require.NoError(t, err)
-		_, err = txn1.Exec(fmt.Sprintf("USE `%s`;", dbName))
-		require.NoError(t, err)
-
-		txn2, err := dbt.GetDB().Begin()
-		require.NoError(t, err)
-		_, err = txn2.Exec(fmt.Sprintf("USE `%s`;", dbName))
-		require.NoError(t, err)
-
-		_, err = txn2.Exec("update test2 set a = a + 1 where b = 1")
-		require.NoError(t, err)
-		err = txn2.Commit()
-		require.NoError(t, err)
-
-		_, err = txn1.Exec("update test2 set a = a + 1 where b = 1")
-		require.NoError(t, err)
-
-		err = txn1.Commit()
-		require.NoError(t, err)
-	})
-}
-
 func (cli *TestServerClient) RunTestExplainForConn(t *testing.T) {
 	cli.RunTestsOnNewDB(t, nil, "explain_for_conn", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("drop table if exists t")
@@ -2074,6 +2248,18 @@ func (cli *TestServerClient) RunTestMultiStatements(t *testing.T) {
 		// the create table + drop table statements will return errors.
 		dbt.MustExec("CREATE DATABASE multistmtuse")
 		dbt.MustExec("use multistmtuse; create table if not exists t1 (id int); drop table t1;")
+
+		// Test issue #50012
+		dbt.MustExec("create database if not exists test;")
+		dbt.MustExec("use test;")
+		dbt.MustExec("CREATE TABLE t (a bigint(20), b int(10), PRIMARY KEY (b, a), UNIQUE KEY uk_a (a));")
+		dbt.MustExec("insert into t values (1, 1);")
+		dbt.MustExec("begin;")
+		rs := dbt.MustQuery("delete from t where a = 1; select 1;")
+		rs.Close()
+		rs = dbt.MustQuery("update t set b = 2 where a = 1; select 1;")
+		rs.Close()
+		dbt.MustExec("commit;")
 	})
 }
 
@@ -2252,7 +2438,7 @@ func (cli *TestServerClient) getMetrics(t *testing.T) []byte {
 
 func getStmtCnt(content string) (stmtCnt map[string]int) {
 	stmtCnt = make(map[string]int)
-	r := regexp.MustCompile("tidb_executor_statement_total{db=\"\",type=\"([A-Z|a-z|-]+)\"} (\\d+)")
+	r := regexp.MustCompile("tidb_executor_statement_total{db=\"\",resource_group=\".*\",type=\"([A-Z|a-z|-]+)\"} (\\d+)")
 	matchResult := r.FindAllStringSubmatch(content, -1)
 	for _, v := range matchResult {
 		cnt, _ := strconv.Atoi(v[2])
@@ -2263,7 +2449,7 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 
 func getDBStmtCnt(content, dbName string) (stmtCnt map[string]int) {
 	stmtCnt = make(map[string]int)
-	r := regexp.MustCompile(fmt.Sprintf("tidb_executor_statement_total{db=\"%s\",type=\"([A-Z|a-z|-]+)\"} (\\d+)", dbName))
+	r := regexp.MustCompile(fmt.Sprintf("tidb_executor_statement_total{db=\"%s\",resource_group=\".*\",type=\"([A-Z|a-z|-]+)\"} (\\d+)", dbName))
 	matchResult := r.FindAllStringSubmatch(content, -1)
 	for _, v := range matchResult {
 		cnt, _ := strconv.Atoi(v[2])
@@ -2443,6 +2629,101 @@ func (cli *TestServerClient) RunTestInfoschemaClientErrors(t *testing.T) {
 				require.Equalf(t, warnings, newWarnings, "source=information_schema.%s code=%d statement=%s", tbl, test.errCode, test.stmt)
 			}
 		}
+	})
+}
+
+func (cli *TestServerClient) RunTestSQLModeIsLoadedBeforeQuery(t *testing.T) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "set global sql_mode='NO_BACKSLASH_ESCAPES';")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, `
+		CREATE TABLE t1 (
+			id bigint(20) NOT NULL,
+			t text DEFAULT NULL,
+			PRIMARY KEY (id)
+		);`)
+		require.NoError(t, err)
+
+		// use another new connection
+		conn1, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn1.ExecContext(ctx, "insert into t1 values (1, 'ab\\\\c');")
+		require.NoError(t, err)
+		result, err := conn1.QueryContext(ctx, "select t from t1 where id = 1;")
+		require.NoError(t, err)
+		require.True(t, result.Next())
+		var tStr string
+		require.NoError(t, result.Scan(&tStr))
+
+		require.Equal(t, "ab\\\\c", tStr)
+	})
+}
+
+func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
+	readConnCount := func(resourceGroupName string) float64 {
+		metric, err := metrics.ConnGauge.GetMetricWith(map[string]string{
+			metrics.LblResourceGroup: resourceGroupName,
+		})
+		require.NoError(t, err)
+		output := &dto.Metric{}
+		metric.Write(output)
+
+		return output.GetGauge().GetValue()
+	}
+
+	resourceGroupConnCountReached := func(t *testing.T, resourceGroupName string, expected float64) {
+		require.Eventually(t, func() bool {
+			return readConnCount(resourceGroupName) == expected
+		}, 5*time.Second, 100*time.Millisecond)
+	}
+
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+		dbt.GetDB().SetMaxIdleConns(0)
+
+		// start 100 connections
+		conns := make([]*sql.Conn, 100)
+		for i := 0; i < 100; i++ {
+			conn, err := dbt.GetDB().Conn(ctx)
+			require.NoError(t, err)
+			conns[i] = conn
+		}
+		resourceGroupConnCountReached(t, "default", 100.0)
+
+		// close 50 connections
+		for i := 0; i < 50; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 50.0)
+
+		// close 25 connections
+		for i := 50; i < 75; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 25.0)
+
+		// change the following 25 connections from `default` resource group to `test`
+		dbt.MustExec("create resource group test RU_PER_SEC = 1000;")
+		for i := 75; i < 100; i++ {
+			_, err := conns[i].ExecContext(ctx, "set resource group test")
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 0.0)
+		resourceGroupConnCountReached(t, "test", 25.0)
+
+		// close 25 connections
+		for i := 75; i < 100; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 0.0)
+		resourceGroupConnCountReached(t, "test", 0.0)
 	})
 }
 

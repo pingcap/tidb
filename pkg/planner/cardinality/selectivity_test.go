@@ -103,7 +103,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	b.Run("Selectivity", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _, err := cardinality.Selectivity(sctx, &statsTbl.HistColl, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions, nil)
+			_, _, err := cardinality.Selectivity(sctx.GetPlanCtx(), &statsTbl.HistColl, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions, nil)
 			require.NoError(b, err)
 		}
 		b.ReportAllocs()
@@ -454,13 +454,13 @@ func TestSelectivity(t *testing.T) {
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo(), ds.Schema().Columns)
 
-		ratio, _, err := cardinality.Selectivity(sctx, histColl, sel.Conditions, nil)
+		ratio, _, err := cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivity) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio)
 
 		histColl.RealtimeCount *= 10
 		histColl.ModifyCount = histColl.RealtimeCount * 9
-		ratio, _, err = cardinality.Selectivity(sctx, histColl, sel.Conditions, nil)
+		ratio, _, err = cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivityAfterIncrease) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, ratio)
 	}
@@ -512,7 +512,7 @@ func TestDNFCondSelectivity(t *testing.T) {
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo(), ds.Schema().Columns)
 
-		ratio, _, err := cardinality.Selectivity(sctx, histColl, sel.Conditions, nil)
+		ratio, _, err := cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "error %v, for expr %s", err, tt)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -642,7 +642,7 @@ func generateIntDatum(dimension, num int) ([]types.Datum, error) {
 				data[dimension-k-1].SetInt64(int64(j % num))
 				j = j / num
 			}
-			bytes, err := codec.EncodeKey(sc, nil, data...)
+			bytes, err := codec.EncodeKey(sc.TimeZone(), nil, data...)
 			if err != nil {
 				return nil, err
 			}
@@ -893,8 +893,8 @@ func generateMapsForMockStatsTbl(statsTbl *statistics.Table) {
 	for _, idxIDs := range colID2IdxIDs {
 		slices.Sort(idxIDs)
 	}
-	statsTbl.Idx2ColumnIDs = idx2Columns
-	statsTbl.ColID2IdxIDs = colID2IdxIDs
+	statsTbl.Idx2ColUniqueIDs = idx2Columns
+	statsTbl.ColUniqueID2IdxIDs = colID2IdxIDs
 }
 
 func TestIssue39593(t *testing.T) {
@@ -934,12 +934,12 @@ func TestIssue39593(t *testing.T) {
 	sctx := testKit.Session()
 	idxID := tblInfo.Indices[0].ID
 	vals := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
-	count, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRanges(vals, vals))
+	count, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count without any changes
 	require.Equal(t, float64(360), count)
 	statsTbl.RealtimeCount *= 10
-	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRanges(vals, vals))
+	count, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table
 	require.Equal(t, float64(3600), count)
@@ -972,6 +972,19 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			StatsVer:          2,
 		}
+	}
+	idxValues := make([]types.Datum, 0, len(colValues))
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+	for _, colV := range colValues {
+		b, err := codec.EncodeKey(sc.TimeZone(), nil, colV)
+		require.NoError(t, err)
+		idxValues = append(idxValues, types.NewBytesDatum(b))
+	}
+	mockStatsTbl.Indices[1] = &statistics.Index{
+		Histogram:         *mockStatsHistogram(1, idxValues, 1000, types.NewFieldType(mysql.TypeBlob)),
+		Info:              tblInfo.Indices[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
 	}
 	generateMapsForMockStatsTbl(mockStatsTbl)
 	stat := h.GetTableStats(tblInfo)
@@ -1035,7 +1048,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	require.NoError(t, err)
 	idxValues := make([]types.Datum, 0)
 	for _, val := range colValues {
-		b, err := codec.EncodeKey(sc, nil, val)
+		b, err := codec.EncodeKey(sc.TimeZone(), nil, val)
 		require.NoError(t, err)
 		idxValues = append(idxValues, types.NewBytesDatum(b))
 	}
@@ -1051,6 +1064,88 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		mockStatsTbl.Indices[int64(i)] = &statistics.Index{
 			Histogram:         *mockStatsHistogram(int64(i), idxValues, 10, types.NewFieldType(mysql.TypeBlob)),
+			Info:              tblInfo.Indices[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		}
+	}
+	generateMapsForMockStatsTbl(mockStatsTbl)
+	stat := h.GetTableStats(tblInfo)
+	stat.HistColl = mockStatsTbl.HistColl
+
+	var (
+		input  []string
+		output []struct {
+			Query  string
+			Result []string
+		}
+	)
+
+	integrationSuiteData := cardinality.GetCardinalitySuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i := 0; i < len(input); i++ {
+		testdata.OnRecord(func() {
+			output[i].Query = input[i]
+		})
+		if !strings.HasPrefix(input[i], "explain") {
+			testKit.MustExec(input[i])
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func TestOrderingIdxSelectivityRatio(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int primary key, b int, c int, index ib(b), index ic(c))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Mock the stats:
+	// total row count 1000
+	// column b, c: from 1 to 1000, NDV 1000
+	// indexes are created on (b), (c) respectively
+	mockStatsTbl := mockStatsTable(tblInfo, 1000)
+	pkColValues, err := generateIntDatum(1, 1000)
+	require.NoError(t, err)
+	mockStatsTbl.Columns[1] = &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, pkColValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	colValues, err := generateIntDatum(1, 1000)
+	require.NoError(t, err)
+	idxValues := make([]types.Datum, 0)
+	for _, val := range colValues {
+		b, err := codec.EncodeKey(sc.TimeZone(), nil, val)
+		require.NoError(t, err)
+		idxValues = append(idxValues, types.NewBytesDatum(b))
+	}
+
+	for i := 2; i <= 3; i++ {
+		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
+			Histogram:         *mockStatsHistogram(int64(i), colValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tblInfo.Columns[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		}
+	}
+	for i := 1; i <= 2; i++ {
+		mockStatsTbl.Indices[int64(i)] = &statistics.Index{
+			Histogram:         *mockStatsHistogram(int64(i), idxValues, 1, types.NewFieldType(mysql.TypeBlob)),
 			Info:              tblInfo.Indices[i-1],
 			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			StatsVer:          2,
@@ -1169,4 +1264,85 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// The execution plan is the same as case 2.
 	testKit.MustExec("set @@tidb_opt_objective = 'determinate'")
 	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
+}
+func TestSubsetIdxCardinality(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int, index iabc(a, b, c))")
+	// Insert enough rows with differing cardinalities to test subset vs full index cardinality estimate.
+	// Result of a 2 column match should produce more rows than 3 column match.
+	testKit.MustExec("insert into t values (1, 1, 1), (1, 1, 1), (2, 1, 1), (2, 1, 1), (3, 1, 1), (3, 1, 1), (4, 1, 1), (4, 1, 1), (5, 1, 1), (5, 1, 1)")
+	testKit.MustExec("insert into t select a + 5, a, a from t")
+	for i := 1; i < 3; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t select a + 10 + %v, b + 1, c from t", i))
+	}
+	for j := 0; j < 3; j++ {
+		testKit.MustExec("insert into t select a, b, c from t")
+	}
+	testKit.MustExec("insert into t select a, b + 10, c from t")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec(`analyze table t`)
+
+	var (
+		input  []string
+		output []struct {
+			Query  string
+			Result []string
+		}
+	)
+	integrationSuiteData := cardinality.GetCardinalitySuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i := 0; i < len(input); i++ {
+		testdata.OnRecord(func() {
+			output[i].Query = input[i]
+		})
+		if !strings.HasPrefix(input[i], "explain") {
+			testKit.MustExec(input[i])
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func TestBuiltinInEstWithoutStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+
+	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(testkit.Rows(
+		"TableReader 0.08 root  data:Selection",
+		"└─Selection 0.08 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
+		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+
+	h.Clear()
+	require.NoError(t, h.InitStatsLite(is))
+	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(testkit.Rows(
+		"TableReader 0.08 root  data:Selection",
+		"└─Selection 0.08 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
+		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+
+	h.Clear()
+	require.NoError(t, h.InitStats(is))
+	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(testkit.Rows(
+		"TableReader 0.08 root  data:Selection",
+		"└─Selection 0.08 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
+		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
 }

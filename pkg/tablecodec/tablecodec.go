@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -323,34 +322,41 @@ func DecodeRowKey(key kv.Key) (kv.Handle, error) {
 }
 
 // EncodeValue encodes a go value to bytes.
-func EncodeValue(sc *stmtctx.StatementContext, b []byte, raw types.Datum) ([]byte, error) {
+// This function may return both a valid encoded bytes and an error (actually `"pingcap/errors".ErrorGroup`). If the caller
+// expects to handle these errors according to `SQL_MODE` or other configuration, please refer to `pkg/errctx`.
+func EncodeValue(loc *time.Location, b []byte, raw types.Datum) ([]byte, error) {
 	var v types.Datum
-	err := flatten(sc, raw, &v)
+	err := flatten(loc, raw, &v)
 	if err != nil {
 		return nil, err
 	}
-	return codec.EncodeValue(sc, b, v)
+
+	val, err := codec.EncodeValue(loc, b, v)
+
+	return val, err
 }
 
 // EncodeRow encode row data and column ids into a slice of byte.
 // valBuf and values pass by caller, for reducing EncodeRow allocates temporary bufs. If you pass valBuf and values as nil,
 // EncodeRow will allocate it.
-func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum, e *rowcodec.Encoder, checksums ...uint32) ([]byte, error) {
+// This function may return both a valid encoded bytes and an error (actually `"pingcap/errors".ErrorGroup`). If the caller
+// expects to handle these errors according to `SQL_MODE` or other configuration, please refer to `pkg/errctx`.
+func EncodeRow(loc *time.Location, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum, e *rowcodec.Encoder, checksums ...uint32) ([]byte, error) {
 	if len(row) != len(colIDs) {
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
 	if e.Enable {
 		valBuf = valBuf[:0]
-		return e.Encode(sc, colIDs, row, valBuf, checksums...)
+		return e.Encode(loc, colIDs, row, valBuf, checksums...)
 	}
-	return EncodeOldRow(sc, row, colIDs, valBuf, values)
+	return EncodeOldRow(loc, row, colIDs, valBuf, values)
 }
 
 // EncodeOldRow encode row data and column ids into a slice of byte.
 // Row layout: colID1, value1, colID2, value2, .....
 // valBuf and values pass by caller, for reducing EncodeOldRow allocates temporary bufs. If you pass valBuf and values as nil,
 // EncodeOldRow will allocate it.
-func EncodeOldRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum) ([]byte, error) {
+func EncodeOldRow(loc *time.Location, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum) ([]byte, error) {
 	if len(row) != len(colIDs) {
 		return nil, errors.Errorf("EncodeRow error: data and columnID count not match %d vs %d", len(row), len(colIDs))
 	}
@@ -361,7 +367,7 @@ func EncodeOldRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int6
 	for i, c := range row {
 		id := colIDs[i]
 		values[2*i].SetInt64(id)
-		err := flatten(sc, c, &values[2*i+1])
+		err := flatten(loc, c, &values[2*i+1])
 		if err != nil {
 			return valBuf, errors.Trace(err)
 		}
@@ -370,16 +376,16 @@ func EncodeOldRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int6
 		// We could not set nil value into kv.
 		return append(valBuf, codec.NilFlag), nil
 	}
-	return codec.EncodeValue(sc, valBuf, values...)
+	return codec.EncodeValue(loc, valBuf, values...)
 }
 
-func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) error {
+func flatten(loc *time.Location, data types.Datum, ret *types.Datum) error {
 	switch data.Kind() {
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := data.GetMysqlTime()
-		if t.Type() == mysql.TypeTimestamp && sc.TimeZone() != time.UTC {
-			err := t.ConvertTimeZone(sc.TimeZone(), time.UTC)
+		if t.Type() == mysql.TypeTimestamp && loc != nil && loc != time.UTC {
+			err := t.ConvertTimeZone(loc, time.UTC)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -399,7 +405,7 @@ func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) e
 		return nil
 	case types.KindBinaryLiteral, types.KindMysqlBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
-		val, err := data.GetBinaryLiteral().ToInt(sc.TypeCtx())
+		val, err := data.GetBinaryLiteral().ToInt(types.StrictContext)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -783,7 +789,7 @@ func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
 	if unsigned {
 		handleDatum.SetUint64(handleDatum.GetUint64())
 	}
-	intHandleBytes, err := codec.EncodeValue(nil, nil, handleDatum)
+	intHandleBytes, err := codec.EncodeValue(time.UTC, nil, handleDatum)
 	return [][]byte{intHandleBytes}, err
 }
 
@@ -969,20 +975,36 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 	return kv.NewCommonHandle(keySuffix)
 }
 
-func decodeHandleInIndexValue(value []byte) (kv.Handle, error) {
-	if getIndexVersion(value) == 1 {
-		seg := SplitIndexValueForClusteredIndexVersion1(value)
-		return kv.NewCommonHandle(seg.CommonHandle)
-	}
-	if len(value) > MaxOldEncodeValueLen {
-		tailLen := value[0]
-		if tailLen >= 8 {
-			return decodeIntHandleInIndexValue(value[len(value)-int(tailLen):]), nil
+func decodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
+	var seg IndexValueSegments
+	if getIndexVersion(value) == 0 {
+		// For Old Encoding (IntHandle without any others options)
+		if len(value) <= MaxOldEncodeValueLen {
+			return decodeIntHandleInIndexValue(value), nil
 		}
-		handleLen := uint16(value[2])<<8 + uint16(value[3])
-		return kv.NewCommonHandle(value[4 : 4+handleLen])
+		// For IndexValueVersion0
+		seg = SplitIndexValue(value)
+	} else {
+		// For IndexValueForClusteredIndexVersion1
+		seg = SplitIndexValueForClusteredIndexVersion1(value)
 	}
-	return decodeIntHandleInIndexValue(value), nil
+	if len(seg.IntHandle) != 0 {
+		handle = decodeIntHandleInIndexValue(seg.IntHandle)
+	}
+	if len(seg.CommonHandle) != 0 {
+		handle, err = kv.NewCommonHandle(seg.CommonHandle)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(seg.PartitionID) != 0 {
+		_, pid, err := codec.DecodeInt(seg.PartitionID)
+		if err != nil {
+			return nil, err
+		}
+		handle = kv.NewPartitionHandle(pid, handle)
+	}
+	return handle, nil
 }
 
 // decodeIntHandleInIndexValue uses to decode index value as int handle id.
@@ -992,7 +1014,7 @@ func decodeIntHandleInIndexValue(data []byte) kv.Handle {
 
 // EncodeTableIndexPrefix encodes index prefix with tableID and idxID.
 func EncodeTableIndexPrefix(tableID, idxID int64) kv.Key {
-	key := make([]byte, 0, prefixLen)
+	key := make([]byte, 0, prefixLen+idLen)
 	key = appendTableIndexPrefix(key, tableID)
 	key = codec.EncodeInt(key, idxID)
 	return key
@@ -1111,7 +1133,7 @@ func GetIndexKeyBuf(buf []byte, defaultCap int) []byte {
 }
 
 // GenIndexKey generates index key using input physical table id
-func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	phyTblID int64, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
 	if idxInfo.Unique {
 		// See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
@@ -1132,7 +1154,7 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	key = GetIndexKeyBuf(buf, RecordRowKeyLen+len(indexedValues)*9+9)
 	key = appendTableIndexPrefix(key, phyTblID)
 	key = codec.EncodeInt(key, idxInfo.ID)
-	key, err = codec.EncodeKey(sc, key, indexedValues...)
+	key, err = codec.EncodeKey(loc, key, indexedValues...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1428,19 +1450,19 @@ func TempIndexValueIsUntouched(b []byte) bool {
 //	|     In v5.0, restored data contains only non-binary data(except for char and _bin). In the above example, the restored data contains only the value of b.
 //	|     Besides, if the collation of b is _bin, then restored data is an integer indicate the spaces are truncated. Then we use sortKey
 //	|     and the restored data together to restore original data.
-func GenIndexValuePortal(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+func GenIndexValuePortal(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, restoredData []types.Datum, buf []byte) ([]byte, error) {
 	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion == 1 {
-		return GenIndexValueForClusteredIndexVersion1(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData, buf)
+		return GenIndexValueForClusteredIndexVersion1(loc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, restoredData, buf)
 	}
-	return genIndexValueVersion0(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, buf)
+	return genIndexValueVersion0(loc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, partitionID, buf)
 }
 
 // TryGetCommonPkColumnRestoredIds get the IDs of primary key columns which need restored data if the table has common handle.
 // Caller need to make sure the table has common handle.
 func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
-	var pkColIds []int64
+	var pkColIDs []int64
 	var pkIdx *model.IndexInfo
 	for _, idx := range tbl.Indices {
 		if idx.Primary {
@@ -1449,18 +1471,18 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 		}
 	}
 	if pkIdx == nil {
-		return pkColIds
+		return pkColIDs
 	}
 	for _, idxCol := range pkIdx.Columns {
 		if types.NeedRestoredData(&tbl.Columns[idxCol.Offset].FieldType) {
-			pkColIds = append(pkColIds, tbl.Columns[idxCol.Offset].ID)
+			pkColIDs = append(pkColIDs, tbl.Columns[idxCol.Offset].ID)
 		}
 	}
-	return pkColIds
+	return pkColIDs
 }
 
 // GenIndexValueForClusteredIndexVersion1 generates the index value for the clustered index with version 1(New in v5.0.0).
-func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, handleRestoredData []types.Datum, buf []byte) ([]byte, error) {
 	var idxVal []byte
@@ -1502,14 +1524,14 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 		}
 
 		if len(handleRestoredData) > 0 {
-			pkColIds := TryGetCommonPkColumnRestoredIds(tblInfo)
-			colIds = append(colIds, pkColIds...)
+			pkColIDs := TryGetCommonPkColumnRestoredIds(tblInfo)
+			colIds = append(colIds, pkColIDs...)
 			allRestoredData = append(allRestoredData, handleRestoredData...)
 		}
 
 		rd := rowcodec.Encoder{Enable: true}
 		var err error
-		idxVal, err = rd.Encode(sc, colIds, allRestoredData, idxVal)
+		idxVal, err = rd.Encode(loc, colIds, allRestoredData, idxVal)
 		if err != nil {
 			return nil, err
 		}
@@ -1525,7 +1547,7 @@ func GenIndexValueForClusteredIndexVersion1(sc *stmtctx.StatementContext, tblInf
 }
 
 // genIndexValueVersion0 create index value for both local and global index.
-func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	idxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle,
 	partitionID int64, buf []byte) ([]byte, error) {
 	var idxVal []byte
@@ -1553,7 +1575,7 @@ func genIndexValueVersion0(sc *stmtctx.StatementContext, tblInfo *model.TableInf
 		rd := rowcodec.Encoder{Enable: true}
 		// Encode row restored value.
 		var err error
-		idxVal, err = rd.Encode(sc, colIds, indexedValues, idxVal)
+		idxVal, err = rd.Encode(loc, colIds, indexedValues, idxVal)
 		if err != nil {
 			return nil, err
 		}
@@ -1791,7 +1813,7 @@ func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdSt
 			return nil, err
 		}
 		datum := types.NewIntDatum(pid)
-		pidBytes, err := codec.EncodeValue(nil, nil, datum)
+		pidBytes, err := codec.EncodeValue(time.UTC, nil, datum)
 		if err != nil {
 			return nil, err
 		}
@@ -1848,7 +1870,7 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 			return nil, err
 		}
 		datum := types.NewIntDatum(pid)
-		pidBytes, err := codec.EncodeValue(nil, nil, datum)
+		pidBytes, err := codec.EncodeValue(time.UTC, nil, datum)
 		if err != nil {
 			return nil, err
 		}

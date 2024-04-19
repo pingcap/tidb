@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -68,7 +69,7 @@ func ExecMultiSQLInGoroutine(s kv.Storage, dbName string, multiSQL []string, don
 }
 
 // ExtractAllTableHandles extracts all handles of a given table.
-func ExtractAllTableHandles(se session.Session, dbName, tbName string) ([]int64, error) {
+func ExtractAllTableHandles(se sessiontypes.Session, dbName, tbName string) ([]int64, error) {
 	dom := domain.GetDomain(se)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
 	if err != nil {
@@ -102,7 +103,7 @@ func FindIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.Inde
 type SubStates = []model.SchemaState
 
 // TestMatchCancelState is used to test whether the cancel state matches.
-func TestMatchCancelState(t *testing.T, job *model.Job, cancelState interface{}, sql string) bool {
+func TestMatchCancelState(t *testing.T, job *model.Job, cancelState any, sql string) bool {
 	switch v := cancelState.(type) {
 	case model.SchemaState:
 		if job.Type == model.ActionMultiSchemaChange {

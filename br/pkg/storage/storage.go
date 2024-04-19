@@ -11,8 +11,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"go.uber.org/zap"
 )
 
@@ -90,6 +89,7 @@ type Writer interface {
 
 type WriterOption struct {
 	Concurrency int
+	PartSize    int64
 }
 
 type ReaderOption struct {
@@ -97,6 +97,8 @@ type ReaderOption struct {
 	StartOffset *int64
 	// EndOffset is exclusive. And it's incompatible with Seek.
 	EndOffset *int64
+	// PrefetchSize will switch to NewPrefetchReader if value is positive.
+	PrefetchSize int
 }
 
 // ExternalStorage represents a kind of file system storage.
@@ -129,6 +131,8 @@ type ExternalStorage interface {
 	Create(ctx context.Context, path string, option *WriterOption) (ExternalFileWriter, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
+	// Close release the resources of the storage.
+	Close()
 }
 
 // ExternalFileReader represents the streaming external file reader.
@@ -158,9 +162,9 @@ type ExternalStorageOptions struct {
 	NoCredentials bool
 
 	// HTTPClient to use. The created storage may ignore this field if it is not
-	// directly using HTTP (e.g. the local storage) or use self-design HTTP client
-	// with credential (e.g. the gcs).
-	// NOTICE: the HTTPClient is only used by s3 storage and azure blob storage.
+	// directly using HTTP (e.g. the local storage).
+	// NOTICE: the HTTPClient is only used by s3/azure/gcs.
+	// For GCS, we will use this as base client to init a client with credentials.
 	HTTPClient *http.Client
 
 	// CheckPermissions check the given permission in New() function.
@@ -188,11 +192,26 @@ func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds boo
 
 // NewWithDefaultOpt creates ExternalStorage with default options.
 func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (ExternalStorage, error) {
-	var opts ExternalStorageOptions
-	if intest.InTest {
-		opts.NoCredentials = true
+	return New(ctx, backend, nil)
+}
+
+// NewFromURL creates an ExternalStorage from URL.
+func NewFromURL(ctx context.Context, uri string) (ExternalStorage, error) {
+	if len(uri) == 0 {
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "empty store is not allowed")
 	}
-	return New(ctx, backend, &opts)
+	u, err := ParseRawURL(uri)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if u.Scheme == "memstore" {
+		return NewMemStorage(), nil
+	}
+	b, err := parseBackend(u, uri, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return NewWithDefaultOpt(ctx, b)
 }
 
 // New creates an ExternalStorage with options.
@@ -225,9 +244,6 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		if backend.Gcs == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "GCS config not found")
 		}
-		// the HTTPClient should has credential, currently the HTTPClient only has the http.Transport.
-		// Issue: https: //github.com/pingcap/tidb/issues/47022
-		opts.HTTPClient = nil
 		return NewGCSStorage(ctx, backend.Gcs, opts)
 	case *backuppb.StorageBackend_AzureBlobStorage:
 		return newAzureBlobStorage(ctx, backend.AzureBlobStorage, opts)

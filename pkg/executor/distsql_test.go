@@ -181,7 +181,7 @@ func TestInconsistentIndex(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		_, err = idxOp.Create(ctx, txn, types.MakeDatums(i+10), kv.IntHandle(100+i), nil)
+		_, err = idxOp.Create(ctx.GetTableCtx(), txn, types.MakeDatums(i+10), kv.IntHandle(100+i), nil)
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestInconsistentIndex(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		err = idxOp.Delete(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(i+10), kv.IntHandle(100+i))
+		err = idxOp.Delete(ctx.GetTableCtx(), txn, types.MakeDatums(i+10), kv.IntHandle(100+i))
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
@@ -322,7 +322,7 @@ func TestCoprocessorPagingSize(t *testing.T) {
 	// +--------------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 	// 2 rows in set (0.01 sec)
 
-	getRPCNumFromExplain := func(rows [][]interface{}) (res uint64) {
+	getRPCNumFromExplain := func(rows [][]any) (res uint64) {
 		re := regexp.MustCompile("rpc_num: ([0-9]+)")
 		for _, row := range rows {
 			buf := bytes.NewBufferString("")
@@ -568,4 +568,26 @@ func TestCoprocessorBatchByStore(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestCoprCacheWithoutExecutionInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values(1), (2), (3)")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore", `return(123)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore"))
+	}()
+
+	defer tk.MustExec("set @@tidb_enable_collect_execution_info=1")
+	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(_ *kv.Request) {
+		tk1.MustExec("set @@tidb_enable_collect_execution_info=0")
+	})
+	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("1", "2", "3"))
 }

@@ -219,14 +219,14 @@ func convertScientificNotation(str string) (string, error) {
 		}
 		// 123.456 >> 5 = 12345600
 		return f[:point] + f[point+1:] + strings.Repeat("0", point+int(exp)-len(f)+1), nil
-	} else { // move point left
-		exp = -exp
-		if int(exp) < point { // 123.456 << 2 = 1.23456
-			return f[:point-int(exp)] + "." + f[point-int(exp):point] + f[point+1:], nil
-		}
-		// 123.456 << 5 = 0.00123456
-		return "0." + strings.Repeat("0", int(exp)-point) + f[:point] + f[point+1:], nil
 	}
+	// move point left
+	exp = -exp
+	if int(exp) < point { // 123.456 << 2 = 1.23456
+		return f[:point-int(exp)] + "." + f[point-int(exp):point] + f[point+1:], nil
+	}
+	// 123.456 << 5 = 0.00123456
+	return "0." + strings.Repeat("0", int(exp)-point) + f[:point] + f[point+1:], nil
 }
 
 func convertDecimalStrToUint(str string, upperBound uint64, tp byte) (uint64, error) {
@@ -316,7 +316,7 @@ func StrToUint(ctx Context, str string, isFuncCast bool) (uint64, error) {
 
 // StrToDateTime converts str to MySQL DateTime.
 func StrToDateTime(ctx Context, str string, fsp int) (Time, error) {
-	return ParseTime(ctx, str, mysql.TypeDatetime, fsp, nil)
+	return ParseTime(ctx, str, mysql.TypeDatetime, fsp)
 }
 
 // StrToDuration converts str to Duration. It returns Duration in normal case,
@@ -754,7 +754,7 @@ func getValidFloatPrefix(ctx Context, s string, isFuncCast bool) (valid string, 
 }
 
 // ToString converts an interface to a string.
-func ToString(value interface{}) (string, error) {
+func ToString(value any) (string, error) {
 	switch v := value.(type) {
 	case bool:
 		if v {

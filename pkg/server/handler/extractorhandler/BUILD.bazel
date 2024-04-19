@@ -1,0 +1,49 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "extractorhandler",
+    srcs = ["extractor.go"],
+    importpath = "github.com/pingcap/tidb/pkg/server/handler/extractorhandler",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/server/handler",
+        "//pkg/types",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "extractorhandler_test",
+    timeout = "short",
+    srcs = [
+        "extract_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        ":extractorhandler",
+        "//pkg/config",
+        "//pkg/domain",
+        "//pkg/metrics",
+        "//pkg/server",
+        "//pkg/server/internal/testserverclient",
+        "//pkg/server/internal/testutil",
+        "//pkg/server/internal/util",
+        "//pkg/session",
+        "//pkg/store/mockstore/unistore",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/stmtsummary/v2:stmtsummary",
+        "//pkg/util/topsql/state",
+        "@com_github_gorilla_mux//:mux",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -70,3 +70,6 @@ func ConvertRowToHandleAndIndexDatum(
 
 // ExtractDatumByOffsetsForTest is used for test.
 var ExtractDatumByOffsetsForTest = extractDatumByOffsets
+
+// CalculateRegionBatchForTest is used for test.
+var CalculateRegionBatchForTest = calculateRegionBatch

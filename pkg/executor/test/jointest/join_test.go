@@ -17,46 +17,17 @@ package jointest
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
-
-func TestJoinInDisk(t *testing.T) {
-	origin := config.RestoreFunc()
-	defer origin()
-
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
-	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
-	tk.MustExec("use test")
-
-	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
-	}
-	tk.Session().SetSessionManager(sm)
-	dom.ExpensiveQueryHandle().SetSessionManager(sm)
-
-	// TODO(fengliyuan): how to ensure that it is using disk really?
-	tk.MustExec("set @@tidb_mem_quota_query=1;")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 int, c2 int)")
-	tk.MustExec("create table t1(c1 int, c2 int)")
-	tk.MustExec("insert into t values(1,1),(2,2)")
-	tk.MustExec("insert into t1 values(2,3),(4,4)")
-	result := tk.MustQuery("select /*+ TIDB_HJ(t, t2) */ * from t, t1 where t.c1 = t1.c1")
-	result.Check(testkit.Rows("2 2 2 3"))
-}
 
 func TestJoin2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -75,7 +46,7 @@ func TestJoin2(t *testing.T) {
 	tk.MustExec("insert t values (1)")
 	tests := []struct {
 		sql    string
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			"select 1 from t as a left join t as b on 0",
@@ -316,552 +287,6 @@ func TestJoin2(t *testing.T) {
 	tk.MustQuery("select min(t2.b) from t1 right join t2 on t2.a=t1.a right join t3 on t2.a=t3.a left join t4 on t3.a=t4.a").Check(testkit.Rows("1"))
 }
 
-func TestJoinCast(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	var result *testkit.Result
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 int)")
-	tk.MustExec("create table t1(c1 int unsigned)")
-	tk.MustExec("insert into t values (1)")
-	tk.MustExec("insert into t1 values (1)")
-	result = tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
-	result.Check(testkit.Rows("1"))
-
-	// int64(-1) != uint64(18446744073709551615)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 bigint)")
-	tk.MustExec("create table t1(c1 bigint unsigned)")
-	tk.MustExec("insert into t values (-1)")
-	tk.MustExec("insert into t1 values (18446744073709551615)")
-	result = tk.MustQuery("select * from t , t1 where t.c1 = t1.c1")
-	result.Check(testkit.Rows())
-
-	// float(1) == double(1)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 float)")
-	tk.MustExec("create table t1(c1 double)")
-	tk.MustExec("insert into t values (1.0)")
-	tk.MustExec("insert into t1 values (1.00)")
-	result = tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
-	result.Check(testkit.Rows("1"))
-
-	// varchar("x") == char("x")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 varchar(1))")
-	tk.MustExec("create table t1(c1 char(1))")
-	tk.MustExec(`insert into t values ("x")`)
-	tk.MustExec(`insert into t1 values ("x")`)
-	result = tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
-	result.Check(testkit.Rows("x"))
-
-	// varchar("x") != char("y")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 varchar(1))")
-	tk.MustExec("create table t1(c1 char(1))")
-	tk.MustExec(`insert into t values ("x")`)
-	tk.MustExec(`insert into t1 values ("y")`)
-	result = tk.MustQuery("select t.c1 from t , t1 where t.c1 = t1.c1")
-	result.Check(testkit.Rows())
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 int,c2 double)")
-	tk.MustExec("create table t1(c1 double,c2 int)")
-	tk.MustExec("insert into t values (1, 2), (1, NULL)")
-	tk.MustExec("insert into t1 values (1, 2), (1, NULL)")
-	result = tk.MustQuery("select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);")
-	result.Check(testkit.Rows("1 2 1 2"))
-
-	/* Issue 11895 */
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t(c1 bigint unsigned);")
-	tk.MustExec("create table t1(c1 bit(64));")
-	tk.MustExec("insert into t value(18446744073709551615);")
-	tk.MustExec("insert into t1 value(-1);")
-	result = tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;")
-	require.Len(t, result.Rows(), 1)
-
-	/* Issues 11896 */
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t(c1 bigint);")
-	tk.MustExec("create table t1(c1 bit(64));")
-	tk.MustExec("insert into t value(1);")
-	tk.MustExec("insert into t1 value(1);")
-	result = tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;")
-	require.Len(t, result.Rows(), 1)
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t(c1 bigint);")
-	tk.MustExec("create table t1(c1 bit(64));")
-	tk.MustExec("insert into t value(-1);")
-	tk.MustExec("insert into t1 value(18446744073709551615);")
-	result = tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;")
-	// TODO: MySQL will return one row, because c1 in t1 is 0xffffffff, which equals to -1.
-	require.Len(t, result.Rows(), 0)
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("create table t(c1 bigint)")
-	tk.MustExec("create table t1(c1 bigint unsigned)")
-	tk.MustExec("create table t2(c1 Date)")
-	tk.MustExec("insert into t value(20191111)")
-	tk.MustExec("insert into t1 value(20191111)")
-	tk.MustExec("insert into t2 value('2019-11-11')")
-	result = tk.MustQuery("select * from t, t1, t2 where t.c1 = t2.c1 and t1.c1 = t2.c1")
-	result.Check(testkit.Rows("20191111 20191111 2019-11-11"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2;")
-	tk.MustExec("create table t(c1 bigint);")
-	tk.MustExec("create table t1(c1 bigint unsigned);")
-	tk.MustExec("create table t2(c1 enum('a', 'b', 'c', 'd'));")
-	tk.MustExec("insert into t value(3);")
-	tk.MustExec("insert into t1 value(3);")
-	tk.MustExec("insert into t2 value('c');")
-	result = tk.MustQuery("select * from t, t1, t2 where t.c1 = t2.c1 and t1.c1 = t2.c1;")
-	result.Check(testkit.Rows("3 3 c"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("drop table if exists t2;")
-	tk.MustExec("create table t(c1 bigint);")
-	tk.MustExec("create table t1(c1 bigint unsigned);")
-	tk.MustExec("create table t2 (c1 SET('a', 'b', 'c', 'd'));")
-	tk.MustExec("insert into t value(9);")
-	tk.MustExec("insert into t1 value(9);")
-	tk.MustExec("insert into t2 value('a,d');")
-	result = tk.MustQuery("select * from t, t1, t2 where t.c1 = t2.c1 and t1.c1 = t2.c1;")
-	result.Check(testkit.Rows("9 9 a,d"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 int)")
-	tk.MustExec("create table t1(c1 decimal(4,2))")
-	tk.MustExec("insert into t values(0), (2)")
-	tk.MustExec("insert into t1 values(0), (9)")
-	result = tk.MustQuery("select * from t left join t1 on t1.c1 = t.c1")
-	result.Sort().Check(testkit.Rows("0 0.00", "2 <nil>"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 decimal(4,1))")
-	tk.MustExec("create table t1(c1 decimal(4,2))")
-	tk.MustExec("insert into t values(0), (2)")
-	tk.MustExec("insert into t1 values(0), (9)")
-	result = tk.MustQuery("select * from t left join t1 on t1.c1 = t.c1")
-	result.Sort().Check(testkit.Rows("0.0 0.00", "2.0 <nil>"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 decimal(4,1))")
-	tk.MustExec("create table t1(c1 decimal(4,2))")
-	tk.MustExec("create index k1 on t1(c1)")
-	tk.MustExec("insert into t values(0), (2)")
-	tk.MustExec("insert into t1 values(0), (9)")
-	result = tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t left join t1 on t1.c1 = t.c1")
-	result.Sort().Check(testkit.Rows("0.0 0.00", "2.0 <nil>"))
-	result = tk.MustQuery("select /*+ INL_HASH_JOIN(t1) */ * from t left join t1 on t1.c1 = t.c1")
-	result.Sort().Check(testkit.Rows("0.0 0.00", "2.0 <nil>"))
-	result = tk.MustQuery("select /*+ INL_MERGE_JOIN(t1) */ * from t left join t1 on t1.c1 = t.c1")
-	result.Sort().Check(testkit.Rows("0.0 0.00", "2.0 <nil>"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("create table t(c1 char(10))")
-	tk.MustExec("create table t1(c1 char(10))")
-	tk.MustExec("create table t2(c1 char(10))")
-	tk.MustExec("insert into t values('abd')")
-	tk.MustExec("insert into t1 values('abc')")
-	tk.MustExec("insert into t2 values('abc')")
-	result = tk.MustQuery("select * from (select * from t union all select * from t1) t1 join t2 on t1.c1 = t2.c1")
-	result.Sort().Check(testkit.Rows("abc abc"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a varchar(10), index idx(a))")
-	tk.MustExec("insert into t values('1'), ('2'), ('3')")
-	tk.MustExec("set @@tidb_init_chunk_size=1")
-	result = tk.MustQuery("select a from (select /*+ INL_JOIN(t1, t2) */ t1.a from t t1 join t t2 on t1.a=t2.a) t group by a")
-	result.Sort().Check(testkit.Rows("1", "2", "3"))
-	result = tk.MustQuery("select a from (select /*+ INL_HASH_JOIN(t1, t2) */ t1.a from t t1 join t t2 on t1.a=t2.a) t group by a")
-	result.Sort().Check(testkit.Rows("1", "2", "3"))
-	result = tk.MustQuery("select a from (select /*+ INL_MERGE_JOIN(t1, t2) */ t1.a from t t1 join t t2 on t1.a=t2.a) t group by a")
-	result.Sort().Check(testkit.Rows("1", "2", "3"))
-	tk.MustExec("set @@tidb_init_chunk_size=32")
-}
-
-func TestUsing(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2, t3, t4")
-	tk.MustExec("create table t1 (a int, c int)")
-	tk.MustExec("create table t2 (a int, d int)")
-	tk.MustExec("create table t3 (a int)")
-	tk.MustExec("create table t4 (a int)")
-	tk.MustExec("insert t1 values (2, 4), (1, 3)")
-	tk.MustExec("insert t2 values (2, 5), (3, 6)")
-	tk.MustExec("insert t3 values (1)")
-
-	tk.MustQuery("select * from t1 join t2 using (a)").Check(testkit.Rows("2 4 5"))
-	tk.MustQuery("select t1.a, t2.a from t1 join t2 using (a)").Check(testkit.Rows("2 2"))
-
-	tk.MustQuery("select * from t1 right join t2 using (a) order by a").Check(testkit.Rows("2 5 4", "3 6 <nil>"))
-	tk.MustQuery("select t1.a, t2.a from t1 right join t2 using (a) order by t2.a").Check(testkit.Rows("2 2", "<nil> 3"))
-
-	tk.MustQuery("select * from t1 left join t2 using (a) order by a").Check(testkit.Rows("1 3 <nil>", "2 4 5"))
-	tk.MustQuery("select t1.a, t2.a from t1 left join t2 using (a) order by t1.a").Check(testkit.Rows("1 <nil>", "2 2"))
-
-	tk.MustQuery("select * from t1 join t2 using (a) right join t3 using (a)").Check(testkit.Rows("1 <nil> <nil>"))
-	tk.MustQuery("select * from t1 join t2 using (a) right join t3 on (t2.a = t3.a)").Check(testkit.Rows("<nil> <nil> <nil> 1"))
-	tk.MustQuery("select t2.a from t1 join t2 using (a) right join t3 on (t1.a = t3.a)").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select t1.a, t2.a, t3.a from t1 join t2 using (a) right join t3 using (a)").Check(testkit.Rows("<nil> <nil> 1"))
-	tk.MustQuery("select t1.c, t2.d from t1 join t2 using (a) right join t3 using (a)").Check(testkit.Rows("<nil> <nil>"))
-
-	tk.MustExec("alter table t1 add column b int default 1 after a")
-	tk.MustExec("alter table t2 add column b int default 1 after a")
-	tk.MustQuery("select * from t1 join t2 using (b, a)").Check(testkit.Rows("2 1 4 5"))
-
-	tk.MustExec("select * from (t1 join t2 using (a)) join (t3 join t4 using (a)) on (t2.a = t4.a and t1.a = t3.a)")
-
-	tk.MustExec("drop table if exists t, tt")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("create table tt(b int, a int)")
-	tk.MustExec("insert into t (a, b) values(1, 1)")
-	tk.MustExec("insert into tt (a, b) values(1, 2)")
-	tk.MustQuery("select * from t join tt using(a)").Check(testkit.Rows("1 1 2"))
-
-	tk.MustExec("drop table if exists t, tt")
-	tk.MustExec("create table t(a float, b int)")
-	tk.MustExec("create table tt(b bigint, a int)")
-	// Check whether this sql can execute successfully.
-	tk.MustExec("select * from t join tt using(a)")
-
-	tk.MustExec("drop table if exists t, s")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("create table s(b int, a int)")
-	tk.MustExec("insert into t values(1,1), (2,2), (3,3), (null,null)")
-	tk.MustExec("insert into s values(1,1), (3,3), (null,null)")
-
-	// For issue 20477
-	tk.MustQuery("select t.*, s.* from t join s using(a)").Check(testkit.Rows("1 1 1 1", "3 3 3 3"))
-	tk.MustQuery("select s.a from t join s using(a)").Check(testkit.Rows("1", "3"))
-	tk.MustQuery("select s.a from t join s using(a) where s.a > 1").Check(testkit.Rows("3"))
-	tk.MustQuery("select s.a from t join s using(a) order by s.a").Check(testkit.Rows("1", "3"))
-	tk.MustQuery("select s.a from t join s using(a) where s.a > 1 order by s.a").Check(testkit.Rows("3"))
-	tk.MustQuery("select s.a from t join s using(a) where s.a > 1 order by s.a limit 2").Check(testkit.Rows("3"))
-
-	// For issue 20441
-	tk.MustExec(`DROP TABLE if exists t1, t2, t3`)
-	tk.MustExec(`create table t1 (i int)`)
-	tk.MustExec(`create table t2 (i int)`)
-	tk.MustExec(`create table t3 (i int)`)
-	tk.MustExec(`select * from t1,t2 natural left join t3 order by t1.i,t2.i,t3.i`)
-	tk.MustExec(`select t1.i,t2.i,t3.i from t2 natural left join t3,t1 order by t1.i,t2.i,t3.i`)
-	tk.MustExec(`select * from t1,t2 natural right join t3 order by t1.i,t2.i,t3.i`)
-	tk.MustExec(`select t1.i,t2.i,t3.i from t2 natural right join t3,t1 order by t1.i,t2.i,t3.i`)
-
-	// For issue 15844
-	tk.MustExec(`DROP TABLE if exists t0, t1`)
-	tk.MustExec(`CREATE TABLE t0(c0 INT)`)
-	tk.MustExec(`CREATE TABLE t1(c0 INT)`)
-	tk.MustExec(`SELECT t0.c0 FROM t0 NATURAL RIGHT JOIN t1 WHERE t1.c0`)
-
-	// For issue 20958
-	tk.MustExec(`DROP TABLE if exists t1, t2`)
-	tk.MustExec(`create table t1(id int, name varchar(20));`)
-	tk.MustExec(`create table t2(id int, address varchar(30));`)
-	tk.MustExec(`insert into t1 values(1,'gangshen');`)
-	tk.MustExec(`insert into t2 values(1,'HangZhou');`)
-	tk.MustQuery(`select t2.* from t1 inner join t2 using (id) limit 1;`).Check(testkit.Rows("1 HangZhou"))
-	tk.MustQuery(`select t2.* from t1 inner join t2 on t1.id = t2.id  limit 1;`).Check(testkit.Rows("1 HangZhou"))
-
-	// For issue 20476
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1(a int)")
-	tk.MustExec("insert into t1 (a) values(1)")
-	tk.MustQuery("select t1.*, t2.* from t1 join t1 t2 using(a)").Check(testkit.Rows("1 1"))
-	tk.MustQuery("select * from t1 join t1 t2 using(a)").Check(testkit.Rows("1"))
-
-	// For issue 18992
-	tk.MustExec("drop table t")
-	tk.MustExec("CREATE TABLE t (   a varchar(55) NOT NULL,   b varchar(55) NOT NULL,   c int(11) DEFAULT NULL,   d int(11) DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustExec("update t t1 join t t2 using(a,b) set t1.c=t2.d;")
-
-	// For issue 20467
-	tk.MustExec(`DROP TABLE if exists t1,t2,t3,t4,t5`)
-	tk.MustExec(`CREATE TABLE t1 (a INT, b INT)`)
-	tk.MustExec(`CREATE TABLE t2 (a INT, b INT)`)
-	tk.MustExec(`CREATE TABLE t3 (a INT, b INT)`)
-	tk.MustExec(`INSERT INTO t1 VALUES (1,1)`)
-	tk.MustExec(`INSERT INTO t2 VALUES (1,1)`)
-	tk.MustExec(`INSERT INTO t3 VALUES (1,1)`)
-	tk.MustGetErrMsg(`SELECT * FROM t1 JOIN (t2 JOIN t3 USING (b)) USING (a)`, "[planner:1052]Column 'a' in from clause is ambiguous")
-
-	// For issue 6712
-	tk.MustExec("drop table if exists t1,t2")
-	tk.MustExec("create table t1 (t1 int , t0 int)")
-	tk.MustExec("create table t2 (t2 int, t0 int)")
-	tk.MustExec("insert into t1 select 11, 1")
-	tk.MustExec("insert into t2 select 22, 1")
-	tk.MustQuery("select t1.t0, t2.t0 from t1 join t2 using(t0) group by t1.t0").Check(testkit.Rows("1 1"))
-	tk.MustQuery("select t1.t0, t2.t0 from t1 join t2 using(t0) having t1.t0 > 0").Check(testkit.Rows("1 1"))
-}
-
-func TestSubquery(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_hash_join_concurrency=1")
-	tk.MustExec("set @@tidb_hashagg_partial_concurrency=1")
-	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (c int, d int)")
-	tk.MustExec("insert t values (1, 1)")
-	tk.MustExec("insert t values (2, 2)")
-	tk.MustExec("insert t values (3, 4)")
-	tk.MustExec("commit")
-
-	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
-
-	result := tk.MustQuery("select * from t where exists(select * from t k where t.c = k.c having sum(c) = 1)")
-	result.Check(testkit.Rows("1 1"))
-	result = tk.MustQuery("select * from t where exists(select k.c, k.d from t k, t p where t.c = k.d)")
-	result.Check(testkit.Rows("1 1", "2 2"))
-	result = tk.MustQuery("select 1 = (select count(*) from t where t.c = k.d) from t k")
-	result.Check(testkit.Rows("1", "1", "0"))
-	result = tk.MustQuery("select 1 = (select count(*) from t where exists( select * from t m where t.c = k.d)) from t k")
-	result.Sort().Check(testkit.Rows("0", "1", "1"))
-	result = tk.MustQuery("select t.c = any (select count(*) from t) from t")
-	result.Sort().Check(testkit.Rows("0", "0", "1"))
-	result = tk.MustQuery("select * from t where (t.c, 6) = any (select count(*), sum(t.c) from t)")
-	result.Check(testkit.Rows("3 4"))
-	result = tk.MustQuery("select t.c from t where (t.c) < all (select count(*) from t)")
-	result.Check(testkit.Rows("1", "2"))
-	result = tk.MustQuery("select t.c from t where (t.c, t.d) = any (select * from t)")
-	result.Sort().Check(testkit.Rows("1", "2", "3"))
-	result = tk.MustQuery("select t.c from t where (t.c, t.d) != all (select * from t)")
-	result.Check(testkit.Rows())
-	result = tk.MustQuery("select (select count(*) from t where t.c = k.d) from t k")
-	result.Sort().Check(testkit.Rows("0", "1", "1"))
-	result = tk.MustQuery("select t.c from t where (t.c, t.d) in (select * from t)")
-	result.Sort().Check(testkit.Rows("1", "2", "3"))
-	result = tk.MustQuery("select t.c from t where (t.c, t.d) not in (select * from t)")
-	result.Check(testkit.Rows())
-	result = tk.MustQuery("select * from t A inner join t B on A.c = B.c and A.c > 100")
-	result.Check(testkit.Rows())
-	// = all empty set is true
-	result = tk.MustQuery("select t.c from t where (t.c, t.d) != all (select * from t where d > 1000)")
-	result.Sort().Check(testkit.Rows("1", "2", "3"))
-	result = tk.MustQuery("select t.c from t where (t.c) < any (select c from t where d > 1000)")
-	result.Check(testkit.Rows())
-	tk.MustExec("insert t values (NULL, NULL)")
-	result = tk.MustQuery("select (t.c) < any (select c from t) from t")
-	result.Sort().Check(testkit.Rows("1", "1", "<nil>", "<nil>"))
-	result = tk.MustQuery("select (10) > all (select c from t) from t")
-	result.Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
-	result = tk.MustQuery("select (c) > all (select c from t) from t")
-	result.Check(testkit.Rows("0", "0", "0", "<nil>"))
-
-	tk.MustExec("drop table if exists a")
-	tk.MustExec("create table a (c int, d int)")
-	tk.MustExec("insert a values (1, 2)")
-	tk.MustExec("drop table if exists b")
-	tk.MustExec("create table b (c int, d int)")
-	tk.MustExec("insert b values (2, 1)")
-
-	result = tk.MustQuery("select * from a b where c = (select d from b a where a.c = 2 and b.c = 1)")
-	result.Check(testkit.Rows("1 2"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(c int)")
-	tk.MustExec("insert t values(10), (8), (7), (9), (11)")
-	result = tk.MustQuery("select * from t where 9 in (select c from t s where s.c < t.c limit 3)")
-	result.Check(testkit.Rows("10"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int, v int)")
-	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
-	result = tk.MustQuery("select * from t where v=(select min(t1.v) from t t1, t t2, t t3 where t1.id=t2.id and t2.id=t3.id and t1.id=t.id)")
-	result.Check(testkit.Rows("1 1", "2 2", "3 3"))
-
-	result = tk.MustQuery("select exists (select t.id from t where s.id < 2 and t.id = s.id) from t s")
-	result.Sort().Check(testkit.Rows("0", "0", "1"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(c int)")
-	result = tk.MustQuery("select exists(select count(*) from t)")
-	result.Check(testkit.Rows("1"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int primary key, v int)")
-	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
-	result = tk.MustQuery("select (select t.id from t where s.id < 2 and t.id = s.id) from t s")
-	result.Sort().Check(testkit.Rows("1", "<nil>", "<nil>"))
-	rs, err := tk.Exec("select (select t.id from t where t.id = t.v and t.v != s.id) from t s")
-	require.NoError(t, err)
-	_, err = session.GetRows4Test(context.Background(), tk.Session(), rs)
-	require.Error(t, err)
-	require.NoError(t, rs.Close())
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists s")
-	tk.MustExec("create table t(id int)")
-	tk.MustExec("create table s(id int)")
-	tk.MustExec("insert into t values(1), (2)")
-	tk.MustExec("insert into s values(2), (2)")
-	result = tk.MustQuery("select id from t where(select count(*) from s where s.id = t.id) > 0")
-	result.Check(testkit.Rows("2"))
-	result = tk.MustQuery("select *, (select count(*) from s where id = t.id limit 1, 1) from t")
-	result.Check(testkit.Rows("1 <nil>", "2 <nil>"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists s")
-	tk.MustExec("create table t(id int primary key)")
-	tk.MustExec("create table s(id int)")
-	tk.MustExec("insert into t values(1), (2)")
-	tk.MustExec("insert into s values(2), (2)")
-	result = tk.MustQuery("select *, (select count(id) from s where id = t.id) from t")
-	result.Check(testkit.Rows("1 0", "2 2"))
-	result = tk.MustQuery("select *, 0 < any (select count(id) from s where id = t.id) from t")
-	result.Check(testkit.Rows("1 0", "2 1"))
-	result = tk.MustQuery("select (select count(*) from t k where t.id = id) from s, t where t.id = s.id limit 1")
-	result.Check(testkit.Rows("1"))
-
-	tk.MustExec("drop table if exists t, s")
-	tk.MustExec("create table t(id int primary key)")
-	tk.MustExec("create table s(id int, index k(id))")
-	tk.MustExec("insert into t values(1), (2)")
-	tk.MustExec("insert into s values(2), (2)")
-	result = tk.MustQuery("select (select id from s where s.id = t.id order by s.id limit 1) from t")
-	result.Check(testkit.Rows("<nil>", "2"))
-
-	tk.MustExec("drop table if exists t, s")
-	tk.MustExec("create table t(id int)")
-	tk.MustExec("create table s(id int)")
-	tk.MustExec("insert into t values(2), (2)")
-	tk.MustExec("insert into s values(2)")
-	result = tk.MustQuery("select (select id from s where s.id = t.id order by s.id) from t")
-	result.Check(testkit.Rows("2", "2"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(dt datetime)")
-	result = tk.MustQuery("select (select 1 from t where DATE_FORMAT(o.dt,'%Y-%m')) from t o")
-	result.Check(testkit.Rows())
-
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(f1 int, f2 int)")
-	tk.MustExec("create table t2(fa int, fb int)")
-	tk.MustExec("insert into t1 values (1,1),(1,1),(1,2),(1,2),(1,2),(1,3)")
-	tk.MustExec("insert into t2 values (1,1),(1,2),(1,3)")
-	result = tk.MustQuery("select f1,f2 from t1 group by f1,f2 having count(1) >= all (select fb from t2 where fa = f1)")
-	result.Check(testkit.Rows("1 2"))
-
-	tk.MustExec("DROP TABLE IF EXISTS t1, t2")
-	tk.MustExec("CREATE TABLE t1(a INT)")
-	tk.MustExec("CREATE TABLE t2 (d BINARY(2), PRIMARY KEY (d(1)), UNIQUE KEY (d))")
-	tk.MustExec("INSERT INTO t1 values(1)")
-	result = tk.MustQuery("SELECT 1 FROM test.t1, test.t2 WHERE 1 = (SELECT test.t2.d FROM test.t2 WHERE test.t1.a >= 1) and test.t2.d = 1;")
-	result.Check(testkit.Rows())
-
-	tk.MustExec("DROP TABLE IF EXISTS t1")
-	tk.MustExec("CREATE TABLE t1(a int, b int default 0)")
-	tk.MustExec("create index k1 on t1(a)")
-	tk.MustExec("INSERT INTO t1 (a) values(1), (2), (3), (4), (5)")
-	result = tk.MustQuery("select (select /*+ INL_JOIN(x2) */ x2.a from t1 x1, t1 x2 where x1.a = t1.a and x1.a = x2.a) from t1")
-	result.Check(testkit.Rows("1", "2", "3", "4", "5"))
-	result = tk.MustQuery("select (select /*+ INL_HASH_JOIN(x2) */ x2.a from t1 x1, t1 x2 where x1.a = t1.a and x1.a = x2.a) from t1")
-	result.Check(testkit.Rows("1", "2", "3", "4", "5"))
-	result = tk.MustQuery("select (select /*+ INL_MERGE_JOIN(x2) */ x2.a from t1 x1, t1 x2 where x1.a = t1.a and x1.a = x2.a) from t1")
-	result.Check(testkit.Rows("1", "2", "3", "4", "5"))
-
-	// test left outer semi join & anti left outer semi join
-	tk.MustQuery("select 1 from (select t1.a in (select t1.a from t1) from t1) x;").Check(testkit.Rows("1", "1", "1", "1", "1"))
-	tk.MustQuery("select 1 from (select t1.a not in (select t1.a from t1) from t1) x;").Check(testkit.Rows("1", "1", "1", "1", "1"))
-
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int)")
-	tk.MustExec("create table t2(b int)")
-	tk.MustExec("insert into t1 values(1)")
-	tk.MustExec("insert into t2 values(1)")
-	tk.MustQuery("select * from t1 where a in (select a from t2)").Check(testkit.Rows("1"))
-
-	tk.MustExec("insert into t2 value(null)")
-	tk.MustQuery("select * from t1 where 1 in (select b from t2)").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from t1 where 1 not in (select b from t2)").Check(testkit.Rows())
-	tk.MustQuery("select * from t1 where 2 not in (select b from t2)").Check(testkit.Rows())
-	tk.MustQuery("select * from t1 where 2 in (select b from t2)").Check(testkit.Rows())
-	tk.MustQuery("select 1 in (select b from t2) from t1").Check(testkit.Rows("1"))
-	tk.MustQuery("select 1 in (select 1 from t2) from t1").Check(testkit.Rows("1"))
-	tk.MustQuery("select 1 not in (select b from t2) from t1").Check(testkit.Rows("0"))
-	tk.MustQuery("select 1 not in (select 1 from t2) from t1").Check(testkit.Rows("0"))
-
-	tk.MustExec("delete from t2 where b=1")
-	tk.MustQuery("select 1 in (select b from t2) from t1").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select 1 not in (select b from t2) from t1").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select 1 not in (select 1 from t2) from t1").Check(testkit.Rows("0"))
-	tk.MustQuery("select 1 in (select 1 from t2) from t1").Check(testkit.Rows("1"))
-	tk.MustQuery("select 1 not in (select null from t1) from t2").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select 1 in (select null from t1) from t2").Check(testkit.Rows("<nil>"))
-
-	tk.MustExec("drop table if exists s")
-	tk.MustExec("create table s(a int not null, b int)")
-	tk.MustExec("set sql_mode = ''")
-	tk.MustQuery("select (2,0) in (select s.a, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select (2,0) not in (select s.a, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select (2,0) = any (select s.a, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select (2,0) != all (select s.a, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select (2,0) in (select s.b, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select (2,0) not in (select s.b, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select (2,0) = any (select s.b, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select (2,0) != all (select s.b, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
-	tk.MustExec("insert into s values(1,null)")
-	tk.MustQuery("select 1 in (select b from s)").Check(testkit.Rows("<nil>"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into t values(1),(null)")
-	tk.MustQuery("select a not in (select 1) from t").Sort().Check(testkit.Rows(
-		"0",
-		"<nil>",
-	))
-	tk.MustQuery("select 1 not in (select null from t t1) from t").Check(testkit.Rows(
-		"<nil>",
-		"<nil>",
-	))
-	tk.MustQuery("select 1 in (select null from t t1) from t").Check(testkit.Rows(
-		"<nil>",
-		"<nil>",
-	))
-	tk.MustQuery("select a in (select 0) xx from (select null as a) x").Check(testkit.Rows("<nil>"))
-
-	tk.MustExec("drop table t")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("insert into t values(1,null),(null, null),(null, 2)")
-	tk.MustQuery("select * from t t1 where (2 in (select a from t t2 where (t2.b=t1.b) is null))").Check(testkit.Rows())
-	tk.MustQuery("select (t2.a in (select t1.a from t t1)) is true from t t2").Sort().Check(testkit.Rows(
-		"0",
-		"0",
-		"1",
-	))
-
-	tk.MustExec("set @@tidb_hash_join_concurrency=5")
-}
-
 func TestJoinLeak(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -927,7 +352,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results := []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(),
@@ -978,7 +403,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t values(1, null, 0), (2, 1, 0)")
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(),
@@ -1022,7 +447,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t values(1, null, 0), (2, 1, 0), (null, 2, 0)")
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(),
@@ -1073,7 +498,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(),
@@ -1106,7 +531,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows(
@@ -1165,7 +590,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows("0"),
@@ -1197,7 +622,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows("0"),
@@ -1238,7 +663,7 @@ func TestNullEmptyAwareSemiJoin(t *testing.T) {
 		},
 	}
 	results = []struct {
-		result [][]interface{}
+		result [][]any
 	}{
 		{
 			testkit.Rows("0"),
@@ -1438,18 +863,39 @@ func TestIssue37932(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestCartesianJoinPanic(t *testing.T) {
+func TestIssue49033(t *testing.T) {
+	val := runtime.GOMAXPROCS(1)
+	defer func() {
+		runtime.GOMAXPROCS(val)
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into t values(1)")
-	tk.MustExec("set tidb_mem_quota_query = 1 << 20")
-	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
-	tk.MustExec("set global tidb_enable_tmp_storage_on_oom = off;")
-	for i := 0; i < 10; i++ {
-		tk.MustExec("insert into t select * from t")
-	}
-	err := tk.QueryToErr("desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t, s;")
+	tk.MustExec("create table t(a int, index(a));")
+	tk.MustExec("create table s(a int, index(a));")
+	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12), (13), (14), (15), (16), (17), (18), (19), (20), (21), (22), (23), (24), (25), (26), (27), (28), (29), (30), (31), (32), (33), (34), (35), (36), (37), (38), (39), (40), (41), (42), (43), (44), (45), (46), (47), (48), (49), (50), (51), (52), (53), (54), (55), (56), (57), (58), (59), (60), (61), (62), (63), (64), (65), (66), (67), (68), (69), (70), (71), (72), (73), (74), (75), (76), (77), (78), (79), (80), (81), (82), (83), (84), (85), (86), (87), (88), (89), (90), (91), (92), (93), (94), (95), (96), (97), (98), (99), (100), (101), (102), (103), (104), (105), (106), (107), (108), (109), (110), (111), (112), (113), (114), (115), (116), (117), (118), (119), (120), (121), (122), (123), (124), (125), (126), (127), (128);")
+	tk.MustExec("insert into s values(1), (128);")
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
+	tk.MustExec("set @@tidb_index_lookup_join_concurrency=1;")
+	tk.MustExec("set @@tidb_index_join_batch_size=32;")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a;")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIssue49033", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIssue49033"))
+	}()
+
+	rs, err := tk.Exec("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;")
+	require.NoError(t, err)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	require.EqualError(t, err, "testIssue49033")
+	require.NoError(t, rs.Close())
+
+	rs, err = tk.Exec("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a")
+	require.NoError(t, err)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	require.EqualError(t, err, "testIssue49033")
+	require.NoError(t, rs.Close())
 }

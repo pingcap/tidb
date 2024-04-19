@@ -118,10 +118,13 @@ func (e *hashAggExec) Next(ctx context.Context) (value [][]byte, err error) {
 	gk := e.groupKeys[e.currGroupIdx]
 	value = make([][]byte, 0, len(e.groupByExprs)+2*len(e.aggExprs))
 	aggCtxs := e.getContexts(gk)
+	sc := e.evalCtx.sctx.GetSessionVars().StmtCtx
+	errCtx := sc.ErrCtx()
 	for i, agg := range e.aggExprs {
 		partialResults := agg.GetPartialResult(aggCtxs[i])
 		for _, result := range partialResults {
-			data, err := codec.EncodeValue(e.evalCtx.sc, nil, result)
+			data, err := codec.EncodeValue(sc.TimeZone(), nil, result)
+			err = errCtx.HandleError(err)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -141,12 +144,15 @@ func (e *hashAggExec) getGroupKey() ([]byte, [][]byte, error) {
 	}
 	bufLen := 0
 	row := make([][]byte, 0, length)
+	sc := e.evalCtx.sctx.GetSessionVars().StmtCtx
+	errCtx := sc.ErrCtx()
 	for _, item := range e.groupByExprs {
-		v, err := item.Eval(chunk.MutRowFromDatums(e.row).ToRow())
+		v, err := item.Eval(e.evalCtx.sctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(e.row).ToRow())
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		b, err := codec.EncodeValue(e.evalCtx.sc, nil, v)
+		b, err := codec.EncodeValue(sc.TimeZone(), nil, v)
+		err = errCtx.HandleError(err)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -179,7 +185,7 @@ func (e *hashAggExec) aggregate(value [][]byte) error {
 	// Update aggregate expressions.
 	aggCtxs := e.getContexts(gk)
 	for i, agg := range e.aggExprs {
-		err = agg.Update(aggCtxs[i], e.evalCtx.sc, chunk.MutRowFromDatums(e.row).ToRow())
+		err = agg.Update(aggCtxs[i], e.evalCtx.sctx.GetSessionVars().StmtCtx, chunk.MutRowFromDatums(e.row).ToRow())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -193,7 +199,7 @@ func (e *hashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateCon
 	if !ok {
 		aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.aggExprs))
 		for _, agg := range e.aggExprs {
-			aggCtxs = append(aggCtxs, agg.CreateContext(e.evalCtx.sc))
+			aggCtxs = append(aggCtxs, agg.CreateContext(e.evalCtx.sctx.GetExprCtx().GetEvalCtx()))
 		}
 		e.aggCtxsMap[groupKeyString] = aggCtxs
 	}
@@ -246,21 +252,25 @@ func (e *streamAggExec) Counts() []int64 {
 
 func (e *streamAggExec) getPartialResult() ([][]byte, error) {
 	value := make([][]byte, 0, len(e.groupByExprs)+2*len(e.aggExprs))
+	sc := e.evalCtx.sctx.GetSessionVars().StmtCtx
+	errCtx := sc.ErrCtx()
 	for i, agg := range e.aggExprs {
 		partialResults := agg.GetPartialResult(e.aggCtxs[i])
 		for _, result := range partialResults {
-			data, err := codec.EncodeValue(e.evalCtx.sc, nil, result)
+			data, err := codec.EncodeValue(sc.TimeZone(), nil, result)
+			err = errCtx.HandleError(err)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			value = append(value, data)
 		}
 		// Clear the aggregate context.
-		e.aggCtxs[i] = agg.CreateContext(e.evalCtx.sc)
+		e.aggCtxs[i] = agg.CreateContext(e.evalCtx.sctx.GetExprCtx().GetEvalCtx())
 	}
 	e.currGroupByValues = e.currGroupByValues[:0]
 	for _, d := range e.currGroupByRow {
-		buf, err := codec.EncodeValue(e.evalCtx.sc, nil, d)
+		buf, err := codec.EncodeValue(sc.TimeZone(), nil, d)
+		err = errCtx.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -281,12 +291,12 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 		matched, firstGroup = false, true
 	}
 	for i, item := range e.groupByExprs {
-		d, err := item.Eval(chunk.MutRowFromDatums(e.row).ToRow())
+		d, err := item.Eval(e.evalCtx.sctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(e.row).ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if matched {
-			c, err := d.Compare(e.evalCtx.sc.TypeCtx(), &e.nextGroupByRow[i], e.groupByCollators[i])
+			c, err := d.Compare(e.evalCtx.sctx.GetSessionVars().StmtCtx.TypeCtx(), &e.nextGroupByRow[i], e.groupByCollators[i])
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -342,7 +352,7 @@ func (e *streamAggExec) Next(ctx context.Context) (retRow [][]byte, err error) {
 			}
 		}
 		for i, agg := range e.aggExprs {
-			err = agg.Update(e.aggCtxs[i], e.evalCtx.sc, chunk.MutRowFromDatums(e.row).ToRow())
+			err = agg.Update(e.aggCtxs[i], e.evalCtx.sctx.GetSessionVars().StmtCtx, chunk.MutRowFromDatums(e.row).ToRow())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

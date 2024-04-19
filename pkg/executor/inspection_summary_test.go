@@ -51,7 +51,7 @@ func TestInspectionSummary(t *testing.T) {
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx.TypeCtx(), s, mysql.TypeDatetime, types.MaxFsp, nil)
+		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx.TypeCtx(), s, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
 		return time
 	}

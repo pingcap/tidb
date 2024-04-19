@@ -4,7 +4,6 @@ go_library(
     name = "util",
     srcs = [
         "dead_table_lock_checker.go",
-        "event.go",
         "mock.go",
         "util.go",
     ],
@@ -18,6 +17,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/util/chunk",
         "//pkg/util/logutil",
+        "//pkg/util/mock",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
 
@@ -102,7 +103,7 @@ func DumpTableStatColSizeToKV(sctx sessionctx.Context, id int64, delta variable.
 
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
 func InsertExtendedStats(sctx sessionctx.Context,
-	statsCache statsutil.StatsCache,
+	statsCache types.StatsCache,
 	statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (statsVer uint64, err error) {
 	slices.Sort(colIDs)
 	bytes, err := json.Marshal(colIDs)
@@ -194,7 +195,7 @@ func SaveExtendedStatsToStorage(sctx sessionctx.Context,
 	return statsVer, nil
 }
 
-func removeExtendedStatsItem(statsCache statsutil.StatsCache,
+func removeExtendedStatsItem(statsCache types.StatsCache,
 	tableID int64, statsName string) {
 	tbl, ok := statsCache.Get(tableID)
 	if !ok || tbl.ExtendedStats == nil || len(tbl.ExtendedStats.Stats) == 0 {

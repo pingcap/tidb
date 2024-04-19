@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -289,7 +290,8 @@ func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {
 	is := domSession.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -328,26 +330,12 @@ func TestBindingSource(t *testing.T) {
 	// Test Source for SQL created sql
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx_a) where a > 10")
 	bindHandle := dom.BindHandle()
-	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
-	bindData := bindHandle.GetBindRecord(hash, sql, "test")
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 1)
-	bind := bindData.Bindings[0]
-	require.Equal(t, bindinfo.Manual, bind.Source)
-
-	// Test Source for evolved sql
-	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
-	tk.MustQuery("select * from t where a > 10")
-	bindHandle.SaveEvolveTasksToStore()
-	sql, hash = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
-	bindData = bindHandle.GetBindRecord(hash, sql, "test")
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 2)
-	bind = bindData.Bindings[1]
-	require.Equal(t, bindinfo.Evolve, bind.Source)
-	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
+	stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
+	require.Equal(t, bindinfo.Manual, binding.Source)
 
 	// Test Source for captured sqls
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -361,13 +349,12 @@ func TestBindingSource(t *testing.T) {
 	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
 	tk.MustExec("admin capture bindings")
 	bindHandle.CaptureBaselines()
-	sql, hash = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a < ?")
-	bindData = bindHandle.GetBindRecord(hash, sql, "test")
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` < ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 1)
-	bind = bindData.Bindings[0]
-	require.Equal(t, bindinfo.Capture, bind.Source)
+	stmt, _, _ = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a < ?")
+	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched = bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `a` < ?", binding.OriginalSQL)
+	require.Equal(t, bindinfo.Capture, binding.Source)
 }
 
 func TestCapturedBindingCharset(t *testing.T) {
@@ -492,31 +479,6 @@ func TestIssue20417(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `b` = ? and `c` = ?", rows[0][0])
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`), no_order_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `b` = 2 AND `c` = 213124", rows[0][1])
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
-
-	// Test for evolve baseline
-	internal.UtilCleanBindingEnv(tk, dom)
-	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
-	tk.MustExec("create global binding for select * from t WHERE c=3924541 using select /*+ use_index(@sel_1 test.t idxb) */ * from t WHERE c=3924541")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "select * from `test` . `t` where `c` = ?", rows[0][0])
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `c` = 3924541", rows[0][1])
-	tk.MustExec("select /*+ use_index(t idxc)*/ * from t where c=3924541")
-	require.Equal(t, "t:idxb", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-	tk.MustExec("admin flush bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 2)
-	require.Equal(t, "select * from `test` . `t` where `c` = ?", rows[0][0])
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), no_order_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541", rows[0][1])
-	require.Equal(t, "pending verify", rows[0][3])
-	tk.MustExec("admin evolve bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 2)
-	require.Equal(t, "select * from `test` . `t` where `c` = ?", rows[0][0])
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), no_order_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541", rows[0][1])
-	status := rows[0][3].(string)
-	require.True(t, status == bindinfo.Enabled || status == bindinfo.Rejected)
-	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
 }
 
 func TestCaptureWithZeroSlowLogThreshold(t *testing.T) {
@@ -737,7 +699,7 @@ func TestCaptureWildcardFilter(t *testing.T) {
 		}
 
 		tk.MustExec("admin capture bindings")
-		var rows [][]interface{}
+		var rows [][]any
 		require.Eventually(t, func() bool {
 			rows = tk.MustQuery("show global bindings").Sort().Rows()
 			return len(rows) == len(dbTbls)
@@ -961,6 +923,7 @@ func TestCaptureFilter(t *testing.T) {
 }
 
 func TestCaptureHints(t *testing.T) {
+	t.Skip("deprecated")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")

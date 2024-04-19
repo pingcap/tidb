@@ -481,6 +481,10 @@ func mirror() error {
 func main() {
 	flag.Parse()
 	if err := mirror(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			panic("subprocess exited with stderr:\n" + string(exitErr.Stderr))
+		}
 		panic(err)
 	}
 }

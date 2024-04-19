@@ -16,9 +16,19 @@ error = '''
 backup range invalid
 '''
 
+["BR:Backup:ErrBackupKeyIsLocked"]
+error = '''
+backup key is locked
+'''
+
 ["BR:Backup:ErrBackupNoLeader"]
 error = '''
 backup no leader
+'''
+
+["BR:Backup:ErrBackupRegion"]
+error = '''
+backup region error
 '''
 
 ["BR:Common:ErrEnvNotSpecified"]
@@ -39,6 +49,11 @@ invalid argument
 ["BR:Common:ErrInvalidMetaFile"]
 error = '''
 invalid metafile: %s
+'''
+
+["BR:Common:ErrInvalidRange"]
+error = '''
+invalid restore range
 '''
 
 ["BR:Common:ErrUndefinedDbOrTable"]
@@ -166,6 +181,11 @@ error = '''
 PD leader not found
 '''
 
+["BR:PD:ErrPDUknownScatterResult"]
+error = '''
+failed to wait region splitted
+'''
+
 ["BR:PD:ErrPDUpdateFailed"]
 error = '''
 failed to update PD
@@ -209,11 +229,6 @@ incompatible system table
 ["BR:Restore:ErrRestoreInvalidBackup"]
 error = '''
 invalid backup
-'''
-
-["BR:Restore:ErrRestoreInvalidRange"]
-error = '''
-invalid restore range
 '''
 
 ["BR:Restore:ErrRestoreInvalidRewrite"]
@@ -551,9 +566,19 @@ error = '''
 encode kv error in file %s at offset %d
 '''
 
+["Lightning:Restore:ErrFoundDataConflictRecords"]
+error = '''
+found data conflict records in table %s, primary key is '%s', row data is '%s'
+'''
+
 ["Lightning:Restore:ErrFoundDuplicateKey"]
 error = '''
 found duplicate key '%s', value '%s'
+'''
+
+["Lightning:Restore:ErrFoundIndexConflictRecords"]
+error = '''
+found index conflict records in table %s, index name is '%s', unique key is '%s', primary key is '%s'
 '''
 
 ["Lightning:Restore:ErrInvalidMetaStatus"]
@@ -976,6 +1001,11 @@ error = '''
 This partition function is not allowed
 '''
 
+["ddl:1566"]
+error = '''
+Not allowed to use NULL value in VALUES LESS THAN
+'''
+
 ["ddl:1567"]
 error = '''
 Incorrect partition name
@@ -1343,7 +1373,7 @@ Unsupported clustered primary key type FLOAT/DOUBLE for TTL
 
 ["ddl:8200"]
 error = '''
-Unsupported shard_row_id_bits for table with primary key as row id
+Unsupported tidb_enable_dist_task setting. To utilize distributed task execution, please enable tidb_ddl_enable_fast_reorg first.
 '''
 
 ["ddl:8201"]
@@ -1509,6 +1539,11 @@ Job [%v] can't be resumed: %s
 ["ddl:8262"]
 error = '''
 Job [%v] has already been paused
+'''
+
+["ddl:8263"]
+error = '''
+The operation is not allowed while the bdr role of this cluster is set to %s.
 '''
 
 ["domain:8027"]
@@ -1813,7 +1848,7 @@ The FORMAT '%s' is not supported
 
 ["executor:8158"]
 error = '''
-The URI of %s is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'
+The URI of %s is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access-key={your_access_key_id ID}&secret-access-key={your_secret_access_key}&session-token={your_session_token}'
 '''
 
 ["executor:8159"]
@@ -1949,6 +1984,11 @@ error = '''
 ["expression:1365"]
 error = '''
 Division by 0
+'''
+
+["expression:1426"]
+error = '''
+Too big precision %d specified for column '%-.192s'. Maximum is %d.
 '''
 
 ["expression:1582"]

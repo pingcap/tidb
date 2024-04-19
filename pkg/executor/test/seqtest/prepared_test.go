@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
@@ -66,7 +67,7 @@ func TestPrepared(t *testing.T) {
 
 		// Statement not found.
 		err = tk.ExecToErr("deallocate prepare stmt_test_5")
-		require.True(t, plannercore.ErrStmtNotFound.Equal(err))
+		require.True(t, plannererrors.ErrStmtNotFound.Equal(err))
 
 		// incorrect SQLs in prepare. issue #3738, SQL in prepare stmt is parsed in DoPrepare.
 		tk.MustGetErrMsg(`prepare p from "delete from t where a = 7 or 1=1/*' and b = 'p'";`,
@@ -74,7 +75,7 @@ func TestPrepared(t *testing.T) {
 
 		// The `stmt_test5` should not be found.
 		err = tk.ExecToErr(`set @a = 1; execute stmt_test_5 using @a;`)
-		require.True(t, plannercore.ErrStmtNotFound.Equal(err))
+		require.True(t, plannererrors.ErrStmtNotFound.Equal(err))
 
 		// Use parameter marker with argument will run prepared statement.
 		result := tk.MustQuery("select distinct c1, c2 from prepare_test where c1 = ?", 1)
@@ -173,11 +174,11 @@ func TestPrepared(t *testing.T) {
 		tk.MustExec("alter table prepare_test drop column c2")
 
 		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
-		require.True(t, plannercore.ErrUnknownColumn.Equal(err))
+		require.True(t, plannererrors.ErrUnknownColumn.Equal(err))
 
 		tk.MustExec("drop table prepare_test")
 		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
-		require.True(t, plannercore.ErrSchemaChanged.Equal(err))
+		require.True(t, plannererrors.ErrSchemaChanged.Equal(err))
 
 		// issue 3381
 		tk.MustExec("drop table if exists prepare3")
@@ -281,11 +282,11 @@ func TestPreparedLimitOffset(t *testing.T) {
 
 		tk.MustExec(`set @a=1.1`)
 		_, err := tk.Exec(`execute stmt_test_1 using @a, @b;`)
-		require.True(t, plannercore.ErrWrongArguments.Equal(err))
+		require.True(t, plannererrors.ErrWrongArguments.Equal(err))
 
 		tk.MustExec(`set @c="-1"`)
 		_, err = tk.Exec("execute stmt_test_1 using @c, @c")
-		require.True(t, plannercore.ErrWrongArguments.Equal(err))
+		require.True(t, plannererrors.ErrWrongArguments.Equal(err))
 
 		stmtID, _, _, err := tk.Session().PrepareStmt("select id from prepare_test limit ?")
 		require.NoError(t, err)
@@ -655,43 +656,4 @@ func TestPreparedIssue17419(t *testing.T) {
 	// require.NotNil(t, tk1.Session().ShowProcess().Plan)
 	// _, ok := tk1.Session().ShowProcess().Plan.(*plannercore.Execute)
 	// require.True(t, ok)
-}
-
-func TestLimitUnsupportedCase(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, key(a))")
-	tk.MustExec("prepare stmt from 'select * from t limit ?'")
-
-	tk.MustExec("set @a = 1.2")
-	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-	tk.MustExec("set @a = 1.")
-	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-	tk.MustExec("set @a = '0'")
-	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-	tk.MustExec("set @a = '1'")
-	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-	tk.MustExec("set @a = 1_2")
-	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
-}
-
-func TestIssue38323(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int, k int);")
-
-	tk.MustExec("prepare stmt from 'explain select * from t where id = ? and k = ? group by id, k';")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement"))
-	tk.MustExec("set @a = 1;")
-	tk.MustExec("execute stmt using @a, @a")
-	tk.MustQuery("execute stmt using @a, @a").Check(tk.MustQuery("explain select * from t where id = 1 and k = 1 group by id, k").Rows())
-
-	tk.MustExec("prepare stmt from 'explain select * from t where ? = id and ? = k group by id, k';")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement"))
-	tk.MustExec("set @a = 1;")
-	tk.MustQuery("execute stmt using @a, @a").Check(tk.MustQuery("explain select * from t where 1 = id and 1 = k group by id, k").Rows())
 }

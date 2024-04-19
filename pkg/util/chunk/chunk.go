@@ -54,9 +54,26 @@ const (
 	ZeroCapacity    = 0
 )
 
+// NewEmptyChunk creates an empty chunk
+func NewEmptyChunk(fields []*types.FieldType) *Chunk {
+	chk := &Chunk{
+		columns: make([]*Column, 0, len(fields)),
+	}
+
+	for _, f := range fields {
+		chk.columns = append(chk.columns, NewEmptyColumn(f))
+	}
+	return chk
+}
+
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
 func NewChunkWithCapacity(fields []*types.FieldType, capacity int) *Chunk {
 	return New(fields, capacity, capacity)
+}
+
+// NewChunkFromPoolWithCapacity creates a new chunk with field types and capacity from the pool.
+func NewChunkFromPoolWithCapacity(fields []*types.FieldType, initCap int) *Chunk {
+	return getChunkFromPool(initCap, fields)
 }
 
 // New creates a new chunk.
@@ -656,4 +673,9 @@ func (c *Chunk) AppendPartialRows(colOff int, rows []Row) {
 			appendCellByCell(dstCol, srcRow.c.columns[i], srcRow.idx)
 		}
 	}
+}
+
+// Destroy is to destroy the Chunk and put Chunk into the pool
+func (c *Chunk) Destroy(initCap int, fields []*types.FieldType) {
+	putChunkFromPool(initCap, fields, c)
 }

@@ -24,6 +24,7 @@ import (
 
 // conditionChecker checks if this condition can be pushed to index planner.
 type conditionChecker struct {
+	ctx                      expression.EvalContext
 	checkerCol               *expression.Column
 	length                   int
 	optPrefixIndexSingleScan bool
@@ -139,16 +140,6 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 
 func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isAccessCond, shouldReserve bool) {
 	_, collation := scalar.CharsetAndCollation()
-	if collate.NewCollationEnabled() && !collate.IsBinCollation(collation) {
-		// The algorithm constructs the range in byte-level: for example, ab% is mapped to [ab, ac] by adding 1 to the last byte.
-		// However, this is incorrect for non-binary collation strings because the sort key order is not the same as byte order.
-		// For example, "`%" is mapped to the range [`, a](where ` is 0x60 and a is 0x61).
-		// Because the collation utf8_general_ci is case-insensitive, a and A have the same sort key.
-		// Finally, the range comes to be [`, A], which is actually an empty range.
-		// See https://github.com/pingcap/tidb/issues/31174 for more details.
-		// In short, when the column type is non-binary collation string, we cannot use `like` expressions to generate the range.
-		return false, true
-	}
 	if !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().GetCollate(), collation) {
 		return false, true
 	}
@@ -166,11 +157,20 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isA
 	if err != nil {
 		return false, true
 	}
+	likeFuncReserve := !c.isFullLengthColumn()
+
+	// Different from `=`, trailing spaces are always significant, and can't be ignored in `like`.
+	// In tidb's implementation, for PAD SPACE collations, the trailing spaces are removed in the index key. So we are
+	// unable to distinguish 'xxx' from 'xxx   ' by a single index range scan, and we may read more data than needed by
+	// the `like` function. Therefore, a Selection is needed to filter the data.
+	if isPadSpaceCollation(collation) {
+		likeFuncReserve = true
+	}
+
 	if len(patternStr) == 0 {
-		return true, !c.isFullLengthColumn()
+		return true, likeFuncReserve
 	}
 	escape := byte(scalar.GetArgs()[2].(*expression.Constant).Value.GetInt64())
-	likeFuncReserve := !c.isFullLengthColumn()
 	for i := 0; i < len(patternStr); i++ {
 		if patternStr[i] == escape {
 			i++
@@ -209,7 +209,7 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isA
 func (c *conditionChecker) matchColumn(expr expression.Expression) bool {
 	// Check if virtual expression column matched
 	if c.checkerCol != nil {
-		return c.checkerCol.EqualByExprAndID(nil, expr)
+		return c.checkerCol.EqualByExprAndID(c.ctx, expr)
 	}
 	return false
 }

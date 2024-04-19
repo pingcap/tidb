@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	pd "github.com/tikv/pd/client/http"
 	"gopkg.in/yaml.v2"
 )
 
@@ -53,13 +54,7 @@ var (
 )
 
 // Rule is used to establish the relationship between labels and a key range.
-type Rule struct {
-	ID       string        `json:"id"`
-	Index    int           `json:"index"`
-	Labels   Labels        `json:"labels"`
-	RuleType string        `json:"rule_type"`
-	Data     []interface{} `json:"data"`
-}
+type Rule pd.LabelRule
 
 // NewRule creates a rule.
 func NewRule() *Rule {
@@ -69,7 +64,7 @@ func NewRule() *Rule {
 // ApplyAttributesSpec will transfer attributes defined in AttributesSpec to the labels.
 func (r *Rule) ApplyAttributesSpec(spec *ast.AttributesSpec) error {
 	if spec.Default {
-		r.Labels = []Label{}
+		r.Labels = []pd.RegionLabel{}
 		return nil
 	}
 	// construct a string list
@@ -129,26 +124,27 @@ func (r *Rule) Reset(dbName, tableName, partName string, ids ...int64) *Rule {
 	}
 
 	if !hasDBKey {
-		r.Labels = append(r.Labels, Label{Key: dbKey, Value: dbName})
+		r.Labels = append(r.Labels, pd.RegionLabel{Key: dbKey, Value: dbName})
 	}
 
 	if !hasTableKey {
-		r.Labels = append(r.Labels, Label{Key: tableKey, Value: tableName})
+		r.Labels = append(r.Labels, pd.RegionLabel{Key: tableKey, Value: tableName})
 	}
 
 	if isPartition && !hasPartitionKey {
-		r.Labels = append(r.Labels, Label{Key: partitionKey, Value: partName})
+		r.Labels = append(r.Labels, pd.RegionLabel{Key: partitionKey, Value: partName})
 	}
 	r.RuleType = ruleType
-	r.Data = []interface{}{}
+	dataSlice := make([]any, 0, len(ids))
 	slices.Sort(ids)
 	for i := 0; i < len(ids); i++ {
 		data := map[string]string{
 			"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]))),
 			"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]+1))),
 		}
-		r.Data = append(r.Data, data)
+		dataSlice = append(dataSlice, data)
 	}
+	r.Data = dataSlice
 	// We may support more types later.
 	r.Index = RuleIndexTable
 	if isPartition {
@@ -157,16 +153,14 @@ func (r *Rule) Reset(dbName, tableName, partName string, ids ...int64) *Rule {
 	return r
 }
 
-// RulePatch is the patch to update the label rules.
-type RulePatch struct {
-	SetRules    []*Rule  `json:"sets"`
-	DeleteRules []string `json:"deletes"`
-}
-
 // NewRulePatch returns a patch of rules which need to be set or deleted.
-func NewRulePatch(setRules []*Rule, deleteRules []string) *RulePatch {
-	return &RulePatch{
-		SetRules:    setRules,
+func NewRulePatch(setRules []*Rule, deleteRules []string) *pd.LabelRulePatch {
+	labelRules := make([]*pd.LabelRule, 0, len(setRules))
+	for _, rule := range setRules {
+		labelRules = append(labelRules, (*pd.LabelRule)(rule))
+	}
+	return &pd.LabelRulePatch{
+		SetRules:    labelRules,
 		DeleteRules: deleteRules,
 	}
 }

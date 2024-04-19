@@ -20,10 +20,12 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 // Key represents high-level Key type.
@@ -100,6 +102,18 @@ type KeyRange struct {
 	XXXNoUnkeyedLiteral struct{}
 	XXXunrecognized     []byte
 	XXXsizecache        int32
+}
+
+// KeyRangeSliceMemUsage return the memory usage of []KeyRange
+func KeyRangeSliceMemUsage(k []KeyRange) int64 {
+	const sizeofKeyRange = int64(unsafe.Sizeof(*(*KeyRange)(nil)))
+
+	res := sizeofKeyRange * int64(cap(k))
+	for _, m := range k {
+		res += int64(cap(m.StartKey)) + int64(cap(m.EndKey)) + int64(cap(m.XXXunrecognized))
+	}
+
+	return res
 }
 
 // IsPoint checks if the key range represents a point.
@@ -390,33 +404,39 @@ func (ch *CommonHandle) ExtraMemSize() uint64 {
 
 // HandleMap is the map for Handle.
 type HandleMap struct {
-	ints map[int64]interface{}
+	ints map[int64]any
 	strs map[string]strHandleVal
 
 	// Use two two-dimensional map to fit partitionHandle.
 	// The first int64 is for partitionID.
-	partitionInts map[int64]map[int64]interface{}
+	partitionInts map[int64]map[int64]any
 	partitionStrs map[int64]map[string]strHandleVal
 }
 
 type strHandleVal struct {
 	h   Handle
-	val interface{}
+	val any
 }
+
+// SizeofHandleMap presents the memory size of struct HandleMap
+const SizeofHandleMap = int64(unsafe.Sizeof(*(*HandleMap)(nil)))
+
+// SizeofStrHandleVal presents the memory size of struct strHandleVal
+const SizeofStrHandleVal = int64(unsafe.Sizeof(*(*strHandleVal)(nil)))
 
 // NewHandleMap creates a new map for handle.
 func NewHandleMap() *HandleMap {
 	return &HandleMap{
-		ints: map[int64]interface{}{},
+		ints: map[int64]any{},
 		strs: map[string]strHandleVal{},
 
-		partitionInts: map[int64]map[int64]interface{}{},
+		partitionInts: map[int64]map[int64]any{},
 		partitionStrs: map[int64]map[string]strHandleVal{},
 	}
 }
 
 // Get gets a value by a Handle.
-func (m *HandleMap) Get(h Handle) (v interface{}, ok bool) {
+func (m *HandleMap) Get(h Handle) (v any, ok bool) {
 	ints, strs := m.ints, m.strs
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
@@ -436,14 +456,42 @@ func (m *HandleMap) Get(h Handle) (v interface{}, ok bool) {
 	return
 }
 
+func calcStrsMemUsage(strs map[string]strHandleVal) int64 {
+	res := int64(0)
+	for key := range strs {
+		res += size.SizeOfString + int64(len(key)) + SizeofStrHandleVal
+	}
+	return res
+}
+
+func calcIntsMemUsage(ints map[int64]any) int64 {
+	return int64(len(ints)) * (size.SizeOfInt64 + size.SizeOfInterface)
+}
+
+// MemUsage gets the memory usage.
+func (m *HandleMap) MemUsage() int64 {
+	res := SizeofHandleMap
+	res += int64(len(m.partitionInts)) * (size.SizeOfInt64 + size.SizeOfMap)
+	for _, v := range m.partitionInts {
+		res += calcIntsMemUsage(v)
+	}
+	res += int64(len(m.partitionStrs)) * (size.SizeOfInt64 + size.SizeOfMap)
+	for _, v := range m.partitionStrs {
+		res += calcStrsMemUsage(v)
+	}
+	res += calcIntsMemUsage(m.ints)
+	res += calcStrsMemUsage(m.strs)
+	return res
+}
+
 // Set sets a value with a Handle.
-func (m *HandleMap) Set(h Handle, val interface{}) {
+func (m *HandleMap) Set(h Handle, val any) {
 	ints, strs := m.ints, m.strs
 	if ph, ok := h.(PartitionHandle); ok {
 		idx := ph.PartitionID
 		if h.IsInt() {
 			if m.partitionInts[idx] == nil {
-				m.partitionInts[idx] = make(map[int64]interface{})
+				m.partitionInts[idx] = make(map[int64]any)
 			}
 			ints = m.partitionInts[idx]
 		} else {
@@ -494,7 +542,7 @@ func (m *HandleMap) Len() int {
 }
 
 // Range iterates the HandleMap with fn, the fn returns true to continue, returns false to stop.
-func (m *HandleMap) Range(fn func(h Handle, val interface{}) bool) {
+func (m *HandleMap) Range(fn func(h Handle, val any) bool) {
 	for h, val := range m.ints {
 		if !fn(IntHandle(h), val) {
 			return

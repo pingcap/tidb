@@ -11,7 +11,7 @@ import (
 )
 
 func TestRepeatableRead(t *testing.T) {
-	data := [][]interface{}{
+	data := [][]any{
 		{version.ServerTypeUnknown, ConsistencyTypeNone, true},
 		{version.ServerTypeMySQL, ConsistencyTypeFlush, true},
 		{version.ServerTypeMariaDB, ConsistencyTypeLock, true},
@@ -19,7 +19,7 @@ func TestRepeatableRead(t *testing.T) {
 		{version.ServerTypeTiDB, ConsistencyTypeSnapshot, false},
 		{version.ServerTypeTiDB, ConsistencyTypeLock, true},
 	}
-	dec := func(d []interface{}) (version.ServerType, string, bool) {
+	dec := func(d []any) (version.ServerType, string, bool) {
 		return version.ServerType(d[0].(int)), d[1].(string), d[2].(bool)
 	}
 	for tag, datum := range data {

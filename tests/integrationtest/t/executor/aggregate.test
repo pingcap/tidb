@@ -388,7 +388,7 @@ select * from t1;
 --sorted_result
 select c1 + 0 from t1;
 SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;
-alter table t1 add index idx(c1); ;
+alter table t1 add index idx(c1);
 --sorted_result
 select c1 + 0 from t1;
 SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;
@@ -741,15 +741,15 @@ select b like '%a' from t group by c;
 select c REGEXP '1.*' from t group by b;
 --error 1055
 select -b from t group by c;
---error 1055
+--error 8123
 select a, max(b) from t;
---error 1055
+--error 8123
 select sum(a)+b from t;
---error 1055
+--error 8123
 select count(b), c from t;
 select count(b), any_value(c) from t;
 select count(b), any_value(c) + 2 from t;
---error 1055
+--error 8123
 select distinct a, b, count(a) from t;
 select a from t group by a,b,c;
 select b from t group by b;
@@ -804,7 +804,7 @@ select * from (select * from t) as e group by b,c;
 select c from t group by c,d order by d;
 --error 1055
 select c from t group by c order by d;
---error 1055
+--error 1052
 select c from t,x group by t.c;
 set sql_mode = default;
 set @@session.tidb_enable_new_only_full_group_by_check = default;

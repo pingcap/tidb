@@ -41,6 +41,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -57,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -125,7 +128,7 @@ func clearSysSession(ctx context.Context, sctx sessionctx.Context) {
 	if sctx == nil {
 		return
 	}
-	_, _ = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
+	_, _ = sctx.GetSQLExecutor().ExecuteInternal(ctx, "rollback")
 	sctx.(pools.Resource).Close()
 }
 
@@ -209,7 +212,7 @@ func (e *SimpleExec) setDefaultRoleNone(s *ast.SetDefaultRoleStmt) error {
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	defer e.ReleaseSysSession(ctx, restrictedCtx)
-	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
+	sqlExecutor := restrictedCtx.GetSQLExecutor()
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin"); err != nil {
 		return err
 	}
@@ -260,7 +263,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 	}
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
-	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
+	sqlExecutor := restrictedCtx.GetSQLExecutor()
 	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "begin"); err != nil {
 		return err
 	}
@@ -320,7 +323,7 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 		return err
 	}
 	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
-	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
+	sqlExecutor := restrictedCtx.GetSQLExecutor()
 	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "begin"); err != nil {
 		return err
 	}
@@ -366,7 +369,7 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	defer e.ReleaseSysSession(ctx, restrictedCtx)
-	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
+	sqlExecutor := restrictedCtx.GetSQLExecutor()
 
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin"); err != nil {
 		return err
@@ -436,7 +439,7 @@ func (e *SimpleExec) executeSetDefaultRole(ctx context.Context, s *ast.SetDefaul
 	activeRoles := sessionVars.ActiveRoles
 	if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.DefaultRoleTable, "", mysql.UpdatePriv) {
 		if !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
-			return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		}
 	}
 
@@ -614,9 +617,9 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	if s.ReadOnly {
 		noopFuncsMode := e.Ctx().GetSessionVars().NoopFuncsMode
 		if s.AsOf == nil && noopFuncsMode != variable.OnInt {
-			err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+			err := expression.ErrFunctionsNoopImpl.FastGenByArgs("READ ONLY")
 			if noopFuncsMode == variable.OffInt {
-				return err
+				return errors.Trace(err)
 			}
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 		}
@@ -699,7 +702,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 		return err
 	}
 	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
-	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
+	sqlExecutor := restrictedCtx.GetSQLExecutor()
 
 	// begin a transaction to insert role graph edges.
 	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "begin"); err != nil {
@@ -1030,11 +1033,11 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			if s.IsCreateRole {
 				if !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateRolePriv) &&
 					!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
-					return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE or CREATE USER")
+					return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE or CREATE USER")
 				}
 			}
 			if !s.IsCreateRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE User")
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE User")
 			}
 		}
 	}
@@ -1143,7 +1146,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 				}
 				return exeerrors.ErrCannotUser.GenWithStackByArgs("CREATE USER", user)
 			}
-			err := infoschema.ErrUserAlreadyExists.GenWithStackByArgs(user)
+			err := infoschema.ErrUserAlreadyExists.FastGenByArgs(user)
 			e.Ctx().GetSessionVars().StmtCtx.AppendNote(err)
 			continue
 		}
@@ -1220,7 +1223,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		return err
 	}
 	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
-	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
+	sqlExecutor := restrictedCtx.GetSQLExecutor()
 
 	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "begin"); err != nil {
 		return errors.Trace(err)
@@ -1699,7 +1702,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	if err != nil {
 		return err
 	}
-	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	sqlExecutor := sysSession.GetSQLExecutor()
 	// session isolation level changed to READ-COMMITTED.
 	// When tidb is at the RR isolation level, executing `begin` will obtain a consistent state.
 	// When operating the same user concurrently, it may happen that historical versions are read.
@@ -1735,13 +1738,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			// For simplicity: RESTRICTED_USER_ADMIN also counts for SYSTEM_USER here.
 
 			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
 			if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 			}
 			if sem.IsEnabled() && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, spec.User) && !hasRestrictedUserPriv {
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
 			}
 		}
 
@@ -1915,7 +1918,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		switch authTokenOptionHandler {
 		case noNeedAuthTokenOptions:
 			if len(authTokenOptions) > 0 {
-				err := errors.New("TOKEN_ISSUER is not needed for the auth plugin")
+				err := errors.NewNoStackError("TOKEN_ISSUER is not needed for the auth plugin")
 				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 			}
 		case OptionalAuthTokenOptions:
@@ -1930,7 +1933,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
 				}
 			} else {
-				err := errors.New("Auth plugin 'tidb_auth_plugin' needs TOKEN_ISSUER")
+				err := errors.NewNoStackError("Auth plugin 'tidb_auth_plugin' needs TOKEN_ISSUER")
 				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 			}
 		}
@@ -1977,7 +1980,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			return exeerrors.ErrCannotUser.GenWithStackByArgs("ALTER USER", strings.Join(failedUsers, ","))
 		}
 		for _, user := range failedUsers {
-			err := infoschema.ErrUserDropExists.GenWithStackByArgs(user)
+			err := infoschema.ErrUserDropExists.FastGenByArgs(user)
 			e.Ctx().GetSessionVars().StmtCtx.AppendNote(err)
 		}
 	}
@@ -2036,7 +2039,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 		return err
 	}
 	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
-	sqlExecutor := restrictedCtx.(sqlexec.SQLExecutor)
+	sqlExecutor := restrictedCtx.GetSQLExecutor()
 
 	// begin a transaction to insert role graph edges.
 	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "begin"); err != nil {
@@ -2072,7 +2075,7 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 	if err != nil {
 		return err
 	}
-	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	sqlExecutor := sysSession.GetSQLExecutor()
 
 	if _, err := sqlExecutor.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
@@ -2206,11 +2209,11 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 		if s.IsDropRole {
 			if !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) &&
 				!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE or CREATE USER")
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE or CREATE USER")
 			}
 		}
 		if !s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
-			return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		}
 	}
 	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
@@ -2221,7 +2224,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 	if err != nil {
 		return err
 	}
-	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	sqlExecutor := sysSession.GetSQLExecutor()
 
 	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "begin"); err != nil {
 		return err
@@ -2238,7 +2241,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 				failedUsers = append(failedUsers, user.String())
 				break
 			}
-			e.Ctx().GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.GenWithStackByArgs(user))
+			e.Ctx().GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.FastGenByArgs(user))
 		}
 
 		// Certain users require additional privileges in order to be modified.
@@ -2250,7 +2253,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 				return err
 			}
-			return core.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 		}
 
 		// begin a transaction to delete a user.
@@ -2376,7 +2379,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 }
 
 func userExists(ctx context.Context, sctx sessionctx.Context, name string, host string) (bool, error) {
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	if err != nil {
@@ -2414,7 +2417,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		return err
 	}
 
-	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	sqlExecutor := sysSession.GetSQLExecutor()
 	// session isolation level changed to READ-COMMITTED.
 	// When tidb is at the RR isolation level, executing `begin` will obtain a consistent state.
 	// When operating the same user concurrently, it may happen that historical versions are read.
@@ -2436,13 +2439,14 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		u = e.Ctx().GetSessionVars().User.AuthUsername
 		h = e.Ctx().GetSessionVars().User.AuthHostname
 	} else {
+		u = s.User.Username
+		h = s.User.Hostname
+
 		checker := privilege.GetPrivilegeManager(e.Ctx())
 		activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
 			return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(u, h, "mysql")
 		}
-		u = s.User.Username
-		h = s.User.Hostname
 	}
 	exists, err := userExistsInternal(ctx, sqlExecutor, u, h)
 	if err != nil {
@@ -2473,7 +2477,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 		pwd = auth.NewHashPassword(s.Password, authplugin)
 	case mysql.AuthSocket:
-		e.Ctx().GetSessionVars().StmtCtx.AppendNote(exeerrors.ErrSetPasswordAuthPlugin.GenWithStackByArgs(u, h))
+		e.Ctx().GetSessionVars().StmtCtx.AppendNote(exeerrors.ErrSetPasswordAuthPlugin.FastGenByArgs(u, h))
 		pwd = ""
 	default:
 		pwd = auth.EncodePassword(s.Password)
@@ -2540,7 +2544,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			}
 			sm.Kill(s.ConnectionID, s.Query, false)
 		} else {
-			err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
+			err := errors.NewNoStackError("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		return nil
@@ -2559,7 +2563,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 
 	gcid, isTruncated, err := globalconn.ParseConnID(s.ConnectionID)
 	if err != nil {
-		err1 := errors.New("Parse ConnectionID failed: " + err.Error())
+		err1 := errors.NewNoStackError("Parse ConnectionID failed: " + err.Error())
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err1)
 		return nil
 	}
@@ -2568,14 +2572,14 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		logutil.BgLogger().Warn(message, zap.Uint64("conn", s.ConnectionID))
 		// Notice that this warning cannot be seen if KILL is triggered by "CTRL-C" of mysql client,
 		//   as the KILL is sent by a new connection.
-		err := errors.New(message)
+		err := errors.NewNoStackError(message)
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
 	}
 
 	if gcid.ServerID != sm.ServerID() {
 		if err := killRemoteConn(ctx, e.Ctx(), &gcid, s.Query); err != nil {
-			err1 := errors.New("KILL remote connection failed: " + err.Error())
+			err1 := errors.NewNoStackError("KILL remote connection failed: " + err.Error())
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err1)
 		}
 	} else {
@@ -2608,7 +2612,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.
 		SetDAGRequest(dagReq).
-		SetFromSessionVars(sctx.GetSessionVars()).
+		SetFromSessionVars(sctx.GetDistSQLCtx()).
 		SetFromInfoSchema(sctx.GetInfoSchema()).
 		SetStoreType(kv.TiDB).
 		SetTiDBServerID(gcid.ServerID).
@@ -2690,11 +2694,11 @@ func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) (err error) {
 	} else {
 		if len(s.PartitionNames) == 0 {
 			for _, table := range s.Tables {
-				partitionStatIds, _, err := core.GetPhysicalIDsAndPartitionNames(table.TableInfo, nil)
+				partitionStatIDs, _, err := core.GetPhysicalIDsAndPartitionNames(table.TableInfo, nil)
 				if err != nil {
 					return err
 				}
-				statsIDs = append(statsIDs, partitionStatIds...)
+				statsIDs = append(statsIDs, partitionStatIDs...)
 				statsIDs = append(statsIDs, table.TableInfo.ID)
 			}
 		} else {
@@ -2786,6 +2790,10 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 		return e.executeAdminReloadStatistics(s)
 	case ast.AdminFlushPlanCache:
 		return e.executeAdminFlushPlanCache(s)
+	case ast.AdminSetBDRRole:
+		return e.executeAdminSetBDRRole(s)
+	case ast.AdminUnsetBDRRole:
+		return e.executeAdminUnsetBDRRole()
 	}
 	return nil
 }
@@ -2808,7 +2816,7 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 		return errors.New("Do not support the 'admin flush global scope.'")
 	}
 	if !e.Ctx().GetSessionVars().EnablePreparedPlanCache {
-		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New("The plan cache is disable. So there no need to flush the plan cache"))
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The plan cache is disable. So there no need to flush the plan cache"))
 		return nil
 	}
 	now := types.NewTime(types.FromGoTime(time.Now().In(e.Ctx().GetSessionVars().StmtCtx.TimeZone())), mysql.TypeTimestamp, 3)
@@ -2822,7 +2830,28 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 	return nil
 }
 
+func (e *SimpleExec) executeAdminSetBDRRole(s *ast.AdminStmt) error {
+	if s.Tp != ast.AdminSetBDRRole {
+		return errors.New("This AdminStmt is not ADMIN SET BDR_ROLE")
+	}
+
+	txn, err := e.Ctx().Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(meta.NewMeta(txn).SetBDRRole(string(s.BDRRole)))
+}
+
+func (e *SimpleExec) executeAdminUnsetBDRRole() error {
+	txn, err := e.Ctx().Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(meta.NewMeta(txn).ClearBDRRole())
+}
+
 func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) error {
+	originalResourceGroup := e.Ctx().GetSessionVars().ResourceGroupName
 	if s.Name.L != "" {
 		if _, ok := e.is.ResourceGroupByName(s.Name); !ok {
 			return infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(s.Name.O)
@@ -2830,6 +2859,11 @@ func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) er
 		e.Ctx().GetSessionVars().ResourceGroupName = s.Name.L
 	} else {
 		e.Ctx().GetSessionVars().ResourceGroupName = resourcegroup.DefaultResourceGroupName
+	}
+	newResourceGroup := e.Ctx().GetSessionVars().ResourceGroupName
+	if originalResourceGroup != newResourceGroup {
+		metrics.ConnGauge.WithLabelValues(originalResourceGroup).Dec()
+		metrics.ConnGauge.WithLabelValues(newResourceGroup).Inc()
 	}
 	return nil
 }

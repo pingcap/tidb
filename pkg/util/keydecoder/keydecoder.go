@@ -62,16 +62,15 @@ func handleType(handle kv.Handle) HandleType {
 		return handleType(h.Handle)
 	} else if h, ok := handle.(*kv.PartitionHandle); ok {
 		return handleType(h.Handle)
-	} else {
-		logutil.BgLogger().Warn("Unexpected kv.Handle type",
-			zap.String("handle Type", fmt.Sprintf("%T", handle)),
-		)
 	}
+	logutil.BgLogger().Warn("Unexpected kv.Handle type",
+		zap.String("handle Type", fmt.Sprintf("%T", handle)),
+	)
 	return UnknownHandle
 }
 
 // DecodeKey decodes `key` (either a Record key or an Index key) into `DecodedKey`, which is used to fill KEY_INFO field in `DEADLOCKS` and `DATA_LOCK_WAITS`
-func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error) {
+func DecodeKey(key []byte, is infoschema.InfoSchema) (DecodedKey, error) {
 	var result DecodedKey
 	if !tablecodec.IsRecordKey(key) && !tablecodec.IsIndexKey(key) {
 		return result, errors.Errorf("Unknown key type for key %v", key)
@@ -82,7 +81,7 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 	}
 	result.TableID = tableOrPartitionID
 
-	table, tableFound := infoschema.TableByID(tableOrPartitionID)
+	table, tableFound := is.TableByID(tableOrPartitionID)
 
 	// The schema may have changed since when the key is get.
 	// Then we just omit the table name and show the table ID only.
@@ -90,7 +89,7 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 	if tableFound {
 		result.TableName = table.Meta().Name.O
 
-		schema, ok := infoschema.SchemaByTable(table.Meta())
+		schema, ok := infoschema.SchemaByTable(is, table.Meta())
 		if !ok {
 			logutil.BgLogger().Warn("no schema associated with table found in infoschema", zap.Int64("tableOrPartitionID", tableOrPartitionID))
 			return result, nil
@@ -101,7 +100,7 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 		// If the table of this ID is not found, try to find it as a partition.
 		var schema *model.DBInfo
 		var partition *model.PartitionDefinition
-		table, schema, partition = infoschema.FindTableByPartitionID(tableOrPartitionID)
+		table, schema, partition = is.FindTableByPartitionID(tableOrPartitionID)
 		if table != nil {
 			tableFound = true
 			result.TableID = table.Meta().ID

@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -107,7 +108,7 @@ type shuffleOutput struct {
 // Open implements the Executor Open interface.
 func (e *ShuffleExec) Open(ctx context.Context) error {
 	for _, s := range e.dataSources {
-		if err := s.Open(ctx); err != nil {
+		if err := exec.Open(ctx, s); err != nil {
 			return err
 		}
 	}
@@ -117,7 +118,7 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 
 	e.prepared = false
 	e.finishCh = make(chan struct{}, 1)
-	e.outputCh = make(chan *shuffleOutput, e.concurrency)
+	e.outputCh = make(chan *shuffleOutput, e.concurrency+len(e.dataSources))
 
 	for _, w := range e.workers {
 		w.finishCh = e.finishCh
@@ -130,7 +131,7 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 		w.outputCh = e.outputCh
 		w.outputHolderCh = make(chan *chunk.Chunk, 1)
 
-		if err := w.childExec.Open(ctx); err != nil {
+		if err := exec.Open(ctx, w.childExec); err != nil {
 			return err
 		}
 
@@ -174,7 +175,7 @@ func (e *ShuffleExec) Close() error {
 			}
 		}
 		// close child executor of each worker
-		if err := w.childExec.Close(); err != nil && firstErr == nil {
+		if err := exec.Close(w.childExec); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -191,7 +192,7 @@ func (e *ShuffleExec) Close() error {
 
 	// close dataSources
 	for _, dataSource := range e.dataSources {
-		if err := dataSource.Close(); err != nil && firstErr == nil {
+		if err := exec.Close(dataSource); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -203,13 +204,13 @@ func (e *ShuffleExec) Close() error {
 }
 
 func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
+	waitGroup := &sync.WaitGroup{}
+	waitGroup.Add(len(e.workers) + len(e.dataSources))
 	// create a goroutine for each dataSource to fetch and split data
 	for i := range e.dataSources {
-		go e.fetchDataAndSplit(ctx, i)
+		go e.fetchDataAndSplit(ctx, i, waitGroup)
 	}
 
-	waitGroup := &sync.WaitGroup{}
-	waitGroup.Add(len(e.workers))
 	for _, w := range e.workers {
 		go w.run(ctx, waitGroup)
 	}
@@ -254,13 +255,13 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func recoveryShuffleExec(output chan *shuffleOutput, r interface{}) {
+func recoveryShuffleExec(output chan *shuffleOutput, r any) {
 	err := util.GetRecoverError(r)
 	output <- &shuffleOutput{err: util.GetRecoverError(r)}
 	logutil.BgLogger().Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
 }
 
-func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int) {
+func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int, waitGroup *sync.WaitGroup) {
 	var (
 		err           error
 		workerIndices []int
@@ -275,7 +276,15 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 		for _, w := range e.workers {
 			close(w.receivers[dataSourceIndex].inputCh)
 		}
+		waitGroup.Done()
 	}()
+
+	failpoint.Inject("shuffleExecFetchDataAndSplit", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(100 * time.Millisecond)
+			panic("shuffleExecFetchDataAndSplitPanic")
+		}
+	})
 
 	for {
 		err = exec.Next(ctx, e.dataSources[dataSourceIndex], chk)
@@ -391,6 +400,7 @@ func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 		waitGroup.Done()
 	}()
 
+	failpoint.Inject("shuffleWorkerRun", nil)
 	for {
 		select {
 		case <-e.finishCh:
@@ -455,7 +465,7 @@ func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItem
 	return &partitionRangeSplitter{
 		byItems:      byItems,
 		numWorkers:   concurrency,
-		groupChecker: vecgroupchecker.NewVecGroupChecker(ctx, byItems),
+		groupChecker: vecgroupchecker.NewVecGroupChecker(ctx.GetExprCtx().GetEvalCtx(), ctx.GetSessionVars().EnableVectorizedExpression, byItems),
 		idx:          0,
 	}
 }

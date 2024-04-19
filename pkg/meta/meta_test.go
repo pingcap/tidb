@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
@@ -31,7 +32,7 @@ import (
 )
 
 func TestPlacementPolicy(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 
 	defer func() {
@@ -149,55 +150,8 @@ func TestResourceGroup(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestBackupAndRestoreAutoIDs(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	acc := m.GetAutoIDAccessors(1, 1)
-	require.NoError(t, acc.RowID().Put(100))
-	require.NoError(t, acc.RandomID().Put(101))
-	require.NoError(t, meta.BackupAndRestoreAutoIDs(m, 1, 1, 2, 2))
-	require.NoError(t, txn.Commit(context.Background()))
-
-	mustGet := func(acc meta.AutoIDAccessor) int {
-		v, err := acc.Get()
-		require.NoError(t, err)
-		return int(v)
-	}
-	txn, err = store.Begin()
-	require.NoError(t, err)
-	m = meta.NewMeta(txn)
-	acc = m.GetAutoIDAccessors(1, 1)
-	// Test old auto IDs are cleaned.
-	require.Equal(t, mustGet(acc.RowID()), 0)
-	require.Equal(t, mustGet(acc.RandomID()), 0)
-
-	// Test new auto IDs are restored.
-	acc2 := m.GetAutoIDAccessors(2, 2)
-	require.Equal(t, mustGet(acc2.RowID()), 100)
-	require.Equal(t, mustGet(acc2.RandomID()), 101)
-	// Backup & restore with the same database & table ID.
-	require.NoError(t, meta.BackupAndRestoreAutoIDs(m, 2, 2, 2, 2))
-	require.NoError(t, txn.Commit(context.Background()))
-
-	txn, err = store.Begin()
-	require.NoError(t, err)
-	m = meta.NewMeta(txn)
-	// Test auto IDs are unchanged.
-	acc2 = m.GetAutoIDAccessors(2, 2)
-	require.Equal(t, mustGet(acc2.RowID()), 100)
-	require.Equal(t, mustGet(acc2.RandomID()), 101)
-}
-
 func TestMeta(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 
 	defer func() {
@@ -274,8 +228,9 @@ func TestMeta(t *testing.T) {
 	tbInfo := &model.TableInfo{
 		ID:   1,
 		Name: model.NewCIStr("t"),
+		DBID: dbInfo.ID,
 	}
-	err = m.CreateTableOrView(1, tbInfo)
+	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo)
 	require.NoError(t, err)
 
 	n, err = m.GetAutoIDAccessors(1, 1).RowID().Inc(10)
@@ -286,7 +241,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	err = m.CreateTableOrView(1, tbInfo)
+	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo)
 	require.NotNil(t, err)
 	require.True(t, meta.ErrTableExists.Equal(err))
 
@@ -311,10 +266,16 @@ func TestMeta(t *testing.T) {
 	tbInfo2 := &model.TableInfo{
 		ID:   2,
 		Name: model.NewCIStr("bb"),
+		DBID: dbInfo.ID,
 	}
-	err = m.CreateTableOrView(1, tbInfo2)
+	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo2)
 	require.NoError(t, err)
 
+	tblName := &model.TableNameInfo{ID: tbInfo.ID, Name: tbInfo.Name}
+	tblName2 := &model.TableNameInfo{ID: tbInfo2.ID, Name: tbInfo2.Name}
+	tableNames, err := m.ListSimpleTables(1)
+	require.NoError(t, err)
+	require.Equal(t, []*model.TableNameInfo{tblName, tblName2}, tableNames)
 	tables, err := m.ListTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo, tbInfo2}, tables)
@@ -341,7 +302,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	err = m.DropTableOrView(1, tbInfo2.ID)
+	err = m.DropTableOrView(1, dbInfo.Name.L, tbInfo2.ID, tbInfo2.Name.L)
 	require.NoError(t, err)
 	err = m.GetAutoIDAccessors(1, tbInfo2.ID).Del()
 	require.NoError(t, err)
@@ -350,6 +311,9 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), n)
 
+	tableNames, err = m.ListSimpleTables(1)
+	require.NoError(t, err)
+	require.Equal(t, []*model.TableNameInfo{tblName}, tableNames)
 	tables, err = m.ListTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo}, tables)
@@ -370,31 +334,33 @@ func TestMeta(t *testing.T) {
 		Name: model.NewCIStr("t_rename"),
 	}
 	// Create table.
-	err = m.CreateTableOrView(1, tbInfo100)
+	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo100)
 	require.NoError(t, err)
 	// Update auto ID.
 	currentDBID := int64(1)
 	n, err = m.GetAutoIDAccessors(currentDBID, tid).RowID().Inc(10)
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
-	// Fail to update auto ID.
+	// Test to update non-existing auto ID.
 	// The table ID doesn't exist.
+	// We can no longer test for non-existing ids.
 	nonExistentID := int64(1234)
 	_, err = m.GetAutoIDAccessors(currentDBID, nonExistentID).RowID().Inc(10)
-	require.NotNil(t, err)
-	require.True(t, meta.ErrTableNotExists.Equal(err))
-	// Fail to update auto ID.
+	require.NoError(t, err)
+	//require.True(t, meta.ErrTableNotExists.Equal(err))
+	// Test to update non-existing auto ID.
 	// The current database ID doesn't exist.
+	// We can no longer test for non-existing ids.
 	currentDBID = nonExistentID
 	_, err = m.GetAutoIDAccessors(currentDBID, tid).RowID().Inc(10)
-	require.NotNil(t, err)
-	require.True(t, meta.ErrDBNotExists.Equal(err))
+	require.NoError(t, err)
+	//require.True(t, meta.ErrDBNotExists.Equal(err))
 	// Test case for CreateTableAndSetAutoID.
 	tbInfo3 := &model.TableInfo{
 		ID:   3,
 		Name: model.NewCIStr("tbl3"),
 	}
-	err = m.CreateTableAndSetAutoID(1, tbInfo3, 123, 0)
+	err = m.CreateTableAndSetAutoID(1, dbInfo.Name.L, tbInfo3, 123, 0)
 	require.NoError(t, err)
 	id, err := m.GetAutoIDAccessors(1, tbInfo3.ID).RowID().Get()
 	require.NoError(t, err)
@@ -404,9 +370,9 @@ func TestMeta(t *testing.T) {
 	require.Equal(t, []byte(strconv.FormatInt(1234, 10)), val)
 	require.Equal(t, []byte{0x6d, 0x44, 0x42, 0x3a, 0x31, 0x0, 0x0, 0x0, 0x0, 0xfb, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x33, 0x0, 0x0, 0x0, 0xfc}, key)
 
-	err = m.DropDatabase(1)
+	err = m.DropDatabase(1, dbInfo.Name.L)
 	require.NoError(t, err)
-	err = m.DropDatabase(currentDBID)
+	err = m.DropDatabase(currentDBID, dbInfo.Name.L)
 	require.NoError(t, err)
 
 	dbs, err = m.ListDatabases()
@@ -446,6 +412,19 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, schemaDiff, readDiff)
 
+	// Test for BDR role
+	role, err := m.GetBDRRole()
+	require.NoError(t, err)
+	require.Len(t, role, 0)
+	require.NoError(t, m.SetBDRRole(string(ast.BDRRolePrimary)))
+	role, err = m.GetBDRRole()
+	require.NoError(t, err)
+	require.Equal(t, string(ast.BDRRolePrimary), role)
+	require.NoError(t, m.ClearBDRRole())
+	role, err = m.GetBDRRole()
+	require.NoError(t, err)
+	require.Len(t, role, 0)
+
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
@@ -455,7 +434,7 @@ func TestMeta(t *testing.T) {
 }
 
 func TestSnapshot(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -517,7 +496,7 @@ func TestElement(t *testing.T) {
 }
 
 func BenchmarkGenGlobalIDs(b *testing.B) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(b, err)
 	defer func() {
 		err := store.Close()
@@ -664,6 +643,87 @@ func TestCreateMySQLDatabase(t *testing.T) {
 	anotherDBID, err := m.CreateMySQLDatabaseIfNotExists()
 	require.NoError(t, err)
 	require.Equal(t, dbID, anotherDBID)
+
+	err = txn.Rollback()
+	require.NoError(t, err)
+}
+
+func TestName(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	// TestTableNameKey
+	m := meta.NewMeta(txn)
+	key := m.TableNameKey("db", "tb")
+	require.Equal(t, string(key), "Names:db\x00tb")
+
+	// TestCheckTableNameExists
+	err = m.CheckTableNameExists(m.TableNameKey("db", "tb"))
+	require.True(t, meta.ErrTableNotExists.Equal(err))
+	// TestCheckTableNameNotExists
+	err = m.CheckTableNameNotExists(m.TableNameKey("db", "tb"))
+	require.NoError(t, err)
+
+	// TestCreateTable
+	err = m.CreateTableName("db", "tb", 1)
+	require.NoError(t, err)
+	err = m.CheckTableNameExists(m.TableNameKey("db", "tb"))
+	require.NoError(t, err)
+	err = m.CheckTableNameNotExists(m.TableNameKey("db", "tb"))
+	require.True(t, meta.ErrTableExists.Equal(err))
+	err = m.CreateTableName("db", "t", 2)
+	require.NoError(t, err)
+
+	err = m.CreateTableName("db", "tb", 3)
+	require.True(t, meta.ErrTableExists.Equal(err))
+
+	err = m.CreateTableName("d", "btb", 3)
+	require.NoError(t, err)
+	err = m.CheckTableNameExists(m.TableNameKey("d", "btb"))
+	require.NoError(t, err)
+
+	// TestDropTableName
+	err = m.DropTableName("db1", "b")
+	require.True(t, meta.ErrTableNotExists.Equal(err))
+	err = m.DropTableName("db", "tb")
+	require.NoError(t, err)
+
+	// TestDropDatabaseName
+	err = m.DropDatabaseName("xx")
+	require.NoError(t, err)
+	err = m.DropDatabaseName("d")
+	require.NoError(t, err)
+	err = m.CheckTableNameNotExists(m.TableNameKey("d", "btb"))
+	require.NoError(t, err)
+	err = m.CheckTableNameExists(m.TableNameKey("db", "t"))
+	require.NoError(t, err)
+
+	// TestClearAllTableNames
+	err = m.ClearAllTableNames()
+	require.NoError(t, err)
+	err = m.CheckTableNameNotExists(m.TableNameKey("db1", "t"))
+	require.NoError(t, err)
+
+	// TestDDLV2Initialized
+	v, err := m.GetDDLV2Initialized()
+	require.NoError(t, err)
+	require.Equal(t, v, false)
+	err = m.SetDDLV2Initialized(true)
+	require.NoError(t, err)
+	v, err = m.GetDDLV2Initialized()
+	require.NoError(t, err)
+	require.Equal(t, v, true)
+	err = m.SetDDLV2Initialized(false)
+	require.NoError(t, err)
+	v, err = m.GetDDLV2Initialized()
+	require.NoError(t, err)
+	require.Equal(t, v, false)
 
 	err = txn.Rollback()
 	require.NoError(t, err)

@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -39,10 +40,10 @@ func TestJoinExec(t *testing.T) {
 	casTest := defaultHashJoinTestCase(colTypes, 0, false)
 
 	runTest := func() {
-		opt1 := mockDataSourceParameters{
-			rows: casTest.rows,
-			ctx:  casTest.ctx,
-			genDataFunc: func(row int, typ *types.FieldType) interface{} {
+		opt1 := testutil.MockDataSourceParameters{
+			Rows: casTest.rows,
+			Ctx:  casTest.ctx,
+			GenDataFunc: func(row int, typ *types.FieldType) any {
 				switch typ.GetType() {
 				case mysql.TypeLong, mysql.TypeLonglong:
 					return int64(row)
@@ -54,12 +55,12 @@ func TestJoinExec(t *testing.T) {
 			},
 		}
 		opt2 := opt1
-		opt1.schema = expression.NewSchema(casTest.columns()...)
-		opt2.schema = expression.NewSchema(casTest.columns()...)
-		dataSource1 := buildMockDataSource(opt1)
-		dataSource2 := buildMockDataSource(opt2)
-		dataSource1.prepareChunks()
-		dataSource2.prepareChunks()
+		opt1.DataSchema = expression.NewSchema(casTest.columns()...)
+		opt2.DataSchema = expression.NewSchema(casTest.columns()...)
+		dataSource1 := testutil.BuildMockDataSource(opt1)
+		dataSource2 := testutil.BuildMockDataSource(opt2)
+		dataSource1.PrepareChunks()
+		dataSource2.PrepareChunks()
 
 		executor := prepare4HashJoin(casTest, dataSource1, dataSource2)
 		result := exec.NewFirstChunk(executor)
@@ -123,10 +124,10 @@ func TestHashJoinRuntimeStats(t *testing.T) {
 		concurrent:       4,
 		maxFetchAndProbe: int64(2 * time.Second),
 	}
-	require.Equal(t, "build_hash_table:{total:2s, fetch:1.9s, build:100ms}, probe:{concurrency:4, total:5s, max:2s, probe:4s, fetch:1s, probe_collision:1}", stats.String())
+	require.Equal(t, "build_hash_table:{total:2s, fetch:1.9s, build:100ms}, probe:{concurrency:4, total:5s, max:2s, probe:4s, fetch and wait:1s, probe_collision:1}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
-	require.Equal(t, "build_hash_table:{total:4s, fetch:3.8s, build:200ms}, probe:{concurrency:4, total:10s, max:2s, probe:8s, fetch:2s, probe_collision:2}", stats.String())
+	require.Equal(t, "build_hash_table:{total:4s, fetch:3.8s, build:200ms}, probe:{concurrency:4, total:10s, max:2s, probe:8s, fetch and wait:2s, probe_collision:2}", stats.String())
 }
 
 func TestIndexJoinRuntimeStats(t *testing.T) {

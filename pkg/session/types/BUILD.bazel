@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "types",
+    srcs = ["sesson_interface.go"],
+    importpath = "github.com/pingcap/tidb/pkg/session/types",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/extension",
+        "//pkg/parser/ast",
+        "//pkg/parser/auth",
+        "//pkg/privilege/conn",
+        "//pkg/session/txninfo",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/sessionstates",
+        "//pkg/util",
+        "//pkg/util/sqlexec",
+    ],
+)

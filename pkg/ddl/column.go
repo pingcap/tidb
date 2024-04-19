@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -185,7 +184,12 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{columnInfo}})
+		addColumnEvent := statsutil.NewAddColumnEvent(
+			job.SchemaID,
+			tblInfo,
+			[]*model.ColumnInfo{columnInfo},
+		)
+		asyncNotifyEvent(d, addColumnEvent)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)
 	}
@@ -325,9 +329,9 @@ func checkDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo,
 
 	var colName model.CIStr
 	var ifExists bool
-	// indexIds is used to make sure we don't truncate args when decoding the rawArgs.
-	var indexIds []int64
-	err = job.DecodeArgs(&colName, &ifExists, &indexIds)
+	// indexIDs is used to make sure we don't truncate args when decoding the rawArgs.
+	var indexIDs []int64
+	err = job.DecodeArgs(&colName, &ifExists, &indexIDs)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)
@@ -487,7 +491,7 @@ func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.Ta
 // Otherwise we set the zero value as original default value.
 // Besides, in insert & update records, we have already implement using the casted value of relative column to insert
 // rather than the original default value.
-func GetOriginDefaultValueForModifyColumn(sessCtx sessionctx.Context, changingCol, oldCol *model.ColumnInfo) (interface{}, error) {
+func GetOriginDefaultValueForModifyColumn(sessCtx sessionctx.Context, changingCol, oldCol *model.ColumnInfo) (any, error) {
 	var err error
 	originDefVal := oldCol.GetOriginDefaultValue()
 	if originDefVal != nil {
@@ -627,7 +631,7 @@ func SetIdxColNameOffset(idxCol *model.IndexColumn, changingCol *model.ColumnInf
 	idxCol.Name = changingCol.Name
 	idxCol.Offset = changingCol.Offset
 	canPrefix := types.IsTypePrefixable(changingCol.GetType())
-	if !canPrefix || (changingCol.GetFlen() < idxCol.Length) {
+	if !canPrefix || (changingCol.GetFlen() <= idxCol.Length) {
 		idxCol.Length = types.UnspecifiedLength
 	}
 }
@@ -654,7 +658,7 @@ func rollbackModifyColumnJobWithData(d *ddlCtx, t *meta.Meta, tblInfo *model.Tab
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// Reconstruct the job args to add the temporary index ids into delete range table.
-	job.Args = []interface{}{changingIdxIDs, getPartitionIDs(tblInfo)}
+	job.Args = []any{changingIdxIDs, getPartitionIDs(tblInfo)}
 	return ver, nil
 }
 
@@ -711,7 +715,7 @@ func (w *worker) doModifyColumnTypeWithData(
 
 				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 				//nolint:forcetypeassert
-				_, _, err = sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, valStr)
+				_, _, err = sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, valStr)
 				if err != nil {
 					job.State = model.JobStateCancelled
 					failpoint.Return(ver, err)
@@ -757,7 +761,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
-		tbl, err := getTable(d.store, dbInfo.ID, tblInfo)
+		tbl, err := getTable((*asAutoIDRequirement)(d), dbInfo.ID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -789,8 +793,13 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
-		job.Args = []interface{}{rmIdxIDs, getPartitionIDs(tblInfo)}
-		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionModifyColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{changingCol}})
+		job.Args = []any{rmIdxIDs, getPartitionIDs(tblInfo)}
+		modifyColumnEvent := statsutil.NewModifyColumnEvent(
+			job.SchemaID,
+			tblInfo,
+			[]*model.ColumnInfo{changingCol},
+		)
+		asyncNotifyEvent(d, modifyColumnEvent)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}
@@ -1102,14 +1111,14 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 }
 
 // TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
-var TestReorgGoroutineRunning = make(chan interface{})
+var TestReorgGoroutineRunning = make(chan any)
 
 // updateCurrentElement update the current element for reorgInfo.
 func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error {
 	failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
-			a := new(interface{})
+			a := new(any)
 			TestReorgGoroutineRunning <- a
 			for {
 				time.Sleep(30 * time.Millisecond)
@@ -1338,7 +1347,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	val := w.rowMap[w.oldColInfo.ID]
 	col := w.newColInfo
 	if val.Kind() == types.KindNull && col.FieldType.GetType() == mysql.TypeTimestamp && mysql.HasNotNullFlag(col.GetFlag()) {
-		if v, err := expression.GetTimeCurrentTimestamp(w.sessCtx, col.GetType(), col.GetDecimal()); err == nil {
+		if v, err := expression.GetTimeCurrentTimestamp(w.sessCtx.GetExprCtx().GetEvalCtx(), col.GetType(), col.GetDecimal()); err == nil {
 			// convert null value to timestamp should be substituted with current timestamp if NOT_NULL flag is set.
 			w.rowMap[w.oldColInfo.ID] = v
 		}
@@ -1375,7 +1384,8 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	}
 	checksums := w.calcChecksums()
 	sctx, rd := w.sessCtx.GetSessionVars().StmtCtx, &w.sessCtx.GetSessionVars().RowEncoder
-	newRowVal, err := tablecodec.EncodeRow(sctx, newRow, newColumnIDs, nil, nil, rd, checksums...)
+	newRowVal, err := tablecodec.EncodeRow(sctx.TimeZone(), newRow, newColumnIDs, nil, nil, rd, checksums...)
+	err = sctx.HandleError(err)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1407,7 +1417,7 @@ func (w *updateColumnWorker) calcChecksums() []uint32 {
 		if !sort.IsSorted(w.checksumBuffer) {
 			sort.Sort(w.checksumBuffer)
 		}
-		checksum, err := w.checksumBuffer.Checksum()
+		checksum, err := w.checksumBuffer.Checksum(w.sessCtx.GetSessionVars().StmtCtx.TimeZone())
 		if err != nil {
 			logutil.BgLogger().Warn("skip checksum in update-column backfill due to encode error", zap.Error(err))
 			return nil
@@ -1449,9 +1459,10 @@ func (w *updateColumnWorker) cleanRowMap() {
 func (w *updateColumnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
+		updateTxnEntrySizeLimitIfNeeded(txn)
 
 		// Because TiCDC do not want this kind of change,
 		// so we set the lossy DDL reorg txn source to 1 to
@@ -1573,7 +1584,7 @@ func (w *worker) doModifyColumn(
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
-	job.Args = []interface{}{[]int64{}, []int64{}}
+	job.Args = []any{[]int64{}, []int64{}}
 	return ver, nil
 }
 
@@ -1687,6 +1698,18 @@ func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.Colu
 	return nil
 }
 
+type asAutoIDRequirement ddlCtx
+
+var _ autoid.Requirement = &asAutoIDRequirement{}
+
+func (r *asAutoIDRequirement) Store() kv.Storage {
+	return r.store
+}
+
+func (r *asAutoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return r.autoidCli
+}
+
 // applyNewAutoRandomBits set auto_random bits to TableInfo and
 // migrate auto_increment ID to auto_random ID if possible.
 func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
@@ -1696,7 +1719,7 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 	if !needMigrateFromAutoIncToAutoRand {
 		return nil
 	}
-	autoRandAlloc := autoid.NewAllocatorsFromTblInfo(d.store, dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
+	autoRandAlloc := autoid.NewAllocatorsFromTblInfo((*asAutoIDRequirement)(d), dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
 	if autoRandAlloc == nil {
 		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
 		return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
@@ -1732,7 +1755,7 @@ func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTrunc
 	}
 	var buf strings.Builder
 	buf.WriteString("select 1 from %n.%n where ")
-	paramsList := make([]interface{}, 0, 2+len(oldCols))
+	paramsList := make([]any, 0, 2+len(oldCols))
 	paramsList = append(paramsList, schema.L, table.L)
 	for i, col := range oldCols {
 		if i == 0 {
@@ -1745,7 +1768,7 @@ func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTrunc
 	}
 	buf.WriteString(" limit 1")
 	//nolint:forcetypeassert
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, buf.String(), paramsList...)
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, buf.String(), paramsList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1885,7 +1908,7 @@ func rollbackModifyColumnJob(d *ddlCtx, t *meta.Meta, tblInfo *model.TableInfo, 
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
-	job.Args = []interface{}{[]int64{}, []int64{}}
+	job.Args = []any{[]int64{}, []int64{}}
 	return ver, nil
 }
 
@@ -1922,7 +1945,7 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	return nil
 }
 
-func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (interface{}, error) {
+func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (any, error) {
 	var err error
 	odValue := col.GetDefaultValue()
 	if odValue == nil && mysql.HasNotNullFlag(col.GetFlag()) {
@@ -1949,7 +1972,7 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 		if ctx == nil {
 			t = time.Now()
 		} else {
-			t, _ = expression.GetStmtTimestamp(ctx)
+			t, _ = expression.GetStmtTimestamp(ctx.GetExprCtx().GetEvalCtx())
 		}
 		if col.GetType() == mysql.TypeTimestamp {
 			odValue = types.NewTime(types.FromGoTime(t.UTC()), col.GetType(), col.GetDecimal()).String()
@@ -2021,6 +2044,15 @@ func getChangingIndexOriginName(changingIdx *model.IndexInfo) string {
 
 func getChangingColumnOriginName(changingColumn *model.ColumnInfo) string {
 	columnName := strings.TrimPrefix(changingColumn.Name.O, changingColumnPrefix)
+	var pos int
+	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
+		return columnName
+	}
+	return columnName[:pos]
+}
+
+func getExpressionIndexOriginName(expressionIdx *model.ColumnInfo) string {
+	columnName := strings.TrimPrefix(expressionIdx.Name.O, expressionIndexPrefix+"_")
 	var pos int
 	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
 		return columnName

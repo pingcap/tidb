@@ -152,42 +152,33 @@ func (i *InfoStore) AllTableNamesOfSchema(schema model.CIStr) ([]string, error) 
 
 // InfoStoreAdaptor convert InfoStore to InfoSchema, it only implements a part of InfoSchema interface to be
 // used by DDL interface.
-// nolint:unused
 type InfoStoreAdaptor struct {
 	infoschema.InfoSchema
 	inner *InfoStore
 }
 
 // SchemaByName implements the InfoSchema interface.
-// nolint:unused
 func (i InfoStoreAdaptor) SchemaByName(schema model.CIStr) (*model.DBInfo, bool) {
 	dbInfo := i.inner.SchemaByName(schema)
 	return dbInfo, dbInfo != nil
 }
 
 // TableExists implements the InfoSchema interface.
-// nolint:unused
 func (i InfoStoreAdaptor) TableExists(schema, table model.CIStr) bool {
 	tableInfo, _ := i.inner.TableByName(schema, table)
 	return tableInfo != nil
 }
 
-// TableIsView implements the InfoSchema interface.
-// nolint:unused
-func (i InfoStoreAdaptor) TableIsView(schema, table model.CIStr) bool {
-	tableInfo, _ := i.inner.TableByName(schema, table)
-	if tableInfo == nil {
-		return false
-	}
-	return tableInfo.IsView()
-}
-
 // TableByName implements the InfoSchema interface.
-// nolint:unused
 func (i InfoStoreAdaptor) TableByName(schema, table model.CIStr) (t table.Table, err error) {
 	tableInfo, err := i.inner.TableByName(schema, table)
 	if err != nil {
 		return nil, err
 	}
 	return tables.MockTableFromMeta(tableInfo), nil
+}
+
+// TableInfoByName implements the InfoSchema interface.
+func (i InfoStoreAdaptor) TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error) {
+	return i.inner.TableByName(schema, table)
 }

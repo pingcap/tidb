@@ -66,7 +66,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEval{{ .Input.TypeName }}(b.ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEval{{ .Input.TypeName }}(ctx, input, buf0); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -127,7 +127,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 {{ $InputFixed := ( .Input.Fixed ) }}
 {{ $UseHashKey := ( or (eq .Input.TypeName "Decimal") (eq .Input.TypeName "JSON") )}}
 {{ $InputTime := (eq .Input.TypeName "Time") }}
-func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+func (b *{{.SigName}}) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- template "BufAllocator" . }}
 	{{- if $InputFixed }}
@@ -215,7 +215,7 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 	{{- end }}
 
 	for j := 0; j < len(args); j++ {
-		if err := args[j].VecEval{{ .Input.TypeName }}(b.ctx, input, buf1); err != nil {
+		if err := args[j].VecEval{{ .Input.TypeName }}(ctx, input, buf1); err != nil {
 			return err
 		}
 		{{- if $InputInt }}
@@ -295,7 +295,7 @@ type inGener struct {
 	defaultGener
 }
 
-func (g inGener) gen() interface{} {
+func (g inGener) gen() any {
 	if rand.Float64() < g.nullRation {
 		return nil
 	}

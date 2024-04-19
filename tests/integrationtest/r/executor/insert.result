@@ -25,189 +25,162 @@ insert into t1 set c1 = '2004';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 year);
 insert into t1 set c1 = 2004;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 bit);
 insert into t1 set c1 = 1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 smallint unsigned);
 insert into t1 set c1 = 1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 int unsigned);
 insert into t1 set c1 = 1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 smallint);
 insert into t1 set c1 = -1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 int);
 insert into t1 set c1 = -1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 decimal(6,4));
 insert into t1 set c1 = '1.1';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 decimal);
 insert into t1 set c1 = 1.1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 numeric);
 insert into t1 set c1 = -1;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 float);
 insert into t1 set c1 = 1.2;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 double);
 insert into t1 set c1 = 1.2;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 double);
 insert into t1 set c1 = 1.3;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 real);
 insert into t1 set c1 = 1.4;
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 date);
 insert into t1 set c1 = '2020-01-01';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 time);
 insert into t1 set c1 = '20:00:00';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 datetime);
 insert into t1 set c1 = '2020-01-01 22:22:22';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 timestamp);
 insert into t1 set c1 = '2020-01-01 22:22:22';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 year);
 insert into t1 set c1 = '2020';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 char(15));
 insert into t1 set c1 = 'test';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 varchar(15));
 insert into t1 set c1 = 'test';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 binary(3));
 insert into t1 set c1 = 'a';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 varbinary(3));
 insert into t1 set c1 = 'b';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 blob);
 insert into t1 set c1 = 'test';
 alter table t1 add index idx(c1(3));
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 text);
 insert into t1 set c1 = 'test';
 alter table t1 add index idx(c1(3));
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 enum('a', 'b'));
 insert into t1 set c1 = 'a';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists t1;
 create table t1(c1 set('a', 'b'));
 insert into t1 set c1 = 'a,b';
 alter table t1 add index idx(c1);
 delete from t1;
 admin check table t1;
-
 drop table if exists c;
 create table c(i int,j int,k int,primary key(i,j,k));
 insert into c values(1,2,3);
@@ -219,7 +192,6 @@ create table t1 (a int(11) ,b varchar(100) ,primary key (a));
 create table t2 (c int(11) ,d varchar(100) ,primary key (c));
 prepare in1 from 'insert into t1 (a,b) select c,null from t2 t on duplicate key update b=t.d';
 execute in1;
-
 drop table if exists t1;
 create table t1(a bigint);
 insert into t1 values("asfasdfsajhlkhlksdaf");
@@ -556,10 +528,7 @@ year(d)	month(d)	day(d)
 2019	1	0
 2019	0	1
 2019	2	31
-truncate t1;
-truncate t2;
-truncate t3;
-truncate t4;
+truncate t1;truncate t2;truncate t3;truncate t4;
 set sql_mode='ALLOW_INVALID_DATES';
 insert into t1 values ('0000-00-00');
 insert into t2 values ('0000-00-00');
@@ -1215,3 +1184,947 @@ select * from tf;
 a
 0
 set @@sql_mode=default;
+drop table if exists tt1;
+create table tt1 (c1 decimal(64));
+insert into tt1 values(89000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);
+Error 1264 (22003): Out of range value for column 'c1' at row 1
+insert into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000);
+Error 1264 (22003): Out of range value for column 'c1' at row 1
+insert ignore into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000);
+show warnings;
+Level	Code	Message
+Warning	1264	Out of range value for column 'c1' at row 1
+Warning	1292	Truncated incorrect DECIMAL value: '789012345678901234567890123456789012345678901234567890123456789012345678900000000'
+select c1 from tt1;
+c1
+9999999999999999999999999999999999999999999999999999999999999999
+update tt1 set c1 = 89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000;
+Error 1264 (22003): Out of range value for column 'c1' at row 1
+drop table if exists tt1;
+insert into tt1 values(4556414e723532);
+Error 1367 (22007): Illegal double '4556414e723532' value found during parsing
+select 888888888888888888888888888888888888888888888888888888888888888888888888888888888888;
+888888888888888888888888888888888888888888888888888888888888888888888888888888888888
+99999999999999999999999999999999999999999999999999999999999999999
+show warnings;
+Level	Code	Message
+Warning	1292	Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888'
+drop table if exists t;
+create table t (id smallint auto_increment primary key);
+alter table t add column c1 int default 1;
+insert ignore into t(id) values (194626268);
+affected rows: 1
+info: 
+select * from t;
+id	c1
+32767	1
+insert ignore into t(id) values ('*') on duplicate key update c1 = 2;
+affected rows: 2
+info: 
+select * from t;
+id	c1
+32767	2
+drop table if exists t;
+create table t (i int not null primary key, j int unique key);
+insert into t values (1, 1), (2, 2);
+affected rows: 2
+info: Records: 2  Duplicates: 0  Warnings: 0
+insert ignore into t values(1, 1) on duplicate key update i = 2;
+affected rows: 0
+info: 
+select * from t;
+i	j
+1	1
+2	2
+insert ignore into t values(1, 1) on duplicate key update j = 2;
+affected rows: 0
+info: 
+select * from t;
+i	j
+1	1
+2	2
+drop table if exists t2;
+create table t2(`col_25` set('Alice','Bob','Charlie','David') NOT NULL,`col_26` date NOT NULL DEFAULT '2016-04-15', PRIMARY KEY (`col_26`) clustered, UNIQUE KEY `idx_9` (`col_25`,`col_26`),UNIQUE KEY `idx_10` (`col_25`));
+insert into t2(col_25, col_26) values('Bob', '1989-03-23'),('Alice', '2023-11-24'), ('Charlie', '2023-12-05');
+insert ignore into t2 (col_25,col_26) values ( 'Bob','1977-11-23' ) on duplicate key update col_25 = 'Alice', col_26 = '2036-12-13';
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry 'Alice' for key 't2.idx_10'
+select * from t2;
+col_25	col_26
+Bob	1989-03-23
+Alice	2023-11-24
+Charlie	2023-12-05
+drop table if exists t4;
+create table t4(id int primary key clustered, k int, v int, unique key uk1(k));
+insert into t4 values (1, 10, 100), (3, 30, 300);
+insert ignore into t4 (id, k, v) values(1, 0, 0) on duplicate key update id = 2, k = 30;
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '30' for key 't4.uk1'
+select * from t4;
+id	k	v
+1	10	100
+3	30	300
+drop table if exists t5;
+create table t5(k1 varchar(100), k2 varchar(100), uk1 int, v int, primary key(k1, k2) clustered, unique key ukk1(uk1), unique key ukk2(v));
+insert into t5(k1, k2, uk1, v) values('1', '1', 1, '100'), ('1', '3', 2, '200');
+update ignore t5 set k2 = '2', uk1 = 2 where k1 = '1' and k2 = '1';
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '2' for key 't5.ukk1'
+select * from t5;
+k1	k2	uk1	v
+1	1	1	100
+1	3	2	200
+drop table if exists t6;
+create table t6 (a int, b int, c int, primary key(a, b) clustered, unique key idx_14(b), unique key idx_15(b), unique key idx_16(a, b));
+insert into t6 select 10, 10, 20;
+insert ignore into t6 set a = 20, b = 10 on duplicate key update a = 100;
+select * from t6;
+a	b	c
+100	10	20
+insert ignore into t6 set a = 200, b= 10 on duplicate key update c = 1000;
+select * from t6;
+a	b	c
+100	10	1000
+drop table if exists insert_autoinc_test;
+create table insert_autoinc_test (id int primary key auto_increment, c1 int);
+insert into insert_autoinc_test(c1) values (1), (2);
+begin;
+select * from insert_autoinc_test;
+id	c1
+1	1
+2	2
+commit;
+begin;
+insert into insert_autoinc_test(id, c1) values (5,5);
+insert into insert_autoinc_test(c1) values (6);
+commit;
+begin;
+select * from insert_autoinc_test;
+id	c1
+1	1
+2	2
+5	5
+6	6
+commit;
+begin;
+insert into insert_autoinc_test(id, c1) values (3,3);
+commit;
+begin;
+select * from insert_autoinc_test;
+id	c1
+1	1
+2	2
+3	3
+5	5
+6	6
+commit;
+begin;
+insert into insert_autoinc_test(c1) values (7);
+commit;
+begin;
+select * from insert_autoinc_test;
+id	c1
+1	1
+2	2
+3	3
+5	5
+6	6
+7	7
+commit;
+drop table if exists insert_autoinc_test;
+create table insert_autoinc_test (id int primary key auto_increment, c1 int);
+insert into insert_autoinc_test(id, c1) values (0.3, 1);
+select * from insert_autoinc_test;
+id	c1
+1	1
+insert into insert_autoinc_test(id, c1) values (-0.3, 2);
+select * from insert_autoinc_test;
+id	c1
+1	1
+2	2
+insert into insert_autoinc_test(id, c1) values (-3.3, 3);
+select * from insert_autoinc_test;
+id	c1
+-3	3
+1	1
+2	2
+insert into insert_autoinc_test(id, c1) values (4.3, 4);
+select * from insert_autoinc_test;
+id	c1
+-3	3
+1	1
+2	2
+4	4
+insert into insert_autoinc_test(c1) values (5);
+select * from insert_autoinc_test;
+id	c1
+-3	3
+1	1
+2	2
+4	4
+5	5
+insert into insert_autoinc_test(id, c1) values (null, 6);
+select * from insert_autoinc_test;
+id	c1
+-3	3
+1	1
+2	2
+4	4
+5	5
+6	6
+drop table if exists insert_autoinc_test;
+create table insert_autoinc_test (id int primary key auto_increment, c1 int);
+insert into insert_autoinc_test(id, c1) values (5, 1);
+select * from insert_autoinc_test;
+id	c1
+5	1
+insert into insert_autoinc_test(id, c1) values (0, 2);
+select * from insert_autoinc_test;
+id	c1
+5	1
+6	2
+insert into insert_autoinc_test(id, c1) values (0, 3);
+select * from insert_autoinc_test;
+id	c1
+5	1
+6	2
+7	3
+set SQL_MODE=NO_AUTO_VALUE_ON_ZERO;
+insert into insert_autoinc_test(id, c1) values (0, 4);
+select * from insert_autoinc_test;
+id	c1
+0	4
+5	1
+6	2
+7	3
+insert into insert_autoinc_test(id, c1) values (0, 5);
+Error 1062 (23000): Duplicate entry '0' for key 'insert_autoinc_test.PRIMARY'
+insert into insert_autoinc_test(c1) values (6);
+select * from insert_autoinc_test;
+id	c1
+0	4
+5	1
+6	2
+7	3
+8	6
+insert into insert_autoinc_test(id, c1) values (null, 7);
+select * from insert_autoinc_test;
+id	c1
+0	4
+5	1
+6	2
+7	3
+8	6
+9	7
+set SQL_MODE='';
+insert into insert_autoinc_test(id, c1) values (0, 8);
+select * from insert_autoinc_test;
+id	c1
+0	4
+5	1
+6	2
+7	3
+8	6
+9	7
+10	8
+insert into insert_autoinc_test(id, c1) values (null, 9);
+select * from insert_autoinc_test;
+id	c1
+0	4
+5	1
+6	2
+7	3
+8	6
+9	7
+10	8
+11	9
+set sql_mode = default;
+drop table if exists insert_test;
+create table insert_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);
+insert insert_test (c1) values (1),(2),(NULL);
+affected rows: 3
+info: Records: 3  Duplicates: 0  Warnings: 0
+begin;
+insert insert_test (c1) values ();
+Error 1136 (21S01): Column count doesn't match value count at row 1
+rollback;
+begin;
+insert insert_test (c1, c2) values (1,2),(1);
+Error 1136 (21S01): Column count doesn't match value count at row 2
+rollback;
+begin;
+insert insert_test (xxx) values (3);
+Error 1054 (42S22): Unknown column 'xxx' in 'field list'
+rollback;
+begin;
+insert insert_test_xxx (c1) values ();
+Error 1146 (42S02): Table 'executor__insert.insert_test_xxx' doesn't exist
+rollback;
+insert insert_test set c1 = 3;
+affected rows: 1
+info: 
+begin;
+insert insert_test set c1 = 4, c1 = 5;
+Error 1110 (42000): Column 'c1' specified twice
+rollback;
+begin;
+insert insert_test set xxx = 6;
+Error 1054 (42S22): Unknown column 'xxx' in 'field list'
+rollback;
+drop table if exists insert_test_1, insert_test_2;
+create table insert_test_1 (id int, c1 int);
+insert insert_test_1 select id, c1 from insert_test;
+affected rows: 4
+info: Records: 4  Duplicates: 0  Warnings: 0
+create table insert_test_2 (id int, c1 int);
+insert insert_test_1 select id, c1 from insert_test union select id * 10, c1 * 10 from insert_test;
+affected rows: 8
+info: Records: 8  Duplicates: 0  Warnings: 0
+begin;
+insert insert_test_1 select c1 from insert_test;
+Error 1136 (21S01): Column count doesn't match value count at row 1
+rollback;
+begin;
+insert insert_test_1 values(default, default, default, default, default);
+Error 1136 (21S01): Column count doesn't match value count at row 1
+rollback;
+select * from insert_test where id = 1;
+id	c1	c2	c3
+1	1	NULL	1
+insert into insert_test (id, c3) values (1, 2) on duplicate key update id=values(id), c2=10;
+affected rows: 2
+info: 
+select * from insert_test where id = 1;
+id	c1	c2	c3
+1	1	10	1
+insert into insert_test (id, c2) values (1, 1) on duplicate key update insert_test.c2=10;
+affected rows: 0
+info: 
+insert into insert_test (id, c2) values(1, 1) on duplicate key update t.c2 = 10;
+Error 1054 (42S22): Unknown column 't.c2' in 'field list'
+INSERT INTO insert_test (id, c3) VALUES (1, 2) ON DUPLICATE KEY UPDATE c3=values(c3)+c3+3;
+affected rows: 2
+info: 
+select * from insert_test where id = 1;
+id	c1	c2	c3
+1	1	10	6
+INSERT IGNORE INTO insert_test (id, c3) VALUES (1, 2) ON DUPLICATE KEY UPDATE c3=values(c3)+c3+3;
+affected rows: 2
+info: 
+select * from insert_test where id = 1;
+id	c1	c2	c3
+1	1	10	11
+drop table if exists insert_err;
+create table insert_err (id int, c1 varchar(8));
+insert insert_err values (1, 'abcdabcdabcd');
+Error 1406 (22001): Data too long for column 'c1' at row 1
+insert insert_err values (1, '你好，世界');
+create table TEST1 (ID INT NOT NULL, VALUE INT DEFAULT NULL, PRIMARY KEY (ID));
+INSERT INTO TEST1(id,value) VALUE(3,3) on DUPLICATE KEY UPDATE VALUE=4;
+affected rows: 1
+info: 
+drop table if exists t;
+create table t (id int);
+insert into t values(1);
+update t t1 set id = (select count(*) + 1 from t t2 where t1.id = t2.id);
+select * from t;
+id
+2
+drop table if exists t;
+create table t(c decimal(5, 5));
+insert into t value(0);
+insert into t value(1);
+Error 1264 (22003): Out of range value for column 'c' at row 1
+drop table if exists t;
+create table t(c binary(255));
+insert into t value(1);
+select length(c) from t;
+length(c)
+255
+drop table if exists t;
+create table t(c varbinary(255));
+insert into t value(1);
+select length(c) from t;
+length(c)
+1
+drop table if exists t;
+create table t(c int);
+set @@time_zone = '+08:00';
+insert into t value(Unix_timestamp('2002-10-27 01:00'));
+select * from t;
+c
+1035651600
+set @@time_zone = default;
+drop table if exists t1;
+create table t1 (b char(0));
+insert into t1 values ("");
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a DECIMAL(4,2));
+INSERT INTO t VALUES (1.000001);
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1366	Incorrect decimal value: '1.000001' for column 'a' at row 1
+INSERT INTO t VALUES (1.000000);
+SHOW WARNINGS;
+Level	Code	Message
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a datetime);
+INSERT INTO t VALUES('2017-00-00');
+Error 1292 (22007): Incorrect datetime value: '2017-00-00' for column 'a' at row 1
+set sql_mode = '';
+INSERT INTO t VALUES('2017-00-00');
+SELECT * FROM t;
+a
+2017-00-00 00:00:00
+set sql_mode = 'strict_all_tables';
+SELECT * FROM t;
+a
+2017-00-00 00:00:00
+set sql_mode = default;
+drop table if exists test;
+CREATE TABLE test(id int(10) UNSIGNED NOT NULL AUTO_INCREMENT, p int(10) UNSIGNED NOT NULL, PRIMARY KEY(p), KEY(id));
+insert into test(p) value(1);
+select * from test;
+id	p
+1	1
+select * from test use index (id) where id = 1;
+id	p
+1	1
+insert into test values(NULL, 2);
+select * from test use index (id) where id = 2;
+id	p
+2	2
+insert into test values(2, 3);
+select * from test use index (id) where id = 2;
+id	p
+2	2
+2	3
+drop table if exists t;
+create table t(a bigint unsigned);
+set @@sql_mode = 'strict_all_tables';
+insert into t value (-1);
+Error 1264 (22003): Out of range value for column 'a' at row 1
+set @@sql_mode = '';
+insert into t value (-1);
+show warnings;
+Level	Code	Message
+Warning	1264	Out of range value for column 'a' at row 1
+insert into t select -1;
+show warnings;
+Level	Code	Message
+Warning	1690	constant -1 overflows bigint
+insert into t select cast(-1 as unsigned);
+insert into t value (-1.111);
+show warnings;
+Level	Code	Message
+Warning	1264	Out of range value for column 'a' at row 1
+insert into t value ('-1.111');
+show warnings;
+Level	Code	Message
+Warning	1264	Out of range value for column 'a' at row 1
+update t set a = -1 limit 1;
+show warnings;
+Level	Code	Message
+Warning	1690	constant -1 overflows bigint
+select * from t;
+a
+0
+0
+18446744073709551615
+0
+0
+set @@sql_mode = default;
+drop table if exists t;
+create table t(a time(6));
+insert into t value('20070219173709.055870'), ('20070219173709.055'), ('20070219173709.055870123');
+select * from t;
+a
+17:37:09.055870
+17:37:09.055000
+17:37:09.055870
+truncate table t;
+insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123);
+select * from t;
+a
+17:37:09.055870
+17:37:09.055000
+17:37:09.055870
+insert into t value(-20070219173709.055870);
+Error 1292 (22007): Incorrect time value: '-20070219173709.055870' for column 'a' at row 1
+drop table if exists t;
+set @@sql_mode='';
+create table t(a float unsigned, b double unsigned);
+insert into t value(-1.1, -1.1), (-2.1, -2.1), (0, 0), (1.1, 1.1);
+show warnings;
+Level	Code	Message
+Warning	1264	Out of range value for column 'a' at row 1
+Warning	1264	Out of range value for column 'b' at row 1
+Warning	1264	Out of range value for column 'a' at row 2
+Warning	1264	Out of range value for column 'b' at row 2
+select * from t;
+a	b
+0	0
+0	0
+0	0
+1.1	1.1
+set @@sql_mode=default;
+drop table if exists t;
+create table t(a int default 1, b int default 2);
+insert into t values(default, default);
+select * from t;
+a	b
+1	2
+truncate table t;
+insert into t values(default(b), default(a));
+select * from t;
+a	b
+2	1
+truncate table t;
+insert into t (b) values(default);
+select * from t;
+a	b
+1	2
+truncate table t;
+insert into t (b) values(default(a));
+select * from t;
+a	b
+1	1
+drop view if exists v;
+create view v as select * from t;
+insert into v values(1,2);
+Error 1105 (HY000): insert into view v is not supported now
+replace into v values(1,2);
+Error 1105 (HY000): replace into view v is not supported now
+drop view v;
+drop sequence if exists seq;
+create sequence seq;
+insert into seq values();
+Error 1105 (HY000): insert into sequence seq is not supported now
+replace into seq values();
+Error 1105 (HY000): replace into sequence seq is not supported now
+drop sequence seq;
+drop table if exists t;
+create table t(name varchar(255), b int, c int, primary key(name(2)));
+insert into t(name, b) values("cha", 3);
+insert into t(name, b) values("chb", 3);
+Error 1062 (23000): Duplicate entry 'ch' for key 't.PRIMARY'
+insert into t(name, b) values("测试", 3);
+insert into t(name, b) values("测试", 3);
+Error 1062 (23000): Duplicate entry '�' for key 't.PRIMARY'
+drop table if exists t;
+create table t (i int unique key);
+insert into t values (1),(2);
+affected rows: 2
+info: Records: 2  Duplicates: 0  Warnings: 0
+select * from t;
+i
+1
+2
+insert into t values (1), (2) on duplicate key update i = values(i);
+affected rows: 0
+info: Records: 2  Duplicates: 0  Warnings: 0
+select * from t;
+i
+1
+2
+insert into t values (2), (3) on duplicate key update i = 3;
+affected rows: 2
+info: Records: 2  Duplicates: 1  Warnings: 0
+select * from t;
+i
+1
+3
+drop table if exists t;
+create table t (i int primary key, j int unique key);
+insert into t values (-1, 1);
+affected rows: 1
+info: 
+select * from t;
+i	j
+-1	1
+insert into t values (1, 1) on duplicate key update j = values(j);
+affected rows: 0
+info: 
+select * from t;
+i	j
+-1	1
+drop table if exists test;
+create table test (i int primary key, j int unique);
+begin;
+insert into test values (1,1);
+insert into test values (2,1) on duplicate key update i = -i, j = -j;
+commit;
+select * from test;
+i	j
+-1	-1
+delete from test;
+insert into test values (1, 1);
+begin;
+delete from test where i = 1;
+insert into test values (2, 1) on duplicate key update i = -i, j = -j;
+commit;
+select * from test;
+i	j
+2	1
+delete from test;
+insert into test values (1, 1);
+begin;
+update test set i = 2, j = 2 where i = 1;
+insert into test values (1, 3) on duplicate key update i = -i, j = -j;
+insert into test values (2, 4) on duplicate key update i = -i, j = -j;
+commit;
+select * from test order by i;
+i	j
+-2	-2
+1	3
+delete from test;
+begin;
+insert into test values (1, 3), (1, 3) on duplicate key update i = values(i), j = values(j);
+commit;
+select * from test order by i;
+i	j
+1	3
+create table tmp (id int auto_increment, code int, primary key(id, code));
+create table m (id int primary key auto_increment, code int unique);
+insert tmp (code) values (1);
+insert tmp (code) values (1);
+set tidb_init_chunk_size=1;
+insert m (code) select code from tmp on duplicate key update code = values(code);
+select * from m;
+id	code
+1	1
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (f1 INT AUTO_INCREMENT PRIMARY KEY,
+f2 VARCHAR(5) NOT NULL UNIQUE);
+INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);
+affected rows: 1
+info: 
+SELECT LAST_INSERT_ID();
+LAST_INSERT_ID()
+1
+INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);
+affected rows: 0
+info: 
+SELECT LAST_INSERT_ID();
+LAST_INSERT_ID()
+1
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (f1 INT AUTO_INCREMENT UNIQUE,
+f2 VARCHAR(5) NOT NULL UNIQUE);
+INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);
+affected rows: 1
+info: 
+SELECT LAST_INSERT_ID();
+LAST_INSERT_ID()
+1
+INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = LAST_INSERT_ID(f1);
+affected rows: 0
+info: 
+SELECT LAST_INSERT_ID();
+LAST_INSERT_ID()
+1
+INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = 2;
+affected rows: 2
+info: 
+SELECT LAST_INSERT_ID();
+LAST_INSERT_ID()
+1
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (f1 INT);
+INSERT t1 VALUES (1) ON DUPLICATE KEY UPDATE f1 = 1;
+affected rows: 1
+info: 
+SELECT * FROM t1;
+f1
+1
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (f1 INT PRIMARY KEY, f2 INT NOT NULL UNIQUE);
+INSERT t1 VALUES (1, 1);
+affected rows: 1
+info: 
+INSERT t1 VALUES (1, 1), (1, 1) ON DUPLICATE KEY UPDATE f1 = 2, f2 = 2;
+affected rows: 3
+info: Records: 2  Duplicates: 1  Warnings: 0
+SELECT * FROM t1 order by f1;
+f1	f2
+1	1
+2	2
+INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;
+Error 1048 (23000): Column 'f2' cannot be null
+INSERT IGNORE t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;
+affected rows: 2
+info: 
+show warnings;
+Level	Code	Message
+Warning	1048	Column 'f2' cannot be null
+SELECT * FROM t1 order by f1;
+f1	f2
+1	0
+2	2
+SET sql_mode='';
+INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;
+show warnings;
+Level	Code	Message
+Warning	1048	Column 'f2' cannot be null
+SELECT * FROM t1 order by f1;
+f1	f2
+1	0
+2	2
+set sql_mode=default;
+set tidb_init_chunk_size=default;
+drop table if exists t1, t2;
+create table t1(a1 bigint primary key, b1 bigint);
+create table t2(a2 bigint primary key, b2 bigint);
+insert into t1 values(1, 100);
+affected rows: 1
+info: 
+insert into t2 values(1, 200);
+affected rows: 1
+info: 
+insert into t1 select a2, b2 from t2 on duplicate key update b1 = a2;
+affected rows: 2
+info: Records: 1  Duplicates: 1  Warnings: 0
+select * from t1;
+a1	b1
+1	1
+insert into t1 select a2, b2 from t2 on duplicate key update b1 = b2;
+affected rows: 2
+info: Records: 1  Duplicates: 1  Warnings: 0
+select * from t1;
+a1	b1
+1	200
+insert into t1 select a2, b2 from t2 on duplicate key update a1 = a2;
+affected rows: 0
+info: Records: 1  Duplicates: 0  Warnings: 0
+select * from t1;
+a1	b1
+1	200
+insert into t1 select a2, b2 from t2 on duplicate key update b1 = 300;
+affected rows: 2
+info: Records: 1  Duplicates: 1  Warnings: 0
+select * from t1;
+a1	b1
+1	300
+insert into t1 values(1, 1) on duplicate key update b1 = 400;
+affected rows: 2
+info: 
+select * from t1;
+a1	b1
+1	400
+insert into t1 select 1, 500 from t2 on duplicate key update b1 = 400;
+affected rows: 0
+info: Records: 1  Duplicates: 0  Warnings: 0
+select * from t1;
+a1	b1
+1	400
+drop table if exists t1, t2;
+create table t1(a bigint primary key, b bigint);
+create table t2(a bigint primary key, b bigint);
+insert into t1 select * from t2 on duplicate key update c = t2.b;
+Error 1054 (42S22): Unknown column 'c' in 'field list'
+drop table if exists t1, t2;
+create table t1(a bigint primary key, b bigint);
+create table t2(a bigint primary key, b bigint);
+insert into t1 select * from t2 on duplicate key update a = b;
+Error 1052 (23000): Column 'b' in field list is ambiguous
+drop table if exists t1, t2;
+create table t1(a bigint primary key, b bigint);
+create table t2(a bigint primary key, b bigint);
+insert into t1 select * from t2 on duplicate key update c = b;
+Error 1054 (42S22): Unknown column 'c' in 'field list'
+drop table if exists t1, t2;
+create table t1(a1 bigint primary key, b1 bigint);
+create table t2(a2 bigint primary key, b2 bigint);
+insert into t1 select * from t2 on duplicate key update a1 = values(b2);
+Error 1054 (42S22): Unknown column 'b2' in 'field list'
+drop table if exists t1, t2;
+create table t1(a1 bigint primary key, b1 bigint);
+create table t2(a2 bigint primary key, b2 bigint);
+insert into t1 values(1, 100);
+affected rows: 1
+info: 
+insert into t2 values(1, 200);
+affected rows: 1
+info: 
+insert into t1 select * from t2 on duplicate key update b1 = values(b1) + b2;
+affected rows: 2
+info: Records: 1  Duplicates: 1  Warnings: 0
+select * from t1;
+a1	b1
+1	400
+insert into t1 select * from t2 on duplicate key update b1 = values(b1) + b2;
+affected rows: 0
+info: Records: 1  Duplicates: 0  Warnings: 0
+select * from t1;
+a1	b1
+1	400
+drop table if exists t;
+create table t(k1 bigint, k2 bigint, val bigint, primary key(k1, k2));
+insert into t (val, k1, k2) values (3, 1, 2);
+affected rows: 1
+info: 
+select * from t;
+k1	k2	val
+1	2	3
+insert into t (val, k1, k2) select c, a, b from (select 1 as a, 2 as b, 4 as c) tmp on duplicate key update val = tmp.c;
+affected rows: 2
+info: Records: 1  Duplicates: 1  Warnings: 0
+select * from t;
+k1	k2	val
+1	2	4
+drop table if exists t;
+create table t(k1 double, k2 double, v double, primary key(k1, k2));
+insert into t (v, k1, k2) select c, a, b from (select "3" c, "1" a, "2" b) tmp on duplicate key update v=c;
+affected rows: 1
+info: Records: 1  Duplicates: 0  Warnings: 0
+select * from t;
+k1	k2	v
+1	2	3
+insert into t (v, k1, k2) select c, a, b from (select "3" c, "1" a, "2" b) tmp on duplicate key update v=c;
+affected rows: 0
+info: Records: 1  Duplicates: 0  Warnings: 0
+select * from t;
+k1	k2	v
+1	2	3
+drop table if exists t1, t2;
+create table t1(id int, a int, b int);
+insert into t1 values (1, 1, 1);
+affected rows: 1
+info: 
+insert into t1 values (2, 2, 1);
+affected rows: 1
+info: 
+insert into t1 values (3, 3, 1);
+affected rows: 1
+info: 
+create table t2(a int primary key, b int, unique(b));
+insert into t2 select a, b from t1 order by id on duplicate key update a=t1.a, b=t1.b;
+affected rows: 5
+info: Records: 3  Duplicates: 2  Warnings: 0
+select * from t2 order by a;
+a	b
+3	1
+drop table if exists t1, t2;
+create table t1(id int, a int, b int);
+insert into t1 values (1, 1, 1);
+affected rows: 1
+info: 
+insert into t1 values (2, 1, 2);
+affected rows: 1
+info: 
+insert into t1 values (3, 3, 1);
+affected rows: 1
+info: 
+create table t2(a int primary key, b int, unique(b));
+insert into t2 select a, b from t1 order by id on duplicate key update a=t1.a, b=t1.b;
+affected rows: 4
+info: Records: 3  Duplicates: 1  Warnings: 0
+select * from t2 order by a;
+a	b
+1	2
+3	1
+drop table if exists t1, t2;
+create table t1(id int, a int, b int, c int);
+insert into t1 values (1, 1, 1, 1);
+affected rows: 1
+info: 
+insert into t1 values (2, 2, 1, 2);
+affected rows: 1
+info: 
+insert into t1 values (3, 3, 2, 2);
+affected rows: 1
+info: 
+insert into t1 values (4, 4, 2, 2);
+affected rows: 1
+info: 
+create table t2(a int primary key, b int, c int, unique(b), unique(c));
+insert into t2 select a, b, c from t1 order by id on duplicate key update b=t2.b, c=t2.c;
+affected rows: 2
+info: Records: 4  Duplicates: 0  Warnings: 0
+select * from t2 order by a;
+a	b	c
+1	1	1
+3	2	2
+drop table if exists t1;
+create table t1(a int primary key, b int);
+insert into t1 values(1,1),(2,2),(3,3),(4,4),(5,5);
+affected rows: 5
+info: Records: 5  Duplicates: 0  Warnings: 0
+insert into t1 values(4,14),(5,15),(6,16),(7,17),(8,18) on duplicate key update b=b+10;
+affected rows: 7
+info: Records: 5  Duplicates: 2  Warnings: 0
+drop table if exists a, b;
+create table a(x int primary key);
+create table b(x int, y int);
+insert into a values(1);
+affected rows: 1
+info: 
+insert into b values(1, 2);
+affected rows: 1
+info: 
+insert into a select x from b ON DUPLICATE KEY UPDATE a.x=b.y;
+affected rows: 2
+info: Records: 1  Duplicates: 1  Warnings: 0
+select * from a;
+x
+2
+## Test issue 28078.
+## Use different types of columns so that there's likely to be error if the types mismatches.
+drop table if exists a, b;
+create table a(id int, a1 timestamp, a2 varchar(10), a3 float, unique(id));
+create table b(id int, b1 time, b2 varchar(10), b3 int);
+insert into a values (1, '2022-01-04 07:02:04', 'a', 1.1), (2, '2022-01-04 07:02:05', 'b', 2.2);
+affected rows: 2
+info: Records: 2  Duplicates: 0  Warnings: 0
+insert into b values (2, '12:34:56', 'c', 10), (3, '01:23:45', 'd', 20);
+affected rows: 2
+info: Records: 2  Duplicates: 0  Warnings: 0
+insert into a (id) select id from b on duplicate key update a.a2 = b.b2, a.a3 = 3.3;
+affected rows: 3
+info: Records: 2  Duplicates: 1  Warnings: 0
+select * from a;
+id	a1	a2	a3
+1	2022-01-04 07:02:04	a	1.1
+2	2022-01-04 07:02:05	c	3.3
+3	NULL	NULL	NULL
+insert into a (id) select 4 from b where b3 = 20 on duplicate key update a.a3 = b.b3;
+affected rows: 1
+info: Records: 1  Duplicates: 0  Warnings: 0
+select * from a;
+id	a1	a2	a3
+1	2022-01-04 07:02:04	a	1.1
+2	2022-01-04 07:02:05	c	3.3
+3	NULL	NULL	NULL
+4	NULL	NULL	NULL
+insert into a (a2, a3) select 'x', 1.2 from b on duplicate key update a.a2 = b.b3;
+affected rows: 2
+info: Records: 2  Duplicates: 0  Warnings: 0
+select * from a;
+id	a1	a2	a3
+1	2022-01-04 07:02:04	a	1.1
+2	2022-01-04 07:02:05	c	3.3
+3	NULL	NULL	NULL
+4	NULL	NULL	NULL
+NULL	NULL	x	1.2
+NULL	NULL	x	1.2
+## reproduce insert on duplicate key update bug under new row format.
+drop table if exists t1;
+create table t1(c1 decimal(6,4), primary key(c1));
+insert into t1 set c1 = 0.1;
+insert into t1 set c1 = 0.1 on duplicate key update c1 = 1;
+select * from t1 use index(primary);
+c1
+1.0000
+drop table if exists t;
+create table t (d int);
+insert into t values (cast('18446744073709551616' as unsigned));
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '18446744073709551616'
+set sql_mode='';
+insert into t values (cast('18446744073709551616' as unsigned));
+Level	Code	Message
+Warning	1264	Out of range value for column 'd' at row 1
+Warning	1292	Truncated incorrect INTEGER value: '18446744073709551616'
+set sql_mode=DEFAULT;

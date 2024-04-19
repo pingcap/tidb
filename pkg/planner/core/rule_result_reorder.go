@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
 
 /*
@@ -39,7 +40,7 @@ This rule reorders results by modifying or injecting a Sort operator:
 type resultReorder struct {
 }
 
-func (rs *resultReorder) optimize(_ context.Context, lp LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (rs *resultReorder) optimize(_ context.Context, lp LogicalPlan, _ *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	ordered := rs.completeSort(lp)
 	if !ordered {
@@ -59,7 +60,7 @@ func (rs *resultReorder) completeSort(lp LogicalPlan) bool {
 		for _, col := range cols {
 			exist := false
 			for _, byItem := range sort.ByItems {
-				if col.Equal(nil, byItem.Expr) {
+				if col.EqualColumn(byItem.Expr) {
 					exist = true
 					break
 				}
@@ -89,7 +90,7 @@ func (rs *resultReorder) injectSort(lp LogicalPlan) LogicalPlan {
 	}
 	sort := LogicalSort{
 		ByItems: byItems,
-	}.Init(lp.SCtx(), lp.SelectBlockOffset())
+	}.Init(lp.SCtx(), lp.QueryBlockOffset())
 	sort.SetChildren(lp)
 	return sort
 }

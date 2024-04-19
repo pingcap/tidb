@@ -14,7 +14,11 @@
 
 package core
 
-import "context"
+import (
+	"context"
+
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+)
 
 type pushDownSequenceSolver struct {
 }
@@ -23,7 +27,7 @@ func (*pushDownSequenceSolver) name() string {
 	return "push_down_sequence"
 }
 
-func (pdss *pushDownSequenceSolver) optimize(_ context.Context, lp LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (pdss *pushDownSequenceSolver) optimize(_ context.Context, lp LogicalPlan, _ *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	return pdss.recursiveOptimize(nil, lp), planChanged, nil
 }
@@ -41,7 +45,7 @@ func (pdss *pushDownSequenceSolver) recursiveOptimize(pushedSequence *LogicalSeq
 	switch x := lp.(type) {
 	case *LogicalSequence:
 		if pushedSequence == nil {
-			pushedSequence = LogicalSequence{}.Init(lp.SCtx(), lp.SelectBlockOffset())
+			pushedSequence = LogicalSequence{}.Init(lp.SCtx(), lp.QueryBlockOffset())
 			pushedSequence.SetChildren(lp.Children()...)
 			return pdss.recursiveOptimize(pushedSequence, lp.Children()[len(lp.Children())-1])
 		}
@@ -50,7 +54,7 @@ func (pdss *pushDownSequenceSolver) recursiveOptimize(pushedSequence *LogicalSeq
 		allCTEs := make([]LogicalPlan, 0, childLen+len(pushedSequence.children)-2)
 		allCTEs = append(allCTEs, pushedSequence.children[:len(pushedSequence.children)-1]...)
 		allCTEs = append(allCTEs, x.children[:childLen-1]...)
-		pushedSequence = LogicalSequence{}.Init(lp.SCtx(), lp.SelectBlockOffset())
+		pushedSequence = LogicalSequence{}.Init(lp.SCtx(), lp.QueryBlockOffset())
 		pushedSequence.SetChildren(append(allCTEs, mainQuery)...)
 		return pdss.recursiveOptimize(pushedSequence, mainQuery)
 	case *DataSource, *LogicalAggregation, *LogicalCTE:

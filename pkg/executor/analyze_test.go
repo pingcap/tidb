@@ -85,10 +85,10 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	// Construct TopN, should be (1, 1) -> 2 and (1, 2) -> 2
 	topn := statistics.NewTopN(2)
 	{
-		key1, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(1))
+		key1, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(1), types.NewIntDatum(1))
 		require.NoError(t, err)
 		topn.AppendTopN(key1, 2)
-		key2, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(2))
+		key2, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(1), types.NewIntDatum(2))
 		require.NoError(t, err)
 		topn.AppendTopN(key2, 2)
 	}
@@ -143,9 +143,9 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("insert into t (id) values (%v)", j))
 		}
 	}
-	var expected [][]interface{}
+	var expected [][]any
 	for i := 1; i <= 20; i++ {
-		expected = append(expected, []interface{}{
+		expected = append(expected, []any{
 			strconv.FormatInt(int64(i), 10), "500",
 		})
 	}

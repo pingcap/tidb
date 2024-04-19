@@ -26,8 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -50,37 +48,37 @@ func (col *CorrelatedColumn) Clone() Expression {
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
-func (col *CorrelatedColumn) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (col *CorrelatedColumn) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return genVecFromConstExpr(ctx, col, types.ETInt, input, result)
 }
 
 // VecEvalReal evaluates this expression in a vectorized manner.
-func (col *CorrelatedColumn) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (col *CorrelatedColumn) VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return genVecFromConstExpr(ctx, col, types.ETReal, input, result)
 }
 
 // VecEvalString evaluates this expression in a vectorized manner.
-func (col *CorrelatedColumn) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (col *CorrelatedColumn) VecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return genVecFromConstExpr(ctx, col, types.ETString, input, result)
 }
 
 // VecEvalDecimal evaluates this expression in a vectorized manner.
-func (col *CorrelatedColumn) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (col *CorrelatedColumn) VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return genVecFromConstExpr(ctx, col, types.ETDecimal, input, result)
 }
 
 // VecEvalTime evaluates this expression in a vectorized manner.
-func (col *CorrelatedColumn) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (col *CorrelatedColumn) VecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return genVecFromConstExpr(ctx, col, types.ETTimestamp, input, result)
 }
 
 // VecEvalDuration evaluates this expression in a vectorized manner.
-func (col *CorrelatedColumn) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (col *CorrelatedColumn) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return genVecFromConstExpr(ctx, col, types.ETDuration, input, result)
 }
 
 // VecEvalJSON evaluates this expression in a vectorized manner.
-func (col *CorrelatedColumn) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (col *CorrelatedColumn) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return genVecFromConstExpr(ctx, col, types.ETJson, input, result)
 }
 
@@ -90,24 +88,24 @@ func (col *CorrelatedColumn) Traverse(action TraverseAction) Expression {
 }
 
 // Eval implements Expression interface.
-func (col *CorrelatedColumn) Eval(row chunk.Row) (types.Datum, error) {
+func (col *CorrelatedColumn) Eval(_ EvalContext, _ chunk.Row) (types.Datum, error) {
 	return *col.Data, nil
 }
 
 // EvalInt returns int representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (col *CorrelatedColumn) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	if col.Data.IsNull() {
 		return 0, true, nil
 	}
 	if col.GetType().Hybrid() {
-		res, err := col.Data.ToInt64(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		res, err := col.Data.ToInt64(typeCtx(ctx))
 		return res, err != nil, err
 	}
 	return col.Data.GetInt64(), false, nil
 }
 
 // EvalReal returns real representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (col *CorrelatedColumn) EvalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	if col.Data.IsNull() {
 		return 0, true, nil
 	}
@@ -115,7 +113,7 @@ func (col *CorrelatedColumn) EvalReal(ctx sessionctx.Context, row chunk.Row) (fl
 }
 
 // EvalString returns string representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (col *CorrelatedColumn) EvalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	if col.Data.IsNull() {
 		return "", true, nil
 	}
@@ -124,7 +122,7 @@ func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row chunk.Row) (
 }
 
 // EvalDecimal returns decimal representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (col *CorrelatedColumn) EvalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	if col.Data.IsNull() {
 		return nil, true, nil
 	}
@@ -132,7 +130,7 @@ func (col *CorrelatedColumn) EvalDecimal(ctx sessionctx.Context, row chunk.Row) 
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
+func (col *CorrelatedColumn) EvalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
 	if col.Data.IsNull() {
 		return types.ZeroTime, true, nil
 	}
@@ -140,7 +138,7 @@ func (col *CorrelatedColumn) EvalTime(ctx sessionctx.Context, row chunk.Row) (ty
 }
 
 // EvalDuration returns Duration representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
+func (col *CorrelatedColumn) EvalDuration(ctx EvalContext, row chunk.Row) (types.Duration, bool, error) {
 	if col.Data.IsNull() {
 		return types.Duration{}, true, nil
 	}
@@ -148,7 +146,7 @@ func (col *CorrelatedColumn) EvalDuration(ctx sessionctx.Context, row chunk.Row)
 }
 
 // EvalJSON returns JSON representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
+func (col *CorrelatedColumn) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, bool, error) {
 	if col.Data.IsNull() {
 		return types.BinaryJSON{}, true, nil
 	}
@@ -156,9 +154,14 @@ func (col *CorrelatedColumn) EvalJSON(ctx sessionctx.Context, row chunk.Row) (ty
 }
 
 // Equal implements Expression interface.
-func (col *CorrelatedColumn) Equal(ctx sessionctx.Context, expr Expression) bool {
+func (col *CorrelatedColumn) Equal(_ EvalContext, expr Expression) bool {
+	return col.EqualColumn(expr)
+}
+
+// EqualColumn returns whether two colum is equal
+func (col *CorrelatedColumn) EqualColumn(expr Expression) bool {
 	if cc, ok := expr.(*CorrelatedColumn); ok {
-		return col.Column.Equal(ctx, &cc.Column)
+		return col.Column.EqualColumn(&cc.Column)
 	}
 	return false
 }
@@ -168,9 +171,9 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 	return true
 }
 
-// ConstItem implements Expression interface.
-func (col *CorrelatedColumn) ConstItem(_ *stmtctx.StatementContext) bool {
-	return false
+// ConstLevel returns the const level for the expression
+func (col *CorrelatedColumn) ConstLevel() ConstLevel {
+	return ConstNone
 }
 
 // Decorrelate implements Expression interface.
@@ -191,11 +194,11 @@ func (col *CorrelatedColumn) resolveIndices(_ *Schema) error {
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
-func (col *CorrelatedColumn) ResolveIndicesByVirtualExpr(_ *Schema) (Expression, bool) {
+func (col *CorrelatedColumn) ResolveIndicesByVirtualExpr(_ EvalContext, _ *Schema) (Expression, bool) {
 	return col, true
 }
 
-func (col *CorrelatedColumn) resolveIndicesByVirtualExpr(_ *Schema) bool {
+func (col *CorrelatedColumn) resolveIndicesByVirtualExpr(_ EvalContext, _ *Schema) bool {
 	return true
 }
 
@@ -261,7 +264,12 @@ type Column struct {
 }
 
 // Equal implements Expression interface.
-func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
+func (col *Column) Equal(_ EvalContext, expr Expression) bool {
+	return col.EqualColumn(expr)
+}
+
+// EqualColumn returns whether two colum is equal
+func (col *Column) EqualColumn(expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		return newCol.UniqueID == col.UniqueID
 	}
@@ -269,17 +277,17 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 }
 
 // EqualByExprAndID extends Equal by comparing virual expression
-func (col *Column) EqualByExprAndID(_ sessionctx.Context, expr Expression) bool {
+func (col *Column) EqualByExprAndID(ctx EvalContext, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		expr, isOk := col.VirtualExpr.(*ScalarFunction)
-		isVirExprMatched := isOk && expr.Equal(nil, newCol.VirtualExpr) && col.RetType.Equal(newCol.RetType)
+		isVirExprMatched := isOk && expr.Equal(ctx, newCol.VirtualExpr) && col.RetType.Equal(newCol.RetType)
 		return (newCol.UniqueID == col.UniqueID) || isVirExprMatched
 	}
 	return false
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
-func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (col *Column) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if col.RetType.Hybrid() {
 		it := chunk.NewIterator4Chunk(input)
 		result.ResizeInt64(0, false)
@@ -301,7 +309,7 @@ func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result
 }
 
 // VecEvalReal evaluates this expression in a vectorized manner.
-func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (col *Column) VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	src := input.Column(col.Index)
 	if col.GetType().GetType() == mysql.TypeFloat {
@@ -333,7 +341,7 @@ func (col *Column) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, resul
 }
 
 // VecEvalString evaluates this expression in a vectorized manner.
-func (col *Column) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (col *Column) VecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if col.RetType.Hybrid() {
 		it := chunk.NewIterator4Chunk(input)
 		result.ReserveString(input.NumRows())
@@ -355,25 +363,25 @@ func (col *Column) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, res
 }
 
 // VecEvalDecimal evaluates this expression in a vectorized manner.
-func (col *Column) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (col *Column) VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
 	return nil
 }
 
 // VecEvalTime evaluates this expression in a vectorized manner.
-func (col *Column) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (col *Column) VecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
 	return nil
 }
 
 // VecEvalDuration evaluates this expression in a vectorized manner.
-func (col *Column) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (col *Column) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
 	return nil
 }
 
 // VecEvalJSON evaluates this expression in a vectorized manner.
-func (col *Column) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (col *Column) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
 	return nil
 }
@@ -382,8 +390,8 @@ const columnPrefix = "Column#"
 
 // String implements Stringer interface.
 func (col *Column) String() string {
-	if col.IsHidden {
-		// A hidden column must be a virtual generated column, we should output its expression.
+	if col.IsHidden && col.VirtualExpr != nil {
+		// A hidden column without virtual expression indicates it's a stored type.
 		return col.VirtualExpr.String()
 	}
 	if col.OrigName != "" {
@@ -410,22 +418,22 @@ func (col *Column) Traverse(action TraverseAction) Expression {
 }
 
 // Eval implements Expression interface.
-func (col *Column) Eval(row chunk.Row) (types.Datum, error) {
+func (col *Column) Eval(_ EvalContext, row chunk.Row) (types.Datum, error) {
 	return row.GetDatum(col.Index, col.RetType), nil
 }
 
 // EvalInt returns int representation of Column.
-func (col *Column) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (col *Column) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	if col.GetType().Hybrid() {
 		val := row.GetDatum(col.Index, col.RetType)
 		if val.IsNull() {
 			return 0, true, nil
 		}
 		if val.Kind() == types.KindMysqlBit {
-			val, err := val.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
+			val, err := val.GetBinaryLiteral().ToInt(typeCtx(ctx))
 			return int64(val), err != nil, err
 		}
-		res, err := val.ToInt64(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		res, err := val.ToInt64(typeCtx(ctx))
 		return res, err != nil, err
 	}
 	if row.IsNull(col.Index) {
@@ -435,7 +443,7 @@ func (col *Column) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, 
 }
 
 // EvalReal returns real representation of Column.
-func (col *Column) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (col *Column) EvalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	if row.IsNull(col.Index) {
 		return 0, true, nil
 	}
@@ -446,7 +454,7 @@ func (col *Column) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, boo
 }
 
 // EvalString returns string representation of Column.
-func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (col *Column) EvalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	if row.IsNull(col.Index) {
 		return "", true, nil
 	}
@@ -463,7 +471,7 @@ func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bo
 }
 
 // EvalDecimal returns decimal representation of Column.
-func (col *Column) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (col *Column) EvalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	if row.IsNull(col.Index) {
 		return nil, true, nil
 	}
@@ -471,7 +479,7 @@ func (col *Column) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.My
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
-func (col *Column) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
+func (col *Column) EvalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
 	if row.IsNull(col.Index) {
 		return types.ZeroTime, true, nil
 	}
@@ -479,7 +487,7 @@ func (col *Column) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, 
 }
 
 // EvalDuration returns Duration representation of Column.
-func (col *Column) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
+func (col *Column) EvalDuration(ctx EvalContext, row chunk.Row) (types.Duration, bool, error) {
 	if row.IsNull(col.Index) {
 		return types.Duration{}, true, nil
 	}
@@ -488,7 +496,7 @@ func (col *Column) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Du
 }
 
 // EvalJSON returns JSON representation of Column.
-func (col *Column) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
+func (col *Column) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, bool, error) {
 	if row.IsNull(col.Index) {
 		return types.BinaryJSON{}, true, nil
 	}
@@ -506,9 +514,9 @@ func (col *Column) IsCorrelated() bool {
 	return false
 }
 
-// ConstItem implements Expression interface.
-func (col *Column) ConstItem(_ *stmtctx.StatementContext) bool {
-	return false
+// ConstLevel returns the const level for the expression
+func (col *Column) ConstLevel() ConstLevel {
+	return ConstNone
 }
 
 // Decorrelate implements Expression interface.
@@ -517,7 +525,7 @@ func (col *Column) Decorrelate(_ *Schema) Expression {
 }
 
 // HashCode implements Expression interface.
-func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
+func (col *Column) HashCode() []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
@@ -525,6 +533,11 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	col.hashcode = append(col.hashcode, columnFlag)
 	col.hashcode = codec.EncodeInt(col.hashcode, col.UniqueID)
 	return col.hashcode
+}
+
+// CanonicalHashCode implements Expression interface.
+func (col *Column) CanonicalHashCode() []byte {
+	return col.HashCode()
 }
 
 // CleanHashCode will clean the hashcode you may be cached before. It's used especially in schema-cloned & reallocated-uniqueID's cases.
@@ -548,15 +561,15 @@ func (col *Column) resolveIndices(schema *Schema) error {
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
-func (col *Column) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) {
+func (col *Column) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool) {
 	newCol := col.Clone()
-	isOk := newCol.resolveIndicesByVirtualExpr(schema)
+	isOk := newCol.resolveIndicesByVirtualExpr(ctx, schema)
 	return newCol, isOk
 }
 
-func (col *Column) resolveIndicesByVirtualExpr(schema *Schema) bool {
+func (col *Column) resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool {
 	for i, c := range schema.Columns {
-		if c.EqualByExprAndID(nil, col) {
+		if c.EqualByExprAndID(ctx, col) {
 			col.Index = i
 			return true
 		}
@@ -687,23 +700,8 @@ idLoop:
 }
 
 // EvalVirtualColumn evals the virtual column
-func (col *Column) EvalVirtualColumn(row chunk.Row) (types.Datum, error) {
-	return col.VirtualExpr.Eval(row)
-}
-
-// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
-func (col *Column) SupportReverseEval() bool {
-	switch col.RetType.GetType() {
-	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
-		return true
-	}
-	return false
-}
-
-// ReverseEval evaluates the only one column value with given function result.
-func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
-	return types.ChangeReverseResultByUpperLowerBound(sc.TypeCtx(), col.RetType, res, rType)
+func (col *Column) EvalVirtualColumn(ctx EvalContext, row chunk.Row) (types.Datum, error) {
+	return col.VirtualExpr.Eval(ctx, row)
 }
 
 // Coercibility returns the coercibility value which is used to check collations.
@@ -745,7 +743,7 @@ func SortColumns(cols []*Column) []*Column {
 // InColumnArray check whether the col is in the cols array
 func (col *Column) InColumnArray(cols []*Column) bool {
 	for _, c := range cols {
-		if col.Equal(nil, c) {
+		if col.EqualColumn(c) {
 			return true
 		}
 	}

@@ -14,8 +14,6 @@
 
 package handshake
 
-import "github.com/klauspost/compress/zstd"
-
 // Response41 is the response message for a successful initial handshake.
 type Response41 struct {
 	Attrs      map[string]string
@@ -23,7 +21,7 @@ type Response41 struct {
 	DBName     string
 	AuthPlugin string
 	Auth       []byte
-	ZstdLevel  zstd.EncoderLevel
+	ZstdLevel  int
 	Capability uint32
 	Collation  uint8
 }

@@ -19,7 +19,6 @@ import (
 	"reflect"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -62,7 +61,6 @@ func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateSequence, TableInfo: tbInfo})
 		return ver, nil
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("sequence", tbInfo.State)
@@ -81,7 +79,7 @@ func createSequenceWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInf
 	} else {
 		sequenceBase = tbInfo.Sequence.Start + 1
 	}
-	return t.CreateSequenceAndSetSeqValue(schemaID, tbInfo, sequenceBase)
+	return t.CreateSequenceAndSetSeqValue(schemaID, job.SchemaName, tbInfo, sequenceBase)
 }
 
 func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model.SequenceInfo) {

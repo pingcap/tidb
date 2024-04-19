@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -54,7 +53,7 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 
 func queryDeleteRangeCnt(sessPool *sess.Pool, jobID int64) (int, error) {
 	sctx, _ := sessPool.Get()
-	s, _ := sctx.(sqlexec.SQLExecutor)
+	s := sctx.GetSQLExecutor()
 	defer func() {
 		sessPool.Put(sctx)
 	}()
@@ -127,7 +126,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return mathutil.Max(len(partitionIDs)*idxIDNumFactor, idxIDNumFactor), nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		var indexName interface{}
+		var indexName any
 		ifNotExists := make([]bool, 1)
 		indexID := make([]int64, 1)
 		var partitionIDs []int64
@@ -194,7 +193,7 @@ func (d *ddl) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Jo
 	}
 
 	// Check delete range.
-	if jobNeedGC(historyJob) {
+	if JobNeedGC(historyJob) {
 		d.checkDeleteRangeCnt(historyJob)
 	}
 

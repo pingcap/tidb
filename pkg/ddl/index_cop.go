@@ -274,7 +274,7 @@ func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64,
 		SetStartTS(startTS).
 		SetKeyRanges([]kv.KeyRange{{StartKey: start, EndKey: end}}).
 		SetKeepOrder(true).
-		SetFromSessionVars(c.SessionContext.GetSessionVars()).
+		SetFromSessionVars(c.SessionContext.GetDistSQLCtx()).
 		SetFromInfoSchema(c.SessionContext.GetDomainInfoSchema()).
 		SetConcurrency(1).
 		Build()
@@ -284,7 +284,7 @@ func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64,
 	if err != nil {
 		return nil, err
 	}
-	return distsql.Select(ctx, c.SessionContext, kvReq, c.FieldTypes)
+	return distsql.Select(ctx, c.SessionContext.GetDistSQLCtx(), kvReq, c.FieldTypes)
 }
 
 func fetchTableScanResult(
@@ -302,7 +302,7 @@ func fetchTableScanResult(
 	}
 	err = table.FillVirtualColumnValue(
 		copCtx.VirtualColumnsFieldTypes, copCtx.VirtualColumnsOutputOffsets,
-		copCtx.ExprColumnInfos, copCtx.ColumnInfos, copCtx.SessionContext, chk)
+		copCtx.ExprColumnInfos, copCtx.ColumnInfos, copCtx.SessionContext.GetExprCtx(), chk)
 	return false, err
 }
 
@@ -353,14 +353,14 @@ func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*m
 		return nil, err
 	}
 	dagReq.Executors = append(dagReq.Executors, execPB)
-	distsql.SetEncodeType(sCtx, dagReq)
+	distsql.SetEncodeType(sCtx.GetDistSQLCtx(), dagReq)
 	return dagReq, nil
 }
 
 func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
 	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos)
 	tblScan.TableId = tblInfo.ID
-	err := tables.SetPBColumnsDefaultValue(sCtx, tblScan.Columns, colInfos)
+	err := tables.SetPBColumnsDefaultValue(sCtx.GetExprCtx(), tblScan.Columns, colInfos)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
@@ -376,7 +376,8 @@ func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
 	pkInfo *model.IndexInfo, stmtCtx *stmtctx.StatementContext) (kv.Handle, error) {
 	if tblInfo.IsCommonHandle {
 		tablecodec.TruncateIndexValues(tblInfo, pkInfo, pkDts)
-		handleBytes, err := codec.EncodeKey(stmtCtx, nil, pkDts...)
+		handleBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, pkDts...)
+		err = stmtCtx.HandleError(err)
 		if err != nil {
 			return nil, err
 		}

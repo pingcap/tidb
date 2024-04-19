@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -37,24 +36,24 @@ type jsonObjectAgg struct {
 }
 
 type partialResult4JsonObjectAgg struct {
-	entries map[string]interface{}
+	entries map[string]any
 	bInMap  int // indicate there are 2^bInMap buckets in entries.
 }
 
 func (*jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonObjectAgg{}
-	p.entries = make(map[string]interface{})
+	p.entries = make(map[string]any)
 	p.bInMap = 0
 	return PartialResult(&p), DefPartialResult4JsonObjectAgg + (1<<p.bInMap)*hack.DefBucketMemoryUsageForMapStringToAny
 }
 
 func (*jsonObjectAgg) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4JsonObjectAgg)(pr)
-	p.entries = make(map[string]interface{})
+	p.entries = make(map[string]any)
 	p.bInMap = 0
 }
 
-func (e *jsonObjectAgg) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *jsonObjectAgg) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	if len(p.entries) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -69,7 +68,7 @@ func (e *jsonObjectAgg) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partial
 	return nil
 }
 
-func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *jsonObjectAgg) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4JsonObjectAgg)(pr)
 	for _, row := range rowsInGroup {
 		key, keyIsNull, err := e.args[0].EvalString(sctx, row)
@@ -86,7 +85,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		}
 
 		key = strings.Clone(key)
-		value, err := e.args[1].Eval(row)
+		value, err := e.args[1].Eval(sctx, row)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -114,7 +113,27 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	return memDelta, nil
 }
 
-func getRealJSONValue(value types.Datum, ft *types.FieldType) (interface{}, error) {
+func (e *jsonObjectAgg) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4JsonObjectAgg)(partialResult)
+	resBuf := spillHelper.serializePartialResult4JsonObjectAgg(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *jsonObjectAgg) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *jsonObjectAgg) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4JsonObjectAgg)(pr)
+	success, deserializeMemDelta := helper.deserializePartialResult4JsonObjectAgg(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + deserializeMemDelta
+}
+
+func getRealJSONValue(value types.Datum, ft *types.FieldType) (any, error) {
 	realVal := value.Clone().GetValue()
 	switch value.Kind() {
 	case types.KindBinaryLiteral, types.KindMysqlBit, types.KindBytes:
@@ -160,7 +179,7 @@ func getRealJSONValue(value types.Datum, ft *types.FieldType) (interface{}, erro
 	return realVal, nil
 }
 
-func getValMemDelta(val interface{}) (memDelta int64) {
+func getValMemDelta(val any) (memDelta int64) {
 	memDelta = DefInterfaceSize
 	switch v := val.(type) {
 	case bool:
@@ -191,7 +210,7 @@ func getValMemDelta(val interface{}) (memDelta int64) {
 	return memDelta
 }
 
-func (*jsonObjectAgg) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+func (*jsonObjectAgg) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4JsonObjectAgg)(src), (*partialResult4JsonObjectAgg)(dst)
 	// When the result of this function is normalized, values having duplicate keys are discarded,
 	// and only the last value encountered is used with that key in the returned object

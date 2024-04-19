@@ -18,44 +18,19 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-)
-
-// Steps of IMPORT INTO, each step is represented by one or multiple subtasks.
-// the initial step is StepInit(-1)
-// steps are processed in the following order:
-// - local sort: StepInit -> StepImport -> StepPostProcess -> StepDone
-// - global sort:
-// StepInit -> StepEncodeAndSort -> StepMergeSort -> StepWriteAndIngest
-// -> StepPostProcess -> StepDone
-const (
-	// StepImport we sort source data and ingest it into TiKV in this step.
-	StepImport proto.Step = 1
-	// StepPostProcess we verify checksum and add index in this step.
-	StepPostProcess proto.Step = 2
-	// StepEncodeAndSort encode source data and write sorted kv into global storage.
-	StepEncodeAndSort proto.Step = 3
-	// StepMergeSort merge sorted kv from global storage, so we can have better
-	// read performance during StepWriteAndIngest.
-	// depends on how much kv files are overlapped, there's might 0 subtasks
-	// in this step.
-	StepMergeSort proto.Step = 4
-	// StepWriteAndIngest write sorted kv into TiKV and ingest it.
-	StepWriteAndIngest proto.Step = 5
 )
 
 // TaskMeta is the task of IMPORT INTO.
 // All the field should be serializable.
 type TaskMeta struct {
-	// IMPORT INTO job id.
+	// IMPORT INTO job id, see mysql.tidb_import_jobs.
 	JobID  int64
 	Plan   importer.Plan
 	Stmt   string
@@ -65,20 +40,20 @@ type TaskMeta struct {
 	// running on the instance that initiate the IMPORT INTO.
 	EligibleInstances []*infosync.ServerInfo
 	// the file chunks to import, when import from server file, we need to pass those
-	// files to the framework dispatcher which might run on another instance.
+	// files to the framework scheduler which might run on another instance.
 	// we use a map from engine ID to chunks since we need support split_file for CSV,
-	// so need to split them into engines before passing to dispatcher.
+	// so need to split them into engines before passing to scheduler.
 	ChunkMap map[int32][]Chunk
 }
 
 // ImportStepMeta is the meta of import step.
-// Dispatcher will split the task into subtasks(FileInfos -> Chunks)
+// Scheduler will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
 type ImportStepMeta struct {
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
 	Chunks   []Chunk
-	Checksum Checksum
+	Checksum map[int64]Checksum // see KVGroupChecksum for definition of map key.
 	Result   Result
 	// MaxIDs stores the max id that have been used during encoding for each allocator type.
 	// the max id is same among all allocator types for now, since we're using same base, see
@@ -119,8 +94,9 @@ type WriteIngestStepMeta struct {
 
 // PostProcessStepMeta is the meta of post process step.
 type PostProcessStepMeta struct {
-	// accumulated checksum of all subtasks in import step.
-	Checksum Checksum
+	// accumulated checksum of all subtasks in import step. See KVGroupChecksum for
+	// definition of map key.
+	Checksum map[int64]Checksum
 	// MaxIDs of max all max-ids of subtasks in import step.
 	MaxIDs map[autoid.AllocatorType]int64
 }
@@ -132,10 +108,10 @@ type SharedVars struct {
 	TableImporter *importer.TableImporter
 	DataEngine    *backend.OpenedEngine
 	IndexEngine   *backend.OpenedEngine
-	Progress      *asyncloaddata.Progress
+	Progress      *importer.Progress
 
 	mu       sync.Mutex
-	Checksum *verification.KVChecksum
+	Checksum *verification.KVGroupChecksum
 
 	SortedDataMeta *external.SortedKVMeta
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
@@ -162,15 +138,12 @@ func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *external.WriterS
 }
 
 // importStepMinimalTask is the minimal task of IMPORT INTO.
-// Scheduler will split the subtask into minimal tasks(Chunks -> Chunk)
+// TaskExecutor will split the subtask into minimal tasks(Chunks -> Chunk)
 type importStepMinimalTask struct {
 	Plan       importer.Plan
 	Chunk      Chunk
 	SharedVars *SharedVars
 }
-
-// IsMinimalTask implements the MinimalTask interface.
-func (*importStepMinimalTask) IsMinimalTask() {}
 
 func (t *importStepMinimalTask) String() string {
 	return fmt.Sprintf("chunk:%s:%d", t.Chunk.Path, t.Chunk.Offset)

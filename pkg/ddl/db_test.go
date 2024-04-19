@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -46,8 +46,11 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -70,6 +73,8 @@ func TestGetTimeZone(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
+	systemTimeZone := timeutil.SystemLocation().String()
+
 	testCases := []struct {
 		tzSQL  string
 		tzStr  string
@@ -84,8 +89,8 @@ func TestGetTimeZone(t *testing.T) {
 		{"set time_zone = '-08:00'", "", "", -28800, ""},
 		{"set time_zone = '+08:00'", "", "", 28800, ""},
 		{"set time_zone = 'Asia/Shanghai'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
-		{"set time_zone = 'SYSTEM'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
-		{"set time_zone = DEFAULT", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
+		{"set time_zone = 'SYSTEM'", systemTimeZone, systemTimeZone, 0, ""},
+		{"set time_zone = DEFAULT", systemTimeZone, systemTimeZone, 0, ""},
 		{"set time_zone = 'GMT'", "GMT", "GMT", 0, ""},
 		{"set time_zone = 'GMT+1'", "GMT", "GMT", 0, "[variable:1298]Unknown or incorrect time zone: 'GMT+1'"},
 		{"set time_zone = 'Etc/GMT+12'", "Etc/GMT+12", "Etc/GMT+12", 0, ""},
@@ -153,46 +158,6 @@ func TestIssue22307(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualError(t, checkErr1, "[planner:1054]Unknown column 'b' in 'where clause'")
 	require.EqualError(t, checkErr2, "[planner:1054]Unknown column 'b' in 'order clause'")
-}
-
-func TestIssue23473(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_23473;")
-	tk.MustExec("create table t_23473 (k int primary key, v int)")
-	tk.MustExec("alter table t_23473 change column k k bigint")
-
-	tbl := external.GetTableByName(t, tk, "test", "t_23473")
-	require.True(t, mysql.HasNoDefaultValueFlag(tbl.Cols()[0].GetFlag()))
-}
-
-func TestAutoConvertBlobTypeByLength(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	sql := fmt.Sprintf("create table t0(c0 Blob(%d), c1 Blob(%d), c2 Blob(%d), c3 Blob(%d))",
-		255-1, 65535-1, 16777215-1, 4294967295-1)
-	tk.MustExec(sql)
-
-	var tableID int64
-	rs := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_name='t0' and table_schema='test';")
-	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))
-	tableID = int64(tableIDi)
-
-	tbl, exist := dom.InfoSchema().TableByID(tableID)
-	require.True(t, exist)
-
-	require.Equal(t, tbl.Cols()[0].GetType(), mysql.TypeTinyBlob)
-	require.Equal(t, tbl.Cols()[0].GetFlen(), 255)
-	require.Equal(t, tbl.Cols()[1].GetType(), mysql.TypeBlob)
-	require.Equal(t, tbl.Cols()[1].GetFlen(), 65535)
-	require.Equal(t, tbl.Cols()[2].GetType(), mysql.TypeMediumBlob)
-	require.Equal(t, tbl.Cols()[2].GetFlen(), 16777215)
-	require.Equal(t, tbl.Cols()[3].GetType(), mysql.TypeLongBlob)
-	require.Equal(t, tbl.Cols()[3].GetFlen(), 4294967295)
 }
 
 func TestAddExpressionIndexRollback(t *testing.T) {
@@ -348,10 +313,10 @@ func TestProcessColumnFlags(t *testing.T) {
 }
 
 func TestForbidCacheTableForSystemTable(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	sysTables := make([]string, 0, 24)
-	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA"}
+	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA", "SYS"}
 	for _, db := range memOrSysDB {
 		tk.MustExec("use " + db)
 		tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
@@ -361,9 +326,11 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 		}
 		for _, one := range sysTables {
 			err := tk.ExecToErr(fmt.Sprintf("alter table `%s` cache", one))
-			if db == "MySQL" {
-				if one == "tidb_mdl_view" {
-					require.EqualError(t, err, "[ddl:1347]'MySQL.tidb_mdl_view' is not BASE TABLE")
+			if db == "MySQL" || db == "SYS" {
+				tbl, err1 := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(one))
+				require.NoError(t, err1)
+				if tbl.Meta().View != nil {
+					require.ErrorIs(t, err, dbterror.ErrWrongObject)
 				} else {
 					require.EqualError(t, err, "[ddl:8200]ALTER table cache for tables in system database is currently unsupported")
 				}
@@ -1097,4 +1064,101 @@ func TestMDLTruncateTable(t *testing.T) {
 	wg.Wait()
 	require.True(t, timetk2.After(timeMain))
 	require.True(t, timetk3.After(timeMain))
+}
+
+func TestTruncateTableAndSchemaDependence(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+
+	var wg sync.WaitGroup
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	wg.Add(2)
+	var timetk2 time.Time
+	var timetk3 time.Time
+
+	one := false
+	f := func(job *model.Job) {
+		if one {
+			return
+		}
+		one = true
+		go func() {
+			tk3.MustExec("drop database test")
+			timetk3 = time.Now()
+			wg.Done()
+		}()
+		time.Sleep(3 * time.Second)
+	}
+
+	hook.OnJobUpdatedExported.Store(&f)
+	dom.DDL().SetHook(hook)
+
+	go func() {
+		tk2.MustExec("truncate table test.t")
+		timetk2 = time.Now()
+		wg.Done()
+	}()
+
+	wg.Wait()
+	require.True(t, timetk3.After(timetk2))
+}
+
+func TestInsertIgnore(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a smallint(6) DEFAULT '-13202', b varchar(221) NOT NULL DEFAULT 'duplicatevalue', " +
+		"c tinyint(1) NOT NULL DEFAULT '0', PRIMARY KEY (c, b));")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{}
+
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, err := tk1.Exec("INSERT INTO t VALUES (-18585,'aaa',1), (-18585,'0',1), (-18585,'1',1), (-18585,'duplicatevalue',1);")
+			assert.NoError(t, err)
+		case model.StateWriteReorganization:
+			idx := testutil.FindIdxInfo(dom, "test", "t", "idx")
+			if idx.BackfillState == model.BackfillStateReadyToMerge {
+				_, err := tk1.Exec("insert ignore into `t`  values ( 234,'duplicatevalue',-2028 );")
+				assert.NoError(t, err)
+				return
+			}
+		}
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
+
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
+}
+
+func TestDDLJobErrEntrySizeTooLarge(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockErrEntrySizeTooLarge", `1*return(true)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockErrEntrySizeTooLarge"))
+	})
+
+	tk.MustGetErrCode("rename table t to t1;", errno.ErrEntryTooLarge)
+	tk.MustExec("create table t1 (a int);")
+	tk.MustExec("alter table t add column b int;") // Should not block.
 }

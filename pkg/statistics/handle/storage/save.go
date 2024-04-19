@@ -25,10 +25,10 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -197,7 +197,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 		if modifyCnt < 0 {
 			modifyCnt = 0
 		}
-		logutil.BgLogger().Info("incrementally update modifyCount", zap.String("category", "stats"),
+		statslogutil.StatsLogger().Info("incrementally update modifyCount",
 			zap.Int64("tableID", tableID),
 			zap.Int64("curModifyCnt", curModifyCnt),
 			zap.Int64("results.BaseModifyCnt", results.BaseModifyCnt),
@@ -208,7 +208,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			if cnt < 0 {
 				cnt = 0
 			}
-			logutil.BgLogger().Info("incrementally update count", zap.String("category", "stats"),
+			statslogutil.StatsLogger().Info("incrementally update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("curCnt", curCnt),
 				zap.Int64("results.Count", results.Count),
@@ -219,7 +219,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			if cnt < 0 {
 				cnt = 0
 			}
-			logutil.BgLogger().Info("directly update count", zap.String("category", "stats"),
+			statslogutil.StatsLogger().Info("directly update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("results.Count", results.Count),
 				zap.Int64("count", cnt))
@@ -325,9 +325,18 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 // If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
 // fields in the stats_meta table will be updated.
 // TODO: refactor to reduce the number of parameters
-func SaveStatsToStorage(sctx sessionctx.Context,
-	tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
-	cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool) (statsVer uint64, err error) {
+func SaveStatsToStorage(
+	sctx sessionctx.Context,
+	tableID int64,
+	count, modifyCount int64,
+	isIndex int,
+	hg *statistics.Histogram,
+	cms *statistics.CMSketch,
+	topN *statistics.TopN,
+	statsVersion int,
+	isAnalyzed int64,
+	updateAnalyzeTime bool,
+) (statsVer uint64, err error) {
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)

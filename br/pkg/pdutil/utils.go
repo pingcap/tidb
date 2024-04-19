@@ -17,7 +17,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
+	pd "github.com/tikv/pd/client/http"
 )
 
 // UndoFunc is a 'undo' operation of some undoable command.
@@ -34,7 +34,7 @@ func GetPlacementRules(ctx context.Context, pdAddr string, tlsConf *tls.Config) 
 	if tlsConf != nil {
 		prefix = "https://"
 	}
-	reqURL := fmt.Sprintf("%s%s%s", prefix, pdAddr, pdapi.PlacementRules)
+	reqURL := fmt.Sprintf("%s%s%s", prefix, pdAddr, pd.PlacementRules)
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, errors.Trace(err)

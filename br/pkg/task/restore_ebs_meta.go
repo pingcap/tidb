@@ -18,7 +18,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -41,6 +40,7 @@ const (
 	flagVolumeType       = "volume-type"
 	flagVolumeIOPS       = "volume-iops"
 	flagVolumeThroughput = "volume-throughput"
+	flagVolumeEncrypted  = "volume-encrypted"
 	flagTargetAZ         = "target-az"
 )
 
@@ -54,6 +54,7 @@ func DefineRestoreSnapshotFlags(command *cobra.Command) {
 	command.Flags().String(flagVolumeType, string(config.GP3Volume), "volume type: gp3, io1, io2")
 	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
+	command.Flags().Bool(flagVolumeEncrypted, false, "whether encryption is enabled for the volume")
 	command.Flags().String(flagProgressFile, "progress.txt", "the file name of progress file")
 	command.Flags().String(flagTargetAZ, "", "the target AZ for restored volumes")
 
@@ -65,6 +66,7 @@ func DefineRestoreSnapshotFlags(command *cobra.Command) {
 	_ = command.Flags().MarkHidden(flagVolumeType)
 	_ = command.Flags().MarkHidden(flagVolumeIOPS)
 	_ = command.Flags().MarkHidden(flagVolumeThroughput)
+	_ = command.Flags().MarkHidden(flagVolumeEncrypted)
 	_ = command.Flags().MarkHidden(flagProgressFile)
 	_ = command.Flags().MarkHidden(flagTargetAZ)
 }
@@ -113,8 +115,7 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 	var (
 		tlsConf *tls.Config
 	)
-	pdAddress := strings.Join(h.cfg.PD, ",")
-	if len(pdAddress) == 0 {
+	if len(h.cfg.PD) == 0 {
 		return errors.Annotate(berrors.ErrInvalidArgument, "pd address can not be empty")
 	}
 
@@ -129,7 +130,7 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 		}
 	}
 
-	controller, err := pdutil.NewPdController(ctx, pdAddress, tlsConf, securityOption)
+	controller, err := pdutil.NewPdController(ctx, h.cfg.PD, tlsConf, securityOption)
 	if err != nil {
 		log.Error("fail to create pd controller", zap.Error(err))
 		return errors.Trace(err)
@@ -241,7 +242,9 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 
 		if h.cfg.UseFSR {
 			err = ec2Session.DisableDataFSR(snapshotsIDsMap)
-			log.Error("disable fsr failed", zap.Error(err))
+			if err != nil {
+				log.Error("disable fsr failed", zap.Error(err))
+			}
 		}
 	}()
 
@@ -254,11 +257,11 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 	}
 
 	volumeIDMap, err = ec2Session.CreateVolumes(h.metaInfo,
-		string(h.cfg.VolumeType), h.cfg.VolumeIOPS, h.cfg.VolumeThroughput, h.cfg.TargetAZ)
+		string(h.cfg.VolumeType), h.cfg.VolumeIOPS, h.cfg.VolumeThroughput, h.cfg.VolumeEncrypted, h.cfg.TargetAZ)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-	totalSize, err = ec2Session.WaitVolumesCreated(volumeIDMap, progress)
+	totalSize, err = ec2Session.WaitVolumesCreated(volumeIDMap, progress, h.cfg.UseFSR)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}

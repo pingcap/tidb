@@ -110,7 +110,17 @@ const (
 	LoadBasedReplicaReadThreshold
 	// TiKVClientReadTimeout sets the timeout value for readonly kv request in milliseconds
 	TiKVClientReadTimeout
+	// SizeLimits sets the size limits of membuf
+	SizeLimits
+	// SessionID marks the connection id, for logging and tracing.
+	SessionID
 )
+
+// TxnSizeLimits is the argument type for `SizeLimits` option
+type TxnSizeLimits struct {
+	Entry uint64
+	Total uint64
+}
 
 // ReplicaReadType is the type of replica to read data from
 type ReplicaReadType byte
@@ -185,8 +195,6 @@ const (
 	InternalTxnBindInfo = InternalTxnOthers
 	// InternalTxnSysVar is the type of sys var txn.
 	InternalTxnSysVar = InternalTxnOthers
-	// InternalTxnTelemetry is the type of telemetry.
-	InternalTxnTelemetry = InternalTxnOthers
 	// InternalTxnAdmin is the type of admin operations.
 	InternalTxnAdmin = "admin"
 	// InternalTxnPrivilege is the type of privilege txn.

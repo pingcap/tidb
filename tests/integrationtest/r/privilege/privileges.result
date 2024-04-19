@@ -133,15 +133,14 @@ set global innodb_commit_concurrency=16;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation
 # TestCheckPointGetDBPrivilege
 CREATE USER 'tester'@'localhost';
-GRANT SELECT,UPDATE ON privilege__privileges.* TO  'tester'@'localhost';
+GRANT SELECT,UPDATE ON privilege__privileges2.* TO  'tester'@'localhost';
 create database if not exists privilege__privileges;
 create table privilege__privileges.t(id int, v int, primary key(id));
 insert into privilege__privileges.t(id, v) values(1, 1);
-use privilege__privileges;
 select * from privilege__privileges.t where id = 1;
-id	v
-1	1
+Error 1142 (42000): SELECT command denied to user 'tester'@'localhost' for table 't'
 update privilege__privileges.t set v = 2 where id = 1;
+Error 1142 (42000): SELECT command denied to user 'tester'@'localhost' for table 't'
 DROP USER 'tester'@'localhost';
 CREATE DATABASE if not exists privilege__privileges;
 USE privilege__privileges;
@@ -328,8 +327,8 @@ GRANT USAGE ON *.* TO 'column'@'%'
 GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON `privilege__privileges`.`column_table` TO 'column'@'%'
 CREATE USER 'tableaccess'@'localhost';
 CREATE TABLE fieldlistt1 (a int);
-desc fieldlistt1;
-Error 1046 (3D000): No database selected
+desc privilege__privileges.fieldlistt1;
+Error 1142 (42000): SELECT command denied to user 'tableaccess'@'localhost' for table 'fieldlistt1'
 CREATE USER tr_insert;
 CREATE USER tr_update;
 CREATE USER tr_delete;
@@ -482,7 +481,7 @@ GRANT ALL ON *.* TO 'superuser';
 SET PASSWORD for 'nobodyuser' = 'newpassword';
 SET PASSWORD for 'nobodyuser' = '';
 SET PASSWORD for 'superuser' = 'newpassword';
-Error 1044 (42000): Access denied for user ''@'' to database 'mysql'
+Error 1044 (42000): Access denied for user 'superuser'@'%' to database 'mysql'
 CREATE ROLE tsg_r1;
 CREATE USER tsg_u1, tsg_u2;
 GRANT CONNECTION_ADMIN, ROLE_ADMIN, SYSTEM_VARIABLES_ADMIN, PROCESS ON *.* TO tsg_r1;
@@ -588,3 +587,33 @@ GRANT UPDATE ON `role`.* TO 'joe'@'%'
 GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'
 GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'
 set global tidb_enable_resource_control = default;
+create table privilege__privileges.admin(a int, KEY idx_a (`a`));
+create user without_super;
+admin set bdr role primary;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin show bdr role;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin unset bdr role;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin cancel ddl jobs 10;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin pause ddl jobs 10;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin resume ddl jobs 10;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin checksum table privilege__privileges.admin;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin check table privilege__privileges.admin;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin check index privilege__privileges.admin idx_a;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin show ddl jobs;
+Error 8121 (HY000): privilege check for 'Super' fail
+admin show ddl job queries 10;
+Error 8121 (HY000): privilege check for 'Super' fail
+ADMIN SHOW privilege__privileges.admin NEXT_ROW_ID;
+Error 8121 (HY000): privilege check for 'Super' fail
+ADMIN SHOW SLOW RECENT 3;
+Error 8121 (HY000): privilege check for 'Super' fail
+ADMIN SHOW SLOW TOP ALL 3;
+Error 8121 (HY000): privilege check for 'Super' fail

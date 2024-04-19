@@ -975,6 +975,7 @@ drop table if exists t;
 create table t (a int);
 create definer='root'@'localhost' view t_v as select * from t;
 create table t_p (a int) partition by hash(a) partitions 4;
+analyze table t_p;
 create temporary table t_t (a int);
 set tidb_enable_non_prepared_plan_cache=1;
 select * from t_v;
@@ -990,7 +991,7 @@ select * from t_p;
 a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 select * from t_t;
 a
 select * from t_t;
@@ -1085,25 +1086,19 @@ drop table if exists t;
 create table t (a int);
 prepare st from 'insert into t values (1)';
 execute st;
-
 execute st;
-
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
 prepare st from 'insert into t select * from t';
 execute st;
-
 execute st;
-
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
 prepare st from 'insert /*+ ignore_plan_cache() */ into t select * from t';
 execute st;
-
 execute st;
-
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -1111,9 +1106,7 @@ drop table if exists t;
 create table t (a int);
 prepare inert200 from 'insert into t values (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1), (1)';
 execute inert200;
-
 execute inert200;
-
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
@@ -1121,9 +1114,7 @@ prepare inert201 from 'insert into t values (1), (1), (1), (1), (1), (1), (1), (
 Level	Code	Message
 Warning	1105	skip prepared plan-cache: too many values in the insert statement
 execute inert201;
-
 execute inert201;
-
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -1842,13 +1833,11 @@ update t set a=2 where a<12;
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
-update t set a=1 where a<10;
- update t set a=2 where a<12;
-update t set a=1 where a<10;
- update t set a=2 where a<12;
+update t set a=1 where a<10; update t set a=2 where a<12;
+update t set a=1 where a<10; update t set a=2 where a<12;
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-1
+0
 update t set a=2 where a<12;
 select @@last_plan_from_cache;
 @@last_plan_from_cache
@@ -2261,3 +2250,350 @@ select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
 set tidb_enable_non_prepared_plan_cache=DEFAULT;
+select @@tidb_prepared_plan_cache_size;
+@@tidb_prepared_plan_cache_size
+100
+select @@tidb_session_plan_cache_size;
+@@tidb_session_plan_cache_size
+100
+set @@tidb_prepared_plan_cache_size = 200;
+select @@tidb_prepared_plan_cache_size;
+@@tidb_prepared_plan_cache_size
+200
+select @@tidb_session_plan_cache_size;
+@@tidb_session_plan_cache_size
+200
+set @@tidb_session_plan_cache_size = 300;
+select @@tidb_prepared_plan_cache_size;
+@@tidb_prepared_plan_cache_size
+300
+select @@tidb_session_plan_cache_size;
+@@tidb_session_plan_cache_size
+300
+set global tidb_prepared_plan_cache_size = 400;
+select @@tidb_prepared_plan_cache_size;
+@@tidb_prepared_plan_cache_size
+400
+select @@tidb_session_plan_cache_size;
+@@tidb_session_plan_cache_size
+400
+set global tidb_session_plan_cache_size = 500;
+select @@tidb_prepared_plan_cache_size;
+@@tidb_prepared_plan_cache_size
+500
+select @@tidb_session_plan_cache_size;
+@@tidb_session_plan_cache_size
+500
+set global tidb_prepared_plan_cache_size = default;
+set global tidb_session_plan_cache_size = default;
+set @@tidb_session_plan_cache_size = default;
+set @@tidb_prepared_plan_cache_size = default;
+drop table if exists t;
+create table t(a int);
+set tidb_enable_non_prepared_plan_cache=1;
+select * from t where a=1;
+a
+explain select * from t where a=2;
+id	estRows	task	access object	operator info
+TableReader_7	10.00	root		data:Selection_6
+└─Selection_6	10.00	cop[tikv]		eq(planner__core__plan_cache.t.a, 2)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+explain format=verbose select * from t where a=2;
+id	estRows	estCost	task	access object	operator info
+TableReader_7	10.00	168975.57	root		data:Selection_6
+└─Selection_6	10.00	2534000.00	cop[tikv]		eq(planner__core__plan_cache.t.a, 2)
+  └─TableFullScan_5	10000.00	2035000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+explain analyze select * from t where a=2;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+TableReader_7	10.00	0	root	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+└─Selection_6	10.00	0	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+  └─TableFullScan_5	10000.00	0	cop[tikv]	<access_object>	<execution_info>	<operator_info>	<memory>	<disk>
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set tidb_enable_non_prepared_plan_cache=default;
+drop table if exists t1, t2, t3, t4;
+set @@tidb_opt_fix_control = "45798:on";
+create table t1 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))));
+create table t2 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))) virtual);
+create table t3 (a int, info json, city varchar(64) as (JSON_UNQUOTE(JSON_EXTRACT(info, '$.city'))) stored);
+create table t4 (a int, info json, index zips( (CAST(info->'$.zipcode' AS UNSIGNED ARRAY))));
+set @a=1;
+set @b=2;
+prepare s1 from 'select * from t1 where a=?';
+show warnings;
+Level	Code	Message
+execute s1 using @a;
+a	info	city
+execute s1 using @b;
+a	info	city
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+prepare s1 from 'select * from t2 where a=?';
+show warnings;
+Level	Code	Message
+execute s1 using @a;
+a	info	city
+execute s1 using @b;
+a	info	city
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+prepare s1 from 'select * from t3 where a=?';
+show warnings;
+Level	Code	Message
+execute s1 using @a;
+a	info	city
+execute s1 using @b;
+a	info	city
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+prepare s1 from 'select * from t4 where a=?';
+show warnings;
+Level	Code	Message
+execute s1 using @a;
+a	info
+execute s1 using @b;
+a	info
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set @@tidb_opt_fix_control = default;
+drop table if exists t1, t2;
+set @@tidb_opt_fix_control = "45798:on";
+CREATE TABLE t1 (
+ipk varbinary(255) NOT NULL,
+i_id varchar(45) DEFAULT NULL,
+i_set_id varchar(45) DEFAULT NULL,
+p_id varchar(45) DEFAULT NULL,
+p_set_id varchar(45) DEFAULT NULL,
+m_id bigint(20) DEFAULT NULL,
+m_i_id varchar(127) DEFAULT NULL,
+m_i_set_id varchar(127) DEFAULT NULL,
+d json DEFAULT NULL,
+p_sources json DEFAULT NULL,
+nslc json DEFAULT NULL,
+cl json DEFAULT NULL,
+fii json DEFAULT NULL,
+fpi json DEFAULT NULL,
+PRIMARY KEY (ipk) /*T![clustered_index] CLUSTERED */,
+UNIQUE KEY i_id (i_id),
+KEY d ((cast(d as char(253) array))),
+KEY m_i_id (m_i_id),
+KEY m_i_set_id (m_i_set_id),
+KEY fpi ((cast(fpi as unsigned array))),
+KEY nslc ((cast(nslc as char(1000) array))),
+KEY cl ((cast(cl as char(3000) array))),
+KEY fii ((cast(fii as unsigned array))),
+KEY m_id (m_id),
+KEY i_set_id (i_set_id),
+KEY m_i_and_m_id (m_i_id,m_id));
+CREATE TABLE t2 (
+ipk varbinary(255) NOT NULL,
+created_time bigint(20) DEFAULT NULL,
+arrival_time bigint(20) DEFAULT NULL,
+updated_time bigint(20) DEFAULT NULL,
+timestamp_data json DEFAULT NULL,
+PRIMARY KEY (ipk) /*T![clustered_index] CLUSTERED */);
+prepare stmt from 'select *
+from ( t1 left outer join t2 on ( t1 . ipk = t2 . ipk ) )
+where ( t1 . i_id = ? )';
+show warnings;
+Level	Code	Message
+set @a='a', @b='b';
+execute stmt using @a;
+ipk	i_id	i_set_id	p_id	p_set_id	m_id	m_i_id	m_i_set_id	d	p_sources	nslc	cl	fii	fpi	ipk	created_time	arrival_time	updated_time	timestamp_data
+execute stmt using @b;
+ipk	i_id	i_set_id	p_id	p_set_id	m_id	m_i_id	m_i_set_id	d	p_sources	nslc	cl	fii	fpi	ipk	created_time	arrival_time	updated_time	timestamp_data
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set @@tidb_opt_fix_control = default;
+drop table if exists t;
+create table t (a int);
+prepare st from 'select * from t where mod(a, 2)=1';
+execute st;
+a
+execute st;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+insert into mysql.expr_pushdown_blacklist(name) values('mod');
+admin reload expr_pushdown_blacklist;
+execute st;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute st;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+drop table if exists t, tt;
+create table t(a int, index(a));
+create table tt(a varchar(10));
+set tidb_enable_non_prepared_plan_cache=1;
+select a+1 from t where a<10;
+a+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+select a+1 from t where a<20;
+a+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+select a+2 from t where a<30;
+a+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+select a+2 from t where a<40;
+a+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+select a,a+1 from t where a<30;
+a	a+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+select a,a+1 from t where a<40;
+a	a+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+select a+'123' from tt where a='1';
+a+'123'
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+select a+'123' from tt where a='2';
+a+'123'
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+select 1 from t where a<10;
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+select 1 from t where a<20;
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+select 2 from t where a<10;
+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+select 2 from t where a<20;
+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+select 1,2 from t where a<10;
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+select 1,2 from t where a<20;
+1	2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set tidb_enable_non_prepared_plan_cache=default;
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+prepare s from "select * from t where tidb_parse_tso(a) > unix_timestamp()";
+execute s;
+a
+1
+drop table if exists t;
+set tidb_enable_non_prepared_plan_cache=1;
+create table t (a int, b varchar(32), c datetime, key(a));
+select * from t where mod(a, 5) < 2;
+a	b	c
+select * from t where mod(a, 5) < 2;
+a	b	c
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+select * from t where c < now();
+a	b	c
+select * from t where c < now();
+a	b	c
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+select date_format(c, '%Y-%m-%d') from t where a < 10;
+date_format(c, '%Y-%m-%d')
+select date_format(c, '%Y-%m-%d') from t where a < 10;
+date_format(c, '%Y-%m-%d')
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+select str_to_date(b, '%Y-%m-%d') from t where a < 10;
+str_to_date(b, '%Y-%m-%d')
+select str_to_date(b, '%Y-%m-%d') from t where a < 10;
+str_to_date(b, '%Y-%m-%d')
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+select * from t where a-2 < 20;
+a	b	c
+select * from t where a-2 < 20;
+a	b	c
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+select * from t where a+b > 100;
+a	b	c
+select * from t where a+b > 100;
+a	b	c
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+select * from t where -a > 10;
+a	b	c
+select * from t where -a > 10;
+a	b	c
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+select * from t where a < 1 and b like '%abc%';
+a	b	c
+select * from t where a < 1 and b like '%abc%';
+a	b	c
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+select database() from t;
+database()
+select database() from t;
+database()
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set tidb_enable_non_prepared_plan_cache=default;
+drop table if exists t;
+CREATE TABLE t (a int(11) DEFAULT NULL, b date DEFAULT NULL);
+INSERT INTO t VALUES (1, current_date());
+PREPARE stmt FROM 'SELECT a FROM t WHERE b=current_date()';
+EXECUTE stmt;
+a
+1

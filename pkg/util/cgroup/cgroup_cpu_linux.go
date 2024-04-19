@@ -55,16 +55,46 @@ func CPUQuotaToGOMAXPROCS(minValue int) (int, CPUQuotaStatus, error) {
 	return maxProcs, CPUQuotaUsed, nil
 }
 
+// GetCPUPeriodAndQuota returns CPU period and quota time of cgroup.
+func GetCPUPeriodAndQuota() (period int64, quota int64, err error) {
+	return getCgroupCPUPeriodAndQuota("/")
+}
+
 // InContainer returns true if the process is running in a container.
 func InContainer() bool {
-	v, err := os.ReadFile(procPathCGroup)
+	// for cgroup V1, check /proc/self/cgroup, for V2, check /proc/self/mountinfo
+	return inContainer(procPathCGroup) || inContainer(procPathMountInfo)
+}
+
+func inContainer(path string) bool {
+	v, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
-	if strings.Contains(string(v), "docker") ||
-		strings.Contains(string(v), "kubepods") ||
-		strings.Contains(string(v), "containerd") {
-		return true
+
+	// For cgroup V1, check /proc/self/cgroup
+	if path == procPathCGroup {
+		if strings.Contains(string(v), "docker") ||
+			strings.Contains(string(v), "kubepods") ||
+			strings.Contains(string(v), "containerd") {
+			return true
+		}
 	}
+
+	// For cgroup V2, check /proc/self/mountinfo
+	if path == procPathMountInfo {
+		lines := strings.Split(string(v), "\n")
+		for _, line := range lines {
+			v := strings.Split(line, " ")
+			// check mount point of root dir is on overlay or not.
+			// v[4] means `mount point`, v[8] means `filesystem type`.
+			// see details from https://man7.org/linux/man-pages/man5/proc.5.html
+			// TODO: enhance this check, as overlay is not the only storage driver for container.
+			if len(v) > 8 && v[4] == "/" && v[8] == "overlay" {
+				return true
+			}
+		}
+	}
+
 	return false
 }

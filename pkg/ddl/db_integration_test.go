@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -1172,7 +1172,10 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("alter table test_alter_column alter column d set default null")
 	tk.MustExec("alter table test_alter_column alter column a drop default")
 	tk.MustGetErrCode("insert into test_alter_column set b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
-	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123"))
+	tk.MustGetErrCode("insert into test_alter_column set a = DEFAULT, b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
+	tk.MustGetErrCode("insert into test_alter_column values (DEFAULT, 'd', 'dd', DEFAULT)", errno.ErrNoDefaultForField)
+	tk.MustExec("insert into test_alter_column set a = NULL, b = 'd', c = 'dd'")
+	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123", "<nil>"))
 
 	// for failing tests
 	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
@@ -1606,6 +1609,56 @@ func TestDefaultColumnWithRand(t *testing.T) {
 	tk.MustGetErrCode("CREATE TABLE t3 (c int, c1 int default a_function_not_supported_yet());", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 }
 
+// TestDefaultValueAsExpressions is used for tests that are inconvenient to place in the pkg/tests directory.
+func TestDefaultValueAsExpressions(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
+
+	// date_format
+	tk.MustExec("create table t6 (c int(10), c1 int default (date_format(now(),'%Y-%m-%d %H:%i:%s')))")
+	tk.MustExec("create table t7 (c int(10), c1 date default (date_format(now(),'%Y-%m')))")
+	// Error message like: Error 1292 (22007): Truncated incorrect DOUBLE value: '2024-03-05 16:37:25'.
+	tk.MustGetErrCode("insert into t6(c) values (1)", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("insert into t7(c) values (1)", errno.ErrTruncatedWrongValue)
+
+	// user
+	tk.MustExec("create table t (c int(10), c1 varchar(256) default (upper(substring_index(user(),'@',1))));")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	tk.MustExec("insert into t(c) values (1),(2),(3)")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "xyz", Hostname: "localhost"}
+	tk.MustExec("insert into t(c) values (4),(5),(6)")
+	tk.MustExec("insert into t values (7, default)")
+	rows := tk.MustQuery("SELECT c1 from t order by c").Rows()
+	for i, row := range rows {
+		d, ok := row[0].(string)
+		require.True(t, ok)
+		if i < 3 {
+			require.Equal(t, "ROOT", d)
+		} else {
+			require.Equal(t, "XYZ", d)
+		}
+	}
+
+	// replace
+	tk.MustExec("create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')))")
+	// Different UUID values will result in different error code.
+	_, err := tk.Exec("insert into t1(c) values (1)")
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	require.Truef(t, ok, "expect type 'terror.Error', but obtain '%T': %v", originErr, originErr)
+	sqlErr := terror.ToSQLError(tErr)
+	if int(sqlErr.Code) != errno.ErrTruncatedWrongValue {
+		require.Equal(t, errno.ErrDataOutOfRange, int(sqlErr.Code))
+	}
+	// test modify column
+	// The error message has UUID, so put this test here.
+	tk.MustExec("create table t2(c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', '')), index idx(c1));")
+	tk.MustExec("insert into t2(c) values (1),(2),(3);")
+	tk.MustGetErrCode("alter table t2 modify column c1 varchar(30) default 'xx';", errno.WarnDataTruncated)
+}
+
 func TestChangingDBCharset(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
@@ -1817,8 +1870,6 @@ func TestParserIssue284(t *testing.T) {
 
 func TestAddExpressionIndex(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
-		// Test for table lock.
-		conf.EnableTableLock = true
 		conf.Instance.SlowThreshold = 10000
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
@@ -1895,60 +1946,6 @@ func TestAddExpressionIndex(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
-}
-
-func TestCreateExpressionIndexError(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		// Test for table lock.
-		conf.EnableTableLock = true
-		conf.Instance.SlowThreshold = 10000
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-		conf.Experimental.AllowsExpressionIndex = true
-	})
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int, b real);")
-	tk.MustGetErrCode("alter table t add primary key ((a+b)) nonclustered;", errno.ErrFunctionalIndexPrimaryKey)
-
-	tk.MustGetErrCode("create table t(a int, index((cast(a as JSON))))", errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
-
-	// Test for error
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int, b real);")
-	tk.MustGetErrCode("alter table t add primary key ((a+b)) nonclustered;", errno.ErrFunctionalIndexPrimaryKey)
-	tk.MustGetErrCode("alter table t add index ((rand()));", errno.ErrFunctionalIndexFunctionIsNotAllowed)
-	tk.MustGetErrCode("alter table t add index ((now()+1));", errno.ErrFunctionalIndexFunctionIsNotAllowed)
-
-	tk.MustExec("alter table t add column (_V$_idx_0 int);")
-	tk.MustGetErrCode("alter table t add index idx((a+1));", errno.ErrDupFieldName)
-	tk.MustExec("alter table t drop column _V$_idx_0;")
-	tk.MustExec("alter table t add index idx((a+1));")
-	tk.MustGetErrCode("alter table t add column (_V$_idx_0 int);", errno.ErrDupFieldName)
-	tk.MustExec("alter table t drop index idx;")
-	tk.MustExec("alter table t add column (_V$_idx_0 int);")
-
-	tk.MustExec("alter table t add column (_V$_expression_index_0 int);")
-	tk.MustGetErrCode("alter table t add index ((a+1));", errno.ErrDupFieldName)
-	tk.MustExec("alter table t drop column _V$_expression_index_0;")
-	tk.MustExec("alter table t add index ((a+1));")
-	tk.MustGetErrCode("alter table t drop column _V$_expression_index_0;", errno.ErrCantDropFieldOrKey)
-	tk.MustGetErrCode("alter table t add column e int as (_V$_expression_index_0 + 1);", errno.ErrBadField)
-
-	// NOTE (#18150): In creating expression index, row value is not allowed.
-	tk.MustExec("drop table if exists t;")
-	tk.MustGetErrCode("create table t (j json, key k (((j,j))))", errno.ErrFunctionalIndexRowValueIsNotAllowed)
-	tk.MustExec("create table t (j json, key k ((j+1),(j+1)))")
-
-	tk.MustGetErrCode("create table t1 (col1 int, index ((concat(''))));", errno.ErrWrongKeyColumnFunctionalIndex)
-	tk.MustGetErrCode("CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED);", errno.ErrFunctionalIndexPrimaryKey)
-
-	// For issue 26349
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(id char(10) primary key, short_name char(10), name char(10), key n((upper(`name`))));")
-	tk.MustExec("update t t1 set t1.short_name='a' where t1.id='1';")
 }
 
 func queryIndexOnTable(dbName, tableName string) string {
@@ -2349,20 +2346,6 @@ func TestEnumAndSetDefaultValue(t *testing.T) {
 	require.Equal(t, "a", tbl.Meta().Columns[1].DefaultValue)
 }
 
-func TestStrictDoubleTypeCheck(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_strict_double_type_check = 'ON'")
-	sql := "create table double_type_check(id int, c double(10));"
-	_, err := tk.Exec(sql)
-	require.Error(t, err)
-	require.Equal(t, "[parser:1149]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use", err.Error())
-	tk.MustExec("set @@tidb_enable_strict_double_type_check = 'OFF'")
-	defer tk.MustExec("set @@tidb_enable_strict_double_type_check = 'ON'")
-	tk.MustExec(sql)
-}
-
 func TestDuplicateErrorMessage(t *testing.T) {
 	defer collate.SetNewCollationEnabledForTest(true)
 	store := testkit.CreateMockStore(t)
@@ -2384,10 +2367,7 @@ func TestDuplicateErrorMessage(t *testing.T) {
 	for _, newCollate := range []bool{false, true} {
 		collate.SetNewCollationEnabledForTest(newCollate)
 		for _, globalIndex := range []bool{false, true} {
-			restoreConfig := config.RestoreFunc()
-			config.UpdateGlobal(func(conf *config.Config) {
-				conf.EnableGlobalIndex = globalIndex
-			})
+			tk.MustExec(fmt.Sprintf("set tidb_enable_global_index=%t", globalIndex))
 			for _, clusteredIndex := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
 				tk.Session().GetSessionVars().EnableClusteredIndex = clusteredIndex
 				for _, t := range tests {
@@ -2414,7 +2394,7 @@ func TestDuplicateErrorMessage(t *testing.T) {
 						fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't.t_idx'", strings.Join(fields, "-")))
 				}
 			}
-			restoreConfig()
+			tk.MustExec("set tidb_enable_global_index=default")
 		}
 	}
 }
@@ -2620,43 +2600,43 @@ func TestAvoidCreateViewOnLocalTemporaryTable(t *testing.T) {
 
 	checkCreateView := func() {
 		err := tk.ExecToErr("create view v1 as select * from tt1")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v1", "[schema:1146]Table 'test.v1' doesn't exist")
 
 		err = tk.ExecToErr("create view v1 as select * from (select * from tt1) as tt")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v1", "[schema:1146]Table 'test.v1' doesn't exist")
 
 		err = tk.ExecToErr("create view v2 as select * from tt0 union select * from tt1")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		err = tk.ExecToErr("select * from v2")
 		require.Error(t, err)
 		require.Equal(t, "[schema:1146]Table 'test.v2' doesn't exist", err.Error())
 
 		err = tk.ExecToErr("create view v3 as select * from tt0, tt1 where tt0.a = tt1.a")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		err = tk.ExecToErr("select * from v3")
 		require.Error(t, err)
 		require.Equal(t, "[schema:1146]Table 'test.v3' doesn't exist", err.Error())
 
 		err = tk.ExecToErr("create view v4 as select a, (select count(1) from tt1 where tt1.a = tt0.a) as tt1a from tt0")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v4", "[schema:1146]Table 'test.v4' doesn't exist")
 
 		err = tk.ExecToErr("create view v5 as select a, (select count(1) from tt1 where tt1.a = 1) as tt1a from tt0")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v5", "[schema:1146]Table 'test.v5' doesn't exist")
 
 		err = tk.ExecToErr("create view v6 as select * from tt0 where tt0.a=(select max(tt1.b) from tt1)")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v6", "[schema:1146]Table 'test.v6' doesn't exist")
 
 		err = tk.ExecToErr("create view v7 as select * from tt0 where tt0.b=(select max(tt1.b) from tt1 where tt0.a=tt1.a)")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v7", "[schema:1146]Table 'test.v7' doesn't exist")
 
 		err = tk.ExecToErr("create or replace view v0 as select * from tt1")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 	}
 
 	checkCreateView()
@@ -2669,8 +2649,6 @@ func TestAvoidCreateViewOnLocalTemporaryTable(t *testing.T) {
 
 func TestDropTemporaryTable(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
-		// Test for table lock.
-		conf.EnableTableLock = true
 		conf.Instance.SlowThreshold = 10000
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
@@ -2936,42 +2914,6 @@ func TestIssue29282(t *testing.T) {
 	}
 }
 
-// See https://github.com/pingcap/tidb/issues/35644
-func TestCreateTempTableInTxn(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("begin")
-	// new created temporary table should be visible
-	tk.MustExec("create temporary table t1(id int primary key, v int)")
-	tk.MustQuery("select * from t1").Check(testkit.Rows())
-	// new inserted data should be visible
-	tk.MustExec("insert into t1 values(123, 456)")
-	tk.MustQuery("select * from t1 where id=123").Check(testkit.Rows("123 456"))
-	// truncate table will clear data but table still visible
-	tk.MustExec("truncate table t1")
-	tk.MustQuery("select * from t1 where id=123").Check(testkit.Rows())
-	tk.MustExec("commit")
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk1.MustExec("create table tt(id int)")
-	tk1.MustExec("begin")
-	tk1.MustExec("create temporary table t1(id int)")
-	tk1.MustExec("insert into tt select * from t1")
-	tk1.MustExec("drop table tt")
-
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustExec("create table t2(id int primary key, v int)")
-	tk2.MustExec("insert into t2 values(234, 567)")
-	tk2.MustExec("begin")
-	// create a new temporary table with the same name will override physical table
-	tk2.MustExec("create temporary table t2(id int primary key, v int)")
-	tk2.MustQuery("select * from t2 where id=234").Check(testkit.Rows())
-	tk2.MustExec("commit")
-}
-
 // See https://github.com/pingcap/tidb/issues/29327
 func TestEnumDefaultValue(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
@@ -3065,4 +3007,10 @@ func TestDefaultCollationForUTF8MB4(t *testing.T) {
 	tk.MustExec("ALTER DATABASE dby CHARACTER SET = 'utf8mb4'")
 	tk.MustQuery("show create database dby").Check(testkit.Rows(
 		"dby CREATE DATABASE `dby` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci */"))
+}
+
+func TestOptimizeTable(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustGetErrMsg("optimize table t", "[ddl:8200]OPTIMIZE TABLE is not supported")
 }

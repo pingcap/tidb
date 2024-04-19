@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -83,7 +84,7 @@ func TestMemGroupConcat(t *testing.T) {
 	}
 }
 
-func groupConcatMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+func groupConcatMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	buffer := new(bytes.Buffer)
 	valBuffer := new(bytes.Buffer)
@@ -112,7 +113,7 @@ func groupConcatMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*typ
 	return memDeltas, nil
 }
 
-func groupConcatOrderMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+func groupConcatOrderMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		buffer := new(bytes.Buffer)
@@ -128,7 +129,7 @@ func groupConcatOrderMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType [
 		}
 		memDelta := int64(buffer.Cap() - oldMemSize)
 		for _, byItem := range byItems {
-			fdt, _ := byItem.Expr.Eval(row)
+			fdt, _ := byItem.Expr.Eval(ctx.GetExprCtx().GetEvalCtx(), row)
 			datumMem := aggfuncs.GetDatumMemSize(&fdt)
 			memDelta += datumMem
 		}
@@ -137,7 +138,7 @@ func groupConcatOrderMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType [
 	return memDeltas, nil
 }
 
-func groupConcatDistinctMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+func groupConcatDistinctMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	valSet := set.NewStringSet()
 	buffer := new(bytes.Buffer)
 	valsBuf := new(bytes.Buffer)
@@ -175,7 +176,7 @@ func groupConcatDistinctMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataTyp
 	return memDeltas, nil
 }
 
-func groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+func groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	valSet := set.NewStringSet()
 	var encodeBytesBuffer []byte
 	for i := 0; i < srcChk.NumRows(); i++ {
@@ -201,7 +202,7 @@ func groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, da
 		valSet.Insert(joinedVal)
 		memDelta := int64(len(joinedVal) + (valsBuf.Cap() + cap(encodeBytesBuffer) - oldMemSize))
 		for _, byItem := range byItems {
-			fdt, _ := byItem.Expr.Eval(row)
+			fdt, _ := byItem.Expr.Eval(ctx.GetExprCtx().GetEvalCtx(), row)
 			datumMem := aggfuncs.GetDatumMemSize(&fdt)
 			memDelta += datumMem
 		}

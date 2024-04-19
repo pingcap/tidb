@@ -231,8 +231,8 @@ func TestUnregisterMetrics(t *testing.T) {
 func TestSetDefaultSessionParams(t *testing.T) {
 	testCases := []struct {
 		si             version.ServerInfo
-		sessionParams  map[string]interface{}
-		expectedParams map[string]interface{}
+		sessionParams  map[string]any
+		expectedParams map[string]any
 	}{
 		{
 			si: version.ServerInfo{
@@ -240,10 +240,10 @@ func TestSetDefaultSessionParams(t *testing.T) {
 				HasTiKV:       true,
 				ServerVersion: semver.New("6.1.0"),
 			},
-			sessionParams: map[string]interface{}{
+			sessionParams: map[string]any{
 				"tidb_snapshot": "2020-01-01 00:00:00",
 			},
-			expectedParams: map[string]interface{}{
+			expectedParams: map[string]any{
 				"tidb_snapshot": "2020-01-01 00:00:00",
 			},
 		},
@@ -253,10 +253,10 @@ func TestSetDefaultSessionParams(t *testing.T) {
 				HasTiKV:       true,
 				ServerVersion: semver.New("6.2.0"),
 			},
-			sessionParams: map[string]interface{}{
+			sessionParams: map[string]any{
 				"tidb_snapshot": "2020-01-01 00:00:00",
 			},
-			expectedParams: map[string]interface{}{
+			expectedParams: map[string]any{
 				"tidb_enable_paging": "ON",
 				"tidb_snapshot":      "2020-01-01 00:00:00",
 			},
@@ -267,11 +267,11 @@ func TestSetDefaultSessionParams(t *testing.T) {
 				HasTiKV:       true,
 				ServerVersion: semver.New("6.2.0"),
 			},
-			sessionParams: map[string]interface{}{
+			sessionParams: map[string]any{
 				"tidb_enable_paging": "OFF",
 				"tidb_snapshot":      "2020-01-01 00:00:00",
 			},
-			expectedParams: map[string]interface{}{
+			expectedParams: map[string]any{
 				"tidb_enable_paging": "OFF",
 				"tidb_snapshot":      "2020-01-01 00:00:00",
 			},
@@ -281,8 +281,8 @@ func TestSetDefaultSessionParams(t *testing.T) {
 				ServerType:    version.ServerTypeMySQL,
 				ServerVersion: semver.New("8.0.32"),
 			},
-			sessionParams:  map[string]interface{}{},
-			expectedParams: map[string]interface{}{},
+			sessionParams:  map[string]any{},
+			expectedParams: map[string]any{},
 		},
 	}
 
@@ -340,7 +340,7 @@ func TestSetSessionParams(t *testing.T) {
 	}
 	conf.Snapshot = ""
 	conf.Consistency = ConsistencyTypeFlush
-	conf.SessionParams = map[string]interface{}{
+	conf.SessionParams = map[string]any{
 		"mock": "UTC",
 	}
 	d.dbHandle = db

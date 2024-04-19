@@ -136,3 +136,79 @@ FROM
   t2 db 
   LEFT JOIN tmp3 c2 ON c2.id = '1' 
   LEFT JOIN tmp3 c3 ON c3.id = '1';
+
+# https://github.com/pingcap/tidb/issues/48755
+drop table if exists t;
+create table t(a int, b int);
+set @@tidb_max_chunk_size = 32;
+# insert into more than 32 rows to the table.
+insert into t values(1, 1);
+insert into t select a+1, a+1 from t;
+insert into t select a+2, a+2 from t;
+insert into t select a+4, a+4 from t;
+insert into t select a+8, a+8 from t;
+insert into t select a+16, a+16 from t;
+insert into t select a+32, a+32 from t;
+select a from (select 100 as a, 100 as b union all select * from t) t where b != 0;
+set @@tidb_max_chunk_size = default;
+
+# https://github.com/pingcap/tidb/issues/48821
+# https://github.com/pingcap/tidb/issues/48983
+drop table if exists t1, t2;
+create table t1(a varchar(20) collate utf8mb4_bin, index ia(a));
+insert into t1 value('测试'),('测试  '),('xxx ');
+explain format = brief select *,length(a) from t1 where a like '测试 %';
+explain format = brief select *,length(a) from t1 where a like '测试';
+select *,length(a) from t1 where a like '测试 %';
+select *,length(a) from t1 where a like '测试';
+explain format = brief select * from t1 use index (ia) where a like 'xxx_';
+select * from t1 use index (ia) where a like 'xxx_';
+create table t2(a varchar(20) collate gbk_chinese_ci, index ia(a));
+insert into t2 value('测试'),('测试  ');
+explain format = brief select *,length(a) from t2 where a like '测试 %';
+explain format = brief select *,length(a) from t2 where a like '测试';
+select *,length(a) from t2 where a like '测试 %';
+select *,length(a) from t2 where a like '测试';
+
+# https://github.com/pingcap/tidb/issues/48969
+drop view if exists v1;
+create view v1(id) as
+with recursive cte(a) as (select 1 union select a+1 from cte where a<3)
+select * from cte;
+
+create table test2(id int,value int);
+insert into test2 values(1,1),(2,2),(3,3),(4,4),(5,5);
+
+update test2
+set value=0
+where test2.id in
+(
+  select * from v1
+);
+select * from test2;
+
+# https://github.com/pingcap/tidb/issues/51560
+create table A(a int primary key, b int);
+create table B(b int primary key);
+create table C(c int primary key, b int);
+
+insert into A values (2, 1), (3, 2);
+insert into B values (1), (2);
+
+# Returns data as expected
+select b.b
+from A a
+left join (
+  B b
+  left join C c on b.b = c.b)
+on b.b = a.b
+where a.a in (2, 3);
+
+# Returns the same.
+select b.b
+from A a
+left join (
+  B b
+  left join C c on b.b = c.b)
+on b.b = a.b
+where a.a in (2, 3, null);

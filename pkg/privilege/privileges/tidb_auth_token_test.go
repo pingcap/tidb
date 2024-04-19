@@ -155,47 +155,52 @@ yeZMN4+EMse5+0hAhg5UiPHE6pG8RI3zYnp0EYKvN+M9/cdNntyuKCCCvOCi4b4d
 
 type pair struct {
 	name  string
-	value interface{}
+	value any
 }
 
 func init() {
 	for i := range publicKeyStrings {
-		if v, rest, err := jwkRepo.DecodePEM(([]byte)(privateKeyStrings[i])); err != nil {
+		v, rest, err := jwkRepo.DecodePEM(([]byte)(privateKeyStrings[i]))
+		if err != nil {
 			log.Println(err.Error())
 			log.Fatal("Error in decode private key")
-		} else if len(rest) > 0 {
-			log.Fatal("Rest in decode private key")
-		} else if priKey, ok := v.(*rsa.PrivateKey); !ok {
-			log.Fatal("Wrong type of private key")
-		} else {
-			priKeys = append(priKeys, priKey)
 		}
-		if v, rest, err := jwkRepo.DecodePEM(([]byte)(publicKeyStrings[i])); err != nil {
+		if len(rest) > 0 {
+			log.Fatal("Rest in decode private key")
+		}
+		priKey, ok := v.(*rsa.PrivateKey)
+		if !ok {
+			log.Fatal("Wrong type of private key")
+		}
+		priKeys = append(priKeys, priKey)
+		v, rest, err = jwkRepo.DecodePEM(([]byte)(publicKeyStrings[i]))
+		if err != nil {
 			log.Println(err.Error())
 			log.Fatal("Error in decode public key")
 		} else if len(rest) > 0 {
 			log.Fatal("Rest in decode public key")
-		} else if pubKey, ok := v.(*rsa.PublicKey); !ok {
-			log.Fatal("Wrong type of public key")
-		} else {
-			pubKeys = append(pubKeys, pubKey)
-			jwk, err := jwkRepo.FromRaw(pubKey)
-			if err != nil {
-				log.Fatal("Error when generate jwk")
-			}
-			keyAttributes := []pair{
-				{jwkRepo.AlgorithmKey, jwaRepo.RS256},
-				{jwkRepo.KeyIDKey, fmt.Sprintf("the-key-id-%d", i)},
-				{jwkRepo.KeyUsageKey, "sig"},
-			}
-			for _, keyAttribute := range keyAttributes {
-				if err = jwk.Set(keyAttribute.name, keyAttribute.value); err != nil {
-					log.Println(err.Error())
-					log.Fatalf("Error when set %s for key %d", keyAttribute.name, i)
-				}
-			}
-			jwkArray = append(jwkArray, jwk)
 		}
+		pubKey, ok := v.(*rsa.PublicKey)
+		if !ok {
+			log.Fatal("Wrong type of public key")
+		}
+		pubKeys = append(pubKeys, pubKey)
+		jwk, err := jwkRepo.FromRaw(pubKey)
+		if err != nil {
+			log.Fatal("Error when generate jwk")
+		}
+		keyAttributes := []pair{
+			{jwkRepo.AlgorithmKey, jwaRepo.RS256},
+			{jwkRepo.KeyIDKey, fmt.Sprintf("the-key-id-%d", i)},
+			{jwkRepo.KeyUsageKey, "sig"},
+		}
+		for _, keyAttribute := range keyAttributes {
+			if err = jwk.Set(keyAttribute.name, keyAttribute.value); err != nil {
+				log.Println(err.Error())
+				log.Fatalf("Error when set %s for key %d", keyAttribute.name, i)
+			}
+		}
+		jwkArray = append(jwkArray, jwk)
 	}
 
 	for i := range path {
@@ -224,7 +229,7 @@ func init() {
 	}
 }
 
-func getSignedTokenString(priKey *rsa.PrivateKey, pairs map[string]interface{}) (string, error) {
+func getSignedTokenString(priKey *rsa.PrivateKey, pairs map[string]any) (string, error) {
 	jwt := jwtRepo.New()
 	header := jwsRepo.NewHeaders()
 	headerPairs := []pair{
@@ -259,7 +264,7 @@ func TestAuthTokenClaims(t *testing.T) {
 	var jwksImpl JWKSImpl
 	now := time.Now()
 	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(nil, nil, path[0], time.Hour), path[0])
-	claims := map[string]interface{}{
+	claims := map[string]any{
 		jwsRepo.KeyIDKey:      "the-key-id-0",
 		jwtRepo.SubjectKey:    email1,
 		openid.EmailKey:       email1,
@@ -364,7 +369,7 @@ func TestJWKSImpl(t *testing.T) {
 
 	require.NoError(t, jwksImpl.LoadJWKS4AuthToken(nil, nil, path[0], time.Hour), path[0])
 	now := time.Now()
-	claims := map[string]interface{}{
+	claims := map[string]any{
 		jwsRepo.KeyIDKey:      "the-key-id-0",
 		jwtRepo.SubjectKey:    email1,
 		openid.EmailKey:       email1,

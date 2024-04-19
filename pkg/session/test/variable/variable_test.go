@@ -17,10 +17,10 @@ package variable
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -120,6 +120,8 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	disableOOM := func(tk *testkit.TestKit, name, sql string) {
 		t.Logf("disable OOM, testcase: %v", name)
 		quota := 5*copr.MockResponseSizeForTest - 100
+		tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
+		defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 		tk.MustExec("use testoom")
 		tk.MustExec("set @@tidb_enable_rate_limit_action=0")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
@@ -171,38 +173,13 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec("use testoom")
 		tk.MustExec("set tidb_distsql_scan_concurrency = 1")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
+		tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
 		err = tk.QueryToErr(testcase.sql)
 		require.Error(t, err)
 		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
+		tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 		se.Close()
 	}
-}
-
-func TestStatementCountLimit(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table stmt_count_limit (id int)")
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.StmtCountLimit = 3
-	})
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("begin")
-	tk.MustExec("insert into stmt_count_limit values (1)")
-	tk.MustExec("insert into stmt_count_limit values (2)")
-	_, err := tk.Exec("insert into stmt_count_limit values (3)")
-	require.Error(t, err)
-
-	// begin is counted into history but this one is not.
-	tk.MustExec("SET SESSION autocommit = false")
-	tk.MustExec("insert into stmt_count_limit values (1)")
-	tk.MustExec("insert into stmt_count_limit values (2)")
-	tk.MustExec("insert into stmt_count_limit values (3)")
-	_, err = tk.Exec("insert into stmt_count_limit values (4)")
-	require.Error(t, err)
 }
 
 func TestCorrectScopeError(t *testing.T) {
@@ -318,6 +295,7 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "MAX_EXECUTION_TIME() is defined more than once, only the last definition takes effect: MAX_EXECUTION_TIME(500)")
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.HasMaxExecutionTime)
 	require.Equal(t, uint64(500), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
+	require.Equal(t, uint64(500), tk.Session().GetSessionVars().GetMaxExecutionTime())
 
 	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("0"))
@@ -328,6 +306,9 @@ func TestMaxExecutionTime(t *testing.T) {
 
 	tk.MustExec("set @@MAX_EXECUTION_TIME = 150;")
 	tk.MustQuery("select * FROM MaxExecTime;")
+	require.Equal(t, uint64(150), tk.Session().GetSessionVars().GetMaxExecutionTime())
+	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(1000) */ * FROM MaxExecTime;")
+	require.Equal(t, uint64(1000), tk.Session().GetSessionVars().GetMaxExecutionTime())
 
 	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("300"))
 	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("150"))
@@ -363,27 +344,23 @@ func TestIsolationRead(t *testing.T) {
 	require.False(t, hasTiKV)
 }
 
-func TestIndexMergeRuntimeStats(t *testing.T) {
+func TestLastQueryInfo(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockRUConsumption", `return()`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockRUConsumption"))
+	}()
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_index_merge = 1")
-	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
-	tk.MustExec("create index t1a on t1(a)")
-	tk.MustExec("create index t1b on t1(b)")
-	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
-	rows := tk.MustQuery("explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;").Rows()
-	require.Len(t, rows, 4)
-	explain := fmt.Sprintf("%v", rows[0])
-	pattern := ".*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*"
-	require.Regexp(t, pattern, explain)
-	tableRangeExplain := fmt.Sprintf("%v", rows[1])
-	indexExplain := fmt.Sprintf("%v", rows[2])
-	tableExplain := fmt.Sprintf("%v", rows[3])
-	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", tableRangeExplain)
-	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", indexExplain)
-	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", tableExplain)
-	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a").Check(testkit.Rows("1 1 1 1 1", "5 5 5 5 5"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec(`prepare stmt1 from 'select * from t'`)
+	tk.MustExec("execute stmt1")
+	checkMatch := func(actual []string, expected []any) bool {
+		return strings.Contains(actual[0], expected[0].(string))
+	}
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":15`), checkMatch)
+	tk.MustExec("select a from t where a = 1")
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":27`), checkMatch)
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":30`), checkMatch)
 }

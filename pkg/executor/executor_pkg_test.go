@@ -15,20 +15,21 @@
 package executor
 
 import (
-	"context"
+	"fmt"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/failpoint"
+	"github.com/hashicorp/go-version"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/executor/aggregate"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -64,7 +65,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 
 	keyOff2IdxOff := []int{1, 3}
 	ctx := mock.NewContext()
-	kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, nil, nil)
+	kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, nil, nil)
 	require.NoError(t, err)
 	// Check the kvRanges is in order.
 	for i, kvRange := range kvRanges {
@@ -94,7 +95,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 		keyOff2IdxOff := []int{1, 3}
 		ctx := mock.NewContext()
 		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
-		kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
 		require.NoError(t, err)
 		// Check the kvRanges is in order.
 		for i, kvRange := range kvRanges {
@@ -116,7 +117,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 		keyOff2IdxOff := []int{1, 3}
 		ctx := mock.NewContext()
 		memTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
-		kvRanges, err := buildKvRangesForIndexJoin(ctx, 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
+		kvRanges, err := buildKvRangesForIndexJoin(ctx.GetDistSQLCtx(), ctx.GetRangerCtx(), 0, 0, joinKeyRows, indexRanges, keyOff2IdxOff, nil, memTracker, nil)
 		require.NoError(t, err)
 		// Check the kvRanges is in order.
 		for i, kvRange := range kvRanges {
@@ -164,61 +165,117 @@ func TestSlowQueryRuntimeStats(t *testing.T) {
 }
 
 // Test whether the actual buckets in Golang Map is same with the estimated number.
-// The test relies the implement of Golang Map. ref https://github.com/golang/go/blob/go1.13/src/runtime/map.go#L114
+// The test relies on the implement of Golang Map. ref https://github.com/golang/go/blob/go1.13/src/runtime/map.go#L114
 func TestAggPartialResultMapperB(t *testing.T) {
-	if runtime.Version() < `go1.13` {
-		t.Skip("Unsupported version")
+	// skip err, since we guarantee the success of execution
+	go113, _ := version.NewVersion(`1.13`)
+	// go version format is `gox.y.z foobar`, we only need x.y.z part
+	// The following is pretty hacky, but it only in test which is ok to do so.
+	actualVer, err := version.NewVersion(runtime.Version()[2:6])
+	if err != nil {
+		t.Fatalf("Cannot get actual go version with error %v\n", err)
+	}
+	if actualVer.LessThan(go113) {
+		t.Fatalf("Unsupported version and should never use any version less than go1.13\n")
 	}
 	type testCase struct {
 		rowNum          int
 		expectedB       int
 		expectedGrowing bool
 	}
-	cases := []testCase{
-		{
-			rowNum:          0,
-			expectedB:       0,
-			expectedGrowing: false,
-		},
-		{
-			rowNum:          100,
-			expectedB:       5,
-			expectedGrowing: true,
-		},
-		{
-			rowNum:          10000,
-			expectedB:       11,
-			expectedGrowing: false,
-		},
-		{
-			rowNum:          1000000,
-			expectedB:       18,
-			expectedGrowing: false,
-		},
-		{
-			rowNum:          851968, // 6.5 * (1 << 17)
-			expectedB:       18,
-			expectedGrowing: true,
-		},
-		{
-			rowNum:          851969, // 6.5 * (1 << 17) + 1
-			expectedB:       18,
-			expectedGrowing: true,
-		},
-		{
-			rowNum:          425984, // 6.5 * (1 << 16)
-			expectedB:       17,
-			expectedGrowing: true,
-		},
-		{
-			rowNum:          425985, // 6.5 * (1 << 16) + 1
-			expectedB:       17,
-			expectedGrowing: true,
-		},
+	var cases []testCase
+	// https://github.com/golang/go/issues/63438
+	// in 1.21, the load factor of map is 6 rather than 6.5 and the go team refused to backport to 1.21.
+	if strings.Contains(runtime.Version(), `go1.21`) {
+		cases = []testCase{
+			{
+				rowNum:          0,
+				expectedB:       0,
+				expectedGrowing: false,
+			},
+			{
+				rowNum:          95,
+				expectedB:       4,
+				expectedGrowing: false,
+			},
+			{
+				rowNum:          10000, // 6 * (1 << 11) is 12288
+				expectedB:       11,
+				expectedGrowing: false,
+			},
+			{
+				rowNum:          1000000, // 6 * (1 << 18) is 1572864
+				expectedB:       18,
+				expectedGrowing: false,
+			},
+			{
+				rowNum:          786432, // 6 * (1 << 17)
+				expectedB:       17,
+				expectedGrowing: false,
+			},
+			{
+				rowNum:          786433, // 6 * (1 << 17) + 1
+				expectedB:       18,
+				expectedGrowing: true,
+			},
+			{
+				rowNum:          393216, // 6 * (1 << 16)
+				expectedB:       16,
+				expectedGrowing: false,
+			},
+			{
+				rowNum:          393217, // 6 * (1 << 16) + 1
+				expectedB:       17,
+				expectedGrowing: true,
+			},
+		}
+	} else {
+		cases = []testCase{
+			{
+				rowNum:          0,
+				expectedB:       0,
+				expectedGrowing: false,
+			},
+			{
+				rowNum:          100,
+				expectedB:       4,
+				expectedGrowing: false,
+			},
+			{
+				rowNum:          10000,
+				expectedB:       11,
+				expectedGrowing: false,
+			},
+			{
+				rowNum:          1000000,
+				expectedB:       18,
+				expectedGrowing: false,
+			},
+			{
+				rowNum:          851968, // 6.5 * (1 << 17)
+				expectedB:       17,
+				expectedGrowing: false,
+			},
+			{
+				rowNum:          851969, // 6.5 * (1 << 17) + 1
+				expectedB:       18,
+				expectedGrowing: true,
+			},
+			{
+				rowNum:          425984, // 6.5 * (1 << 16)
+				expectedB:       16,
+				expectedGrowing: false,
+			},
+			{
+				rowNum:          425985, // 6.5 * (1 << 16) + 1
+				expectedB:       17,
+				expectedGrowing: true,
+			},
+		}
 	}
 
 	for _, tc := range cases {
-		aggMap := make(aggregate.AggPartialResultMapper)
+		aggMap := make(aggfuncs.AggPartialResultMapper)
 		tempSlice := make([]aggfuncs.PartialResult, 10)
 		for num := 0; num < tc.rowNum; num++ {
 			aggMap[strconv.Itoa(num)] = tempSlice
@@ -245,13 +302,13 @@ type hmap struct {
 	nevacuate  uintptr        // nolint:unused // progress counter for evacuation (buckets less than this have been evacuated)
 }
 
-func getB(m aggregate.AggPartialResultMapper) int {
+func getB(m aggfuncs.AggPartialResultMapper) int {
 	point := (**hmap)(unsafe.Pointer(&m))
 	value := *point
 	return int(value.B)
 }
 
-func getGrowing(m aggregate.AggPartialResultMapper) bool {
+func getGrowing(m aggfuncs.AggPartialResultMapper) bool {
 	point := (**hmap)(unsafe.Pointer(&m))
 	value := *point
 	return value.oldbuckets != nil
@@ -270,143 +327,166 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 	require.Len(t, res, 1)
 }
 
-func TestSortSpillDisk(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testSortedRowContainerSpill", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testSortedRowContainerSpill"))
-	}()
+func TestErrLevelsForResetStmtContext(t *testing.T) {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().MemQuota.MemQuotaQuery = 1
-	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	cas := &sortCase{rows: 2048, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
-	opt := mockDataSourceParameters{
-		schema: expression.NewSchema(cas.columns()...),
-		rows:   cas.rows,
-		ctx:    cas.ctx,
-		ndvs:   cas.ndvs,
+	domain.BindDomain(ctx, &domain.Domain{})
+
+	cases := []struct {
+		name    string
+		sqlMode mysql.SQLMode
+		stmt    []ast.StmtNode
+		levels  errctx.LevelMap
+	}{
+		{
+			name:    "strict,write",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelError
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "non-strict,write",
+			sqlMode: mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict,insert ignore",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{IgnoreErr: true}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+				return
+			}(),
+		},
+		{
+			name:    "strict,update ignore",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.UpdateStmt{IgnoreErr: true}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+				return
+			}(),
+		},
+		{
+			name:    "strict,delete ignore",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.DeleteStmt{IgnoreErr: true}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict without error_for_division_by_zero,write",
+			sqlMode: mysql.ModeStrictAllTables,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict,select/union",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.SelectStmt{}, &ast.SetOprStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "non-strict,select/union",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.SelectStmt{}, &ast.SetOprStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict,load_data",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.LoadDataStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+				return
+			}(),
+		},
+		{
+			name:    "non-strict,load_data",
+			sqlMode: mysql.SQLMode(0),
+			stmt:    []ast.StmtNode{&ast.LoadDataStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+				return
+			}(),
+		},
 	}
-	dataSource := buildMockDataSource(opt)
-	exe := &SortExec{
-		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
-		schema:       dataSource.Schema(),
-	}
-	for _, idx := range cas.orderByIdx {
-		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
-	}
-	tmpCtx := context.Background()
-	chk := exec.NewFirstChunk(exe)
-	dataSource.prepareChunks()
-	err := exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
+
+	for i, c := range cases {
+		require.NotEmpty(t, c.stmt, c.name)
+		for _, stmt := range c.stmt {
+			msg := fmt.Sprintf("%d: %s, stmt: %T", i, c.name, stmt)
+			ctx.GetSessionVars().SQLMode = c.sqlMode
+			require.NoError(t, ResetContextOfStmt(ctx, stmt), msg)
+			ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+			require.Equal(t, c.levels, ec.LevelMap(), msg)
 		}
 	}
-	// Test only 1 partition and all data in memory.
-	require.Len(t, exe.partitionList, 1)
-	require.Equal(t, false, exe.partitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exe.partitionList[0].NumRow())
-	err = exe.Close()
-	require.NoError(t, err)
-
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 1)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	dataSource.prepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Test 2 partitions and all data in disk.
-	// Now spilling is in parallel.
-	// Maybe the second add() will called before spilling, depends on
-	// Golang goroutine scheduling. So the result has two possibilities.
-	if len(exe.partitionList) == 2 {
-		require.Len(t, exe.partitionList, 2)
-		require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, true, exe.partitionList[1].AlreadySpilledSafeForTest())
-		require.Equal(t, 1024, exe.partitionList[0].NumRow())
-		require.Equal(t, 1024, exe.partitionList[1].NumRow())
-	} else {
-		require.Len(t, exe.partitionList, 1)
-		require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, 2048, exe.partitionList[0].NumRow())
-	}
-
-	err = exe.Close()
-	require.NoError(t, err)
-
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 28000)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	dataSource.prepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Test only 1 partition but spill disk.
-	require.Len(t, exe.partitionList, 1)
-	require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exe.partitionList[0].NumRow())
-	err = exe.Close()
-	require.NoError(t, err)
-
-	// Test partition nums.
-	ctx = mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 16864*50)
-	ctx.GetSessionVars().MemTracker.Consume(16864 * 45)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	cas = &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
-	opt = mockDataSourceParameters{
-		schema: expression.NewSchema(cas.columns()...),
-		rows:   cas.rows,
-		ctx:    cas.ctx,
-		ndvs:   cas.ndvs,
-	}
-	dataSource = buildMockDataSource(opt)
-	exe = &SortExec{
-		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
-		schema:       dataSource.Schema(),
-	}
-	for _, idx := range cas.orderByIdx {
-		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
-	}
-	tmpCtx = context.Background()
-	chk = exec.NewFirstChunk(exe)
-	dataSource.prepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Don't spill too many partitions.
-	require.True(t, len(exe.partitionList) <= 4)
-	err = exe.Close()
-	require.NoError(t, err)
 }

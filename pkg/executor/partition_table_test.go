@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -39,7 +38,6 @@ func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 
 	// list partition table
 	tk.MustExec(`create table tlist(a int, b int, unique index idx_a(a), index idx_b(b)) partition by list(a)(
@@ -93,15 +91,15 @@ func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
 
 	// test table dual
 	queryRange1 := "select a from trange1 where a=200"
-	tk.MustHavePlan(queryRange1, "TableDual") // check if TableDual is used
+	tk.MustQuery("EXPLAIN FORMAT='brief' " + queryRange1).Check(testkit.Rows("Point_Get 1.00 root table:trange1, partition:dual, index:a(a) "))
 	tk.MustQuery(queryRange1).Check(testkit.Rows())
 
 	queryRange2 := "select a from trange2 where a=200"
-	tk.MustHavePlan(queryRange2, "TableDual") // check if TableDual is used
+	tk.MustQuery("EXPLAIN FORMAT='brief' " + queryRange2).Check(testkit.Rows("Point_Get 1.00 root table:trange2, partition:dual, index:a(a) "))
 	tk.MustQuery(queryRange2).Check(testkit.Rows())
 
 	queryList := "select a from tlist where a=200"
-	tk.MustHavePlan(queryList, "TableDual") // check if TableDual is used
+	tk.MustQuery("EXPLAIN FORMAT='brief' " + queryList).Check(testkit.Rows("Point_Get 1.00 root table:tlist, partition:dual, index:idx_a(a) "))
 	tk.MustQuery(queryList).Check(testkit.Rows())
 
 	// test PointGet for one partition
@@ -320,7 +318,8 @@ func TestOrderByAndLimit(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test_orderby_limit"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if strings.HasPrefix(tblInfo.Name.L, "tr") || strings.HasPrefix(tblInfo.Name.L, "thash") || strings.HasPrefix(tblInfo.Name.L, "tlist") {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -1028,82 +1027,6 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 	tk.MustQuery(queryRange).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 }
 
-func TestGlobalStatsAndSQLBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create database test_global_stats")
-	tk.MustExec("use test_global_stats")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set tidb_cost_model_version=2")
-
-	// hash and range and list partition
-	tk.MustExec("create table thash(a int, b int, key(a)) partition by hash(a) partitions 4")
-	tk.MustExec(`create table trange(a int, b int, key(a)) partition by range(a) (
-		partition p0 values less than (200),
-		partition p1 values less than (400),
-		partition p2 values less than (600),
-		partition p3 values less than (800),
-		partition p4 values less than (1001))`)
-	tk.MustExec(`create table tlist (a int, b int, key(a)) partition by list (a) (
-		partition p0 values in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
-		partition p1 values in (10, 11, 12, 13, 14, 15, 16, 17, 18, 19),
-		partition p2 values in (20, 21, 22, 23, 24, 25, 26, 27, 28, 29),
-		partition p3 values in (30, 31, 32, 33, 34, 35, 36, 37, 38, 39),
-		partition p4 values in (40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50))`)
-
-	// construct some special data distribution
-	vals := make([]string, 0, 1000)
-	listVals := make([]string, 0, 1000)
-	for i := 0; i < 1000; i++ {
-		if i < 10 {
-			// for hash and range partition, 1% of records are in [0, 100)
-			vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(100), rand.Intn(100)))
-			// for list partition, 1% of records are equal to 0
-			listVals = append(listVals, "(0, 0)")
-		} else {
-			vals = append(vals, fmt.Sprintf("(%v, %v)", 100+rand.Intn(900), 100+rand.Intn(900)))
-			listVals = append(listVals, fmt.Sprintf("(%v, %v)", 1+rand.Intn(50), 1+rand.Intn(50)))
-		}
-	}
-	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
-	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
-	tk.MustExec("insert into tlist values " + strings.Join(listVals, ","))
-
-	// before analyzing, the planner will choose TableScan to access the 1% of records
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
-
-	tk.MustExec("analyze table thash")
-	tk.MustExec("analyze table trange")
-	tk.MustExec("analyze table tlist")
-
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
-
-	// create SQL bindings
-	tk.MustExec("create session binding for select * from thash where a<100 using select * from thash ignore index(a) where a<100")
-	tk.MustExec("create session binding for select * from trange where a<100 using select * from trange ignore index(a) where a<100")
-	tk.MustExec("create session binding for select * from tlist where a<100 using select * from tlist ignore index(a) where a<100")
-
-	// use TableScan again since the Index(a) is ignored
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
-
-	// drop SQL bindings
-	tk.MustExec("drop session binding for select * from thash where a<100")
-	tk.MustExec("drop session binding for select * from trange where a<100")
-	tk.MustExec("drop session binding for select * from tlist where a<100")
-
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
-}
-
 func TestPartitionTableWithDifferentJoin(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
@@ -1516,7 +1439,7 @@ func TestSubqueries(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		for _, op := range []string{"in", "not in"} {
 			x := rand.Intn(40000)
-			var r [][]interface{}
+			var r [][]any
 			for _, t := range []string{"tinner", "thash", "trange"} {
 				q := fmt.Sprintf(`select * from touter where touter.a %v (select %v.b from %v where %v.a > touter.b and %v.c > %v)`, op, t, t, t, t, x)
 				if r == nil {
@@ -1532,7 +1455,7 @@ func TestSubqueries(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		for _, op := range []string{"exists", "not exists"} {
 			x := rand.Intn(40000)
-			var r [][]interface{}
+			var r [][]any
 			for _, t := range []string{"tinner", "thash", "trange"} {
 				q := fmt.Sprintf(`select * from touter where %v (select %v.b from %v where %v.a > touter.b and %v.c > %v)`, op, t, t, t, t, x)
 				if r == nil {
@@ -1711,7 +1634,7 @@ func TestParallelApply(t *testing.T) {
 	aggFuncs := []string{"sum", "count", "max", "min"}
 	tbls := []string{"tinner", "thash", "trange"}
 	for i := 0; i < 50; i++ {
-		var r [][]interface{}
+		var r [][]any
 		op := ops[rand.Intn(len(ops))]
 		agg := aggFuncs[rand.Intn(len(aggFuncs))]
 		x := rand.Intn(10000)
@@ -1785,7 +1708,7 @@ func TestDirectReadingWithUnionScan(t *testing.T) {
 				sql += ` order by b`
 			}
 
-			var result [][]interface{}
+			var result [][]any
 			for _, tb := range []string{`trange`, `tnormal`, `thash`} {
 				q := fmt.Sprintf(sql, tb)
 				tk.MustHavePlan(q, `UnionScan`)
@@ -1844,7 +1767,7 @@ func TestUnsignedPartitionColumn(t *testing.T) {
 		pointCond := fmt.Sprintf("a = %v", rand.Intn(400000))
 		batchCond := fmt.Sprintf("a in (%v, %v, %v)", rand.Intn(400000), rand.Intn(400000), rand.Intn(400000))
 
-		var rScan, rPoint, rBatch [][]interface{}
+		var rScan, rPoint, rBatch [][]any
 		for tid, tbl := range []string{"tnormal_pk", "trange_pk", "thash_pk"} {
 			// unsigned + TableReader
 			scanSQL := fmt.Sprintf("select * from %v use index(primary) where %v", tbl, scanCond)
@@ -1878,7 +1801,7 @@ func TestUnsignedPartitionColumn(t *testing.T) {
 		}
 
 		lookupCond := fmt.Sprintf("a %v %v", []string{">", "<"}[rand.Intn(2)], rand.Intn(400000))
-		var rLookup [][]interface{}
+		var rLookup [][]any
 		for tid, tbl := range []string{"tnormal_uniq", "trange_uniq", "thash_uniq"} {
 			// unsigned + IndexReader
 			scanSQL := fmt.Sprintf("select a from %v use index(a) where %v", tbl, scanCond)
@@ -2160,80 +2083,14 @@ func TestIdexMerge(t *testing.T) {
 	}
 }
 
-func TestGlobalIndexScan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists p")
-	tk.MustExec(`create table p (id int, c int) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-	tk.MustExec("alter table p add unique idx(id)")
-	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
-	tk.MustExec("analyze table p")
-	tk.MustQuery("select id from p use index (idx) order by id").Check(testkit.Rows("1", "3", "5", "7"))
-}
-
-func TestAggWithGlobalIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists p")
-	tk.MustExec(`create table p (id int, c int) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-	tk.MustExec("alter table p add unique idx(id)")
-	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
-	tk.MustExec("analyze table p")
-	tk.MustQuery("select count(*) from p use index (idx)").Check(testkit.Rows("4"))
-	tk.MustQuery("select count(*) from p partition(p0) use index (idx)").Check(testkit.Rows("1"))
-}
-
-func TestGlobalIndexDoubleRead(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists p")
-	tk.MustExec(`create table p (id int, c int) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-	tk.MustExec("alter table p add unique idx(id)")
-	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
-	tk.MustQuery("select * from p use index (idx)").Sort().Check(testkit.Rows("1 3", "3 4", "5 6", "7 9"))
-}
-
 func TestDropGlobalIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists p")
 	tk.MustExec(`create table p (id int, c int) partition by range (c) (
@@ -2384,11 +2241,10 @@ func TestIssue26251(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
+	tk1.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk1.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk1.MustExec("use test")
 	tk1.MustExec("create table tp (id int primary key) partition by range (id) (partition p0 values less than (100));")
 	tk1.MustExec("create table tn (id int primary key);")
@@ -2550,235 +2406,4 @@ func TestIssue31024(t *testing.T) {
 	require.Equal(t, <-ch, 2)
 
 	tk2.MustExec("rollback")
-}
-
-func TestIssue21732(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database TestIssue21732")
-	tk.MustExec("use TestIssue21732")
-	tk.MustExec("drop table if exists p")
-	tk.MustExec(`create table p (a int, b int GENERATED ALWAYS AS (3*a-2*a) VIRTUAL) partition by hash(b) partitions 2;`)
-	tk.MustExec("alter table p add unique index idx (a);")
-	tk.MustExec("insert into p (a) values  (1),(2),(3);")
-	tk.MustQuery("select * from p use index (idx)").Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
-	tk.MustExec("drop database TestIssue21732")
-}
-
-func TestGlobalIndexSelectSpecifiedPartition(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists p")
-	tk.MustExec(`create table p (id int, c int) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-	tk.MustExec("alter table p add unique idx(id)")
-	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
-	tk.MustQuery("select * from p partition(p0) use index (idx)").Sort().Check(testkit.Rows("1 3"))
-}
-
-func TestGlobalIndexScanSpecifiedPartition(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists p")
-	tk.MustExec(`create table p (id int, c int) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-	tk.MustExec("alter table p add unique idx(id)")
-	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
-	tk.MustExec("analyze table p")
-	tk.MustQuery("select id from p partition(p0) use index (idx)").Sort().Check(testkit.Rows("1"))
-}
-
-func TestGlobalIndexScanForClusteredSpecifiedPartition(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists p")
-	tk.MustExec(`create table p (id int, c int, d int, e int, primary key(d, c) clustered) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-	tk.MustExec("alter table p add unique idx(id)")
-	tk.MustExec("insert into p values (1,3,1,1), (3,4,3,3), (5,6,5,5), (7,9,7,7)")
-	tk.MustExec("analyze table p")
-	tk.MustQuery("select id from p partition(p0) use index (idx)").Sort().Check(testkit.Rows("1"))
-}
-
-func TestGlobalIndexJoin(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists p")
-	tk.MustExec(`create table t1 (id int, c int) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-	tk.MustExec("alter table t1 add unique idx(id)")
-	tk.MustExec("insert into t1 values (1,3), (3,4), (5,6), (7,9)")
-
-	tk.MustExec(`create table t2 (id int, c int)`)
-	tk.MustExec("insert into t2 values (1, 3)")
-
-	tk.MustExec("analyze table t1")
-	tk.MustExec("analyze table t2")
-	tk.MustQuery("select /*+ INL_JOIN(t1, t2) */ * from t1 inner join t2 on t1.id = t2.id").Sort().Check(testkit.Rows("1 3 1 3"))
-	tk.MustQuery("select /*+ INL_JOIN(t1, t2) */ t1.id from t1 inner join t2 on t1.id = t2.id").Sort().Check(testkit.Rows("1"))
-}
-
-func TestGlobalIndexJoinSpecifiedPartition(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists p")
-	tk.MustExec(`create table t1 (id int, c int) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-	tk.MustExec("alter table t1 add unique idx(id)")
-	tk.MustExec("insert into t1 values (1,3), (3,4), (5,6), (7,9)")
-
-	tk.MustExec(`create table t2 (id int, c int)`)
-	tk.MustExec("insert into t2 values (1, 3)")
-
-	tk.MustExec("analyze table t1")
-	tk.MustExec("analyze table t2")
-	tk.MustQuery("select /*+ INL_JOIN(t1, t2) */ * from t1 partition(p0) inner join t2 on t1.id = t2.id").Sort().Check(testkit.Rows("1 3 1 3"))
-	tk.MustQuery("select /*+ INL_JOIN(t1, t2) */ t1.id from t1 partition(p0) inner join t2 on t1.id = t2.id").Sort().Check(testkit.Rows("1"))
-}
-
-func TestGlobalIndexJoinForClusteredSpecifiedPartition(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists p")
-	tk.MustExec(`create table t1 (id int, c int, d int, e int, primary key(d, c) clustered) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-	tk.MustExec("alter table t1 add unique idx(id)")
-	tk.MustExec("insert into t1 values (1,3,1,1), (3,4,3,3), (5,6,5,5), (7,9,7,7)")
-
-	tk.MustExec(`create table t2 (id int, c int)`)
-	tk.MustExec("insert into t2 values (1, 3)")
-
-	tk.MustExec("analyze table t1")
-	tk.MustExec("analyze table t2")
-	tk.MustQuery("select /*+ INL_JOIN(t1, t2) */ * from t1 partition(p0) inner join t2 on t1.id = t2.id").Sort().Check(testkit.Rows("1 3 1 1 1 3"))
-	tk.MustQuery("select /*+ INL_JOIN(t1, t2) */ t1.id from t1 partition(p0) inner join t2 on t1.id = t2.id").Sort().Check(testkit.Rows("1"))
-}
-
-func TestGlobalIndexForIssue40149(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	for _, opt := range []string{"true", "false"} {
-		failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(`+opt+`)`)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists test_t1")
-		tk.MustExec(`CREATE TABLE test_t1 (
-  		a int(11) NOT NULL,
-  		b int(11) DEFAULT NULL,
-  		c int(11) DEFAULT NULL
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY RANGE (c) (
- 	PARTITION p0 VALUES LESS THAN (10),
- 	PARTITION p1 VALUES LESS THAN (MAXVALUE));`)
-		tk.MustExec("alter table test_t1 add unique  p_a (a);")
-		tk.MustExec("insert into test_t1 values (1,1,1);")
-		tk.MustQuery("select * from test_t1 where a = 1;").Sort().Check(testkit.Rows("1 1 1"))
-		failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	}
-}
-
-func TestGlobalIndexMerge(t *testing.T) {
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
-
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("SET session tidb_enable_index_merge = ON;")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`CREATE TABLE t (
-  		a int(11) NOT NULL,
-  		b int(11) DEFAULT NULL,
-  		c int(11) DEFAULT NULL,
-		d int(11) NOT NULL AUTO_INCREMENT,
-		KEY idx_bd (b, c),
-		UNIQUE KEY uidx_ac(a)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY RANGE (c) (
- 	PARTITION p0 VALUES LESS THAN (10),
- 	PARTITION p1 VALUES LESS THAN (MAXVALUE));`)
-	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5),(6,6,6,6),(7,7,7,7),(8,8,8,8);")
-	tk.MustExec("analyze table t")
-	// when index_merge has global index as its partial path, ignore it.
-	require.False(t, tk.MustUseIndex("select /*+ use_index_merge(t, uidx_ac, idx_bc) */ * from t where a=1 or b=2", "uidx_ac"))
-	tk.MustQuery("select /*+ use_index_merge(t, uidx_ac, idx_bc) */ * from t where a=1 or b=2").Sort().Check(
-		testkit.Rows("1 1 1 1", "2 2 2 2"))
 }

@@ -22,7 +22,6 @@ import (
 	"path"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/ks3sdklib/aws-sdk-go/aws"
@@ -35,13 +34,13 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"go.uber.org/zap"
 )
 
 const (
 	// ks3 sdk does not expose context, we use hardcoded timeout for network request
-	ks3HTTPDeadline = 5 * time.Minute
-	ks3SDKProvider  = "ks3-sdk"
+	ks3SDKProvider = "ks3-sdk"
 )
 
 // KS3Storage acts almost same as S3Storage except it's used for kingsoft s3.
@@ -52,7 +51,7 @@ type KS3Storage struct {
 
 // NewKS3Storage initialize a new s3 storage for metadata.
 func NewKS3Storage(
-	_ context.Context,
+	ctx context.Context,
 	backend *backuppb.S3,
 	opts *ExternalStorageOptions,
 ) (obj *KS3Storage, errRet error) {
@@ -70,10 +69,6 @@ func NewKS3Storage(
 	if opts.HTTPClient != nil {
 		awsConfig.HTTPClient = opts.HTTPClient
 	}
-
-	// due to ks3 does not use context API, we should manually set the deadline
-	// for HTTP client
-	awsConfig.HTTPClient.Timeout = ks3HTTPDeadline
 
 	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
 		awsConfig.Credentials = credentials.NewStaticCredentials(
@@ -109,7 +104,7 @@ func NewKS3Storage(
 	}
 
 	for _, p := range opts.CheckPermissions {
-		err := permissionCheckFnKS3[p](c, &qs)
+		err := permissionCheckFnKS3[p](ctx, c, &qs)
 		if err != nil {
 			return nil, errors.Annotatef(berrors.ErrStorageInvalidPermission, "check permission %s failed due to %v", p, err)
 		}
@@ -121,14 +116,14 @@ func NewKS3Storage(
 	}, nil
 }
 
-var permissionCheckFnKS3 = map[Permission]func(*s3.S3, *backuppb.S3) error{
+var permissionCheckFnKS3 = map[Permission]func(context.Context, *s3.S3, *backuppb.S3) error{
 	AccessBuckets:      s3BucketExistenceCheckKS3,
 	ListObjects:        listObjectsCheckKS3,
 	GetObject:          getObjectCheckKS3,
 	PutAndDeleteObject: putAndDeleteObjectCheckKS3,
 }
 
-func s3BucketExistenceCheckKS3(svc *s3.S3, qs *backuppb.S3) error {
+func s3BucketExistenceCheckKS3(_ context.Context, svc *s3.S3, qs *backuppb.S3) error {
 	input := &s3.HeadBucketInput{
 		Bucket: aws.String(qs.Bucket),
 	}
@@ -136,7 +131,7 @@ func s3BucketExistenceCheckKS3(svc *s3.S3, qs *backuppb.S3) error {
 	return errors.Trace(err)
 }
 
-func listObjectsCheckKS3(svc *s3.S3, qs *backuppb.S3) error {
+func listObjectsCheckKS3(_ context.Context, svc *s3.S3, qs *backuppb.S3) error {
 	input := &s3.ListObjectsInput{
 		Bucket:  aws.String(qs.Bucket),
 		Prefix:  aws.String(qs.Prefix),
@@ -149,7 +144,7 @@ func listObjectsCheckKS3(svc *s3.S3, qs *backuppb.S3) error {
 	return nil
 }
 
-func getObjectCheckKS3(svc *s3.S3, qs *backuppb.S3) error {
+func getObjectCheckKS3(_ context.Context, svc *s3.S3, qs *backuppb.S3) error {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(qs.Bucket),
 		Key:    aws.String("not-exists"),
@@ -167,7 +162,7 @@ func getObjectCheckKS3(svc *s3.S3, qs *backuppb.S3) error {
 	return nil
 }
 
-func putAndDeleteObjectCheckKS3(svc *s3.S3, options *backuppb.S3) (err error) {
+func putAndDeleteObjectCheckKS3(ctx context.Context, svc *s3.S3, options *backuppb.S3) (err error) {
 	file := fmt.Sprintf("access-check/%s", uuid.New().String())
 	defer func() {
 		// we always delete the object used for permission check,
@@ -177,7 +172,7 @@ func putAndDeleteObjectCheckKS3(svc *s3.S3, options *backuppb.S3) (err error) {
 			Bucket: aws.String(options.Bucket),
 			Key:    aws.String(options.Prefix + file),
 		}
-		_, err2 := svc.DeleteObject(input)
+		_, err2 := svc.DeleteObjectWithContext(ctx, input)
 		if aerr, ok := err2.(awserr.Error); ok {
 			if aerr.Code() != "NoSuchKey" {
 				log.Warn("failed to delete object used for permission check",
@@ -191,7 +186,7 @@ func putAndDeleteObjectCheckKS3(svc *s3.S3, options *backuppb.S3) (err error) {
 	}()
 	// when no permission, aws returns err with code "AccessDenied"
 	input := buildPutObjectInputKS3(options, file, []byte("check"))
-	_, err = svc.PutObject(input)
+	_, err = svc.PutObjectWithContext(ctx, input)
 	return errors.Trace(err)
 }
 
@@ -225,7 +220,7 @@ type KS3Uploader struct {
 
 // UploadPart update partial data to s3, we should call CreateMultipartUpload to start it,
 // and call CompleteMultipartUpload to finish it.
-func (u *KS3Uploader) Write(_ context.Context, data []byte) (int, error) {
+func (u *KS3Uploader) Write(ctx context.Context, data []byte) (int, error) {
 	partInput := &s3.UploadPartInput{
 		Body:          bytes.NewReader(data),
 		Bucket:        u.createOutput.Bucket,
@@ -235,7 +230,7 @@ func (u *KS3Uploader) Write(_ context.Context, data []byte) (int, error) {
 		ContentLength: int64p(int64(len(data))),
 	}
 
-	uploadResult, err := u.svc.UploadPart(partInput)
+	uploadResult, err := u.svc.UploadPartWithContext(ctx, partInput)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -247,7 +242,7 @@ func (u *KS3Uploader) Write(_ context.Context, data []byte) (int, error) {
 }
 
 // Close complete multi upload request.
-func (u *KS3Uploader) Close(_ context.Context) error {
+func (u *KS3Uploader) Close(ctx context.Context) error {
 	completeInput := &s3.CompleteMultipartUploadInput{
 		Bucket:   u.createOutput.Bucket,
 		Key:      u.createOutput.Key,
@@ -256,7 +251,7 @@ func (u *KS3Uploader) Close(_ context.Context) error {
 			Parts: u.completeParts,
 		},
 	}
-	_, err := u.svc.CompleteMultipartUpload(completeInput)
+	_, err := u.svc.CompleteMultipartUploadWithContext(ctx, completeInput)
 	return errors.Trace(err)
 }
 
@@ -265,22 +260,22 @@ func int64p(i int64) *int64 {
 }
 
 // WriteFile writes data to a file to storage.
-func (rs *KS3Storage) WriteFile(_ context.Context, file string, data []byte) error {
+func (rs *KS3Storage) WriteFile(ctx context.Context, file string, data []byte) error {
 	input := buildPutObjectInputKS3(rs.options, file, data)
 	// we don't need to calculate contentMD5 if s3 object lock enabled.
 	// since aws-go-sdk already did it in #computeBodyHashes
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
-	_, err := rs.svc.PutObject(input)
+	_, err := rs.svc.PutObjectWithContext(ctx, input)
 	return errors.Trace(err)
 }
 
 // ReadFile reads the file from the storage and returns the contents.
-func (rs *KS3Storage) ReadFile(_ context.Context, file string) ([]byte, error) {
+func (rs *KS3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
 	}
-	result, err := rs.svc.GetObject(input)
+	result, err := rs.svc.GetObjectWithContext(ctx, input)
 	if err != nil {
 		return nil, errors.Annotatef(err,
 			"failed to read s3 file, file info: input.bucket='%s', input.key='%s'",
@@ -295,18 +290,18 @@ func (rs *KS3Storage) ReadFile(_ context.Context, file string) ([]byte, error) {
 }
 
 // DeleteFile delete the file in s3 storage
-func (rs *KS3Storage) DeleteFile(_ context.Context, file string) error {
+func (rs *KS3Storage) DeleteFile(ctx context.Context, file string) error {
 	input := &s3.DeleteObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 
-	_, err := rs.svc.DeleteObject(input)
+	_, err := rs.svc.DeleteObjectWithContext(ctx, input)
 	return errors.Trace(err)
 }
 
 // DeleteFiles delete the files in batch in s3 storage.
-func (rs *KS3Storage) DeleteFiles(_ context.Context, files []string) error {
+func (rs *KS3Storage) DeleteFiles(ctx context.Context, files []string) error {
 	for len(files) > 0 {
 		batch := files
 		if len(batch) > s3DeleteObjectsLimit {
@@ -325,7 +320,10 @@ func (rs *KS3Storage) DeleteFiles(_ context.Context, files []string) error {
 				Quiet:   boolP(false),
 			},
 		}
-		_ = rs.svc.DeleteObjects(input)
+		_, err := rs.svc.DeleteObjectsWithContext(ctx, input)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		files = files[len(batch):]
 	}
 	return nil
@@ -336,13 +334,13 @@ func boolP(b bool) *bool {
 }
 
 // FileExists check if file exists on s3 storage.
-func (rs *KS3Storage) FileExists(_ context.Context, file string) (bool, error) {
+func (rs *KS3Storage) FileExists(ctx context.Context, file string) (bool, error) {
 	input := &s3.HeadObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + file),
 	}
 
-	_, err := rs.svc.HeadObject(input)
+	_, err := rs.svc.HeadObjectWithContext(ctx, input)
 	if err != nil {
 		if aerr, ok := errors.Cause(err).(awserr.Error); ok { // nolint:errorlint
 			switch aerr.Code() {
@@ -361,7 +359,7 @@ func (rs *KS3Storage) FileExists(_ context.Context, file string) (bool, error) {
 // The first argument is the file path that can be used in `Open`
 // function; the second argument is the size in byte of the file determined
 // by path.
-func (rs *KS3Storage) WalkDir(_ context.Context, opt *WalkOption, fn func(string, int64) error) error {
+func (rs *KS3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
 	if opt == nil {
 		opt = &WalkOption{}
 	}
@@ -385,7 +383,7 @@ func (rs *KS3Storage) WalkDir(_ context.Context, opt *WalkOption, fn func(string
 	}
 
 	for {
-		res, err := rs.svc.ListObjects(req)
+		res, err := rs.svc.ListObjectsWithContext(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -423,9 +421,10 @@ func (rs *KS3Storage) URI() string {
 }
 
 // Open a Reader by file path.
-func (rs *KS3Storage) Open(_ context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
+func (rs *KS3Storage) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
 	start := int64(0)
 	end := int64(0)
+	prefetchSize := 0
 	if o != nil {
 		if o.StartOffset != nil {
 			start = *o.StartOffset
@@ -433,21 +432,28 @@ func (rs *KS3Storage) Open(_ context.Context, path string, o *ReaderOption) (Ext
 		if o.EndOffset != nil {
 			end = *o.EndOffset
 		}
+		prefetchSize = o.PrefetchSize
 	}
-	reader, r, err := rs.open(path, start, end)
+	reader, r, err := rs.open(ctx, path, start, end)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if prefetchSize > 0 {
+		reader = prefetch.NewReader(reader, prefetchSize)
+	}
 	return &ks3ObjectReader{
-		storage:   rs,
-		name:      path,
-		reader:    reader,
-		rangeInfo: r,
+		ctx:          ctx,
+		storage:      rs,
+		name:         path,
+		reader:       reader,
+		rangeInfo:    r,
+		prefetchSize: prefetchSize,
 	}, nil
 }
 
 // if endOffset > startOffset, should return reader for bytes in [startOffset, endOffset).
 func (rs *KS3Storage) open(
+	ctx context.Context,
 	path string,
 	startOffset, endOffset int64,
 ) (io.ReadCloser, RangeInfo, error) {
@@ -474,7 +480,7 @@ func (rs *KS3Storage) open(
 		rangeOffset = aws.String(fmt.Sprintf("bytes=%d-", startOffset))
 	}
 	input.Range = rangeOffset
-	result, err := rs.svc.GetObject(input)
+	result, err := rs.svc.GetObjectWithContext(ctx, input)
 	if err != nil {
 		return nil, RangeInfo{}, errors.Trace(err)
 	}
@@ -511,24 +517,35 @@ func (rs *KS3Storage) open(
 
 // ks3ObjectReader wrap GetObjectOutput.Body and add the `Seek` method.
 type ks3ObjectReader struct {
-	storage   *KS3Storage
-	name      string
-	reader    io.ReadCloser
-	pos       int64
-	rangeInfo RangeInfo
-	retryCnt  int
+	ctx          context.Context
+	storage      *KS3Storage
+	name         string
+	reader       io.ReadCloser
+	pos          int64
+	rangeInfo    RangeInfo
+	prefetchSize int
 }
 
 // Read implement the io.Reader interface.
 func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
+	retryCnt := 0
 	maxCnt := r.rangeInfo.End + 1 - r.pos
+	if maxCnt == 0 {
+		return 0, io.EOF
+	}
 	if maxCnt > int64(len(p)) {
 		maxCnt = int64(len(p))
 	}
 	n, err = r.reader.Read(p[:maxCnt])
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
-	if err != nil && errors.Cause(err) != io.EOF && r.retryCnt < maxErrorRetries { //nolint:errorlint
+	for err != nil && errors.Cause(err) != io.EOF && retryCnt < maxErrorRetries { //nolint:errorlint
+		log.L().Warn(
+			"read s3 object failed, will retry",
+			zap.String("file", r.name),
+			zap.Int("retryCnt", retryCnt),
+			zap.Error(err),
+		)
 		// if can retry, reopen a new reader and try read again
 		end := r.rangeInfo.End + 1
 		if end == r.rangeInfo.Size {
@@ -536,13 +553,16 @@ func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 		}
 		_ = r.reader.Close()
 
-		newReader, _, err1 := r.storage.open(r.name, r.pos, end)
+		newReader, _, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
 		if err1 != nil {
 			log.Warn("open new s3 reader failed", zap.String("file", r.name), zap.Error(err1))
 			return
 		}
 		r.reader = newReader
-		r.retryCnt++
+		if r.prefetchSize > 0 {
+			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		}
+		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
 	}
 
@@ -606,11 +626,14 @@ func (r *ks3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 
-	newReader, info, err := r.storage.open(r.name, realOffset, 0)
+	newReader, info, err := r.storage.open(r.ctx, r.name, realOffset, 0)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	r.reader = newReader
+	if r.prefetchSize > 0 {
+		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+	}
 	r.rangeInfo = info
 	r.pos = realOffset
 	return realOffset, nil
@@ -621,7 +644,7 @@ func (r *ks3ObjectReader) GetFileSize() (int64, error) {
 }
 
 // createUploader create multi upload request.
-func (rs *KS3Storage) createUploader(_ context.Context, name string) (ExternalFileWriter, error) {
+func (rs *KS3Storage) createUploader(ctx context.Context, name string) (ExternalFileWriter, error) {
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + name),
@@ -639,7 +662,7 @@ func (rs *KS3Storage) createUploader(_ context.Context, name string) (ExternalFi
 		input.StorageClass = aws.String(rs.options.StorageClass)
 	}
 
-	resp, err := rs.svc.CreateMultipartUpload(input)
+	resp, err := rs.svc.CreateMultipartUploadWithContext(ctx, input)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -662,17 +685,19 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 	} else {
 		up := s3manager.NewUploader(&s3manager.UploadOptions{
 			Parallel: option.Concurrency,
+			S3:       rs.svc,
 		})
 		rd, wd := io.Pipe()
 		upParams := &s3manager.UploadInput{
 			Bucket: aws.String(rs.options.Bucket),
 			Key:    aws.String(rs.options.Prefix + name),
 			Body:   rd,
+			Size:   1024 * 1024 * 5, // ks3 SDK need to set this value to non-zero.
 		}
 		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}}
 		s3Writer.wg.Add(1)
 		go func() {
-			_, err := up.Upload(upParams)
+			_, err := up.UploadWithContext(ctx, upParams)
 			// like a channel we only let sender close the pipe in happy path
 			if err != nil {
 				log.Warn("upload to ks3 failed", zap.String("filename", name), zap.Error(err))
@@ -683,7 +708,11 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 		}()
 		uploader = s3Writer
 	}
-	uploaderWriter := newBufferedWriter(uploader, WriteBufferSize, NoCompression)
+	bufSize := WriteBufferSize
+	if option != nil && option.PartSize > 0 {
+		bufSize = int(option.PartSize)
+	}
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
 	return uploaderWriter, nil
 }
 
@@ -702,3 +731,6 @@ func (rs *KS3Storage) Rename(ctx context.Context, oldFileName, newFileName strin
 	}
 	return nil
 }
+
+// Close implements ExternalStorage interface.
+func (*KS3Storage) Close() {}

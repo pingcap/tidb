@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -71,13 +70,10 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 		{"-123456789123456789123456789.12345 < a", "1"},
 		{"'aaaa'=a", "eq(0, a)"},
 	}
-	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Cols(), tblInfo)
-	require.NoError(t, err)
-	schema := NewSchema(cols...)
 	for _, test := range tests {
-		f, err := ParseSimpleExprsWithNames(ctx, test.exprStr, schema, names)
+		f, err := ParseSimpleExpr(ctx, test.exprStr, WithTableInfo("", tblInfo))
 		require.NoError(t, err)
-		require.Equal(t, test.result, f[0].String())
+		require.Equal(t, test.result, f.String())
 	}
 }
 
@@ -90,8 +86,8 @@ func TestCompare(t *testing.T) {
 	jsonVal := types.CreateBinaryJSON("123")
 	// test cases for generating function signatures.
 	tests := []struct {
-		arg0     interface{}
-		arg1     interface{}
+		arg0     any
+		arg1     any
 		funcName string
 		tp       byte
 		expected int64
@@ -138,15 +134,16 @@ func TestCompare(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		bf, err := funcs[test.funcName].getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{test.arg0, test.arg1}))
+		bf, err := funcs[test.funcName].getFunction(ctx, primitiveValsToConstants(ctx, []any{test.arg0, test.arg1}))
 		require.NoError(t, err)
 		args := bf.getArgs()
 		require.Equal(t, test.tp, args[0].GetType().GetType())
 		require.Equal(t, test.tp, args[1].GetType().GetType())
-		res, isNil, err := bf.evalInt(chunk.Row{})
+		res, err := evalBuiltinFunc(bf, ctx, chunk.Row{})
 		require.NoError(t, err)
-		require.False(t, isNil)
-		require.Equal(t, test.expected, res)
+		require.False(t, res.IsNull())
+		require.Equal(t, types.KindInt64, res.Kind())
+		require.Equal(t, test.expected, res.GetInt64())
 	}
 
 	// test <non-const decimal expression> <cmp> <const string expression>
@@ -178,36 +175,36 @@ func TestCoalesce(t *testing.T) {
 	ctx := createContext(t)
 
 	cases := []struct {
-		args     []interface{}
-		expected interface{}
+		args     []any
+		expected any
 		isNil    bool
 		getErr   bool
 	}{
-		{[]interface{}{nil}, nil, true, false},
-		{[]interface{}{nil, nil}, nil, true, false},
-		{[]interface{}{nil, nil, nil}, nil, true, false},
-		{[]interface{}{nil, 1}, int64(1), false, false},
-		{[]interface{}{nil, 1.1}, 1.1, false, false},
-		{[]interface{}{1, 1.1}, float64(1), false, false},
-		{[]interface{}{nil, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromFloatForTest(123.456), false, false},
-		{[]interface{}{1, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromInt(1), false, false},
-		{[]interface{}{nil, duration}, duration, false, false},
-		{[]interface{}{nil, durationWithFsp}, durationWithFsp, false, false},
-		{[]interface{}{durationWithFsp, duration}, durationWithFsp, false, false},
-		{[]interface{}{duration, durationWithFsp}, durationWithFspAndZeroMicrosecond, false, false},
-		{[]interface{}{nil, tm, nil}, tm, false, false},
-		{[]interface{}{nil, tmWithFsp, nil}, tmWithFsp, false, false},
-		{[]interface{}{tmWithFsp, tm, nil}, tmWithFsp, false, false},
-		{[]interface{}{tm, tmWithFsp, nil}, tmWithFspAndZeroMicrosecond, false, false},
-		{[]interface{}{nil, dt, nil}, dt, false, false},
-		{[]interface{}{tm, dt}, tm, false, false},
+		{[]any{nil}, nil, true, false},
+		{[]any{nil, nil}, nil, true, false},
+		{[]any{nil, nil, nil}, nil, true, false},
+		{[]any{nil, 1}, int64(1), false, false},
+		{[]any{nil, 1.1}, 1.1, false, false},
+		{[]any{1, 1.1}, float64(1), false, false},
+		{[]any{nil, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromFloatForTest(123.456), false, false},
+		{[]any{1, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromInt(1), false, false},
+		{[]any{nil, duration}, duration, false, false},
+		{[]any{nil, durationWithFsp}, durationWithFsp, false, false},
+		{[]any{durationWithFsp, duration}, durationWithFsp, false, false},
+		{[]any{duration, durationWithFsp}, durationWithFspAndZeroMicrosecond, false, false},
+		{[]any{nil, tm, nil}, tm, false, false},
+		{[]any{nil, tmWithFsp, nil}, tmWithFsp, false, false},
+		{[]any{tmWithFsp, tm, nil}, tmWithFsp, false, false},
+		{[]any{tm, tmWithFsp, nil}, tmWithFspAndZeroMicrosecond, false, false},
+		{[]any{nil, dt, nil}, dt, false, false},
+		{[]any{tm, dt}, tm, false, false},
 	}
 
 	for _, test := range cases {
 		f, err := newFunctionForTest(ctx, ast.Coalesce, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 
 		if test.getErr {
 			require.Error(t, err)
@@ -274,12 +271,12 @@ func TestIntervalFunc(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(test.args))
 		require.NoError(t, err)
 		if test.getErr {
-			v, err := evalBuiltinFunc(f, chunk.Row{})
+			v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			require.Error(t, err)
 			require.Equal(t, test.ret, v.GetInt64())
 			continue
 		}
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, test.ret, v.GetInt64())
 	}
@@ -299,84 +296,84 @@ func TestGreatestLeastFunc(t *testing.T) {
 	decL := &types.MyDecimal{}
 
 	for _, test := range []struct {
-		args             []interface{}
-		expectedGreatest interface{}
-		expectedLeast    interface{}
+		args             []any
+		expectedGreatest any
+		expectedLeast    any
 		isNil            bool
 		getErr           bool
 	}{
 		{
-			[]interface{}{int64(-9223372036854775808), uint64(9223372036854775809)},
+			[]any{int64(-9223372036854775808), uint64(9223372036854775809)},
 			decG.FromUint(9223372036854775809), decL.FromInt(-9223372036854775808), false, false,
 		},
 		{
-			[]interface{}{uint64(9223372036854775808), uint64(9223372036854775809)},
+			[]any{uint64(9223372036854775808), uint64(9223372036854775809)},
 			uint64(9223372036854775809), uint64(9223372036854775808), false, false,
 		},
 		{
-			[]interface{}{1, 2, 3, 4},
+			[]any{1, 2, 3, 4},
 			int64(4), int64(1), false, false,
 		},
 		{
-			[]interface{}{"a", "b", "c"},
+			[]any{"a", "b", "c"},
 			"c", "a", false, false,
 		},
 		{
-			[]interface{}{"123a", "b", "c", 12},
+			[]any{"123a", "b", "c", 12},
 			"c", "12", false, false,
 		},
 		{
-			[]interface{}{tm, "123"},
+			[]any{tm, "123"},
 			curTimeString, "123", false, false,
 		},
 		{
-			[]interface{}{tm, 123},
+			[]any{tm, 123},
 			curTimeString, "123", false, false,
 		},
 		{
-			[]interface{}{tm, "invalid_time_1", "invalid_time_2", tmWithFsp},
+			[]any{tm, "invalid_time_1", "invalid_time_2", tmWithFsp},
 			"invalid_time_2", curTimeString, false, false,
 		},
 		{
-			[]interface{}{tm, "invalid_time_2", "invalid_time_1", tmWithFsp},
+			[]any{tm, "invalid_time_2", "invalid_time_1", tmWithFsp},
 			"invalid_time_2", curTimeString, false, false,
 		},
 		{
-			[]interface{}{tm, "invalid_time", nil, tmWithFsp},
+			[]any{tm, "invalid_time", nil, tmWithFsp},
 			nil, nil, true, false,
 		},
 		{
-			[]interface{}{duration, "123"},
+			[]any{duration, "123"},
 			"12:59:59", "123", false, false,
 		},
 		{
-			[]interface{}{duration, duration},
+			[]any{duration, duration},
 			duration, duration, false, false,
 		},
 		{
-			[]interface{}{"123", nil, "123"},
+			[]any{"123", nil, "123"},
 			nil, nil, true, false,
 		},
 		{
-			[]interface{}{errors.New("must error"), 123},
+			[]any{errors.New("must error"), 123},
 			nil, nil, false, true,
 		},
 		{
-			[]interface{}{794755072.0, 4556, "2000-01-09"},
+			[]any{794755072.0, 4556, "2000-01-09"},
 			"794755072", "2000-01-09", false, false,
 		},
 		{
-			[]interface{}{905969664.0, 4556, "1990-06-16 17:22:56.005534"},
+			[]any{905969664.0, 4556, "1990-06-16 17:22:56.005534"},
 			"905969664", "1990-06-16 17:22:56.005534", false, false,
 		},
 		{
-			[]interface{}{105969664.0, 120000, types.Duration{Duration: 20*time.Hour + 0*time.Minute + 0*time.Second}},
+			[]any{105969664.0, 120000, types.Duration{Duration: 20*time.Hour + 0*time.Minute + 0*time.Second}},
 			"20:00:00", "105969664", false, false,
 		},
 	} {
 		f0, err := newFunctionForTest(ctx, ast.Greatest, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
-		d, err := f0.Eval(chunk.Row{})
+		d, err := f0.Eval(ctx, chunk.Row{})
 		if test.getErr {
 			require.Error(t, err)
 		} else {
@@ -390,7 +387,7 @@ func TestGreatestLeastFunc(t *testing.T) {
 
 		f1, err := newFunctionForTest(ctx, ast.Least, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
-		d, err = f1.Eval(chunk.Row{})
+		d, err = f1.Eval(ctx, chunk.Row{})
 		if test.getErr {
 			require.Error(t, err)
 		} else {
@@ -410,7 +407,7 @@ func TestGreatestLeastFunc(t *testing.T) {
 
 func TestRefineArgsWithCastEnum(t *testing.T) {
 	ctx := createContext(t)
-	zeroUintConst := primitiveValsToConstants(ctx, []interface{}{uint64(0)})[0]
+	zeroUintConst := primitiveValsToConstants(ctx, []any{uint64(0)})[0]
 	enumType := types.NewFieldTypeBuilder().SetType(mysql.TypeEnum).SetElems([]string{"1", "2", "3"}).AddFlag(mysql.EnumSetAsIntFlag).Build()
 	enumCol := &Column{RetType: &enumType}
 
@@ -420,4 +417,13 @@ func TestRefineArgsWithCastEnum(t *testing.T) {
 	args := f.refineArgsByUnsignedFlag(ctx, []Expression{zeroUintConst, enumCol})
 	require.Equal(t, zeroUintConst, args[0])
 	require.Equal(t, enumCol, args[1])
+}
+
+func TestIssue46475(t *testing.T) {
+	ctx := createContext(t)
+	args := []any{nil, dt, nil}
+
+	f, err := newFunctionForTest(ctx, ast.Coalesce, primitiveValsToConstants(ctx, args)...)
+	require.NoError(t, err)
+	require.Equal(t, f.GetType().GetType(), mysql.TypeDate)
 }

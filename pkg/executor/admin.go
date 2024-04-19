@@ -116,25 +116,24 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	sc := e.Ctx().GetSessionVars().StmtCtx
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return nil
 	}
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(sc, e.table.ID, e.index.ID, ranger.FullRange()).
+	kvReq, err := builder.SetIndexRanges(e.Ctx().GetDistSQLCtx(), e.table.ID, e.index.ID, ranger.FullRange()).
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
-		SetFromSessionVars(e.Ctx().GetSessionVars()).
+		SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
 		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
 		Build()
 	if err != nil {
 		return err
 	}
 
-	e.result, err = distsql.Select(ctx, e.Ctx(), kvReq, e.RetFieldTypes())
+	e.result, err = distsql.Select(ctx, e.Ctx().GetDistSQLCtx(), kvReq, e.RetFieldTypes())
 	if err != nil {
 		return err
 	}
@@ -152,11 +151,11 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
 
-	err := tables.SetPBColumnsDefaultValue(e.Ctx(), dagReq.Executors[0].IdxScan.Columns, e.cols)
+	err := tables.SetPBColumnsDefaultValue(e.Ctx().GetExprCtx(), dagReq.Executors[0].IdxScan.Columns, e.cols)
 	if err != nil {
 		return nil, err
 	}
-	distsql.SetEncodeType(e.Ctx(), dagReq)
+	distsql.SetEncodeType(e.Ctx().GetDistSQLCtx(), dagReq)
 	return dagReq, nil
 }
 
@@ -216,7 +215,7 @@ func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
 
 // Open implements the Executor Open interface.
 func (e *RecoverIndexExec) Open(ctx context.Context) error {
-	if err := e.BaseExecutor.Open(ctx); err != nil {
+	if err := exec.Open(ctx, &e.BaseExecutor); err != nil {
 		return err
 	}
 
@@ -231,7 +230,7 @@ func (e *RecoverIndexExec) Open(ctx context.Context) error {
 func (e *RecoverIndexExec) constructTableScanPB(tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
 	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos)
 	tblScan.TableId = e.physicalID
-	err := tables.SetPBColumnsDefaultValue(e.Ctx(), tblScan.Columns, colInfos)
+	err := tables.SetPBColumnsDefaultValue(e.Ctx().GetExprCtx(), tblScan.Columns, colInfos)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
@@ -259,7 +258,7 @@ func (e *RecoverIndexExec) buildDAGPB(_ kv.Transaction, limitCnt uint64) (*tipb.
 
 	limitExec := e.constructLimitPB(limitCnt)
 	dagReq.Executors = append(dagReq.Executors, limitExec)
-	distsql.SetEncodeType(e.Ctx(), dagReq)
+	distsql.SetEncodeType(e.Ctx().GetDistSQLCtx(), dagReq)
 	return dagReq, nil
 }
 
@@ -273,14 +272,14 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, err
 	}
-	builder.KeyRanges = kv.NewNonParitionedKeyRanges(keyRanges)
+	builder.KeyRanges = kv.NewNonPartitionedKeyRanges(keyRanges)
 	kvReq, err := builder.
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
-		SetFromSessionVars(e.Ctx().GetSessionVars()).
+		SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
 		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
 		Build()
 	if err != nil {
 		return nil, err
@@ -289,7 +288,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	// Actually, with limitCnt, the match datas maybe only in one region, so let the concurrency to be 1,
 	// avoid unnecessary region scan.
 	kvReq.Concurrency = 1
-	result, err := distsql.Select(ctx, e.Ctx(), kvReq, e.columnsTypes())
+	result, err := distsql.Select(ctx, e.Ctx().GetDistSQLCtx(), kvReq, e.columnsTypes())
 	if err != nil {
 		return nil, err
 	}
@@ -403,7 +402,7 @@ func (e *RecoverIndexExec) buildIndexedValues(row chunk.Row, idxVals []types.Dat
 	}
 
 	if e.cols == nil {
-		columns, _, err := expression.ColumnInfos2ColumnsAndNames(e.Ctx(), model.NewCIStr("mock"), e.table.Meta().Name, e.table.Meta().Columns, e.table.Meta())
+		columns, _, err := expression.ColumnInfos2ColumnsAndNames(e.Ctx().GetExprCtx(), model.NewCIStr("mock"), e.table.Meta().Name, e.table.Meta().Columns, e.table.Meta())
 		if err != nil {
 			return nil, err
 		}
@@ -416,9 +415,10 @@ func (e *RecoverIndexExec) buildIndexedValues(row chunk.Row, idxVals []types.Dat
 		idxVals = idxVals[:idxValLen]
 	}
 
+	sctx := e.Ctx()
 	for i, col := range e.index.Meta().Columns {
 		if e.table.Meta().Columns[col.Offset].IsGenerated() {
-			val, err := e.cols[col.Offset].EvalVirtualColumn(row)
+			val, err := e.cols[col.Offset].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), row)
 			if err != nil {
 				return nil, err
 			}
@@ -441,7 +441,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	rowIdx := make([]int, 0, len(rows))
 	cnt := 0
 	for i, row := range rows {
-		iter := e.index.GenIndexKVIter(sc, row.idxVals, row.handle, nil)
+		iter := e.index.GenIndexKVIter(sc.ErrCtx(), sc.TimeZone(), row.idxVals, row.handle, nil)
 		for iter.Valid() {
 			var buf []byte
 			if cnt < len(e.idxKeyBufs) {
@@ -524,7 +524,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			return result, err
 		}
 
-		_, err = e.index.Create(e.Ctx(), txn, row.idxVals, row.handle, row.rsData, table.WithIgnoreAssertion)
+		_, err = e.index.Create(e.Ctx().GetTableCtx(), txn, row.idxVals, row.handle, row.rsData, table.WithIgnoreAssertion)
 		if err != nil {
 			return result, err
 		}
@@ -613,7 +613,7 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 }
 
 func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte, error) {
-	e.idxValues.Range(func(h kv.Handle, _ interface{}) bool {
+	e.idxValues.Range(func(h kv.Handle, _ any) bool {
 		e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(e.table.RecordPrefix(), h))
 		return true
 	})
@@ -636,7 +636,7 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 				return errors.Trace(errors.Errorf("batch keys are inconsistent with handles"))
 			}
 			for _, handleIdxVals := range handleIdxValsGroup.([][]types.Datum) {
-				if err := e.index.Delete(e.Ctx().GetSessionVars().StmtCtx, txn, handleIdxVals, handle); err != nil {
+				if err := e.index.Delete(e.Ctx().GetTableCtx(), txn, handleIdxVals, handle); err != nil {
 					return err
 				}
 				e.removeCnt++
@@ -697,7 +697,7 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 			} else {
 				e.idxValues.Set(handle, [][]types.Datum{idxVals})
 			}
-			idxKey, _, err := e.index.GenIndexKey(sc, idxVals, handle, nil)
+			idxKey, _, err := e.index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxVals, handle, nil)
 			if err != nil {
 				return err
 			}
@@ -778,7 +778,7 @@ func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context) error {
 		}
 		e.scanRowCnt = 0
 		e.batchKeys = e.batchKeys[:0]
-		e.idxValues.Range(func(h kv.Handle, val interface{}) bool {
+		e.idxValues.Range(func(h kv.Handle, _ any) bool {
 			e.idxValues.Delete(h)
 			return true
 		})
@@ -791,10 +791,9 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, err
 	}
-	sc := e.Ctx().GetSessionVars().StmtCtx
 	var builder distsql.RequestBuilder
 	ranges := ranger.FullRange()
-	keyRanges, err := distsql.IndexRangesToKVRanges(sc, e.physicalID, e.index.Meta().ID, ranges)
+	keyRanges, err := distsql.IndexRangesToKVRanges(e.Ctx().GetDistSQLCtx(), e.physicalID, e.index.Meta().ID, ranges)
 	if err != nil {
 		return nil, err
 	}
@@ -807,16 +806,16 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
-		SetFromSessionVars(e.Ctx().GetSessionVars()).
+		SetFromSessionVars(e.Ctx().GetDistSQLCtx()).
 		SetFromInfoSchema(e.Ctx().GetInfoSchema()).
-		SetConnID(e.Ctx().GetSessionVars().ConnectionID).
+		SetConnIDAndConnAlias(e.Ctx().GetSessionVars().ConnectionID, e.Ctx().GetSessionVars().SessionAlias).
 		Build()
 	if err != nil {
 		return nil, err
 	}
 
 	kvReq.Concurrency = 1
-	result, err := distsql.Select(ctx, e.Ctx(), kvReq, e.getIdxColTypes())
+	result, err := distsql.Select(ctx, e.Ctx().GetDistSQLCtx(), kvReq, e.getIdxColTypes())
 	if err != nil {
 		return nil, err
 	}
@@ -837,7 +836,7 @@ func (e *CleanupIndexExec) init() error {
 	e.batchKeys = make([]kv.Key, 0, e.batchSize)
 	e.idxValsBufs = make([][]types.Datum, e.batchSize)
 	sc := e.Ctx().GetSessionVars().StmtCtx
-	idxKey, _, err := e.index.GenIndexKey(sc, []types.Datum{{}}, kv.IntHandle(math.MinInt64), nil)
+	idxKey, _, err := e.index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), []types.Datum{{}}, kv.IntHandle(math.MinInt64), nil)
 	if err != nil {
 		return err
 	}
@@ -856,14 +855,14 @@ func (e *CleanupIndexExec) buildIdxDAGPB() (*tipb.DAGRequest, error) {
 
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
-	err := tables.SetPBColumnsDefaultValue(e.Ctx(), dagReq.Executors[0].IdxScan.Columns, e.columns)
+	err := tables.SetPBColumnsDefaultValue(e.Ctx().GetExprCtx(), dagReq.Executors[0].IdxScan.Columns, e.columns)
 	if err != nil {
 		return nil, err
 	}
 
 	limitExec := e.constructLimitPB()
 	dagReq.Executors = append(dagReq.Executors, limitExec)
-	distsql.SetEncodeType(e.Ctx(), dagReq)
+	distsql.SetEncodeType(e.Ctx().GetDistSQLCtx(), dagReq)
 	return dagReq, nil
 }
 

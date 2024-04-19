@@ -111,7 +111,7 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	}
 
 	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
-	t, err := types.ParseTime(se.GetSessionVars().StmtCtx.TypeCtx(), params[handler.Snapshot], mysql.TypeTimestamp, 6, nil)
+	t, err := types.ParseTime(se.GetSessionVars().StmtCtx.TypeCtx(), params[handler.Snapshot], mysql.TypeTimestamp, 6)
 	if err != nil {
 		handler.WriteError(w, err)
 		return

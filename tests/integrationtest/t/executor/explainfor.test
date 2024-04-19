@@ -430,3 +430,28 @@ select @@last_plan_from_cache;
 execute stmt_join;
 select @@last_plan_from_binding;
 
+
+# TestExplainMemTablePredicatePushDown
+create database s1;
+drop table if exists t;
+create table t(a int);
+drop table if exists r;
+create table r(a int);
+desc format='brief' select * from information_schema.tables where table_name='t';
+desc format='brief' select * from information_schema.tables where lower(table_name)='t';
+desc format='brief' select * from information_schema.tables where upper(table_name)=upper('t');
+
+desc format='brief' select * from information_schema.REFERENTIAL_CONSTRAINTS where table_name='t';
+desc format='brief' select * from information_schema.KEY_COLUMN_USAGE where table_name='t';
+desc format='brief' select * from information_schema.STATISTICS where table_name='t';
+desc format='brief' select * from information_schema.STATISTICS where table_name='t' and table_name='r';
+desc format='brief' select * from information_schema.STATISTICS where table_name='t' or table_name='r';
+desc format='brief' select * from information_schema.tables where table_schema='t';
+desc format='brief' select * from information_schema.KEY_COLUMN_USAGE where table_schema='s1';
+desc format='brief' select * from information_schema.STATISTICS where table_schema='s1';
+desc format='brief' select * from information_schema.STATISTICS where table_schema='s1' and table_schema='test';
+desc format='brief' select * from information_schema.STATISTICS where table_name='s1' and table_schema='test';
+desc format='brief' select * from information_schema.STATISTICS where table_schema='s1' or table_schema='test';
+desc format='brief' SELECT column_name FROM information_schema.statistics WHERE index_name = 'idx1' AND table_schema = DATABASE () AND table_name = 't' ORDER BY seq_in_index;
+desc format='brief' SELECT table_comment FROM information_schema.tables WHERE table_schema = DATABASE () AND table_name = 't';
+desc format='brief' SELECT * FROM information_schema.referential_constraints rc JOIN information_schema.key_column_usage fk USING (constraint_schema, constraint_name) WHERE fk.referenced_column_name != 't' AND fk.table_schema = DATABASE () AND fk.table_name = 't' AND rc.constraint_schema = DATABASE () AND rc.table_name = 't';

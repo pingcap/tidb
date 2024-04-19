@@ -52,7 +52,6 @@ func randomNum(args ...int) int {
 		return args[0] + randomIntn(args[1]-args[0])
 	} else if len(args) == 1 {
 		return randomIntn(args[0])
-	} else {
-		return randomInt()
 	}
+	return randomInt()
 }

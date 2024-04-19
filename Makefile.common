@@ -27,7 +27,13 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
 GO              := GO111MODULE=on go
-GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
+BUILD_FLAG	:= -tags codes
+GOEXPERIMENT=
+ifeq ("${ENABLE_FIPS}", "1")
+	BUILD_FLAG = -tags codes,boringcrypto
+	GOEXPERIMENT = GOEXPERIMENT=boringcrypto
+endif
+GOBUILD         := $(GOEXPERIMENT) $(GO) build $(BUILD_FLAG)
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
 GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
@@ -124,3 +130,4 @@ ifneq ("$(CI)", "")
 	BAZEL_CMD_CONFIG := --config=ci --repository_cache=/home/jenkins/.tidb/tmp
 	BAZEL_SYNC_CONFIG := --repository_cache=/home/jenkins/.tidb/tmp
 endif
+BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...

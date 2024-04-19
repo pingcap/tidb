@@ -8,12 +8,12 @@ select count(*) /*+ stream_agg() */ from t where a > 1;
 count(*) /*+ stream_agg() 
 0
 Level	Code	Message
-Warning	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8066]Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.
+Warning	8066	Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.
 select count(*) from (select count(*) as a /*+ stream_agg() */ from t where b > 1 group by b) t1 where a > 1;
 count(*)
 0
 Level	Code	Message
-Warning	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8066]Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.
+Warning	8066	Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.
 set tidb_cost_model_version=2;
 drop table if exists t, t1, th;
 drop view if exists v, v1;
@@ -751,7 +751,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a))
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1105	Duplicate query block name qb_v for view's query block hint, only the first one is effective
+Warning	1815	Duplicate query block name qb_v for view's query block hint, only the first one is effective
 explain format = 'brief' select /*+ qb_name(qb_v, v1@sel_1 .v@sel_2 .@sel_2), qb_name(qb_v, v1@sel_1 .v@sel_2 .@sel_1), merge_join(t1@qb_v) */ * from v1;
 id	estRows	task	access object	operator info
 HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
@@ -782,7 +782,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a))
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1105	Duplicate query block name qb_v for view's query block hint, only the first one is effective
+Warning	1815	Duplicate query block name qb_v for view's query block hint, only the first one is effective
 explain format = 'brief' select /*+ qb_name(qb_v, v2@sel_1 .v1@sel_2 .v@sel_2 .@sel_2), qb_name(qb_v, v2@sel_1 .v1@sel_2 .v@sel_2 .@sel_1), merge_join(t1@qb_v) */ * from v2;
 id	estRows	task	access object	operator info
 HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
@@ -822,7 +822,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a))
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1105	Duplicate query block name qb_v for view's query block hint, only the first one is effective
+Warning	1815	Duplicate query block name qb_v for view's query block hint, only the first one is effective
 explain format = 'brief' select /*+ qb_name(qb_v1_2, v@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v1;
 id	estRows	task	access object	operator info
 HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
@@ -851,7 +851,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a))
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1105	The qb_name hint qb_v1_2 is unused, please check whether the table list in the qb_name hint qb_v1_2 is correct
+Warning	1815	The qb_name hint qb_v1_2 is unused, please check whether the table list in the qb_name hint qb_v1_2 is correct
 explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;
 id	estRows	task	access object	operator info
 HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
@@ -889,7 +889,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a))
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1105	The qb_name hint qb_v1_2 is unused, please check whether the table list in the qb_name hint qb_v1_2 is correct
+Warning	1815	The qb_name hint qb_v1_2 is unused, please check whether the table list in the qb_name hint qb_v1_2 is correct
 explain format = 'brief' select /*+ qb_name(qb_v2_2, vv@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2 vv;
 id	estRows	task	access object	operator info
 HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
@@ -965,7 +965,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a))
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1105	The qb_name hint qb_v2_2 is unused, please check whether the table list in the qb_name hint qb_v2_2 is correct
+Warning	1815	The qb_name hint qb_v2_2 is unused, please check whether the table list in the qb_name hint qb_v2_2 is correct
 explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v) t;
 id	estRows	task	access object	operator info
 HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
@@ -985,7 +985,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a))
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1105	The qb_name hint qb_v_2 is unused, please check whether the table list in the qb_name hint qb_v_2 is correct
+Warning	1815	The qb_name hint qb_v_2 is unused, please check whether the table list in the qb_name hint qb_v_2 is correct
 explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v.@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel1), merge_join(t@qb_v_1) */ * from v) t;
 id	estRows	task	access object	operator info
 HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
@@ -1008,7 +1008,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a))
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1105	The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct
+Warning	1815	The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct
 explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1) t;
 id	estRows	task	access object	operator info
 HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
@@ -1037,7 +1037,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a))
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1105	The qb_name hint qb_v_2 is unused, please check whether the table list in the qb_name hint qb_v_2 is correct
+Warning	1815	The qb_name hint qb_v_2 is unused, please check whether the table list in the qb_name hint qb_v_2 is correct
 explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v1.v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1) t;
 id	estRows	task	access object	operator info
 HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
@@ -1069,7 +1069,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a))
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1105	The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct
+Warning	1815	The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct
 explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v) t;
 id	estRows	task	access object	operator info
 HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
@@ -1112,7 +1112,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a))
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1105	The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct
+Warning	1815	The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct
 explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_2 . v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v1) t;
 id	estRows	task	access object	operator info
 HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
@@ -1213,7 +1213,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a))
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1105	Only one query block name is allowed in a view hint, otherwise the hint will be invalid
+Warning	1815	Only one query block name is allowed in a view hint, otherwise the hint will be invalid
 explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(t1@qb_v_2, t3@qb_v_2) */ * from v2;
 id	estRows	task	access object	operator info
 HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
@@ -1568,7 +1568,7 @@ HashJoin_42	6944.44	root		CARTESIAN inner join
   └─Selection_45	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2), gt(planner__core__casetest__hint__hint.t4.b, 3), lt(planner__core__casetest__hint__hint.t4.a, 10), lt(planner__core__casetest__hint__hint.t4.a, 8), lt(planner__core__casetest__hint__hint.t4.a, 9)
     └─TableFullScan_44	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1105	The qb_name hint qb is unused, please check whether the table list in the qb_name hint qb is correct
+Warning	1815	The qb_name hint qb is unused, please check whether the table list in the qb_name hint qb is correct
 drop table if exists t;
 create table t(id int primary key, a int, b int, c int, key(a), key(b), key(c));
 explain format = 'brief' select * from t where b = 1 and (a = 1 or c = 1);

@@ -34,10 +34,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
 )
 
@@ -53,9 +56,14 @@ type infosSchemaClusterTableSuite struct {
 
 func createInfosSchemaClusterTableSuite(t *testing.T) *infosSchemaClusterTableSuite {
 	s := new(infosSchemaClusterTableSuite)
-	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcServer, s.listenAddr = setUpRPCService(t, s.dom, "127.0.0.1:0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	pdAddrs := []string{s.mockAddr}
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(
+		t,
+		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("infoschema-cluster-table-test", pdAddrs)),
+		mockstore.WithPDAddr(pdAddrs),
+	)
+	s.rpcServer, s.listenAddr = setUpRPCService(t, s.dom, "127.0.0.1:0")
 	s.startTime = time.Now()
 	t.Cleanup(func() {
 		if s.rpcServer != nil {
@@ -101,12 +109,12 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 	srv := httptest.NewServer(router)
 	// mock store stats stat
 	mockAddr := strings.TrimPrefix(srv.URL, "http://")
-	router.Handle(pdapi.Stores, fn.Wrap(func() (*helper.StoresStat, error) {
-		return &helper.StoresStat{
+	router.Handle(pd.Stores, fn.Wrap(func() (*pd.StoresInfo, error) {
+		return &pd.StoresInfo{
 			Count: 1,
-			Stores: []helper.StoreStat{
+			Stores: []pd.StoreInfo{
 				{
-					Store: helper.StoreBaseStat{
+					Store: pd.MetaStore{
 						ID:             1,
 						Address:        "127.0.0.1:20160",
 						State:          0,
@@ -121,15 +129,15 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 		}, nil
 	}))
 	// mock regions
-	router.Handle(pdapi.Regions, fn.Wrap(func() (*helper.RegionsInfo, error) {
-		return &helper.RegionsInfo{
+	router.Handle(pd.Regions, fn.Wrap(func() (*pd.RegionsInfo, error) {
+		return &pd.RegionsInfo{
 			Count: 1,
-			Regions: []helper.RegionInfo{
+			Regions: []pd.RegionInfo{
 				{
 					ID:       1,
 					StartKey: "",
 					EndKey:   "",
-					Epoch: helper.RegionEpoch{
+					Epoch: pd.RegionEpoch{
 						ConfVer: 1,
 						Version: 2,
 					},
@@ -142,7 +150,7 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 		}, nil
 	}))
 	// mock PD API
-	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
+	router.Handle(pd.Status, fn.Wrap(func() (any, error) {
 		return struct {
 			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
@@ -153,14 +161,14 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 			StartTimestamp: s.startTime.Unix(),
 		}, nil
 	}))
-	var mockConfig = func() (map[string]interface{}, error) {
-		configuration := map[string]interface{}{
+	var mockConfig = func() (map[string]any, error) {
+		configuration := map[string]any{
 			"key1": "value1",
 			"key2": map[string]string{
 				"nest1": "n-value1",
 				"nest2": "n-value2",
 			},
-			"key3": map[string]interface{}{
+			"key3": map[string]any{
 				"nest1": "n-value1",
 				"nest2": "n-value2",
 				"key4": map[string]string{
@@ -172,12 +180,12 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 		return configuration, nil
 	}
 	// PD config.
-	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
+	router.Handle(pd.Config, fn.Wrap(mockConfig))
 	// TiDB/TiKV config.
 	router.Handle("/config", fn.Wrap(mockConfig))
 	// PD region.
-	router.Handle(pdapi.RegionStats, fn.Wrap(func() (*helper.PDRegionStats, error) {
-		return &helper.PDRegionStats{
+	router.Handle(pd.StatsRegion, fn.Wrap(func() (*pd.RegionStats, error) {
+		return &pd.RegionStats{
 			Count:            1,
 			EmptyCount:       1,
 			StorageSize:      1,
@@ -218,10 +226,13 @@ func TestTiDBClusterInfo(t *testing.T) {
 		row("pd", mockAddr, mockAddr, "4.0.0-alpha", "mock-pd-githash"),
 		row("tikv", "store1", "", "", ""),
 	))
-	startTime := s.startTime.Format(time.RFC3339)
-	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type != 'tidb'").Check(testkit.Rows(
+	startTime := types.NewTime(types.FromGoTime(s.startTime), mysql.TypeDatetime, 0).String()
+	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type = 'pd'").Check(testkit.Rows(
 		row("pd", mockAddr, startTime),
-		row("tikv", "store1", ""),
+	))
+	// The start_time is filled in `dataForTiDBClusterInfo` function not always same as `s.startTime`.
+	tk.MustQuery("select type, instance from information_schema.cluster_info where type = 'tikv'").Check(testkit.Rows(
+		row("tikv", "store1"),
 	))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockStoreTombstone", `return(true)`))
@@ -234,6 +245,7 @@ func TestTiDBClusterInfo(t *testing.T) {
 		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash,1001",
 		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash,0",
 		"tiproxy,127.0.0.1:6000," + mockAddr + ",mock-version,mock-githash,0",
+		"ticdc,127.0.0.1:8300," + mockAddr + ",mock-version,mock-githash,0",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo", fpExpr))
@@ -245,6 +257,7 @@ func TestTiDBClusterInfo(t *testing.T) {
 		row("tidb", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "1001"),
 		row("tikv", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "0"),
 		row("tiproxy", "127.0.0.1:6000", mockAddr, "mock-version", "mock-githash", "0"),
+		row("ticdc", "127.0.0.1:8300", mockAddr, "mock-version", "mock-githash", "0"),
 	))
 	tk.MustQuery("select * from information_schema.cluster_config").Check(testkit.Rows(
 		"pd 127.0.0.1:11080 key1 value1",
@@ -268,9 +281,17 @@ func TestTiDBClusterInfo(t *testing.T) {
 		"tikv 127.0.0.1:11080 key3.key4.nest4 n-value5",
 		"tikv 127.0.0.1:11080 key3.nest1 n-value1",
 		"tikv 127.0.0.1:11080 key3.nest2 n-value2",
+		"ticdc 127.0.0.1:8300 key1 value1",
+		"ticdc 127.0.0.1:8300 key2.nest1 n-value1",
+		"ticdc 127.0.0.1:8300 key2.nest2 n-value2",
+		"ticdc 127.0.0.1:8300 key3.key4.nest3 n-value4",
+		"ticdc 127.0.0.1:8300 key3.key4.nest4 n-value5",
+		"ticdc 127.0.0.1:8300 key3.nest1 n-value1",
+		"ticdc 127.0.0.1:8300 key3.nest2 n-value2",
 	))
 	tk.MustQuery("select TYPE, `KEY`, VALUE from information_schema.cluster_config where `key`='key3.key4.nest4' order by type").Check(testkit.Rows(
 		"pd key3.key4.nest4 n-value5",
+		"ticdc key3.key4.nest4 n-value5",
 		"tidb key3.key4.nest4 n-value5",
 		"tikv key3.key4.nest4 n-value5",
 	))
@@ -284,13 +305,12 @@ func TestTikvRegionStatus(t *testing.T) {
 		mockAddr,
 	}
 	tk := testkit.NewTestKit(t, store)
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_t1")
 	tk.MustExec(`CREATE TABLE test_t1 ( a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL)`)
 	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_ID, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1'").Check(testkit.Rows(
@@ -359,9 +379,9 @@ func TestTableStorageStats(t *testing.T) {
 		"For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')")
 
 	// Test it would get null set when get the sys schema.
-	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';").Check([][]interface{}{})
-	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA in ('information_schema', 'metrics_schema');").Check([][]interface{}{})
-	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check([][]interface{}{})
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';").Check([][]any{})
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA in ('information_schema', 'metrics_schema');").Check([][]any{})
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check([][]any{})
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -377,7 +397,7 @@ func TestTableStorageStats(t *testing.T) {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 55
+	result := 54
 	require.Len(t, rows, result)
 
 	// More tests about the privileges.

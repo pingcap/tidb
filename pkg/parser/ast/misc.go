@@ -552,12 +552,8 @@ func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
 
 // Prepared represents a prepared statement.
 type Prepared struct {
-	Stmt          StmtNode
-	StmtType      string
-	Params        []ParamMarkerExpr
-	SchemaVersion int64
-	CachedPlan    interface{}
-	CachedNames   interface{}
+	Stmt     StmtNode
+	StmtType string
 }
 
 // ExecuteStmt is a statement to execute PreparedStmt.
@@ -800,6 +796,8 @@ const (
 	SetNames = "SetNAMES"
 	// SetCharset is the const for set charset stmt.
 	SetCharset = "SetCharset"
+	// TiDBCloudStorageURI is the const for set tidb_cloud_storage_uri stmt.
+	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
 )
 
 // VariableAssignment is a variable assignment struct.
@@ -838,7 +836,10 @@ func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.Name)
 		ctx.WritePlain("=")
 	}
-	if err := n.Value.Restore(ctx); err != nil {
+	if n.Name == TiDBCloudStorageURI {
+		// need to redact the url for safety when `show processlist;`
+		ctx.WritePlain(RedactURL(n.Value.(ValueExpr).GetString()))
+	} else if err := n.Value.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore VariableAssignment.Value")
 	}
 	if n.ExtendValue != nil {
@@ -1107,6 +1108,15 @@ func (n *SetStmt) Accept(v Visitor) (Node, bool) {
 		n.Variables[i] = node.(*VariableAssignment)
 	}
 	return v.Leave(n)
+}
+
+// SecureText implements SensitiveStatement interface.
+// need to redact the tidb_cloud_storage_url for safety when `show processlist;`
+func (n *SetStmt) SecureText() string {
+	redactedStmt := *n
+	var sb strings.Builder
+	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	return sb.String()
 }
 
 // SetConfigStmt is the statement to set cluster configs.
@@ -2291,7 +2301,7 @@ type AdminStmtType int
 
 // Admin statement types.
 const (
-	AdminShowDDL = iota + 1
+	AdminShowDDL AdminStmtType = iota + 1
 	AdminCheckTable
 	AdminShowDDLJobs
 	AdminCancelDDLJobs
@@ -2314,16 +2324,60 @@ const (
 	AdminCaptureBindings
 	AdminEvolveBindings
 	AdminReloadBindings
-	AdminShowTelemetry
-	AdminResetTelemetryID
 	AdminReloadStatistics
 	AdminFlushPlanCache
+	AdminSetBDRRole
+	AdminShowBDRRole
+	AdminUnsetBDRRole
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
 type HandleRange struct {
 	Begin int64
 	End   int64
+}
+
+// BDRRole represents the role of the cluster in BDR mode.
+type BDRRole string
+
+const (
+	BDRRolePrimary   BDRRole = "primary"
+	BDRRoleSecondary BDRRole = "secondary"
+	BDRRoleNone      BDRRole = ""
+)
+
+// DeniedByBDR checks whether the DDL is denied by BDR.
+func DeniedByBDR(role BDRRole, action model.ActionType, job *model.Job) (denied bool) {
+	ddlType, ok := model.ActionBDRMap[action]
+	switch role {
+	case BDRRolePrimary:
+		if !ok {
+			return true
+		}
+
+		// Can't add unique index on primary role.
+		if job != nil && (action == model.ActionAddIndex || action == model.ActionAddPrimaryKey) &&
+			len(job.Args) >= 1 && job.Args[0].(bool) {
+			// job.Args[0] is unique when job.Type is ActionAddIndex or ActionAddPrimaryKey.
+			return true
+		}
+
+		if ddlType == model.SafeDDL || ddlType == model.UnmanagementDDL {
+			return false
+		}
+	case BDRRoleSecondary:
+		if !ok {
+			return true
+		}
+		if ddlType == model.UnmanagementDDL {
+			return false
+		}
+	default:
+		// if user do not set bdr role, we will not deny any ddl as `none`
+		return false
+	}
+
+	return true
 }
 
 type StatementScope int
@@ -2413,6 +2467,7 @@ type AdminStmt struct {
 	Where          ExprNode
 	StatementScope StatementScope
 	LimitSimple    LimitSimple
+	BDRRole        BDRRole
 }
 
 // Restore implements Node interface.
@@ -2553,10 +2608,6 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("EVOLVE BINDINGS")
 	case AdminReloadBindings:
 		ctx.WriteKeyWord("RELOAD BINDINGS")
-	case AdminShowTelemetry:
-		ctx.WriteKeyWord("SHOW TELEMETRY")
-	case AdminResetTelemetryID:
-		ctx.WriteKeyWord("RESET TELEMETRY_ID")
 	case AdminReloadStatistics:
 		ctx.WriteKeyWord("RELOAD STATS_EXTENDED")
 	case AdminFlushPlanCache:
@@ -2567,6 +2618,19 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		} else if n.StatementScope == StatementScopeGlobal {
 			ctx.WriteKeyWord("FLUSH GLOBAL PLAN_CACHE")
 		}
+	case AdminSetBDRRole:
+		switch n.BDRRole {
+		case BDRRolePrimary:
+			ctx.WriteKeyWord("SET BDR ROLE PRIMARY")
+		case BDRRoleSecondary:
+			ctx.WriteKeyWord("SET BDR ROLE SECONDARY")
+		default:
+			return errors.New("Unsupported BDR role")
+		}
+	case AdminShowBDRRole:
+		ctx.WriteKeyWord("SHOW BDR ROLE")
+	case AdminUnsetBDRRole:
+		ctx.WriteKeyWord("UNSET BDR ROLE")
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
@@ -3517,45 +3581,6 @@ func (n *BRIEStmt) SecureText() string {
 	return sb.String()
 }
 
-type LoadDataActionTp int
-
-const (
-	LoadDataPause LoadDataActionTp = iota
-	LoadDataResume
-	LoadDataCancel
-	LoadDataDrop
-)
-
-// LoadDataActionStmt represent PAUSE/RESUME/CANCEL/DROP LOAD DATA JOB statement.
-type LoadDataActionStmt struct {
-	stmtNode
-
-	Tp    LoadDataActionTp
-	JobID int64
-}
-
-func (n *LoadDataActionStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
-}
-
-func (n *LoadDataActionStmt) Restore(ctx *format.RestoreCtx) error {
-	switch n.Tp {
-	case LoadDataPause:
-		ctx.WriteKeyWord("PAUSE LOAD DATA JOB ")
-	case LoadDataResume:
-		ctx.WriteKeyWord("RESUME LOAD DATA JOB ")
-	case LoadDataCancel:
-		ctx.WriteKeyWord("CANCEL LOAD DATA JOB ")
-	case LoadDataDrop:
-		ctx.WriteKeyWord("DROP LOAD DATA JOB ")
-	default:
-		return errors.Errorf("invalid load data action type: %d", n.Tp)
-	}
-	ctx.WritePlainf("%d", n.JobID)
-	return nil
-}
-
 type ImportIntoActionTp string
 
 const (
@@ -3663,9 +3688,11 @@ type HintTable struct {
 }
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
-	if ht.DBName.L != "" {
-		ctx.WriteName(ht.DBName.String())
-		ctx.WriteKeyWord(".")
+	if !ctx.Flags.HasWithoutSchemaNameFlag() {
+		if ht.DBName.L != "" {
+			ctx.WriteName(ht.DBName.String())
+			ctx.WriteKeyWord(".")
+		}
 	}
 	ctx.WriteName(ht.TableName.String())
 	if ht.QBName.L != "" {
@@ -3716,7 +3743,9 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.HintData.(string))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
-	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join", "broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
+		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading", "no_hash_join", "no_merge_join",
+		"no_index_join", "no_index_hash_join", "no_index_merge_join":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")
@@ -3774,7 +3803,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		hintData := n.HintData.(HintSetVar)
 		ctx.WritePlain(hintData.VarName)
 		ctx.WritePlain(" = ")
-		ctx.WritePlain(hintData.Value)
+		ctx.WriteString(hintData.Value)
 	}
 	ctx.WritePlain(")")
 	return nil

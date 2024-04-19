@@ -23,5 +23,6 @@ import (
 var Analyzer = rowserr.NewAnalyzer()
 
 func init() {
+	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }

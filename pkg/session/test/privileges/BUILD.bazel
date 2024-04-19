@@ -8,7 +8,6 @@ go_test(
         "privileges_test.go",
     ],
     flaky = True,
-    shard_count = 5,
     deps = [
         "//pkg/config",
         "//pkg/parser/auth",

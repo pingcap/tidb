@@ -17,12 +17,15 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -37,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"go.uber.org/zap"
 )
@@ -83,7 +87,7 @@ func newBackfillScheduler(ctx context.Context, info *reorgInfo, sessPool *sess.P
 	jobCtx *JobContext) (backfillScheduler, error) {
 	if tp == typeAddIndexWorker && info.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 		ctx = logutil.WithCategory(ctx, "ddl-ingest")
-		return newIngestBackfillScheduler(ctx, info, sessPool, tbl, false), nil
+		return newIngestBackfillScheduler(ctx, info, sessPool, tbl)
 	}
 	return newTxnBackfillScheduler(ctx, info, sessPool, tp, tbl, sessCtx, jobCtx)
 }
@@ -135,18 +139,24 @@ func newSessCtx(
 	resourceGroupName string,
 ) (sessionctx.Context, error) {
 	sessCtx := newContext(store)
-	if err := initSessCtx(sessCtx, sqlMode, tzLocation); err != nil {
+	if err := initSessCtx(sessCtx, sqlMode, tzLocation, resourceGroupName); err != nil {
 		return nil, errors.Trace(err)
 	}
-	sessCtx.GetSessionVars().ResourceGroupName = resourceGroupName
 	return sessCtx, nil
 }
 
+// initSessCtx initializes the session context. Be careful to the timezone.
 func initSessCtx(
 	sessCtx sessionctx.Context,
 	sqlMode mysql.SQLMode,
 	tzLocation *model.TimeZoneLocation,
+	resGroupName string,
 ) error {
+	// Correct the initial timezone.
+	tz := *time.UTC
+	sessCtx.GetSessionVars().TimeZone = &tz
+	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(&tz)
+
 	// Set the row encode format version.
 	rowFormat := variable.GetDDLReorgRowFormat()
 	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != variable.DefTiDBRowFormatV1
@@ -156,20 +166,51 @@ func initSessCtx(
 		return errors.Trace(err)
 	}
 	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
-	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
+
+	errLevels := sessCtx.GetSessionVars().StmtCtx.ErrLevels()
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
+	errLevels[errctx.ErrGroupDividedByZero] =
+		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
+	sessCtx.GetSessionVars().StmtCtx.SetErrLevels(errLevels)
 
 	typeFlags := types.StrictFlags.
 		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
 		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode())
+		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()).
+		WithCastTimeToYearThroughConcat(true)
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
+	sessCtx.GetSessionVars().StmtCtx.ResourceGroupName = resGroupName
 
 	// Prevent initializing the mock context in the workers concurrently.
 	// For details, see https://github.com/pingcap/tidb/issues/40879.
-	_ = sessCtx.GetDomainInfoSchema()
+	if _, ok := sessCtx.(*mock.Context); ok {
+		_ = sessCtx.GetDomainInfoSchema()
+	}
 	return nil
+}
+
+func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context) {
+	sv := sessCtx.GetSessionVars()
+	rowEncoder := sv.RowEncoder.Enable
+	sqlMode := sv.SQLMode
+	var timezone *time.Location
+	if sv.TimeZone != nil {
+		// Copy the content of timezone instead of pointer because it may be changed.
+		tz := *sv.TimeZone
+		timezone = &tz
+	}
+	typeFlags := sv.StmtCtx.TypeFlags()
+	errLevels := sv.StmtCtx.ErrLevels()
+	resGroupName := sv.StmtCtx.ResourceGroupName
+	return func(usedSessCtx sessionctx.Context) {
+		uv := usedSessCtx.GetSessionVars()
+		uv.RowEncoder.Enable = rowEncoder
+		uv.SQLMode = sqlMode
+		uv.TimeZone = timezone
+		uv.StmtCtx.SetTypeFlags(typeFlags)
+		uv.StmtCtx.SetErrLevels(errLevels)
+		uv.StmtCtx.ResourceGroupName = resGroupName
+	}
 }
 
 func (*txnBackfillScheduler) expectedWorkerSize() (size int) {
@@ -271,7 +312,7 @@ type ingestBackfillScheduler struct {
 	reorgInfo  *reorgInfo
 	sessPool   *sess.Pool
 	tbl        table.PhysicalTable
-	distribute bool
+	avgRowSize int
 
 	closed bool
 
@@ -287,18 +328,28 @@ type ingestBackfillScheduler struct {
 	checkpointMgr *ingest.CheckpointManager
 }
 
-func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
-	sessPool *sess.Pool, tbl table.PhysicalTable, distribute bool) *ingestBackfillScheduler {
+func newIngestBackfillScheduler(
+	ctx context.Context,
+	info *reorgInfo,
+	sessPool *sess.Pool,
+	tbl table.PhysicalTable,
+) (*ingestBackfillScheduler, error) {
+	sctx, err := sessPool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer sessPool.Put(sctx)
+	avgRowSize := estimateTableRowSize(ctx, info.d.store, sctx.GetRestrictedSQLExecutor(), tbl)
 	return &ingestBackfillScheduler{
 		ctx:        ctx,
 		reorgInfo:  info,
 		sessPool:   sessPool,
 		tbl:        tbl,
+		avgRowSize: avgRowSize,
 		taskCh:     make(chan *reorgBackfillTask, backfillTaskChanSize),
 		resultCh:   make(chan *backfillResult, backfillTaskChanSize),
 		poolErr:    make(chan error),
-		distribute: distribute,
-	}
+	}, nil
 }
 
 func (b *ingestBackfillScheduler) setupWorkers() error {
@@ -326,6 +377,8 @@ func (b *ingestBackfillScheduler) setupWorkers() error {
 	b.writerPool = writerPool
 	b.copReqSenderPool.chunkSender = writerPool
 	b.copReqSenderPool.adjustSize(readerCnt)
+	logutil.Logger(b.ctx).Info("setup ingest backfill workers",
+		zap.Int64("jobID", job.ID), zap.Int("reader", readerCnt), zap.Int("writer", writerCnt))
 	return nil
 }
 
@@ -420,7 +473,7 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordCh
 	worker, err := newAddIndexIngestWorker(
 		b.ctx, b.tbl, reorgInfo.d, engines, b.resultCh, job.ID,
 		reorgInfo.SchemaName, indexIDs, b.writerMaxID,
-		b.copReqSenderPool, sessCtx, b.checkpointMgr, b.distribute)
+		b.copReqSenderPool, sessCtx, b.checkpointMgr)
 	if err != nil {
 		// Return an error only if it is the first worker.
 		if b.writerMaxID == 0 {
@@ -461,15 +514,29 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 	return newCopReqSenderPool(b.ctx, copCtx, sessCtx.GetStore(), b.taskCh, b.sessPool, b.checkpointMgr), nil
 }
 
-func (*ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
-	return expectedIngestWorkerCnt()
+func (b *ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize int) {
+	return expectedIngestWorkerCnt(int(variable.GetDDLReorgWorkerCounter()), b.avgRowSize)
 }
 
-func expectedIngestWorkerCnt() (readerCnt, writerCnt int) {
-	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
-	readerCnt = max(readerCnt, 1)
-	writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
+func expectedIngestWorkerCnt(concurrency, avgRowSize int) (readerCnt, writerCnt int) {
+	workerCnt := concurrency
+	if avgRowSize == 0 {
+		// Statistic data not exist, use default concurrency.
+		readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
+		readerCnt = max(readerCnt, 1)
+		writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
+		return readerCnt, writerCnt
+	}
+
+	readerRatio := []float64{0.5, 1, 2, 4, 8}
+	rowSize := []uint64{200, 500, 1000, 3000, math.MaxUint64}
+	for i, s := range rowSize {
+		if uint64(avgRowSize) <= s {
+			readerCnt = max(int(float64(workerCnt)*readerRatio[i]), 1)
+			writerCnt = max(workerCnt, 1)
+			break
+		}
+	}
 	return readerCnt, writerCnt
 }
 
@@ -488,13 +555,11 @@ func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool
 		w.resultCh <- result
 		return
 	}
-	if !w.distribute {
-		err := w.d.isReorgRunnable(w.jobID, false)
-		if err != nil {
-			result.err = err
-			w.resultCh <- result
-			return
-		}
+	err := w.d.isReorgRunnable(w.jobID, false)
+	if err != nil {
+		result.err = err
+		w.resultCh <- result
+		return
 	}
 	count, nextKey, err := w.WriteLocal(&rs)
 	if err != nil {

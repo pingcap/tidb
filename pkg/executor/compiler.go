@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -48,21 +49,24 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		if r == nil {
 			return
 		}
-		if recoveredErr, ok := r.(error); !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoveredErr) ||
+		recoveredErr, ok := r.(error)
+		if !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoveredErr) ||
 			exeerrors.ErrMemoryExceedForInstance.Equal(recoveredErr) ||
 			exeerrors.ErrQueryInterrupted.Equal(recoveredErr) ||
 			exeerrors.ErrMaxExecTimeExceeded.Equal(recoveredErr)) {
 			panic(r)
-		} else {
-			err = recoveredErr
 		}
+		err = recoveredErr
 		logutil.Logger(ctx).Error("compile SQL panic", zap.String("SQL", stmtNode.Text()), zap.Stack("stack"), zap.Any("recover", r))
 	}()
 
 	c.Ctx.GetSessionVars().StmtCtx.IsReadOnly = plannercore.IsReadOnly(stmtNode, c.Ctx.GetSessionVars())
 
+	// Do preprocess and validate.
 	ret := &plannercore.PreprocessorReturn{}
-	err = plannercore.Preprocess(ctx, c.Ctx,
+	err = plannercore.Preprocess(
+		ctx,
+		c.Ctx,
 		stmtNode,
 		plannercore.WithPreprocessorReturn(ret),
 		plannercore.InitTxnContextProvider,
@@ -85,18 +89,19 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	stmtCtx := sessVars.StmtCtx
 	// handle the execute statement
 	var (
-		pointPlanShortPathOK bool
-		preparedObj          *plannercore.PlanCacheStmt
+		pointGetPlanShortPathOK bool
+		preparedObj             *plannercore.PlanCacheStmt
 	)
 
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if preparedObj, err = plannercore.GetPreparedStmt(execStmt, sessVars); err != nil {
 			return nil, err
 		}
-		if pointPlanShortPathOK, err = plannercore.IsPointPlanShortPathOK(c.Ctx, is, preparedObj); err != nil {
+		if pointGetPlanShortPathOK, err = plannercore.IsPointGetPlanShortPathOK(c.Ctx, is, preparedObj); err != nil {
 			return nil, err
 		}
 	}
+	// Build the final physical plan.
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, is)
 	if err != nil {
 		return nil, err
@@ -107,9 +112,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	})
 
 	if preparedObj != nil {
-		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL)
+		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	} else {
-		CountStmtNode(stmtNode, sessVars.InRestrictedSQL)
+		CountStmtNode(stmtNode, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	}
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
@@ -125,9 +130,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
 		OutputNames:   names,
-		Ti:            &TelemetryInfo{},
 	}
-	if pointPlanShortPathOK {
+	// Use cached plan if possible.
+	if pointGetPlanShortPathOK {
 		if ep, ok := stmt.Plan.(*plannercore.Execute); ok {
 			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
 				stmtCtx.SetPlan(stmt.Plan)
@@ -136,13 +141,16 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 				stmt.PsStmt = preparedObj
 			} else {
 				// invalid the previous cached point plan
-				preparedObj.PreparedAst.CachedPlan = nil
+				preparedObj.PointGet.Plan = nil
 			}
 		}
 	}
-	if err = sessiontxn.OptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
+
+	// Perform optimization and initialization related to the transaction level.
+	if err = sessiontxn.AdviseOptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
 		return nil, err
 	}
+
 	return stmt, nil
 }
 
@@ -151,9 +159,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 // If the estimated output row count of any operator in the physical plan tree
 // is greater than the specific threshold, we'll set it to lowPriority when
 // sending it to the coprocessor.
-func needLowerPriority(p plannercore.Plan) bool {
+func needLowerPriority(p base.Plan) bool {
 	switch x := p.(type) {
-	case plannercore.PhysicalPlan:
+	case base.PhysicalPlan:
 		return isPhysicalPlanNeedLowerPriority(x)
 	case *plannercore.Execute:
 		return needLowerPriority(x.Plan)
@@ -173,7 +181,7 @@ func needLowerPriority(p plannercore.Plan) bool {
 	return false
 }
 
-func isPhysicalPlanNeedLowerPriority(p plannercore.PhysicalPlan) bool {
+func isPhysicalPlanNeedLowerPriority(p base.PhysicalPlan) bool {
 	expensiveThreshold := int64(config.GetGlobalConfig().Log.ExpensiveThreshold)
 	if int64(p.StatsCount()) > expensiveThreshold {
 		return true
@@ -189,7 +197,7 @@ func isPhysicalPlanNeedLowerPriority(p plannercore.PhysicalPlan) bool {
 }
 
 // CountStmtNode records the number of statements with the same type.
-func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
+func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool, resourceGroup string) {
 	if inRestrictedSQL {
 		return
 	}
@@ -205,11 +213,11 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 			}
 		case config.GetGlobalConfig().Status.RecordDBLabel:
 			for dbLabel := range dbLabels {
-				metrics.StmtNodeCounter.WithLabelValues(typeLabel, dbLabel).Inc()
+				metrics.StmtNodeCounter.WithLabelValues(typeLabel, dbLabel, resourceGroup).Inc()
 			}
 		}
 	} else {
-		metrics.StmtNodeCounter.WithLabelValues(typeLabel, "").Inc()
+		metrics.StmtNodeCounter.WithLabelValues(typeLabel, "", resourceGroup).Inc()
 	}
 }
 

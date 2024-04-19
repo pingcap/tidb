@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -278,7 +279,7 @@ func (fkc *FKCheckExec) buildCheckKeyFromFKValue(sc *stmtctx.StatementContext, v
 		}
 		return key, true, nil
 	}
-	key, distinct, err := fkc.Idx.GenIndexKey(sc, vals, nil, nil)
+	key, distinct, err := fkc.Idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), vals, nil, nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -292,7 +293,8 @@ func (fkc *FKCheckExec) buildHandleFromFKValues(sc *stmtctx.StatementContext, va
 	if len(vals) == 1 && fkc.Idx == nil {
 		return kv.IntHandle(vals[0].GetInt64()), nil
 	}
-	handleBytes, err := codec.EncodeKey(sc, nil, vals...)
+	handleBytes, err := codec.EncodeKey(sc.TimeZone(), nil, vals...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -464,7 +466,8 @@ func (h *fkValueHelper) fetchFKValuesWithCheck(sc *stmtctx.StatementContext, row
 	if err != nil || h.hasNullValue(vals) {
 		return nil, err
 	}
-	keyBuf, err := codec.EncodeKey(sc, nil, vals...)
+	keyBuf, err := codec.EncodeKey(sc.TimeZone(), nil, vals...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -687,7 +690,8 @@ func (fkc *FKCascadeExec) onUpdateRow(sc *stmtctx.StatementContext, oldRow, newR
 	if err != nil {
 		return err
 	}
-	newValsKey, err := codec.EncodeKey(sc, nil, newVals...)
+	newValsKey, err := codec.EncodeKey(sc.TimeZone(), nil, newVals...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return err
 	}
@@ -716,7 +720,7 @@ func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (exec.Executor, err
 // this is to avoid performance issue, see: https://github.com/pingcap/tidb/issues/38631
 var maxHandleFKValueInOneCascade = 1024
 
-func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.Plan, error) {
+func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (base.Plan, error) {
 	if len(fkc.fkValues) == 0 && len(fkc.fkUpdatedValuesMap) == 0 {
 		return nil, nil
 	}
@@ -757,7 +761,7 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.P
 	if err != nil {
 		return nil, err
 	}
-	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx, stmtNode, fkc.b.is)
+	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx.GetPlanCtx(), stmtNode, fkc.b.is)
 	if err != nil {
 		return nil, err
 	}

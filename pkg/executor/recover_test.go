@@ -26,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
@@ -135,7 +137,7 @@ func TestFlashbackTable(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
 	}()
 
-	store := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_flashback")
@@ -376,15 +378,15 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	nowTS, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 	tk.MustExec("truncate table mysql.stats_meta")
-	errorMsg := fmt.Sprintf("[ddl:-1]Detected modified system table during [%s, now), can't do flashback", oracle.GetTimeFromTS(nowTS).String())
-	tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(nowTS)), errorMsg)
+	errorMsg := fmt.Sprintf("[ddl:-1]Detected modified system table during [%s, now), can't do flashback", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat))
+	tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat)), errorMsg)
 
 	// update tidb_server_version
 	nowTS, err = tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 	tk.MustExec("update mysql.tidb set VARIABLE_VALUE=VARIABLE_VALUE+1 where VARIABLE_NAME='tidb_server_version'")
-	errorMsg = fmt.Sprintf("[ddl:-1]Detected TiDB upgrade during [%s, now), can't do flashback", oracle.GetTimeFromTS(nowTS).String())
-	tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(nowTS)), errorMsg)
+	errorMsg = fmt.Sprintf("[ddl:-1]Detected TiDB upgrade during [%s, now), can't do flashback", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat))
+	tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat)), errorMsg)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
@@ -451,6 +453,67 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/changeFlashbackGetMinSafeTimeTimeout"))
 }
 
+func TestFlashbackTSOWithSafeTs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/changeFlashbackGetMinSafeTimeTimeout", `return(0)`))
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+
+	// Set GC safe point.
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	time.Sleep(time.Second)
+	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	flashbackTs := oracle.GetTimeFromTS(ts)
+	testcases := []struct {
+		name         string
+		sql          string
+		injectSafeTS uint64
+		// compareWithSafeTS will be 0 if FlashbackTS==SafeTS, -1 if FlashbackTS < SafeTS, and +1 if FlashbackTS > SafeTS.
+		compareWithSafeTS int
+	}{
+		{
+			name:              "5 seconds ago to now, safeTS 5 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to tso %d", ts),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs),
+			compareWithSafeTS: 0,
+		},
+		{
+			name:              "10 seconds ago to now, safeTS 5 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to tso %d", ts),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second)),
+			compareWithSafeTS: -1,
+		},
+		{
+			name:              "5 seconds ago to now, safeTS 10 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to tso %d", ts),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(-10 * time.Second)),
+			compareWithSafeTS: 1,
+		},
+	}
+	for _, testcase := range testcases {
+		t.Log(testcase.name)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
+		if testcase.compareWithSafeTS == 1 {
+			start := time.Now()
+			tk.MustContainErrMsg(testcase.sql,
+				"cannot set flashback timestamp after min-resolved-ts")
+			// When set `flashbackGetMinSafeTimeTimeout` = 0, no retry for `getStoreGlobalMinSafeTS`.
+			require.Less(t, time.Since(start), time.Second)
+		} else {
+			tk.MustExec(testcase.sql)
+		}
+	}
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/changeFlashbackGetMinSafeTimeTimeout"))
+}
+
 func TestFlashbackRetryGetMinSafeTime(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -492,7 +555,7 @@ func TestFlashbackSchema(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
 	}()
 
-	store := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_flashback")

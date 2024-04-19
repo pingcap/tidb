@@ -245,7 +245,7 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRo
 		}
 		if probeKeyNullBits != nil && len(probeHCtx.naKeyColIdx) > 1 {
 			// check the idxs-th value of the join columns.
-			ok, err = codec.EqualChunkRow(c.sc, mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
+			ok, err = codec.EqualChunkRow(c.sc.TypeCtx(), mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
 			if err != nil {
 				return nil, err
 			}
@@ -293,9 +293,10 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 		memDelta            int64
 	)
 	c.memTracker.Consume(-c.chkBufSizeForOneProbe)
+	defer func() { c.memTracker.Consume(memDelta) }()
 	if needTrackMemUsage {
 		c.memTracker.Consume(int64(cap(innerPtrs)) * rowPtrSize)
-		defer c.memTracker.Consume(-int64(cap(innerPtrs))*rowPtrSize + memDelta)
+		defer c.memTracker.Consume(-int64(cap(innerPtrs)) * rowPtrSize)
 	}
 	c.chkBufSizeForOneProbe = 0
 
@@ -381,7 +382,7 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 				needCheckProbeTypes = append(needCheckProbeTypes, probeHCtx.allTypes[i])
 			}
 			// check the idxs-th value of the join columns.
-			ok, err = codec.EqualChunkRow(c.sc, mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
+			ok, err = codec.EqualChunkRow(c.sc.TypeCtx(), mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
 			if err != nil {
 				return nil, err
 			}
@@ -404,7 +405,7 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 				needCheckProbeTypes = append(needCheckProbeTypes, probeHCtx.allTypes[i])
 			}
 			// check the idxs-th value of the join columns.
-			ok, err = codec.EqualChunkRow(c.sc, mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
+			ok, err = codec.EqualChunkRow(c.sc.TypeCtx(), mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
 			if err != nil {
 				return nil, err
 			}
@@ -421,11 +422,11 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 // matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
 func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx *hashContext) (ok bool, err error) {
 	if len(c.hCtx.naKeyColIdx) > 0 {
-		return codec.EqualChunkRow(c.sc,
+		return codec.EqualChunkRow(c.sc.TypeCtx(),
 			buildRow, c.hCtx.allTypes, c.hCtx.naKeyColIdx,
 			probeRow, probeHCtx.allTypes, probeHCtx.naKeyColIdx)
 	}
-	return codec.EqualChunkRow(c.sc,
+	return codec.EqualChunkRow(c.sc.TypeCtx(),
 		buildRow, c.hCtx.allTypes, c.hCtx.keyColIdx,
 		probeRow, probeHCtx.allTypes, probeHCtx.keyColIdx)
 }
@@ -463,7 +464,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 	// 1: write the row data of join key to hashVals. (normal EQ key should ignore the null values.) null-EQ for Except statement is an exception.
 	for keyIdx, colIdx := range c.hCtx.keyColIdx {
 		ignoreNull := len(ignoreNulls) > keyIdx && ignoreNulls[keyIdx]
-		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
+		err := codec.HashChunkSelected(c.sc.TypeCtx(), hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -473,7 +474,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 	hasNullMark := make([]bool, len(hCtx.hasNull))
 	for keyIdx, colIdx := range c.hCtx.naKeyColIdx {
 		// NAAJ won't ignore any null values, but collect them as one hash bucket.
-		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, false)
+		err := codec.HashChunkSelected(c.sc.TypeCtx(), hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, false)
 		if err != nil {
 			return errors.Trace(err)
 		}

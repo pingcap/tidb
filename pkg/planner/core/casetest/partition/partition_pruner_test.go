@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/planner/core/internal"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -86,12 +86,12 @@ func getPartitionInfoFromPlan(plan []string) string {
 	infos := make([]testTablePartitionInfo, 0, 2)
 	info := testTablePartitionInfo{}
 	for _, row := range plan {
-		partitions := internal.GetFieldValue("partition:", row)
+		partitions := coretestsdk.GetFieldValue("partition:", row)
 		if partitions != "" {
 			info.Partitions = partitions
 			continue
 		}
-		tbl := internal.GetFieldValue("table:", row)
+		tbl := coretestsdk.GetFieldValue("table:", row)
 		if tbl != "" {
 			info.Table = tbl
 			infos = append(infos, info)
@@ -211,4 +211,25 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 		}
 	}
 	require.True(t, valid)
+}
+
+func TestPointGetIntHandleNotFirst(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (
+		c int,
+		a int not null,
+		b int,
+		primary key  (a) /*T![clustered_index] clustered */
+	  )`)
+	tk.MustExec(`insert into t values(1, 13, 1)`)
+	tk.MustQuery("select * from t WHERE `a` BETWEEN 13 AND 13").Check(testkit.Rows("1 13 1"))
+	tk.MustExec(`alter table t
+	  partition by range (a)
+	  (partition p0 values less than (10),
+	   partition p1 values less than (maxvalue))`)
+
+	tk.MustQuery("select * from t WHERE a BETWEEN 13 AND 13").Check(testkit.Rows("1 13 1"))
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 13 1"))
 }

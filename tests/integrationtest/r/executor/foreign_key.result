@@ -115,7 +115,7 @@ t1	CREATE TABLE `t1` (
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `leader` (`leader`),
   KEY `leader2` (`leader2`),
-  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `executor__foreign_key`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */
+  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 set @@global.tidb_enable_foreign_key=1;
 alter table t1 add constraint fk2 foreign key (leader2) references t1 (id);
@@ -128,8 +128,8 @@ t1	CREATE TABLE `t1` (
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `leader` (`leader`),
   KEY `leader2` (`leader2`),
-  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `executor__foreign_key`.`t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */,
-  CONSTRAINT `fk2` FOREIGN KEY (`leader2`) REFERENCES `executor__foreign_key`.`t1` (`id`)
+  CONSTRAINT `fk` FOREIGN KEY (`leader`) REFERENCES `t1` (`id`) ON DELETE CASCADE ON UPDATE SET NULL /* FOREIGN KEY INVALID */,
+  CONSTRAINT `fk2` FOREIGN KEY (`leader2`) REFERENCES `t1` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t1;
 create table t1 (id int key, leader int, leader2 int, index(leader), index(leader2), constraint fk foreign key (leader) references t1(id) /* FOREIGN KEY INVALID */);
@@ -341,9 +341,7 @@ a	b
 1	11
 2	NULL
 admin check table t1;
-
 admin check table t2;
-
 set @@foreign_key_checks=default;
 set @@foreign_key_checks=1;
 drop table if exists t1, t2, t3;
@@ -370,9 +368,7 @@ id	b
 1	10
 2	NULL
 admin check table t1;
-
 admin check table t2;
-
 set @@foreign_key_checks=default;
 set @@foreign_key_checks=1;
 drop table if exists t1, t2, t3;
@@ -389,6 +385,7 @@ select * from t2;
 t
 set @@time_zone=default;
 set @@foreign_key_checks=default;
+drop table t1, t2;
 set @@foreign_key_checks=1;
 drop table if exists a, b;
 create table b (  id int(11) NOT NULL AUTO_INCREMENT,  f int(11) NOT NULL,  PRIMARY KEY (id));
@@ -398,3 +395,86 @@ insert a(id,b_id) values(1,1);
 update b set id=1,f=2 where id=1;
 set @@foreign_key_checks=default;
 drop table if exists a, b;
+drop table if exists t1;
+set @@foreign_key_checks=1;
+create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid));
+insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz');
+insert into t1 (name) select name from t1;
+insert into t1 (name) select name from t1;
+insert into t1 (name) select name from t1;
+insert into t1 (name) select name from t1;
+insert into t1 (name) select name from t1;
+insert into t1 (name) select name from t1;
+insert into t1 (name) select name from t1;
+insert into t1 (name) select name from t1;
+select count(*) from t1;
+count(*)
+256
+update t1 set pid=1 where id>1;
+alter table t1 add foreign key (pid) references t1 (id) on update cascade;
+select sum(id) from t1;
+sum(id)
+32896
+SET GLOBAL tidb_mem_oom_action='CANCEL';
+set @@tidb_mem_quota_query=40960;
+update t1 set id=id+100000 where id=1;
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+select id,pid from t1 where id = 1;
+id	pid
+1	NULL
+set @@foreign_key_checks=0;
+update t1 set id=id+100000 where id=1;
+select id,pid from t1 where id<3 or pid is null order by id;
+id	pid
+2	1
+100001	NULL
+SET GLOBAL tidb_mem_oom_action = DEFAULT;
+set @@tidb_mem_quota_query=DEFAULT;
+set @@foreign_key_checks=DEFAULT;
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+drop table if exists t1, t2;
+create table t1 (id int key);
+create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);
+insert into t1 values (1), (2), (3);
+insert into t2 values (1), (2), (3);
+lock table t2 read;
+set @@foreign_key_checks=1;
+delete from t1 where id = 1;
+Error 8020 (HY000): Table 't2' was locked in READ by server: <server> session: <session>
+unlock tables;
+delete from t1 where id = 1;
+select * from t1 order by id;
+id
+2
+3
+select * from t2 order by id;
+id
+2
+3
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;
+set @@global.tidb_enable_foreign_key=1;
+set @@foreign_key_checks=1;
+create database executor__foreign_key_other_schema;
+use executor__foreign_key_other_schema;
+drop table if exists users;
+CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);
+use executor__foreign_key;
+drop table if exists orders;
+CREATE TABLE orders (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, user_id INT NOT NULL, doc JSON, FOREIGN KEY fk_user_id (user_id) REFERENCES executor__foreign_key_other_schema.users(id));
+alter table orders modify user_id int null;
+show create table orders;
+Table	Create Table
+orders	CREATE TABLE `orders` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `user_id` int(11) DEFAULT NULL,
+  `doc` json DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `fk_user_id` (`user_id`),
+  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id`) REFERENCES `executor__foreign_key_other_schema`.`users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists orders;
+drop database executor__foreign_key_other_schema;
+set @@global.tidb_enable_foreign_key=default;
+set @@foreign_key_checks=default;

@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -30,6 +31,9 @@ type InfoCache struct {
 	mu sync.RWMutex
 	// cache is sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	cache []schemaAndTimestamp
+
+	r    autoid.Requirement
+	Data *Data
 }
 
 type schemaAndTimestamp struct {
@@ -38,9 +42,12 @@ type schemaAndTimestamp struct {
 }
 
 // NewCache creates a new InfoCache.
-func NewCache(capacity int) *InfoCache {
+func NewCache(r autoid.Requirement, capacity int) *InfoCache {
+	infoData := NewData()
 	return &InfoCache{
 		cache: make([]schemaAndTimestamp, 0, capacity),
+		r:     r,
+		Data:  infoData,
 	}
 }
 
@@ -99,15 +106,24 @@ func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
 	// moreover, the most likely hit element in the array is the first one in steady mode
 	// thus it may have better performance than binary search
 	for i, is := range h.cache {
-		if is.timestamp == 0 || (i > 0 && h.cache[i-1].infoschema.SchemaMetaVersion() != is.infoschema.SchemaMetaVersion()+1) {
-			// the schema version doesn't have a timestamp or there is a gap in the schema cache
-			// ignore all the schema cache equals or less than this version in search by timestamp
-			break
+		if is.timestamp == 0 || ts < uint64(is.timestamp) {
+			// is.timestamp == 0 means the schema ts is unknown, so we can't use it, then just skip it.
+			// ts < is.timestamp means the schema is newer than ts, so we can't use it too, just skip it to find the older one.
+			continue
 		}
-		if ts >= uint64(is.timestamp) {
-			// found the largest version before the given ts
+		// ts >= is.timestamp must be true after the above condition.
+		if i == 0 {
+			// the first element is the latest schema, so we can return it directly.
 			return is.infoschema, true
 		}
+		if h.cache[i-1].infoschema.SchemaMetaVersion() == is.infoschema.SchemaMetaVersion()+1 && uint64(h.cache[i-1].timestamp) > ts {
+			// This first condition is to make sure the schema version is continuous. If last(cache[i-1]) schema-version is 10,
+			// but current(cache[i]) schema-version is not 9, then current schema is not suitable for ts.
+			// The second condition is to make sure the cache[i-1].timestamp > ts >= cache[i].timestamp, then the current schema is suitable for ts.
+			return is.infoschema, true
+		}
+		// current schema is not suitable for ts, then break the loop to avoid the unnecessary search.
+		break
 	}
 
 	logutil.BgLogger().Debug("SCHEMA CACHE no schema found")
@@ -184,7 +200,8 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 	})
 
 	// cached entry
-	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version {
+	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version &&
+		IsV2(h.cache[i].infoschema) == IsV2(is) {
 		// update timestamp if it is not 0 and cached one is 0
 		if schemaTS > 0 && h.cache[i].timestamp == 0 {
 			h.cache[i].timestamp = int64(schemaTS)

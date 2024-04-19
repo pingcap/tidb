@@ -18,7 +18,6 @@ go_library(
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_prometheus_client_golang//prometheus",
-        "@org_golang_x_exp//maps",
         "@org_uber_go_zap//:zap",
     ],
 )

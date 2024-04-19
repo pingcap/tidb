@@ -493,9 +493,9 @@ type TableInfo struct {
 	// Because auto increment ID has schemaID as prefix,
 	// We need to save original schemaID to keep autoID unchanged
 	// while renaming a table from one database to another.
-	// TODO: Remove it.
-	// Now it only uses for compatibility with the old version that already uses this field.
-	OldSchemaID int64 `json:"old_schema_id,omitempty"`
+	// Only set if table has been renamed across schemas
+	// Old name 'old_schema_id' is kept for backwards compatibility
+	AutoIDSchemaID int64 `json:"old_schema_id,omitempty"`
 
 	// ShardRowIDBits specify if the implicit row ID is sharded.
 	ShardRowIDBits uint64
@@ -541,6 +541,14 @@ type TableInfo struct {
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
+
+	DBID int64 `json:"-"`
+}
+
+// TableNameInfo provides meta data describing a table name info.
+type TableNameInfo struct {
+	ID   int64 `json:"id"`
+	Name CIStr `json:"name"`
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
@@ -718,11 +726,10 @@ func (t *TableInfo) GetUpdateTime() time.Time {
 	return TSConvert2Time(t.UpdateTS)
 }
 
-// GetDBID returns the schema ID that is used to create an allocator.
-// TODO: Remove it after removing OldSchemaID.
-func (t *TableInfo) GetDBID(dbID int64) int64 {
-	if t.OldSchemaID != 0 {
-		return t.OldSchemaID
+// GetAutoIDSchemaID returns the schema ID that was used to create an allocator.
+func (t *TableInfo) GetAutoIDSchemaID(dbID int64) int64 {
+	if t.AutoIDSchemaID != 0 {
+		return t.AutoIDSchemaID
 	}
 	return dbID
 }
@@ -1190,6 +1197,10 @@ type PartitionInfo struct {
 	// rather than pid.
 	Enable bool `json:"enable"`
 
+	// IsEmptyColumns is for syntax like `partition by key()`.
+	// When IsEmptyColums is true, it will not display column name in `show create table` stmt.
+	IsEmptyColumns bool `json:"is_empty_columns"`
+
 	Definitions []PartitionDefinition `json:"definitions"`
 	// AddingDefinitions is filled when adding partitions that is in the mid state.
 	AddingDefinitions []PartitionDefinition `json:"adding_definitions"`
@@ -1239,6 +1250,7 @@ func (pi *PartitionInfo) Clone() *PartitionInfo {
 }
 
 // GetNameByID gets the partition name by ID.
+// TODO: Remove the need for this function!
 func (pi *PartitionInfo) GetNameByID(id int64) string {
 	definitions := pi.Definitions
 	// do not convert this loop to `for _, def := range definitions`.
@@ -1305,6 +1317,14 @@ func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
 		}
 	}
 	return false
+}
+
+// ClearReorgIntermediateInfo remove intermediate information used during reorganize partition.
+func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
+	pi.DDLType = PartitionTypeNone
+	pi.DDLExpr = ""
+	pi.DDLColumns = nil
+	pi.NewTableID = 0
 }
 
 // PartitionState is the state of the partition.
@@ -1760,9 +1780,26 @@ func (cis *CIStr) MemoryUsage() (sum int64) {
 
 // TableItemID is composed by table ID and column/index ID
 type TableItemID struct {
-	TableID int64
-	ID      int64
-	IsIndex bool
+	TableID          int64
+	ID               int64
+	IsIndex          bool
+	IsSyncLoadFailed bool
+}
+
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (t TableItemID) Key() string {
+	return fmt.Sprintf("%d#%d#%t", t.ID, t.TableID, t.IsIndex)
+}
+
+// StatsLoadItem represents the load unit for statistics's memory loading.
+type StatsLoadItem struct {
+	TableItemID
+	FullLoad bool
+}
+
+// Key is used to generate unique key for TableItemID to use in the syncload
+func (s StatsLoadItem) Key() string {
+	return fmt.Sprintf("%s#%t", s.TableItemID.Key(), s.FullLoad)
 }
 
 // PolicyRefInfo is the struct to refer the placement policy.
@@ -1902,6 +1939,10 @@ func (p *PlacementSettings) String() string {
 
 	if len(p.LearnerConstraints) > 0 {
 		writeSettingStringToBuilder(sb, "LEARNER_CONSTRAINTS", p.LearnerConstraints)
+	}
+
+	if len(p.SurvivalPreferences) > 0 {
+		writeSettingStringToBuilder(sb, "SURVIVAL_PREFERENCES", p.SurvivalPreferences)
 	}
 
 	return sb.String()
@@ -2078,8 +2119,8 @@ func (p *ResourceGroupSettings) String() string {
 
 // Adjust adjusts the resource group settings.
 func (p *ResourceGroupSettings) Adjust() {
-	// Curretly we only support ru_per_sec sytanx, so BurstLimit(capicity) is always same as ru_per_sec.
-	if p.BurstLimit == 0 {
+	// Curretly we only support ru_per_sec sytanx, so BurstLimit(capicity) is always same as ru_per_sec except burstable.
+	if p.BurstLimit >= 0 {
 		p.BurstLimit = int64(p.RURate)
 	}
 }

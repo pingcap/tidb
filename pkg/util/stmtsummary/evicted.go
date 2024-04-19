@@ -179,9 +179,8 @@ func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *stmtS
 		return isMatch
 	} else if eEndTime <= sBeginTime {
 		return isTooOld
-	} else {
-		return isTooYoung
 	}
+	return isTooYoung
 }
 
 // ToEvictedCountDatum converts history evicted record to `evicted count` record's datum
@@ -382,4 +381,8 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	addTo.sumWriteSQLRespTotal += addWith.sumWriteSQLRespTotal
 
 	addTo.sumErrors += addWith.sumErrors
+
+	addTo.StmtRUSummary.Merge(&addWith.StmtRUSummary)
+	// resourceGroupName might not be inited because when it is a evicted item.
+	addTo.resourceGroupName = addWith.resourceGroupName
 }

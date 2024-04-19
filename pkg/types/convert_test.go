@@ -32,7 +32,7 @@ type invalidMockType struct {
 }
 
 // Convert converts the val with type tp.
-func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
+func Convert(val any, target *FieldType) (v any, err error) {
 	d := NewDatum(val)
 	ret, err := d.ConvertTo(DefaultStmtNoWarningContext, target)
 	if err != nil {
@@ -147,14 +147,14 @@ func TestConvertType(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "10:11:12.1", vv.(Duration).String())
 	typeCtx := DefaultStmtNoWarningContext
-	vd, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2, nil)
+	vd, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2)
 	require.Equal(t, "2010-10-10 10:11:11.12", vd.String())
 	require.NoError(t, err)
 	v, err = Convert(vd, ft)
 	require.NoError(t, err)
 	require.Equal(t, "10:11:11.1", v.(Duration).String())
 
-	vt, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2, nil)
+	vt, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
 	require.Equal(t, "2010-10-10 10:11:11.12", vt.String())
 	require.NoError(t, err)
 	v, err = Convert(vt, ft)
@@ -271,7 +271,7 @@ func TestConvertType(t *testing.T) {
 	require.Equal(t, int64(2015), v)
 	v, err = Convert(ZeroDuration, ft)
 	require.NoError(t, err)
-	require.Equal(t, int64(0), v)
+	require.Equal(t, int64(time.Now().Year()), v)
 	bj1, err := ParseBinaryJSONFromString("99")
 	require.NoError(t, err)
 	v, err = Convert(bj1, ft)
@@ -322,7 +322,7 @@ func TestConvertType(t *testing.T) {
 	require.Error(t, err)
 }
 
-func testToString(t *testing.T, val interface{}, expect string) {
+func testToString(t *testing.T, val any, expect string) {
 	b, err := ToString(val)
 	require.NoError(t, err)
 	require.Equal(t, expect, b)
@@ -343,7 +343,7 @@ func TestConvertToString(t *testing.T) {
 	testToString(t, Enum{Name: "a", Value: 1}, "a")
 	testToString(t, Set{Name: "a", Value: 1}, "a")
 
-	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6, nil)
+	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	require.NoError(t, err)
 	testToString(t, t1, "2011-11-10 11:11:11.999999")
 
@@ -577,7 +577,7 @@ func TestFieldTypeToStr(t *testing.T) {
 	require.Equal(t, "binary", v)
 }
 
-func accept(t *testing.T, tp byte, value interface{}, unsigned bool, expected string) {
+func accept(t *testing.T, tp byte, value any, unsigned bool, expected string) {
 	ft := NewFieldType(tp)
 	if unsigned {
 		ft.AddFlag(mysql.UnsignedFlag)
@@ -595,15 +595,15 @@ func accept(t *testing.T, tp byte, value interface{}, unsigned bool, expected st
 	}
 }
 
-func unsignedAccept(t *testing.T, tp byte, value interface{}, expected string) {
+func unsignedAccept(t *testing.T, tp byte, value any, expected string) {
 	accept(t, tp, value, true, expected)
 }
 
-func signedAccept(t *testing.T, tp byte, value interface{}, expected string) {
+func signedAccept(t *testing.T, tp byte, value any, expected string) {
 	accept(t, tp, value, false, expected)
 }
 
-func deny(t *testing.T, tp byte, value interface{}, unsigned bool, expected string) {
+func deny(t *testing.T, tp byte, value any, unsigned bool, expected string) {
 	ft := NewFieldType(tp)
 	if unsigned {
 		ft.AddFlag(mysql.UnsignedFlag)
@@ -620,15 +620,15 @@ func deny(t *testing.T, tp byte, value interface{}, unsigned bool, expected stri
 	}
 }
 
-func unsignedDeny(t *testing.T, tp byte, value interface{}, expected string) {
+func unsignedDeny(t *testing.T, tp byte, value any, expected string) {
 	deny(t, tp, value, true, expected)
 }
 
-func signedDeny(t *testing.T, tp byte, value interface{}, expected string) {
+func signedDeny(t *testing.T, tp byte, value any, expected string) {
 	deny(t, tp, value, false, expected)
 }
 
-func strvalue(v interface{}) string {
+func strvalue(v any) string {
 	return fmt.Sprintf("%v", v)
 }
 
@@ -864,7 +864,7 @@ func TestGetValidInt(t *testing.T) {
 		{"123de", "123", true, true},
 	}
 	warnings := &warnStore{}
-	ctx := NewContext(DefaultStmtFlags.WithTruncateAsWarning(true), time.UTC, warnings.AppendWarning)
+	ctx := NewContext(DefaultStmtFlags.WithTruncateAsWarning(true), time.UTC, warnings)
 	warningCount := 0
 	for i, tt := range tests {
 		prefix, err := getValidIntPrefix(ctx, tt.origin, false)
@@ -1074,13 +1074,13 @@ func TestConvertJSONToInt(t *testing.T) {
 
 func TestConvertJSONToFloat(t *testing.T) {
 	var tests = []struct {
-		in  interface{}
+		in  any
 		out float64
 		ty  JSONTypeCode
 		err bool
 	}{
-		{in: make(map[string]interface{}), ty: JSONTypeCodeObject, err: true},
-		{in: make([]interface{}, 0), ty: JSONTypeCodeArray, err: true},
+		{in: make(map[string]any), ty: JSONTypeCodeObject, err: true},
+		{in: make([]any, 0), ty: JSONTypeCodeArray, err: true},
 		{in: int64(3), out: 3, ty: JSONTypeCodeInt64},
 		{in: int64(-3), out: -3, ty: JSONTypeCodeInt64},
 		{in: uint64(1 << 63), out: 1 << 63, ty: JSONTypeCodeUint64},

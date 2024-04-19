@@ -36,7 +36,14 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	// To speed up testing
 	DefProfileDuration = time.Millisecond * 200
-	goleak.VerifyTestMain(m)
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
+		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	}
+	testsetup.SetupForCommonTest()
+	goleak.VerifyTestMain(m, opts...)
 }
 
 func TestBasicAPI(t *testing.T) {

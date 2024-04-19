@@ -15,19 +15,24 @@
 package importintotest
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"slices"
 	"strconv"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func (s *mockGCSSuite) TestSplitFile() {
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	var allData []string
 	var content []byte
 	for j := 0; j < 500; j++ {
@@ -54,14 +59,14 @@ func (s *mockGCSSuite) TestSplitFile() {
 	s.Len(result, 1)
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(int64(jobID))
 	s.NoError(err)
-	globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
+	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
 
-	subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(globalTask.ID, importinto.StepImport)
+	subtasks, err2 := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepImport)
 	s.NoError(err2)
 	s.Len(subtasks, 3)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))

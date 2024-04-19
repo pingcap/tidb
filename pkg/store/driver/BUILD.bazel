@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/store/driver",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/executor/importer",
         "//pkg/kv",
+        "//pkg/metrics",
         "//pkg/sessionctx/variable",
         "//pkg/store/copr",
         "//pkg/store/driver/error",
@@ -23,6 +23,7 @@ go_library(
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//http",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//keepalive",
         "@org_uber_go_zap//:zap",

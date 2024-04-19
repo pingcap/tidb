@@ -171,6 +171,15 @@ func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context,
 	}
 }
 
+func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
+	if entrySizeLimit := variable.TxnEntrySizeLimit.Load(); entrySizeLimit > 0 {
+		txn.SetOption(kv.SizeLimits, kv.TxnSizeLimits{
+			Entry: entrySizeLimit,
+			Total: kv.TxnTotalSizeLimit.Load(),
+		})
+	}
+}
+
 type backfiller interface {
 	BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
 	AddMetricInfo(float64)
@@ -388,6 +397,11 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 		zap.Int64("physicalTableID", t.GetPhysicalID()),
 		zap.String("start key", hex.EncodeToString(startKey)),
 		zap.String("end key", hex.EncodeToString(endKey)))
+	if len(startKey) == 0 && len(endKey) == 0 {
+		logutil.BgLogger().Info("split table range from PD, get noop table range", zap.String("category", "ddl"), zap.Int64("physicalTableID", t.GetPhysicalID()))
+		return []kv.KeyRange{}, nil
+	}
+
 	kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
 	s, ok := store.(tikv.Storage)
 	if !ok {
@@ -613,7 +627,7 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, dbName model.CIStr, t table.
 	for _, col := range t.WritableCols() {
 		writableColInfos = append(writableColInfos, col.ColumnInfo)
 	}
-	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx, dbName, t.Meta().Name, writableColInfos, t.Meta())
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx.GetExprCtx(), dbName, t.Meta().Name, writableColInfos, t.Meta())
 	if err != nil {
 		return nil, err
 	}
@@ -672,9 +686,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 
 	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
 		return errors.Trace(err)
-	}
-	if startKey == nil && endKey == nil {
-		return nil
 	}
 
 	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {

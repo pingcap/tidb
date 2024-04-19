@@ -19,14 +19,18 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tikv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	lightning "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/errormanager"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -88,28 +92,44 @@ type litBackendCtx struct {
 	etcdClient      *clientv3.Client
 }
 
+func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(err error, indexID int64, tbl table.Table, hasDupe bool) error {
+	if err != nil && !common.ErrFoundIndexConflictRecords.Equal(err) {
+		logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
+			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
+		return errors.Trace(err)
+	} else if hasDupe {
+		logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
+			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
+
+		if common.ErrFoundIndexConflictRecords.Equal(err) {
+			tErr, ok := errors.Cause(err).(*terror.Error)
+			if !ok {
+				return errors.Trace(tikv.ErrKeyExists)
+			}
+			if len(tErr.Args()) != 4 {
+				return errors.Trace(tikv.ErrKeyExists)
+			}
+			indexName := tErr.Args()[1]
+			valueStr := tErr.Args()[2]
+
+			return errors.Trace(tikv.ErrKeyExists.FastGenByArgs(valueStr, indexName))
+		}
+		return errors.Trace(tikv.ErrKeyExists)
+	}
+	return nil
+}
+
 // CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
 func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
 	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
 	// backend must be a local backend.
-	// todo: when we can separate local backend completely from tidb backend, will remove this cast.
-	//nolint:forcetypeassert
 	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 		SysVars: bc.sysVars,
 		IndexID: indexID,
-	})
-	if err != nil {
-		logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
-			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
-		return err
-	} else if hasDupe {
-		logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
-			zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
-		return tikv.ErrKeyExists
-	}
-	return nil
+	}, lightning.ErrorOnDup)
+	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
 
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
@@ -140,16 +160,8 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 			SQLMode: mysql.ModeStrictAllTables,
 			SysVars: bc.sysVars,
 			IndexID: ei.indexID,
-		})
-		if err != nil {
-			logutil.Logger(bc.ctx).Error(LitInfoRemoteDupCheck, zap.Error(err),
-				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
-			return err
-		} else if hasDupe {
-			logutil.Logger(bc.ctx).Error(LitErrRemoteDupExistErr,
-				zap.String("table", tbl.Meta().Name.O), zap.Int64("index ID", indexID))
-			return tikv.ErrKeyExists
-		}
+		}, lightning.ErrorOnDup)
+		return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 	}
 	return nil
 }
@@ -198,7 +210,7 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		se, _ := concurrency.NewSession(bc.etcdClient)
 		mu, err := acquireLock(bc.ctx, se, distLockKey)
 		if err != nil {
-			return true, false, err
+			return true, false, errors.Trace(err)
 		}
 		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
 		defer func() {
@@ -214,16 +226,43 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 			}
 		}()
 	}
-
-	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", indexID),
-		zap.String("usage info", bc.diskRoot.UsageInfo()))
-	err = bc.backend.UnsafeImportAndReset(bc.ctx, ei.uuid, int64(lightning.SplitRegionSize)*int64(lightning.MaxSplitRegionSizeRatio), int64(lightning.SplitRegionKeys))
+	err = bc.unsafeImportAndReset(ei)
 	if err != nil {
-		logutil.Logger(bc.ctx).Error(LitErrIngestDataErr, zap.Int64("index ID", indexID),
-			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		return true, false, err
 	}
 	return true, true, nil
+}
+
+func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
+	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", ei.indexID),
+		zap.String("usage info", bc.diskRoot.UsageInfo()))
+	logger := log.FromContext(bc.ctx).With(
+		zap.Stringer("engineUUID", ei.uuid),
+	)
+
+	ei.closedEngine = backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
+
+	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
+	regionSplitKeys := int64(lightning.SplitRegionKeys)
+	if err := ei.closedEngine.Import(bc.ctx, regionSplitSize, regionSplitKeys); err != nil {
+		logutil.Logger(bc.ctx).Error(LitErrIngestDataErr, zap.Int64("index ID", ei.indexID),
+			zap.String("usage info", bc.diskRoot.UsageInfo()))
+		return err
+	}
+
+	err := bc.backend.ResetEngine(bc.ctx, ei.uuid)
+	if err != nil {
+		logutil.Logger(bc.ctx).Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
+		err1 := ei.closedEngine.Cleanup(bc.ctx)
+		if err1 != nil {
+			logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err1),
+				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		}
+		ei.openedEngine = nil
+		ei.closedEngine = nil
+		return err
+	}
+	return nil
 }
 
 // ForceSyncFlagForTest is a flag to force sync only for test.
@@ -241,8 +280,15 @@ func (bc *litBackendCtx) ShouldSync(mode FlushMode) (shouldFlush bool, shouldImp
 	if mode == FlushModeForceLocalAndCheckDiskQuota {
 		shouldFlush = true
 	} else {
+		interval := bc.updateInterval
+		// This failpoint will be manually set through HTTP status port.
+		failpoint.Inject("mockSyncIntervalMs", func(val failpoint.Value) {
+			if v, ok := val.(int); ok {
+				interval = time.Duration(v) * time.Millisecond
+			}
+		})
 		shouldFlush = shouldImport ||
-			time.Since(bc.timeOfLastFlush.Load()) >= bc.updateInterval
+			time.Since(bc.timeOfLastFlush.Load()) >= interval
 	}
 	return shouldFlush, shouldImport
 }

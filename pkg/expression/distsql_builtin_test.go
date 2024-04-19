@@ -20,17 +20,17 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPBToExpr(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	fieldTps := make([]*types.FieldType, 1)
 	ds := []types.Datum{types.NewIntDatum(1), types.NewUintDatum(1), types.NewFloat64Datum(1),
 		types.NewDecimalDatum(newMyDecimal(t, "1")), types.NewDurationDatum(newDuration(time.Second))}
@@ -38,7 +38,7 @@ func TestPBToExpr(t *testing.T) {
 	for _, d := range ds {
 		expr := datumExpr(t, d)
 		expr.Val = expr.Val[:len(expr.Val)/2]
-		_, err := PBToExpr(expr, fieldTps, sc)
+		_, err := PBToExpr(ctx, expr, fieldTps)
 		require.Error(t, err)
 	}
 
@@ -50,7 +50,7 @@ func TestPBToExpr(t *testing.T) {
 			},
 		},
 	}
-	_, err := PBToExpr(expr, fieldTps, sc)
+	_, err := PBToExpr(ctx, expr, fieldTps)
 	require.NoError(t, err)
 
 	val := make([]byte, 0, 32)
@@ -64,7 +64,7 @@ func TestPBToExpr(t *testing.T) {
 			},
 		},
 	}
-	_, err = PBToExpr(expr, fieldTps, sc)
+	_, err = PBToExpr(ctx, expr, fieldTps)
 	require.Error(t, err)
 
 	expr = &tipb.Expr{
@@ -78,7 +78,7 @@ func TestPBToExpr(t *testing.T) {
 		Sig:       tipb.ScalarFuncSig_AbsInt,
 		FieldType: ToPBFieldType(newIntFieldType()),
 	}
-	_, err = PBToExpr(expr, fieldTps, sc)
+	_, err = PBToExpr(ctx, expr, fieldTps)
 	require.Error(t, err)
 }
 
@@ -778,14 +778,14 @@ func TestEval(t *testing.T) {
 			types.NewIntDatum(1),
 		},
 	}
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	for _, tt := range tests {
-		expr, err := PBToExpr(tt.expr, fieldTps, sc)
+		expr, err := PBToExpr(ctx, tt.expr, fieldTps)
 		require.NoError(t, err)
-		result, err := expr.Eval(row)
+		result, err := expr.Eval(ctx, row)
 		require.NoError(t, err)
 		require.Equal(t, tt.result.Kind(), result.Kind())
-		cmp, err := result.Compare(sc.TypeCtx(), &tt.result, collate.GetCollator(fieldTps[0].GetCollate()))
+		cmp, err := result.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &tt.result, collate.GetCollator(fieldTps[0].GetCollate()))
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
@@ -793,7 +793,7 @@ func TestEval(t *testing.T) {
 
 func TestPBToExprWithNewCollation(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(false)
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	fieldTps := make([]*types.FieldType, 1)
 
 	cases := []struct {
@@ -821,7 +821,7 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 		expr.FieldType = toPBFieldType(ft)
 		require.Equal(t, cs.pbID, expr.FieldType.Collate)
 
-		e, err := PBToExpr(expr, fieldTps, sc)
+		e, err := PBToExpr(ctx, expr, fieldTps)
 		require.NoError(t, err)
 		cons, ok := e.(*Constant)
 		require.True(t, ok)
@@ -838,7 +838,7 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 		expr.FieldType = toPBFieldType(ft)
 		require.Equal(t, -cs.pbID, expr.FieldType.Collate)
 
-		e, err := PBToExpr(expr, fieldTps, sc)
+		e, err := PBToExpr(ctx, expr, fieldTps)
 		require.NoError(t, err)
 		cons, ok := e.(*Constant)
 		require.True(t, ok)
@@ -848,7 +848,7 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 
 // Test convert various scalar functions.
 func TestPBToScalarFuncExpr(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
+	ctx := mock.NewContext()
 	fieldTps := make([]*types.FieldType, 1)
 	exprs := []*tipb.Expr{
 		{
@@ -863,7 +863,7 @@ func TestPBToScalarFuncExpr(t *testing.T) {
 		},
 	}
 	for _, expr := range exprs {
-		_, err := PBToExpr(expr, fieldTps, sc)
+		_, err := PBToExpr(ctx, expr, fieldTps)
 		require.NoError(t, err)
 	}
 }
@@ -897,6 +897,7 @@ func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 		expr.Val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal:
 		expr.Tp = tipb.ExprType_MysqlDecimal
+		expr.FieldType = toPBFieldType(types.NewFieldType(mysql.TypeNewDecimal))
 		var err error
 		expr.Val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		require.NoError(t, err)
@@ -904,7 +905,7 @@ func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 		expr.Tp = tipb.ExprType_MysqlJson
 		var err error
 		expr.Val = make([]byte, 0, 1024)
-		expr.Val, err = codec.EncodeValue(nil, expr.Val, d)
+		expr.Val, err = codec.EncodeValue(time.UTC, expr.Val, d)
 		require.NoError(t, err)
 	case types.KindMysqlTime:
 		expr.Tp = tipb.ExprType_MysqlTime

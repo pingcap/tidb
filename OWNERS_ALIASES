@@ -1,3 +1,4 @@
+# Sort the member alphabetically.
 aliases:
   sig-critical-approvers-tidb-server:
     - yudongusa
@@ -89,6 +90,11 @@ aliases:
     - wjhuang2016
     - ywqzzy
     - zimulala
+  sig-approvers-parser: # approvers for `parser` module.
+    - bb7133
+    - BornChanger
+    - D3Hunter
+    - tangenta
   sig-approvers-resourcemanager: # approvers for resourcemanager pkg
     - Benjamin2037
     - D3Hunter
@@ -115,3 +121,12 @@ aliases:
     - Benjamin2037
     - gmhdbjd
     - lichunzhu
+  sig-approvers-planner: # approvers for planner module
+    - AilinKid
+    - elsa0520
+    - fixdb
+    - hawkingrei
+    - hi-rustin
+    - qw4990
+    - time-and-fate
+    - winoros

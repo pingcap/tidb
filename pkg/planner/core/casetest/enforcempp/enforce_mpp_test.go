@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/core/internal"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -41,6 +41,7 @@ func TestEnforceMPP(t *testing.T) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("create index idx on t(a)")
 	tk.MustExec("CREATE TABLE `s` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  `d` int(11) DEFAULT NULL,\n  UNIQUE KEY `a` (`a`),\n  KEY `ii` (`a`,`b`)\n)")
+	tk.MustExec("create table t3(id int, sala char(10), name char(100), primary key(id, sala)) partition by list columns (sala)(partition p1 values in('a'));")
 
 	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
 	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
@@ -52,7 +53,8 @@ func TestEnforceMPP(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -60,6 +62,12 @@ func TestEnforceMPP(t *testing.T) {
 			}
 		}
 		if tblInfo.Name.L == "s" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+		if tblInfo.Name.L == "t3" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
 				Available: true,
@@ -141,7 +149,8 @@ func TestEnforceMPPWarning1(t *testing.T) {
 			is := dom.InfoSchema()
 			db, exists := is.SchemaByName(model.NewCIStr("test"))
 			require.True(t, exists)
-			for _, tblInfo := range db.Tables {
+			for _, tbl := range is.SchemaTables(db.Name) {
+				tblInfo := tbl.Meta()
 				if tblInfo.Name.L == "t" {
 					tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 						Count:     1,
@@ -157,7 +166,8 @@ func TestEnforceMPPWarning1(t *testing.T) {
 			is := dom.InfoSchema()
 			db, exists := is.SchemaByName(model.NewCIStr("test"))
 			require.True(t, exists)
-			for _, tblInfo := range db.Tables {
+			for _, tbl := range is.SchemaTables(db.Name) {
+				tblInfo := tbl.Meta()
 				if tblInfo.Name.L == "t" {
 					tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 						Count:     1,
@@ -194,7 +204,8 @@ func TestEnforceMPPWarning2(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -246,7 +257,8 @@ func TestEnforceMPPWarning3(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -309,7 +321,8 @@ func TestEnforceMPPWarning4(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" || tblInfo.Name.L == "s" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -370,7 +383,8 @@ func TestMPP2PhaseAggPushDown(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "c" || tblInfo.Name.L == "o" || tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -424,7 +438,8 @@ func TestMPPSkewedGroupDistinctRewrite(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -476,7 +491,8 @@ func TestMPPSingleDistinct3Stage(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -516,7 +532,7 @@ func TestMPPSingleDistinct3Stage(t *testing.T) {
 //
 //	since it doesn't change the schema out (index ref is still the right), so by now it's fine. SEE case: EXPLAIN select count(distinct a), count(distinct b), sum(c) from t.
 func TestMPPMultiDistinct3Stage(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
 	// test table
@@ -574,7 +590,7 @@ func TestMPPMultiDistinct3Stage(t *testing.T) {
 
 // Test null-aware semi join push down for MPP mode
 func TestMPPNullAwareSemiJoinPushDown(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
 	// test table
@@ -622,7 +638,7 @@ func TestMPPNullAwareSemiJoinPushDown(t *testing.T) {
 }
 
 func TestMPPSharedCTEScan(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
 	// test table
@@ -670,7 +686,7 @@ func TestMPPSharedCTEScan(t *testing.T) {
 }
 
 func TestRollupMPP(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")

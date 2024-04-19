@@ -335,3 +335,22 @@ connection default;
 disconnect conn1;
 execute s;
 set @@tidb_enable_plan_replayer_capture=default;
+
+# TestPointGetWriteLock
+drop table if exists point;
+create table point (id int primary key, c int, d varchar(10), unique c_d (c, d));
+insert point values (1, 1, 'a');
+insert point values (2, 2, 'b');
+lock tables point write;
+select * from point where id = 1;
+--replace_regex /.*num_rpc.*/.*num_rpc.*/
+explain analyze select * from point where id = 1;
+unlock tables;
+
+update point set c = 3 where id = 1;
+lock tables point write;
+select * from point where id = 1;
+--replace_regex /.*num_rpc.*/.*num_rpc.*/
+explain analyze select * from point where id = 1;
+unlock tables;
+

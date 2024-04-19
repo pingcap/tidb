@@ -14,7 +14,6 @@ go_library(
     deps = [
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/collate",
@@ -40,9 +39,9 @@ go_test(
     embed = [":codec"],
     flaky = True,
     deps = [
+        "//pkg/errctx",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/benchdaily",

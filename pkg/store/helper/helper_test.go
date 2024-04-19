@@ -16,6 +16,7 @@ package helper_test
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -31,9 +32,10 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client/http"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/zap"
 )
@@ -45,7 +47,7 @@ func TestHotRegion(t *testing.T) {
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
 	}
-	regionMetric, err := h.FetchHotRegion(pdapi.HotRead)
+	regionMetric, err := h.FetchHotRegion(context.Background(), "read")
 	require.NoError(t, err)
 
 	expected := map[uint64]helper.RegionMetric{
@@ -89,7 +91,9 @@ func TestTiKVRegionsInfo(t *testing.T) {
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
 	}
-	regionsInfo, err := h.GetRegionsInfo()
+	pdCli, err := h.TryGetPDHTTPClient()
+	require.NoError(t, err)
+	regionsInfo, err := pdCli.GetRegions(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, getMockTiKVRegionsInfo(), regionsInfo)
 }
@@ -102,7 +106,10 @@ func TestTiKVStoresStat(t *testing.T) {
 		RegionCache: store.GetRegionCache(),
 	}
 
-	stat, err := h.GetStoresStat()
+	pdCli, err := h.TryGetPDHTTPClient()
+	require.NoError(t, err)
+
+	stat, err := pdCli.GetStores(context.Background())
 	require.NoError(t, err)
 
 	data, err := json.Marshal(stat)
@@ -138,18 +145,21 @@ func (s *mockStore) Describe() string {
 }
 
 func createMockStore(t *testing.T) (store helper.Storage) {
+	server := mockPDHTTPServer()
+
+	pdAddrs := []string{"invalid_pd_address", server.URL[len("http://"):]}
 	s, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithMultiRegions(c, []byte("x"))
 		}),
+		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("store-helper-test", pdAddrs)),
+		mockstore.WithPDAddr(pdAddrs),
 	)
 	require.NoError(t, err)
 
-	server := mockPDHTTPServer()
-
 	store = &mockStore{
 		s.(helper.Storage),
-		[]string{"invalid_pd_address", server.URL[len("http://"):]},
+		pdAddrs,
 	}
 
 	t.Cleanup(func() {
@@ -163,9 +173,9 @@ func createMockStore(t *testing.T) (store helper.Storage) {
 
 func mockPDHTTPServer() *httptest.Server {
 	router := mux.NewRouter()
-	router.HandleFunc(pdapi.HotRead, mockHotRegionResponse)
-	router.HandleFunc(pdapi.Regions, mockTiKVRegionsInfoResponse)
-	router.HandleFunc(pdapi.Stores, mockStoreStatResponse)
+	router.HandleFunc(pd.HotRead, mockHotRegionResponse)
+	router.HandleFunc(pd.Regions, mockTiKVRegionsInfoResponse)
+	router.HandleFunc(pd.Stores, mockStoreStatResponse)
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
 	return httptest.NewServer(serverMux)
@@ -174,22 +184,22 @@ func mockPDHTTPServer() *httptest.Server {
 func mockHotRegionResponse(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	regionsStat := helper.HotRegionsStat{
-		RegionsStat: []helper.RegionStat{
+	regionsStat := pd.HotPeersStat{
+		Stats: []pd.HotPeerStatShow{
 			{
-				FlowBytes: 100,
+				ByteRate:  100,
 				RegionID:  2,
 				HotDegree: 1,
 			},
 			{
-				FlowBytes: 200,
+				ByteRate:  200,
 				RegionID:  4,
 				HotDegree: 2,
 			},
 		},
 	}
-	resp := helper.StoreHotRegionInfos{
-		AsLeader: make(map[uint64]*helper.HotRegionsStat),
+	resp := pd.StoreHotPeersInfos{
+		AsLeader: make(pd.StoreHotPeersStat),
 	}
 	resp.AsLeader[0] = &regionsStat
 	data, err := json.MarshalIndent(resp, "", "	")
@@ -258,33 +268,33 @@ func getRegionsTableInfoAns(dbs []*model.DBInfo) map[int64][]helper.TableInfo {
 	return ans
 }
 
-func getMockTiKVRegionsInfo() *helper.RegionsInfo {
-	regions := []helper.RegionInfo{
+func getMockTiKVRegionsInfo() *pd.RegionsInfo {
+	regions := []pd.RegionInfo{
 		{
 			ID:       1,
 			StartKey: "",
 			EndKey:   "12341234",
-			Epoch: helper.RegionEpoch{
+			Epoch: pd.RegionEpoch{
 				ConfVer: 1,
 				Version: 1,
 			},
-			Peers: []helper.RegionPeer{
+			Peers: []pd.RegionPeer{
 				{ID: 2, StoreID: 1},
 				{ID: 15, StoreID: 51},
 				{ID: 66, StoreID: 99, IsLearner: true},
 				{ID: 123, StoreID: 111, IsLearner: true},
 			},
-			Leader: helper.RegionPeer{
+			Leader: pd.RegionPeer{
 				ID:      2,
 				StoreID: 1,
 			},
-			DownPeers: []helper.RegionPeerStat{
+			DownPeers: []pd.RegionPeerStat{
 				{
-					helper.RegionPeer{ID: 66, StoreID: 99, IsLearner: true},
-					120,
+					Peer:    pd.RegionPeer{ID: 66, StoreID: 99, IsLearner: true},
+					DownSec: 120,
 				},
 			},
-			PendingPeers: []helper.RegionPeer{
+			PendingPeers: []pd.RegionPeer{
 				{ID: 15, StoreID: 51},
 			},
 			WrittenBytes:    100,
@@ -297,66 +307,66 @@ func getMockTiKVRegionsInfo() *helper.RegionsInfo {
 			ID:       2,
 			StartKey: "7480000000000000FF295F698000000000FF0000010000000000FA",
 			EndKey:   "7480000000000000FF2B5F698000000000FF0000010000000000FA",
-			Epoch:    helper.RegionEpoch{ConfVer: 1, Version: 1},
-			Peers:    []helper.RegionPeer{{ID: 3, StoreID: 1}},
-			Leader:   helper.RegionPeer{ID: 3, StoreID: 1},
+			Epoch:    pd.RegionEpoch{ConfVer: 1, Version: 1},
+			Peers:    []pd.RegionPeer{{ID: 3, StoreID: 1}},
+			Leader:   pd.RegionPeer{ID: 3, StoreID: 1},
 		},
 		// table: 63, record + index: 1, 2
 		{
 			ID:       3,
 			StartKey: "7480000000000000FF3F5F698000000000FF0000010000000000FA",
 			EndKey:   "7480000000000000FF425F698000000000FF0000010000000000FA",
-			Epoch:    helper.RegionEpoch{ConfVer: 1, Version: 1},
-			Peers:    []helper.RegionPeer{{ID: 4, StoreID: 1}},
-			Leader:   helper.RegionPeer{ID: 4, StoreID: 1},
+			Epoch:    pd.RegionEpoch{ConfVer: 1, Version: 1},
+			Peers:    []pd.RegionPeer{{ID: 4, StoreID: 1}},
+			Leader:   pd.RegionPeer{ID: 4, StoreID: 1},
 		},
 		// table: 66, record
 		{
 			ID:       4,
 			StartKey: "7480000000000000FF425F72C000000000FF0000000000000000FA",
 			EndKey:   "",
-			Epoch:    helper.RegionEpoch{ConfVer: 1, Version: 1},
-			Peers:    []helper.RegionPeer{{ID: 5, StoreID: 1}},
-			Leader:   helper.RegionPeer{ID: 5, StoreID: 1},
+			Epoch:    pd.RegionEpoch{ConfVer: 1, Version: 1},
+			Peers:    []pd.RegionPeer{{ID: 5, StoreID: 1}},
+			Leader:   pd.RegionPeer{ID: 5, StoreID: 1},
 		},
 		// table: 66, record + index: 3
 		{
 			ID:       5,
 			StartKey: "7480000000000000FF425F698000000000FF0000030000000000FA",
 			EndKey:   "7480000000000000FF425F72C000000000FF0000000000000000FA",
-			Epoch:    helper.RegionEpoch{ConfVer: 1, Version: 1},
-			Peers:    []helper.RegionPeer{{ID: 6, StoreID: 1}},
-			Leader:   helper.RegionPeer{ID: 6, StoreID: 1},
+			Epoch:    pd.RegionEpoch{ConfVer: 1, Version: 1},
+			Peers:    []pd.RegionPeer{{ID: 6, StoreID: 1}},
+			Leader:   pd.RegionPeer{ID: 6, StoreID: 1},
 		},
 		// table: 66, index: 1
 		{
 			ID:       6,
 			StartKey: "7480000000000000FF425F698000000000FF0000010000000000FA",
 			EndKey:   "7480000000000000FF425F698000000000FF0000020000000000FA",
-			Epoch:    helper.RegionEpoch{ConfVer: 1, Version: 1},
-			Peers:    []helper.RegionPeer{{ID: 7, StoreID: 1}},
-			Leader:   helper.RegionPeer{ID: 7, StoreID: 1},
+			Epoch:    pd.RegionEpoch{ConfVer: 1, Version: 1},
+			Peers:    []pd.RegionPeer{{ID: 7, StoreID: 1}},
+			Leader:   pd.RegionPeer{ID: 7, StoreID: 1},
 		},
 		// table: 66, index: 2
 		{
 			ID:       7,
 			StartKey: "7480000000000000FF425F698000000000FF0000020000000000FA",
 			EndKey:   "7480000000000000FF425F698000000000FF0000030000000000FA",
-			Epoch:    helper.RegionEpoch{ConfVer: 1, Version: 1},
-			Peers:    []helper.RegionPeer{{ID: 8, StoreID: 1}},
-			Leader:   helper.RegionPeer{ID: 8, StoreID: 1},
+			Epoch:    pd.RegionEpoch{ConfVer: 1, Version: 1},
+			Peers:    []pd.RegionPeer{{ID: 8, StoreID: 1}},
+			Leader:   pd.RegionPeer{ID: 8, StoreID: 1},
 		},
 		// merge region 7, 5
 		{
 			ID:       8,
 			StartKey: "7480000000000000FF425F698000000000FF0000020000000000FA",
 			EndKey:   "7480000000000000FF425F72C000000000FF0000000000000000FA",
-			Epoch:    helper.RegionEpoch{ConfVer: 1, Version: 1},
-			Peers:    []helper.RegionPeer{{ID: 9, StoreID: 1}},
-			Leader:   helper.RegionPeer{ID: 9, StoreID: 1},
+			Epoch:    pd.RegionEpoch{ConfVer: 1, Version: 1},
+			Peers:    []pd.RegionPeer{{ID: 9, StoreID: 1}},
+			Leader:   pd.RegionPeer{ID: 9, StoreID: 1},
 		},
 	}
-	return &helper.RegionsInfo{
+	return &pd.RegionsInfo{
 		Count:   int64(len(regions)),
 		Regions: regions,
 	}
@@ -387,24 +397,24 @@ func mockStoreStatResponse(w http.ResponseWriter, _ *http.Request) {
 	if err != nil {
 		log.Panic("mock tikv store api response failed", zap.Error(err))
 	}
-	storesStat := helper.StoresStat{
+	storesStat := pd.StoresInfo{
 		Count: 1,
-		Stores: []helper.StoreStat{
+		Stores: []pd.StoreInfo{
 			{
-				Store: helper.StoreBaseStat{
+				Store: pd.MetaStore{
 					ID:        1,
 					Address:   "127.0.0.1:20160",
 					State:     0,
 					StateName: "Up",
 					Version:   "3.0.0-beta",
-					Labels: []helper.StoreLabel{
+					Labels: []pd.StoreLabel{
 						{
 							Key:   "test",
 							Value: "test",
 						},
 					},
 				},
-				Status: helper.StoreDetailStat{
+				Status: pd.StoreStatus{
 					Capacity:        "60 GiB",
 					Available:       "100 GiB",
 					LeaderCount:     10,
@@ -415,8 +425,8 @@ func mockStoreStatResponse(w http.ResponseWriter, _ *http.Request) {
 					RegionWeight:    999999.999999,
 					RegionScore:     999999.999999,
 					RegionSize:      1000,
-					StartTs:         startTs,
-					LastHeartbeatTs: lastHeartbeatTs,
+					StartTS:         startTs,
+					LastHeartbeatTS: lastHeartbeatTs,
 					Uptime:          "1h30m",
 				},
 			},
