@@ -2590,3 +2590,27 @@ show warnings;
 Level	Code	Message
 Warning	1690	2 warnings with this error code, first warning: constant 128 overflows tinyint
 set @@sql_mode=default;
+drop table if exists t;
+create table t (a date);
+insert into t values('9999-01-01');
+set @@sql_mode='ALLOW_INVALID_DATES';
+alter table t modify a timestamp;
+select * from t;
+a
+0000-00-00 00:00:00
+drop table if exists t;
+create table t (a date);
+insert into t values('9999-01-01');
+set @@sql_mode='ALLOW_INVALID_DATES,STRICT_TRANS_TABLES';
+alter table t modify a timestamp;
+Error 1292 (22007): Incorrect timestamp value: '9999-01-01'
+select * from t;
+a
+9999-01-01
+drop table t;
+CREATE TABLE t (a date, b timestamp AS (a));
+set @@sql_mode='';
+insert into t (a) values('9999-01-01');
+select * from t;
+a	b
+9999-01-01	0000-00-00 00:00:00
