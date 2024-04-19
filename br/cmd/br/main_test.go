@@ -26,15 +26,15 @@ import (
 
 func TestMain(m *testing.M) {
 	skipLeakTest := false
-    var newArgs []string
-    for _, arg := range os.Args {
-        if arg == "--skip-goleak" {
-            skipLeakTest = true
-        } else {
-            newArgs = append(newArgs, arg)
-        }
-    }
-    os.Args = newArgs
+	var newArgs []string
+	for _, arg := range os.Args {
+		if arg == "--skip-goleak" {
+			skipLeakTest = true
+		} else {
+			newArgs = append(newArgs, arg)
+		}
+	}
+	os.Args = newArgs
 
 	if !skipLeakTest {
 		goleak.VerifyTestMain(m,
