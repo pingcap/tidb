@@ -439,6 +439,12 @@ func TestSplitKeyRangesByLocationsWithoutBuckets(t *testing.T) {
 	rangeEqual(t, locRanges[1].Ranges.ToRanges(), "g", "h", "h", "m", "n")
 	rangeEqual(t, locRanges[2].Ranges.ToRanges(), "n", "t")
 	rangeEqual(t, locRanges[3].Ranges.ToRanges(), "v", "w")
+
+	locRanges, err = cache.SplitKeyRangesByLocationsWithoutBuckets(bo, NewKeyRanges(BuildKeyRanges("a", "b", "v", "w")), UnspecifiedLimit)
+	require.NoError(t, err)
+	require.Len(t, locRanges, 2)
+	rangeEqual(t, locRanges[0].Ranges.ToRanges(), "a", "b")
+	rangeEqual(t, locRanges[1].Ranges.ToRanges(), "v", "w")
 }
 
 func TestSplitKeyRanges(t *testing.T) {
