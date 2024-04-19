@@ -21,8 +21,10 @@ import (
 	"github.com/pingcap/tidb/pkg/owner"
 )
 
+// AutoIDResignHandler is the http handler for ${TIDB_HOST:PORT}//autoid/leader/resign
 type AutoIDResignHandler func() owner.Manager
 
+// ServeHTTP implements http.Handler
 func (h AutoIDResignHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	om := h()
 	if om.IsOwner() {
@@ -37,8 +39,10 @@ func (h AutoIDResignHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	}
 }
 
+// AutoIDLeaderHandler is the http handler for ${TIDB_HOST:PORT}//autoid/leader
 type AutoIDLeaderHandler func() owner.Manager
 
+// ServeHTTP implements http.Handler
 func (h AutoIDLeaderHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	om := h()
 	ddlOwnerID, err := om.GetOwnerID(context.Background())
