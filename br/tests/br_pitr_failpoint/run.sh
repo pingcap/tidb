@@ -44,13 +44,21 @@ sql_pid=$!
 echo "start log task"
 run_br --pd $PD_ADDR log start --task-name integration_test -s "local://$TEST_DIR/$PREFIX/log"
 
+# wait until the index creation is running
+while true; do
+    run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'running' AND SCHEMA_STATE = 'write reorganization';"
+    if grep -Fq "1. row" $res_file; then
+        break
+    fi
+
+    sleep 1
+done
+
 # run snapshot backup 1 -- before the index becomes public
 echo "run snapshot backup"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full-1"
 
 # advance the progress of index creation, make the index become public
-run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'running' AND SCHEMA_STATE = 'write reorganization';"
-check_contains "1. row"
 touch $hint_sig_file_public
 
 # run snapshot backup 2 -- before the ddl history is generated
