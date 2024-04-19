@@ -32,12 +32,14 @@ const (
 	SessionNonPrepared
 )
 
-// PlanCacheTracker PlanCacheTrackerf `PlanCacheTracker`.
+// PlanCacheTracker PlanCacheTrackerf `PlanCacheTracker`. `PlanCacheTracker` is thread-safe.
 type PlanCacheTracker struct {
-	UseCache             bool
-	CacheType            PlanCacheType
-	PlanCacheUnqualified string
-	ForcePlanCache       bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
+	mu sync.Mutex
+
+	useCache             bool
+	cacheType            PlanCacheType
+	planCacheUnqualified string
+	forcePlanCache       bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
 	alwaysWarnSkipCache  bool
 
 	warnHandler WarnHandler
@@ -45,7 +47,10 @@ type PlanCacheTracker struct {
 
 // ForceSetSkipPlanCache forces to skip plan cache.
 func (h *PlanCacheTracker) ForceSetSkipPlanCache(err error) {
-	if h.CacheType == DefaultNoCache {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.cacheType == DefaultNoCache {
 		return
 	}
 	h.setSkipPlanCache(err)
@@ -53,11 +58,14 @@ func (h *PlanCacheTracker) ForceSetSkipPlanCache(err error) {
 
 // SetSkipPlanCache sets to skip plan cache.
 func (h *PlanCacheTracker) SetSkipPlanCache(err error) {
-	if !h.UseCache {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if !h.useCache {
 		return
 	}
 
-	if h.ForcePlanCache {
+	if h.forcePlanCache {
 		h.warnHandler.AppendWarning(errors.NewNoStackErrorf("force plan-cache: may use risky cached plan: %s", err.Error()))
 		return
 	}
@@ -66,10 +74,10 @@ func (h *PlanCacheTracker) SetSkipPlanCache(err error) {
 }
 
 func (h *PlanCacheTracker) setSkipPlanCache(reason error) {
-	h.UseCache = false
-	h.PlanCacheUnqualified = reason.Error()
+	h.useCache = false
+	h.planCacheUnqualified = reason.Error()
 
-	switch h.CacheType {
+	switch h.cacheType {
 	case DefaultNoCache:
 		h.warnHandler.AppendWarning(errors.NewNoStackError("unknown cache type"))
 	case SessionPrepared:
@@ -85,7 +93,50 @@ func (h *PlanCacheTracker) setSkipPlanCache(reason error) {
 // SetAlwaysWarnSkipCache sets whether to always warn when skip plan cache. By default, for `SessionNonPrepared`, we don't warn
 // when skip plan cache. But in some cases, we want to warn even for `SessionNonPrepared`.
 func (h *PlanCacheTracker) SetAlwaysWarnSkipCache(alwaysWarnSkipCache bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	h.alwaysWarnSkipCache = alwaysWarnSkipCache
+}
+
+// SetCacheType sets the cache type.
+func (h *PlanCacheTracker) SetCacheType(cacheType PlanCacheType) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.cacheType = cacheType
+}
+
+// SetForcePlanCache sets whether to force the optimizer to use plan cache even if there is risky optimization.
+func (h *PlanCacheTracker) SetForcePlanCache(forcePlanCache bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.forcePlanCache = forcePlanCache
+}
+
+// EnablePlanCache sets to use plan cache.
+func (h *PlanCacheTracker) EnablePlanCache() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.useCache = true
+}
+
+// UseCache returns whether to use plan cache.
+func (h *PlanCacheTracker) UseCache() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.useCache
+}
+
+// PlanCacheUnqualified returns the reason of why the plan cache is unqualified
+func (h *PlanCacheTracker) PlanCacheUnqualified() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.planCacheUnqualified
 }
 
 // NewPlanCacheTracker creates a new PlanCacheTracker.
@@ -97,6 +148,7 @@ func NewPlanCacheTracker(warnHandler WarnHandler) PlanCacheTracker {
 
 // RangeFallbackHandler is used to handle range fallback.
 // If there are too many ranges, it'll fallback and add a warning.
+// RangeFallbackHandler is thread-safe.
 type RangeFallbackHandler struct {
 	PlanCacheTracker
 
@@ -108,9 +160,7 @@ type RangeFallbackHandler struct {
 func (h *RangeFallbackHandler) RecordRangeFallback(rangeMaxSize int64) {
 	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
 	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
-	if h.UseCache {
-		h.SetSkipPlanCache(errors.NewNoStackError("in-list is too long"))
-	}
+	h.SetSkipPlanCache(errors.NewNoStackError("in-list is too long"))
 	h.reportRangeFallbackWarning.Do(func() {
 		h.warnHandler.AppendWarning(errors.NewNoStackErrorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
 	})

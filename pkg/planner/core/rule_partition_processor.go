@@ -1536,7 +1536,7 @@ func (p *rangePruner) extractDataForPrune(sctx base.PlanContext, expr expression
 	// the constExpr may not a really constant when coming here.
 	// Suppose the partition expression is 'a + b' and we have a condition 'a = 2',
 	// the constExpr is '2 + b' after the replacement which we can't evaluate.
-	if !expression.ConstExprConsiderPlanCache(constExpr, sctx.GetSessionVars().StmtCtx.UseCache) {
+	if !expression.ConstExprConsiderPlanCache(constExpr, sctx.GetSessionVars().StmtCtx.UseCache()) {
 		return ret, false
 	}
 	c, isNull, err := constExpr.EvalInt(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
