@@ -54,12 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
->>>>>>> 6660de73564 (server: fix the missing type of query total counter for resource groups above 2 (#52606))
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
