@@ -423,11 +423,10 @@ func (ctl *StatusController) PrintStatusOfTask(ctx context.Context, name string)
 	return nil
 }
 
-func (ctl *StatusController) Close() error {
+func (ctl *StatusController) Close() {
 	ctl.mgr.GetPDClient().Close()
 	err := ctl.meta.Close()
 	if err != nil {
-		return err
+		log.Warn("failed to close meta data client", logutil.ShortError(err))
 	}
-	return nil
 }
