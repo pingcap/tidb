@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -420,7 +421,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		for _, f := range tc.flags {
 			flag = flag | f
 		}
-		_, err = logicalOptimize(ctx, flag, p.(LogicalPlan))
+		_, err = logicalOptimize(ctx, flag, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		trace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Logical
 		require.NotNil(t, trace, comment)
