@@ -24,6 +24,10 @@ res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 hint_sig_file_public=$TEST_DIR/hint_sig_file_public
 hint_sig_file_history=$TEST_DIR/hint_sig_file_history
 
+# inject some failpoints for TiDB-server
+export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/ddl/create-index-stuck-before-public=return(\"$hint_sig_file_public\");\
+github.com/pingcap/tidb/pkg/ddl/create-index-stuck-before-ddlhistory=return(\"$hint_sig_file_history\")"
+
 # start a new cluster
 echo "restart a services"
 restart_services
@@ -31,10 +35,6 @@ restart_services
 # prepare the data
 echo "prepare the data"
 run_sql_file $CUR/prepare_data/ingest_repair.sql
-
-# inject some failpoints
-export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/ddl/create-index-stuck-before-public=1*return(\"$hint_sig_file_public\");\
-github.com/pingcap/tidb/pkg/ddl/create-index-stuck-before-ddlhistory=1*return(\"$hint_sig_file_history\")"
 
 # prepare the intersect data
 run_sql_file $CUR/intersect_data/ingest_repair1.sql &
@@ -49,6 +49,8 @@ echo "run snapshot backup"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full-1"
 
 # advance the progress of index creation, make the index become public
+run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'running' AND SCHEMA_STATE = 'write reorganization';"
+check_contains "1. row"
 touch $hint_sig_file_public
 
 # run snapshot backup 2 -- before the ddl history is generated
@@ -56,10 +58,17 @@ echo "run snapshot backup"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full-2"
 
 # advance the progress of index creation, generate ddl history
+run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'done' AND SCHEMA_STATE = 'public';"
+check_contains "1. row"
 touch $hint_sig_file_history
 
 # wait index creation done
 wait $sql_pid
+run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'sync' AND SCHEMA_STATE = 'public';"
+check_contains "1. row"
+
+# clean the failpoints
+export GO_FAILPOINTS=""
 
 # check something in the upstream
 run_sql "SHOW INDEX FROM test.pairs WHERE Key_name = 'i1';"

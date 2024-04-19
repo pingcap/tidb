@@ -779,21 +779,6 @@ SwitchIndexState:
 		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			ingest.LitBackCtxMgr.Unregister(job.ID)
 		}
-		// Inject the failpoint to prevent the progress of index creation.
-		failpoint.Inject("create-index-stuck-before-ddlhistory", func(v failpoint.Value) {
-			if sigFile, ok := v.(string); ok {
-				for {
-					time.Sleep(1 * time.Second)
-					if _, err := os.Stat(sigFile); err != nil {
-						if os.IsNotExist(err) {
-							continue
-						}
-						failpoint.Return(ver, errors.Trace(err))
-					}
-					break
-				}
-			}
-		})
 		logutil.BgLogger().Info("run add index job done", zap.String("category", "ddl"),
 			zap.String("charset", job.Charset),
 			zap.String("collation", job.Collate))
