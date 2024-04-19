@@ -695,11 +695,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				return ver, errors.Trace(err)
 			}
 		}
-<<<<<<< HEAD:ddl/index.go
-		indexInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
-=======
-
 		// Inject the failpoint to prevent the progress of index creation.
 		failpoint.Inject("create-index-stuck-before-public", func(v failpoint.Value) {
 			if sigFile, ok := v.(string); ok {
@@ -715,9 +710,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				}
 			}
 		})
-
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StatePublic)
->>>>>>> d4a80587478 (br: add integration test for ingest corner case test (#52734)):pkg/ddl/index.go
+		indexInfo.State = model.StatePublic
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
