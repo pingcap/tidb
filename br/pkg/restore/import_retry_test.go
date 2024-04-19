@@ -50,6 +50,43 @@ func assertRegions(t *testing.T, regions []*split.RegionInfo, keys ...string) {
 	}
 }
 
+// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+func initTestClient(isRawKv bool) *TestClient {
+	peers := make([]*metapb.Peer, 1)
+	peers[0] = &metapb.Peer{
+		Id:      1,
+		StoreId: 1,
+	}
+	keys := [6]string{"", "aay", "bba", "bbh", "cca", ""}
+	regions := make(map[uint64]*split.RegionInfo)
+	for i := uint64(1); i < 6; i++ {
+		startKey := []byte(keys[i-1])
+		if len(startKey) != 0 {
+			startKey = codec.EncodeBytesExt([]byte{}, startKey, isRawKv)
+		}
+		endKey := []byte(keys[i])
+		if len(endKey) != 0 {
+			endKey = codec.EncodeBytesExt([]byte{}, endKey, isRawKv)
+		}
+		regions[i] = &split.RegionInfo{
+			Leader: &metapb.Peer{
+				Id: i,
+			},
+			Region: &metapb.Region{
+				Id:       i,
+				Peers:    peers,
+				StartKey: startKey,
+				EndKey:   endKey,
+			},
+		}
+	}
+	stores := make(map[uint64]*metapb.Store)
+	stores[1] = &metapb.Store{
+		Id: 1,
+	}
+	return NewTestClient(stores, regions, 6)
+}
+
 func TestScanSuccess(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)

@@ -37,7 +37,6 @@ go_library(
         "//pkg/privilege/privileges/ldap",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/stmtctx",
-        "//pkg/sessionctx/variable/featuretag/disttask",
         "//pkg/tidb-binlog/pump_client",
         "//pkg/types",
         "//pkg/types/parser_driver",

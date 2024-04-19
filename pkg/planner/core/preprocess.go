@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1759,6 +1760,7 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 				if err := txnManager.OnStmtStart(context.TODO(), txnManager.GetCurrentStmt()); err != nil {
 					return err
 				}
+				p.sctx.GetSessionVars().TxnCtx.StaleReadTs = p.LastSnapshotTS
 			}
 		}
 	}
@@ -1794,7 +1796,7 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	return false
 }
 
-func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
+func tryLockMDLAndUpdateSchemaIfNecessary(sctx base.PlanContext, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
 		return tbl, nil
 	}

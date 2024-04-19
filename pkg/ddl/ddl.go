@@ -831,6 +831,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		if err != nil {
 			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
 		}
+		d.runningJobs.clear()
 	})
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
@@ -869,13 +870,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	defer d.sessPool.Put(ctx)
 
 	ingest.InitGlobalLightningEnv()
-	d.ownerManager.SetRetireOwnerHook(func() {
-		// Since this instance is not DDL owner anymore, we clean up the processing job info.
-		if ingest.LitBackCtxMgr != nil {
-			ingest.LitBackCtxMgr.MarkJobFinish()
-		}
-		d.runningJobs.clear()
-	})
 
 	return nil
 }

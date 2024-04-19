@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -204,7 +205,7 @@ type IndexReaderExecutor struct {
 	corColInAccess bool
 	idxCols        []*expression.Column
 	colLens        []int
-	plans          []plannercore.PhysicalPlan
+	plans          []base.PhysicalPlan
 
 	memTracker *memory.Tracker
 
@@ -320,7 +321,7 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
 	var err error
 	if e.corColInFilter {
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetPlanCtx(), e.plans)
+		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetBuildPBCtx(), e.plans)
 		if err != nil {
 			return err
 		}
@@ -470,8 +471,8 @@ type IndexLookUpExecutor struct {
 	corColInIdxSide bool
 	corColInTblSide bool
 	corColInAccess  bool
-	idxPlans        []plannercore.PhysicalPlan
-	tblPlans        []plannercore.PhysicalPlan
+	idxPlans        []base.PhysicalPlan
+	tblPlans        []base.PhysicalPlan
 	idxCols         []*expression.Column
 	colLens         []int
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
@@ -582,14 +583,14 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 
 	var err error
 	if e.corColInIdxSide {
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetPlanCtx(), e.idxPlans)
+		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetBuildPBCtx(), e.idxPlans)
 		if err != nil {
 			return err
 		}
 	}
 
 	if e.corColInTblSide {
-		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetPlanCtx(), e.tblPlans)
+		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetBuildPBCtx(), e.tblPlans)
 		if err != nil {
 			return err
 		}
@@ -1594,7 +1595,7 @@ func GetLackHandles(expectedHandles []kv.Handle, obtainedHandlesMap *kv.HandleMa
 	return diffHandles
 }
 
-func getPhysicalPlanIDs(plans []plannercore.PhysicalPlan) []int {
+func getPhysicalPlanIDs(plans []base.PhysicalPlan) []int {
 	planIDs := make([]int, 0, len(plans))
 	for _, p := range plans {
 		planIDs = append(planIDs, p.ID())

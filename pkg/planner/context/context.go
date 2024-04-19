@@ -66,6 +66,8 @@ type PlanContext interface {
 	AdviseTxnWarmup() error
 	// GetRangerCtx returns the context used in `ranger` functions
 	GetRangerCtx() *rangerctx.RangerContext
+	// GetBuildPBCtx returns the context used in `ToPB` method.
+	GetBuildPBCtx() *BuildPBContext
 }
 
 // EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.
@@ -75,3 +77,30 @@ type EmptyPlanContextExtended struct{}
 
 // AdviseTxnWarmup advises the txn to warm up.
 func (EmptyPlanContextExtended) AdviseTxnWarmup() error { return nil }
+
+// BuildPBContext is used to build the `*tipb.Executor` according to the plan.
+type BuildPBContext struct {
+	ExprCtx exprctx.BuildContext
+	Client  kv.Client
+
+	TiFlashFastScan                    bool
+	TiFlashFineGrainedShuffleBatchSize uint64
+
+	// the following fields are used to build `expression.PushDownContext`.
+	// TODO: it'd be better to embed `expression.PushDownContext` in `BuildPBContext`. But `expression` already
+	// depends on this package, so we need to move `expression.PushDownContext` to a standalone package first.
+	GroupConcatMaxLen  uint64
+	InExplainStmt      bool
+	AppendWarning      func(err error)
+	AppendExtraWarning func(err error)
+}
+
+// GetExprCtx returns the expression context.
+func (b *BuildPBContext) GetExprCtx() exprctx.BuildContext {
+	return b.ExprCtx
+}
+
+// GetClient returns the kv client.
+func (b *BuildPBContext) GetClient() kv.Client {
+	return b.Client
+}

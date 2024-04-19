@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -745,6 +746,22 @@ SwitchIndexState:
 			indexInfo.State = model.StatePublic
 		}
 
+		// Inject the failpoint to prevent the progress of index creation.
+		failpoint.Inject("create-index-stuck-before-public", func(v failpoint.Value) {
+			if sigFile, ok := v.(string); ok {
+				for {
+					time.Sleep(1 * time.Second)
+					if _, err := os.Stat(sigFile); err != nil {
+						if os.IsNotExist(err) {
+							continue
+						}
+						failpoint.Return(ver, errors.Trace(err))
+					}
+					break
+				}
+			}
+		})
+
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StatePublic)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -853,35 +870,12 @@ func cleanupSortPath(ctx context.Context, currentJobID int64) error {
 				logutil.Logger(ctx).Warn(ingest.LitErrCleanSortPath, zap.Error(err))
 				return nil
 			}
+			failpoint.Inject("ownerResignAfterDispatchLoopCheck", func() {
+				close(local.WaitRMFolderChForTest)
+			})
 		}
 	}
 	return nil
-}
-
-// IngestJobsNotExisted checks the ddl about `add index` with ingest method not existed.
-func IngestJobsNotExisted(ctx sessionctx.Context) bool {
-	se := sess.NewSession(ctx)
-	template := "select job_meta from mysql.tidb_ddl_job where reorg and (type = %d or type = %d) and processing;"
-	sql := fmt.Sprintf(template, model.ActionAddIndex, model.ActionAddPrimaryKey)
-	rows, err := se.Execute(context.Background(), sql, "check-pitr")
-	if err != nil {
-		logutil.BgLogger().Warn("cannot check ingest job", zap.Error(err))
-		return false
-	}
-	for _, row := range rows {
-		jobBinary := row.GetBytes(0)
-		runJob := model.Job{}
-		err := runJob.Decode(jobBinary)
-		if err != nil {
-			logutil.BgLogger().Warn("cannot check ingest job", zap.Error(err))
-			return false
-		}
-		// Check whether this add index job is using lightning to do the backfill work.
-		if runJob.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			return false
-		}
-	}
-	return true
 }
 
 func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,

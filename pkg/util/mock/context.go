@@ -286,6 +286,25 @@ func (c *Context) GetRangerCtx() *rangerctx.RangerContext {
 	}
 }
 
+// GetBuildPBCtx returns the `ToPB` context of the session
+func (c *Context) GetBuildPBCtx() *planctx.BuildPBContext {
+	return &planctx.BuildPBContext{
+		ExprCtx: c.GetExprCtx(),
+		Client:  c.GetClient(),
+
+		TiFlashFastScan:                    c.GetSessionVars().TiFlashFastScan,
+		TiFlashFineGrainedShuffleBatchSize: c.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
+
+		// the following fields are used to build `expression.PushDownContext`.
+		// TODO: it'd be better to embed `expression.PushDownContext` in `BuildPBContext`. But `expression` already
+		// depends on this package, so we need to move `expression.PushDownContext` to a standalone package first.
+		GroupConcatMaxLen:  c.GetSessionVars().GroupConcatMaxLen,
+		InExplainStmt:      c.GetSessionVars().StmtCtx.InExplainStmt,
+		AppendWarning:      c.GetSessionVars().StmtCtx.AppendWarning,
+		AppendExtraWarning: c.GetSessionVars().StmtCtx.AppendExtraWarning,
+	}
+}
+
 // Txn implements sessionctx.Context Txn interface.
 func (c *Context) Txn(bool) (kv.Transaction, error) {
 	return &c.txn, nil
