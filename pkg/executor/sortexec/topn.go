@@ -51,7 +51,7 @@ type TopNExec struct {
 	spillHelper *topNSpillHelper
 	spillAction *topNSpillAction
 
-	// Normally, heap will be stored in me  从  mory after it has been built.
+	// Normally, heap will be stored in memory after it has been built.
 	// However, other executors may trigger topn spill after the heap is built
 	// and inMemoryThenSpillFlag will be set to true at this time.
 	inMemoryThenSpillFlag bool
@@ -159,43 +159,45 @@ func (e *TopNExec) greaterRow(rowI, rowJ chunk.Row) bool {
 // Next implements the Executor Next interface.
 //
 // The following picture shows the procedure of topn when spill is triggered.
-//                      ┌─────────┐                                                                           
-//                      │  Child  │                                                                           
-//                      └────▲────┘                                                                           
-//                           │                                                                                
-//                         Fetch                                                                              
-//                           │                                                                                
-//                   ┌───────┴───────┐                                                                        
-//                   │ Chunk Fetcher │                                                                        
-//                   └───────┬───────┘                                                                        
-//                           │                                                                                
-//                           │                                                                                
-//                           ▼                                                                                
-//                      Check Spill──────►Spill Triggered─────────►Spill                                      
-//                           │                                       │                                        
-//                           ▼                                       │                                        
-//                   Spill Not Triggered                             │                                        
-//                           │                                       │                                        
-//                           ▼                                       │                                        
-//                         Push◄─────────────────────────────────────┘                                        
-//                           │                                                                                
-//                           ▼                                                                                
-//      ┌────────────────►Channel◄───────────────────┐                                                        
-//      │                    ▲                       │                                                       ▼
-//      │                    │                       │                                                        
-//    Fetch                Fetch                   Fetch                                                      
-//      │                    │                       │                                                        
-// ┌────┴───┐            ┌───┴────┐              ┌───┴────┐                                                   
-// │ Worker │            │ Worker │   ......     │ Worker │                                                   
-// └────┬───┘            └───┬────┘              └───┬────┘                                                   
-//      │                    │                       │                                                        
-//      │                    │                       │                                                        
-//      │                    ▼                       │                                                        
-//      └───────────► Multi-way Merge◄───────────────┘                                                        
-//                           │                                                                                
-//                           │                                                                                
-//                           ▼                                                                                
-//                        Output                                                                              
+/*
+	                    ┌─────────┐
+	                    │  Child  │
+	                    └────▲────┘
+	                         │
+	                       Fetch
+	                         │
+	                 ┌───────┴───────┐
+	                 │ Chunk Fetcher │
+	                 └───────┬───────┘
+	                         │
+	                         │
+	                         ▼
+	                    Check Spill──────►Spill Triggered─────────►Spill
+	                         │                                       │
+	                         ▼                                       │
+	                 Spill Not Triggered                             │
+	                         │                                       │
+	                         ▼                                       │
+	                       Push◄─────────────────────────────────────┘
+	                         │
+	                         ▼
+	    ┌────────────────►Channel◄───────────────────┐
+	    │                    ▲                       │
+	    │                    │                       │
+	  Fetch                Fetch                   Fetch
+	    │                    │                       │
+   ┌────┴───┐            ┌───┴────┐              ┌───┴────┐
+   │ Worker │            │ Worker │   ......     │ Worker │
+   └────┬───┘            └───┬────┘              └───┬────┘
+	    │                    │                       │
+	    │                    │                       │
+	    │                    ▼                       │
+	    └───────────► Multi-way Merge◄───────────────┘
+	                         │
+	                         │
+	                         ▼
+	                      Output
+*/
 func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.fetched.CompareAndSwap(false, true) {
@@ -265,7 +267,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 
 const topNCompactionFactor = 4
 
-func (e *TopNExec) executeTopNNoSpill(ctx context.Context) error {
+func (e *TopNExec) executeTopNWhenNoSpillTriggered(ctx context.Context) error {
 	if e.spillHelper.isSpillNeeded() {
 		e.isSpillTriggeredInStage2ForTest = true
 		return nil
@@ -287,7 +289,7 @@ func (e *TopNExec) executeTopNNoSpill(ctx context.Context) error {
 			break
 		}
 
-		e.chkHeap.processChkNoSpill(childRowChk)
+		e.chkHeap.processChk(childRowChk)
 
 		if e.chkHeap.rowChunks.Len() > len(e.chkHeap.rowPtrs)*topNCompactionFactor {
 			err = e.chkHeap.doCompaction(e)
@@ -377,7 +379,7 @@ func (e *TopNExec) spillTopNExecHeap() error {
 	return nil
 }
 
-func (e *TopNExec) executeTopNWithSpill(ctx context.Context) error {
+func (e *TopNExec) executeTopNWhenSpillTriggered(ctx context.Context) error {
 	// idx need to be set to 0 as we need to spill all data
 	e.chkHeap.idx = 0
 	err := e.spillTopNExecHeap()
@@ -423,13 +425,13 @@ func (e *TopNExec) executeTopN(ctx context.Context) {
 		e.chkHeap.droppedRowNum++
 	}
 
-	if err := e.executeTopNNoSpill(ctx); err != nil {
+	if err := e.executeTopNWhenNoSpillTriggered(ctx); err != nil {
 		e.resultChannel <- rowWithError{err: err}
 		return
 	}
 
 	if e.spillHelper.isSpillNeeded() {
-		if err := e.executeTopNWithSpill(ctx); err != nil {
+		if err := e.executeTopNWhenSpillTriggered(ctx); err != nil {
 			e.resultChannel <- rowWithError{err: err}
 			return
 		}
@@ -439,7 +441,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) {
 }
 
 // Return true when spill is triggered
-func (e *TopNExec) generateTopNResultsWithNoSpill() bool {
+func (e *TopNExec) generateTopNResultsWHenNoSpillTriggered() bool {
 	rowPtrNum := len(e.chkHeap.rowPtrs)
 	for ; e.chkHeap.idx < rowPtrNum; e.chkHeap.idx++ {
 		if e.chkHeap.idx%10 == 0 && e.spillHelper.isSpillNeeded() {
@@ -485,7 +487,7 @@ func (e *TopNExec) generateResultWithMultiWayMerge(offset int64, limit int64) er
 	}
 }
 
-func (e *TopNExec) generateTopNResultsWithSpill() error {
+func (e *TopNExec) generateTopNResultsWhenSpillTriggered() error {
 	inDiskNum := len(e.spillHelper.sortedRowsInDisk)
 	if inDiskNum == 0 {
 		panic("inDiskNum can't be 0 when we generate result with spill triggered")
@@ -494,7 +496,6 @@ func (e *TopNExec) generateTopNResultsWithSpill() error {
 	if inDiskNum == 1 {
 		inDisk := e.spillHelper.sortedRowsInDisk[0]
 		chunkNum := inDisk.NumChunks()
-		skippedRowNum := uint64(0)
 		offset := e.Limit.Offset
 		for i := 0; i < chunkNum; i++ {
 			chk, err := inDisk.GetChunk(i)
@@ -505,11 +506,14 @@ func (e *TopNExec) generateTopNResultsWithSpill() error {
 			injectTopNRandomFail(10)
 
 			rowNum := chk.NumRows()
-			for j := 0; j < rowNum; j++ {
-				if !e.inMemoryThenSpillFlag && skippedRowNum < offset {
-					skippedRowNum++
-					continue
-				}
+			j := 0
+			if !e.inMemoryThenSpillFlag {
+				// When e.inMemoryThenSpillFlag == false, we need to set j = offset
+				// because rows that should be ignored before offset are also spilled into disk.
+				j = int(offset)
+			}
+
+			for ; j < rowNum; j++ {
 				select {
 				case <-e.finishCh:
 					return nil
@@ -524,7 +528,7 @@ func (e *TopNExec) generateTopNResultsWithSpill() error {
 
 func (e *TopNExec) generateTopNResults() {
 	if !e.spillHelper.isSpillTriggered() {
-		if !e.generateTopNResultsWithNoSpill() {
+		if !e.generateTopNResultsWHenNoSpillTriggered() {
 			return
 		}
 
@@ -536,7 +540,7 @@ func (e *TopNExec) generateTopNResults() {
 		e.inMemoryThenSpillFlag = true
 	}
 
-	e.generateTopNResultsWithSpill()
+	e.generateTopNResultsWhenSpillTriggered()
 }
 
 func (e *TopNExec) IsSpillTriggeredForTest() bool {

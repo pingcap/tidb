@@ -91,7 +91,7 @@ func (t *topNWorker) fetchChunksAndProcessImpl() bool {
 				t.chkHeap.initPtrs()
 				heap.Init(t.chkHeap)
 			}
-			t.chkHeap.processChkWithSpill(chk)
+			t.chkHeap.processChk(chk)
 		}
 	}
 	return true

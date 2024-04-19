@@ -101,18 +101,10 @@ func (h *topNChunkHeap) update(heapMaxRow chunk.Row, newRow chunk.Row) {
 	h.droppedRowNum++
 }
 
-func (h *topNChunkHeap) processChkNoSpill(chk *chunk.Chunk) {
+func (h *topNChunkHeap) processChk(chk *chunk.Chunk) {
 	for i := 0; i < chk.NumRows(); i++ {
 		heapMaxRow := h.rowChunks.GetRow(h.rowPtrs[0])
 		newRow := chk.GetRow(i)
-		h.update(heapMaxRow, newRow)
-	}
-}
-
-func (h *topNChunkHeap) processChkWithSpill(chk *chunk.Chunk) {
-	for i := 0; i < chk.NumRows(); i++ {
-		newRow := chk.GetRow(i)
-		heapMaxRow := h.rowChunks.GetRow(h.rowPtrs[0])
 		h.update(heapMaxRow, newRow)
 	}
 }
