@@ -15,6 +15,7 @@
 package infoschema
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 
@@ -29,59 +30,145 @@ type infoschemaV3 struct {
 	infoV1 *infoSchema
 }
 
-// TODO: check every fields.
 func tblEqual(tbl1, tbl2 table.Table) bool {
-	if tbl1.Meta().ID != tbl2.Meta().ID {
+	if tbl1 == nil && tbl2 == nil {
+		return true
+	}
+	m1, err := json.Marshal(tbl1.Meta())
+	if err != nil {
+		panic(err)
+	}
+	m2, err := json.Marshal(tbl2.Meta())
+	if err != nil {
+		panic(err)
+	}
+	if string(m1) != string(m2) {
 		return false
 	}
 	return true
 }
 
-// TODO: check every fields.
 func tblInfoEqual(tbl1, tbl2 *model.TableInfo) bool {
-	if tbl1.ID != tbl2.ID {
+	if tbl1 == nil && tbl2 == nil {
+		return true
+	}
+	m1, err := json.Marshal(tbl1)
+	if err != nil {
+		panic(err)
+	}
+	m2, err := json.Marshal(tbl2)
+	if err != nil {
+		panic(err)
+	}
+	if string(m1) != string(m2) {
 		return false
 	}
 	return true
 }
 
 func dbInfoEqual(db1, db2 *model.DBInfo) bool {
-	if db1.ID != db2.ID {
+	if db1 == nil && db2 == nil {
+		return true
+	}
+	m1, err := json.Marshal(db1)
+	if err != nil {
+		panic(err)
+	}
+	m2, err := json.Marshal(db2)
+	if err != nil {
+		panic(err)
+	}
+	if string(m1) != string(m2) {
 		return false
 	}
 	return true
 }
 
 func partitionEqual(p1, p2 *model.PartitionDefinition) bool {
-	if p1.ID != p2.ID {
+	if p1 == nil && p2 == nil {
+		return true
+	}
+	m1, err := json.Marshal(p1)
+	if err != nil {
+		panic(err)
+	}
+	m2, err := json.Marshal(p2)
+	if err != nil {
+		panic(err)
+	}
+	if string(m1) != string(m2) {
 		return false
 	}
 	return true
 }
 
 func policyEqual(p1, p2 *model.PolicyInfo) bool {
-	if p1.Name != p2.Name {
+	if p1 == nil && p2 == nil {
+		return true
+	}
+	m1, err := json.Marshal(p1)
+	if err != nil {
+		panic(err)
+	}
+	m2, err := json.Marshal(p2)
+	if err != nil {
+		panic(err)
+	}
+	if string(m1) != string(m2) {
 		return false
 	}
 	return true
 }
 
 func resourceGroupEqual(r1, r2 *model.ResourceGroupInfo) bool {
-	if r1.Name != r2.Name {
+	if r1 == nil && r2 == nil {
+		return true
+	}
+	m1, err := json.Marshal(r1)
+	if err != nil {
+		panic(err)
+	}
+	m2, err := json.Marshal(r2)
+	if err != nil {
+		panic(err)
+	}
+	if string(m1) != string(m2) {
 		return false
 	}
 	return true
 }
 
 func bundleEqual(b1, b2 *placement.Bundle) bool {
-	if b1.ID != b2.ID {
+	if b1 == nil && b2 == nil {
+		return true
+	}
+	m1, err := json.Marshal(b1)
+	if err != nil {
+		panic(err)
+	}
+	m2, err := json.Marshal(b2)
+	if err != nil {
+		panic(err)
+	}
+	if string(m1) != string(m2) {
 		return false
 	}
 	return true
 }
 
 func referredFKInfoEqual(r1, r2 *model.ReferredFKInfo) bool {
-	if r1.ChildTable.String() != r2.ChildTable.String() {
+	if r1 == nil && r2 == nil {
+		return true
+	}
+	m1, err := json.Marshal(r1)
+	if err != nil {
+		panic(err)
+	}
+	m2, err := json.Marshal(r2)
+	if err != nil {
+		panic(err)
+	}
+	if string(m1) != string(m2) {
 		return false
 	}
 	return true

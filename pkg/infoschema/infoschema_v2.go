@@ -234,6 +234,7 @@ func NewInfoSchemaV2(r autoid.Requirement, infoData *Data) infoschemaV2 {
 				policyMap:             map[string]*model.PolicyInfo{},
 				resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
 				ruleBundleMap:         map[int64]*placement.Bundle{},
+				policyRefMap:          map[int64]*model.PolicyRefInfo{},
 				referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
 			},
 			schemaMap:           map[string]*schemaTables{},
@@ -773,6 +774,8 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	if !ok {
 		return nil
 	}
+
+	affected = appendAffectedIDs(affected, table.Meta())
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, table.Meta())
