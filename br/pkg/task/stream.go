@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -471,10 +470,6 @@ func (s *streamMgr) checkStreamStartEnable(g glue.Glue) error {
 	if !supportStream {
 		return errors.New("Unable to create task about log-backup. " +
 			"please set TiKV config `log-backup.enable` to true and restart TiKVs.")
-	}
-	if !ddl.IngestJobsNotExisted(se.GetSessionCtx()) {
-		return errors.Annotate(berrors.ErrUnknown,
-			"Unable to create log backup task. Please wait until the DDL jobs(add index with ingest method) are finished.")
 	}
 
 	return nil
