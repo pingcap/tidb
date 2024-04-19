@@ -45,10 +45,17 @@ echo "start log task"
 run_br --pd $PD_ADDR log start --task-name integration_test -s "local://$TEST_DIR/$PREFIX/log"
 
 # wait until the index creation is running
+retry_cnt=0
 while true; do
     run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'running' AND SCHEMA_STATE = 'write reorganization' AND JOB_TYPE = 'add index /* ingest */';"
     if grep -Fq "1. row" $res_file; then
         break
+    fi
+
+    retry_cnt=$((retry_cnt+1))
+    if [ "$retry_cnt" -gt 50 ]; then
+        echo 'the wait lag is too large'
+        exit 1
     fi
 
     sleep 1
@@ -62,10 +69,17 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full-1"
 touch $hint_sig_file_public
 
 # wait until the index creation is done
+retry_cnt=0
 while true; do
     run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'done' AND SCHEMA_STATE = 'public' AND JOB_TYPE = 'add index /* ingest */';"
     if grep -Fq "1. row" $res_file; then
         break
+    fi
+
+    retry_cnt=$((retry_cnt+1))
+    if [ "$retry_cnt" -gt 50 ]; then
+        echo 'the wait lag is too large'
+        exit 1
     fi
 
     sleep 1
@@ -82,10 +96,17 @@ touch $hint_sig_file_history
 wait $sql_pid
 
 # wait until the index creation is done
+retry_cnt=0
 while true; do
     run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'synced' AND SCHEMA_STATE = 'public' AND JOB_TYPE = 'add index /* ingest */';"
     if grep -Fq "1. row" $res_file; then
         break
+    fi
+
+    retry_cnt=$((retry_cnt+1))
+    if [ "$retry_cnt" -gt 50 ]; then
+        echo 'the wait lag is too large'
+        exit 1
     fi
 
     sleep 1
