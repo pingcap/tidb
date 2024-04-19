@@ -16,11 +16,11 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )

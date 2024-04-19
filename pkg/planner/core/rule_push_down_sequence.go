@@ -16,8 +16,8 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
 

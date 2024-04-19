@@ -16,11 +16,11 @@ package core
 
 import (
 	"cmp"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"math"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
 type joinReorderGreedySolver struct {
