@@ -108,7 +108,7 @@ func TestGroupFingerPrint(t *testing.T) {
 	}()
 	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
 	require.NoError(t, err)
-	logic1, ok := plan.(plannercore.LogicalPlan)
+	logic1, ok := plan.(base.LogicalPlan)
 	require.True(t, ok)
 
 	// Plan tree should be: DataSource -> Selection -> Projection
@@ -241,7 +241,7 @@ func TestBuildKeyInfo(t *testing.T) {
 	require.NoError(t, err)
 	p1, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
 	require.NoError(t, err)
-	logic1, ok := p1.(plannercore.LogicalPlan)
+	logic1, ok := p1.(base.LogicalPlan)
 	require.True(t, ok)
 	group1 := Convert2Group(logic1)
 	group1.BuildKeyInfo()
@@ -253,7 +253,7 @@ func TestBuildKeyInfo(t *testing.T) {
 	require.NoError(t, err)
 	p2, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt2, is)
 	require.NoError(t, err)
-	logic2, ok := p2.(plannercore.LogicalPlan)
+	logic2, ok := p2.(base.LogicalPlan)
 	require.True(t, ok)
 	group2 := Convert2Group(logic2)
 	group2.BuildKeyInfo()
