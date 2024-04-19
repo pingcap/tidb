@@ -642,3 +642,219 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 	err = mockDB.ExpectationsWereMet()
 	require.NoError(t, err)
 }
+
+func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
+	p := parser.New()
+	node, _, err := p.ParseSQL("create table a (a varchar(20) primary key nonclustered, b int not null, c text, unique key uni_b(b));")
+	require.NoError(t, err)
+	mockSctx := mock.NewContext()
+	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
+	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	require.False(t, info.PKIsHandle)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
+	require.NoError(t, err)
+	require.False(t, tbl.Meta().HasClusteredIndex())
+
+	sessionOpts := encode.SessionOptions{
+		SQLMode:   mysql.ModeStrictAllTables,
+		Timestamp: 1234567890,
+	}
+
+	encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table:          tbl,
+		SessionOptions: sessionOpts,
+		Logger:         log.L(),
+	})
+	require.NoError(t, err)
+	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+
+	data1 := []types.Datum{
+		types.NewStringDatum("x"),
+		types.NewIntDatum(6),
+		types.NewStringDatum("1.csv"),
+		types.NewIntDatum(1),
+	}
+	data2 := []types.Datum{
+		types.NewStringDatum("y"),
+		types.NewIntDatum(6),
+		types.NewStringDatum("2.csv"),
+		types.NewIntDatum(2),
+	}
+	data3 := []types.Datum{
+		types.NewStringDatum("z"),
+		types.NewIntDatum(3),
+		types.NewStringDatum("3.csv"),
+		types.NewIntDatum(3),
+	}
+	data4 := []types.Datum{
+		types.NewStringDatum("z"),
+		types.NewIntDatum(4),
+		types.NewStringDatum("4.csv"),
+		types.NewIntDatum(4),
+	}
+	data5 := []types.Datum{
+		types.NewStringDatum("t"),
+		types.NewIntDatum(4),
+		types.NewStringDatum("5.csv"),
+		types.NewIntDatum(5),
+	}
+	tctx := encoder.SessionCtx.GetTableCtx()
+	_, err = encoder.Table.AddRecord(tctx, data1)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(tctx, data2)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(tctx, data3)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(tctx, data4)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(tctx, data5)
+	require.NoError(t, err)
+	kvPairs := encoder.SessionCtx.TakeKvPairs()
+
+	data1RowKey := kvPairs.Pairs[0].Key
+	data2RowKey := kvPairs.Pairs[3].Key
+	data2RowValue := kvPairs.Pairs[3].Val
+	data3RowKey := kvPairs.Pairs[6].Key
+	data4RowKey := kvPairs.Pairs[9].Key
+	data4RowValue := kvPairs.Pairs[9].Val
+	data5RowKey := kvPairs.Pairs[12].Key
+	data5RowValue := kvPairs.Pairs[12].Val
+
+	data2IndexKey := kvPairs.Pairs[5].Key
+	data2IndexValue := kvPairs.Pairs[5].Val
+	data3IndexKey := kvPairs.Pairs[8].Key
+	data3IndexValue := kvPairs.Pairs[8].Val
+	data4IndexValue := kvPairs.Pairs[11].Val
+	data5IndexKey := kvPairs.Pairs[14].Key
+	data5IndexValue := kvPairs.Pairs[14].Val
+
+	data1NonclusteredKey := kvPairs.Pairs[1].Key
+	data1NonclusteredValue := kvPairs.Pairs[1].Val
+	data2NonclusteredValue := kvPairs.Pairs[4].Val
+	data4NonclusteredKey := kvPairs.Pairs[10].Key
+	data4NonclusteredValue := kvPairs.Pairs[10].Val
+	data5NonclusteredValue := kvPairs.Pairs[13].Val
+
+	db, mockDB, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mockDB.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_task_info`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v2.*").
+		WillReturnResult(sqlmock.NewResult(2, 1))
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "index_name", "raw_value", "raw_handle"}).
+			AddRow(1, data4NonclusteredKey, "uni_b", data4NonclusteredValue, data4RowKey).
+			AddRow(2, data4NonclusteredKey, "uni_b", data5NonclusteredValue, data5RowKey).
+			AddRow(3, data1NonclusteredKey, "uni_b", data1NonclusteredValue, data1RowKey).
+			AddRow(4, data1NonclusteredKey, "uni_b", data2NonclusteredValue, data2RowKey).
+			AddRow(5, data3IndexKey, "PRIMARY", data3IndexValue, data3RowKey).
+			AddRow(6, data3IndexKey, "PRIMARY", data4IndexValue, data4RowKey))
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v2.*").
+		WithArgs(0, "a", nil, nil, data5RowKey, data5RowValue, 1).
+		WillReturnResult(driver.ResultNoRows)
+	mockDB.ExpectCommit()
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v2.*").
+		WithArgs(0, "a", nil, nil, data2RowKey, data2RowValue, 1).
+		WillReturnResult(driver.ResultNoRows)
+	mockDB.ExpectCommit()
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v2.*").
+		WithArgs(0, "a", nil, nil, data4RowKey, data4RowValue, 1).
+		WillReturnResult(driver.ResultNoRows)
+	mockDB.ExpectCommit()
+	for i := 0; i < 2; i++ {
+		mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 0 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+			WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "index_name", "raw_value", "raw_handle"}))
+	}
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "raw_value"}).
+			AddRow(1, data5RowKey, data5RowValue).
+			AddRow(2, data2RowKey, data2RowValue).
+			AddRow(3, data4RowKey, data4RowValue))
+	for i := 0; i < 2; i++ {
+		mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
+			WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "raw_value"}))
+	}
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid FROM `lightning_task_info`.conflict_error_v2 WHERE key_data = \"\" and row_data = \"\" LIMIT 1\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid"}).
+			AddRow(1))
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
+		WillReturnResult(driver.ResultNoRows)
+	mockDB.ExpectCommit()
+	mockDB.ExpectQuery("\\QSELECT _tidb_rowid FROM `lightning_task_info`.conflict_error_v2 WHERE key_data = \"\" and row_data = \"\" LIMIT 1\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid"}))
+
+	cfg := config.NewConfig()
+	cfg.Conflict.Strategy = config.ReplaceOnDup
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.App.TaskInfoSchemaName = "lightning_task_info"
+	em := errormanager.New(db, cfg, log.L())
+	err = em.Init(ctx)
+	require.NoError(t, err)
+
+	fnGetLatestCount := atomic.NewInt32(0)
+	fnDeleteKeyCount := atomic.NewInt32(0)
+	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
+	err = em.ReplaceConflictKeys(
+		ctx, tbl, "a", pool,
+		func(ctx context.Context, key []byte) ([]byte, error) {
+			fnGetLatestCount.Add(1)
+			switch {
+			case bytes.Equal(key, data4NonclusteredKey):
+				if fnGetLatestCount.String() != "20" {
+					return data4NonclusteredValue, nil
+				}
+				return nil, tikverr.ErrNotExist
+			case bytes.Equal(key, data5RowKey):
+				if fnGetLatestCount.String() == "3" {
+					return data5RowValue, nil
+				}
+				return nil, tikverr.ErrNotExist
+			case bytes.Equal(key, data1NonclusteredKey):
+				return data1NonclusteredValue, nil
+			case bytes.Equal(key, data2RowKey):
+				if fnGetLatestCount.String() == "6" {
+					return data2RowValue, nil
+				}
+				return nil, tikverr.ErrNotExist
+			case bytes.Equal(key, data3IndexKey):
+				return data3IndexValue, nil
+			case bytes.Equal(key, data4RowKey):
+				if fnGetLatestCount.String() == "9" {
+					return data4RowValue, nil
+				}
+				return nil, tikverr.ErrNotExist
+			case bytes.Equal(key, data2IndexKey):
+				return data2IndexValue, nil
+			case bytes.Equal(key, data5IndexKey):
+				return data5IndexValue, nil
+			default:
+				return nil, fmt.Errorf("key %x is not expected", key)
+			}
+		},
+		func(ctx context.Context, key []byte) error {
+			fnDeleteKeyCount.Add(1)
+			if !bytes.Equal(key, data5RowKey) && !bytes.Equal(key, data2RowKey) && !bytes.Equal(key, data4RowKey) && !bytes.Equal(key, data2IndexKey) && !bytes.Equal(key, data4NonclusteredKey) && !bytes.Equal(key, data5IndexKey) {
+				return fmt.Errorf("key %v is not expected", key)
+			}
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, int32(21), fnGetLatestCount.Load())
+	require.Equal(t, int32(5), fnDeleteKeyCount.Load())
+	err = mockDB.ExpectationsWereMet()
+	require.NoError(t, err)
+}
