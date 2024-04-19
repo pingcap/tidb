@@ -677,7 +677,7 @@ timezone.*
     curl -X POST -d "transaction_summary_capacity={number}" http://{TiDBIP}:10080/settings
     ```
 
-1. Send upgrade operations to the cluster. The operations here include `start`, `finish` and `show`.
+1. The commands are used to handle smooth upgrade mode(refer to the [TiDB Smooth Upgrade](https://github.com/pingcap/docs/blob/master/smooth-upgrade-tidb.md) for details) operations. We can send these upgrade operations to the cluster. The operations here include `start`, `finish` and `show`.
 
    ```shell
    curl -X POST http://{TiDBIP}:10080/upgrade/{op}
