@@ -16,6 +16,9 @@ package executor
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/set"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"runtime"
 	"strconv"
 	"strings"
@@ -489,4 +492,19 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 			require.Equal(t, c.levels, ec.LevelMap(), msg)
 		}
 	}
+}
+
+func TestTikvstoreLockCtxMemConsume(t *testing.T) {
+	lockCtx := tikvstore.NewLockCtx(0, 0, time.Time{})
+	lockCtx.OnMemChange = func(capacity int) uint64 {
+		bucketMemoryUsage := hack.EstimateBucketMemoryUsageWithKVSize(lockCtx.GetValuesKSize(), lockCtx.GetValuesVSize())
+		mapSize := set.EstimateMapSize(capacity, bucketMemoryUsage)
+		return mapSize
+	}
+	numKeys := 100
+	lockCtx.InitCheckExistence(numKeys)
+	memUsage := lockCtx.OnMemChange(numKeys)
+	// the type of (key,value) in lockCtx.Value is (string,ReturnedValue) with size (16,48)
+	expectedMemUsage := set.EstimateMapSize(numKeys, hack.EstimateBucketMemoryUsageWithKVSize(16, 48))
+	require.Equal(t, expectedMemUsage, memUsage)
 }
