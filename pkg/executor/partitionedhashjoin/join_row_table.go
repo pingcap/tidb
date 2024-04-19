@@ -425,8 +425,6 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 type rowTableBuilder struct {
 	buildKeyIndex    []int
 	buildSchema      *expression.Schema
-	rowColumnsOrder  []int
-	columnsSize      []int
 	needUsedFlag     bool
 	hasNullableKey   bool
 	hasFilter        bool
@@ -451,8 +449,6 @@ func createRowTableBuilder(buildKeyIndex []int, buildSchema *expression.Schema, 
 	builder := &rowTableBuilder{
 		buildKeyIndex:       buildKeyIndex,
 		buildSchema:         buildSchema,
-		rowColumnsOrder:     meta.rowColumnsOrder,
-		columnsSize:         meta.columnsSize,
 		crrntSizeOfRowTable: make([]int64, partitionNumber),
 		startPosInRawData:   make([][]uint64, partitionNumber),
 		hasNullableKey:      hasNullableKey,
@@ -620,11 +616,11 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*
 		seg.rawData = append(seg.rawData, fakeAddrByte...)
 		// null_map
 		if nullMapLength := rowTableMeta.nullMapLength; nullMapLength > 0 {
-			bitmap := make([]byte, (nullMapLength+7)/8)
-			buildColumns := builder.buildSchema.Columns
-			for i := 0; i < len(builder.buildKeyIndex); i++ {
-				if !mysql.HasNotNullFlag(buildColumns[builder.buildKeyIndex[i]].RetType.GetFlag()) {
-					bitmap[i/8] |= 1 << (7 - i%8)
+			bitmap := make([]byte, nullMapLength)
+			for colIndexInRowTable, colIndexInRow := range rowTableMeta.rowColumnsOrder {
+				colIndexInBitMap := colIndexInRowTable + 1
+				if row.IsNull(colIndexInRow) {
+					bitmap[colIndexInBitMap/8] |= 1 << (7 - colIndexInRowTable%8)
 				}
 			}
 			seg.rawData = append(seg.rawData, bitmap...)
@@ -640,8 +636,8 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*
 			seg.rawData = append(seg.rawData, builder.serializedKeyVectorBuffer[logicalRowIndex]...)
 		}
 
-		for index, colIdx := range builder.rowColumnsOrder {
-			if builder.columnsSize[index] > 0 {
+		for index, colIdx := range rowTableMeta.rowColumnsOrder {
+			if rowTableMeta.columnsSize[index] > 0 {
 				// fixed size
 				seg.rawData = append(seg.rawData, row.GetRaw(colIdx)...)
 			} else {
