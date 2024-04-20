@@ -16,6 +16,8 @@ package expression
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	goJSON "encoding/json"
 	"strconv"
 	"strings"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/qri-io/jsonschema"
 )
 
 var (
@@ -53,6 +56,7 @@ var (
 	_ functionClass = &jsonMergePreserveFunctionClass{}
 	_ functionClass = &jsonPrettyFunctionClass{}
 	_ functionClass = &jsonQuoteFunctionClass{}
+	_ functionClass = &jsonSchemaValidFunctionClass{}
 	_ functionClass = &jsonSearchFunctionClass{}
 	_ functionClass = &jsonStorageSizeFunctionClass{}
 	_ functionClass = &jsonDepthFunctionClass{}
@@ -77,6 +81,7 @@ var (
 	_ builtinFunc = &builtinJSONOverlapsSig{}
 	_ builtinFunc = &builtinJSONStorageSizeSig{}
 	_ builtinFunc = &builtinJSONDepthSig{}
+	_ builtinFunc = &builtinJSONSchemaValidSig{}
 	_ builtinFunc = &builtinJSONSearchSig{}
 	_ builtinFunc = &builtinJSONKeysSig{}
 	_ builtinFunc = &builtinJSONKeys2ArgsSig{}
@@ -1795,4 +1800,67 @@ func (b *builtinJSONLengthSig) evalInt(ctx EvalContext, row chunk.Row) (res int6
 		return 1, false, nil
 	}
 	return int64(obj.GetElemCount()), false, nil
+}
+
+type jsonSchemaValidFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *jsonSchemaValidFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson, types.ETJson)
+	if err != nil {
+		return nil, err
+	}
+
+	sig := &builtinJSONSchemaValidSig{bf}
+	return sig, nil
+}
+
+type builtinJSONSchemaValidSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONSchemaValidSig) Clone() builtinFunc {
+	newSig := &builtinJSONSchemaValidSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinJSONSchemaValidSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
+	schema := &jsonschema.Schema{}
+
+	// First argument is the schema
+	schemaData, isNull, err := b.args[0].EvalJSON(ctx, row)
+	if err != nil {
+		return res, false, err
+	}
+	dataBin, err := schemaData.MarshalJSON()
+	if err != nil {
+		return res, false, err
+	}
+	if err := json.Unmarshal(dataBin, schema); err != nil {
+		return res, false, err
+	}
+
+	// Second argument is the JSON document
+	docData, _, err := b.args[1].EvalJSON(ctx, row)
+	if err != nil {
+		return res, false, err
+	}
+	docDataBin, err := docData.MarshalJSON()
+	if err != nil {
+		return res, false, err
+	}
+	errs, err := schema.ValidateBytes(context.Background(), docDataBin)
+	if err != nil {
+		return res, false, err
+	}
+	if len(errs) > 0 {
+		return res, false, nil
+	}
+	res = 1
+	return res, false, nil
 }
