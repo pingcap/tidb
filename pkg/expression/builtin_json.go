@@ -17,7 +17,6 @@ package expression
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	goJSON "encoding/json"
 	"strconv"
 	"strings"
@@ -1841,7 +1840,7 @@ func (b *builtinJSONSchemaValidSig) evalInt(ctx EvalContext, row chunk.Row) (res
 	if err != nil {
 		return res, false, err
 	}
-	if err := json.Unmarshal(dataBin, schema); err != nil {
+	if err := goJSON.Unmarshal(dataBin, schema); err != nil {
 		return res, false, err
 	}
 
