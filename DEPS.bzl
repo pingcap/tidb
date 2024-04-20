@@ -5933,6 +5933,32 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_qri_io_jsonpointer",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/qri-io/jsonpointer",
+        sha256 = "6870d4b9fc5ac8efb9226447975fecfb07241133e23c7e661f5aac1a3088f338",
+        strip_prefix = "github.com/qri-io/jsonpointer@v0.1.1",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/qri-io/jsonpointer/com_github_qri_io_jsonpointer-v0.1.1.zip",
+            "http://ats.apps.svc/gomod/github.com/qri-io/jsonpointer/com_github_qri_io_jsonpointer-v0.1.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/qri-io/jsonpointer/com_github_qri_io_jsonpointer-v0.1.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/qri-io/jsonpointer/com_github_qri_io_jsonpointer-v0.1.1.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_qri_io_jsonschema",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/qri-io/jsonschema",
+        sha256 = "51305cc45fd383b24de94e2eb421ffba8d83679520c18348842c4255025c5940",
+        strip_prefix = "github.com/qri-io/jsonschema@v0.2.1",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/qri-io/jsonschema/com_github_qri_io_jsonschema-v0.2.1.zip",
+            "http://ats.apps.svc/gomod/github.com/qri-io/jsonschema/com_github_qri_io_jsonschema-v0.2.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/qri-io/jsonschema/com_github_qri_io_jsonschema-v0.2.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/qri-io/jsonschema/com_github_qri_io_jsonschema-v0.2.1.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_quasilyte_go_ruleguard",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/quasilyte/go-ruleguard",
