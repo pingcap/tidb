@@ -93,6 +93,7 @@ require (
 	github.com/prometheus/client_model v0.6.1
 	github.com/prometheus/common v0.52.2
 	github.com/prometheus/prometheus v0.50.1
+	github.com/qri-io/jsonschema v0.2.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sasha-s/go-deadlock v0.3.1
 	github.com/scalalang2/golang-fifo v0.1.5
@@ -150,7 +151,6 @@ require (
 	github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 // indirect
 	github.com/getsentry/sentry-go v0.27.0 // indirect
 	github.com/qri-io/jsonpointer v0.1.1 // indirect
-	github.com/qri-io/jsonschema v0.2.1 // indirect
 )
 
 require (
@@ -303,7 +303,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240308144416-29370a3891b7 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apimachinery v0.28.6 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
