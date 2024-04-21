@@ -297,6 +297,7 @@ func TestRetry(t *testing.T) {
 		err1  error
 	)
 
+	// only 3 retries, too manh retries will take too much time
 	for i := 0; i < 3; i++ {
 		task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
 		require.Error(t, err1)
