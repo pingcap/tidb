@@ -1206,7 +1206,7 @@ func (w *GCWorker) resolveLocks(
 		keyspaceID := w.store.GetCodec().GetKeyspaceID()
 		// resolve locks in `keyspaceID` range.
 		txnLeftBound, txnRightBound = keyspace.GetKeyspaceTxnRange(uint32(keyspaceID))
-		err = w.legacyResolveLocksByRange(ctx, txnLeftBound, txnRightBound, runner, safePoint)
+		err = w.resolveLocksByKeyspaceRange(ctx, txnLeftBound, txnRightBound, runner, safePoint)
 		errMsg = "[gc worker] keyspace resolve locks err."
 	} else {
 		logutil.Logger(ctx).Info("[gc worker] start all keyspaces resolve locks when use global gc.")
@@ -1265,19 +1265,19 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 
 	// There is 3 steps of resolve locks in global gc.
 	// step 1. resolve locks in [ unbounded, keyspace 0 left bound )
-	// step 2. resolve locks in [ keyspace txnLeftBound , keyspace txnRightBound ) ... [ max keyspace txnLeftBound , max keyspace txnRightBound )
+	// step 2. resolve locks in [ keyspace txnLeftBound , keyspace txnRightBound ) for all keyspaces with keyspace level GC disabled
 	// step 3. resolve locks in [ max keyspace txnRightBound , unbounded )
 
 	// step 1. resolve locks in [ unbounded, keyspace 0 left bound )
 	txnLeftBound := []byte("")
 	txnRightBound := keyspace.GetKeyspaceTxnPrefix(0)
-	err = w.legacyResolveLocksByRange(ctx, txnLeftBound, txnRightBound, runner, safePoint)
+	err = w.resolveLocksByKeyspaceRange(ctx, txnLeftBound, txnRightBound, runner, safePoint)
 	if err != nil {
 		logutil.Logger(ctx).Warn("[gc worker] resolve lock failed to the left side of the keyspace range.", zap.Error(errors.Trace(err)))
 		return err
 	}
 
-	// step 2. resolve locks in [ keyspace txnLeftBound , keyspace txnRightBound ) ... [ max keyspace txnLeftBound , max keyspace txnRightBound )
+	// step 2. resolve locks in [ keyspace txnLeftBound , keyspace txnRightBound ) for all keyspaces with keyspace level GC disabled
 	// maxRightBound is the max right bound of all keyspaces,
 	// is used to find the range right of the last range of keyspace.
 	var maxRightBound []byte
@@ -1296,7 +1296,7 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 		if bytes.Compare(txnRightBound, maxRightBound) > 0 {
 			maxRightBound = txnRightBound
 		}
-		err := w.legacyResolveLocksByRange(ctx, txnLeftBound, txnRightBound, runner, safePoint)
+		err := w.resolveLocksByKeyspaceRange(ctx, txnLeftBound, txnRightBound, runner, safePoint)
 		if err != nil {
 			logutil.Logger(ctx).Warn("[gc worker] resolve locks in keyspace range failed.", zap.Uint32("keyspace-id", keyspaceMeta.Id), zap.String("txn-left-bound", hex.EncodeToString(txnLeftBound)), zap.String("txn-rigth-bound", hex.EncodeToString(txnRightBound)), zap.Error(errors.Trace(err)))
 			continue
@@ -1305,7 +1305,7 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 
 	// step 3. resolve locks in [ max keyspace txnRightBound , unbounded )
 	endKey := []byte("")
-	err = w.legacyResolveLocksByRange(ctx, maxRightBound, endKey, runner, safePoint)
+	err = w.resolveLocksByKeyspaceRange(ctx, maxRightBound, endKey, runner, safePoint)
 	if err != nil {
 		logutil.Logger(ctx).Warn("[gc worker] resolve locks failed.", zap.String("txnLeftBound", hex.EncodeToString(maxRightBound)), zap.String("txnRightBound", hex.EncodeToString(endKey)), zap.Error(errors.Trace(err)))
 		return err
@@ -1314,7 +1314,7 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 	return nil
 }
 
-func (w *GCWorker) legacyResolveLocksByRange(ctx context.Context, txnLeftBound []byte, txnRightBound []byte, runner *rangetask.Runner, safePoint uint64) error {
+func (w *GCWorker) resolveLocksByKeyspaceRange(ctx context.Context, txnLeftBound []byte, txnRightBound []byte, runner *rangetask.Runner, safePoint uint64) error {
 	logutil.Logger(ctx).Info("[gc worker] resolve locks by range",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
