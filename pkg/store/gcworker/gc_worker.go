@@ -755,14 +755,20 @@ func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint ui
 	if keyspace.IsKeyspaceMetaUseKeyspaceLevelGC(keyspace.CurrentKeyspaceMeta) {
 		keyspaceID := w.store.GetCodec().GetKeyspaceID()
 		minSafePoint, err = w.pdClient.UpdateServiceSafePointV2(ctx, uint32(keyspaceID), gcWorkerServiceSafePointID, ttl, safePoint)
+		logutil.Logger(ctx).Info("[gc worker] update the service safe point of keyspace level gc safe point",
+			zap.String("uuid", w.uuid),
+			zap.Uint64("req-service-safe-point", safePoint),
+			zap.Uint64("resp-min-service-safe-point", minSafePoint),
+			zap.Uint32("keyspace-id", uint32(keyspaceID)))
 	} else {
 		// It is the situation when the keyspace is not set.
 		minSafePoint, err = w.pdClient.UpdateServiceGCSafePoint(ctx, gcWorkerServiceSafePointID, ttl, safePoint)
+		logutil.Logger(ctx).Info("[gc worker] update the service safe point of global gc safe point",
+			zap.String("uuid", w.uuid),
+			zap.Uint64("req-service-safe-point", safePoint),
+			zap.Uint64("resp-min-service-safe-point", minSafePoint))
 	}
-	logutil.Logger(ctx).Info("[gc worker] update service safe point",
-		zap.String("uuid", w.uuid),
-		zap.Uint64("req-service-safe-point", safePoint),
-		zap.Uint64("resp-min-safe-point", minSafePoint))
+
 	if err != nil {
 		logutil.Logger(ctx).Error("failed to update service safe point", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
@@ -1244,7 +1250,6 @@ func (w *GCWorker) getAllKeyspace(ctx context.Context) ([]*keyspacepb.KeyspaceMe
 		allkeyspaces = append(allkeyspaces, keyspacesList...)
 		latestKeyspace := keyspacesList[len(keyspacesList)-1]
 		startID = latestKeyspace.Id + 1
-		logutil.Logger(ctx).Info("get all keyspace startID", zap.Uint32("startID", startID))
 	}
 	return allkeyspaces, nil
 }
@@ -1256,7 +1261,7 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 		logutil.Logger(ctx).Warn("[gc worker] get all keyspace err.", zap.Error(errors.Trace(err)))
 		return err
 	}
-	logutil.Logger(ctx).Info("[gc worker] start keyspaces resolve locks.")
+	logutil.Logger(ctx).Info("[gc worker] start resolving locks in global GC mode")
 
 	// There is 3 steps of resolve locks in global gc.
 	// step 1. resolve locks in [ unbounded, keyspace 0 left bound )
