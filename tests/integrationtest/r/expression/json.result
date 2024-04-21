@@ -649,3 +649,39 @@ select 1 from t where cast(BINARY vc as json) = '1';
 1
 select 1 from t where cast(BINARY c as json) = '1';
 1
+SELECT JSON_SCHEMA_VALID(NULL, NULL);
+JSON_SCHEMA_VALID(NULL, NULL)
+NULL
+SELECT JSON_SCHEMA_VALID('{}', NULL);
+JSON_SCHEMA_VALID('{}', NULL)
+NULL
+SELECT JSON_SCHEMA_VALID(NULL, '{}');
+JSON_SCHEMA_VALID(NULL, '{}')
+NULL
+SELECT JSON_SCHEMA_VALID('{"required": ["a","b"]}', '{"a": 5,"b": 6}');
+JSON_SCHEMA_VALID('{"required": ["a","b"]}', '{"a": 5,"b": 6}')
+1
+SELECT JSON_SCHEMA_VALID('{"required": ["a","b"]}', '{"a": 5,"c": 6}');
+JSON_SCHEMA_VALID('{"required": ["a","b"]}', '{"a": 5,"c": 6}')
+0
+SELECT JSON_SCHEMA_VALID('{"type": "object"}', '{}');
+JSON_SCHEMA_VALID('{"type": "object"}', '{}')
+1
+SELECT JSON_SCHEMA_VALID('{"type": "object"}', '"foo"');
+JSON_SCHEMA_VALID('{"type": "object"}', '"foo"')
+0
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{}');
+JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{}')
+1
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{"a": "foo"}');
+JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{"a": "foo"}')
+0
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{"a": 5}');
+JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{"a": 5}')
+1
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 5}');
+JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 5}')
+1
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 6}');
+JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 6}')
+1
