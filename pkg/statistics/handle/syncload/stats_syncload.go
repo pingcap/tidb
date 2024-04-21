@@ -239,14 +239,14 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 			task.ResultCh <- result
 			return nil, nil
 		}
-		if !updateNeededItemTaskRetryCountAndCheck(task) {
+		if !isVaildForRetry(task) {
 			result.Error = sr.Err
 			task.ResultCh <- result
 			return nil, nil
 		}
 		return task, sr.Err
 	case <-time.After(timeout):
-		if !updateNeededItemTaskRetryCountAndCheck(task) {
+		if !isVaildForRetry(task) {
 			result.Error = errors.New("stats loading timeout")
 			task.ResultCh <- result
 			return nil, nil
@@ -256,7 +256,7 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 	}
 }
 
-func updateNeededItemTaskRetryCountAndCheck(task *statstypes.NeededItemTask) bool {
+func isVaildForRetry(task *statstypes.NeededItemTask) bool {
 	task.Retry++
 	return task.Retry <= 3
 }
