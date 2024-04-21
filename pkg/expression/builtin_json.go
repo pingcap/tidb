@@ -1832,9 +1832,12 @@ func (b *builtinJSONSchemaValidSig) evalInt(ctx EvalContext, row chunk.Row) (res
 	schema := &jsonschema.Schema{}
 
 	// First argument is the schema
-	schemaData, isNull, err := b.args[0].EvalJSON(ctx, row)
+	schemaData, schemaIsNull, err := b.args[0].EvalJSON(ctx, row)
 	if err != nil {
 		return res, false, err
+	}
+	if schemaIsNull {
+		return res, true, err
 	}
 	dataBin, err := schemaData.MarshalJSON()
 	if err != nil {
@@ -1845,9 +1848,12 @@ func (b *builtinJSONSchemaValidSig) evalInt(ctx EvalContext, row chunk.Row) (res
 	}
 
 	// Second argument is the JSON document
-	docData, _, err := b.args[1].EvalJSON(ctx, row)
+	docData, docIsNull, err := b.args[1].EvalJSON(ctx, row)
 	if err != nil {
 		return res, false, err
+	}
+	if docIsNull {
+		return res, true, err
 	}
 	docDataBin, err := docData.MarshalJSON()
 	if err != nil {
