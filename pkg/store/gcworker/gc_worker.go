@@ -409,11 +409,13 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	// Gc safe point is not separated by keyspace now. The whole cluster has only one global gc safe point.
-	// So at least one TiDB with `keyspace-name` not set is required in the whole cluster to calculate and update gc safe point.
-	// If `keyspace-name` is set, the TiDB node will only do its own delete range, and will not calculate gc safe point and resolve locks.
-	// Note that when `keyspace-name` is set, `checkLeader` will be done within the key space.
-	// Therefore only one TiDB node in each key space will be responsible to do delete range.
+	// If 'gc_management_type' is not 'keyspace_level_gc' in current keyspace meta config,
+	// At least one TiDB with `keyspace-name` not set is required in the whole cluster
+	// which will to calculate and update global gc safe point in the whole cluster.
+	// In this case, if `keyspace-name` is set, the TiDB node will only do its own delete range,
+	// and will not calculate gc safe point and resolve locks.
+	// Note that when `keyspace-name` is set, `checkLeader` will be done within the keyspace.
+	// Therefore only one TiDB node in each keyspace will be responsible to do delete range.
 	if !keyspace.IsKeyspaceMetaUseKeyspaceLevelGC(keyspace.CurrentKeyspaceMeta) {
 		// If we use global gc safe point, a tidb which has keyspace-name should only do delete range logic.
 		err = w.runKeyspaceGCJobInGlobalGC(ctx, concurrency)
