@@ -306,8 +306,7 @@ func (w *GCWorker) tick(ctx context.Context) {
 
 // getGCSafePoint returns the current gc safe point.
 func (w *GCWorker) getGCSafePoint(ctx context.Context, pdClient pd.Client) (uint64, error) {
-	// If there is try to set gc safepoint is 0, the interface will not set gc safepoint to 0,
-	// it will return current gc safepoint.
+	// UpdateGCSafePoint returns the current GC safepoint without updating anything if 0 is passed.
 	var gcSafePoint uint64
 	var err error
 	keyspaceID := w.store.GetCodec().GetKeyspaceID()
@@ -1250,7 +1249,7 @@ func (w *GCWorker) getAllKeyspace(ctx context.Context) ([]*keyspacepb.KeyspaceMe
 	return allkeyspaces, nil
 }
 
-// Do resolve locks in global gc.
+// resolveLocksInGlobalGC performs resolve locks in global GC mode.
 func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask.Runner, safePoint uint64) error {
 	keyspaces, err := w.getAllKeyspace(ctx)
 	if err != nil {
