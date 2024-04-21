@@ -1857,7 +1857,7 @@ func BenchmarkCompleteLoadErr(b *testing.B) {
 	col := &model.ColumnInfo{
 		Name: model.NewCIStr("a"),
 	}
-	err := types.ErrWarnDataOutOfRange
+	err := types.ErrDataTooLong
 	for n := 0; n < b.N; n++ {
 		completeLoadErr(col, 0, err)
 	}
