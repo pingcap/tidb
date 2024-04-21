@@ -407,3 +407,5 @@ SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{"a": "fo
 SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number"}}}', '{"a": 5}');
 SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 5}');
 SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"type": "number", "minimum": 5}}}', '{"a": 6}');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "abc"}');
+SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"pattern": "^a"}}}', '{"a": "cba"}');
