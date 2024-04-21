@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -1837,4 +1838,27 @@ func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 
 func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 	b.ReportAllocs()
+}
+
+func BenchmarkCompleteInsertErr(b *testing.B) {
+	b.ReportAllocs()
+	col := &model.ColumnInfo{
+		Name:      model.NewCIStr("a"),
+		FieldType: *types.NewFieldType(mysql.TypeBlob),
+	}
+	err := types.ErrWarnDataOutOfRange
+	for n := 0; n < b.N; n++ {
+		completeInsertErr(col, nil, 0, err)
+	}
+}
+
+func BenchmarkCompleteLoadErr(b *testing.B) {
+	b.ReportAllocs()
+	col := &model.ColumnInfo{
+		Name: model.NewCIStr("a"),
+	}
+	err := types.ErrWarnDataOutOfRange
+	for n := 0; n < b.N; n++ {
+		completeLoadErr(col, 0, err)
+	}
 }
