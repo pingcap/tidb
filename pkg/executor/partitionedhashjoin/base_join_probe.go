@@ -272,8 +272,11 @@ func (j *baseJoinProbe) appendBuildRowToChunk(chk *chunk.Chunk, currentColumnInd
 
 func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols []int, forOtherCondition bool, colOffset int, currentColumnInRow int) {
 	chkRows := chk.NumRows()
+	needUpdateVirtualRow := currentColumnInRow == 0
 	if len(usedCols) == 0 || len(j.cachedBuildRows) == 0 {
-		chk.SetNumVirtualRows(chkRows + len(j.cachedBuildRows))
+		if needUpdateVirtualRow {
+			chk.SetNumVirtualRows(chkRows + len(j.cachedBuildRows))
+		}
 		return
 	}
 	for i := 0; i < len(j.cachedBuildRows); i++ {
@@ -326,7 +329,9 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 			}
 		}
 	}
-	chk.SetNumVirtualRows(chkRows + len(j.cachedBuildRows))
+	if needUpdateVirtualRow {
+		chk.SetNumVirtualRows(chkRows + len(j.cachedBuildRows))
+	}
 }
 
 func (j *baseJoinProbe) appendProbeRowToChunk(chk *chunk.Chunk, probeChk *chunk.Chunk) {
@@ -377,6 +382,7 @@ func (j *baseJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joinedC
 	// 1. columns already in joinedChk
 	// 2. columns from build side, but not in joinedChk
 	// 3. columns from probe side, but not in joinedChk
+	rowCount := chk.NumRows()
 	probeUsedColumns, probeColOffset, probeColOffsetInJoinedChk := j.lUsed, 0, 0
 	if !j.rightAsBuildSide {
 		probeUsedColumns, probeColOffset, probeColOffsetInJoinedChk = j.rUsed, len(j.lUsed), j.ctx.hashTableMeta.totalColumnNumber
@@ -423,6 +429,13 @@ func (j *baseJoinProbe) buildResultAfterOtherCondition(chk *chunk.Chunk, joinedC
 			j.batchConstructBuildRows(chk, j.ctx.hashTableMeta.columnCountNeededForOtherCondition, false)
 		}
 	}
+	rowsAdded := 0
+	for _, result := range j.selected {
+		if result {
+			rowsAdded++
+		}
+	}
+	chk.SetNumVirtualRows(rowCount + rowsAdded)
 	return
 }
 

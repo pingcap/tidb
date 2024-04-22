@@ -593,9 +593,13 @@ func (builder *rowTableBuilder) appendRemainingRowLocations(rowTables []*rowTabl
 
 func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*rowTable, rowTableMeta *JoinTableMeta) {
 	fakeAddrByte := make([]byte, 8)
+	var fakeKeyByte []byte
+	if builder.keepFilteredRows && rowTableMeta.isJoinKeysFixedLength && !rowTableMeta.isJoinKeysInlined {
+		fakeKeyByte = make([]byte, rowTableMeta.joinKeysLength)
+	}
 	for logicalRowIndex, physicalRowIndex := range builder.usedRows {
-		needInsertedToHashTable := (!builder.hasFilter || builder.filterVector[physicalRowIndex]) && (!builder.hasNullableKey || !builder.nullKeyVector[physicalRowIndex])
-		if !needInsertedToHashTable && !builder.keepFilteredRows {
+		hasValidKey := (!builder.hasFilter || builder.filterVector[physicalRowIndex]) && (!builder.hasNullableKey || !builder.nullKeyVector[physicalRowIndex])
+		if !hasValidKey && !builder.keepFilteredRows {
 			continue
 		}
 		var (
@@ -620,7 +624,7 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*
 				rowTables[partIdx].segments = append(rowTables[partIdx].segments, seg)
 			}
 		}
-		if needInsertedToHashTable {
+		if hasValidKey {
 			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 		}
 		seg.hashValues = append(seg.hashValues, builder.hashValue[logicalRowIndex])
@@ -641,12 +645,24 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*
 		length := uint64(0)
 		// if join_key is not fixed length: `key_length` need to be written in rawData
 		if !rowTableMeta.isJoinKeysFixedLength {
-			length = uint64(len(builder.serializedKeyVectorBuffer[logicalRowIndex]))
+			if hasValidKey {
+				length = uint64(len(builder.serializedKeyVectorBuffer[logicalRowIndex]))
+			} else {
+				length = 0
+			}
 			seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), SizeOfLengthField)...)
 		}
 		if !rowTableMeta.isJoinKeysInlined {
 			// if join_key is not inlined: `serialized_key` need to be written in rawData
-			seg.rawData = append(seg.rawData, builder.serializedKeyVectorBuffer[logicalRowIndex]...)
+			if hasValidKey {
+				seg.rawData = append(seg.rawData, builder.serializedKeyVectorBuffer[logicalRowIndex]...)
+			} else {
+				// if there is no valid key, and the key is fixed length, then write a fake key
+				if rowTableMeta.isJoinKeysFixedLength {
+					seg.rawData = append(seg.rawData, fakeKeyByte...)
+				}
+				// otherwise don't need to write since length is 0
+			}
 		}
 
 		for index, colIdx := range rowTableMeta.rowColumnsOrder {
