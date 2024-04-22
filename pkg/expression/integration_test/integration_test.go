@@ -2590,14 +2590,26 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("2000-01-05 00:00:00.00000"))
 
 	// fix issues #52262
+	// date time
 	result = tk.MustQuery(`select distinct -(DATE_ADD(DATE('2017-11-12 08:48:25'), INTERVAL 1 HOUR_MICROSECOND))`)
 	result.Check(testkit.Rows("-20171112000000.100000"))
 	result = tk.MustQuery(`select distinct (DATE_ADD(DATE('2017-11-12 08:48:25'), INTERVAL 1 HOUR_MICROSECOND))`)
 	result.Check(testkit.Rows("2017-11-12 00:00:00.100000"))
-	result = tk.MustQuery(`select distinct -cast(0.1 as time(1));`)
+	// duration
+	result = tk.MustQuery(`select distinct -cast(0.1 as time(1))`)
 	result.Check(testkit.Rows("-0.1"))
-	result = tk.MustQuery(`select distinct cast(0.1 as time(1));`)
+	result = tk.MustQuery(`select distinct cast(0.1 as time(1))`)
 	result.Check(testkit.Rows("00:00:00.1"))
+	// date
+	result = tk.MustQuery(`select distinct -(DATE('2017-11-12 08:48:25'))`)
+	result.Check(testkit.Rows("-20171112"))
+	result = tk.MustQuery(`select distinct (DATE('2017-11-12 08:48:25'))`)
+	result.Check(testkit.Rows("2017-11-12"))
+	// timestamp
+	result = tk.MustQuery(`select distinct (Timestamp('2017-11-12 08:48:25'))`)
+	result.Check(testkit.Rows("2017-11-12 08:48:25"))
+	result = tk.MustQuery(`select distinct -(Timestamp('2017-11-12 08:48:25'))`)
+	result.Check(testkit.Rows("-20171112084825"))
 }
 
 func TestSetVariables(t *testing.T) {
