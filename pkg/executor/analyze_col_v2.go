@@ -17,13 +17,8 @@ package executor
 import (
 	"context"
 	stderrors "errors"
-<<<<<<< HEAD
-	"math"
 	"sort"
 	"sync/atomic"
-=======
-	"slices"
->>>>>>> 2e1d9e1039c (executor: remove the retry for analyze (#52634))
 	"time"
 
 	"github.com/pingcap/errors"
@@ -58,52 +53,7 @@ type AnalyzeColumnsExecV2 struct {
 	*AnalyzeColumnsExec
 }
 
-<<<<<<< HEAD
-func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2() *statistics.AnalyzeResults {
-	analyzeResult := e.analyzeColumnsPushDownV2()
-	if e.notRetryable(analyzeResult) {
-		return analyzeResult
-	}
-
-	finishJobWithLog(e.ctx, analyzeResult.Job, analyzeResult.Err)
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	if statsHandle == nil {
-		return analyzeResult
-	}
-
-	var statsTbl *statistics.Table
-	tid := e.tableID.GetStatisticsID()
-	if tid == e.tableInfo.ID {
-		statsTbl = statsHandle.GetTableStats(e.tableInfo)
-	} else {
-		statsTbl = statsHandle.GetPartitionStats(e.tableInfo, tid)
-	}
-	if statsTbl == nil || statsTbl.RealtimeCount <= 0 {
-		return analyzeResult
-	}
-
-	newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.RealtimeCount))
-	if newSampleRate >= *e.analyzePB.ColReq.SampleRate {
-		return analyzeResult
-	}
-	*e.analyzePB.ColReq.SampleRate = newSampleRate
-	prepareV2AnalyzeJobInfo(e.AnalyzeColumnsExec, true)
-	AddNewAnalyzeJob(e.ctx, e.job)
-	StartAnalyzeJob(e.ctx, e.job)
-	return e.analyzeColumnsPushDownV2()
-}
-
-// Do **not** retry if succeed / not oom error / not auto-analyze / samplerate not set.
-func (e *AnalyzeColumnsExecV2) notRetryable(analyzeResult *statistics.AnalyzeResults) bool {
-	return analyzeResult.Err == nil || analyzeResult.Err != errAnalyzeOOM ||
-		!e.ctx.GetSessionVars().InRestrictedSQL ||
-		e.analyzePB.ColReq == nil || *e.analyzePB.ColReq.SampleRate <= 0
-}
-
 func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeResults {
-=======
-func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics.AnalyzeResults {
->>>>>>> 2e1d9e1039c (executor: remove the retry for analyze (#52634))
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
