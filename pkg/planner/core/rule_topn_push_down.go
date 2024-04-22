@@ -93,6 +93,7 @@ func (lt *LogicalTopN) setChild(p base.LogicalPlan, opt *coreusage.LogicalOptimi
 	return lt
 }
 
+// PushDownTopN implements LogicalPlan interface.
 func (ls *LogicalSort) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
@@ -152,6 +153,7 @@ func (p *LogicalUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *co
 	return p
 }
 
+// PushDownTopN implements LogicalPlan interface.
 func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
@@ -233,6 +235,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *coreu
 	return p.children[idx].PushDownTopN(newTopN, opt)
 }
 
+// PushDownTopN implements the LogicalPlan interface.
 func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
