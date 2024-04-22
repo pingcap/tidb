@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"strings"
 	"testing"
 
@@ -99,7 +100,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 		plan, err := builder.Build(context.TODO(), stmt)
 		require.NoError(t, err)
-		_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(core.LogicalPlan))
+		_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 		require.NoError(t, err)
 		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 		require.NotNil(t, otrace)
@@ -161,7 +162,7 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	flag := uint64(0)
 	// flagGcSubstitute | flagStabilizeResults | flagSkewDistinctAgg | flagEliminateOuterJoin | flagPushDownAgg
 	flag |= flag | 1<<1 | 1<<3 | 1<<8 | 1<<13 | 1<<16
-	_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(core.LogicalPlan))
+	_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(base.LogicalPlan))
 	require.NoError(t, err)
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 	require.NotNil(t, otrace)
@@ -224,7 +225,7 @@ func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 	plan, err := builder.Build(context.TODO(), stmt)
 	require.NoError(t, err)
-	_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(core.LogicalPlan))
+	_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 	require.NoError(t, err)
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 	for _, candidate := range otrace.Candidates {

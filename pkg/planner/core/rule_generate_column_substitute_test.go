@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -265,7 +266,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	require.NoError(b, err, sql)
 	p, err := core.BuildLogicalPlanForTest(ctx, s.GetSCtx(), stmt, s.GetIS())
 	require.NoError(b, err)
-	selection := p.(core.LogicalPlan).Children()[0]
+	selection := p.(base.LogicalPlan).Children()[0]
 	m := make(core.ExprColumnMap, len(selection.Schema().Columns))
 	for _, col := range selection.Schema().Columns {
 		if col.VirtualExpr != nil {
