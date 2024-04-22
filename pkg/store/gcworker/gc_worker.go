@@ -416,7 +416,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	// and will not calculate gc safe point and resolve locks.
 	// Note that when `keyspace-name` is set, `checkLeader` will be done within the keyspace.
 	// Therefore only one TiDB node in each keyspace will be responsible to do delete range.
-	if keyspace.IsKeyspaceMetaUseKeyspaceLevelGC(keyspace.CurrentKeyspaceMeta) {
+	if keyspace.CurrentKeyspaceMeta != nil && !keyspace.IsKeyspaceMetaUseKeyspaceLevelGC(keyspace.CurrentKeyspaceMeta) {
 		// If we use global gc safe point, a tidb which has keyspace-name should only do delete range logic.
 		err = w.runKeyspaceGCJobInGlobalGC(ctx, concurrency)
 		if err != nil {
