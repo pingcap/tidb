@@ -162,11 +162,11 @@ func (j *leftOuterJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, j
 func (j *leftOuterJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, startProbeRow int) {
 	// append not matched rows
 	// for not matched rows, probe col is appended using original cols, and build column is appended using nulls
-	prevRows, afterRows := 0, 0
+	prevRows := chk.NumRows()
+	afterRows := prevRows
 	for index, colIndex := range j.lUsed {
 		dstCol := chk.Column(index)
 		srcCol := j.currentChunk.Column(colIndex)
-		prevRows = dstCol.Rows()
 		chunk.CopySelectedRowsWithRowIdFunc(dstCol, srcCol, j.isNotMatchedRows, startProbeRow, j.currentProbeRow, func(i int) int {
 			return j.usedRows[i]
 		})
@@ -186,6 +186,7 @@ func (j *leftOuterJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, star
 			dstCol := chk.Column(colOffset + index)
 			dstCol.AppendNNulls(nullRows)
 		}
+		chk.SetNumVirtualRows(prevRows + nullRows)
 	}
 }
 
@@ -220,12 +221,12 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 		remainCap--
 	}
 	if len(j.cachedBuildRows) > 0 {
-		j.batchConstructBuildRows(joinedChk, 0, true)
+		j.batchConstructBuildRows(joinedChk, 0, hasOtherCondition)
 	}
 	j.appendOffsetAndLength(j.currentProbeRow, length)
 	j.appendProbeRowToChunk(joinedChk, j.currentChunk)
 
-	if j.ctx.hasOtherCondition() {
+	if hasOtherCondition {
 		if joinedChk.NumRows() > 0 {
 			j.selected = j.selected[:0]
 			j.selected, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
@@ -281,10 +282,8 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 			return err
 		}
 		err = j.buildResultAfterOtherCondition(chk, joinedChk)
-		prevSetProbeRowIndex := -1
 		for index, result := range j.selected {
-			if result && prevSetProbeRowIndex != j.rowIndexInfos[index].probeRowIndex {
-				prevSetProbeRowIndex = j.rowIndexInfos[index].probeRowIndex
+			if result {
 				meta.setUsedFlag(j.rowIndexInfos[index].buildRowStart)
 			}
 		}
