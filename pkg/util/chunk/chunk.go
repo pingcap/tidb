@@ -429,7 +429,7 @@ func (c *Chunk) AppendPartialRowByColIdxs(colOff int, row Row, colIdxs []int) (w
 // appendCellByCell appends the cell with rowIdx of src into dst.
 func appendCellByCell(dst *Column, src *Column, rowIdx int) {
 	dst.appendNullBitmap(!src.IsNull(rowIdx))
-	if src.isFixed() {
+	if dst.isFixed() {
 		elemLen := len(src.elemBuf)
 		offset := rowIdx * elemLen
 		dst.data = append(dst.data, src.data[offset:offset+elemLen]...)
