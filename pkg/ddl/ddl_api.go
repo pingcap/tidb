@@ -96,6 +96,8 @@ const (
 	tiflashCheckPendingTablesRetry = 7
 )
 
+var errCheckConstraintIsOff = errors.NewNoStackError("tidb_enable_check_constraint is off")
+
 func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
 	var placementPolicyRef *model.PolicyRefInfo
 	sessionVars := ctx.GetSessionVars()
@@ -1244,7 +1246,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
 			case ast.ColumnOptionCheck:
 				if !variable.EnableCheckConstraint.Load() {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
+					ctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 				} else {
 					// Check the column CHECK constraint dependency lazily, after fill all the name.
 					// Extract column constraint from column option.
@@ -2184,7 +2186,7 @@ func BuildTableInfo(
 		// check constraint
 		if constr.Tp == ast.ConstraintCheck {
 			if !variable.EnableCheckConstraint.Load() {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
+				ctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 				continue
 			}
 			// Since column check constraint dependency has been done in columnDefToCol.
@@ -3934,7 +3936,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
 			case ast.ConstraintCheck:
 				if !variable.EnableCheckConstraint.Load() {
-					sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
+					sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 				} else {
 					err = d.CreateCheckConstraint(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint)
 				}
@@ -4035,13 +4037,13 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			err = d.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility)
 		case ast.AlterTableAlterCheck:
 			if !variable.EnableCheckConstraint.Load() {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 			} else {
 				err = d.AlterCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
 			}
 		case ast.AlterTableDropCheck:
 			if !variable.EnableCheckConstraint.Load() {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 			} else {
 				err = d.DropCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name))
 			}
