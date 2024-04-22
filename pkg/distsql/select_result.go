@@ -777,8 +777,9 @@ func (s *selectResultRuntimeStats) String() string {
 
 	rpcStatsStr := reqStat.String()
 	if len(rpcStatsStr) > 0 {
-		buf.WriteString(", ")
+		buf.WriteString(", rpc_info:{")
 		buf.WriteString(rpcStatsStr)
+		buf.WriteString("}")
 	}
 
 	if len(s.backoffSleep) > 0 {
