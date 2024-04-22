@@ -244,7 +244,9 @@ func createLocalBackend(
 		return nil, err
 	}
 
-	litLogger.Info("create local backend for adding index", zap.String("keyspaceName", cfg.keyspaceName))
+	litLogger.Info("create local backend for adding index",
+		zap.String("sortDir", cfg.lightning.TikvImporter.SortedKVDir),
+		zap.String("keyspaceName", cfg.keyspaceName))
 	// We disable the switch TiKV mode feature for now,
 	// because the impact is not fully tested.
 	var raftKV2SwitchModeDuration time.Duration
