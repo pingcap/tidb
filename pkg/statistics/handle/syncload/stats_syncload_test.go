@@ -225,17 +225,18 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		task3, err3 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
 		require.NoError(t, err3)
 		require.Nil(t, task3)
-
-		task, err3 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, exitCh)
-		require.NoError(t, err3)
-		require.Nil(t, task)
-
-		rs1, ok1 := <-stmtCtx1.StatsLoad.ResultCh
-		require.True(t, ok1)
-		require.Equal(t, neededColumns[0].TableItemID, rs1.Item)
-		rs2, ok2 := <-stmtCtx2.StatsLoad.ResultCh
-		require.True(t, ok2)
-		require.Equal(t, neededColumns[0].TableItemID, rs2.Item)
+		for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
+			rs1, ok1 := <-resultCh
+			require.True(t, rs1.Shared)
+			require.True(t, ok1)
+			require.Equal(t, neededColumns[0].TableItemID, rs1.Val.(stmtctx.StatsLoadResult).Item)
+		}
+		for _, resultCh := range stmtCtx2.StatsLoad.ResultCh {
+			rs1, ok1 := <-resultCh
+			require.True(t, rs1.Shared)
+			require.True(t, ok1)
+			require.Equal(t, neededColumns[0].TableItemID, rs1.Val.(stmtctx.StatsLoadResult).Item)
+		}
 
 		stat = h.GetTableStats(tableInfo)
 		hg := stat.Columns[tableInfo.Columns[2].ID].Histogram
