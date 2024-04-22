@@ -16,13 +16,13 @@ package core_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
