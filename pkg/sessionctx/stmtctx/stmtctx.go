@@ -212,6 +212,7 @@ type StatementContext struct {
 	UseCache               bool
 	ForcePlanCache         bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
 	CacheType              PlanCacheType
+	PlanCacheUnqualified   string // why this query is not supported by the plan cache
 	BatchCheck             bool
 	IgnoreExplainIDSuffix  bool
 	MultiSchemaInfo        *model.MultiSchemaInfo
@@ -791,6 +792,7 @@ func (sc *StatementContext) ForceSetSkipPlanCache(reason error) {
 
 func (sc *StatementContext) setSkipPlanCache(reason error) {
 	sc.UseCache = false
+	sc.PlanCacheUnqualified = reason.Error()
 	switch sc.CacheType {
 	case DefaultNoCache:
 		sc.AppendWarning(errors.NewNoStackError("unknown cache type"))

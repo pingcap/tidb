@@ -501,6 +501,68 @@ func TestPerformanceSchemaforNonPrepPlanCache(t *testing.T) {
 		"6 select * from `t` where `a` = ? 0 0 3 select * from t where a=1"))
 }
 
+func TestPlanCacheUnqualified(t *testing.T) {
+	setupStmtSummary()
+	defer closeStmtSummary()
+
+	store := testkit.CreateMockStore(t)
+	tk := newTestKitWithRoot(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int, b int)`)
+	tk.MustExec(`create table t2 (a int, b int)`)
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
+	tk.MustExec(`prepare st1 from 'select * from t1 where a<=?'`)
+	tk.MustExec(`set @x1 = '123'`)
+	tk.MustExec(`prepare st2 from 'select * from t1 where t1.a > (select 1 from t2 where t2.b<1)'`)
+	tk.MustExec(`prepare st3 from 'select /*+ ignore_plan_cache() */ * from t1'`)
+	tk.MustExec(`prepare st4 from 'select database() from t1';`)
+
+	tk.MustExec(`execute st1 using @x1`)
+	tk.MustExec(`execute st1 using @x1`)
+	tk.MustExec(`execute st1 using @x1`)
+	tk.MustExec(`execute st1 using @x1`)
+
+	tk.MustExec(`execute st2`)
+	tk.MustExec(`execute st2`)
+	tk.MustExec(`execute st2`)
+
+	tk.MustExec(`execute st3`)
+	tk.MustExec(`execute st3`)
+
+	tk.MustExec(`execute st4`)
+	tk.MustExec(`execute st4`)
+
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+    from information_schema.statements_summary where plan_cache_unqualified > 0`).Sort().Check(testkit.Rows(
+		"select * from `t1` 2 2 ignore plan cache by hint",
+		"select * from `t1` where `a` <= ? 4 4 '123' may be converted to INT",
+		"select * from `t1` where `t1` . `a` > ( select ? from `t2` where `t2` . `b` < ? ) 3 3 query has uncorrelated sub-queries is un-cacheable",
+		"select database ( ) from `t1` 2 2 query has 'database' is un-cacheable"))
+
+	for i := 0; i < 100; i++ {
+		tk.MustExec(`execute st3`)
+		tk.MustExec(`execute st4`)
+	}
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+    from information_schema.statements_summary where plan_cache_unqualified > 0`).Sort().Check(testkit.Rows(
+		"select * from `t1` 102 102 ignore plan cache by hint",
+		"select * from `t1` where `a` <= ? 4 4 '123' may be converted to INT",
+		"select * from `t1` where `t1` . `a` > ( select ? from `t2` where `t2` . `b` < ? ) 3 3 query has uncorrelated sub-queries is un-cacheable",
+		"select database ( ) from `t1` 102 102 query has 'database' is un-cacheable"))
+
+	tk.MustExec(`set @x2=123`)
+	for i := 0; i < 20; i++ {
+		tk.MustExec(`execute st1 using @x1`)
+		tk.MustExec(`execute st1 using @x2`)
+	}
+	tk.MustQuery(`select digest_text, exec_count, plan_cache_unqualified, last_plan_cache_unqualified_reason
+    from information_schema.statements_summary where digest_text like '%<= ?%'`).Check(
+		testkit.Rows("select * from `t1` where `a` <= ? 44 24 '123' may be converted to INT"))
+}
+
 func TestPerformanceSchemaforPlanCache(t *testing.T) {
 	setupStmtSummary()
 	defer closeStmtSummary()
