@@ -533,7 +533,11 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 	tableInfo := recoverInfo.TableInfo.Clone()
 	tableInfo.State = model.StatePublic
 	tableInfo.UpdateTS = t.StartTS
+<<<<<<< HEAD:ddl/table.go
 	err = t.CreateTableAndSetAutoID(recoverInfo.SchemaID, tableInfo, recoverInfo.AutoIDs.RowID, recoverInfo.AutoIDs.RandomID)
+=======
+	err = t.CreateTableAndSetAutoID(recoverInfo.SchemaID, recoverInfo.OldSchemaName, tableInfo, recoverInfo.AutoIDs)
+>>>>>>> 4b6e8ee0306 (meta,ddl: fix duplicate entry error when insert after drop and recover table (#52761)):pkg/ddl/table.go
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
