@@ -25,8 +25,8 @@ hint_sig_file_public=$TEST_DIR/hint_sig_file_public
 hint_sig_file_history=$TEST_DIR/hint_sig_file_history
 
 # inject some failpoints for TiDB-server
-export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/ddl/create-index-stuck-before-public=return(\"$hint_sig_file_public\");\
-github.com/pingcap/tidb/pkg/ddl/create-index-stuck-before-ddlhistory=return(\"$hint_sig_file_history\")"
+export GO_FAILPOINTS="github.com/pingcap/tidb/ddl/create-index-stuck-before-public=return(\"$hint_sig_file_public\");\
+github.com/pingcap/tidb/ddl/create-index-stuck-before-ddlhistory=return(\"$hint_sig_file_history\")"
 
 # start a new cluster
 echo "restart a services"
