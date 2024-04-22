@@ -280,7 +280,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	}
 
 	if withSel {
-		sel := make([]int, 0, 2049)
+		sel := make([]int, 0, inputRowNumber)
 		for i := 0; i < inputRowNumber; i++ {
 			if i%9 == 0 {
 				continue
@@ -530,7 +530,7 @@ func TestInnerJoinProbeWithSel(t *testing.T) {
 
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	a := &expression.Column{Index: 1, RetType: intTp}
-	b := &expression.Column{Index: 8, RetType: intTp}
+	b := &expression.Column{Index: 8, RetType: uintTp}
 	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
 	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
