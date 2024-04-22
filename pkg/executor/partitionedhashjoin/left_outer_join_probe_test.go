@@ -49,9 +49,17 @@ func genLeftOuterJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFilter
 			require.NoError(t, err)
 		}
 		for leftIndex := 0; leftIndex < leftChunk.NumRows(); leftIndex++ {
-			if leftFilter != nil && !filterVector[leftIndex] {
+			filterIndex := leftIndex
+			if leftChunk.Sel() != nil {
+				filterIndex = leftChunk.Sel()[leftIndex]
+			}
+			if leftFilter != nil && !filterVector[filterIndex] {
 				// filtered by left filter, just construct the result row without probe
 				appendToResultChk(leftChunk.GetRow(leftIndex), emptyRow, leftUsedColumns, rightUsedColumns, resultChk)
+				if resultChk.IsFull() {
+					returnChks = append(returnChks, resultChk)
+					resultChk = chunk.New(resultTypes, sessCtx.GetSessionVars().MaxChunkSize, sessCtx.GetSessionVars().MaxChunkSize)
+				}
 				continue
 			}
 			leftRow := leftChunk.GetRow(leftIndex)
@@ -80,6 +88,10 @@ func genLeftOuterJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFilter
 			}
 			if !hasAtLeastOneMatch {
 				appendToResultChk(leftRow, emptyRow, leftUsedColumns, rightUsedColumns, resultChk)
+				if resultChk.IsFull() {
+					returnChks = append(returnChks, resultChk)
+					resultChk = chunk.New(resultTypes, sessCtx.GetSessionVars().MaxChunkSize, sessCtx.GetSessionVars().MaxChunkSize)
+				}
 			}
 		}
 	}
@@ -256,7 +268,7 @@ func TestLeftOuterJoinProbeWithSel(t *testing.T) {
 
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	a := &expression.Column{Index: 1, RetType: intTp}
-	b := &expression.Column{Index: 8, RetType: intTp}
+	b := &expression.Column{Index: 8, RetType: uintTp}
 	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
 	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
