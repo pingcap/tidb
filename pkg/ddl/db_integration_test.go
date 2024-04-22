@@ -3061,7 +3061,6 @@ func TestIssue52680(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, ids, step.expect)
 		txn.Rollback()
-
 	}
 
 	tk.MustQuery("show table issue52680 next_row_id").Check(testkit.Rows(
