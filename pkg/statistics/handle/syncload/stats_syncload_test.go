@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -298,7 +299,7 @@ func TestRetry(t *testing.T) {
 	)
 
 	// only 3 retries, too manh retries will take too much time
-	for i := 0; i < 3; i++ {
+	for i := 0; i < syncload.RetryCount; i++ {
 		task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)

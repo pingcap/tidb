@@ -32,6 +32,7 @@ go_test(
     race = "on",
     shard_count = 5,
     deps = [
+        ":syncload",
         "//pkg/config",
         "//pkg/parser/model",
         "//pkg/sessionctx",

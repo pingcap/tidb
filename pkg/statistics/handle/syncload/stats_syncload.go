@@ -36,6 +36,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// RetryCount is the max retry count for a sync load task.
+const RetryCount = 3
+
 type statsSyncLoad struct {
 	statsHandle statstypes.StatsHandle
 	StatsLoad   statstypes.StatsLoad
@@ -258,7 +261,7 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 
 func isVaildForRetry(task *statstypes.NeededItemTask) bool {
 	task.Retry++
-	return task.Retry <= 3
+	return task.Retry <= RetryCount
 }
 
 func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statstypes.NeededItemTask) (err error) {
