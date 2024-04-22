@@ -728,18 +728,18 @@ func TestAppendCellByCell(t *testing.T) {
 	dstCol := NewColumn(types.NewFieldType(mysql.TypeString), 5)
 	srcCol := NewColumn(types.NewFieldType(mysql.TypeLong), 5)
 
-	srcCol.AppendInt64(1)
-	srcCol.AppendInt64(2)
-	srcCol.AppendInt64(3)
+	srcCol.AppendInt64(85)
+	srcCol.AppendInt64(86)
+	srcCol.AppendInt64(87)
 
 	appendCellByCell(dstCol, srcCol, 0)
 	appendCellByCell(dstCol, srcCol, 1)
 	appendCellByCell(dstCol, srcCol, 2)
 
 	// Test is success when there is no panic
-	dstCol.GetString(0)
-	dstCol.GetString(1)
-	dstCol.GetString(2)
+	require.Equal(t, "U\x00\x00\x00\x00\x00\x00\x00", dstCol.GetString(0))
+	require.Equal(t, "V\x00\x00\x00\x00\x00\x00\x00", dstCol.GetString(1))
+	require.Equal(t, "W\x00\x00\x00\x00\x00\x00\x00", dstCol.GetString(2))
 }
 
 func BenchmarkAppendInt(b *testing.B) {
