@@ -3044,9 +3044,9 @@ func TestIssue52680(t *testing.T) {
 		sql    string
 		expect meta.AutoIDGroup
 	}{
-		{sql: "", expect: meta.AutoIDGroup{0, 4000, 0}},
-		{sql: "drop table issue52680", expect: meta.AutoIDGroup{0, 0, 0}},
-		{sql: "recover table issue52680", expect: meta.AutoIDGroup{0, 4000, 0}},
+		{sql: "", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
+		{sql: "drop table issue52680", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 0, RandomID: 0}},
+		{sql: "recover table issue52680", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
 	}
 
 	for _, step := range testSteps {
