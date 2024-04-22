@@ -2601,15 +2601,15 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery(`select distinct cast(0.1 as time(1))`)
 	result.Check(testkit.Rows("00:00:00.1"))
 	// date
-	result = tk.MustQuery(`select distinct -(DATE('2017-11-12 08:48:25'))`)
+	result = tk.MustQuery(`select distinct -(DATE('2017-11-12 08:48:25.123'))`)
 	result.Check(testkit.Rows("-20171112"))
-	result = tk.MustQuery(`select distinct (DATE('2017-11-12 08:48:25'))`)
+	result = tk.MustQuery(`select distinct (DATE('2017-11-12 08:48:25.123'))`)
 	result.Check(testkit.Rows("2017-11-12"))
 	// timestamp
-	result = tk.MustQuery(`select distinct (Timestamp('2017-11-12 08:48:25'))`)
-	result.Check(testkit.Rows("2017-11-12 08:48:25"))
-	result = tk.MustQuery(`select distinct -(Timestamp('2017-11-12 08:48:25'))`)
-	result.Check(testkit.Rows("-20171112084825"))
+	result = tk.MustQuery(`select distinct (Timestamp('2017-11-12 08:48:25.1'))`)
+	result.Check(testkit.Rows("2017-11-12 08:48:25.1"))
+	result = tk.MustQuery(`select distinct -(Timestamp('2017-11-12 08:48:25.1'))`)
+	result.Check(testkit.Rows("-20171112084825.1"))
 }
 
 func TestSetVariables(t *testing.T) {
