@@ -148,6 +148,18 @@ func (ctx *ExprCtxExtendedImpl) GetGroupConcatMaxLen() uint64 {
 	return ctx.sctx.GetSessionVars().GroupConcatMaxLen
 }
 
+// InInsertOrUpdate returns whether when are building an expression for insert or update statement.
+func (ctx *ExprCtxExtendedImpl) InInsertOrUpdate() bool {
+	sc := ctx.sctx.GetSessionVars().StmtCtx
+	return sc.InInsertStmt || sc.InUpdateStmt
+}
+
+// ConnectionID indicates the connection ID of the current session.
+// If the context is not in a session, it should return 0.
+func (ctx *ExprCtxExtendedImpl) ConnectionID() uint64 {
+	return ctx.sctx.GetSessionVars().ConnectionID
+}
+
 // SessionEvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.
 type SessionEvalContext struct {
 	sctx  sessionctx.Context

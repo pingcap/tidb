@@ -441,7 +441,7 @@ func (d *ddl) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
 						return
 					}
 					d.setAlreadyRunOnce(job.ID)
-					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
+					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli, job.State == model.JobStateSynced)
 					// Don't have a worker now.
 					return
 				}
@@ -479,7 +479,7 @@ func (d *ddl) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
 			if err != nil {
 				return
 			}
-			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
+			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli, job.State == model.JobStateSynced)
 			d.synced(job)
 
 			if RunInGoTest {
@@ -586,6 +586,9 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 		slices.Sort(s)
 		return strings.Join(s, ",")
 	case model.ActionTruncateTable:
+		if schema {
+			return strconv.FormatInt(job.SchemaID, 10)
+		}
 		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(job.Args[0].(int64), 10)
 	}
 	if schema {
