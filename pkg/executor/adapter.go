@@ -1961,6 +1961,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		KeyspaceID:          keyspaceID,
 		RUDetail:            ruDetail,
 		ResourceGroupName:   sessVars.StmtCtx.ResourceGroupName,
+
+		PlanCacheUnqualified: sessVars.StmtCtx.PlanCacheUnqualified,
 	}
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)

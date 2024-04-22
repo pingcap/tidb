@@ -57,7 +57,7 @@ This folder contains all tests which relies on external processes such as TiDB.
     br/tests/download_integration_test_binaries.sh
     mkdir -p bin && mv third_bin/* bin/
     rm -rf third_bin/
-    make #make tidb
+    make failpoint-enable && make && make failpoint-disable #make tidb
     ```
 
 2. The following programs must be installed:
