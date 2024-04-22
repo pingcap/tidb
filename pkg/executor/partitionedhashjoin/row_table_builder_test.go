@@ -38,9 +38,9 @@ func createSimpleFilter(t *testing.T) expression.CNFExprs {
 	b := &expression.Constant{RetType: intTp, Value: d}
 	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
 	require.NoError(t, err, "error when create simple filter")
-	buildFilter := make(expression.CNFExprs, 0)
-	buildFilter = append(buildFilter, sf)
-	return buildFilter
+	filter := make(expression.CNFExprs, 0)
+	filter = append(filter, sf)
+	return filter
 }
 
 func createImpossibleFilter(t *testing.T) expression.CNFExprs {
