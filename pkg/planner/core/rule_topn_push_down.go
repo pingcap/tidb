@@ -93,7 +93,7 @@ func (lt *LogicalTopN) setChild(p base.LogicalPlan, opt *coreusage.LogicalOptimi
 	return lt
 }
 
-func (ls *LogicalSort) pushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
+func (ls *LogicalSort) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
@@ -152,7 +152,7 @@ func (p *LogicalUnionAll) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *co
 	return p
 }
 
-func (p *LogicalProjection) pushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
+func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
@@ -233,7 +233,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *coreu
 	return p.children[idx].PushDownTopN(newTopN, opt)
 }
 
-func (p *LogicalJoin) pushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
+func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
