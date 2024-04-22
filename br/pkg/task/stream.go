@@ -569,16 +569,15 @@ func RunStreamStart(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = streamMgr.checkImportTaskRunning(ctx, etcdCLI); err != nil {
-		return errors.Trace(err)
-	}
-
 	cli := streamhelper.NewMetaDataClient(etcdCLI)
 	defer func() {
 		if closeErr := cli.Close(); closeErr != nil {
 			log.Warn("failed to close etcd client", zap.Error(closeErr))
 		}
 	}()
+	if err = streamMgr.checkImportTaskRunning(ctx, cli.Client); err != nil {
+		return errors.Trace(err)
+	}
 	// It supports single stream log task currently.
 	if count, err := cli.GetTaskCount(ctx); err != nil {
 		return errors.Trace(err)
