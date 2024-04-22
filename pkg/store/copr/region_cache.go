@@ -255,11 +255,7 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithoutBuckets(bo *Backoffer, ran
 		if limit != UnspecifiedLimit && len(res) >= limit {
 			break
 		}
-<<<<<<< HEAD
-		nextLocIndex := len(res)
-=======
 
->>>>>>> 6ed747b46da (executor: fix the issue that tiflash cop throw exception `Income key ranges is empty for region: 211` (#52763))
 		if nextLocIndex >= len(locs) {
 			err = errors.Errorf("Unexpected loc index %d, which should less than %d", nextLocIndex, len(locs))
 			return nil, err
