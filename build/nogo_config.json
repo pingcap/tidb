@@ -17,7 +17,7 @@
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
-      "br/pkg/lightning/web/res_vfsdata.go": "ignore code"
+      "lightning/pkg/web/res_vfsdata.go": "ignore code"
     }
   },
   "asmdecl": {
@@ -175,6 +175,7 @@
   "fieldalignment": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
+      "pkg/statistics/table.go": "disable this limitation that prevents us from splitting struct fields for clarity",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
@@ -238,8 +239,8 @@
     },
     "only_files": {
       "util/gctuner": "only for util/gctuner",
-      "br/pkg/lightning/mydump/": "only for br/pkg/lightning/mydump/",
-      "br/pkg/lightning/importer/opts": "only for br/pkg/lightning/importer/opts",
+      "pkg/lightning/mydump/": "only for pkg/lightning/mydump/",
+      "lightning/pkg/importer/opts": "only for lightning/pkg/importer/opts",
       "pkg/executor/aggregate.go": "only for executor/aggregate.go",
       "pkg/types/json_binary_functions.go": "only for types/json_binary_functions.go",
       "pkg/types/json_binary_test.go": "only for types/json_binary_test.go",
@@ -362,26 +363,26 @@
       "br/pkg/mock/storage/storage.go": "ignore storage code",
       "br/pkg/utils/": "ignore utils code",
       "br/pkg/version/version.go": "ignore version code",
-      "br/pkg/lightning/common/errors.go": "ignore error",
-      "br/pkg/lightning/config/config.go": "ignore config code",
-      "br/pkg/lightning/config/config_test.go": "ignore config code",
-      "br/pkg/lightning/config/global.go": "ignore global code",
-      "br/pkg/lightning/mydump/": "ignore mydump code",
-      "br/pkg/lightning/checkpoints/checkpoints.go": "ignore checkpoints code",
-      "br/pkg/lightning/checkpoints/glue_checkpoint.go": "ignore glue_checkpoint code",
-      "br/pkg/lightning/backend/local/": "ignore local code",
-      "br/pkg/lightning/backend/tidb/tidb.go": "ignore tidb code",
-      "br/pkg/lightning/backend/tidb/tidb_test.go": "ignore tidb code",
-      "br/pkg/lightning/checkpoints/checkpoints_test.go": "ignore checkpoints code",
-      "br/pkg/lightning/checkpoints/checkpoints_sql_test.go": "ignore checkpoints code",
-      "br/pkg/lightning/errormanager/errormanager_test.go": "ignore errormanager code",
-      "br/pkg/lightning/backend/kv/sql2kv_test.go": "ignore sql2kv code",
+      "pkg/lightning/common/errors.go": "ignore error",
+      "pkg/lightning/config/config.go": "ignore config code",
+      "pkg/lightning/config/config_test.go": "ignore config code",
+      "pkg/lightning/config/global.go": "ignore global code",
+      "pkg/lightning/mydump/": "ignore mydump code",
+      "pkg/lightning/checkpoints/checkpoints.go": "ignore checkpoints code",
+      "pkg/lightning/checkpoints/glue_checkpoint.go": "ignore glue_checkpoint code",
+      "pkg/lightning/backend/local/": "ignore local code",
+      "pkg/lightning/backend/tidb/tidb.go": "ignore tidb code",
+      "pkg/lightning/backend/tidb/tidb_test.go": "ignore tidb code",
+      "pkg/lightning/checkpoints/checkpoints_test.go": "ignore checkpoints code",
+      "pkg/lightning/checkpoints/checkpoints_sql_test.go": "ignore checkpoints code",
+      "pkg/lightning/errormanager/errormanager_test.go": "ignore errormanager code",
+      "pkg/lightning/backend/kv/sql2kv_test.go": "ignore sql2kv code",
       "br/pkg/stream/rewrite_meta_rawkv_test.go": "ignore rewrite_meta_rawkv code",
-      "br/pkg/lightning/lightning.go": "ignore lightning code",
-      "br/pkg/lightning/importer": "ignore importer code",
+      "lightning/pkg/server/lightning.go": "ignore lightning code",
+      "lightning/pkg/importer": "ignore importer code",
       "br/cmd/tidb-lightning-ctl/main.go": "ignore main code",
       "br/pkg/stream/rewrite_meta_rawkv.go": "ignore rewrite_meta_rawkv code",
-      "br/pkg/lightning/web/": "ignore web code",
+      "lightning/pkg/web/": "ignore web code",
       "br/pkg/mock/": "ignore mock code",
       "br/pkg/aws/ebs.go": "ignore ebs code",
       "br/pkg/backup/": "ignore backup code",
@@ -472,6 +473,7 @@
   },
   "nilness": {
     "exclude_files": {
+      "br/pkg/streamhelper/advancer_test.go": "please fix it",
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
@@ -486,8 +488,8 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
-      "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
-      "br/pkg/lightning/importer/opts": "br/pkg/lightning/importer/opts",
+      "pkg/lightning/mydump/": "pkg/lightning/mydump/",
+      "lightning/pkg/importer/opts": "lightning/pkg/importer/opts",
       "pkg/kv/": "kv code",
       "pkg/util/memory": "util/memory",
       "pkg/ddl/": "ddl",
@@ -520,7 +522,8 @@
     "only_files": {
       "pkg/autoid_service/": "autoid_service",
       "pkg/bindinfo/": "bindinfo",
-      "br/pkg/lightning/": "br/pkg/lightning/",
+      "pkg/lightning/": "pkg/lightning/",
+      "lightning/": "lightning/",
       "pkg/executor/": "executor/",
       "pkg/types/json_binary_functions.go": "types/json_binary_functions.go",
       "pkg/types/json_binary_test.go": "types/json_binary_test.go",
@@ -611,9 +614,9 @@
       ".*test_/testmain\\.go$": "ignore generated code",
       ".*failpoint_binding__.go$": "ignore generated code",
       "pkg/util/chunk": "ignore util/chunk",
-      "br/pkg/lightning/mydump/": "more than 50",
-      "br/pkg/lightning/importer/": "more than 50",
-      "br/pkg/lightning/backend/local/": "more than 50",
+      "pkg/lightning/mydump/": "more than 50",
+      "lightning/pkg/importer/": "more than 50",
+      "pkg/lightning/backend/local/": "more than 50",
       "br/pkg/restore/": "more than 50",
       "pkg/ddl/tests/partition/": "more than 50"
     },
@@ -679,7 +682,7 @@
       "pkg/disttask/": "disttask code",
       "pkg/timer/": "timer code",
       "pkg/util/": "util code",
-      "br/pkg/lightning/config/": "br/pkg/lightning/config code",
+      "pkg/lightning/config/": "pkg/lightning/config code",
       "br/pkg/storage": "br/pkg/storage code",
       "br/pkg/utils": "br/pkg/utils code",
       "pkg/planner/cascades": "planner/cascades code",
@@ -695,8 +698,8 @@
       ".*\\.pb\\.go$": "generated code",
       "pkg/parser/parser.go": "generated code",
       "/cgo/": "no need to vet third party code for cgo",
-      "br/pkg/lightning/common/conn.go": "ignore: to fix it",
-      "br/pkg/lightning/common/storage_unix.go": "ignore: to fix it",
+      "pkg/lightning/common/conn.go": "ignore: to fix it",
+      "pkg/lightning/common/storage_unix.go": "ignore: to fix it",
       "br/pkg/task/common.go": "ignore: to fix it",
       ".*_generated\\.go$": "ignore generated code"
     }
@@ -1049,10 +1052,10 @@
       ".*_test\\.go$": "ignore test code",
       "br/pkg/restore/split/client.go": "github.com/golang/protobuf deprecated",
       "br/pkg/streamhelper/advancer_cliext.go": "github.com/golang/protobuf deprecated",
-      "br/pkg/lightning/checkpoints/checkpoints.go": "cfg.TikvImporter.Addr is deprecated",
-      "br/pkg/lightning/checkpoints/glue_checkpoint.go": "cfg.TikvImporter.Addr is deprecated",
-      "br/pkg/lightning/backend/local/local.go": "grpc Compressor/Decompressor is deprecated",
-      "br/pkg/lightning/backend/local/compress.go": "grpc Compressor/Decompressor is deprecated",
+      "pkg/lightning/checkpoints/checkpoints.go": "cfg.TikvImporter.Addr is deprecated",
+      "pkg/lightning/checkpoints/glue_checkpoint.go": "cfg.TikvImporter.Addr is deprecated",
+      "pkg/lightning/backend/local/local.go": "grpc Compressor/Decompressor is deprecated",
+      "pkg/lightning/backend/local/compress.go": "grpc Compressor/Decompressor is deprecated",
       "pkg/domain/infosync/resource_manager_client.go": "github.com/golang/protobuf deprecated"
     },
     "only_files": {
@@ -1344,6 +1347,20 @@
   "bootstrap": {
     "only_files": {
       "pkg/session/": "bootstrap code"
+    }
+  },
+  "appends": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "unusedwrite": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
     }
   }
 }

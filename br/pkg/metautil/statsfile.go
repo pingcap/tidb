@@ -26,11 +26,11 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -185,7 +185,7 @@ func downloadStats(
 ) error {
 	defer close(taskCh)
 	eg, ectx := errgroup.WithContext(ctx)
-	downloadWorkerpool := utils.NewWorkerPool(4, "download stats for each partition")
+	downloadWorkerpool := util.NewWorkerPool(4, "download stats for each partition")
 	for _, statsFileIndex := range statsFileIndexes {
 		if ectx.Err() != nil {
 			break

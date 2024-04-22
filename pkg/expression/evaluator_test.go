@@ -91,7 +91,7 @@ func datumsToConstants(datums []types.Datum) []Expression {
 
 func primitiveValsToConstants(ctx BuildContext, args []any) []Expression {
 	cons := datumsToConstants(types.MakeDatums(args...))
-	char, col := ctx.GetSessionVars().GetCharsetInfo()
+	char, col := ctx.GetCharsetInfo()
 	for i, arg := range args {
 		types.DefaultTypeForValue(arg, cons[i].GetType(), char, col)
 	}
@@ -110,17 +110,19 @@ func TestSleep(t *testing.T) {
 	d := make([]types.Datum, 1)
 	f, err := fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
-	ret, isNull, err := f.evalInt(ctx, chunk.Row{})
+	res, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Equal(t, int64(0), ret)
+	require.False(t, res.IsNull())
+	require.Equal(t, types.KindInt64, res.Kind())
+	require.Equal(t, int64(0), res.GetInt64())
 	d[0].SetInt64(-1)
 	f, err = fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
-	ret, isNull, err = f.evalInt(ctx, chunk.Row{})
+	res, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Equal(t, int64(0), ret)
+	require.False(t, res.IsNull())
+	require.Equal(t, types.KindInt64, res.Kind())
+	require.Equal(t, int64(0), res.GetInt64())
 
 	// for error case under the strict model
 	levels[errctx.ErrGroupBadNull] = errctx.LevelError
@@ -128,25 +130,26 @@ func TestSleep(t *testing.T) {
 	d[0].SetNull()
 	_, err = fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
-	_, isNull, err = f.evalInt(ctx, chunk.Row{})
+	res, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
-	require.False(t, isNull)
+	require.False(t, res.IsNull())
 	d[0].SetFloat64(-2.5)
 	_, err = fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
-	_, isNull, err = f.evalInt(ctx, chunk.Row{})
+	res, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.Error(t, err)
-	require.False(t, isNull)
+	require.False(t, res.IsNull())
 
 	// strict model
 	d[0].SetFloat64(0.5)
 	start := time.Now()
 	f, err = fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
-	ret, isNull, err = f.evalInt(ctx, chunk.Row{})
+	res, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Equal(t, int64(0), ret)
+	require.False(t, res.IsNull())
+	require.Equal(t, types.KindInt64, res.Kind())
+	require.Equal(t, int64(0), res.GetInt64())
 	sub := time.Since(start)
 	require.GreaterOrEqual(t, sub.Nanoseconds(), int64(0.5*1e9))
 	d[0].SetFloat64(3)
@@ -157,11 +160,13 @@ func TestSleep(t *testing.T) {
 		time.Sleep(1 * time.Second)
 		ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}()
-	ret, isNull, err = f.evalInt(ctx, chunk.Row{})
+
+	res, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	sub = time.Since(start)
 	require.NoError(t, err)
-	require.False(t, isNull)
-	require.Equal(t, int64(1), ret)
+	require.False(t, res.IsNull())
+	require.Equal(t, types.KindInt64, res.Kind())
+	require.Equal(t, int64(1), res.GetInt64())
 	require.LessOrEqual(t, sub.Nanoseconds(), int64(2*1e9))
 	require.GreaterOrEqual(t, sub.Nanoseconds(), int64(1*1e9))
 }
@@ -550,7 +555,11 @@ func TestUnaryOp(t *testing.T) {
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
-		require.Equalf(t, types.NewDatum(tt.result), result, "%d", i)
+		if tt.result == nil {
+			require.Truef(t, result.IsNull(), "%d", i)
+		} else {
+			require.Equalf(t, types.NewDatum(tt.result), result, "%d", i)
+		}
 	}
 
 	tbl = []struct {

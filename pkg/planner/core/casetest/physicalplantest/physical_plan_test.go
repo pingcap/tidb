@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/internal"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -211,7 +211,7 @@ func TestUnmatchedTableInHint(t *testing.T) {
 }
 
 func TestIssue37520(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -241,7 +241,7 @@ func TestIssue37520(t *testing.T) {
 }
 
 func TestMPPHints(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -283,7 +283,7 @@ func TestMPPHints(t *testing.T) {
 }
 
 func TestMPPHintsScope(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -340,7 +340,7 @@ func TestMPPBCJModel(t *testing.T) {
 			Probe: sizeof(Data) * 2 / 3
 			exchange size: Build + Probe = 4/3 * sizeof(Data)
 	*/
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(3))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(3))
 	{
 		cnt, err := store.GetMPPClient().GetMPPStoreCount()
 		require.Equal(t, cnt, 3)
@@ -382,7 +382,7 @@ func TestMPPBCJModel(t *testing.T) {
 }
 
 func TestMPPPreferBCJ(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(3))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(3))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -449,7 +449,7 @@ func TestMPPBCJModelOneTiFlash(t *testing.T) {
 			Probe: sizeof(Data) * 0 / 1
 			exchange size: Build + Probe = 0 * sizeof(Data)
 	*/
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(1))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(1))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
@@ -500,7 +500,7 @@ func TestMPPBCJModelOneTiFlash(t *testing.T) {
 }
 
 func TestMPPRightSemiJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(3))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(3))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -556,7 +556,7 @@ func TestMPPRightSemiJoin(t *testing.T) {
 }
 
 func TestMPPRightOuterJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(3))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(3))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")

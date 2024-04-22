@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -95,12 +96,8 @@ func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, stor
 			storageName = "storage layer"
 		}
 		warnErr := errors.NewNoStackError("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now.")
-		sc := ctx.GetSessionVars().StmtCtx
-		if sc.InExplainStmt {
-			sc.AppendWarning(warnErr)
-		} else {
-			sc.AppendExtraWarning(warnErr)
-		}
+
+		ctx.AppendWarning(warnErr)
 		return false
 	}
 	canEnumPush := canEnumPushdownPreliminarily(scalarFunc)
@@ -125,38 +122,29 @@ func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, stor
 func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreType, canEnumPush bool) bool {
 	pc := ctx.PbConverter()
 	if storeType == kv.TiFlash {
-		sc := ctx.sessVars.StmtCtx
 		switch expr.GetType().GetType() {
 		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 			if expr.GetType().GetType() == mysql.TypeEnum && canEnumPush {
 				break
 			}
 			warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
-			if sc.InExplainStmt {
-				sc.AppendWarning(warnErr)
-			} else {
-				sc.AppendExtraWarning(warnErr)
-			}
+			ctx.AppendWarning(warnErr)
 			return false
 		case mysql.TypeNewDecimal:
 			if !expr.GetType().IsDecimalValid() {
 				warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
-				if sc.InExplainStmt {
-					sc.AppendWarning(warnErr)
-				} else {
-					sc.AppendExtraWarning(warnErr)
-				}
+				ctx.AppendWarning(warnErr)
 				return false
 			}
 		}
 	}
 	switch x := expr.(type) {
 	case *CorrelatedColumn:
-		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column) != nil
+		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column, true) != nil
 	case *Constant:
 		return pc.conOrCorColToPBExpr(expr) != nil
 	case *Column:
-		return pc.columnToPBExpr(x) != nil
+		return pc.columnToPBExpr(x, true) != nil
 	case *ScalarFunction:
 		return canScalarFuncPushDown(ctx, x, storeType)
 	}
@@ -207,8 +195,8 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
-		ast.JSONInsert /*ast.JSONReplace,*/, ast.JSONRemove, ast.JSONLength,
-		ast.JSONUnquote, ast.JSONContains, ast.JSONValid, ast.JSONMemberOf,
+		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONLength, ast.JSONMergePatch,
+		ast.JSONUnquote, ast.JSONContains, ast.JSONValid, ast.JSONMemberOf, ast.JSONArrayAppend,
 
 		// date functions.
 		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
@@ -431,18 +419,54 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 
 // PushDownContext is the context used for push down expressions
 type PushDownContext struct {
-	evalCtx  EvalContext
-	client   kv.Client
-	sessVars *variable.SessionVars
+	evalCtx           EvalContext
+	client            kv.Client
+	warnHandler       contextutil.WarnHandler
+	groupConcatMaxLen uint64
+}
+
+type pushDownWarnHandler struct {
+	inExplainStmt      bool
+	appendWarning      func(err error)
+	appendExtraWarning func(err error)
+}
+
+func (h *pushDownWarnHandler) AppendWarning(err error) {
+	if h.inExplainStmt {
+		h.appendWarning(err)
+	} else {
+		h.appendExtraWarning(err)
+	}
 }
 
 // NewPushDownContext returns a new PushDownContext
-func NewPushDownContext(evalCtx EvalContext, sessVars *variable.SessionVars, client kv.Client) PushDownContext {
-	return PushDownContext{
-		evalCtx:  evalCtx,
-		client:   client,
-		sessVars: sessVars,
+func NewPushDownContext(evalCtx EvalContext, client kv.Client, inExplainStmt bool, appendWarning func(err error), appendExtraWarning func(err error), groupConcatMaxLen uint64) PushDownContext {
+	var warnHandler contextutil.WarnHandler
+	if appendWarning != nil && appendExtraWarning != nil {
+		warnHandler = &pushDownWarnHandler{
+			inExplainStmt:      inExplainStmt,
+			appendWarning:      appendWarning,
+			appendExtraWarning: appendExtraWarning,
+		}
 	}
+
+	return PushDownContext{
+		evalCtx:           evalCtx,
+		client:            client,
+		warnHandler:       warnHandler,
+		groupConcatMaxLen: groupConcatMaxLen,
+	}
+}
+
+// NewPushDownContextFromSessionVars builds a new PushDownContext from session vars.
+func NewPushDownContextFromSessionVars(evalCtx EvalContext, sessVars *variable.SessionVars, client kv.Client) PushDownContext {
+	return NewPushDownContext(
+		evalCtx,
+		client,
+		sessVars.StmtCtx.InExplainStmt,
+		sessVars.StmtCtx.AppendWarning,
+		sessVars.StmtCtx.AppendExtraWarning,
+		sessVars.GroupConcatMaxLen)
 }
 
 // EvalCtx returns the eval context
@@ -460,9 +484,16 @@ func (ctx PushDownContext) Client() kv.Client {
 	return ctx.client
 }
 
-// GetSessionVars returns the session variables
-func (ctx PushDownContext) GetSessionVars() *variable.SessionVars {
-	return ctx.sessVars
+// GetGroupConcatMaxLen returns the max length of group_concat
+func (ctx PushDownContext) GetGroupConcatMaxLen() uint64 {
+	return ctx.groupConcatMaxLen
+}
+
+// AppendWarning appends a warning to be handled by the internal handler
+func (ctx PushDownContext) AppendWarning(err error) {
+	if ctx.warnHandler != nil {
+		ctx.warnHandler.AppendWarning(err)
+	}
 }
 
 // PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down

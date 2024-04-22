@@ -21,7 +21,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/planner",
         "//pkg/planner/core",
-        "//pkg/planner/core/internal",
+        "//pkg/planner/util/coretestsdk",
         "//pkg/sessionctx/stmtctx",
         "//pkg/testkit",
         "//pkg/testkit/external",

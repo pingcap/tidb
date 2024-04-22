@@ -5,6 +5,7 @@
 //
 //	mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler Scheduler,CleanUpRoutine,TaskManager
 //
+
 // Package mock is a generated GoMock package.
 package mock
 
@@ -39,6 +40,11 @@ func NewMockScheduler(ctrl *gomock.Controller) *MockScheduler {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockScheduler) EXPECT() *MockSchedulerMockRecorder {
 	return m.recorder
+}
+
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockScheduler) ISGOMOCK() struct{} {
+	return struct{}{}
 }
 
 // Close mocks base method.
@@ -200,6 +206,11 @@ func (m *MockCleanUpRoutine) EXPECT() *MockCleanUpRoutineMockRecorder {
 	return m.recorder
 }
 
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockCleanUpRoutine) ISGOMOCK() struct{} {
+	return struct{}{}
+}
+
 // CleanUp mocks base method.
 func (m *MockCleanUpRoutine) CleanUp(arg0 context.Context, arg1 *proto.Task) error {
 	m.ctrl.T.Helper()
@@ -235,6 +246,11 @@ func NewMockTaskManager(ctrl *gomock.Controller) *MockTaskManager {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockTaskManager) EXPECT() *MockTaskManagerMockRecorder {
 	return m.recorder
+}
+
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockTaskManager) ISGOMOCK() struct{} {
+	return struct{}{}
 }
 
 // CancelTask mocks base method.

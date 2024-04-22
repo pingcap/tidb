@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
@@ -858,7 +859,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		e.viewMu.Lock()
 		_, ok := e.viewSchemaMap[tbl.ID]
 		if !ok {
-			var viewLogicalPlan plannercore.Plan
+			var viewLogicalPlan base.Plan
 			internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 			// Build plan is not thread safe, there will be concurrency on sessionctx.
 			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {
@@ -1755,7 +1756,7 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo) [][]types
 				col.Name.O,            // COLUMN_NAME
 				i+1,                   // ORDINAL_POSITION,
 				1,                     // POSITION_IN_UNIQUE_CONSTRAINT
-				schema.O,              // REFERENCED_TABLE_SCHEMA
+				fk.RefSchema.O,        // REFERENCED_TABLE_SCHEMA
 				fk.RefTable.O,         // REFERENCED_TABLE_NAME
 				fkRefCol,              // REFERENCED_COLUMN_NAME
 			)
@@ -1765,20 +1766,18 @@ func keyColumnUsageInTable(schema model.CIStr, table *model.TableInfo) [][]types
 	return rows
 }
 
-func ensureSchemaTables(is infoschema.InfoSchema, schemas []*model.DBInfo) []*model.DBInfo {
-	res := schemas[:0]
-	for _, db := range schemas {
-		if len(db.Tables) == 0 {
-			// For infoschema v2, Tables of DBInfo could be missing.
-			dbInfo := db.Clone()
-			tbls := is.SchemaTables(db.Name)
-			for _, tbl := range tbls {
-				dbInfo.Tables = append(dbInfo.Tables, tbl.Meta())
-			}
-			res = append(res, dbInfo)
-		} else {
-			res = append(res, db)
+func ensureSchemaTables(is infoschema.InfoSchema, schemaNames []model.CIStr) []*model.DBInfo {
+	// For infoschema v2, Tables of DBInfo could be missing.
+	res := make([]*model.DBInfo, 0, len(schemaNames))
+	for _, dbName := range schemaNames {
+		dbInfoRaw, _ := is.SchemaByName(dbName)
+		dbInfo := dbInfoRaw.Clone()
+		dbInfo.Tables = dbInfo.Tables[:0]
+		tbls := is.SchemaTables(dbName)
+		for _, tbl := range tbls {
+			dbInfo.Tables = append(dbInfo.Tables, tbl.Meta())
 		}
+		res = append(res, dbInfo)
 	}
 	return res
 }
@@ -1824,8 +1823,8 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 			return err
 		}
 	}
-	schemas := is.AllSchemas()
-	schemas = ensureSchemaTables(is, schemas)
+	schemaNames := is.AllSchemaNames()
+	schemas := ensureSchemaTables(is, schemaNames)
 	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, schemas)
 	for i := range allRegionsInfo.Regions {
 		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
@@ -1949,17 +1948,17 @@ func (e *memtableRetriever) setDataForTiDBHotRegions(ctx context.Context, sctx s
 	if !ok {
 		return errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
-	allSchemas := sctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
 	tikvHelper := &helper.Helper{
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	metrics, err := tikvHelper.ScrapeHotInfo(ctx, helper.HotRead, allSchemas)
+	schemas := tikvHelper.FilterMemDBs(sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().AllSchemas())
+	metrics, err := tikvHelper.ScrapeHotInfo(ctx, helper.HotRead, schemas)
 	if err != nil {
 		return err
 	}
 	e.setDataForHotRegionByMetrics(metrics, "read")
-	metrics, err = tikvHelper.ScrapeHotInfo(ctx, helper.HotWrite, allSchemas)
+	metrics, err = tikvHelper.ScrapeHotInfo(ctx, helper.HotWrite, schemas)
 	if err != nil {
 		return err
 	}

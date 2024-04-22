@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
-var _ Misc = &infoSchemaMisc{}
+var _ context.Misc = &infoSchemaMisc{}
 
 type sortedTables []table.Table
 
@@ -67,6 +67,9 @@ type infoSchemaMisc struct {
 
 	// ruleBundleMap stores all placement rules
 	ruleBundleMap map[int64]*placement.Bundle
+
+	// policyRefMap stores all policyRefInfo for tables.
+	policyRefMap map[int64]*model.PolicyRefInfo
 
 	// policyMap stores all placement policies.
 	policyMutex sync.RWMutex
@@ -184,7 +187,7 @@ func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err
 			return
 		}
 	}
-	return nil, ErrTableNotExists.GenWithStackByArgs(schema, table)
+	return nil, ErrTableNotExists.FastGenByArgs(schema, table)
 }
 
 // TableInfoByName implements InfoSchema.TableInfoByName
@@ -277,15 +280,6 @@ func (is *infoSchema) FindTableInfoByPartitionID(
 // SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
 func (is *infoSchema) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
 	return getTableInfoList(is.SchemaTables(schema))
-}
-
-// allocByID returns the Allocators of a table.
-func allocByID(is InfoSchema, id int64) (autoid.Allocators, bool) {
-	tbl, ok := is.TableByID(id)
-	if !ok {
-		return autoid.Allocators{}, false
-	}
-	return tbl.Allocators(nil), true
 }
 
 // AllSchemaNames returns all the schemas' names.

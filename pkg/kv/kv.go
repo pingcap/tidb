@@ -381,8 +381,8 @@ func NewPartitionedKeyRanges(ranges [][]KeyRange) *KeyRanges {
 	return NewPartitionedKeyRangesWithHints(ranges, nil)
 }
 
-// NewNonParitionedKeyRanges constructs a new RequestRange for a non partitioned table.
-func NewNonParitionedKeyRanges(ranges []KeyRange) *KeyRanges {
+// NewNonPartitionedKeyRanges constructs a new RequestRange for a non-partitioned table.
+func NewNonPartitionedKeyRanges(ranges []KeyRange) *KeyRanges {
 	return NewNonParitionedKeyRangesWithHint(ranges, nil)
 }
 
