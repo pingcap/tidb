@@ -542,6 +542,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			defer indexTaskWg.Done()
 
 			var handleKeys [][]byte
+			var insertRows [][2][]byte
 			for start < end {
 				indexKvRows, err := em.db.QueryContext(
 					indexGCtx, common.SprintfWithIdentifiers(selectIndexConflictKeysReplace, em.schema),
@@ -635,30 +636,11 @@ func (em *ErrorManager) ReplaceConflictKeys(
 						// Only if there is a->1 we dare to delete data KV with key "1".
 
 						if bytes.Equal(kvPair.Key, rawKey) && bytes.Equal(kvPair.Val, rawValue) {
-							if err := exec.Transact(ctx, "insert data conflict error record for conflict detection 'replace' mode",
-								func(c context.Context, txn *sql.Tx) error {
-									sb := &strings.Builder{}
-									_, err2 := common.FprintfWithIdentifiers(sb, insertIntoConflictErrorData, em.schema)
-									if err2 != nil {
-										return errors.Trace(err2)
-									}
-									var sqlArgs []any
-									sb.WriteString(sqlValuesConflictErrorData)
-									sqlArgs = append(sqlArgs,
-										em.taskID,
-										tableName,
-										nil,
-										nil,
-										rawHandle,
-										overwritten,
-										1,
-									)
-									_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
-									return errors.Trace(err)
-								}); err != nil {
-								return errors.Trace(err)
-							}
 							handleKeys = append(handleKeys, rawHandle)
+							var insertRow [2][]byte
+							insertRow[0] = rawHandle
+							insertRow[1] = overwritten
+							insertRows = append(insertRows, insertRow)
 							break
 						}
 					}
@@ -673,6 +655,34 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					break
 				}
 				if err := fnDeleteKeys(indexGCtx, handleKeys); err != nil {
+					return errors.Trace(err)
+				}
+				if err := exec.Transact(ctx, "insert data conflict error record for conflict detection 'replace' mode",
+					func(c context.Context, txn *sql.Tx) error {
+						sb := &strings.Builder{}
+						_, err2 := common.FprintfWithIdentifiers(sb, insertIntoConflictErrorData, em.schema)
+						if err2 != nil {
+							return errors.Trace(err2)
+						}
+						var sqlArgs []any
+						for i, insertRow := range insertRows {
+							if i > 0 {
+								sb.WriteByte(',')
+							}
+							sb.WriteString(sqlValuesConflictErrorData)
+							sqlArgs = append(sqlArgs,
+								em.taskID,
+								tableName,
+								nil,
+								nil,
+								insertRow[0],
+								insertRow[1],
+								1,
+							)
+						}
+						_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
+						return errors.Trace(err)
+					}); err != nil {
 					return errors.Trace(err)
 				}
 				start = lastRowID + 1

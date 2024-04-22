@@ -491,12 +491,8 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 			AddRow(4, data3IndexKey, "uni_b", data4IndexValue, data4RowKey))
 	mockDB.ExpectBegin()
 	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v2.*").
-		WithArgs(0, "test", nil, nil, data2RowKey, data2RowValue, 1).
-		WillReturnResult(driver.ResultNoRows)
-	mockDB.ExpectCommit()
-	mockDB.ExpectBegin()
-	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v2.*").
-		WithArgs(0, "test", nil, nil, data4RowKey, data4RowValue, 1).
+		WithArgs(0, "test", nil, nil, data2RowKey, data2RowValue, 1,
+			0, "test", nil, nil, data4RowKey, data4RowValue, 1).
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
 	for i := 0; i < 2; i++ {
