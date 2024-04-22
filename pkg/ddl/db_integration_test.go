@@ -3072,6 +3072,7 @@ func TestIssue52680(t *testing.T) {
 
 	is = dom.InfoSchema()
 	ti1, err := is.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
+	require.NoError(t, err)
 	require.Equal(t, ti1.ID, ti.ID)
 
 	tk.MustExec("insert into issue52680 values(default);")
