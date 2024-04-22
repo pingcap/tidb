@@ -130,7 +130,7 @@ func TestBuild(t *testing.T) {
 		}
 	}
 	require.Equal(t, 0, len(rowSet))
-	require.Equal(t, rowTable.rowCount(), rowCount)
+	require.Equal(t, rowTable.rowCount(), uint64(rowCount))
 }
 
 func TestConcurrentBuild(t *testing.T) {
