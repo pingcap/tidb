@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	tikvmetrics "github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/client-go/v2/tikvrpc"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
@@ -746,15 +745,6 @@ func (s *selectResultRuntimeStats) String() string {
 				buf.WriteString(", tot_wait: ")
 				buf.WriteString(execdetails.FormatDuration(s.totalWaitTime))
 			}
-		}
-		copRPC := reqStat.RPCStats[tikvrpc.CmdCop]
-		if copRPC != nil && copRPC.Count > 0 {
-			reqStat = reqStat.Clone()
-			delete(reqStat.RPCStats, tikvrpc.CmdCop)
-			buf.WriteString(", rpc_num: ")
-			buf.WriteString(strconv.FormatInt(copRPC.Count, 10))
-			buf.WriteString(", rpc_time: ")
-			buf.WriteString(execdetails.FormatDuration(time.Duration(copRPC.Consume)))
 		}
 		if config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB > 0 {
 			fmt.Fprintf(buf, ", copr_cache_hit_ratio: %v",
