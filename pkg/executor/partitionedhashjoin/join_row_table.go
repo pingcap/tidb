@@ -618,7 +618,7 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*
 		if nullMapLength := rowTableMeta.nullMapLength; nullMapLength > 0 {
 			bitmap := make([]byte, nullMapLength)
 			for colIndexInRowTable, colIndexInRow := range rowTableMeta.rowColumnsOrder {
-				colIndexInBitMap := colIndexInRowTable + 1
+				colIndexInBitMap := colIndexInRowTable + rowTableMeta.colOffsetInNullMap
 				if row.IsNull(colIndexInRow) {
 					bitmap[colIndexInBitMap/8] |= 1 << (7 - colIndexInRowTable%8)
 				}
