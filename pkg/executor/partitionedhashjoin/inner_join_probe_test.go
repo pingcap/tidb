@@ -15,6 +15,7 @@
 package partitionedhashjoin
 
 import (
+	"github.com/pingcap/errors"
 	"sort"
 	"strconv"
 	"testing"
@@ -32,38 +33,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func evalOtherCondition(sessCtx sessionctx.Context, probeIsLeft bool, probeRow chunk.Row, buildRow chunk.Row, shallowRow chunk.MutRow, otherCondition expression.CNFExprs) (bool, error) {
-	if probeIsLeft {
-		shallowRow.ShallowCopyPartialRow(0, probeRow)
-		shallowRow.ShallowCopyPartialRow(probeRow.Len(), buildRow)
-	} else {
-		shallowRow.ShallowCopyPartialRow(0, buildRow)
-		shallowRow.ShallowCopyPartialRow(buildRow.Len(), probeRow)
-	}
+func evalOtherCondition(sessCtx sessionctx.Context, leftRow chunk.Row, rightRow chunk.Row, shallowRow chunk.MutRow, otherCondition expression.CNFExprs) (bool, error) {
+	shallowRow.ShallowCopyPartialRow(0, leftRow)
+	shallowRow.ShallowCopyPartialRow(leftRow.Len(), rightRow)
 	valid, _, err := expression.EvalBool(sessCtx.GetExprCtx().GetEvalCtx(), otherCondition, shallowRow.ToRow())
 	return valid, err
 }
 
-func appendToResultChk(probeIsLeft bool, probeRow chunk.Row, buildRow chunk.Row, probeUsedColumns []int, buildUsedColumns []int, resultChunk *chunk.Chunk) {
-	if probeIsLeft {
-		lWide := resultChunk.AppendRowByColIdxs(probeRow, probeUsedColumns)
-		resultChunk.AppendPartialRowByColIdxs(lWide, buildRow, buildUsedColumns)
+func appendToResultChk(leftRow chunk.Row, rightRow chunk.Row, leftUsedColumns []int, rightUsedColumns []int, resultChunk *chunk.Chunk) {
+	lWide := 0
+	if leftRow.IsEmpty() {
+		for index := range leftUsedColumns {
+			resultChunk.Column(index).AppendNull()
+		}
+		resultChunk.SetNumVirtualRows(resultChunk.NumRows() + 1)
+		lWide = len(leftUsedColumns)
 	} else {
-		lWide := resultChunk.AppendRowByColIdxs(buildRow, buildUsedColumns)
-		resultChunk.AppendPartialRowByColIdxs(lWide, probeRow, probeUsedColumns)
+		lWide = resultChunk.AppendRowByColIdxs(leftRow, leftUsedColumns)
+	}
+	if rightRow.IsEmpty() {
+		for index := range rightUsedColumns {
+			resultChunk.Column(index + lWide).AppendNull()
+		}
+	} else {
+		resultChunk.AppendPartialRowByColIdxs(lWide, rightRow, rightUsedColumns)
 	}
 }
 
 // generate inner join result using nested loop
 func genInnerJoinResult(t *testing.T, sessCtx sessionctx.Context, leftChunks []*chunk.Chunk, rightChunks []*chunk.Chunk, leftKeyIndex []int, rightKeyIndex []int,
-	leftTypes []*types.FieldType, rightTypes []*types.FieldType, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType, leftUsedColumns []int, rightUsedColumns []int, otherConditions expression.CNFExprs) []*chunk.Chunk {
-	resultTypes := make([]*types.FieldType, 0, len(leftUsedColumns)+len(rightUsedColumns))
-	for _, colIndex := range leftUsedColumns {
-		resultTypes = append(resultTypes, leftTypes[colIndex])
-	}
-	for _, colIndex := range rightUsedColumns {
-		resultTypes = append(resultTypes, rightTypes[colIndex])
-	}
+	leftTypes []*types.FieldType, rightTypes []*types.FieldType, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType, leftUsedColumns []int,
+	rightUsedColumns []int, otherConditions expression.CNFExprs, resultTypes []*types.FieldType) []*chunk.Chunk {
 	returnChks := make([]*chunk.Chunk, 0, 1)
 	resultChk := chunk.New(resultTypes, sessCtx.GetSessionVars().MaxChunkSize, sessCtx.GetSessionVars().MaxChunkSize)
 	shallowRowTypes := make([]*types.FieldType, 0, len(leftTypes)+len(rightTypes))
@@ -71,31 +71,27 @@ func genInnerJoinResult(t *testing.T, sessCtx sessionctx.Context, leftChunks []*
 	shallowRowTypes = append(shallowRowTypes, rightTypes...)
 	shallowRow := chunk.MutRowFromTypes(shallowRowTypes)
 	// for right out join, use left as build, for other join, always use right as build
-	probeChunks, buildChunks := leftChunks, rightChunks
-	probeKeyTypes, buildKeyTypes := leftKeyTypes, rightKeyTypes
-	probeKeyIndex, buildKeyIndex := leftKeyIndex, rightKeyIndex
-	probeUsedColumns, buildUsedColumns := leftUsedColumns, rightUsedColumns
-	for _, probeChunk := range probeChunks {
-		for probeIndex := 0; probeIndex < probeChunk.NumRows(); probeIndex++ {
-			probeRow := probeChunk.GetRow(probeIndex)
-			for _, buildChunk := range buildChunks {
-				for buildIndex := 0; buildIndex < buildChunk.NumRows(); buildIndex++ {
+	for _, leftChunk := range leftChunks {
+		for leftIndex := 0; leftIndex < leftChunk.NumRows(); leftIndex++ {
+			leftRow := leftChunk.GetRow(leftIndex)
+			for _, rightChunk := range rightChunks {
+				for rightIndex := 0; rightIndex < rightChunk.NumRows(); rightIndex++ {
 					if resultChk.IsFull() {
 						returnChks = append(returnChks, resultChk)
 						resultChk = chunk.New(resultTypes, sessCtx.GetSessionVars().MaxChunkSize, sessCtx.GetSessionVars().MaxChunkSize)
 					}
-					buildRow := buildChunk.GetRow(buildIndex)
-					ok, err := codec.EqualChunkRow(sessCtx.GetSessionVars().StmtCtx.TypeCtx(), probeRow, probeKeyTypes, probeKeyIndex,
-						buildRow, buildKeyTypes, buildKeyIndex)
+					buildRow := rightChunk.GetRow(rightIndex)
+					ok, err := codec.EqualChunkRow(sessCtx.GetSessionVars().StmtCtx.TypeCtx(), leftRow, leftKeyTypes, leftKeyIndex,
+						buildRow, rightKeyTypes, rightKeyIndex)
 					require.NoError(t, err)
 					if ok && otherConditions != nil {
 						// key is match, check other condition
-						ok, err = evalOtherCondition(sessCtx, true, probeRow, buildRow, shallowRow, otherConditions)
+						ok, err = evalOtherCondition(sessCtx, leftRow, buildRow, shallowRow, otherConditions)
 						require.NoError(t, err)
 					}
 					if ok {
 						// construct result chunk
-						appendToResultChk(true, probeRow, buildRow, probeUsedColumns, buildUsedColumns, resultChk)
+						appendToResultChk(leftRow, buildRow, leftUsedColumns, rightUsedColumns, resultChk)
 					}
 				}
 			}
@@ -174,6 +170,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	buildUsed := leftUsed
 	buildUsedByOtherCondition := leftUsedByOtherCondition
 	buildFilter, probeFilter := leftFilter, rightFilter
+	needUsedFlag := false
 	if rightAsBuildSide {
 		probeKeyIndex, buildKeyIndex = leftKeyIndex, rightKeyIndex
 		probeKeyTypes, buildKeyTypes = leftKeyTypes, rightKeyTypes
@@ -181,17 +178,46 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		buildUsed = rightUsed
 		buildUsedByOtherCondition = rightUsedByOtherCondition
 		buildFilter, probeFilter = rightFilter, leftFilter
+		if joinType == plannercore.RightOuterJoin {
+			needUsedFlag = true
+		}
+	} else {
+		switch joinType {
+		case plannercore.LeftOuterJoin, plannercore.SemiJoin, plannercore.AntiSemiJoin:
+			needUsedFlag = true
+		case plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+			require.NoError(t, errors.New("left semi/anti join does not support use left as build side"))
+		}
 	}
-	needUsedFlag := joinType == plannercore.LeftOuterJoin && !rightAsBuildSide
+	switch joinType {
+	case plannercore.InnerJoin:
+		require.Equal(t, 0, len(leftFilter), "inner join does not support left filter")
+		require.Equal(t, 0, len(rightFilter), "inner join does not support right filter")
+	case plannercore.LeftOuterJoin:
+		require.Equal(t, 0, len(rightFilter), "inner join does not support right filter")
+	case plannercore.RightOuterJoin:
+		require.Equal(t, 0, len(leftFilter), "inner join does not support left filter")
+	case plannercore.SemiJoin, plannercore.AntiSemiJoin:
+		require.Equal(t, 0, len(leftFilter), "semi/anti join does not support left filter")
+		require.Equal(t, 0, len(rightFilter), "semi/anti join does not support right filter")
+	case plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+		require.Equal(t, 0, len(rightFilter), "left outer semi/anti join does not support right filter")
+	}
 	joinedTypes := make([]*types.FieldType, 0, len(leftTypes)+len(rightTypes))
 	joinedTypes = append(joinedTypes, leftTypes...)
 	joinedTypes = append(joinedTypes, rightTypes...)
 	resultTypes := make([]*types.FieldType, 0, len(leftUsed)+len(rightUsed))
 	for _, colIndex := range leftUsed {
-		resultTypes = append(resultTypes, leftTypes[colIndex])
+		resultTypes = append(resultTypes, leftTypes[colIndex].Clone())
+		if joinType == plannercore.RightOuterJoin {
+			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
+		}
 	}
 	for _, colIndex := range rightUsed {
-		resultTypes = append(resultTypes, rightTypes[colIndex])
+		resultTypes = append(resultTypes, rightTypes[colIndex].Clone())
+		if joinType == plannercore.LeftOuterJoin {
+			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
+		}
 	}
 
 	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, buildUsedByOtherCondition, buildUsed, needUsedFlag)
@@ -307,11 +333,39 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 			}
 		}
 	}
+	if joinProbe.NeedScanRowTable() {
+		joinProbes := make([]JoinProbe, 0, hashJoinCtx.Concurrency)
+		for i := uint(0); i < hashJoinCtx.Concurrency; i++ {
+			joinProbes = append(joinProbes, NewJoinProbe(hashJoinCtx, i, joinType, probeKeyIndex, joinedTypes, probeTypes, rightAsBuildSide))
+		}
+		for _, prober := range joinProbes {
+			prober.InitForScanRowTable()
+			for !prober.IsScanRowTableDone() {
+				joinResult = prober.ScanRowTable(joinResult)
+				require.NoError(t, joinResult.Err, "unexpected error during scan row table")
+				if joinResult.Chk.IsFull() {
+					resultChunks = append(resultChunks, joinResult.Chk)
+					joinResult.Chk = chunk.New(resultTypes, hashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize, hashJoinCtx.SessCtx.GetSessionVars().MaxChunkSize)
+				}
+			}
+		}
+	}
 	if joinResult.Chk.NumRows() > 0 {
 		resultChunks = append(resultChunks, joinResult.Chk)
 	}
-	expectedChunks := genInnerJoinResult(t, hashJoinCtx.SessCtx, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes, rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, rightUsed, otherCondition)
-	checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	switch joinType {
+	case plannercore.InnerJoin:
+		expectedChunks := genInnerJoinResult(t, hashJoinCtx.SessCtx, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes, rightTypes,
+			leftKeyTypes, rightKeyTypes, leftUsed, rightUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	case plannercore.LeftOuterJoin:
+		expectedChunks := genLeftOuterJoinResult(t, hashJoinCtx.SessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, rightUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	default:
+		require.NoError(t, errors.New("not supported join type"))
+
+	}
 }
 
 type testCase struct {
