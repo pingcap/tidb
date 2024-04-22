@@ -885,7 +885,8 @@ func (c *unaryMinusFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	_, intOverflow := c.typeInfer(argExpr)
 
 	var bf baseBuiltinFunc
-	switch argExprTp.EvalType() {
+	evalType := argExprTp.EvalType()
+	switch evalType {
 	case types.ETInt:
 		if intOverflow {
 			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETDecimal)
@@ -903,14 +904,6 @@ func (c *unaryMinusFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusInt)
 		}
 		bf.tp.SetDecimal(0)
-	case types.ETDecimal:
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETDecimal)
-		if err != nil {
-			return nil, err
-		}
-		bf.tp.SetDecimalUnderLimit(argExprTp.GetDecimal())
-		sig = &builtinUnaryMinusDecimalSig{bf, false}
-		sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 	case types.ETReal:
 		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
 		if err != nil {
@@ -919,12 +912,19 @@ func (c *unaryMinusFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		sig = &builtinUnaryMinusRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusReal)
 	default:
-		tp := argExpr.GetType().GetType()
-		if types.IsTypeTime(tp) || tp == mysql.TypeDuration {
+		asDecimal := evalType == types.ETDecimal
+		if !asDecimal {
+			tp := argExprTp.GetType()
+			if types.IsTypeTime(tp) || tp == mysql.TypeDuration {
+				asDecimal = true
+			}
+		}
+		if asDecimal {
 			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETDecimal)
 			if err != nil {
 				return nil, err
 			}
+			bf.tp.SetDecimalUnderLimit(argExprTp.GetDecimal())
 			sig = &builtinUnaryMinusDecimalSig{bf, false}
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 		} else {
