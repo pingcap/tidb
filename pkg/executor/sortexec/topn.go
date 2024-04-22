@@ -160,43 +160,43 @@ func (e *TopNExec) greaterRow(rowI, rowJ chunk.Row) bool {
 //
 // The following picture shows the procedure of topn when spill is triggered.
 /*
-	                    ┌─────────┐
-	                    │  Child  │
-	                    └────▲────┘
-	                         │
-	                       Fetch
-	                         │
-	                 ┌───────┴───────┐
-	                 │ Chunk Fetcher │
-	                 └───────┬───────┘
-	                         │
-	                         │
-	                         ▼
-	                    Check Spill──────►Spill Triggered─────────►Spill
-	                         │                                       │
-	                         ▼                                       │
-	                 Spill Not Triggered                             │
-	                         │                                       │
-	                         ▼                                       │
-	                       Push◄─────────────────────────────────────┘
-	                         │
-	                         ▼
-	    ┌────────────────►Channel◄───────────────────┐
-	    │                    ▲                       │
-	    │                    │                       │
-	  Fetch                Fetch                   Fetch
-	    │                    │                       │
+                        ┌─────────┐
+                        │  Child  │
+                        └────▲────┘
+                             │
+                           Fetch
+                             │
+                     ┌───────┴───────┐
+                     │ Chunk Fetcher │
+                     └───────┬───────┘
+                             │
+                             │
+                             ▼
+                        Check Spill──────►Spill Triggered─────────►Spill
+                             │                                       │
+                             ▼                                       │
+                     Spill Not Triggered                             │
+                             │                                       │
+                             ▼                                       │
+                           Push◄─────────────────────────────────────┘
+                             │
+                             ▼
+        ┌────────────────►Channel◄───────────────────┐
+        │                    ▲                       │
+        │                    │                       │
+      Fetch                Fetch                   Fetch
+        │                    │                       │
    ┌────┴───┐            ┌───┴────┐              ┌───┴────┐
    │ Worker │            │ Worker │   ......     │ Worker │
    └────┬───┘            └───┬────┘              └───┬────┘
-	    │                    │                       │
-	    │                    │                       │
-	    │                    ▼                       │
-	    └───────────► Multi-way Merge◄───────────────┘
-	                         │
-	                         │
-	                         ▼
-	                      Output
+        │                    │                       │
+        │                    │                       │
+        │                    ▼                       │
+        └───────────► Multi-way Merge◄───────────────┘
+                             │
+                             │
+                             ▼
+                          Output
 */
 func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
