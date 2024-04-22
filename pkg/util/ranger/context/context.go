@@ -27,6 +27,7 @@ type RangerContext struct {
 	ErrCtx  errctx.Context
 	ExprCtx exprctx.BuildContext
 	*contextutil.RangeFallbackHandler
+	*contextutil.PlanCacheTracker
 	OptimizerFixControl      map[uint64]string
 	UseCache                 bool
 	InPreparedPlanBuilding   bool

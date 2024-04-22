@@ -1854,7 +1854,8 @@ func checkRangeFallbackAndReset(t *testing.T, sctx sessionctx.Context, expectedR
 		hasRangeFallbackWarn = hasRangeFallbackWarn || strings.Contains(warn.Err.Error(), "'tidb_opt_range_max_size' exceeded when building ranges")
 	}
 	require.Equal(t, expectedRangeFallback, hasRangeFallbackWarn)
-	stmtCtx.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(stmtCtx)
+	stmtCtx.PlanCacheTracker = contextutil.NewPlanCacheTracker(stmtCtx)
+	stmtCtx.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&stmtCtx.PlanCacheTracker, stmtCtx)
 	stmtCtx.SetWarnings(nil)
 }
 

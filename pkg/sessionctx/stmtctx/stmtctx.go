@@ -210,6 +210,7 @@ type StatementContext struct {
 	InPreparedPlanBuilding bool
 	InShowWarning          bool
 
+	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler
 
 	BatchCheck            bool
@@ -464,7 +465,8 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, defaultErrLevels, sc)
-	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(sc)
+	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
+	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	return sc
 }
 
@@ -475,7 +477,8 @@ func (sc *StatementContext) Reset() {
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, defaultErrLevels, sc)
-	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(sc)
+	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
+	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 }
 
 // CtxID returns the context id of the statement
