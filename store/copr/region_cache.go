@@ -155,9 +155,11 @@ func (c *RegionCache) splitKeyRangesByLocation(loc *tikv.KeyLocation, ranges *Ke
 		}
 	} else {
 		// rs[i] is not in the region.
-		taskRanges := ranges.Slice(0, i)
-		res = append(res, &LocationKeyRanges{Location: loc, Ranges: taskRanges})
-		ranges = ranges.Slice(i, ranges.Len())
+		if i > 0 {
+			taskRanges := ranges.Slice(0, i)
+			res = append(res, &LocationKeyRanges{Location: loc, Ranges: taskRanges})
+			ranges = ranges.Slice(i, ranges.Len())
+		}
 	}
 	return res, ranges, false
 }
@@ -248,11 +250,12 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithoutBuckets(bo *Backoffer, ran
 	}
 	res := make([]*LocationKeyRanges, 0, resCap)
 
+	nextLocIndex := 0
 	for ranges.Len() > 0 {
 		if limit != UnspecifiedLimit && len(res) >= limit {
 			break
 		}
-		nextLocIndex := len(res)
+
 		if nextLocIndex >= len(locs) {
 			err = errors.Errorf("Unexpected loc index %d, which should less than %d", nextLocIndex, len(locs))
 			return nil, err
@@ -264,6 +267,8 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithoutBuckets(bo *Backoffer, ran
 			res = append(res, &LocationKeyRanges{Location: loc, Ranges: ranges})
 			break
 		}
+		nextLocIndex++
+
 		isBreak := false
 		res, ranges, isBreak = c.splitKeyRangesByLocation(loc, ranges, res)
 		if isBreak {
