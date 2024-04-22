@@ -107,6 +107,8 @@ func TestLeftOuterJoinProbeBasic(t *testing.T) {
 
 	rightAsBuildSide := []bool{true, false}
 	partitionNumber := 3
+	simpleFilter := createSimpleFilter(t)
+	hasFilter := []bool{false, true}
 
 	testCases := []testCase{
 		// normal case
@@ -126,10 +128,15 @@ func TestLeftOuterJoinProbeBasic(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		// inner join does not have left/right Filter
 		for _, value := range rightAsBuildSide {
-			testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, tc.leftKeyTypes, tc.rightKeyTypes, tc.leftTypes, tc.rightTypes, value, tc.leftUsed,
-				tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, nil, nil, tc.otherCondition, partitionNumber, plannercore.LeftOuterJoin, 200)
+			for _, testFilter := range hasFilter {
+				leftFilter := simpleFilter
+				if !testFilter {
+					leftFilter = nil
+				}
+				testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, tc.leftKeyTypes, tc.rightKeyTypes, tc.leftTypes, tc.rightTypes, value, tc.leftUsed,
+					tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, leftFilter, nil, tc.otherCondition, partitionNumber, plannercore.LeftOuterJoin, 200)
+			}
 		}
 	}
 }
@@ -178,25 +185,26 @@ func TestLeftOuterJoinProbeAllJoinKeys(t *testing.T) {
 	rTypes := lTypes
 	lUsed := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
 	rUsed := lUsed
+	joinType := plannercore.LeftOuterJoin
 
 	// single key
 	for i := 0; i < len(lTypes); i++ {
-		testJoinProbe(t, false, []int{i}, []int{i}, []*types.FieldType{lTypes[i]}, []*types.FieldType{rTypes[i]}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-		testJoinProbe(t, false, []int{i}, []int{i}, []*types.FieldType{lTypes[i]}, []*types.FieldType{rTypes[i]}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+		testJoinProbe(t, false, []int{i}, []int{i}, []*types.FieldType{lTypes[i]}, []*types.FieldType{rTypes[i]}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+		testJoinProbe(t, false, []int{i}, []int{i}, []*types.FieldType{lTypes[i]}, []*types.FieldType{rTypes[i]}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
 	}
 	// composed key
 	// fixed size, inlined
-	testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, []*types.FieldType{intTp, uintTp}, []*types.FieldType{intTp, uintTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-	testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, []*types.FieldType{intTp, uintTp}, []*types.FieldType{intTp, uintTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, []*types.FieldType{intTp, uintTp}, []*types.FieldType{intTp, uintTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+	testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, []*types.FieldType{intTp, uintTp}, []*types.FieldType{intTp, uintTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
 	// variable size, inlined
-	testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-	testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+	testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
 	// fixed size, not inlined
-	testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, []*types.FieldType{intTp, datetimeTp}, []*types.FieldType{intTp, datetimeTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-	testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, []*types.FieldType{intTp, datetimeTp}, []*types.FieldType{intTp, datetimeTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, []*types.FieldType{intTp, datetimeTp}, []*types.FieldType{intTp, datetimeTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+	testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, []*types.FieldType{intTp, datetimeTp}, []*types.FieldType{intTp, datetimeTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
 	// variable size, not inlined
-	testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, []*types.FieldType{intTp, decimalTp}, []*types.FieldType{intTp, decimalTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-	testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, []*types.FieldType{intTp, decimalTp}, []*types.FieldType{intTp, decimalTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, []*types.FieldType{intTp, decimalTp}, []*types.FieldType{intTp, decimalTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+	testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, []*types.FieldType{intTp, decimalTp}, []*types.FieldType{intTp, decimalTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
 }
 
 func TestLeftOuterJoinProbeOtherCondition(t *testing.T) {
@@ -218,9 +226,20 @@ func TestLeftOuterJoinProbeOtherCondition(t *testing.T) {
 	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
+	joinType := plannercore.LeftOuterJoin
+	simpleFilter := createSimpleFilter(t)
+	hasFilter := []bool{false, true}
+	rightAsBuildSide := []bool{false, true}
 
-	testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, true, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 200)
-	testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, false, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 200)
+	for _, rightBuild := range rightAsBuildSide {
+		for _, testFilter := range hasFilter {
+			leftFilter := simpleFilter
+			if !testFilter {
+				leftFilter = nil
+			}
+			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, leftFilter, nil, otherCondition, 3, joinType, 200)
+		}
+	}
 }
 
 func TestLeftOuterJoinProbeWithSel(t *testing.T) {
@@ -242,9 +261,18 @@ func TestLeftOuterJoinProbeWithSel(t *testing.T) {
 	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
+	joinType := plannercore.LeftOuterJoin
+	rightAsBuildSide := []bool{false, true}
+	simpleFilter := createSimpleFilter(t)
+	hasFilter := []bool{false, true}
 
-	testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, true, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 500)
-	testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, false, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 500)
-	testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, true, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, nil, 3, plannercore.InnerJoin, 500)
-	testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, false, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, nil, 3, plannercore.InnerJoin, 500)
+	for _, rightBuild := range rightAsBuildSide {
+		for _, useFilter := range hasFilter {
+			leftFilter := simpleFilter
+			if !useFilter {
+				leftFilter = nil
+			}
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, leftFilter, nil, otherCondition, 3, joinType, 500)
+		}
+	}
 }
