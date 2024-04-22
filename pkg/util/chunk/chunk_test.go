@@ -724,6 +724,24 @@ func TestToString(t *testing.T) {
 	require.Equal(t, "1, 1, 1, 0000-00-00, 1\n2, 2, 2, 0000-00-00 00:00:00, 2\n", chk.ToString(fieldTypes))
 }
 
+func TestAppendCellByCell(t *testing.T) {
+	dstCol := NewColumn(types.NewFieldType(mysql.TypeString), 5)
+	srcCol := NewColumn(types.NewFieldType(mysql.TypeLong), 5)
+
+	srcCol.AppendInt64(1)
+	srcCol.AppendInt64(2)
+	srcCol.AppendInt64(3)
+
+	appendCellByCell(dstCol, srcCol, 0)
+	appendCellByCell(dstCol, srcCol, 1)
+	appendCellByCell(dstCol, srcCol, 2)
+
+	// Test is success when there is no panic
+	dstCol.GetString(0)
+	dstCol.GetString(1)
+	dstCol.GetString(2)
+}
+
 func BenchmarkAppendInt(b *testing.B) {
 	b.ReportAllocs()
 	chk := newChunk(8)
