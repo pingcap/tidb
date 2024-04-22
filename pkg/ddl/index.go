@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -41,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -805,16 +803,11 @@ func pickBackfillType(ctx context.Context, job *model.Job) (model.ReorgType, err
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge, nil
 		}
-		available, err := ingest.LitBackCtxMgr.CheckAvailable()
+		available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable(ctx)
 		if err != nil {
 			return model.ReorgTypeNone, err
 		}
 		if available {
-			ctx := logutil.WithCategory(ctx, "ddl-ingest")
-			err = cleanupSortPath(ctx, job.ID)
-			if err != nil {
-				return model.ReorgTypeNone, err
-			}
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge, nil
 		}
@@ -830,52 +823,6 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
 	jc.cloudStorageURI = variable.CloudStorageURI.Load()
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0
-}
-
-// cleanupSortPath is used to clean up the temp data of the previous jobs.
-// Because we don't remove all the files after the support of checkpoint,
-// there maybe some stale files in the sort path if TiDB is killed during the backfill process.
-func cleanupSortPath(ctx context.Context, currentJobID int64) error {
-	sortPath := ingest.ConfigSortPath()
-	err := os.MkdirAll(sortPath, 0700)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	entries, err := os.ReadDir(sortPath)
-	if err != nil {
-		logutil.Logger(ctx).Warn(ingest.LitErrReadSortPath, zap.Error(err))
-		return errors.Trace(err)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		jobID, err := ingest.DecodeBackendTag(entry.Name())
-		if err != nil {
-			logutil.Logger(ctx).Warn(ingest.LitErrCleanSortPath, zap.Error(err))
-			continue
-		}
-		if _, ok := ingest.LitBackCtxMgr.Load(jobID); ok {
-			// The job is still running, skip it.
-			logutil.Logger(ctx).Warn("the job is still running, skip removing it",
-				zap.Int64("running job ID", jobID))
-			continue
-		}
-		// Remove all the temp data of the previous done jobs.
-		if jobID < currentJobID {
-			logutil.Logger(ctx).Info("remove stale temp index data",
-				zap.Int64("jobID", jobID), zap.Int64("currentJobID", currentJobID))
-			err := os.RemoveAll(filepath.Join(sortPath, entry.Name()))
-			if err != nil {
-				logutil.Logger(ctx).Warn(ingest.LitErrCleanSortPath, zap.Error(err))
-				return nil
-			}
-			failpoint.Inject("ownerResignAfterDispatchLoopCheck", func() {
-				close(local.WaitRMFolderChForTest)
-			})
-		}
-	}
-	return nil
 }
 
 func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
