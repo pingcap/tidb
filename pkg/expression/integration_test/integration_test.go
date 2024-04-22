@@ -2610,6 +2610,21 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("2017-11-12 08:48:25.1"))
 	result = tk.MustQuery(`select distinct -(Timestamp('2017-11-12 08:48:25.1'))`)
 	result.Check(testkit.Rows("-20171112084825.1"))
+
+	tk.MustExec("create table t2(a DATETIME, b Timestamp, c TIME, d DATE)")
+	tk.MustExec(`insert into t2 values("2000-1-1 08:48:25.123", "2000-1-2 08:48:25.1", "11:11:12.1", "2000-1-3 08:48:25.1")`)
+	tk.MustExec("insert into t2 (select * from t2)")
+
+	result = tk.MustQuery(`select distinct -((a+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
+	result.Check(testkit.Rows("-20000101084825.100000"))
+	result = tk.MustQuery(`select distinct -((b+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
+	result.Check(testkit.Rows("-20000102084825.100000"))
+	result = tk.MustQuery(`select distinct -((c+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
+	result.Check(testkit.Rows("-111112.100000"))
+	result = tk.MustQuery(`select distinct -((d+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
+	result.Check(testkit.Rows("-20000103000000.100000"))
+
+	tk.MustExec("drop table t2")
 }
 
 func TestSetVariables(t *testing.T) {
