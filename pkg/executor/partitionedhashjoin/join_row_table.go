@@ -15,7 +15,6 @@
 package partitionedhashjoin
 
 import (
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"hash/fnv"
 	"sync/atomic"
 	"unsafe"
@@ -26,13 +25,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 const SizeOfNextPtr = int(unsafe.Sizeof(uintptr(0)))
 const SizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
 const sizeOfUInt64 = int(unsafe.Sizeof(uint64(1)))
 const sizeOfFloat64 = int(unsafe.Sizeof(float64(1)))
-const usedFlagMask = uint32(1) << 31
+const usedFlagMaskBigEndian = uint32(1) << 31
+const usedFlagMaskLittleEndian = uint32(1) << 7
 
 type rowTableSegment struct {
 	/*
@@ -127,6 +128,8 @@ type JoinTableMeta struct {
 	keyMode keyMode
 	// offset to rowData, -1 for variable length, non-inlined key
 	rowDataOffset int
+
+	usedFlagMask uint32
 }
 
 func (meta *JoinTableMeta) getSerializedKeyLength(rowStart uintptr) uint64 {
@@ -164,12 +167,12 @@ func (meta *JoinTableMeta) isColumnNull(rowStart uintptr, columnIndex int) bool 
 func (meta *JoinTableMeta) setUsedFlag(rowStart uintptr) {
 	addr := (*uint32)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr))
 	value := atomic.LoadUint32(addr)
-	value |= usedFlagMask
+	value |= meta.usedFlagMask
 	atomic.StoreUint32(addr, value)
 }
 
 func (meta *JoinTableMeta) isCurrentRowUsed(rowStart uintptr) bool {
-	return (*(*uint32)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr)) & usedFlagMask) == usedFlagMask
+	return (*(*uint32)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr)) & meta.usedFlagMask) == meta.usedFlagMask
 }
 
 type rowTable struct {
@@ -417,6 +420,16 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	} else {
 		if meta.isJoinKeysFixedLength {
 			meta.rowDataOffset = SizeOfNextPtr + meta.nullMapLength + meta.joinKeysLength
+		}
+	}
+	if needUsedFlag {
+		test := usedFlagMaskBigEndian
+		test8High := *(*uint8)(unsafe.Pointer(&test))
+		if test8High == uint8(usedFlagMaskLittleEndian) {
+			// big endian
+			meta.usedFlagMask = usedFlagMaskBigEndian
+		} else {
+			meta.usedFlagMask = usedFlagMaskLittleEndian
 		}
 	}
 	return meta
