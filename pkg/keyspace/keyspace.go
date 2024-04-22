@@ -109,6 +109,7 @@ func IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) boo
 	return false
 }
 
+// IsKeyspaceUseGlobalGC return true if TiDB set 'keyspace-name' and use global gc.
 func IsKeyspaceUseGlobalGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	return keyspaceMeta != nil && !IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta)
 }
