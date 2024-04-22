@@ -110,7 +110,7 @@ func IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) boo
 }
 
 func IsKeyspaceUseGlobalGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
-	return CurrentKeyspaceMeta != nil && !IsKeyspaceMetaUseKeyspaceLevelGC(CurrentKeyspaceMeta)
+	return keyspaceMeta != nil && !IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta)
 }
 
 // GetKeyspaceTxnPrefix return the keyspace txn prefix
