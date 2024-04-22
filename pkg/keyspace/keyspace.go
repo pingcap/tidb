@@ -109,6 +109,10 @@ func IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) boo
 	return false
 }
 
+func IsKeyspaceUseGlobalGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
+	return CurrentKeyspaceMeta != nil && !IsKeyspaceMetaUseKeyspaceLevelGC(CurrentKeyspaceMeta)
+}
+
 // GetKeyspaceTxnPrefix return the keyspace txn prefix
 func GetKeyspaceTxnPrefix(keyspaceID uint32) []byte {
 	keyspaceIDBytes := make([]byte, 4)

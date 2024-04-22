@@ -410,13 +410,14 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	}
 
 	// If 'gc_management_type' is not 'keyspace_level_gc' in current keyspace meta config,
+	// current keyspace will use global gc safe point.
 	// At least one TiDB with `keyspace-name` not set is required in the whole cluster
 	// which will to calculate and update global gc safe point in the whole cluster.
 	// In this case, if `keyspace-name` is set, the TiDB node will only do its own delete range,
 	// and will not calculate gc safe point and resolve locks.
 	// Note that when `keyspace-name` is set, `checkLeader` will be done within the keyspace.
 	// Therefore only one TiDB node in each keyspace will be responsible to do delete range.
-	if keyspace.CurrentKeyspaceMeta != nil && !keyspace.IsKeyspaceMetaUseKeyspaceLevelGC(keyspace.CurrentKeyspaceMeta) {
+	if keyspace.IsKeyspaceUseGlobalGC(keyspace.CurrentKeyspaceMeta) {
 		// If we use global gc safe point, a tidb which has keyspace-name should only do delete range logic.
 		err = w.runKeyspaceGCJobInGlobalGC(ctx, concurrency)
 		if err != nil {
@@ -479,14 +480,6 @@ func (w *GCWorker) runKeyspaceGCJobInGlobalGC(ctx context.Context, concurrency i
 	}
 
 	return nil
-}
-
-func (w *GCWorker) isKeyspaceEnableKeyspaceGC() bool {
-	return keyspace.IsKeyspaceMetaUseKeyspaceLevelGC(keyspace.CurrentKeyspaceMeta) && w.store != nil && w.store.GetCodec() != nil && w.store.GetCodec().GetKeyspace() != nil
-}
-
-func (w *GCWorker) isKeyspaceInGlobalGC() bool {
-	return !keyspace.IsKeyspaceMetaUseKeyspaceLevelGC(keyspace.CurrentKeyspaceMeta) && w.store.GetCodec() != nil && w.store.GetCodec().GetKeyspace() != nil
 }
 
 // prepare checks preconditions for starting a GC job. It returns a bool
