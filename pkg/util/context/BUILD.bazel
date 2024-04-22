@@ -4,8 +4,10 @@ go_library(
     name = "context",
     srcs = [
         "context.go",
+        "plancache.go",
         "warn.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/context",
     visibility = ["//visibility:public"],
+    deps = ["@com_github_pingcap_errors//:errors"],
 )
