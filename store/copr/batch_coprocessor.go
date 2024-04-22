@@ -288,6 +288,20 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 	return res, score
 }
 
+func getUsedStores(cache *RegionCache, usedTiFlashStoresMap map[uint64]struct{}) []*tikv.Store {
+	logutil.BgLogger().Info("detecting available mpp stores")
+	// decide the available stores
+	stores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
+	usedStores := make([]*tikv.Store, 0)
+	for _, store := range stores {
+		_, ok := usedTiFlashStoresMap[store.StoreID()]
+		if ok {
+			usedStores = append(usedStores, store)
+		}
+	}
+	return usedStores
+}
+
 // balanceBatchCopTask balance the regions between available stores, the basic rule is
 //  1. the first region of each original batch cop task belongs to its original store because some
 //     meta data(like the rpc context) in batchCopTask is related to it
@@ -300,7 +314,7 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 //
 // The second balance strategy: Not only consider the region count between TiFlash stores, but also try to make the regions' range continuous(stored in TiFlash closely).
 // If balanceWithContinuity is true, the second balance strategy is enable.
-func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, isMPP bool, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) []*batchCopTask {
+func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, usedTiFlashStoresMap map[uint64]struct{}, originalTasks []*batchCopTask, isMPP bool, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) []*batchCopTask {
 	if len(originalTasks) == 0 {
 		log.Info("Batch cop task balancer got an empty task set.")
 		return originalTasks
@@ -329,8 +343,8 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 			storeTaskMap[taskStoreID] = batchTask
 		}
 	} else {
-		stores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
-		aliveStores := filterAliveStores(ctx, stores, ttl, kvStore)
+		usedStores := getUsedStores(cache, usedTiFlashStoresMap)
+		aliveStores := filterAliveStores(ctx, usedStores, ttl, kvStore)
 		for _, s := range aliveStores {
 			storeTaskMap[s.StoreID()] = &batchCopTask{
 				storeAddr: s.GetAddr(),
@@ -823,6 +837,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 		var batchTasks []*batchCopTask
 
 		storeTaskMap := make(map[string]*batchCopTask)
+		usedTiFlashStoresMap := make(map[uint64]struct{})
 		needRetry := false
 		for _, task := range tasks {
 			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, isMPP, tikv.LabelFilterNoTiFlashWriteNode)
@@ -852,6 +867,10 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				}
 				storeTaskMap[rpcCtx.Addr] = batchTask
 			}
+
+			for _, store := range allStores {
+				usedTiFlashStoresMap[store] = struct{}{}
+			}
 		}
 		if needRetry {
 			// As mentioned above, nil rpcCtx is always attributed to failed stores.
@@ -875,7 +894,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 			logutil.BgLogger().Debug(msg)
 		}
 		balanceStart := time.Now()
-		batchTasks = balanceBatchCopTask(bo.GetCtx(), store, batchTasks, isMPP, ttl, balanceWithContinuity, balanceContinuousRegionCount)
+		batchTasks = balanceBatchCopTask(bo.GetCtx(), store, usedTiFlashStoresMap, batchTasks, isMPP, ttl, balanceWithContinuity, balanceContinuousRegionCount)
 		balanceElapsed := time.Since(balanceStart)
 		if log.GetLevel() <= zap.DebugLevel {
 			msg := "After region balance:"
