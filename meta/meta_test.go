@@ -320,7 +320,11 @@ func TestMeta(t *testing.T) {
 		ID:   3,
 		Name: model.NewCIStr("tbl3"),
 	}
+<<<<<<< HEAD:meta/meta_test.go
 	err = m.CreateTableAndSetAutoID(1, tbInfo3, 123, 0)
+=======
+	err = m.CreateTableAndSetAutoID(1, dbInfo.Name.L, tbInfo3, meta.AutoIDGroup{RowID: 123, IncrementID: 0})
+>>>>>>> 4b6e8ee0306 (meta,ddl: fix duplicate entry error when insert after drop and recover table (#52761)):pkg/meta/meta_test.go
 	require.NoError(t, err)
 	id, err := m.GetAutoIDAccessors(1, tbInfo3.ID).RowID().Get()
 	require.NoError(t, err)
