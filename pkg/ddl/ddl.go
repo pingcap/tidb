@@ -862,6 +862,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
 
+<<<<<<< HEAD
 	ctx, err := d.sessPool.Get()
 	if err != nil {
 		return err
@@ -875,6 +876,15 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			ingest.LitBackCtxMgr.MarkJobFinish()
 		}
 		d.runningJobs.clear()
+=======
+	ingest.InitGlobalLightningEnv(func(jobIDs []int64) ([]int64, error) {
+		se, err := d.sessPool.Get()
+		if err != nil {
+			return nil, err
+		}
+		defer d.sessPool.Put(se)
+		return filterProcessingJobIDs(sess.NewSession(se), jobIDs)
+>>>>>>> 79c1499bec7 (ddl: move file management into litBackendCtxMgr (#52645))
 	})
 
 	return nil

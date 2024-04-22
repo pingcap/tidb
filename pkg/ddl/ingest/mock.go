@@ -43,6 +43,7 @@ func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBacken
 	}
 }
 
+<<<<<<< HEAD
 // MarkJobProcessing implements BackendCtxMgr.MarkJobProcessing interface.
 func (*MockBackendCtxMgr) MarkJobProcessing(_ int64) bool {
 	return true
@@ -54,6 +55,10 @@ func (*MockBackendCtxMgr) MarkJobFinish() {
 
 // CheckAvailable implements BackendCtxMgr.Available interface.
 func (m *MockBackendCtxMgr) CheckAvailable() (bool, error) {
+=======
+// CheckMoreTasksAvailable implements BackendCtxMgr.CheckMoreTaskAvailable interface.
+func (m *MockBackendCtxMgr) CheckMoreTasksAvailable(context.Context) (bool, error) {
+>>>>>>> 79c1499bec7 (ddl: move file management into litBackendCtxMgr (#52645))
 	return len(m.runningJobs) == 0, nil
 }
 

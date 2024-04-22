@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -788,16 +787,11 @@ func pickBackfillType(ctx context.Context, job *model.Job) (model.ReorgType, err
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge, nil
 		}
-		available, err := ingest.LitBackCtxMgr.CheckAvailable()
+		available, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable(ctx)
 		if err != nil {
 			return model.ReorgTypeNone, err
 		}
 		if available {
-			ctx := logutil.WithCategory(ctx, "ddl-ingest")
-			err = cleanupSortPath(ctx, job.ID)
-			if err != nil {
-				return model.ReorgTypeNone, err
-			}
 			job.ReorgMeta.ReorgTp = model.ReorgTypeLitMerge
 			return model.ReorgTypeLitMerge, nil
 		}
@@ -815,6 +809,7 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0
 }
 
+<<<<<<< HEAD
 // cleanupSortPath is used to clean up the temp data of the previous jobs.
 // Because we don't remove all the files after the support of checkpoint,
 // there maybe some stale files in the sort path if TiDB is killed during the backfill process.
@@ -884,6 +879,8 @@ func IngestJobsNotExisted(ctx sessionctx.Context) bool {
 	return true
 }
 
+=======
+>>>>>>> 79c1499bec7 (ddl: move file management into litBackendCtxMgr (#52645))
 func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
