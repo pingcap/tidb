@@ -763,17 +763,28 @@ func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
 // and rebases the table autoID.
+<<<<<<< HEAD
 func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIncID, autoRandID int64) error {
 	err := m.CreateTableOrView(dbID, tableInfo)
+=======
+func (m *Meta) CreateTableAndSetAutoID(dbID int64, dbName string, tableInfo *model.TableInfo, autoIDs AutoIDGroup) error {
+	err := m.CreateTableOrView(dbID, dbName, tableInfo)
+>>>>>>> 4b6e8ee0306 (meta,ddl: fix duplicate entry error when insert after drop and recover table (#52761))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoIncID)
+	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoIDs.RowID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if tableInfo.AutoRandomBits > 0 {
-		_, err = m.txn.HInc(m.dbKey(dbID), m.autoRandomTableIDKey(tableInfo.ID), autoRandID)
+		_, err = m.txn.HInc(m.dbKey(dbID), m.autoRandomTableIDKey(tableInfo.ID), autoIDs.RandomID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if tableInfo.SepAutoInc() && tableInfo.GetAutoIncrementColInfo() != nil {
+		_, err = m.txn.HInc(m.dbKey(dbID), m.autoIncrementIDKey(tableInfo.ID), autoIDs.IncrementID)
 		if err != nil {
 			return errors.Trace(err)
 		}
