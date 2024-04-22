@@ -325,10 +325,12 @@ func TestReplaceConflictOneKey(t *testing.T) {
 				return nil, fmt.Errorf("key %v is not expected", key)
 			}
 		},
-		func(ctx context.Context, key []byte) error {
-			fnDeleteKeyCount.Add(1)
-			if !bytes.Equal(key, data1IndexKey) {
-				return fmt.Errorf("key %v is not expected", key)
+		func(ctx context.Context, keys [][]byte) error {
+			fnDeleteKeyCount.Add(int32(len(keys)))
+			for _, key := range keys {
+				if !bytes.Equal(key, data1IndexKey) {
+					return fmt.Errorf("key %v is not expected", key)
+				}
 			}
 			return nil
 		},
@@ -549,10 +551,12 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 				return nil, fmt.Errorf("key %v is not expected", key)
 			}
 		},
-		func(ctx context.Context, key []byte) error {
-			fnDeleteKeyCount.Add(1)
-			if !bytes.Equal(key, data1IndexKey) && !bytes.Equal(key, data2RowKey) && !bytes.Equal(key, data4RowKey) {
-				return fmt.Errorf("key %v is not expected", key)
+		func(ctx context.Context, keys [][]byte) error {
+			fnDeleteKeyCount.Add(int32(len(keys)))
+			for _, key := range keys {
+				if !bytes.Equal(key, data1IndexKey) && !bytes.Equal(key, data2RowKey) && !bytes.Equal(key, data4RowKey) {
+					return fmt.Errorf("key %v is not expected", key)
+				}
 			}
 			return nil
 		},

@@ -494,7 +494,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	tableName string,
 	pool *util.WorkerPool,
 	fnGetLatest func(ctx context.Context, key []byte) ([]byte, error),
-	fnDeleteKey func(ctx context.Context, key []byte) error,
+	fnDeleteKeys func(ctx context.Context, key [][]byte) error,
 ) error {
 	if em.db == nil {
 		return nil
@@ -541,6 +541,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		pool.ApplyOnErrorGroup(indexG, func() error {
 			defer indexTaskWg.Done()
 
+			var handleKeys [][]byte
 			for start < end {
 				indexKvRows, err := em.db.QueryContext(
 					indexGCtx, common.SprintfWithIdentifiers(selectIndexConflictKeysReplace, em.schema),
@@ -550,9 +551,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				}
 
 				var lastRowID int64
-				hasRow := false
 				for indexKvRows.Next() {
-					hasRow = true
 					var rawKey, rawValue, rawHandle []byte
 					var indexName string
 					if err := indexKvRows.Scan(&lastRowID, &rawKey, &indexName, &rawValue, &rawHandle); err != nil {
@@ -659,9 +658,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 								}); err != nil {
 								return errors.Trace(err)
 							}
-							if err := fnDeleteKey(indexGCtx, rawHandle); err != nil {
-								return errors.Trace(err)
-							}
+							handleKeys = append(handleKeys, rawHandle)
 							break
 						}
 					}
@@ -672,8 +669,11 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err := indexKvRows.Close(); err != nil {
 					return errors.Trace(err)
 				}
-				if !hasRow {
+				if len(handleKeys) == 0 {
 					break
+				}
+				if err := fnDeleteKeys(indexGCtx, handleKeys); err != nil {
+					return errors.Trace(err)
 				}
 				start = lastRowID + 1
 				// If the remaining tasks cannot be processed at once, split the task
@@ -688,6 +688,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 						indexTaskWg.Done()
 					}
 				}
+				handleKeys = handleKeys[:0]
 			}
 			return nil
 		})
@@ -715,6 +716,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		pool.ApplyOnErrorGroup(dataG, func() error {
 			defer dataTaskWg.Done()
 
+			var handleKeys [][]byte
 			for start < end {
 				dataKvRows, err := em.db.QueryContext(
 					dataGCtx, common.SprintfWithIdentifiers(selectDataConflictKeysReplace, em.schema),
@@ -727,9 +729,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				var previousRawKey, latestValue []byte
 				var mustKeepKvPairs *kv.Pairs
 
-				hasRow := false
 				for dataKvRows.Next() {
-					hasRow = true
 					var rawKey, rawValue []byte
 					if err := dataKvRows.Scan(&lastRowID, &rawKey, &rawValue); err != nil {
 						return errors.Trace(err)
@@ -824,9 +824,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 							}
 						}
 
-						if err := fnDeleteKey(dataGCtx, kvPair.Key); err != nil {
-							return errors.Trace(err)
-						}
+						handleKeys = append(handleKeys, kvPair.Key)
 					}
 				}
 				if err := dataKvRows.Err(); err != nil {
@@ -835,8 +833,11 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err := dataKvRows.Close(); err != nil {
 					return errors.Trace(err)
 				}
-				if !hasRow {
+				if len(handleKeys) == 0 {
 					break
+				}
+				if err := fnDeleteKeys(dataGCtx, handleKeys); err != nil {
+					return errors.Trace(err)
 				}
 				start = lastRowID + 1
 				// If the remaining tasks cannot be processed at once, split the task
@@ -851,6 +852,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 						dataTaskWg.Done()
 					}
 				}
+				handleKeys = handleKeys[:0]
 			}
 			return nil
 		})

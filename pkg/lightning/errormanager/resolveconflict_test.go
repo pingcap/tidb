@@ -250,10 +250,12 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 				return nil, fmt.Errorf("key %v is not expected", key)
 			}
 		},
-		func(ctx context.Context, key []byte) error {
-			fnDeleteKeyCount.Add(1)
-			if !bytes.Equal(key, data2NonclusteredKey) && !bytes.Equal(key, data6NonclusteredKey) && !bytes.Equal(key, data2IndexKey) && !bytes.Equal(key, data3RowKey) && !bytes.Equal(key, data6IndexKey) && !bytes.Equal(key, data7RowKey) {
-				return fmt.Errorf("key %v is not expected", key)
+		func(ctx context.Context, keys [][]byte) error {
+			fnDeleteKeyCount.Add(int32(len(keys)))
+			for _, key := range keys {
+				if !bytes.Equal(key, data2NonclusteredKey) && !bytes.Equal(key, data6NonclusteredKey) && !bytes.Equal(key, data2IndexKey) && !bytes.Equal(key, data3RowKey) && !bytes.Equal(key, data6IndexKey) && !bytes.Equal(key, data7RowKey) {
+					return fmt.Errorf("key %v is not expected", key)
+				}
 			}
 			return nil
 		},
@@ -416,10 +418,12 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 				return nil, fmt.Errorf("key %v is not expected", key)
 			}
 		},
-		func(ctx context.Context, key []byte) error {
-			fnDeleteKeyCount.Add(1)
-			if !bytes.Equal(key, data4RowKey) && !bytes.Equal(key, data4NonclusteredKey) {
-				return fmt.Errorf("key %v is not expected", key)
+		func(ctx context.Context, keys [][]byte) error {
+			fnDeleteKeyCount.Add(int32(len(keys)))
+			for _, key := range keys {
+				if !bytes.Equal(key, data4RowKey) && !bytes.Equal(key, data4NonclusteredKey) {
+					return fmt.Errorf("key %v is not expected", key)
+				}
 			}
 			return nil
 		},
@@ -628,10 +632,12 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 				return nil, fmt.Errorf("key %x is not expected", key)
 			}
 		},
-		func(ctx context.Context, key []byte) error {
-			fnDeleteKeyCount.Add(1)
-			if !bytes.Equal(key, data5RowKey) && !bytes.Equal(key, data2RowKey) && !bytes.Equal(key, data4RowKey) && !bytes.Equal(key, data2IndexKey) && !bytes.Equal(key, data4NonclusteredKey) && !bytes.Equal(key, data5IndexKey) {
-				return fmt.Errorf("key %v is not expected", key)
+		func(ctx context.Context, keys [][]byte) error {
+			fnDeleteKeyCount.Add(int32(len(keys)))
+			for _, key := range keys {
+				if !bytes.Equal(key, data5RowKey) && !bytes.Equal(key, data2RowKey) && !bytes.Equal(key, data4RowKey) && !bytes.Equal(key, data2IndexKey) && !bytes.Equal(key, data4NonclusteredKey) && !bytes.Equal(key, data5IndexKey) {
+					return fmt.Errorf("key %v is not expected", key)
+				}
 			}
 			return nil
 		},
@@ -844,10 +850,12 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 				return nil, fmt.Errorf("key %x is not expected", key)
 			}
 		},
-		func(ctx context.Context, key []byte) error {
-			fnDeleteKeyCount.Add(1)
-			if !bytes.Equal(key, data5RowKey) && !bytes.Equal(key, data2RowKey) && !bytes.Equal(key, data4RowKey) && !bytes.Equal(key, data2IndexKey) && !bytes.Equal(key, data4NonclusteredKey) && !bytes.Equal(key, data5IndexKey) {
-				return fmt.Errorf("key %v is not expected", key)
+		func(ctx context.Context, keys [][]byte) error {
+			fnDeleteKeyCount.Add(int32(len(keys)))
+			for _, key := range keys {
+				if !bytes.Equal(key, data5RowKey) && !bytes.Equal(key, data2RowKey) && !bytes.Equal(key, data4RowKey) && !bytes.Equal(key, data2IndexKey) && !bytes.Equal(key, data4NonclusteredKey) && !bytes.Equal(key, data5IndexKey) {
+					return fmt.Errorf("key %v is not expected", key)
+				}
 			}
 			return nil
 		},
