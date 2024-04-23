@@ -1988,7 +1988,7 @@ func getMicroServiceServerInfo(ctx sessionctx.Context, serviceName string) ([]Se
 		resp, err := util.InternalHTTPClient().Do(req)
 		if resp == nil || resp.StatusCode != http.StatusOK {
 			terror.Log(resp.Body.Close())
-			return servers, nil
+			continue
 		}
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
