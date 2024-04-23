@@ -56,8 +56,8 @@ const (
 // CodecV1 represents api v1 codec.
 var CodecV1 = tikv.NewCodecV1(tikv.ModeTxn)
 
-//// globalKeyspaceMeta is the keyspace meta of the current TiDB, if keyspace-name is not set then globalKeyspaceMeta == nil.
-//var globalKeyspaceMeta *keyspacepb.KeyspaceMeta
+// globalKeyspaceMeta is the keyspace meta of the current TiDB, if TiDB without set "keyspace-name" then globalKeyspaceMeta.Load() == nil.
+var globalKeyspaceMeta atomic.Pointer[keyspacepb.KeyspaceMeta]
 
 // MakeKeyspaceEtcdNamespace return the keyspace prefix path for etcd namespace
 func MakeKeyspaceEtcdNamespace(c tikv.Codec) string {
@@ -225,8 +225,6 @@ func IsKeyspaceNotExistError(err error) bool {
 	}
 	return strings.Contains(err.Error(), pdpb.ErrorType_ENTRY_NOT_FOUND.String())
 }
-
-var globalKeyspaceMeta atomic.Pointer[keyspacepb.KeyspaceMeta]
 
 func GetGlobalKeyspaceMeta() *keyspacepb.KeyspaceMeta {
 	v := globalKeyspaceMeta.Load()
