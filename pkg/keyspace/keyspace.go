@@ -16,7 +16,6 @@ package keyspace
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -48,8 +47,10 @@ const (
 	// KeyspaceMetaConfigGCManagementTypeGlobalGC is a type of GC management in keyspace meta config, it means this keyspace will use GC safe point by global GC.
 	KeyspaceMetaConfigGCManagementTypeGlobalGC = "global_gc"
 
+	// maxKeyspaceID is the maximum keyspace id that can be created, no keyspace can be created greater than this value.
 	maxKeyspaceID = 0xffffff
 
+	// keyspaceTxnModePrefix is txn data prefix of keyspace.
 	keyspaceTxnModePrefix byte = 'x'
 )
 
@@ -97,18 +98,8 @@ func WrapZapcoreWithKeyspace() zap.Option {
 	})
 }
 
-// NewEtcdSafePointKV is used to add etcd namespace with keyspace prefix
-// if the current keyspace is configured with "gc_management_type" = "keyspace_level_gc".
-func NewEtcdSafePointKV(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
-	var etcdNameSpace string
-	if IsCurrentTiDBUseKeyspaceLevelGC() {
-		etcdNameSpace = MakeKeyspaceEtcdNamespace(codec)
-	}
-	return tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig, tikv.WithPrefix(etcdNameSpace))
-}
-
-// IsCurrentTiDBUseKeyspaceLevelGC return true if globalKeyspaceMeta not nil and globalKeyspaceMeta config has "gc_management_type" = "keyspace_level_gc".
-func IsCurrentTiDBUseKeyspaceLevelGC() bool {
+// IsGlobalKeyspaceUseKeyspaceLevelGC return true if globalKeyspaceMeta not nil and globalKeyspaceMeta config has "gc_management_type" = "keyspace_level_gc".
+func IsGlobalKeyspaceUseKeyspaceLevelGC() bool {
 	return IsKeyspaceUseKeyspaceLevelGC(GetGlobalKeyspaceMeta())
 }
 
@@ -162,8 +153,8 @@ func GetKeyspaceTxnRange(keyspaceID uint32) ([]byte, []byte) {
 	return txnLeftBound, txnRightBound
 }
 
-// InitCurrentKeyspaceMeta is used to get the keyspace meta from pd during TiDB startup.
-func InitCurrentKeyspaceMeta() error {
+// InitGlobalKeyspaceMeta is used to get the keyspace meta from PD during TiDB startup and set global keyspace meta.
+func InitGlobalKeyspaceMeta() error {
 	cfg := config.GetGlobalConfig()
 	if IsKeyspaceNameEmpty(GetKeyspaceNameBySettings()) {
 		return nil
@@ -226,6 +217,7 @@ func IsKeyspaceNotExistError(err error) bool {
 	return strings.Contains(err.Error(), pdpb.ErrorType_ENTRY_NOT_FOUND.String())
 }
 
+// GetGlobalKeyspaceMeta return global keyspace meta if TiDB set "keyspace-name"
 func GetGlobalKeyspaceMeta() *keyspacepb.KeyspaceMeta {
 	v := globalKeyspaceMeta.Load()
 	if v == nil {

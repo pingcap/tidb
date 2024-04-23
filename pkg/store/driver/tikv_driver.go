@@ -122,6 +122,16 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 	}
 }
 
+// NewEtcdSafePointKV is used to add etcd namespace with keyspace prefix
+// if the current keyspace is configured with "gc_management_type" = "keyspace_level_gc".
+func NewEtcdSafePointKV(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
+	var etcdNameSpace string
+	if keyspace.IsGlobalKeyspaceUseKeyspaceLevelGC() {
+		etcdNameSpace = keyspace.MakeKeyspaceEtcdNamespace(codec)
+	}
+	return tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig, tikv.WithPrefix(etcdNameSpace))
+}
+
 // OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig
 // unspecified options will be set to global config
 func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv.Storage, err error) {
@@ -207,7 +217,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		tikv.WithCodec(codec),
 	)
 
-	spkv, err = keyspace.NewEtcdSafePointKV(etcdAddrs, codec, tlsConfig)
+	spkv, err = NewEtcdSafePointKV(etcdAddrs, codec, tlsConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

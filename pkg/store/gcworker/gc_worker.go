@@ -77,7 +77,7 @@ type GCWorker struct {
 }
 
 func getTsFromPD(store kv.Storage, tikvStore tikv.Storage) (uint64, error) {
-	if keyspace.IsCurrentTiDBUseKeyspaceLevelGC() {
+	if keyspace.IsGlobalKeyspaceUseKeyspaceLevelGC() {
 		return tikvStore.CurrentTimestamp(kv.GlobalTxnScope)
 	}
 	// For global gc.
@@ -310,7 +310,7 @@ func (w *GCWorker) getGCSafePoint(ctx context.Context, pdClient pd.Client) (uint
 	var gcSafePoint uint64
 	var err error
 	keyspaceID := keyspace.GetGlobalKeyspaceMeta().Id
-	if keyspace.IsCurrentTiDBUseKeyspaceLevelGC() {
+	if keyspace.IsGlobalKeyspaceUseKeyspaceLevelGC() {
 		gcSafePoint, err = pdClient.UpdateGCSafePointV2(ctx, keyspaceID, 0)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -746,10 +746,10 @@ func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint ui
 	// Sets TTL to MAX to make it permanently valid.
 	ttl := int64(math.MaxInt64)
 
-	if keyspace.IsCurrentTiDBUseKeyspaceLevelGC() {
+	if keyspace.IsGlobalKeyspaceUseKeyspaceLevelGC() {
 		keyspaceID := keyspace.GetGlobalKeyspaceMeta().Id
 		minSafePoint, err = w.pdClient.UpdateServiceSafePointV2(ctx, keyspaceID, gcWorkerServiceSafePointID, ttl, safePoint)
-		logutil.Logger(ctx).Info("[gc worker] update the service safe point of keyspace level gc safe point",
+		logutil.Logger(ctx).Info("[gc worker] update keyspace gc worker service safe point ",
 			zap.String("uuid", w.uuid),
 			zap.Uint64("req-service-safe-point", safePoint),
 			zap.Uint64("resp-min-service-safe-point", minSafePoint),
@@ -757,7 +757,7 @@ func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint ui
 	} else {
 		// It is the situation when the keyspace is not set.
 		minSafePoint, err = w.pdClient.UpdateServiceGCSafePoint(ctx, gcWorkerServiceSafePointID, ttl, safePoint)
-		logutil.Logger(ctx).Info("[gc worker] update the service safe point of global gc safe point",
+		logutil.Logger(ctx).Info("[gc worker] update gc worker service safe point",
 			zap.String("uuid", w.uuid),
 			zap.Uint64("req-service-safe-point", safePoint),
 			zap.Uint64("resp-min-service-safe-point", minSafePoint))
@@ -1195,7 +1195,7 @@ func (w *GCWorker) resolveLocks(
 	var txnLeftBound []byte
 	var txnRightBound []byte
 
-	if keyspace.IsCurrentTiDBUseKeyspaceLevelGC() {
+	if keyspace.IsGlobalKeyspaceUseKeyspaceLevelGC() {
 		// When enable keyspace level gc, legacyResolveLocks only resolve specified keyspace locks.
 		keyspaceID := keyspace.GetGlobalKeyspaceMeta().Id
 		// resolve locks in `keyspaceID` range.
@@ -1336,7 +1336,7 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 
 	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 	for {
-		if keyspace.IsCurrentTiDBUseKeyspaceLevelGC() {
+		if keyspace.IsGlobalKeyspaceUseKeyspaceLevelGC() {
 			keyspaceID := keyspace.GetGlobalKeyspaceMeta().Id
 			newSafePoint, err = w.pdClient.UpdateGCSafePointV2(ctx, keyspaceID, safePoint)
 			logutil.Logger(ctx).Info("[gc worker] update keyspace gc safe point",
@@ -1345,6 +1345,10 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 				zap.Uint64("resp-gc-safe-point", newSafePoint))
 		} else {
 			newSafePoint, err = w.pdClient.UpdateGCSafePoint(ctx, safePoint)
+			logutil.Logger(ctx).Info("[gc worker] update gc safe point",
+				zap.String("uuid", w.uuid),
+				zap.Uint64("req-gc-safe-point", safePoint),
+				zap.Uint64("resp-gc-safe-point", newSafePoint))
 		}
 		if err != nil {
 			if errors.Cause(err) == context.Canceled {

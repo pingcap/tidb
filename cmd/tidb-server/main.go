@@ -279,7 +279,7 @@ func main() {
 		os.Exit(0)
 	}
 	registerStores()
-	err := keyspace.InitCurrentKeyspaceMeta()
+	err := keyspace.InitGlobalKeyspaceMeta()
 	terror.MustNil(err)
 	err = metricsutil.RegisterMetrics()
 	terror.MustNil(err)
