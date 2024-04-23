@@ -22,11 +22,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
+// BuilderV3 ...
 type BuilderV3 struct {
 	builderV1 *Builder
 	builderV2 *Builder
 }
 
+// NewBuilderV3 ...
 func NewBuilderV3(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) *BuilderV3 {
 	v3 := &BuilderV3{
 		builderV1: NewBuilder(r, factory, infoData),
@@ -37,9 +39,10 @@ func NewBuilderV3(r autoid.Requirement, factory func() (pools.Resource, error), 
 	return v3
 }
 
+// InitWithOldInfoSchema ...
 func (b *BuilderV3) InitWithOldInfoSchema(oldSchema InfoSchema) (*BuilderV3, error) {
-	oldSchemaV1 := oldSchema.(*InfoSchemaWithTS).InfoSchema.(*infoschemaV3).infoV1
-	oldSchemaV2 := oldSchema.(*InfoSchemaWithTS).InfoSchema.(*infoschemaV3).infoV2
+	oldSchemaV1 := oldSchema.(*WithTS).InfoSchema.(*infoschemaV3).infoV1
+	oldSchemaV2 := oldSchema.(*WithTS).InfoSchema.(*infoschemaV3).infoV2
 
 	_, err1 := b.builderV1.InitWithOldInfoSchema(oldSchemaV1)
 	_, err2 := b.builderV2.InitWithOldInfoSchema(oldSchemaV2)
@@ -52,6 +55,7 @@ func (b *BuilderV3) InitWithOldInfoSchema(oldSchema InfoSchema) (*BuilderV3, err
 	return b, nil
 }
 
+// InitWithDBInfos ...
 func (b *BuilderV3) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) (*BuilderV3, error) {
 	_, err1 := b.builderV1.InitWithDBInfos(dbInfos, policies, resourceGroups, schemaVersion)
 	_, err2 := b.builderV2.InitWithDBInfos(dbInfos, policies, resourceGroups, schemaVersion)
@@ -64,17 +68,20 @@ func (b *BuilderV3) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.P
 	return b, nil
 }
 
+// Build ...
 func (b *BuilderV3) Build(schemaTS uint64) InfoSchema {
 	v1 := b.builderV1.Build(schemaTS)
 	v2 := b.builderV2.Build(schemaTS)
 	return &infoschemaV3{infoV1: v1.(*infoSchema), infoV2: v2.(*infoschemaV2)}
 }
 
+// SetDeltaUpdateBundles ...
 func (b *BuilderV3) SetDeltaUpdateBundles() {
 	b.builderV1.SetDeltaUpdateBundles()
 	b.builderV2.SetDeltaUpdateBundles()
 }
 
+// ApplyDiff ...
 func (b *BuilderV3) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	rs1, err1 := b.builderV1.ApplyDiff(m, diff)
 	rs2, err2 := b.builderV2.ApplyDiff(m, diff)

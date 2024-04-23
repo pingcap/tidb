@@ -96,12 +96,12 @@ func (h *InfoCache) GetLatest() InfoSchema {
 		infoschema_metrics.HitLatestCounter.Inc()
 		if h.store != nil {
 			ver, _ := h.store.CurrentVersion(kv.GlobalTxnScope)
-			return &InfoSchemaWithTS{
+			return &WithTS{
 				InfoSchema: h.cache[0].infoschema,
 				Timestamp:  ver.Ver,
 			}
 		}
-		return &InfoSchemaWithTS{
+		return &WithTS{
 			InfoSchema: h.cache[0].infoschema,
 		}
 	}
@@ -154,12 +154,12 @@ func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 	}
 	if h.store != nil {
 		ver, _ := h.store.CurrentVersion(kv.GlobalTxnScope)
-		return &InfoSchemaWithTS{
+		return &WithTS{
 			InfoSchema: is,
 			Timestamp:  ver.Ver,
 		}
 	}
-	return &InfoSchemaWithTS{
+	return &WithTS{
 		InfoSchema: is,
 	}
 }
@@ -207,12 +207,12 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 		infoschema_metrics.HitTSCounter.Inc()
 		if h.store != nil {
 			ver, _ := h.store.CurrentVersion(kv.GlobalTxnScope)
-			return &InfoSchemaWithTS{
+			return &WithTS{
 				InfoSchema: schema,
 				Timestamp:  ver.Ver,
 			}
 		}
-		return &InfoSchemaWithTS{
+		return &WithTS{
 			InfoSchema: schema,
 		}
 	}
@@ -268,12 +268,14 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 	return true
 }
 
-type InfoSchemaWithTS struct {
+// WithTS ...
+type WithTS struct {
 	InfoSchema
 	Timestamp uint64
 }
 
-func (is *InfoSchemaWithTS) SchemaTables(schema model.CIStr) []table.Table {
+// SchemaTables ...
+func (is *WithTS) SchemaTables(schema model.CIStr) []table.Table {
 	if v3, ok := is.InfoSchema.(*infoschemaV3); ok {
 		return v3.SchemaTablesWithTs(schema, is.Timestamp)
 	}
