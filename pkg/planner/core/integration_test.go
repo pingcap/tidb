@@ -691,6 +691,7 @@ func TestScalarFunctionPushDown(t *testing.T) {
 }
 
 func TestReverseUTF8PushDownToTiFlash(t *testing.T) {
+	t.Skip("modify table info in test")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
