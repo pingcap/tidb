@@ -123,7 +123,7 @@ func init() {
 // NewMockDomain is only used for test
 func NewMockDomain() *Domain {
 	do := &Domain{}
-	do.infoCache = infoschema.NewCache(do, 1)
+	do.infoCache = infoschema.NewCache(do, 1, nil)
 	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 0)
 	return do
 }
@@ -1093,7 +1093,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		mdlCheckCh: make(chan struct{}),
 	}
 
-	do.infoCache = infoschema.NewCache(do, int(variable.SchemaVersionCacheLimit.Load()))
+	do.infoCache = infoschema.NewCache(do, int(variable.SchemaVersionCacheLimit.Load()), store)
 	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)

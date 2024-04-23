@@ -38,8 +38,8 @@ func NewBuilderV3(r autoid.Requirement, factory func() (pools.Resource, error), 
 }
 
 func (b *BuilderV3) InitWithOldInfoSchema(oldSchema InfoSchema) (*BuilderV3, error) {
-	oldSchemaV1 := oldSchema.(*infoschemaV3).infoV1
-	oldSchemaV2 := oldSchema.(*infoschemaV3).infoV2
+	oldSchemaV1 := oldSchema.(*InfoSchemaWithTS).InfoSchema.(*infoschemaV3).infoV1
+	oldSchemaV2 := oldSchema.(*InfoSchemaWithTS).InfoSchema.(*infoschemaV3).infoV2
 
 	_, err1 := b.builderV1.InitWithOldInfoSchema(oldSchemaV1)
 	_, err2 := b.builderV2.InitWithOldInfoSchema(oldSchemaV2)

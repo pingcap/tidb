@@ -65,7 +65,7 @@ func TestSyncerSimple(t *testing.T) {
 	cli := cluster.RandClient()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ic := infoschema.NewCache(nil, 2)
+	ic := infoschema.NewCache(nil, 2, nil)
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d := NewDDL(
 		ctx,
@@ -89,7 +89,7 @@ func TestSyncerSimple(t *testing.T) {
 	key := util2.DDLAllSchemaVersions + "/" + d.OwnerManager().ID()
 	checkRespKV(t, 1, key, syncer.InitialVersion, resp.Kvs...)
 
-	ic2 := infoschema.NewCache(nil, 2)
+	ic2 := infoschema.NewCache(nil, 2, nil)
 	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d1 := NewDDL(
 		ctx,

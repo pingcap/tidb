@@ -515,6 +515,45 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 	return dbInfo, ok
 }
 
+func (is *infoschemaV2) SchemaTablesWithTs(schema model.CIStr, ts uint64) (tables []table.Table) {
+	if isSpecialDB(schema.L) {
+		schTbls := is.Data.specials[schema.L]
+		tables := make([]table.Table, 0, len(schTbls.tables))
+		for _, tbl := range schTbls.tables {
+			tables = append(tables, tbl)
+		}
+		return tables
+	}
+
+	dbInfo, ok := is.SchemaByName(schema)
+	if !ok {
+		return
+	}
+	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(ts))
+	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+	// the meta region leader is slow.
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+	m := meta.NewSnapshotMeta(snapshot)
+	tblInfos, err := m.ListSimpleTables(dbInfo.ID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			return nil
+		}
+		// TODO: error could happen, so do not panic!
+		panic(err)
+	}
+	tables = make([]table.Table, 0, len(tblInfos))
+	for _, tblInfo := range tblInfos {
+		tbl, ok := is.TableByID(tblInfo.ID)
+		if !ok {
+			// what happen?
+			continue
+		}
+		tables = append(tables, tbl)
+	}
+	return
+}
+
 func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
 	if isSpecialDB(schema.L) {
 		schTbls := is.Data.specials[schema.L]
