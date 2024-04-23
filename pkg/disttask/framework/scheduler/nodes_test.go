@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -146,12 +147,6 @@ func TestFilterByScope(t *testing.T) {
 			expectedNodes: []string{"1", "2", "3"},
 		},
 		{
-			// this case is imposible for real cluster.
-			nodes:         []proto.ManagedNode{mockManagedNode("1", ""), mockManagedNode("2", ""), mockManagedNode("3", "")},
-			targetScope:   "background",
-			expectedNodes: []string{"1", "2", "3"},
-		},
-		{
 			nodes:         []proto.ManagedNode{mockManagedNode("1", "1"), mockManagedNode("2", ""), mockManagedNode("3", "")},
 			targetScope:   "",
 			expectedNodes: []string{"2", "3"},
@@ -179,11 +174,18 @@ func TestFilterByScope(t *testing.T) {
 		{
 			nodes:         []proto.ManagedNode{mockManagedNode("1", "1"), mockManagedNode("2", ""), mockManagedNode("3", "background")},
 			targetScope:   "",
-			expectedNodes: []string{"2"},
+			expectedNodes: []string{"3"},
+		},
+		{
+			nodes:         []proto.ManagedNode{mockManagedNode("1", ""), mockManagedNode("2", ""), mockManagedNode("3", "")},
+			targetScope:   "background",
+			expectedNodes: nil,
 		},
 	}
 
-	for _, cas := range cases {
-		require.Equal(t, cas.expectedNodes, filterByScope(cas.nodes, cas.targetScope))
+	for i, cas := range cases {
+		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
+			require.Equal(t, cas.expectedNodes, filterByScope(cas.nodes, cas.targetScope))
+		})
 	}
 }

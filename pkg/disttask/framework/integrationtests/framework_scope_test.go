@@ -158,7 +158,6 @@ func runTargetScopeCase(t *testing.T, c *testutil.TestDXFContext, tk *testkit.Te
 		}
 	}
 	checkSubtaskOnNodes(c.Ctx, t, taskID, expected)
-	t.Logf("test case %d passed", idx)
 }
 
 func TestTargetScope(t *testing.T) {
@@ -168,6 +167,8 @@ func TestTargetScope(t *testing.T) {
 	tk := testkit.NewTestKit(t, c.Store)
 	caseNum := 10
 	for i := 0; i < caseNum; i++ {
-		runTargetScopeCase(t, c, tk, generateScopeCase(nodeCnt, 5), i, nodeCnt)
+		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
+			runTargetScopeCase(t, c, tk, generateScopeCase(nodeCnt, 5), i, nodeCnt)
+		})
 	}
 }
