@@ -504,12 +504,20 @@ func TestPaginateScanRegion(t *testing.T) {
 			StartKey: []byte{1},
 			EndKey:   []byte{2},
 		},
+		Leader: &metapb.Peer{
+			Id:      1,
+			StoreId: 1,
+		},
 	})
 	mockPDClient.Regions.SetRegion(&pdtypes.Region{
 		Meta: &metapb.Region{
 			Id:       4,
 			StartKey: []byte{4},
 			EndKey:   []byte{5},
+		},
+		Leader: &metapb.Peer{
+			Id:      4,
+			StoreId: 1,
 		},
 	})
 
@@ -525,12 +533,20 @@ func TestPaginateScanRegion(t *testing.T) {
 				StartKey: []byte{2},
 				EndKey:   []byte{3},
 			},
+			Leader: &metapb.Peer{
+				Id:      2,
+				StoreId: 1,
+			},
 		},
 		{
 			Meta: &metapb.Region{
 				Id:       3,
 				StartKey: []byte{3},
 				EndKey:   []byte{4},
+			},
+			Leader: &metapb.Peer{
+				Id:      3,
+				StoreId: 1,
 			},
 		},
 	}
