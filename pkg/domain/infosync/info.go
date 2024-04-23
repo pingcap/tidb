@@ -726,7 +726,7 @@ func (is *InfoSyncer) GetMinStartTS() uint64 {
 }
 
 func (is *InfoSyncer) getMinStartTsEtcdCli() *clientv3.Client {
-	if keyspace.IsGlobalKeyspaceUseKeyspaceLevelGC() {
+	if keyspace.IsCurrentKeyspaceUseKeyspaceLevelGC() {
 		// If keyspace use keyspace leve gc, we should use etcd client with keyspace prefix to access min start timestamp of the current keyspace.
 		return is.etcdCli
 	}

@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"log"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -98,9 +97,9 @@ func WrapZapcoreWithKeyspace() zap.Option {
 	})
 }
 
-// IsGlobalKeyspaceUseKeyspaceLevelGC return true if globalKeyspaceMeta not nil and globalKeyspaceMeta config has "gc_management_type" = "keyspace_level_gc".
-func IsGlobalKeyspaceUseKeyspaceLevelGC() bool {
-	return IsKeyspaceUseKeyspaceLevelGC(GetGlobalKeyspaceMeta())
+// IsCurrentKeyspaceUseKeyspaceLevelGC return true if globalKeyspaceMeta not nil and globalKeyspaceMeta config has "gc_management_type" = "keyspace_level_gc".
+func IsCurrentKeyspaceUseKeyspaceLevelGC() bool {
+	return IsKeyspaceUseKeyspaceLevelGC(GetCurrentKeyspaceMeta())
 }
 
 // IsKeyspaceUseKeyspaceLevelGC return true if keyspace meta config has "gc_management_type" = "keyspace_level_gc".
@@ -116,10 +115,10 @@ func IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 
 // IsCurrentKeyspaceUseGlobalGC return true if TiDB set 'keyspace-name' and use global gc.
 func IsCurrentKeyspaceUseGlobalGC() bool {
-	if GetGlobalKeyspaceMeta() == nil {
+	if GetCurrentKeyspaceMeta() == nil {
 		return true
 	}
-	if val, ok := GetGlobalKeyspaceMeta().Config[KeyspaceMetaConfigGCManagementType]; ok {
+	if val, ok := GetCurrentKeyspaceMeta().Config[KeyspaceMetaConfigGCManagementType]; ok {
 		return val == KeyspaceMetaConfigGCManagementTypeGlobalGC
 	}
 	return true
@@ -176,7 +175,7 @@ func InitGlobalKeyspaceMeta() error {
 
 	keyspaceMeta, err := GetKeyspaceMeta(pdCli, cfg.KeyspaceName)
 
-	setGlobalKeyspaceMeta(keyspaceMeta)
+	setCurrentKeyspaceMeta(keyspaceMeta)
 	return err
 }
 
@@ -217,16 +216,15 @@ func IsKeyspaceNotExistError(err error) bool {
 	return strings.Contains(err.Error(), pdpb.ErrorType_ENTRY_NOT_FOUND.String())
 }
 
-// GetGlobalKeyspaceMeta return global keyspace meta if TiDB set "keyspace-name"
-func GetGlobalKeyspaceMeta() *keyspacepb.KeyspaceMeta {
+// GetCurrentKeyspaceMeta return global keyspace meta if TiDB set "keyspace-name"
+func GetCurrentKeyspaceMeta() *keyspacepb.KeyspaceMeta {
 	v := globalKeyspaceMeta.Load()
 	if v == nil {
-		log.Fatal("globalKeyspaceMeta is not initialized")
 		return nil
 	}
 	return v
 }
 
-func setGlobalKeyspaceMeta(ks *keyspacepb.KeyspaceMeta) {
+func setCurrentKeyspaceMeta(ks *keyspacepb.KeyspaceMeta) {
 	globalKeyspaceMeta.Store(ks)
 }

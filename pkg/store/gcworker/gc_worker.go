@@ -77,7 +77,7 @@ type GCWorker struct {
 }
 
 func getTsFromPD(store kv.Storage, tikvStore tikv.Storage) (uint64, error) {
-	if keyspace.IsGlobalKeyspaceUseKeyspaceLevelGC() {
+	if keyspace.IsCurrentKeyspaceUseKeyspaceLevelGC() {
 		return tikvStore.CurrentTimestamp(kv.GlobalTxnScope)
 	}
 	// For global gc.
@@ -309,8 +309,8 @@ func (w *GCWorker) getGCSafePoint(ctx context.Context, pdClient pd.Client) (uint
 	// UpdateGCSafePoint returns the current GC safepoint without updating anything if 0 is passed.
 	var gcSafePoint uint64
 	var err error
-	keyspaceID := keyspace.GetGlobalKeyspaceMeta().Id
-	if keyspace.IsGlobalKeyspaceUseKeyspaceLevelGC() {
+	if keyspace.IsCurrentKeyspaceUseKeyspaceLevelGC() {
+		keyspaceID := keyspace.GetCurrentKeyspaceMeta().Id
 		gcSafePoint, err = pdClient.UpdateGCSafePointV2(ctx, keyspaceID, 0)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -342,6 +342,9 @@ func (w *GCWorker) logIsGCSafePointTooEarly(ctx context.Context, safePoint uint6
 }
 
 func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) error {
+	if keyspace.GetCurrentKeyspaceMeta() == nil {
+		return errors.New("run keyspace delete range, but without keyspace meta")
+	}
 	// Get safe point from PD.
 	// The GC safe point is updated only after the global GC have done resolveLocks phase globally.
 	// So, in the following code, resolveLocks must have been done by the global GC on the ranges to be deleted,
@@ -363,12 +366,12 @@ func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) 
 		return nil
 	}
 
-	keyspaceID := keyspace.GetGlobalKeyspaceMeta().Id
+	keyspaceID := keyspace.GetCurrentKeyspaceMeta().Id
 	logutil.Logger(ctx).Info("start keyspace delete range", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
 		zap.Int("concurrency", concurrency),
-		zap.Uint32("keyspaceID", keyspaceID),
-		zap.Uint64("GCSafepoint", safePoint))
+		zap.Uint32("keyspace-id", keyspaceID),
+		zap.Uint64("gc-safe-point", safePoint))
 
 	// Do deleteRanges.
 	err = w.deleteRanges(ctx, safePoint, concurrency)
@@ -416,7 +419,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	 	3. At least one TiDB without `keyspace-name` is required in the whole cluster
 			which will to calculate and update global gc safe point in the whole cluster.
 	*/
-	if keyspace.GetGlobalKeyspaceMeta() != nil && keyspace.IsCurrentKeyspaceUseGlobalGC() {
+	if keyspace.GetCurrentKeyspaceMeta() != nil && keyspace.IsCurrentKeyspaceUseGlobalGC() {
 		// If we use global gc safe point, a tidb which has keyspace-name should only do delete range logic.
 		err = w.runKeyspaceGCJobInGlobalGC(ctx, concurrency)
 		if err != nil {
@@ -746,8 +749,8 @@ func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint ui
 	// Sets TTL to MAX to make it permanently valid.
 	ttl := int64(math.MaxInt64)
 
-	if keyspace.IsGlobalKeyspaceUseKeyspaceLevelGC() {
-		keyspaceID := keyspace.GetGlobalKeyspaceMeta().Id
+	if keyspace.IsCurrentKeyspaceUseKeyspaceLevelGC() {
+		keyspaceID := keyspace.GetCurrentKeyspaceMeta().Id
 		minSafePoint, err = w.pdClient.UpdateServiceSafePointV2(ctx, keyspaceID, gcWorkerServiceSafePointID, ttl, safePoint)
 		logutil.Logger(ctx).Info("[gc worker] update keyspace gc worker service safe point ",
 			zap.String("uuid", w.uuid),
@@ -1195,9 +1198,9 @@ func (w *GCWorker) resolveLocks(
 	var txnLeftBound []byte
 	var txnRightBound []byte
 
-	if keyspace.IsGlobalKeyspaceUseKeyspaceLevelGC() {
+	if keyspace.IsCurrentKeyspaceUseKeyspaceLevelGC() {
 		// When enable keyspace level gc, legacyResolveLocks only resolve specified keyspace locks.
-		keyspaceID := keyspace.GetGlobalKeyspaceMeta().Id
+		keyspaceID := keyspace.GetCurrentKeyspaceMeta().Id
 		// resolve locks in `keyspaceID` range.
 		txnLeftBound, txnRightBound = keyspace.GetKeyspaceTxnRange(keyspaceID)
 		err = w.resolveLocksByKeyspaceRange(ctx, txnLeftBound, txnRightBound, runner, safePoint)
@@ -1336,8 +1339,8 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 
 	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 	for {
-		if keyspace.IsGlobalKeyspaceUseKeyspaceLevelGC() {
-			keyspaceID := keyspace.GetGlobalKeyspaceMeta().Id
+		if keyspace.IsCurrentKeyspaceUseKeyspaceLevelGC() {
+			keyspaceID := keyspace.GetCurrentKeyspaceMeta().Id
 			newSafePoint, err = w.pdClient.UpdateGCSafePointV2(ctx, keyspaceID, safePoint)
 			logutil.Logger(ctx).Info("[gc worker] update keyspace gc safe point",
 				zap.String("uuid", w.uuid),
