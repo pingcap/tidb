@@ -170,7 +170,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			j.nullKeyVector = make([]bool, physicalRows)
 		}
 		for i := 0; i < physicalRows; i++ {
-			j.nullKeyVector = append(j.nullKeyVector, false)
+			j.nullKeyVector[i] = false
 		}
 	}
 	if cap(j.serializedKeys) >= logicalRows {

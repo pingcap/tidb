@@ -637,13 +637,16 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*
 			for colIndexInRowTable, colIndexInRow := range rowTableMeta.rowColumnsOrder {
 				colIndexInBitMap := colIndexInRowTable + rowTableMeta.colOffsetInNullMap
 				if row.IsNull(colIndexInRow) {
-					bitmap[colIndexInBitMap/8] |= 1 << (7 - colIndexInRowTable%8)
+					bitmap[colIndexInBitMap/8] |= 1 << (7 - colIndexInBitMap%8)
 				}
 			}
 			seg.rawData = append(seg.rawData, bitmap...)
 		}
 		length := uint64(0)
 		// if join_key is not fixed length: `key_length` need to be written in rawData
+		// even the join keys is inlined, for example if join key is 2 binary string
+		// then the inlined join key should be: col1_size + col1_data + col2_size + col2_data
+		// and len(col1_size + col1_data + col2_size + col2_data) need to be written before the inlined join key
 		if !rowTableMeta.isJoinKeysFixedLength {
 			if hasValidKey {
 				length = uint64(len(builder.serializedKeyVectorBuffer[logicalRowIndex]))
