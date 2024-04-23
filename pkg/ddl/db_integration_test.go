@@ -1658,6 +1658,12 @@ func TestDefaultValueAsExpressions(t *testing.T) {
 	tk.MustExec("create table t2(c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', '')), index idx(c1));")
 	tk.MustExec("insert into t2(c) values (1),(2),(3);")
 	tk.MustGetErrCode("alter table t2 modify column c1 varchar(30) default 'xx';", errno.WarnDataTruncated)
+	// test add column for enum
+	nowStr := time.Now().Format("2006-01")
+	sql := fmt.Sprintf("alter table t2 add column c3 enum('%v','n')", nowStr) + " default (date_format(now(),'%Y-%m'))"
+	tk.MustExec(sql)
+	tk.MustExec("insert into t2(c) values (4);")
+	tk.MustQuery("select c3 from t2").Check(testkit.Rows(nowStr, nowStr, nowStr, nowStr))
 }
 
 func TestChangingDBCharset(t *testing.T) {
