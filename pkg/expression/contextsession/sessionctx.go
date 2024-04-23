@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package contextimpl
+package contextsession
 
 import (
 	"context"
@@ -29,10 +29,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -236,8 +236,13 @@ func (ctx *SessionEvalContext) WarningCount() int {
 }
 
 // TruncateWarnings truncates warnings begin from start and returns the truncated warnings.
-func (ctx *SessionEvalContext) TruncateWarnings(start int) []stmtctx.SQLWarn {
+func (ctx *SessionEvalContext) TruncateWarnings(start int) []contextutil.SQLWarn {
 	return ctx.sctx.GetSessionVars().StmtCtx.TruncateWarnings(start)
+}
+
+// CopyWarnings copies the warnings to dst
+func (ctx *SessionEvalContext) CopyWarnings(dst []contextutil.SQLWarn) []contextutil.SQLWarn {
+	return ctx.sctx.GetSessionVars().StmtCtx.CopyWarnings(dst)
 }
 
 // CurrentDB returns the current database name
