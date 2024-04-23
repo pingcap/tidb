@@ -20,6 +20,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/core",
+        "//pkg/planner/core/base",
         "//pkg/session",
         "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",

@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/property"
 )
@@ -181,7 +182,7 @@ func (g *Group) InsertImpl(prop *property.PhysicalProperty, impl Implementation)
 }
 
 // Convert2GroupExpr converts a logical plan to a GroupExpr.
-func Convert2GroupExpr(node plannercore.LogicalPlan) *GroupExpr {
+func Convert2GroupExpr(node base.LogicalPlan) *GroupExpr {
 	e := NewGroupExpr(node)
 	e.Children = make([]*Group, 0, len(node.Children()))
 	for _, child := range node.Children() {
@@ -192,7 +193,7 @@ func Convert2GroupExpr(node plannercore.LogicalPlan) *GroupExpr {
 }
 
 // Convert2Group converts a logical plan to a Group.
-func Convert2Group(node plannercore.LogicalPlan) *Group {
+func Convert2Group(node base.LogicalPlan) *Group {
 	e := Convert2GroupExpr(node)
 	g := NewGroupWithSchema(e, node.Schema())
 	// Stats property for `Group` would be computed after exploration phase.

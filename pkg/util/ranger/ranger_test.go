@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -270,7 +271,7 @@ func TestTableRange(t *testing.T) {
 			require.NoError(t, err)
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
-			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
 				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
@@ -468,7 +469,7 @@ create table t(
 			require.NoError(t, err)
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
-			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
@@ -830,7 +831,7 @@ func TestColumnRange(t *testing.T) {
 			require.NoError(t, err)
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
-			sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			sel := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 			ds, ok := sel.Children()[0].(*plannercore.DataSource)
 			require.True(t, ok)
 			conds := make([]expression.Expression, len(sel.Conditions))
@@ -988,7 +989,7 @@ func TestIndexRangeForYear(t *testing.T) {
 			require.NoError(t, err)
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
-			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
@@ -1057,7 +1058,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 			require.NoError(t, err)
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
-			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
@@ -1404,7 +1405,7 @@ create table t(
 			require.NoError(t, err)
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
-			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
 			require.NotNil(t, selection)
 			conds := make([]expression.Expression, len(selection.Conditions))
@@ -1645,7 +1646,7 @@ func TestTableShardIndex(t *testing.T) {
 			require.NoError(t, err)
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 			require.NoError(t, err)
-			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 			conds := make([]expression.Expression, len(selection.Conditions))
 			for i, cond := range selection.Conditions {
 				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
@@ -1836,7 +1837,7 @@ func getSelectionFromQuery(t *testing.T, sctx sessionctx.Context, sql string) *p
 	require.NoError(t, err)
 	p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 	require.NoError(t, err)
-	selection, isSelection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+	selection, isSelection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 	require.True(t, isSelection)
 	return selection
 }
@@ -2282,7 +2283,7 @@ create table t(
 		require.NoError(t, err, fmt.Sprintf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		require.NoError(t, err, fmt.Sprintf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
 		require.NotNil(t, selection, fmt.Sprintf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, len(selection.Conditions))

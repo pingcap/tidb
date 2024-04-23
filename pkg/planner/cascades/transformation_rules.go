@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -858,7 +859,7 @@ func (*pushDownJoin) predicatePushDown(
 	leftCond []expression.Expression,
 	rightCond []expression.Expression,
 	remainCond []expression.Expression,
-	dual plannercore.LogicalPlan,
+	dual base.LogicalPlan,
 ) {
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond []expression.Expression
