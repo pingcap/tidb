@@ -491,10 +491,10 @@ type Job struct {
 	ID   int64      `json:"id"`
 	Type ActionType `json:"type"`
 	// SchemaID means different for different job types:
-	// - ExchangeTablePartition: nt db id
+	// - ExchangeTablePartition: db id of non-partitioned table
 	SchemaID int64 `json:"schema_id"`
 	// TableID means different for different job types:
-	// - ExchangeTablePartition: nt id
+	// - ExchangeTablePartition: non-partitioned table id
 	TableID    int64         `json:"table_id"`
 	SchemaName string        `json:"schema_name"`
 	TableName  string        `json:"table_name"`
