@@ -41,24 +41,26 @@ func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression)
 type convertOuterToInnerJoin struct {
 }
 
-func (*convertOuterToInnerJoin) optimize(_ context.Context, p LogicalPlan, _ *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
+func (*convertOuterToInnerJoin) optimize(_ context.Context, p base.LogicalPlan, _ *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	return p.convertOuterToInnerJoin(nil), planChanged, nil
+	return p.ConvertOuterToInnerJoin(nil), planChanged, nil
 }
 
-func (s *baseLogicalPlan) convertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan {
+// ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
+func (s *baseLogicalPlan) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
 	p := s.self
 	for i, child := range p.Children() {
-		newChild := child.convertOuterToInnerJoin(predicates)
+		newChild := child.ConvertOuterToInnerJoin(predicates)
 		p.SetChild(i, newChild)
 	}
 	return p
 }
 
-func (p *LogicalJoin) convertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan {
+// ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
+func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
 	innerTable := p.Children()[0]
 	outerTable := p.Children()[1]
-	var switchChild bool = false
+	switchChild := false
 
 	if p.JoinType == LeftOuterJoin {
 		innerTable, outerTable = outerTable, innerTable
@@ -66,11 +68,11 @@ func (p *LogicalJoin) convertOuterToInnerJoin(predicates []expression.Expression
 	}
 
 	combinedCond := mergeOnClausePredicates(p, predicates)
-	innerTable = innerTable.convertOuterToInnerJoin(combinedCond)
+	innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
 	if p.JoinType == InnerJoin {
-		outerTable = outerTable.convertOuterToInnerJoin(combinedCond)
+		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
 	} else {
-		outerTable = outerTable.convertOuterToInnerJoin(predicates)
+		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
 	}
 
 	if switchChild {
@@ -100,11 +102,12 @@ func (*convertOuterToInnerJoin) name() string {
 	return "convert_outer_to_inner_joins"
 }
 
-func (s *LogicalSelection) convertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan {
+// ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
+func (s *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
 	p := s.self.(*LogicalSelection)
 	combinedCond := append(predicates, p.Conditions...)
 	child := p.Children()[0]
-	child = child.convertOuterToInnerJoin(combinedCond)
+	child = child.ConvertOuterToInnerJoin(combinedCond)
 	p.SetChildren(child)
 	return p
 }

@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"errors"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -66,15 +65,16 @@ func findPredicateType(expr expression.Expression) (*expression.Column, predicat
 	return nil, otherPredicate
 }
 
-func (*predicateSimplification) optimize(_ context.Context, p LogicalPlan, opt *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error) {
+func (*predicateSimplification) optimize(_ context.Context, p base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	return p.predicateSimplification(opt), planChanged, nil
+	return p.PredicateSimplification(opt), planChanged, nil
 }
 
-func (s *baseLogicalPlan) predicateSimplification(opt *coreusage.LogicalOptimizeOp) LogicalPlan {
+// PredicateSimplification implements the LogicalPlan interface.
+func (s *baseLogicalPlan) PredicateSimplification(opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	p := s.self
 	for i, child := range p.Children() {
-		newChild := child.predicateSimplification(opt)
+		newChild := child.PredicateSimplification(opt)
 		p.SetChild(i, newChild)
 	}
 	return p
@@ -133,13 +133,13 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 			if iCol == jCol {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("NE/INList simplification is triggered"))
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
 					if !specialCase {
 						removeValues = append(removeValues, i)
 					}
 				} else if iType == inListPredicate && jType == notEqualPredicate {
 					predicates[i], specialCase = updateInPredicate(sctx, ithPredicate, jthPredicate)
-					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("NE/INList simplification is triggered"))
+					sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("NE/INList simplification is triggered")
 					if !specialCase {
 						removeValues = append(removeValues, j)
 					}
@@ -156,7 +156,8 @@ func applyPredicateSimplification(sctx base.PlanContext, predicates []expression
 	return newValues
 }
 
-func (ds *DataSource) predicateSimplification(*coreusage.LogicalOptimizeOp) LogicalPlan {
+// PredicateSimplification implements the LogicalPlan interface.
+func (ds *DataSource) PredicateSimplification(*coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	p := ds.self.(*DataSource)
 	p.pushedDownConds = applyPredicateSimplification(p.SCtx(), p.pushedDownConds)
 	p.allConds = applyPredicateSimplification(p.SCtx(), p.allConds)

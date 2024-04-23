@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -220,7 +221,7 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 	}
 }
 
-func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
+func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 	for _, child := range lp.Children() {
 		c.collectFromPlan(child)
 	}
@@ -344,7 +345,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 // First return value: predicate columns (nil if predicate is false)
 // Second return value: histogram-needed columns (nil if histNeeded is false)
 // Third return value: ds.physicalTableID from all DataSource (always collected)
-func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) (
+func CollectColumnStatsUsage(lp base.LogicalPlan, predicate, histNeeded bool) (
 	[]model.TableItemID,
 	[]model.StatsLoadItem,
 	*intset.FastIntSet,

@@ -29,8 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	fifo "github.com/scalalang2/golang-fifo"
-	"github.com/scalalang2/golang-fifo/sieve"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/tidwall/btree"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -87,7 +86,7 @@ type Data struct {
 	// Stores the full data in memory.
 	schemaMap *btree.BTreeG[schemaItem]
 
-	tableCache fifo.Cache[tableCacheKey, table.Table]
+	tableCache *Sieve[tableCacheKey, table.Table]
 
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	mu struct {
@@ -97,6 +96,17 @@ type Data struct {
 
 	// For information_schema/metrics_schema/performance_schema etc
 	specials map[string]*schemaTables
+
+	// pid2tid is used by FindTableInfoByPartitionID, it stores {partitionID, schemaVersion} => table ID
+	// Need full data in memory!
+	pid2tid *btree.BTreeG[partitionItem]
+}
+
+type partitionItem struct {
+	partitionID   int64
+	schemaVersion int64
+	tableID       int64
+	tomb          bool
 }
 
 func (isd *Data) getVersionByTS(ts uint64) (int64, bool) {
@@ -142,12 +152,12 @@ type tableCacheKey struct {
 // NewData creates an infoschema V2 data struct.
 func NewData() *Data {
 	ret := &Data{
-		byID:      btree.NewBTreeG[tableItem](compareByID),
-		byName:    btree.NewBTreeG[tableItem](compareByName),
-		schemaMap: btree.NewBTreeG[schemaItem](compareSchemaItem),
-		// TODO: limit by size instead of by table count.
-		tableCache: sieve.New[tableCacheKey, table.Table](1000),
+		byID:       btree.NewBTreeG[tableItem](compareByID),
+		byName:     btree.NewBTreeG[tableItem](compareByName),
+		schemaMap:  btree.NewBTreeG[schemaItem](compareSchemaItem),
+		tableCache: newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
 		specials:   make(map[string]*schemaTables),
+		pid2tid:    btree.NewBTreeG[partitionItem](comparePartitionItem),
 	}
 	return ret
 }
@@ -156,6 +166,11 @@ func (isd *Data) add(item tableItem, tbl table.Table) {
 	isd.byID.Set(item)
 	isd.byName.Set(item)
 	isd.tableCache.Set(tableCacheKey{item.tableID, item.schemaVersion}, tbl)
+	if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+		for _, def := range pi.Definitions {
+			isd.pid2tid.Set(partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
+		}
+	}
 }
 
 func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
@@ -204,6 +219,16 @@ func compareByName(a, b tableItem) bool {
 		return false
 	}
 
+	return a.schemaVersion < b.schemaVersion
+}
+
+func comparePartitionItem(a, b partitionItem) bool {
+	if a.partitionID < b.partitionID {
+		return true
+	}
+	if a.partitionID > b.partitionID {
+		return false
+	}
 	return a.schemaVersion < b.schemaVersion
 }
 
@@ -464,23 +489,52 @@ func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
 }
 
 func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	// TODO: This is quite inefficient! we need some better way or avoid this API.
-	dbInfos := is.AllSchemas()
-	for _, dbInfo := range dbInfos {
-		tbls := is.SchemaTables(dbInfo.Name)
-		for _, tbl := range tbls {
-			pi := tbl.Meta().GetPartitionInfo()
-			if pi == nil {
-				continue
+	var ok bool
+	var pi partitionItem
+	is.pid2tid.Descend(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
+		func(item partitionItem) bool {
+			if item.partitionID != partitionID {
+				return false
 			}
-			for _, p := range pi.Definitions {
-				if p.ID == partitionID {
-					return tbl, dbInfo, &p
-				}
+			if item.schemaVersion > is.infoSchema.schemaMetaVersion {
+				// Skip the record.
+				return true
 			}
+			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
+				ok = !item.tomb
+				pi = item
+				return false
+			}
+			return true
+		})
+	if !ok {
+		return nil, nil, nil
+	}
+
+	tbl, ok := is.TableByID(pi.tableID)
+	if !ok {
+		// something wrong?
+		return nil, nil, nil
+	}
+
+	dbID := tbl.Meta().DBID
+	dbInfo, ok := is.SchemaByID(dbID)
+	if !ok {
+		// something wrong?
+		return nil, nil, nil
+	}
+
+	partInfo := tbl.Meta().GetPartitionInfo()
+	var def *model.PartitionDefinition
+	for i := 0; i < len(partInfo.Definitions); i++ {
+		pdef := &partInfo.Definitions[i]
+		if pdef.ID == partitionID {
+			def = pdef
+			break
 		}
 	}
-	return nil, nil, nil
+
+	return tbl, dbInfo, def
 }
 
 func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
@@ -776,6 +830,12 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, table.Meta())
+
+	if pi := table.Meta().GetPartitionInfo(); pi != nil {
+		for _, def := range pi.Definitions {
+			b.infoData.pid2tid.Set(partitionItem{def.ID, diff.Version, table.Meta().ID, true})
+		}
+	}
 
 	b.infoData.remove(tableItem{
 		dbName:        dbInfo.Name.L,

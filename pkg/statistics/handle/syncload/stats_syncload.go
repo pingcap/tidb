@@ -36,6 +36,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// RetryCount is the max retry count for a sync load task.
+const RetryCount = 3
+
 type statsSyncLoad struct {
 	statsHandle statstypes.StatsHandle
 	StatsLoad   statstypes.StatsLoad
@@ -204,6 +207,9 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 }
 
 // HandleOneTask handles last task if not nil, else handle a new task from chan, and return current task if fail somewhere.
+//   - If the task is handled successfully, return nil, nil.
+//   - If the task is timeout, return the task and nil. The caller should retry the timeout task without sleep.
+//   - If the task is failed, return the task, error. The caller should retry the timeout task with sleep.
 func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statstypes.NeededItemTask, exit chan struct{}) (task *statstypes.NeededItemTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
@@ -223,46 +229,69 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 	} else {
 		task = lastTask
 	}
+	result := stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
 	resultChan := s.StatsLoad.Singleflight.DoChan(task.Item.Key(), func() (any, error) {
-		return s.handleOneItemTask(sctx, task)
+		err := s.handleOneItemTask(task)
+		return nil, err
 	})
 	timeout := time.Until(task.ToTimeout)
 	select {
-	case result := <-resultChan:
-		if result.Err == nil {
-			slr := result.Val.(*stmtctx.StatsLoadResult)
-			if slr.Error != nil {
-				return task, slr.Error
-			}
-			task.ResultCh <- *slr
+	case sr := <-resultChan:
+		// sr.Val is always nil.
+		if sr.Err == nil {
+			task.ResultCh <- result
 			return nil, nil
 		}
-		return task, result.Err
+		if !isVaildForRetry(task) {
+			result.Error = sr.Err
+			task.ResultCh <- result
+			return nil, nil
+		}
+		return task, sr.Err
 	case <-time.After(timeout):
+		if !isVaildForRetry(task) {
+			result.Error = errors.New("stats loading timeout")
+			task.ResultCh <- result
+			return nil, nil
+		}
 		task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 		return task, nil
 	}
 }
 
-func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statstypes.NeededItemTask) (result *stmtctx.StatsLoadResult, err error) {
+func isVaildForRetry(task *statstypes.NeededItemTask) bool {
+	task.Retry++
+	return task.Retry <= RetryCount
+}
+
+func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err error) {
+	se, err := s.statsHandle.SPool().Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	sctx.GetSessionVars().StmtCtx.Priority = mysql.HighPriority
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err = errors.Errorf("stats loading panicked: %v", r)
 		}
+		if err == nil { // only recycle when no error
+			sctx.GetSessionVars().StmtCtx.Priority = mysql.NoPriority
+			s.statsHandle.SPool().Put(se)
+		}
 	}()
-	result = &stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
-	item := result.Item
+	item := task.Item.TableItemID
 	tbl, ok := s.statsHandle.Get(item.TableID)
 	if !ok {
-		return result, nil
+		return nil
 	}
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, loadNeeded := tbl.IndexIsLoadNeeded(item.ID)
 		if !loadNeeded {
-			return result, nil
+			return nil
 		}
 		if index != nil {
 			wrapper.idxInfo = index.Info
@@ -272,7 +301,7 @@ func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statsty
 	} else {
 		col, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
 		if !loadNeeded {
-			return result, nil
+			return nil
 		}
 		if col != nil {
 			wrapper.colInfo = col.Info
@@ -288,18 +317,15 @@ func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statsty
 				Histogram:  *statistics.NewHistogram(item.ID, 0, 0, 0, &wrapper.colInfo.FieldType, 0, 0),
 				IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
 			}
-			if s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad) {
-				return result, nil
-			}
-			return nil, nil
+			s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+			return nil
 		}
 	}
 	t := time.Now()
 	needUpdate := false
 	wrapper, err = s.readStatsForOneItem(sctx, item, wrapper, tbl.IsPkIsHandle, task.Item.FullLoad)
 	if err != nil {
-		result.Error = err
-		return result, err
+		return err
 	}
 	if item.IsIndex {
 		if wrapper.idxInfo != nil {
@@ -311,10 +337,10 @@ func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statsty
 		}
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
-	if needUpdate && s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad) {
-		return result, nil
+	if needUpdate {
+		s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 	}
-	return nil, nil
+	return nil
 }
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
@@ -492,14 +518,14 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	tbl, ok := s.statsHandle.Get(item.TableID)
 	if !ok {
-		return true
+		return false
 	}
 	if !item.IsIndex && colHist != nil {
 		c, ok := tbl.Columns[item.ID]
 		// - If the stats is fully loaded,
 		// - If the stats is meta-loaded and we also just need the meta.
 		if ok && (c.IsFullLoad() || !fullLoaded) {
-			return true
+			return false
 		}
 		tbl = tbl.Copy()
 		tbl.Columns[item.ID] = colHist
