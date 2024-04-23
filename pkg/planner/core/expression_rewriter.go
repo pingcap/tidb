@@ -176,7 +176,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	return expr, err
 }
 
-func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
+func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -202,7 +202,7 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 // aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
-func (b *PlanBuilder) rewrite(ctx context.Context, exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
+func (b *PlanBuilder) rewrite(ctx context.Context, exprNode ast.ExprNode, p base.LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, base.LogicalPlan, error) {
 	expr, resultPlan, err := b.rewriteWithPreprocess(ctx, exprNode, p, aggMapper, nil, asScalar, nil)
 	return expr, resultPlan, err
 }
@@ -213,11 +213,11 @@ func (b *PlanBuilder) rewrite(ctx context.Context, exprNode ast.ExprNode, p Logi
 func (b *PlanBuilder) rewriteWithPreprocess(
 	ctx context.Context,
 	exprNode ast.ExprNode,
-	p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int,
+	p base.LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int,
 	windowMapper map[*ast.WindowFuncExpr]int,
 	asScalar bool,
 	preprocess func(ast.Node) ast.Node,
-) (expression.Expression, LogicalPlan, error) {
+) (expression.Expression, base.LogicalPlan, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -240,7 +240,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	return expr, resultPlan, err
 }
 
-func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) (rewriter *expressionRewriter) {
+func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalPlan) (rewriter *expressionRewriter) {
 	defer func() {
 		if p != nil {
 			rewriter.schema = p.Schema()
@@ -273,7 +273,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	return
 }
 
-func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, LogicalPlan, error) {
+func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, base.LogicalPlan, error) {
 	planCtx := rewriter.planCtx
 	// sourceTable is only used to build simple expression with one table
 	// when planCtx is present, sourceTable should be nil.
@@ -302,7 +302,7 @@ func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScal
 		return nil, nil, errors.Trace(rewriter.err)
 	}
 
-	var plan LogicalPlan
+	var plan base.LogicalPlan
 	if planCtx != nil {
 		plan = planCtx.plan
 	}
@@ -321,7 +321,7 @@ func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScal
 }
 
 type exprRewriterPlanCtx struct {
-	plan    LogicalPlan
+	plan    base.LogicalPlan
 	builder *PlanBuilder
 
 	aggrMap   map[*ast.AggregateFuncExpr]int
@@ -438,7 +438,7 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 
 // buildSubquery translates the subquery ast to plan.
 // Subquery related hints are returned through hintFlags. Please see comments around HintFlagSemiJoinRewrite and PlanBuilder.subQueryHintFlags for details.
-func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, subq *ast.SubqueryExpr, subqueryCtx subQueryCtx) (np LogicalPlan, hintFlags uint64, err error) {
+func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, subq *ast.SubqueryExpr, subqueryCtx subQueryCtx) (np base.LogicalPlan, hintFlags uint64, err error) {
 	intest.AssertNotNil(planCtx)
 	b := planCtx.builder
 	if er.schema != nil {
@@ -631,7 +631,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
-func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, planCtx *exprRewriterPlanCtx, l, r expression.Expression, not, markNoDecorrelate bool) {
+func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np base.LogicalPlan, planCtx *exprRewriterPlanCtx, l, r expression.Expression, not, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
 	if er.asScalar || not {
 		if expression.GetRowLen(r) == 1 {
@@ -783,7 +783,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 
 // handleOtherComparableSubq handles the queries like < any, < max, etc. For example, if the query is t.id < any (select s.id from s),
 // it will be rewrote to t.id < (select max(s.id) from s).
-func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all, markNoDecorrelate bool) {
+func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np base.LogicalPlan, useMin bool, cmpFunc string, all, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
 	plan4Agg := LogicalAggregation{}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 	if hintinfo := planCtx.builder.TableHints(); hintinfo != nil {
@@ -904,7 +904,7 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 // handleNEAny handles the case of != any. For example, if the query is t.id != any (select s.id from s), it will be rewrote to
 // t.id != s.id or count(distinct s.id) > 1 or [any checker]. If there are two different values in s.id ,
 // there must exist a s.id that doesn't equal to t.id.
-func (er *expressionRewriter) handleNEAny(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np LogicalPlan, markNoDecorrelate bool) {
+func (er *expressionRewriter) handleNEAny(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np base.LogicalPlan, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
 	sctx := planCtx.builder.ctx
 	exprCtx := sctx.GetExprCtx()
@@ -947,7 +947,7 @@ func (er *expressionRewriter) handleNEAny(planCtx *exprRewriterPlanCtx, lexpr, r
 
 // handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrote to
 // t.id = (select s.id from s having count(distinct s.id) <= 1 and [all checker]).
-func (er *expressionRewriter) handleEQAll(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np LogicalPlan, markNoDecorrelate bool) {
+func (er *expressionRewriter) handleEQAll(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np base.LogicalPlan, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
 	sctx := planCtx.builder.ctx
 	exprCtx := sctx.GetExprCtx()
@@ -1088,7 +1088,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 
 // popExistsSubPlan will remove the useless plan in exist's child.
 // See comments inside the method for more details.
-func (*expressionRewriter) popExistsSubPlan(planCtx *exprRewriterPlanCtx, p LogicalPlan) LogicalPlan {
+func (*expressionRewriter) popExistsSubPlan(planCtx *exprRewriterPlanCtx, p base.LogicalPlan) base.LogicalPlan {
 	intest.AssertNotNil(planCtx)
 out:
 	for {
@@ -1351,7 +1351,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	return v, true
 }
 
-func hasCTEConsumerInSubPlan(p LogicalPlan) bool {
+func hasCTEConsumerInSubPlan(p base.LogicalPlan) bool {
 	if _, ok := p.(*LogicalCTE); ok {
 		return true
 	}
@@ -1815,7 +1815,7 @@ func (er *expressionRewriter) positionToScalarFunc(planCtx *exprRewriterPlanCtx,
 	if v.P != nil {
 		stkLen := len(er.ctxStack)
 		val := er.ctxStack[stkLen-1]
-		intNum, isNull, err := expression.GetIntFromConstant(er.sctx, val)
+		intNum, isNull, err := expression.GetIntFromConstant(er.sctx.GetEvalCtx(), val)
 		str = "?"
 		if err == nil {
 			if isNull {
@@ -2437,7 +2437,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.String(), clauseMsg[planCtx.builder.curClause])
 }
 
-func findFieldNameFromNaturalUsingJoin(p LogicalPlan, v *ast.ColumnName) (col *expression.Column, name *types.FieldName, err error) {
+func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (col *expression.Column, name *types.FieldName, err error) {
 	switch x := p.(type) {
 	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)

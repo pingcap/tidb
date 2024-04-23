@@ -17,7 +17,6 @@ package ingest
 import (
 	"context"
 	"net"
-	"path/filepath"
 	"strconv"
 	"sync/atomic"
 
@@ -43,12 +42,18 @@ type litConfig struct {
 	resourceGroup string
 }
 
-func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool, resourceGroup string) (*litConfig, error) {
+func genConfig(
+	ctx context.Context,
+	jobSortPath string,
+	memRoot MemRoot,
+	unique bool,
+	resourceGroup string,
+) (*litConfig, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	cfg := lightning.NewConfig()
 	cfg.TikvImporter.Backend = lightning.BackendLocal
 	// Each backend will build a single dir in lightning dir.
-	cfg.TikvImporter.SortedKVDir = filepath.Join(LitSortPath, EncodeBackendTag(jobID))
+	cfg.TikvImporter.SortedKVDir = jobSortPath
 	if ImporterRangeConcurrencyForTest != nil {
 		cfg.TikvImporter.RangeConcurrency = int(ImporterRangeConcurrencyForTest.Load())
 	} else {

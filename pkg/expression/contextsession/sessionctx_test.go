@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package contextimpl_test
+package contextsession_test
 
 import (
 	"sync/atomic"
@@ -22,13 +22,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/context"
-	"github.com/pingcap/tidb/pkg/expression/contextimpl"
 	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/contextsession"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	tmock "github.com/stretchr/testify/mock"
@@ -40,7 +40,7 @@ func TestSessionEvalContextBasic(t *testing.T) {
 	ctx := mock.NewContext()
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
-	impl := contextimpl.NewSessionEvalContext(ctx)
+	impl := contextsession.NewSessionEvalContext(ctx)
 	require.True(t, impl.GetOptionalPropSet().IsFull())
 
 	// should contain all the optional properties
@@ -81,16 +81,32 @@ func TestSessionEvalContextBasic(t *testing.T) {
 	ec.AppendWarning(errors.New("err3"))
 	require.Equal(t, 3, impl.WarningCount())
 
+	for _, dst := range [][]contextutil.SQLWarn{
+		nil,
+		make([]contextutil.SQLWarn, 1),
+		make([]contextutil.SQLWarn, 3),
+		make([]contextutil.SQLWarn, 0, 3),
+	} {
+		warnings := impl.CopyWarnings(dst)
+		require.Equal(t, 3, len(warnings))
+		require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
+		require.Equal(t, contextutil.WarnLevelWarning, warnings[1].Level)
+		require.Equal(t, contextutil.WarnLevelWarning, warnings[2].Level)
+		require.Equal(t, "err1", warnings[0].Err.Error())
+		require.Equal(t, "err2", warnings[1].Err.Error())
+		require.Equal(t, "err3", warnings[2].Err.Error())
+	}
+
 	warnings := impl.TruncateWarnings(1)
 	require.Equal(t, 2, len(warnings))
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[1].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[1].Level)
 	require.Equal(t, "err2", warnings[0].Err.Error())
 	require.Equal(t, "err3", warnings[1].Err.Error())
 
 	warnings = impl.TruncateWarnings(0)
 	require.Equal(t, 1, len(warnings))
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err1", warnings[0].Err.Error())
 }
 
@@ -98,7 +114,7 @@ func TestSessionEvalContextCurrentTime(t *testing.T) {
 	ctx := mock.NewContext()
 	vars := ctx.GetSessionVars()
 	sc := vars.StmtCtx
-	impl := contextimpl.NewSessionEvalContext(ctx)
+	impl := contextsession.NewSessionEvalContext(ctx)
 
 	var now atomic.Pointer[time.Time]
 	sc.SetStaleTSOProvider(func() (uint64, error) {
@@ -165,7 +181,7 @@ func (m *mockPrivManager) RequestDynamicVerification(
 
 func TestSessionEvalContextPrivilegeCheck(t *testing.T) {
 	ctx := mock.NewContext()
-	impl := contextimpl.NewSessionEvalContext(ctx)
+	impl := contextsession.NewSessionEvalContext(ctx)
 	activeRoles := []*auth.RoleIdentity{
 		{Username: "role1", Hostname: "host1"},
 		{Username: "role2", Hostname: "host2"},
@@ -202,7 +218,7 @@ func TestSessionEvalContextPrivilegeCheck(t *testing.T) {
 
 func getProvider[T context.OptionalEvalPropProvider](
 	t *testing.T,
-	impl *contextimpl.SessionEvalContext,
+	impl *contextsession.SessionEvalContext,
 	key context.OptionalEvalPropKey,
 ) T {
 	val, ok := impl.GetOptionalPropProvider(key)
@@ -215,7 +231,7 @@ func getProvider[T context.OptionalEvalPropProvider](
 
 func TestSessionEvalContextOptProps(t *testing.T) {
 	ctx := mock.NewContext()
-	impl := contextimpl.NewSessionEvalContext(ctx)
+	impl := contextsession.NewSessionEvalContext(ctx)
 
 	// test for OptPropCurrentUser
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "user1", Hostname: "host1"}
@@ -249,8 +265,8 @@ func TestSessionEvalContextOptProps(t *testing.T) {
 
 func TestSessionBuildContext(t *testing.T) {
 	ctx := mock.NewContext()
-	impl := contextimpl.NewExprExtendedImpl(ctx)
-	evalCtx, ok := impl.GetEvalCtx().(*contextimpl.SessionEvalContext)
+	impl := contextsession.NewExprExtendedImpl(ctx)
+	evalCtx, ok := impl.GetEvalCtx().(*contextsession.SessionEvalContext)
 	require.True(t, ok)
 	require.Same(t, evalCtx, impl.SessionEvalContext)
 	require.True(t, evalCtx.GetOptionalPropSet().IsFull())
@@ -282,7 +298,7 @@ func TestSessionBuildContext(t *testing.T) {
 	require.Same(t, vars.Rng, impl.Rng())
 
 	// PlanCache
-	vars.StmtCtx.UseCache = true
+	vars.StmtCtx.EnablePlanCache()
 	require.True(t, impl.IsUseCache())
 	impl.SetSkipPlanCache(errors.New("mockReason"))
 	require.False(t, impl.IsUseCache())
@@ -310,4 +326,27 @@ func TestSessionBuildContext(t *testing.T) {
 	require.True(t, impl.IsInUnionCast())
 	impl.SetInUnionCast(false)
 	require.False(t, impl.IsInUnionCast())
+
+	// InInsertOrUpdate
+	vars.StmtCtx.InInsertStmt = false
+	vars.StmtCtx.InUpdateStmt = false
+	require.False(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = true
+	require.True(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = false
+	vars.StmtCtx.InUpdateStmt = true
+	require.True(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = true
+	require.True(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = false
+	vars.StmtCtx.InUpdateStmt = false
+	require.False(t, impl.InInsertOrUpdate())
+
+	// ConnID
+	vars.ConnectionID = 123
+	require.Equal(t, uint64(123), impl.ConnectionID())
 }

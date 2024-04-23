@@ -48,23 +48,23 @@ import (
 )
 
 var (
-	_ LogicalPlan = &LogicalJoin{}
-	_ LogicalPlan = &LogicalAggregation{}
-	_ LogicalPlan = &LogicalProjection{}
-	_ LogicalPlan = &LogicalSelection{}
-	_ LogicalPlan = &LogicalApply{}
-	_ LogicalPlan = &LogicalMaxOneRow{}
-	_ LogicalPlan = &LogicalTableDual{}
-	_ LogicalPlan = &DataSource{}
-	_ LogicalPlan = &TiKVSingleGather{}
-	_ LogicalPlan = &LogicalTableScan{}
-	_ LogicalPlan = &LogicalIndexScan{}
-	_ LogicalPlan = &LogicalUnionAll{}
-	_ LogicalPlan = &LogicalSort{}
-	_ LogicalPlan = &LogicalLock{}
-	_ LogicalPlan = &LogicalLimit{}
-	_ LogicalPlan = &LogicalWindow{}
-	_ LogicalPlan = &LogicalExpand{}
+	_ base.LogicalPlan = &LogicalJoin{}
+	_ base.LogicalPlan = &LogicalAggregation{}
+	_ base.LogicalPlan = &LogicalProjection{}
+	_ base.LogicalPlan = &LogicalSelection{}
+	_ base.LogicalPlan = &LogicalApply{}
+	_ base.LogicalPlan = &LogicalMaxOneRow{}
+	_ base.LogicalPlan = &LogicalTableDual{}
+	_ base.LogicalPlan = &DataSource{}
+	_ base.LogicalPlan = &TiKVSingleGather{}
+	_ base.LogicalPlan = &LogicalTableScan{}
+	_ base.LogicalPlan = &LogicalIndexScan{}
+	_ base.LogicalPlan = &LogicalUnionAll{}
+	_ base.LogicalPlan = &LogicalSort{}
+	_ base.LogicalPlan = &LogicalLock{}
+	_ base.LogicalPlan = &LogicalLimit{}
+	_ base.LogicalPlan = &LogicalWindow{}
+	_ base.LogicalPlan = &LogicalExpand{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
@@ -1165,7 +1165,7 @@ type LogicalSelection struct {
 	Conditions []expression.Expression
 }
 
-func extractNotNullFromConds(conditions []expression.Expression, p LogicalPlan) intset.FastIntSet {
+func extractNotNullFromConds(conditions []expression.Expression, p base.LogicalPlan) intset.FastIntSet {
 	// extract the column NOT NULL rejection characteristic from selection condition.
 	// CNF considered only, DNF doesn't have its meanings (cause that condition's eval may don't take effect)
 	//
@@ -1569,7 +1569,7 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 	return nil
 }
 
-func (ds *DataSource) buildTableGather() LogicalPlan {
+func (ds *DataSource) buildTableGather() base.LogicalPlan {
 	ts := LogicalTableScan{Source: ds, HandleCols: ds.handleCols}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema())
 	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -1578,7 +1578,7 @@ func (ds *DataSource) buildTableGather() LogicalPlan {
 	return sg
 }
 
-func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
+func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 	is := LogicalIndexScan{
 		Source:         ds,
 		IsDoubleRead:   false,
@@ -1605,7 +1605,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
 }
 
 // Convert2Gathers builds logical TiKVSingleGathers from DataSource.
-func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
+func (ds *DataSource) Convert2Gathers() (gathers []base.LogicalPlan) {
 	tg := ds.buildTableGather()
 	gathers = append(gathers, tg)
 	for _, path := range ds.possibleAccessPaths {
@@ -2224,7 +2224,7 @@ func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *e
 // extractCorColumnsBySchema4LogicalPlan only extracts the correlated columns that match the specified schema.
 // e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is returned.
-func extractCorColumnsBySchema4LogicalPlan(p LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
+func extractCorColumnsBySchema4LogicalPlan(p base.LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
 	corCols := ExtractCorrelatedCols4LogicalPlan(p)
 	return ExtractCorColumnsBySchema(corCols, schema, false)
 }
@@ -2295,8 +2295,8 @@ type CTEClass struct {
 	// The union between seed part and recursive part is DISTINCT or DISTINCT ALL.
 	IsDistinct bool
 	// seedPartLogicalPlan and recursivePartLogicalPlan are the logical plans for the seed part and recursive part of this CTE.
-	seedPartLogicalPlan      LogicalPlan
-	recursivePartLogicalPlan LogicalPlan
+	seedPartLogicalPlan      base.LogicalPlan
+	recursivePartLogicalPlan base.LogicalPlan
 	// seedPartPhysicalPlan and recursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
 	seedPartPhysicalPlan      base.PhysicalPlan
 	recursivePartPhysicalPlan base.PhysicalPlan

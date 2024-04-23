@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	base2 "github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/base"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -156,7 +156,7 @@ type physicalSchemaProducer struct {
 	basePhysicalPlan
 }
 
-func (s *physicalSchemaProducer) cloneWithSelf(newSelf base2.PhysicalPlan) (*physicalSchemaProducer, error) {
+func (s *physicalSchemaProducer) cloneWithSelf(newSelf base.PhysicalPlan) (*physicalSchemaProducer, error) {
 	base, err := s.basePhysicalPlan.cloneWithSelf(newSelf)
 	if err != nil {
 		return nil, err
@@ -200,7 +200,7 @@ func (s *physicalSchemaProducer) MemoryUsage() (sum int64) {
 type baseSchemaProducer struct {
 	schema *expression.Schema
 	names  types.NameSlice
-	base.Plan
+	baseimpl.Plan
 }
 
 // OutputNames returns the outputting names of each column.
@@ -253,7 +253,7 @@ func (p *LogicalMaxOneRow) Schema() *expression.Schema {
 	return s
 }
 
-func buildLogicalJoinSchema(joinType JoinType, join LogicalPlan) *expression.Schema {
+func buildLogicalJoinSchema(joinType JoinType, join base.LogicalPlan) *expression.Schema {
 	leftSchema := join.Children()[0].Schema()
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
@@ -273,7 +273,7 @@ func buildLogicalJoinSchema(joinType JoinType, join LogicalPlan) *expression.Sch
 }
 
 // BuildPhysicalJoinSchema builds the schema of PhysicalJoin from it's children's schema.
-func BuildPhysicalJoinSchema(joinType JoinType, join base2.PhysicalPlan) *expression.Schema {
+func BuildPhysicalJoinSchema(joinType JoinType, join base.PhysicalPlan) *expression.Schema {
 	leftSchema := join.Children()[0].Schema()
 	switch joinType {
 	case SemiJoin, AntiSemiJoin:
@@ -318,8 +318,8 @@ func GetStatsInfo(i any) map[string]uint64 {
 		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419
 		return nil
 	}
-	p := i.(base2.Plan)
-	var physicalPlan base2.PhysicalPlan
+	p := i.(base.Plan)
+	var physicalPlan base.PhysicalPlan
 	switch x := p.(type) {
 	case *Insert:
 		physicalPlan = x.SelectPlan
@@ -327,7 +327,7 @@ func GetStatsInfo(i any) map[string]uint64 {
 		physicalPlan = x.SelectPlan
 	case *Delete:
 		physicalPlan = x.SelectPlan
-	case base2.PhysicalPlan:
+	case base.PhysicalPlan:
 		physicalPlan = x
 	}
 
@@ -388,7 +388,7 @@ func extractStringFromBoolSlice(slice []bool) string {
 	return strings.Join(l, ",")
 }
 
-func tableHasDirtyContent(ctx base2.PlanContext, tableInfo *model.TableInfo) bool {
+func tableHasDirtyContent(ctx base.PlanContext, tableInfo *model.TableInfo) bool {
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ctx.HasDirtyContent(tableInfo.ID)
@@ -403,8 +403,8 @@ func tableHasDirtyContent(ctx base2.PlanContext, tableInfo *model.TableInfo) boo
 	return false
 }
 
-func clonePhysicalPlan(plans []base2.PhysicalPlan) ([]base2.PhysicalPlan, error) {
-	cloned := make([]base2.PhysicalPlan, 0, len(plans))
+func clonePhysicalPlan(plans []base.PhysicalPlan) ([]base.PhysicalPlan, error) {
+	cloned := make([]base.PhysicalPlan, 0, len(plans))
 	for _, p := range plans {
 		c, err := p.Clone()
 		if err != nil {
@@ -473,11 +473,11 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 }
 
 // GetPushDownCtx creates a PushDownContext from PlanContext
-func GetPushDownCtx(pctx base2.PlanContext) expression.PushDownContext {
+func GetPushDownCtx(pctx base.PlanContext) expression.PushDownContext {
 	return GetPushDownCtxFromBuildPBContext(pctx.GetBuildPBCtx())
 }
 
 // GetPushDownCtxFromBuildPBContext creates a PushDownContext from BuildPBContext
-func GetPushDownCtxFromBuildPBContext(bctx *base2.BuildPBContext) expression.PushDownContext {
+func GetPushDownCtxFromBuildPBContext(bctx *base.BuildPBContext) expression.PushDownContext {
 	return expression.NewPushDownContext(bctx.GetExprCtx().GetEvalCtx(), bctx.GetClient(), bctx.InExplainStmt, bctx.AppendWarning, bctx.AppendExtraWarning, bctx.GroupConcatMaxLen)
 }
