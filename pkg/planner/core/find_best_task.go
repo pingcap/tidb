@@ -2208,6 +2208,64 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
 
+func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *DataSource, physPlanPartInfo *PhysPlanPartInfo, conditions []expression.Expression) ([]expression.Expression, error) {
+	if !is.Index.Global {
+		return conditions, nil
+	}
+	args := make([]expression.Expression, 0, len(p.partitionNames)+1)
+	for _, col := range is.schema.Columns {
+		if col.ID == model.ExtraPidColID {
+			args = append(args, col.Clone())
+			break
+		}
+	}
+
+	// For SQL like 'select x from t partition(p0, p1) use index(idx)',
+	// we will add a `Selection` like `in(t._tidb_pid, p0, p1)` into the plan.
+	// For truncate/drop partitions, we should only return indexes where partitions still in public state.
+	idxArr, err := PartitionPruning(p.SCtx(), p.table.GetPartitionedTable(),
+		physPlanPartInfo.PruningConds,
+		physPlanPartInfo.PartitionNames,
+		physPlanPartInfo.Columns,
+		physPlanPartInfo.ColumnNames)
+	if err != nil {
+		return nil, err
+	}
+	needNot := false
+	pInfo := p.TableInfo().GetPartitionInfo()
+	if len(idxArr) == 1 && idxArr[0] == FullRange {
+		// Only filter adding and dropping partitions.
+		if len(pInfo.AddingDefinitions) == 0 && len(pInfo.DroppingDefinitions) == 0 {
+			return conditions, nil
+		}
+		needNot = true
+		for _, p := range pInfo.AddingDefinitions {
+			args = append(args, expression.NewInt64Const(p.ID))
+		}
+		for _, p := range pInfo.DroppingDefinitions {
+			args = append(args, expression.NewInt64Const(p.ID))
+		}
+	} else if len(idxArr) == 0 {
+		// add an invalid pid as param for `IN` function
+		args = append(args, expression.NewInt64Const(-1))
+	} else {
+		for _, idx := range idxArr {
+			args = append(args, expression.NewInt64Const(pInfo.Definitions[idx].ID))
+		}
+	}
+	condition, err := expression.NewFunction(p.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
+	if err != nil {
+		return nil, err
+	}
+	if needNot {
+		condition, err = expression.NewFunction(p.SCtx().GetExprCtx(), ast.UnaryNot, types.NewFieldType(mysql.TypeLonglong), condition)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return append(conditions, condition), nil
+}
+
 func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSource, path *util.AccessPath, finalStats *property.StatsInfo) error {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
@@ -2223,44 +2281,9 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 
 	// Add a `Selection` for `IndexScan` with global index.
 	// It should pushdown to TiKV, DataSource schema doesn't contain this column.
-	if is.Index.Global {
-		args := make([]expression.Expression, 0, len(p.partitionNames)+1)
-		for _, col := range is.schema.Columns {
-			if col.ID == model.ExtraPidColID {
-				args = append(args, col.Clone())
-				break
-			}
-		}
-
-		// For SQL like 'select x from t partition(p0, p1) use index(idx)',
-		// we will add a `Selection` like `in(t._tidb_pid, p0, p1)` into the plan.
-		// For truncate/delete partitions, we should only return indexes where partitions still in public state.
-		idxArr, err := PartitionPruning(p.SCtx(), p.table.GetPartitionedTable(),
-			copTask.physPlanPartInfo.PruningConds,
-			copTask.physPlanPartInfo.PartitionNames,
-			copTask.physPlanPartInfo.Columns,
-			copTask.physPlanPartInfo.ColumnNames)
-		if err != nil {
-			return err
-		}
-		pDef := p.TableInfo().GetPartitionInfo().Definitions
-		if len(idxArr) == 1 && idxArr[0] == FullRange {
-			for _, p := range pDef {
-				args = append(args, expression.NewInt64Const(p.ID))
-			}
-		} else if len(idxArr) == 0 {
-			// add an invalid pid as param for `IN` function
-			args = append(args, expression.NewInt64Const(-1))
-		} else {
-			for _, idx := range idxArr {
-				args = append(args, expression.NewInt64Const(pDef[idx].ID))
-			}
-		}
-		inCondition, err := expression.NewFunction(p.SCtx().GetExprCtx(), ast.In, types.NewFieldType(mysql.TypeLonglong), args...)
-		if err != nil {
-			return err
-		}
-		indexConds = append(indexConds, inCondition)
+	indexConds, err := is.addSelectionConditionForGlobalIndex(p, &copTask.physPlanPartInfo, indexConds)
+	if err != nil {
+		return err
 	}
 
 	if indexConds != nil {

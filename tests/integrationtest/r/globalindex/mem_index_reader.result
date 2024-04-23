@@ -12,11 +12,10 @@ begin;
 insert into t values (5, 1);
 explain select b from t use index(idx1) where b > 2;
 id	estRows	task	access object	operator info
-Projection_5	3333.33	root	NULL	globalindex__mem_index_reader.t.b
-└─UnionScan_6	3333.33	root	NULL	gt(globalindex__mem_index_reader.t.b, 2)
-  └─IndexReader_10	3333.33	root	NULL	index:Selection_9
-    └─Selection_9	3333.33	cop[tikv]	NULL	in(_tidb_pid, pid0, pid1, pid2, pid3, pid4)
-      └─IndexRangeScan_7	3333.33	cop[tikv]	table:t, index:idx1(b)	range:(2,+inf], keep order:false, stats:pseudo
+Projection_5	3333.33	root		globalindex__mem_index_reader.t.b
+└─UnionScan_6	3333.33	root		gt(globalindex__mem_index_reader.t.b, 2)
+  └─IndexReader_9	3333.33	root		index:IndexRangeScan_7
+    └─IndexRangeScan_7	3333.33	cop[tikv]	table:t, index:idx1(b)	range:(2,+inf], keep order:false, stats:pseudo
 select b from t use index(idx1) where b > 2;
 b
 3
@@ -57,11 +56,10 @@ begin;
 insert into t values (2005, 1);
 explain select b from t use index(idx1) where b > 2;
 id	estRows	task	access object	operator info
-Projection_5	3333.33	root	NULL	globalindex__mem_index_reader.t.b
-└─UnionScan_6	3333.33	root	NULL	gt(globalindex__mem_index_reader.t.b, 2)
-  └─IndexReader_10	3333.33	root	NULL	index:Selection_9
-    └─Selection_9	3333.33	cop[tikv]	NULL	in(_tidb_pid, pid0, pid1, pid2, pid3, pid4)
-      └─IndexRangeScan_7	3333.33	cop[tikv]	table:t, index:idx1(b)	range:(2,+inf], keep order:false, stats:pseudo
+Projection_5	3333.33	root		globalindex__mem_index_reader.t.b
+└─UnionScan_6	3333.33	root		gt(globalindex__mem_index_reader.t.b, 2)
+  └─IndexReader_9	3333.33	root		index:IndexRangeScan_7
+    └─IndexRangeScan_7	3333.33	cop[tikv]	table:t, index:idx1(b)	range:(2,+inf], keep order:false, stats:pseudo
 select b from t use index(idx1) where b > 2;
 b
 3
