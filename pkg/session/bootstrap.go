@@ -583,7 +583,7 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
-		target_scope VARCHAR(256),
+		target_scope VARCHAR(256) DEAFAULT "",
 		error BLOB,
 		key(state),
       	UNIQUE KEY task_key(task_key)
@@ -3086,8 +3086,8 @@ func upgradeToVer196(s sessiontypes.Session, ver int64) {
 		return
 	}
 
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN target_scope VARCHAR(256) AFTER `step`;")
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN target_scope VARCHAR(256) AFTER `step`;")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN target_scope VARCHAR(256) DEAFAULT '' AFTER `step`;")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN target_scope VARCHAR(256) DEAFAULT '' AFTER `step`;")
 }
 
 func writeOOMAction(s sessiontypes.Session) {
