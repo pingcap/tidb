@@ -22,9 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/mock/gomock"
-	"golang.org/x/exp/rand"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -32,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
+	"golang.org/x/exp/rand"
 )
 
 func getMockBasicSchedulerExtForScope(ctrl *gomock.Controller, subtaskCnt int) scheduler.Extension {
