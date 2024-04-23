@@ -85,7 +85,7 @@ type BuildContext interface {
 	// IsUseCache indicates whether to cache the build expression in plan cache.
 	IsUseCache() bool
 	// SetSkipPlanCache sets to skip the plan cache and records the reason.
-	SetSkipPlanCache(reason error)
+	SetSkipPlanCache(reason string)
 	// AllocPlanColumnID allocates column id for plan.
 	AllocPlanColumnID() int64
 	// SetInNullRejectCheck sets the flag to indicate whether the expression is in null reject check.

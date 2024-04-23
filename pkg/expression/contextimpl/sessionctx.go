@@ -108,7 +108,7 @@ func (ctx *ExprCtxExtendedImpl) IsUseCache() bool {
 }
 
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
-func (ctx *ExprCtxExtendedImpl) SetSkipPlanCache(reason error) {
+func (ctx *ExprCtxExtendedImpl) SetSkipPlanCache(reason string) {
 	ctx.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
 }
 
