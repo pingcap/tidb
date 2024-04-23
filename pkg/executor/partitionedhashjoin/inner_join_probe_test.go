@@ -15,11 +15,11 @@
 package partitionedhashjoin
 
 import (
-	"github.com/pingcap/errors"
 	"sort"
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -32,6 +32,16 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func toNullableTypes(tps []*types.FieldType) []*types.FieldType {
+	ret := make([]*types.FieldType, 0, len(tps))
+	for _, tp := range tps {
+		nullableTp := tp.Clone()
+		nullableTp.DelFlag(mysql.NotNullFlag)
+		ret = append(ret, nullableTp)
+	}
+	return ret
+}
 
 func evalOtherCondition(sessCtx sessionctx.Context, leftRow chunk.Row, rightRow chunk.Row, shallowRow chunk.MutRow, otherCondition expression.CNFExprs) (bool, error) {
 	shallowRow.ShallowCopyPartialRow(0, leftRow)
@@ -60,6 +70,15 @@ func appendToResultChk(leftRow chunk.Row, rightRow chunk.Row, leftUsedColumns []
 	}
 }
 
+func containsNullKey(row chunk.Row, keyIndex []int) bool {
+	for _, index := range keyIndex {
+		if row.IsNull(index) {
+			return true
+		}
+	}
+	return false
+}
+
 // generate inner join result using nested loop
 func genInnerJoinResult(t *testing.T, sessCtx sessionctx.Context, leftChunks []*chunk.Chunk, rightChunks []*chunk.Chunk, leftKeyIndex []int, rightKeyIndex []int,
 	leftTypes []*types.FieldType, rightTypes []*types.FieldType, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType, leftUsedColumns []int,
@@ -80,18 +99,23 @@ func genInnerJoinResult(t *testing.T, sessCtx sessionctx.Context, leftChunks []*
 						returnChks = append(returnChks, resultChk)
 						resultChk = chunk.New(resultTypes, sessCtx.GetSessionVars().MaxChunkSize, sessCtx.GetSessionVars().MaxChunkSize)
 					}
-					buildRow := rightChunk.GetRow(rightIndex)
-					ok, err := codec.EqualChunkRow(sessCtx.GetSessionVars().StmtCtx.TypeCtx(), leftRow, leftKeyTypes, leftKeyIndex,
-						buildRow, rightKeyTypes, rightKeyIndex)
-					require.NoError(t, err)
-					if ok && otherConditions != nil {
-						// key is match, check other condition
-						ok, err = evalOtherCondition(sessCtx, leftRow, buildRow, shallowRow, otherConditions)
+					rightRow := rightChunk.GetRow(rightIndex)
+					valid := !containsNullKey(leftRow, leftKeyIndex) && !containsNullKey(rightRow, rightKeyIndex)
+					if valid {
+						ok, err := codec.EqualChunkRow(sessCtx.GetSessionVars().StmtCtx.TypeCtx(), leftRow, leftKeyTypes, leftKeyIndex,
+							rightRow, rightKeyTypes, rightKeyIndex)
 						require.NoError(t, err)
+						valid = ok
 					}
-					if ok {
+					if valid && otherConditions != nil {
+						// key is match, check other condition
+						ok, err := evalOtherCondition(sessCtx, leftRow, rightRow, shallowRow, otherConditions)
+						require.NoError(t, err)
+						valid = ok
+					}
+					if valid {
 						// construct result chunk
-						appendToResultChk(leftRow, buildRow, leftUsedColumns, rightUsedColumns, resultChk)
+						appendToResultChk(leftRow, rightRow, leftUsedColumns, rightUsedColumns, resultChk)
 					}
 				}
 			}
@@ -154,6 +178,7 @@ func checkChunksEqual(t *testing.T, expectedChunks []*chunk.Chunk, resultChunks 
 	for i := 0; i < len(expectedRows); i++ {
 		x := cmp(expectedRows[i], resultRows[i])
 		if x != 0 {
+			// used for debug
 			x = cmp(expectedRows[i], resultRows[i])
 		}
 		require.Equal(t, 0, x, "result index = "+strconv.Itoa(i))
@@ -420,9 +445,11 @@ func TestInnerJoinProbeBasic(t *testing.T) {
 
 	for _, tc := range testCases {
 		// inner join does not have left/right Filter
-		for _, value := range rightAsBuildSide {
-			testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, tc.leftKeyTypes, tc.rightKeyTypes, tc.leftTypes, tc.rightTypes, value, tc.leftUsed,
+		for _, rightAsBuild := range rightAsBuildSide {
+			testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, tc.leftKeyTypes, tc.rightKeyTypes, tc.leftTypes, tc.rightTypes, rightAsBuild, tc.leftUsed,
 				tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, nil, nil, tc.otherCondition, partitionNumber, plannercore.InnerJoin, 200)
+			testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, toNullableTypes(tc.leftKeyTypes), toNullableTypes(tc.rightKeyTypes),
+				toNullableTypes(tc.leftTypes), toNullableTypes(tc.rightTypes), rightAsBuild, tc.leftUsed, tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, nil, nil, tc.otherCondition, partitionNumber, plannercore.InnerJoin, 200)
 		}
 	}
 }
