@@ -185,15 +185,10 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	paramStmt.Accept(features)
 
 	// Collect information for metadata lock.
-	mdlMap := make(map[int64]int64)
-	vars.GetRelatedTableForMDL().Range(func(key, value any) bool {
-		mdlMap[key.(int64)] = value.(int64)
-		return true
-	})
-	dbName := make([]model.CIStr, 0, len(mdlMap))
-	tbls := make([]table.Table, 0, len(mdlMap))
-	relateVersion := make(map[int64]uint64, len(mdlMap))
-	for id := range mdlMap {
+	dbName := make([]model.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
+	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
+	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.MDLRelatedTableIDs))
+	for _, id := range vars.StmtCtx.MDLRelatedTableIDs {
 		tbl, ok := is.TableByID(id)
 		if !ok {
 			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))

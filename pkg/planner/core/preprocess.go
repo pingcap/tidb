@@ -1818,6 +1818,11 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
+	defer func() {
+		if !skipLock {
+			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs = append(sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs, tbl.Meta().ID)
+		}
+	}()
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
