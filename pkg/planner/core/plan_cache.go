@@ -40,6 +40,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
@@ -158,19 +159,21 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	stmtCtx := sessVars.StmtCtx
 	cacheEnabled := false
 	if isNonPrepared {
-		stmtCtx.CacheType = stmtctx.SessionNonPrepared
+		stmtCtx.SetCacheType(contextutil.SessionNonPrepared)
 		cacheEnabled = sctx.GetSessionVars().EnableNonPreparedPlanCache // plan-cache might be disabled after prepare.
 	} else {
-		stmtCtx.CacheType = stmtctx.SessionPrepared
+		stmtCtx.SetCacheType(contextutil.SessionPrepared)
 		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache
 	}
-	stmtCtx.UseCache = stmt.StmtCacheable && cacheEnabled
+	if stmt.StmtCacheable && cacheEnabled {
+		stmtCtx.EnablePlanCache()
+	}
 	if stmt.UncacheableReason != "" {
 		stmtCtx.ForceSetSkipPlanCache(errors.NewNoStackError(stmt.UncacheableReason))
 	}
 
 	var bindSQL string
-	if stmtCtx.UseCache {
+	if stmtCtx.UseCache() {
 		var ignoreByBinding bool
 		bindSQL, ignoreByBinding = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
 		if ignoreByBinding {
@@ -182,7 +185,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
 	var latestSchemaVersion int64
 
-	if stmtCtx.UseCache {
+	if stmtCtx.UseCache() {
 		if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || stmt.ForUpdateRead {
 			// In Rc or ForUpdateRead, we should check if the information schema has been changed since
 			// last time. If it changed, we should rebuild the plan. Here, we use a different and more
@@ -195,7 +198,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	if stmtCtx.UseCache && stmt.PointGet.Plan != nil { // special code path for fast point plan
+	if stmtCtx.UseCache() && stmt.PointGet.Plan != nil { // special code path for fast point plan
 		if plan, names, ok, err := getCachedPointPlan(stmt, sessVars, stmtCtx); ok {
 			return plan, names, err
 		}
@@ -205,7 +208,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return nil, nil, err
 	}
-	if stmtCtx.UseCache { // for non-point plans
+	if stmtCtx.UseCache() { // for non-point plans
 		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt, matchOpts); err != nil || ok {
 			return plan, names, err
 		}
@@ -323,14 +326,14 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	}
 
 	// check whether this plan is cacheable.
-	if stmtCtx.UseCache {
+	if stmtCtx.UseCache() {
 		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
 			stmtCtx.SetSkipPlanCache(errors.Errorf(reason))
 		}
 	}
 
 	// put this plan into the plan cache.
-	if stmtCtx.UseCache {
+	if stmtCtx.UseCache() {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
@@ -353,7 +356,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
 func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
 	sc := p.SCtx().GetSessionVars().StmtCtx
-	if !sc.UseCache {
+	if !sc.UseCache() {
 		return false // plan-cache is disabled for this query
 	}
 
@@ -363,7 +366,7 @@ func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
 		sc.AppendWarning(errors.NewNoStackErrorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
 		return false // fail to rebuild ranges
 	}
-	if !sc.UseCache {
+	if !sc.UseCache() {
 		// in this case, the UseCache flag changes from `true` to `false`, then there must be some
 		// over-optimized operations were triggered, return `false` for safety here.
 		return false
@@ -773,7 +776,7 @@ func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 // short paths for these executions, currently "point select" and "point update"
 func tryCachePointPlan(_ context.Context, sctx base.PlanContext,
 	stmt *PlanCacheStmt, p base.Plan, names types.NameSlice) error {
-	if !sctx.GetSessionVars().StmtCtx.UseCache {
+	if !sctx.GetSessionVars().StmtCtx.UseCache() {
 		return nil
 	}
 	var (

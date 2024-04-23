@@ -104,7 +104,7 @@ func (ctx *ExprCtxExtendedImpl) Rng() *mathutil.MysqlRng {
 // IsUseCache indicates whether to cache the build expression in plan cache.
 // If SetSkipPlanCache is invoked, it should return false.
 func (ctx *ExprCtxExtendedImpl) IsUseCache() bool {
-	return ctx.sctx.GetSessionVars().StmtCtx.UseCache
+	return ctx.sctx.GetSessionVars().StmtCtx.UseCache()
 }
 
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
@@ -146,6 +146,18 @@ func (ctx *ExprCtxExtendedImpl) GetWindowingUseHighPrecision() bool {
 // GetGroupConcatMaxLen returns the value of the 'group_concat_max_len' system variable.
 func (ctx *ExprCtxExtendedImpl) GetGroupConcatMaxLen() uint64 {
 	return ctx.sctx.GetSessionVars().GroupConcatMaxLen
+}
+
+// InInsertOrUpdate returns whether when are building an expression for insert or update statement.
+func (ctx *ExprCtxExtendedImpl) InInsertOrUpdate() bool {
+	sc := ctx.sctx.GetSessionVars().StmtCtx
+	return sc.InInsertStmt || sc.InUpdateStmt
+}
+
+// ConnectionID indicates the connection ID of the current session.
+// If the context is not in a session, it should return 0.
+func (ctx *ExprCtxExtendedImpl) ConnectionID() uint64 {
+	return ctx.sctx.GetSessionVars().ConnectionID
 }
 
 // SessionEvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.

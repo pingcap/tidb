@@ -370,6 +370,7 @@ type NeededItemTask struct {
 	ToTimeout time.Time
 	ResultCh  chan stmtctx.StatsLoadResult
 	Item      model.StatsLoadItem
+	Retry     int
 }
 
 // StatsLoad is used to load stats concurrently

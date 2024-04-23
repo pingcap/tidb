@@ -282,7 +282,7 @@ func TestSessionBuildContext(t *testing.T) {
 	require.Same(t, vars.Rng, impl.Rng())
 
 	// PlanCache
-	vars.StmtCtx.UseCache = true
+	vars.StmtCtx.EnablePlanCache()
 	require.True(t, impl.IsUseCache())
 	impl.SetSkipPlanCache(errors.New("mockReason"))
 	require.False(t, impl.IsUseCache())
@@ -310,4 +310,27 @@ func TestSessionBuildContext(t *testing.T) {
 	require.True(t, impl.IsInUnionCast())
 	impl.SetInUnionCast(false)
 	require.False(t, impl.IsInUnionCast())
+
+	// InInsertOrUpdate
+	vars.StmtCtx.InInsertStmt = false
+	vars.StmtCtx.InUpdateStmt = false
+	require.False(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = true
+	require.True(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = false
+	vars.StmtCtx.InUpdateStmt = true
+	require.True(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = true
+	require.True(t, impl.InInsertOrUpdate())
+
+	vars.StmtCtx.InInsertStmt = false
+	vars.StmtCtx.InUpdateStmt = false
+	require.False(t, impl.InInsertOrUpdate())
+
+	// ConnID
+	vars.ConnectionID = 123
+	require.Equal(t, uint64(123), impl.ConnectionID())
 }

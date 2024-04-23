@@ -104,7 +104,7 @@ func (a *aggOrderByResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 
 func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	if v, ok := inNode.(*ast.PositionExpr); ok {
-		pos, isNull, err := expression.PosFromPositionExpr(a.ctx.GetExprCtx(), v)
+		pos, isNull, err := expression.PosFromPositionExpr(a.ctx.GetExprCtx(), a.ctx, v)
 		if err != nil {
 			a.err = err
 		}
@@ -1312,7 +1312,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 		expressions = append(expressions, expr)
 	}
 	cnfExpres := make([]expression.Expression, 0)
-	useCache := b.ctx.GetSessionVars().StmtCtx.UseCache
+	useCache := b.ctx.GetSessionVars().StmtCtx.UseCache()
 	for _, expr := range expressions {
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
@@ -2397,7 +2397,7 @@ func getUintFromNode(ctx base.PlanContext, n ast.Node, mustInt64orUint64 bool) (
 		if err != nil {
 			return 0, false, false
 		}
-		str, isNull, err := expression.GetStringFromConstant(ctx.GetExprCtx(), param)
+		str, isNull, err := expression.GetStringFromConstant(ctx.GetExprCtx().GetEvalCtx(), param)
 		if err != nil {
 			return 0, false, false
 		}
@@ -3262,7 +3262,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 	case *ast.PositionExpr:
-		pos, isNull, err := expression.PosFromPositionExpr(g.ctx.GetExprCtx(), v)
+		pos, isNull, err := expression.PosFromPositionExpr(g.ctx.GetExprCtx(), g.ctx, v)
 		if err != nil {
 			g.err = plannererrors.ErrUnknown.GenWithStackByArgs()
 		}

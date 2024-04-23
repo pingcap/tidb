@@ -1815,7 +1815,7 @@ func (er *expressionRewriter) positionToScalarFunc(planCtx *exprRewriterPlanCtx,
 	if v.P != nil {
 		stkLen := len(er.ctxStack)
 		val := er.ctxStack[stkLen-1]
-		intNum, isNull, err := expression.GetIntFromConstant(er.sctx, val)
+		intNum, isNull, err := expression.GetIntFromConstant(er.sctx.GetEvalCtx(), val)
 		str = "?"
 		if err == nil {
 			if isNull {

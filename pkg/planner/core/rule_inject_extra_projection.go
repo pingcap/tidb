@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/internal"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
 
 // InjectExtraProjection is used to extract the expressions of specific
@@ -116,7 +116,7 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) base.PhysicalPlan {
 	hasScalarFunc := false
 
-	internal.WrapCastForAggFuncs(aggPlan.SCtx().GetExprCtx(), aggFuncs)
+	coreusage.WrapCastForAggFuncs(aggPlan.SCtx().GetExprCtx(), aggFuncs)
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
 		for _, arg := range aggFuncs[i].Args {
 			_, isScalarFunc := arg.(*expression.ScalarFunction)
