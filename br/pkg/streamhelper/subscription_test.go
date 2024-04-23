@@ -58,6 +58,7 @@ func TestSubBasic(t *testing.T) {
 	}
 	sub.HandleErrors(ctx)
 	req.NoError(sub.PendingErrors())
+	waitPendingEvents(t, sub)
 	sub.Drop()
 	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
 	for k := range sub.Events() {
@@ -92,6 +93,7 @@ func TestNormalError(t *testing.T) {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
+	waitPendingEvents(t, sub)
 	sub.Drop()
 	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
 	for k := range sub.Events() {
