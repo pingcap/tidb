@@ -165,7 +165,13 @@ func createLocalBackend(
 		return nil, err
 	}
 
+<<<<<<< HEAD
 	logutil.BgLogger().Info("create local backend for adding index", zap.String("category", "ddl-ingest"), zap.String("keyspaceName", cfg.keyspaceName))
+=======
+	litLogger.Info("create local backend for adding index",
+		zap.String("sortDir", cfg.lightning.TikvImporter.SortedKVDir),
+		zap.String("keyspaceName", cfg.keyspaceName))
+>>>>>>> 9609d5c3a5c (ddl: allow multiple fast reorg running at the same time (#52799))
 	// We disable the switch TiKV mode feature for now,
 	// because the impact is not fully tested.
 	var raftKV2SwitchModeDuration time.Duration
