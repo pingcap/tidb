@@ -14,10 +14,16 @@
 
 package servicescope
 
-import "regexp"
+import (
+	"fmt"
+	"regexp"
+)
 
-// IsValidServiceScope valid the tidb-service-scope set by users.
-func IsValidServiceScope(scope string) bool {
+// CheckServiceScope check if the tidb-service-scope set by users is valid.
+func CheckServiceScope(scope string) error {
 	re := regexp.MustCompile(`^[a-zA-Z0-9_-]{0,64}$`)
-	return re.MatchString(scope)
+	if !re.MatchString(scope) {
+		return fmt.Errorf("the tidb-service-scope value '%s' is invalid. It must be 64 characters or fewer and consist only of letters (a-z, A-Z), numbers (0-9), hyphens (-), and underscores (_)", scope)
+	}
+	return nil
 }
