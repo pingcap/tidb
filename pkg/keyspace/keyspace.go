@@ -19,7 +19,9 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -54,8 +56,8 @@ const (
 // CodecV1 represents api v1 codec.
 var CodecV1 = tikv.NewCodecV1(tikv.ModeTxn)
 
-// CurrentKeyspaceMeta is the keyspace meta of the current TiDB, if keyspace-name is not set then CurrentKeyspaceMeta == nil.
-var CurrentKeyspaceMeta *keyspacepb.KeyspaceMeta
+//// globalKeyspaceMeta is the keyspace meta of the current TiDB, if keyspace-name is not set then globalKeyspaceMeta == nil.
+//var globalKeyspaceMeta *keyspacepb.KeyspaceMeta
 
 // MakeKeyspaceEtcdNamespace return the keyspace prefix path for etcd namespace
 func MakeKeyspaceEtcdNamespace(c tikv.Codec) string {
@@ -105,9 +107,9 @@ func NewEtcdSafePointKV(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Con
 	return tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig, tikv.WithPrefix(etcdNameSpace))
 }
 
-// IsCurrentTiDBUseKeyspaceLevelGC return true if CurrentKeyspaceMeta not nil and CurrentKeyspaceMeta config has "gc_management_type" = "keyspace_level_gc".
+// IsCurrentTiDBUseKeyspaceLevelGC return true if globalKeyspaceMeta not nil and globalKeyspaceMeta config has "gc_management_type" = "keyspace_level_gc".
 func IsCurrentTiDBUseKeyspaceLevelGC() bool {
-	return IsKeyspaceUseKeyspaceLevelGC(CurrentKeyspaceMeta)
+	return IsKeyspaceUseKeyspaceLevelGC(GetGlobalKeyspaceMeta())
 }
 
 // IsKeyspaceUseKeyspaceLevelGC return true if keyspace meta config has "gc_management_type" = "keyspace_level_gc".
@@ -123,10 +125,10 @@ func IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 
 // IsCurrentKeyspaceUseGlobalGC return true if TiDB set 'keyspace-name' and use global gc.
 func IsCurrentKeyspaceUseGlobalGC() bool {
-	if CurrentKeyspaceMeta == nil {
+	if GetGlobalKeyspaceMeta() == nil {
 		return true
 	}
-	if val, ok := CurrentKeyspaceMeta.Config[KeyspaceMetaConfigGCManagementType]; ok {
+	if val, ok := GetGlobalKeyspaceMeta().Config[KeyspaceMetaConfigGCManagementType]; ok {
 		return val == KeyspaceMetaConfigGCManagementTypeGlobalGC
 	}
 	return true
@@ -181,7 +183,9 @@ func InitCurrentKeyspaceMeta() error {
 	}
 	defer pdCli.Close()
 
-	CurrentKeyspaceMeta, err = GetKeyspaceMeta(pdCli, cfg.KeyspaceName)
+	keyspaceMeta, err := GetKeyspaceMeta(pdCli, cfg.KeyspaceName)
+
+	setGlobalKeyspaceMeta(keyspaceMeta)
 	return err
 }
 
@@ -220,4 +224,19 @@ func IsKeyspaceNotExistError(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), pdpb.ErrorType_ENTRY_NOT_FOUND.String())
+}
+
+var globalKeyspaceMeta atomic.Pointer[keyspacepb.KeyspaceMeta]
+
+func GetGlobalKeyspaceMeta() *keyspacepb.KeyspaceMeta {
+	v := globalKeyspaceMeta.Load()
+	if v == nil {
+		log.Fatal("globalKeyspaceMeta is not initialized")
+		return nil
+	}
+	return v
+}
+
+func setGlobalKeyspaceMeta(ks *keyspacepb.KeyspaceMeta) {
+	globalKeyspaceMeta.Store(ks)
 }
