@@ -237,7 +237,7 @@ func createSession(store kv.Storage) sessiontypes.Session {
 		privilege.BindPrivilegeManager(se, nil)
 		se.GetSessionVars().CommonGlobalLoaded = true
 		se.GetSessionVars().InRestrictedSQL = true
-		se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+		se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		return se
 	}
 }
@@ -248,8 +248,8 @@ func (w *GCWorker) GetScope(status string) variable.ScopeFlag {
 }
 
 // Stats returns the server statistics.
-func (w *GCWorker) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{})
+func (w *GCWorker) Stats(vars *variable.SessionVars) (map[string]any, error) {
+	m := make(map[string]any)
 	if v, err := w.loadValueFromSysTable(gcLeaderUUIDKey); err == nil {
 		m[tidbGCLeaderUUID] = v
 	}
@@ -817,7 +817,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		return errors.Trace(err)
 	}
 	// Cache table ids on which placement rules have been GC-ed, to avoid redundantly GC the same table id multiple times.
-	gcPlacementRuleCache := make(map[int64]interface{}, len(ranges))
+	gcPlacementRuleCache := make(map[int64]any, len(ranges))
 
 	logutil.Logger(ctx).Info("start delete ranges", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
@@ -1489,11 +1489,11 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // GC placement rules when the partitions are removed by the GC worker.
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
-func (w *GCWorker) doGCPlacementRules(se sessiontypes.Session, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]interface{}) (err error) {
+func (w *GCWorker) doGCPlacementRules(se sessiontypes.Session, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]any) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
-		args, err1 := json.Marshal([]interface{}{kv.Key{}, []int64{int64(v.(int))}})
+		args, err1 := json.Marshal([]any{kv.Key{}, []int64{int64(v.(int))}})
 		if err1 != nil {
 			return
 		}
@@ -1575,7 +1575,7 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJob", func(v failpoint.Value) {
-		args, err1 := json.Marshal([]interface{}{kv.Key{}, []int64{}, []string{v.(string)}})
+		args, err1 := json.Marshal([]any{kv.Key{}, []int64{}, []string{v.(string)}})
 		if err1 != nil {
 			return
 		}
@@ -1632,8 +1632,8 @@ func getGCRules(ids []int64, rules map[string]*label.Rule) []string {
 	var gcRules []string
 	for _, rule := range rules {
 		find := false
-		for _, d := range rule.Data.([]interface{}) {
-			if r, ok := d.(map[string]interface{}); ok {
+		for _, d := range rule.Data.([]any) {
+			if r, ok := d.(map[string]any); ok {
 				nowRange := fmt.Sprintf("%s%s", r["start_key"], r["end_key"])
 				if _, ok := oldRange[nowRange]; ok {
 					find = true

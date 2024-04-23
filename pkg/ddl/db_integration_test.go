@@ -29,6 +29,7 @@ import (
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -40,9 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -50,7 +49,9 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -72,7 +73,7 @@ func TestCreateTableIfNotExistsLike(t *testing.T) {
 	require.GreaterOrEqual(t, len(warnings), 1)
 	lastWarn := warnings[len(warnings)-1]
 	require.Truef(t, terror.ErrorEqual(infoschema.ErrTableExists, lastWarn.Err), "err %v", lastWarn.Err)
-	require.Equal(t, stmtctx.WarnLevelNote, lastWarn.Level)
+	require.Equal(t, contextutil.WarnLevelNote, lastWarn.Level)
 
 	// Test duplicate create-table without `LIKE` clause
 	tk.MustExec("create table if not exists ct(b bigint, c varchar(60));")
@@ -1172,7 +1173,10 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("alter table test_alter_column alter column d set default null")
 	tk.MustExec("alter table test_alter_column alter column a drop default")
 	tk.MustGetErrCode("insert into test_alter_column set b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
-	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123"))
+	tk.MustGetErrCode("insert into test_alter_column set a = DEFAULT, b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
+	tk.MustGetErrCode("insert into test_alter_column values (DEFAULT, 'd', 'dd', DEFAULT)", errno.ErrNoDefaultForField)
+	tk.MustExec("insert into test_alter_column set a = NULL, b = 'd', c = 'dd'")
+	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123", "<nil>"))
 
 	// for failing tests
 	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
@@ -1604,6 +1608,62 @@ func TestDefaultColumnWithRand(t *testing.T) {
 
 	// use a non-existent function name
 	tk.MustGetErrCode("CREATE TABLE t3 (c int, c1 int default a_function_not_supported_yet());", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
+}
+
+// TestDefaultValueAsExpressions is used for tests that are inconvenient to place in the pkg/tests directory.
+func TestDefaultValueAsExpressions(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
+
+	// date_format
+	tk.MustExec("create table t6 (c int(10), c1 int default (date_format(now(),'%Y-%m-%d %H:%i:%s')))")
+	tk.MustExec("create table t7 (c int(10), c1 date default (date_format(now(),'%Y-%m')))")
+	// Error message like: Error 1292 (22007): Truncated incorrect DOUBLE value: '2024-03-05 16:37:25'.
+	tk.MustGetErrCode("insert into t6(c) values (1)", errno.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("insert into t7(c) values (1)", errno.ErrTruncatedWrongValue)
+
+	// user
+	tk.MustExec("create table t (c int(10), c1 varchar(256) default (upper(substring_index(user(),'@',1))));")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	tk.MustExec("insert into t(c) values (1),(2),(3)")
+	tk.Session().GetSessionVars().User = &auth.UserIdentity{Username: "xyz", Hostname: "localhost"}
+	tk.MustExec("insert into t(c) values (4),(5),(6)")
+	tk.MustExec("insert into t values (7, default)")
+	rows := tk.MustQuery("SELECT c1 from t order by c").Rows()
+	for i, row := range rows {
+		d, ok := row[0].(string)
+		require.True(t, ok)
+		if i < 3 {
+			require.Equal(t, "ROOT", d)
+		} else {
+			require.Equal(t, "XYZ", d)
+		}
+	}
+
+	// replace
+	tk.MustExec("create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')))")
+	// Different UUID values will result in different error code.
+	_, err := tk.Exec("insert into t1(c) values (1)")
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	require.Truef(t, ok, "expect type 'terror.Error', but obtain '%T': %v", originErr, originErr)
+	sqlErr := terror.ToSQLError(tErr)
+	if int(sqlErr.Code) != errno.ErrTruncatedWrongValue {
+		require.Equal(t, errno.ErrDataOutOfRange, int(sqlErr.Code))
+	}
+	// test modify column
+	// The error message has UUID, so put this test here.
+	tk.MustExec("create table t2(c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', '')), index idx(c1));")
+	tk.MustExec("insert into t2(c) values (1),(2),(3);")
+	tk.MustGetErrCode("alter table t2 modify column c1 varchar(30) default 'xx';", errno.WarnDataTruncated)
+	// test add column for enum
+	nowStr := time.Now().Format("2006-01")
+	sql := fmt.Sprintf("alter table t2 add column c3 enum('%v','n')", nowStr) + " default (date_format(now(),'%Y-%m'))"
+	tk.MustExec(sql)
+	tk.MustExec("insert into t2(c) values (4);")
+	tk.MustQuery("select c3 from t2").Check(testkit.Rows(nowStr, nowStr, nowStr, nowStr))
 }
 
 func TestChangingDBCharset(t *testing.T) {
@@ -2547,43 +2607,43 @@ func TestAvoidCreateViewOnLocalTemporaryTable(t *testing.T) {
 
 	checkCreateView := func() {
 		err := tk.ExecToErr("create view v1 as select * from tt1")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v1", "[schema:1146]Table 'test.v1' doesn't exist")
 
 		err = tk.ExecToErr("create view v1 as select * from (select * from tt1) as tt")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v1", "[schema:1146]Table 'test.v1' doesn't exist")
 
 		err = tk.ExecToErr("create view v2 as select * from tt0 union select * from tt1")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		err = tk.ExecToErr("select * from v2")
 		require.Error(t, err)
 		require.Equal(t, "[schema:1146]Table 'test.v2' doesn't exist", err.Error())
 
 		err = tk.ExecToErr("create view v3 as select * from tt0, tt1 where tt0.a = tt1.a")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		err = tk.ExecToErr("select * from v3")
 		require.Error(t, err)
 		require.Equal(t, "[schema:1146]Table 'test.v3' doesn't exist", err.Error())
 
 		err = tk.ExecToErr("create view v4 as select a, (select count(1) from tt1 where tt1.a = tt0.a) as tt1a from tt0")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v4", "[schema:1146]Table 'test.v4' doesn't exist")
 
 		err = tk.ExecToErr("create view v5 as select a, (select count(1) from tt1 where tt1.a = 1) as tt1a from tt0")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v5", "[schema:1146]Table 'test.v5' doesn't exist")
 
 		err = tk.ExecToErr("create view v6 as select * from tt0 where tt0.a=(select max(tt1.b) from tt1)")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v6", "[schema:1146]Table 'test.v6' doesn't exist")
 
 		err = tk.ExecToErr("create view v7 as select * from tt0 where tt0.b=(select max(tt1.b) from tt1 where tt0.a=tt1.a)")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v7", "[schema:1146]Table 'test.v7' doesn't exist")
 
 		err = tk.ExecToErr("create or replace view v0 as select * from tt1")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 	}
 
 	checkCreateView()
@@ -2960,4 +3020,65 @@ func TestOptimizeTable(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 	tk := testkit.NewTestKit(t, store)
 	tk.MustGetErrMsg("optimize table t", "[ddl:8200]OPTIMIZE TABLE is not supported")
+}
+
+func TestIssue52680(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table issue52680 (id bigint primary key auto_increment) auto_id_cache=1;")
+	tk.MustExec("insert into issue52680 values(default),(default);")
+	tk.MustQuery("select * from issue52680").Check(testkit.Rows("1", "2"))
+
+	is := dom.InfoSchema()
+	ti, err := is.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
+	require.NoError(t, err)
+
+	ddlutil.EmulatorGCDisable()
+	defer ddlutil.EmulatorGCEnable()
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	testSteps := []struct {
+		sql    string
+		expect meta.AutoIDGroup
+	}{
+		{sql: "", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
+		{sql: "drop table issue52680", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 0, RandomID: 0}},
+		{sql: "recover table issue52680", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
+	}
+	for _, step := range testSteps {
+		if step.sql != "" {
+			tk.MustExec(step.sql)
+		}
+
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		m := meta.NewMeta(txn)
+		idAcc := m.GetAutoIDAccessors(ti.DBID, ti.ID)
+		ids, err := idAcc.Get()
+		require.NoError(t, err)
+		require.Equal(t, ids, step.expect)
+		txn.Rollback()
+	}
+
+	tk.MustQuery("show table issue52680 next_row_id").Check(testkit.Rows(
+		"test issue52680 id 1 _TIDB_ROWID",
+		"test issue52680 id 3 AUTO_INCREMENT",
+	))
+
+	is = dom.InfoSchema()
+	ti1, err := is.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
+	require.NoError(t, err)
+	require.Equal(t, ti1.ID, ti.ID)
+
+	tk.MustExec("insert into issue52680 values(default);")
+	tk.MustQuery("select * from issue52680").Check(testkit.Rows("1", "2", "3"))
 }

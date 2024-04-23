@@ -64,6 +64,8 @@ func TestInitMetaTable(t *testing.T) {
 
 		metaInTest.ID = metaInMySQL.ID
 		metaInMySQL.UpdateTS = metaInTest.UpdateTS
+		metaInTest.DBID = 0
+		metaInMySQL.DBID = 0
 		require.True(t, reflect.DeepEqual(metaInMySQL, metaInTest))
 	}
 }

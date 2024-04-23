@@ -88,12 +88,12 @@ func (t *topNHeap) Len() int {
 	return t.heapSize
 }
 
-func (t *topNHeap) Push(x interface{}) {
+func (t *topNHeap) Push(x any) {
 	t.rows = append(t.rows, x.(*sortRow))
 	t.heapSize++
 }
 
-func (t *topNHeap) Pop() interface{} {
+func (t *topNHeap) Pop() any {
 	return nil
 }
 

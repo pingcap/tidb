@@ -11,7 +11,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"go.uber.org/zap"
 )
 
@@ -131,6 +131,8 @@ type ExternalStorage interface {
 	Create(ctx context.Context, path string, option *WriterOption) (ExternalFileWriter, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
+	// Close release the resources of the storage.
+	Close()
 }
 
 // ExternalFileReader represents the streaming external file reader.
@@ -190,11 +192,7 @@ func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds boo
 
 // NewWithDefaultOpt creates ExternalStorage with default options.
 func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (ExternalStorage, error) {
-	var opts ExternalStorageOptions
-	if gcs := backend.GetGcs(); gcs != nil {
-		opts.HTTPClient = gcsHttpClientForThroughput()
-	}
-	return New(ctx, backend, &opts)
+	return New(ctx, backend, nil)
 }
 
 // NewFromURL creates an ExternalStorage from URL.

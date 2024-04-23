@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -83,9 +84,9 @@ func TestExplainFor(t *testing.T) {
 	tkRoot.MustQuery("explain analyze select * from t1;")
 	check()
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
-	require.True(t, core.ErrAccessDenied.Equal(err))
+	require.True(t, plannererrors.ErrAccessDenied.Equal(err))
 	err = tkUser.ExecToErr("explain for connection 42")
-	require.True(t, core.ErrNoSuchThread.Equal(err))
+	require.True(t, plannererrors.ErrNoSuchThread.Equal(err))
 
 	tkRootProcess.Plan = nil
 	ps = []*util.ProcessInfo{tkRootProcess}
@@ -378,15 +379,15 @@ func TestIssue28259(t *testing.T) {
 	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 3)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexFullScan.*", res.Rows()[2][0])
+	require.Len(t, res.Rows(), 2)
+	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[1][0])
 
 	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
 		"where col1 between -1696020282760139948 and -2619168038882941276 or col1 < -4004648990067362699;")
-	require.Len(t, res.Rows(), 3)
-	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
-	require.Regexp(t, ".*IndexFullScan.*", res.Rows()[2][0])
+	require.Len(t, res.Rows(), 2)
+	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[1][0])
 	res = tk.MustQuery("explain format = 'brief' select col1 from UK_GCOL_VIRTUAL_18588 use index(UK_COL1) " +
 		"where col1 between 5516958330762833919 and 8551969118506051323 or col1 < 2887622822023883594;")
 	require.Len(t, res.Rows(), 2)
@@ -706,8 +707,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.MustExec("prepare stmt from 'SELECT /*+ USE_INDEX_MERGE(t0, i0, PRIMARY)*/ t0.c0 FROM t0 WHERE t0.c1 OR t0.c0;';")
 	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
-	// The plan contains the generated column, so it can not be cached.
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")

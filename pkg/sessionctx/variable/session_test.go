@@ -189,7 +189,7 @@ func TestSlowLogFormat(t *testing.T) {
 		ColumnStatsLoadStatus: map[int64]string{2: "unInitialized"},
 	}
 
-	copTasks := &stmtctx.CopTasksDetails{
+	copTasks := &execdetails.CopTasksDetails{
 		NumCopTasks:       10,
 		AvgProcessTime:    time.Second,
 		P90ProcessTime:    time.Second * 2,
@@ -300,12 +300,14 @@ func TestSlowLogFormat(t *testing.T) {
 		ExecRetryTime:     5*time.Second + time.Millisecond*100,
 		IsExplicitTxn:     true,
 		IsWriteCacheTable: true,
-		UsedStats:         map[int64]*stmtctx.UsedStatsInfoForTable{1: usedStats1, 2: usedStats2},
+		UsedStats:         &stmtctx.UsedStatsInfo{},
 		ResourceGroupName: "rg1",
 		RRU:               50.0,
 		WRU:               100.56,
 		WaitRUDuration:    134 * time.Millisecond,
 	}
+	logItems.UsedStats.RecordUsedInfo(1, usedStats1)
+	logItems.UsedStats.RecordUsedInfo(2, usedStats2)
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
 
@@ -543,4 +545,17 @@ func TestUserVarConcurrently(t *testing.T) {
 	})
 	wg.Wait()
 	cancel()
+}
+
+func TestSetStatus(t *testing.T) {
+	sv := variable.NewSessionVars(nil)
+	require.True(t, sv.IsAutocommit())
+	sv.SetStatusFlag(mysql.ServerStatusInTrans, true)
+	require.True(t, sv.InTxn())
+	sv.SetStatusFlag(mysql.ServerStatusCursorExists, true)
+	require.True(t, sv.InTxn())
+	sv.SetStatusFlag(mysql.ServerStatusInTrans, false)
+	require.True(t, sv.HasStatusFlag(mysql.ServerStatusCursorExists))
+	require.False(t, sv.InTxn())
+	require.Equal(t, mysql.ServerStatusAutocommit|mysql.ServerStatusCursorExists, sv.Status())
 }

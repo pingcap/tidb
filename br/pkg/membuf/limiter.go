@@ -14,20 +14,26 @@
 
 package membuf
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
+)
 
 // Limiter will block on Acquire if the number it has acquired and not released
 // exceeds the limit.
 type Limiter struct {
-	limit    int
-	mu       sync.Mutex
-	waitNums []int
-	waitChs  []chan struct{}
+	initLimit int
+	limit     int
+	mu        sync.Mutex
+	waitNums  []int
+	waitChs   []chan struct{}
 }
 
 // NewLimiter creates a new Limiter with the given limit.
 func NewLimiter(limit int) *Limiter {
-	return &Limiter{limit: limit}
+	return &Limiter{limit: limit, initLimit: limit}
 }
 
 // Acquire acquires n tokens from the limiter. If the number of tokens acquired
@@ -56,6 +62,15 @@ func (l *Limiter) Release(n int) {
 	l.mu.Lock()
 
 	l.limit += n
+	if l.limit > l.initLimit {
+		log.Error(
+			"limit overflow",
+			zap.Int("limit", l.limit),
+			zap.Int("initLimit", l.initLimit),
+			zap.Stack("stack"),
+		)
+	}
+
 	for len(l.waitNums) > 0 && l.limit >= l.waitNums[0] {
 		l.limit -= l.waitNums[0]
 		close(l.waitChs[0])

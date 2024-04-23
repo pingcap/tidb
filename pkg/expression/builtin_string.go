@@ -32,8 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -192,7 +190,7 @@ type lengthFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *lengthFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -230,7 +228,7 @@ type asciiFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *asciiFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *asciiFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -271,7 +269,7 @@ type concatFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *concatFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -298,12 +296,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		bf.tp.SetFlen(mysql.MaxBlobWidth)
 	}
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinConcatSig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_Concat)
 	return sig, nil
@@ -343,7 +336,7 @@ type concatWSFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *concatWSFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -380,12 +373,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		bf.tp.SetFlen(mysql.MaxBlobWidth)
 	}
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinConcatWSSig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_ConcatWS)
 	return sig, nil
@@ -453,7 +441,7 @@ type leftFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *leftFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *leftFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -538,7 +526,7 @@ type rightFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rightFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *rightFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -624,7 +612,7 @@ type repeatFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *repeatFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *repeatFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -634,11 +622,7 @@ func (c *repeatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	}
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinRepeatSig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_Repeat)
 	return sig, nil
@@ -687,7 +671,7 @@ type lowerFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *lowerFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -755,7 +739,7 @@ type reverseFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *reverseFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -768,7 +752,7 @@ func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	bf.tp.SetFlen(args[0].GetType().GetFlen())
 	addBinFlag(bf.tp)
 	var sig builtinFunc
-	if types.IsBinaryStr(argTp) {
+	if types.IsBinaryStr(argTp) || types.IsTypeBit(argTp) {
 		sig = &builtinReverseSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Reverse)
 	} else {
@@ -824,7 +808,7 @@ type spaceFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *spaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *spaceFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -832,15 +816,11 @@ func (c *spaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinSpaceSig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_Space)
 	return sig, nil
@@ -883,7 +863,7 @@ type upperFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *upperFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -951,7 +931,7 @@ type strcmpFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *strcmpFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *strcmpFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1001,7 +981,7 @@ type replaceFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *replaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *replaceFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1066,7 +1046,7 @@ type convertFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *convertFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1159,7 +1139,7 @@ type substringFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *substringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *substringFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1355,7 +1335,7 @@ type substringIndexFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *substringIndexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *substringIndexFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1435,7 +1415,7 @@ type locateFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *locateFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *locateFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1618,7 +1598,7 @@ type hexFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *hexFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1642,7 +1622,7 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 			return nil, err
 		}
 		bf.tp.SetFlen(args[0].GetType().GetFlen() * 2)
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
 		sig := &builtinHexIntArgSig{bf}
@@ -1697,7 +1677,7 @@ type unhexFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *unhexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *unhexFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1772,7 +1752,7 @@ type trimFunctionClass struct {
 // getFunction sets trim built-in function signature.
 // The syntax of trim in mysql is 'TRIM([{BOTH | LEADING | TRAILING} [remstr] FROM] str), TRIM([remstr FROM] str)',
 // but we wil convert it into trim(str), trim(str, remstr) and trim(str, remstr, direction) in AST.
-func (c *trimFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *trimFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1914,7 +1894,7 @@ type lTrimFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lTrimFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *lTrimFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1954,7 +1934,7 @@ type rTrimFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rTrimFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *rTrimFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -2010,9 +1990,9 @@ func trimRight(str, remstr string) string {
 	}
 }
 
-func getFlen4LpadAndRpad(ctx sessionctx.Context, arg Expression) int {
+func getFlen4LpadAndRpad(ctx BuildContext, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
-		length, isNull, err := constant.EvalInt(ctx, chunk.Row{})
+		length, isNull, err := constant.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			logutil.BgLogger().Error("eval `Flen` for LPAD/RPAD", zap.Error(err))
 		}
@@ -2028,7 +2008,7 @@ type lpadFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *lpadFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -2039,12 +2019,7 @@ func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf.tp.SetFlen(getFlen4LpadAndRpad(ctx, args[1]))
 	addBinFlag(bf.tp)
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
 		sig := &builtinLpadSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Lpad)
@@ -2158,7 +2133,7 @@ type rpadFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *rpadFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -2169,12 +2144,7 @@ func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf.tp.SetFlen(getFlen4LpadAndRpad(ctx, args[1]))
 	addBinFlag(bf.tp)
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
 		sig := &builtinRpadSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Rpad)
@@ -2287,7 +2257,7 @@ type bitLengthFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *bitLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *bitLengthFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -2325,7 +2295,7 @@ type charFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *charFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *charFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -2344,7 +2314,7 @@ func (c *charFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		logutil.BgLogger().Warn(fmt.Sprintf("The last argument in char function must be constant, but got %T", args[len(args)-1]))
 		return nil, errIncorrectArgs
 	}
-	charsetName, isNull, err := args[len(args)-1].EvalString(ctx, chunk.Row{})
+	charsetName, isNull, err := args[len(args)-1].EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -2411,8 +2381,9 @@ func (b *builtinCharSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 	enc := charset.FindEncoding(b.tp.GetCharset())
 	res, err := enc.Transform(nil, dBytes, charset.OpDecode)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		if ctx.GetSessionVars().StrictSQLMode {
+		tc := typeCtx(ctx)
+		tc.AppendWarning(err)
+		if sqlMode(ctx).HasStrictMode() {
 			return "", true, nil
 		}
 	}
@@ -2423,7 +2394,7 @@ type charLengthFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *charLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *charLengthFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if argsErr := c.verifyArgs(args); argsErr != nil {
 		return nil, argsErr
 	}
@@ -2485,7 +2456,7 @@ type findInSetFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *findInSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *findInSetFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -2540,7 +2511,7 @@ type fieldFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *fieldFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *fieldFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -2672,10 +2643,10 @@ type makeSetFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *makeSetFunctionClass) getFlen(ctx sessionctx.Context, args []Expression) int {
+func (c *makeSetFunctionClass) getFlen(ctx BuildContext, args []Expression) int {
 	flen, count := 0, 0
 	if constant, ok := args[0].(*Constant); ok {
-		bits, isNull, err := constant.EvalInt(ctx, chunk.Row{})
+		bits, isNull, err := constant.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if err == nil && !isNull {
 			for i, length := 1, len(args); i < length; i++ {
 				if (bits & (1 << uint(i-1))) != 0 {
@@ -2695,7 +2666,7 @@ func (c *makeSetFunctionClass) getFlen(ctx sessionctx.Context, args []Expression
 	return flen + len(args) - 1 - 1
 }
 
-func (c *makeSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *makeSetFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -2757,7 +2728,7 @@ type octFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *octFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *octFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -2767,7 +2738,7 @@ func (c *octFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		if err != nil {
 			return nil, err
 		}
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
 
@@ -2780,7 +2751,7 @@ func (c *octFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		if err != nil {
 			return nil, err
 		}
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
 		bf.tp.SetFlen(64)
@@ -2858,7 +2829,7 @@ type ordFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *ordFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *ordFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -2916,7 +2887,7 @@ type quoteFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *quoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *quoteFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -2987,7 +2958,7 @@ type binFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *binFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *binFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -2995,7 +2966,7 @@ func (c *binFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)
@@ -3028,7 +2999,7 @@ type eltFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *eltFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *eltFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if argsErr := c.verifyArgs(args); argsErr != nil {
 		return nil, argsErr
 	}
@@ -3086,7 +3057,7 @@ type exportSetFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *exportSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *exportSetFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -3258,7 +3229,7 @@ type formatFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *formatFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *formatFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -3277,7 +3248,7 @@ func (c *formatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
-	charset, colalte := ctx.GetSessionVars().GetCharsetInfo()
+	charset, colalte := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(colalte)
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
@@ -3403,10 +3374,11 @@ func (b *builtinFormatWithLocaleSig) evalString(ctx EvalContext, row chunk.Row) 
 	if err != nil {
 		return "", false, err
 	}
+	tc := typeCtx(ctx)
 	if isNull {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
+		tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
 	} else if !strings.EqualFold(locale, "en_US") { // TODO: support other locales.
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+		tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
 	}
 	locale = "en_US"
 	formatString, err := mysql.GetLocaleFormatFunction(locale)(x, d)
@@ -3438,7 +3410,7 @@ type fromBase64FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *fromBase64FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -3456,12 +3428,7 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		}
 	}
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinFromBase64Sig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_FromBase64)
@@ -3522,7 +3489,7 @@ type toBase64FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *toBase64FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -3530,7 +3497,7 @@ func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 
@@ -3540,12 +3507,7 @@ func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		bf.tp.SetFlen(base64NeededEncodedLength(bf.args[0].GetType().GetFlen()))
 	}
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	sig := &builtinToBase64Sig{bf, maxAllowedPacket}
 	sig.setPbCode(tipb.ScalarFuncSig_ToBase64)
 	return sig, nil
@@ -3632,7 +3594,7 @@ type insertFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *insertFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -3643,12 +3605,7 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
 	addBinFlag(bf.tp)
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
+	maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 	if types.IsBinaryStr(bf.tp) {
 		sig = &builtinInsertSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Insert)
@@ -3765,7 +3722,7 @@ type instrFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *instrFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *instrFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -3847,7 +3804,7 @@ type loadFileFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *loadFileFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *loadFileFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -3855,7 +3812,7 @@ func (c *loadFileFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)
@@ -3941,7 +3898,7 @@ func (c *weightStringFunctionClass) verifyArgs(args []Expression) (weightStringP
 	return padding, length, nil
 }
 
-func (c *weightStringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *weightStringFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	padding, length, err := c.verifyArgs(args)
 	if err != nil {
 		return nil, err
@@ -3963,11 +3920,7 @@ func (c *weightStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if padding == weightStringPaddingNull {
 		sig = &builtinWeightStringNullSig{bf}
 	} else {
-		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
-		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		maxAllowedPacket := ctx.GetEvalCtx().GetMaxAllowedPacket()
 		sig = &builtinWeightStringSig{bf, padding, length, maxAllowedPacket}
 	}
 	return sig, nil
@@ -4036,7 +3989,8 @@ func (b *builtinWeightStringSig) evalString(ctx EvalContext, row chunk.Row) (str
 		lenStr := len(str)
 		if b.length < lenStr {
 			tpInfo := fmt.Sprintf("BINARY(%d)", b.length)
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errTruncatedWrongValue.FastGenByArgs(tpInfo, str))
+			tc := typeCtx(ctx)
+			tc.AppendWarning(errTruncatedWrongValue.FastGenByArgs(tpInfo, str))
 			str = str[:b.length]
 		} else if b.length > lenStr {
 			if uint64(b.length-lenStr) > b.maxAllowedPacket {
@@ -4064,7 +4018,7 @@ type translateFunctionClass struct {
 
 // getFunction sets translate built-in function signature.
 // The syntax of translate in Oracle is 'TRANSLATE(expr, from_string, to_string)'.
-func (c *translateFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *translateFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}

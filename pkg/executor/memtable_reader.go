@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/set"
 	pd "github.com/tikv/pd/client/http"
@@ -166,7 +167,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		err  error
 	}
 	if !hasPriv(sctx, mysql.ConfigPriv) {
-		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
@@ -203,6 +204,12 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), statusAddr)
 				case "tiproxy":
 					url = fmt.Sprintf("%s://%s/api/admin/config?format=json", util.InternalHTTPSchema(), statusAddr)
+				case "ticdc":
+					url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), statusAddr)
+				case "tso":
+					url = fmt.Sprintf("%s://%s/tso/api/v1/config", util.InternalHTTPSchema(), statusAddr)
+				case "scheduling":
+					url = fmt.Sprintf("%s://%s/scheduling/api/v1/config", util.InternalHTTPSchema(), statusAddr)
 				default:
 					ch <- result{err: errors.Errorf("currently we do not support get config from node type: %s(%s)", typ, address)}
 					return
@@ -226,7 +233,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					ch <- result{err: errors.Errorf("request %s failed: %s", url, resp.Status)}
 					return
 				}
-				var nested map[string]interface{}
+				var nested map[string]any
 				if err = json.NewDecoder(resp.Body).Decode(&nested); err != nil {
 					ch <- result{err: errors.Trace(err)}
 					return
@@ -302,11 +309,11 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	case diagnosticspb.ServerInfoType_LoadInfo,
 		diagnosticspb.ServerInfoType_SystemInfo:
 		if !hasPriv(sctx, mysql.ProcessPriv) {
-			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+			return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 		}
 	case diagnosticspb.ServerInfoType_HardwareInfo:
 		if !hasPriv(sctx, mysql.ConfigPriv) {
-			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+			return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 		}
 	}
 	if e.extractor.SkipRequest || e.retrieved {
@@ -318,7 +325,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 		return nil, err
 	}
 	serversInfo = infoschema.FilterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
-	return infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx, serversInfo, e.serverInfoType, true)
+	return infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversInfo, e.serverInfoType, true)
 }
 
 func parseFailpointServerInfo(s string) []infoschema.ServerInfo {
@@ -370,11 +377,11 @@ func (h logResponseHeap) Swap(i, j int) {
 	h[i], h[j] = h[j], h[i]
 }
 
-func (h *logResponseHeap) Push(x interface{}) {
+func (h *logResponseHeap) Push(x any) {
 	*h = append(*h, x.(logStreamResult))
 }
 
-func (h *logResponseHeap) Pop() interface{} {
+func (h *logResponseHeap) Pop() any {
 	old := *h
 	n := len(old)
 	x := old[n-1]
@@ -384,7 +391,7 @@ func (h *logResponseHeap) Pop() interface{} {
 
 func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
-		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
@@ -610,11 +617,11 @@ func (h hotRegionsResponseHeap) Swap(i, j int) {
 	h[i], h[j] = h[j], h[i]
 }
 
-func (h *hotRegionsResponseHeap) Push(x interface{}) {
+func (h *hotRegionsResponseHeap) Push(x any) {
 	*h = append(*h, x.(hotRegionsResult))
 }
 
-func (h *hotRegionsResponseHeap) Pop() interface{} {
+func (h *hotRegionsResponseHeap) Pop() any {
 	old := *h
 	n := len(old)
 	x := old[n-1]
@@ -668,7 +675,7 @@ type HistoryHotRegion struct {
 
 func (e *hotRegionsHistoryRetriver) initialize(_ context.Context, sctx sessionctx.Context) ([]chan hotRegionsResult, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
-		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	pdServers, err := infoschema.GetPDServerInfo(sctx)
 	if err != nil {
@@ -783,8 +790,10 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		RegionCache: tikvStore.GetRegionCache(),
 	}
 	tz := sctx.GetSessionVars().Location()
-	allSchemas := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().AllSchemas()
-	schemas := tikvHelper.FilterMemDBs(allSchemas)
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	allSchemaNames := is.AllSchemaNames()
+	schemas := ensureSchemaTables(is, allSchemaNames)
+	schemas = tikvHelper.FilterMemDBs(schemas)
 	tables := tikvHelper.GetTablesInfoWithKeyRange(schemas)
 	for e.heap.Len() > 0 && len(finalRows) < hotRegionsHistoryBatchSize {
 		minTimeItem := heap.Pop(e.heap).(hotRegionsResult)

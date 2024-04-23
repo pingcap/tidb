@@ -70,7 +70,7 @@ func (w *WaitGroupEnhancedWrapper) checkUnExitedProcess(exit chan struct{}) {
 
 func (w *WaitGroupEnhancedWrapper) check() bool {
 	unexitedProcess := make([]string, 0)
-	w.registerProcess.Range(func(key, value any) bool {
+	w.registerProcess.Range(func(key, _ any) bool {
 		unexitedProcess = append(unexitedProcess, key.(string))
 		return true
 	})
@@ -105,7 +105,7 @@ func (w *WaitGroupEnhancedWrapper) Run(exec func(), label string) {
 // exec is that execute logic function. recoverFn is that handler will be called after recover and before dump stack,
 // passing `nil` means noop.
 // Note that the registered label shouldn't be duplicated.
-func (w *WaitGroupEnhancedWrapper) RunWithRecover(exec func(), recoverFn func(r interface{}), label string) {
+func (w *WaitGroupEnhancedWrapper) RunWithRecover(exec func(), recoverFn func(r any), label string) {
 	w.onStart(label)
 	w.Add(1)
 	go func() {
@@ -158,11 +158,25 @@ func (w *WaitGroupWrapper) Run(exec func()) {
 	}()
 }
 
+// RunWithLog works like Run, but it also logs on panic.
+func (w *WaitGroupWrapper) RunWithLog(exec func()) {
+	w.Add(1)
+	go func() {
+		defer w.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				logutil.BgLogger().Error("panic in wait group", zap.Any("recover", r), zap.Stack("stack"))
+			}
+		}()
+		exec()
+	}()
+}
+
 // RunWithRecover wraps goroutine startup call with force recovery, add 1 to WaitGroup
 // and call done when function return. it will dump current goroutine stack into log if catch any recover result.
 // exec is that execute logic function. recoverFn is that handler will be called after recover and before dump stack,
 // passing `nil` means noop.
-func (w *WaitGroupWrapper) RunWithRecover(exec func(), recoverFn func(r interface{})) {
+func (w *WaitGroupWrapper) RunWithRecover(exec func(), recoverFn func(r any)) {
 	w.Add(1)
 	go func() {
 		defer func() {

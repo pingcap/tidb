@@ -29,16 +29,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	litlog "github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
@@ -46,21 +46,21 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	kvconfig "github.com/tikv/client-go/v2/config"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -95,11 +95,14 @@ const (
 	detachedOption              = "detached"
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
 	cloudStorageURIOption       = "cloud_storage_uri"
+	disablePrecheckOption       = "disable_precheck"
 	// used for test
 	maxEngineSizeOption = "__max_engine_size"
+	forceMergeStep      = "__force_merge_step"
 )
 
 var (
+	// all supported options.
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
 		characterSetOption:          true,
@@ -118,7 +121,9 @@ var (
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
+		forceMergeStep:              false,
 		cloudStorageURIOption:       true,
+		disablePrecheckOption:       false,
 	}
 
 	csvOnlyOptions = map[string]struct{}{
@@ -132,6 +137,11 @@ var (
 		splitFileOption:           {},
 	}
 
+	allowedOptionsOfImportFromQuery = map[string]struct{}{
+		threadOption:          {},
+		disablePrecheckOption: {},
+	}
+
 	// LoadDataReadBlockSize is exposed for test.
 	LoadDataReadBlockSize = int64(config.ReadBlockSize)
 
@@ -143,9 +153,25 @@ var (
 	}
 )
 
-// GetKVStore returns a kv.Storage.
-// kv encoder of physical mode needs it.
-var GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
+// DataSourceType indicates the data source type of IMPORT INTO.
+type DataSourceType string
+
+const (
+	// DataSourceTypeFile represents the data source of IMPORT INTO is file.
+	// exported for test.
+	DataSourceTypeFile DataSourceType = "file"
+	// DataSourceTypeQuery represents the data source of IMPORT INTO is query.
+	DataSourceTypeQuery DataSourceType = "query"
+)
+
+func (t DataSourceType) String() string {
+	return string(t)
+}
+
+var (
+	// NewClientWithContext returns a kv.Client.
+	NewClientWithContext = pd.NewClientWithContext
+)
 
 // FieldMapping indicates the relationship between input field and table column or user variable
 type FieldMapping struct {
@@ -173,7 +199,8 @@ type Plan struct {
 	// after import.
 	DesiredTableInfo *model.TableInfo
 
-	Path   string
+	Path string
+	// only effective when data source is file.
 	Format string
 	// Data interpretation is restrictive if the SQL mode is restrictive and neither
 	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
@@ -199,7 +226,7 @@ type Plan struct {
 
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
-	ThreadCnt             int64
+	ThreadCnt             int
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
@@ -207,12 +234,14 @@ type Plan struct {
 	DisableTiKVImportMode bool
 	MaxEngineSize         config.ByteSize
 	CloudStorageURI       string
+	DisablePrecheck       bool
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
 
 	// todo: remove it when load data code is reverted.
-	InImportInto bool
+	InImportInto   bool
+	DataSourceType DataSourceType
 	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
 	// the user who executes the statement, in the form of user@host
@@ -222,6 +251,8 @@ type Plan struct {
 	IsRaftKV2 bool
 	// total data file size in bytes.
 	TotalFileSize int64
+	// used in tests to force enable merge-step when using global sort.
+	ForceMergeStep bool
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -327,7 +358,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 	}
 
 	return &Plan{
-		DBName: plan.Table.Schema.O,
+		DBName: plan.Table.Schema.L,
 		DBID:   plan.Table.DBInfo.ID,
 
 		Path:                 plan.Path,
@@ -343,11 +374,12 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 		ImportantSysVars: getImportantSysVars(userSctx),
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
+		DataSourceType:         DataSourceTypeFile,
 	}, nil
 }
 
 // NewImportPlan creates a new import into plan.
-func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
+func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
 	var format string
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
@@ -370,7 +402,7 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 	p := &Plan{
 		TableInfo:        tbl.Meta(),
 		DesiredTableInfo: tbl.Meta(),
-		DBName:           plan.Table.Schema.O,
+		DBName:           plan.Table.Schema.L,
 		DBID:             plan.Table.DBInfo.ID,
 
 		Path:           plan.Path,
@@ -384,25 +416,16 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 		InImportInto:           true,
+		DataSourceType:         getDataSourceType(plan),
 		User:                   userSctx.GetSessionVars().User.String(),
 	}
-	if err := p.initOptions(userSctx, plan.Options); err != nil {
+	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
 	}
 	if err := p.initParameters(plan); err != nil {
 		return nil, err
 	}
 	return p, nil
-}
-
-// InitTiKVConfigs initializes some TiKV related configs.
-func (p *Plan) InitTiKVConfigs(ctx context.Context, sctx sessionctx.Context) error {
-	isRaftKV2, err := util.IsRaftKv2(ctx, sctx)
-	if err != nil {
-		return err
-	}
-	p.IsRaftKV2 = isRaftKV2
-	return nil
 }
 
 // ASTArgsFromPlan creates ASTArgs from plan.
@@ -469,8 +492,18 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 	return c, nil
 }
 
+// InitTiKVConfigs initializes some TiKV related configs.
+func (e *LoadDataController) InitTiKVConfigs(ctx context.Context, sctx sessionctx.Context) error {
+	isRaftKV2, err := util.IsRaftKv2(ctx, sctx)
+	if err != nil {
+		return err
+	}
+	e.Plan.IsRaftKV2 = isRaftKV2
+	return nil
+}
+
 func (e *LoadDataController) checkFieldParams() error {
-	if e.Path == "" {
+	if e.DataSourceType == DataSourceTypeFile && e.Path == "" {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
 	if e.InImportInto {
@@ -499,14 +532,14 @@ func (e *LoadDataController) checkFieldParams() error {
 	return nil
 }
 
-func (p *Plan) initDefaultOptions() {
-	// we're using cpu count of current node, not of framework managed nodes,
-	// but it seems more intuitive.
-	threadCnt := cpu.GetCPUCount()
-	threadCnt = int(math.Max(1, float64(threadCnt)*0.5))
+func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
+	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
+	if p.DataSourceType == DataSourceTypeQuery {
+		threadCnt = 2
+	}
 
 	p.Checksum = config.OpLevelRequired
-	p.ThreadCnt = int64(threadCnt)
+	p.ThreadCnt = threadCnt
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
@@ -519,8 +552,12 @@ func (p *Plan) initDefaultOptions() {
 	p.Charset = &v
 }
 
-func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	p.initDefaultOptions()
+func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
+	targetNodeCPUCnt, err := GetTargetNodeCPUCnt(ctx, p.DataSourceType, p.Path)
+	if err != nil {
+		return err
+	}
+	p.initDefaultOptions(targetNodeCPUCnt)
 
 	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {
@@ -544,12 +581,19 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 			}
 		}
 	}
+	if p.DataSourceType == DataSourceTypeQuery {
+		for k := range specifiedOptions {
+			if _, ok := allowedOptionsOfImportFromQuery[k]; !ok {
+				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "import from query")
+			}
+		}
+	}
 
 	optAsString := func(opt *plannercore.LoadDataOpt) (string, error) {
 		if opt.Value.GetType().GetType() != mysql.TypeVarString {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		val, isNull, err2 := opt.Value.EvalString(seCtx, chunk.Row{})
+		val, isNull, err2 := opt.Value.EvalString(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err2 != nil || isNull {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -560,7 +604,7 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		if opt.Value.GetType().GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		val, isNull, err2 := opt.Value.EvalInt(seCtx, chunk.Row{})
+		val, isNull, err2 := opt.Value.EvalInt(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err2 != nil || isNull {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -637,7 +681,7 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		if err != nil || vInt <= 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		p.ThreadCnt = vInt
+		p.ThreadCnt = int(vInt)
 	}
 	if opt, ok := specifiedOptions[maxWriteSpeedOption]; ok {
 		v, err := optAsString(opt)
@@ -698,6 +742,12 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
+	if _, ok := specifiedOptions[disablePrecheckOption]; ok {
+		p.DisablePrecheck = true
+	}
+	if _, ok := specifiedOptions[forceMergeStep]; ok {
+		p.ForceMergeStep = true
+	}
 
 	// when split-file is set, data file will be split into chunks of 256 MiB.
 	// skip_rows should be 0 or 1, we add this restriction to simplify skip_rows
@@ -708,16 +758,23 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
 	}
 
-	p.adjustOptions()
+	p.adjustOptions(targetNodeCPUCnt)
 	return nil
 }
 
-func (p *Plan) adjustOptions() {
+func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
+	limit := targetNodeCPUCnt
+	if p.DataSourceType == DataSourceTypeQuery {
+		// for query, row is produced using 1 thread, the max cpu used is much
+		// lower than import from file, so we set limit to 2*targetNodeCPUCnt.
+		// TODO: adjust after spec is ready.
+		limit *= 2
+	}
 	// max value is cpu-count
-	numCPU := int64(runtime.GOMAXPROCS(0))
-	if p.ThreadCnt > numCPU {
-		log.L().Info("IMPORT INTO thread count is larger than cpu-count, set to cpu-count")
-		p.ThreadCnt = numCPU
+	if p.ThreadCnt > limit {
+		log.L().Info("adjust IMPORT INTO thread count",
+			zap.Int("before", p.ThreadCnt), zap.Int("after", limit))
+		p.ThreadCnt = limit
 	}
 }
 
@@ -747,7 +804,7 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		}
 		setClause = sb.String()
 	}
-	optionMap := make(map[string]interface{}, len(plan.Options))
+	optionMap := make(map[string]any, len(plan.Options))
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
 			val := opt.Value.String()
@@ -988,7 +1045,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		fileNameKey = strings.Trim(u.Path, "/")
 	}
 	// try to find pattern error in advance
-	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(fileNameKey), "")
+	_, err2 = filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), "")
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 			"Glob pattern error: "+err2.Error())
@@ -1001,7 +1058,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	s := e.dataStore
 	var totalSize int64
 	dataFiles := []*mydump.SourceFileMeta{}
-	idx := strings.IndexByte(fileNameKey, '*')
+	// check glob pattern is present in filename.
+	idx := strings.IndexAny(fileNameKey, "*[")
 	// simple path when the path represent one file
 	sourceType := e.getSourceType()
 	if idx == -1 {
@@ -1036,7 +1094,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// when import from server disk, all entries in parent directory should have READ
 		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
-		escapedPath := stringutil.EscapeGlobExceptAsterisk(fileNameKey)
+		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
 		err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				// we have checked in LoadDataExec.Next
@@ -1213,25 +1271,25 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 }
 
 // IsLocalSort returns true if we sort data on local disk.
-func (e *LoadDataController) IsLocalSort() bool {
-	return e.Plan.CloudStorageURI == ""
+func (p *Plan) IsLocalSort() bool {
+	return p.CloudStorageURI == ""
 }
 
 // IsGlobalSort returns true if we sort data on global storage.
-func (e *LoadDataController) IsGlobalSort() bool {
-	return !e.IsLocalSort()
+func (p *Plan) IsGlobalSort() bool {
+	return !p.IsLocalSort()
 }
 
 // CreateColAssignExprs creates the column assignment expressions using session context.
 // RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
 // so we sync it.
-func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]expression.Expression, []stmtctx.SQLWarn, error) {
+func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]expression.Expression, []contextutil.SQLWarn, error) {
 	e.colAssignMu.Lock()
 	defer e.colAssignMu.Unlock()
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
-	allWarnings := []stmtctx.SQLWarn{}
+	allWarnings := []contextutil.SQLWarn{}
 	for _, assign := range e.ColumnAssignments {
-		newExpr, err := expression.RewriteAstExpr(sctx, assign.Expr, nil, nil, false)
+		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), assign.Expr, nil, nil, false)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
 		allWarnings = append(allWarnings, sctx.GetSessionVars().StmtCtx.GetWarnings()...)
@@ -1245,16 +1303,10 @@ func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]ex
 }
 
 func (e *LoadDataController) getBackendWorkerConcurrency() int {
-	// when using global sort, write&ingest step buffers KV data in memory,
 	// suppose cpu:mem ratio 1:2(true in most case), and we assign 1G per concurrency,
 	// so we can use 2 * threadCnt as concurrency. write&ingest step is mostly
 	// IO intensive, so CPU usage is below ThreadCnt in our tests.
-	// The real concurrency used is adjusted in external engine later.
-	// when using local sort, use the default value as lightning.
-	if e.IsGlobalSort() {
-		return int(e.ThreadCnt) * 2
-	}
-	return config.DefaultRangeConcurrency * 2
+	return e.ThreadCnt * 2
 }
 
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
@@ -1279,6 +1331,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		KeyspaceName:                tidb.GetGlobalKeyspaceName(),
 		PausePDSchedulerScope:       config.PausePDSchedulerScopeTable,
 		DisableAutomaticCompactions: true,
+		BlockSize:                   config.DefaultBlockSize,
 	}
 	if e.IsRaftKV2 {
 		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
@@ -1286,35 +1339,23 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 	return backendConfig
 }
 
-// JobImportParam is the param of the job import.
-type JobImportParam struct {
-	Job      *Job
-	Group    *errgroup.Group
-	GroupCtx context.Context
-	// should be closed in the end of the job.
-	Done chan struct{}
+// FullTableName return FQDN of the table.
+func (e *LoadDataController) FullTableName() string {
+	return common.UniqueTable(e.DBName, e.Table.Meta().Name.O)
+}
 
-	Progress *Progress
+func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
+	if p.SelectPlan != nil {
+		return DataSourceTypeQuery
+	}
+	return DataSourceTypeFile
 }
 
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
 	Affected   uint64
-	Warnings   []stmtctx.SQLWarn
+	Warnings   []contextutil.SQLWarn
 	ColSizeMap map[int64]int64
-}
-
-// JobImporter is the interface for importing a job.
-type JobImporter interface {
-	// Param returns the param of the job import.
-	Param() *JobImportParam
-	// Import imports the job.
-	// import should run in routines using param.Group, when import finished, it should close param.Done.
-	// during import, we should use param.GroupCtx, so this method has no context param.
-	Import()
-	// Result returns the result of the job import.
-	Result() JobImportResult
-	io.Closer
 }
 
 // GetMsgFromBRError get msg from BR error.
@@ -1333,6 +1374,28 @@ func GetMsgFromBRError(err error) string {
 		return raw
 	}
 	return raw[:len(raw)-len(berrMsg)-len(": ")]
+}
+
+// GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.
+// target node is current node if it's server-disk import, import from query or disttask is disabled,
+// else it's the node managed by disttask.
+// exported for testing.
+func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path string) (int, error) {
+	if sourceType == DataSourceTypeQuery {
+		return cpu.GetCPUCount(), nil
+	}
+
+	u, err2 := storage.ParseRawURL(path)
+	if err2 != nil {
+		return 0, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			err2.Error())
+	}
+
+	serverDiskImport := storage.IsLocal(u)
+	if serverDiskImport || !variable.EnableDistTask.Load() {
+		return cpu.GetCPUCount(), nil
+	}
+	return handle.GetCPUCountOfManagedNode(ctx)
 }
 
 // TestSyncCh is used in unit test to synchronize the execution.

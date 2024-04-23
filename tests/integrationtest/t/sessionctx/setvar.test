@@ -652,6 +652,14 @@ select /*+ set_var(tidb_opt_ordering_index_selectivity_threshold=1) */ @@tidb_op
 select @@tidb_opt_ordering_index_selectivity_threshold;
 set @@tidb_opt_ordering_index_selectivity_threshold=default;
 select @@tidb_opt_ordering_index_selectivity_threshold;
+select /*+ set_var(tidb_opt_ordering_index_selectivity_ratio=-1) */ @@tidb_opt_ordering_index_selectivity_ratio;
+select @@tidb_opt_ordering_index_selectivity_ratio;
+set @@tidb_opt_ordering_index_selectivity_ratio=default;
+select @@tidb_opt_ordering_index_selectivity_ratio;
+select /*+ set_var(tidb_opt_ordering_index_selectivity_ratio=1) */ @@tidb_opt_ordering_index_selectivity_ratio;
+select @@tidb_opt_ordering_index_selectivity_ratio;
+set @@tidb_opt_ordering_index_selectivity_ratio=default;
+select @@tidb_opt_ordering_index_selectivity_ratio;
 select /*+ set_var(tidb_opt_enable_mpp_shared_cte_execution=0) */ @@tidb_opt_enable_mpp_shared_cte_execution;
 select @@tidb_opt_enable_mpp_shared_cte_execution;
 set @@tidb_opt_enable_mpp_shared_cte_execution=default;
@@ -666,6 +674,16 @@ select @@max_execution_time;
 select /*+ set_var(max_execution_time=100) */ @@max_execution_time;
 # The value is the changed value 1000, not the default value 0.
 select @@max_execution_time;
+select @@tidb_max_chunk_size;
+select /*+ set_var(tidb_max_chunk_size=32) */ @@tidb_max_chunk_size;
+select @@tidb_max_chunk_size;
+select @@tidb_init_chunk_size;
+select /*+ set_var(tidb_init_chunk_size=3) */ @@tidb_init_chunk_size;
+select @@tidb_init_chunk_size;
+select /*+ set_var(tidb_opt_use_invisible_indexes=on) */ @@tidb_opt_use_invisible_indexes;
+select @@tidb_opt_use_invisible_indexes;
+select /*+ set_var(tidb_opt_use_invisible_indexes=off) */ @@tidb_opt_use_invisible_indexes;
+select @@tidb_opt_use_invisible_indexes;
 
 set @@global.max_execution_time=1000;
 connect (conn1,localhost,root,,sessionctx__setvar);

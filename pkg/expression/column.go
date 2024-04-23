@@ -98,7 +98,7 @@ func (col *CorrelatedColumn) EvalInt(ctx EvalContext, row chunk.Row) (int64, boo
 		return 0, true, nil
 	}
 	if col.GetType().Hybrid() {
-		res, err := col.Data.ToInt64(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		res, err := col.Data.ToInt64(typeCtx(ctx))
 		return res, err != nil, err
 	}
 	return col.Data.GetInt64(), false, nil
@@ -158,7 +158,7 @@ func (col *CorrelatedColumn) Equal(_ EvalContext, expr Expression) bool {
 	return col.EqualColumn(expr)
 }
 
-// EqualColumn returns whether two colum is equal
+// EqualColumn returns whether two column is equal
 func (col *CorrelatedColumn) EqualColumn(expr Expression) bool {
 	if cc, ok := expr.(*CorrelatedColumn); ok {
 		return col.Column.EqualColumn(&cc.Column)
@@ -268,7 +268,7 @@ func (col *Column) Equal(_ EvalContext, expr Expression) bool {
 	return col.EqualColumn(expr)
 }
 
-// EqualColumn returns whether two colum is equal
+// EqualColumn returns whether two column is equal
 func (col *Column) EqualColumn(expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		return newCol.UniqueID == col.UniqueID
@@ -390,8 +390,8 @@ const columnPrefix = "Column#"
 
 // String implements Stringer interface.
 func (col *Column) String() string {
-	if col.IsHidden {
-		// A hidden column must be a virtual generated column, we should output its expression.
+	if col.IsHidden && col.VirtualExpr != nil {
+		// A hidden column without virtual expression indicates it's a stored type.
 		return col.VirtualExpr.String()
 	}
 	if col.OrigName != "" {
@@ -430,10 +430,10 @@ func (col *Column) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) 
 			return 0, true, nil
 		}
 		if val.Kind() == types.KindMysqlBit {
-			val, err := val.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
+			val, err := val.GetBinaryLiteral().ToInt(typeCtx(ctx))
 			return int64(val), err != nil, err
 		}
-		res, err := val.ToInt64(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		res, err := val.ToInt64(typeCtx(ctx))
 		return res, err != nil, err
 	}
 	if row.IsNull(col.Index) {

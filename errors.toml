@@ -51,6 +51,11 @@ error = '''
 invalid metafile: %s
 '''
 
+["BR:Common:ErrInvalidRange"]
+error = '''
+invalid restore range
+'''
+
 ["BR:Common:ErrUndefinedDbOrTable"]
 error = '''
 undefined restore databases or tables
@@ -224,11 +229,6 @@ incompatible system table
 ["BR:Restore:ErrRestoreInvalidBackup"]
 error = '''
 invalid backup
-'''
-
-["BR:Restore:ErrRestoreInvalidRange"]
-error = '''
-invalid restore range
 '''
 
 ["BR:Restore:ErrRestoreInvalidRewrite"]
@@ -566,9 +566,19 @@ error = '''
 encode kv error in file %s at offset %d
 '''
 
+["Lightning:Restore:ErrFoundDataConflictRecords"]
+error = '''
+found data conflict records in table %s, primary key is '%s', row data is '%s'
+'''
+
 ["Lightning:Restore:ErrFoundDuplicateKey"]
 error = '''
 found duplicate key '%s', value '%s'
+'''
+
+["Lightning:Restore:ErrFoundIndexConflictRecords"]
+error = '''
+found index conflict records in table %s, index name is '%s', unique key is '%s', primary key is '%s'
 '''
 
 ["Lightning:Restore:ErrInvalidMetaStatus"]
@@ -989,6 +999,11 @@ Partition constant is out of partition function domain
 ["ddl:1564"]
 error = '''
 This partition function is not allowed
+'''
+
+["ddl:1566"]
+error = '''
+Not allowed to use NULL value in VALUES LESS THAN
 '''
 
 ["ddl:1567"]
@@ -1969,6 +1984,11 @@ error = '''
 ["expression:1365"]
 error = '''
 Division by 0
+'''
+
+["expression:1426"]
+error = '''
+Too big precision %d specified for column '%-.192s'. Maximum is %d.
 '''
 
 ["expression:1582"]

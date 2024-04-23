@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statsStorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/tikv/client-go/v2/oracle"
@@ -36,15 +37,17 @@ import (
 func (e *ShowExec) fetchShowStatsExtended() error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
-	dbs := do.InfoSchema().AllSchemas()
+	dbs := do.InfoSchema().AllSchemaNames()
 	for _, db := range dbs {
-		for _, tblInfo := range db.Tables {
+		tables := do.InfoSchema().SchemaTables(db)
+		for _, tblInfo := range tables {
+			tblInfo := tblInfo.Meta()
 			pi := tblInfo.GetPartitionInfo()
 			// Extended statistics for partitioned table is not supported now.
 			if pi != nil {
 				continue
 			}
-			e.appendTableForStatsExtended(db.Name.L, tblInfo, h.GetTableStats(tblInfo))
+			e.appendTableForStatsExtended(db.L, tblInfo, h.GetTableStats(tblInfo))
 		}
 	}
 	return nil
@@ -92,7 +95,7 @@ func (e *ShowExec) appendTableForStatsExtended(dbName string, tbl *model.TableIn
 			statsType = "cardinality"
 			statsVal = item.StringVals
 		}
-		e.appendRow([]interface{}{
+		e.appendRow([]any{
 			dbName,
 			tbl.Name.L,
 			statsName,
@@ -108,24 +111,26 @@ func (e *ShowExec) appendTableForStatsExtended(dbName string, tbl *model.TableIn
 func (e *ShowExec) fetchShowStatsMeta() error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
-	dbs := do.InfoSchema().AllSchemas()
+	dbs := do.InfoSchema().AllSchemaNames()
 	for _, db := range dbs {
-		for _, tbl := range db.Tables {
+		tables := do.InfoSchema().SchemaTables(db)
+		for _, tbl := range tables {
+			tbl := tbl.Meta()
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
 				}
-				e.appendTableForStatsMeta(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
+				e.appendTableForStatsMeta(db.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						e.appendTableForStatsMeta(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+						e.appendTableForStatsMeta(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					e.appendTableForStatsMeta(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+					e.appendTableForStatsMeta(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
 				}
 			}
 		}
@@ -137,18 +142,31 @@ func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string
 	if statsTbl.Pseudo {
 		return
 	}
-	e.appendRow([]interface{}{
-		dbName,
-		tblName,
-		partitionName,
-		e.versionToTime(statsTbl.Version),
-		statsTbl.ModifyCount,
-		statsTbl.RealtimeCount,
-	})
+	if !statsTbl.IsAnalyzed() {
+		e.appendRow([]any{
+			dbName,
+			tblName,
+			partitionName,
+			e.versionToTime(statsTbl.Version),
+			statsTbl.ModifyCount,
+			statsTbl.RealtimeCount,
+			nil,
+		})
+	} else {
+		e.appendRow([]any{
+			dbName,
+			tblName,
+			partitionName,
+			e.versionToTime(statsTbl.Version),
+			statsTbl.ModifyCount,
+			statsTbl.RealtimeCount,
+			e.versionToTime(statsTbl.LastAnalyzeVersion),
+		})
+	}
 }
 
 func (e *ShowExec) appendTableForStatsLocked(dbName, tblName, partitionName string) {
-	e.appendRow([]interface{}{
+	e.appendRow([]any{
 		dbName,
 		tblName,
 		partitionName,
@@ -159,7 +177,7 @@ func (e *ShowExec) appendTableForStatsLocked(dbName, tblName, partitionName stri
 func (e *ShowExec) fetchShowStatsLocked() error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
-	dbs := do.InfoSchema().AllSchemas()
+	dbs := do.InfoSchema().AllSchemaNames()
 
 	type LockedTableInfo struct {
 		dbName        string
@@ -169,22 +187,24 @@ func (e *ShowExec) fetchShowStatsLocked() error {
 	tableInfo := make(map[int64]*LockedTableInfo)
 
 	for _, db := range dbs {
-		for _, tbl := range db.Tables {
+		tables := do.InfoSchema().SchemaTables(db)
+		for _, tbl := range tables {
+			tbl := tbl.Meta()
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
 				}
-				tableInfo[tbl.ID] = &LockedTableInfo{db.Name.O, tbl.Name.O, partitionName}
+				tableInfo[tbl.ID] = &LockedTableInfo{db.O, tbl.Name.O, partitionName}
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						tableInfo[def.ID] = &LockedTableInfo{db.Name.O, tbl.Name.O, def.Name.O}
+						tableInfo[def.ID] = &LockedTableInfo{db.O, tbl.Name.O, def.Name.O}
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					tableInfo[def.ID] = &LockedTableInfo{db.Name.O, tbl.Name.O, def.Name.O}
+					tableInfo[def.ID] = &LockedTableInfo{db.O, tbl.Name.O, def.Name.O}
 				}
 			}
 		}
@@ -215,24 +235,26 @@ func (e *ShowExec) fetchShowStatsLocked() error {
 func (e *ShowExec) fetchShowStatsHistogram() error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
-	dbs := do.InfoSchema().AllSchemas()
+	dbs := do.InfoSchema().AllSchemaNames()
 	for _, db := range dbs {
-		for _, tbl := range db.Tables {
+		tables := do.InfoSchema().SchemaTables(db)
+		for _, tbl := range tables {
+			tbl := tbl.Meta()
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
 				}
-				e.appendTableForStatsHistograms(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
+				e.appendTableForStatsHistograms(db.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						e.appendTableForStatsHistograms(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+						e.appendTableForStatsHistograms(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					e.appendTableForStatsHistograms(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+					e.appendTableForStatsHistograms(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
 				}
 			}
 		}
@@ -262,7 +284,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 
 func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string, isIndex int, hist statistics.Histogram,
 	avgColSize float64, loadStatus string, memUsage statistics.CacheItemMemoryUsage) {
-	e.appendRow([]interface{}{
+	e.appendRow([]any{
 		dbName,
 		tblName,
 		partitionName,
@@ -289,28 +311,30 @@ func (*ShowExec) versionToTime(version uint64) types.Time {
 func (e *ShowExec) fetchShowStatsBuckets() error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
-	dbs := do.InfoSchema().AllSchemas()
+	dbs := do.InfoSchema().AllSchemaNames()
 	for _, db := range dbs {
-		for _, tbl := range db.Tables {
+		tables := do.InfoSchema().SchemaTables(db)
+		for _, tbl := range tables {
+			tbl := tbl.Meta()
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
 				}
-				if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl)); err != nil {
+				if err := e.appendTableForStatsBuckets(db.O, tbl.Name.O, partitionName, h.GetTableStats(tbl)); err != nil {
 					return err
 				}
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
+						if err := e.appendTableForStatsBuckets(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
 							return err
 						}
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
+					if err := e.appendTableForStatsBuckets(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
 						return err
 					}
 				}
@@ -348,28 +372,30 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 func (e *ShowExec) fetchShowStatsTopN() error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
-	dbs := do.InfoSchema().AllSchemas()
+	dbs := do.InfoSchema().AllSchemaNames()
 	for _, db := range dbs {
-		for _, tbl := range db.Tables {
+		tables := do.InfoSchema().SchemaTables(db)
+		for _, tbl := range tables {
+			tbl := tbl.Meta()
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
 				}
-				if err := e.appendTableForStatsTopN(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl)); err != nil {
+				if err := e.appendTableForStatsTopN(db.O, tbl.Name.O, partitionName, h.GetTableStats(tbl)); err != nil {
 					return err
 				}
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						if err := e.appendTableForStatsTopN(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
+						if err := e.appendTableForStatsTopN(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
 							return err
 						}
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					if err := e.appendTableForStatsTopN(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
+					if err := e.appendTableForStatsTopN(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
 						return err
 					}
 				}
@@ -431,7 +457,7 @@ func (e *ShowExec) topNToRows(dbName, tblName, partitionName, colName string, nu
 		if err != nil {
 			return err
 		}
-		e.appendRow([]interface{}{
+		e.appendRow([]any{
 			dbName,
 			tblName,
 			partitionName,
@@ -460,7 +486,7 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		e.appendRow([]interface{}{
+		e.appendRow([]any{
 			dbName,
 			tblName,
 			partitionName,
@@ -480,7 +506,7 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string,
 func (e *ShowExec) fetchShowStatsHealthy() {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
-	dbs := do.InfoSchema().AllSchemas()
+	dbs := do.InfoSchema().AllSchemaNames()
 	var (
 		fieldPatternsLike collate.WildcardPattern
 		fieldFilter       string
@@ -490,27 +516,29 @@ func (e *ShowExec) fetchShowStatsHealthy() {
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 	for _, db := range dbs {
-		if fieldFilter != "" && db.Name.L != fieldFilter {
+		if fieldFilter != "" && db.L != fieldFilter {
 			continue
-		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(db.Name.L) {
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(db.L) {
 			continue
 		}
-		for _, tbl := range db.Tables {
+		tables := do.InfoSchema().SchemaTables(db)
+		for _, tbl := range tables {
+			tbl := tbl.Meta()
 			pi := tbl.GetPartitionInfo()
 			if pi == nil || e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
 				partitionName := ""
 				if pi != nil {
 					partitionName = "global"
 				}
-				e.appendTableForStatsHealthy(db.Name.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
+				e.appendTableForStatsHealthy(db.O, tbl.Name.O, partitionName, h.GetTableStats(tbl))
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						e.appendTableForStatsHealthy(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+						e.appendTableForStatsHealthy(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					e.appendTableForStatsHealthy(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+					e.appendTableForStatsHealthy(db.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
 				}
 			}
 		}
@@ -522,7 +550,7 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 	if !ok {
 		return
 	}
-	e.appendRow([]interface{}{
+	e.appendRow([]any{
 		dbName,
 		tblName,
 		partitionName,
@@ -531,7 +559,8 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 }
 
 func (e *ShowExec) fetchShowHistogramsInFlight() {
-	e.appendRow([]interface{}{statistics.HistogramNeededItems.Length()})
+	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	e.appendRow([]any{statsStorage.CleanFakeItemsForShowHistInFlights(statsHandle)})
 }
 
 func (e *ShowExec) fetchShowAnalyzeStatus(ctx context.Context) error {
@@ -554,7 +583,7 @@ func (e *ShowExec) fetchShowColumnStatsUsage() error {
 	if err != nil {
 		return err
 	}
-	dbs := do.InfoSchema().AllSchemas()
+	dbs := do.InfoSchema().AllSchemaNames()
 
 	appendTableForColumnStatsUsage := func(dbName string, tbl *model.TableInfo, global bool, def *model.PartitionDefinition) {
 		tblID := tbl.ID
@@ -573,7 +602,7 @@ func (e *ShowExec) fetchShowColumnStatsUsage() error {
 			if !ok {
 				continue
 			}
-			row := []interface{}{dbName, tbl.Name.O, partitionName, col.Name.O}
+			row := []any{dbName, tbl.Name.O, partitionName, col.Name.O}
 			if colStatsUsage.LastUsedAt != nil {
 				row = append(row, *colStatsUsage.LastUsedAt)
 			} else {
@@ -589,15 +618,17 @@ func (e *ShowExec) fetchShowColumnStatsUsage() error {
 	}
 
 	for _, db := range dbs {
-		for _, tbl := range db.Tables {
+		tables := do.InfoSchema().SchemaTables(db)
+		for _, tbl := range tables {
+			tbl := tbl.Meta()
 			pi := tbl.GetPartitionInfo()
 			// Though partition tables in static pruning mode don't have global stats, we dump predicate columns of partitions with table ID
 			// rather than partition ID. Hence appendTableForColumnStatsUsage needs to be called for both partition and global in both dynamic
 			// and static pruning mode.
-			appendTableForColumnStatsUsage(db.Name.O, tbl, pi != nil, nil)
+			appendTableForColumnStatsUsage(db.O, tbl, pi != nil, nil)
 			if pi != nil {
 				for i := range pi.Definitions {
-					appendTableForColumnStatsUsage(db.Name.O, tbl, false, &pi.Definitions[i])
+					appendTableForColumnStatsUsage(db.O, tbl, false, &pi.Definitions[i])
 				}
 			}
 		}

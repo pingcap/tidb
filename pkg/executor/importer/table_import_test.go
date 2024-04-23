@@ -21,11 +21,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	tidb "github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -120,8 +121,8 @@ func TestCalculateSubtaskCnt(t *testing.T) {
 					TotalFileSize:   tt.totalSize,
 					CloudStorageURI: tt.cloudStorageURL,
 				},
-				ExecuteNodesCnt: tt.executeNodeCnt,
 			}
+			e.SetExecuteNodeCnt(tt.executeNodeCnt)
 			if got := e.calculateSubtaskCnt(); got != tt.want {
 				t.Errorf("calculateSubtaskCnt() = %v, want %v", got, tt.want)
 			}
@@ -168,8 +169,8 @@ func TestLoadDataControllerGetAdjustedMaxEngineSize(t *testing.T) {
 					TotalFileSize:   tt.totalSize,
 					CloudStorageURI: tt.cloudStorageURL,
 				},
-				ExecuteNodesCnt: tt.executeNodeCnt,
 			}
+			e.SetExecuteNodeCnt(tt.executeNodeCnt)
 			if got := e.getAdjustedMaxEngineSize(); got != tt.want {
 				t.Errorf("getAdjustedMaxEngineSize() = %v, want %v", got, tt.want)
 			}
@@ -177,6 +178,33 @@ func TestLoadDataControllerGetAdjustedMaxEngineSize(t *testing.T) {
 	}
 }
 
-func ChecksumTable(ctx context.Context, executor sessionctx.Context, plan *Plan, logger *zap.Logger) (*local.RemoteChecksum, error) {
-	return checksumTable(ctx, executor, plan, logger)
+type mockPDClient struct {
+	pd.Client
+}
+
+// GetAllStores return fake stores.
+func (c *mockPDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+	return nil, nil
+}
+
+func (c *mockPDClient) Close() {
+}
+
+func TestGetRegionSplitSizeKeys(t *testing.T) {
+	bak := NewClientWithContext
+	t.Cleanup(func() {
+		NewClientWithContext = bak
+	})
+	NewClientWithContext = func(_ context.Context, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
+		return nil, errors.New("mock error")
+	}
+	_, _, err := GetRegionSplitSizeKeys(context.Background())
+	require.ErrorContains(t, err, "mock error")
+
+	NewClientWithContext = func(_ context.Context, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
+		return &mockPDClient{}, nil
+	}
+	_, _, err = GetRegionSplitSizeKeys(context.Background())
+	require.ErrorContains(t, err, "get region split size and keys failed")
+	// no positive case, more complex to mock it
 }

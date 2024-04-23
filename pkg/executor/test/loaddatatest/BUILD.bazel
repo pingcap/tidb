@@ -11,9 +11,9 @@ go_test(
     race = "on",
     shard_count = 11,
     deps = [
-        "//br/pkg/lightning/mydump",
         "//pkg/config",
         "//pkg/executor",
+        "//pkg/lightning/mydump",
         "//pkg/meta/autoid",
         "//pkg/sessionctx",
         "//pkg/testkit",

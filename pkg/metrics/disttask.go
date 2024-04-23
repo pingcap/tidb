@@ -16,7 +16,6 @@ package metrics
 
 import (
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -28,6 +27,7 @@ const (
 	lblTaskType   = "task_type"
 	lblTaskID     = "task_id"
 	lblSubTaskID  = "subtask_id"
+	lblExecID     = "exec_id"
 )
 
 // status for task
@@ -41,12 +41,10 @@ const (
 var (
 	//DistTaskGauge is the gauge of dist task count.
 	DistTaskGauge *prometheus.GaugeVec
-	//DistTaskStarttimeGauge is the gauge of dist task count.
-	DistTaskStarttimeGauge *prometheus.GaugeVec
-	// DistTaskSubTaskCntGauge is the gauge of dist task subtask count.
-	DistTaskSubTaskCntGauge *prometheus.GaugeVec
-	// DistTaskSubTaskStartTimeGauge is the gauge of dist task subtask start time.
-	DistTaskSubTaskStartTimeGauge *prometheus.GaugeVec
+	//DistTaskStartTimeGauge is the gauge of dist task count.
+	DistTaskStartTimeGauge *prometheus.GaugeVec
+	// DistTaskUsedSlotsGauge is the gauge of used slots on executor node.
+	DistTaskUsedSlotsGauge *prometheus.GaugeVec
 )
 
 // InitDistTaskMetrics initializes disttask metrics.
@@ -59,85 +57,38 @@ func InitDistTaskMetrics() {
 			Help:      "Gauge of disttask.",
 		}, []string{lblTaskType, lblTaskStatus})
 
-	DistTaskStarttimeGauge = NewGaugeVec(
+	DistTaskStartTimeGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "disttask",
 			Name:      "start_time",
 			Help:      "Gauge of start_time of disttask.",
 		}, []string{lblTaskType, lblTaskStatus, lblTaskID})
-
-	DistTaskSubTaskCntGauge = NewGaugeVec(
+	DistTaskUsedSlotsGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "disttask",
-			Name:      "subtask_cnt",
-			Help:      "Gauge of subtask count.",
-		}, []string{lblTaskType, lblTaskID, lblTaskStatus})
-
-	DistTaskSubTaskStartTimeGauge = NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "disttask",
-			Name:      "subtask_start_time",
-			Help:      "Gauge of subtask start time.",
-		}, []string{lblTaskType, lblTaskID, lblTaskStatus, lblSubTaskID})
-}
-
-// IncDistTaskSubTaskCnt increases the count of dist task subtask.
-func IncDistTaskSubTaskCnt(subtask *proto.Subtask) {
-	DistTaskSubTaskCntGauge.WithLabelValues(
-		subtask.Type.String(),
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State.String(),
-	).Inc()
-}
-
-// DecDistTaskSubTaskCnt decreases the count of dist task subtask.
-func DecDistTaskSubTaskCnt(subtask *proto.Subtask) {
-	DistTaskSubTaskCntGauge.WithLabelValues(
-		subtask.Type.String(),
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State.String(),
-	).Dec()
-}
-
-// StartDistTaskSubTask sets the start time of dist task subtask.
-func StartDistTaskSubTask(subtask *proto.Subtask) {
-	DistTaskSubTaskStartTimeGauge.WithLabelValues(
-		subtask.Type.String(),
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State.String(),
-		strconv.Itoa(int(subtask.ID)),
-	).SetToCurrentTime()
-}
-
-// EndDistTaskSubTask deletes the start time of dist task subtask.
-func EndDistTaskSubTask(subtask *proto.Subtask) {
-	DistTaskSubTaskStartTimeGauge.DeleteLabelValues(
-		subtask.Type.String(),
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State.String(),
-		strconv.Itoa(int(subtask.ID)),
-	)
+			Name:      "used_slots",
+			Help:      "Gauge of used slots on a executor node.",
+		}, []string{"service_scope"})
 }
 
 // UpdateMetricsForAddTask update metrics when a task is added
-func UpdateMetricsForAddTask(task *proto.Task) {
+func UpdateMetricsForAddTask(task *proto.TaskBase) {
 	DistTaskGauge.WithLabelValues(task.Type.String(), WaitingStatus).Inc()
-	DistTaskStarttimeGauge.WithLabelValues(task.Type.String(), WaitingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
+	DistTaskStartTimeGauge.WithLabelValues(task.Type.String(), WaitingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
 }
 
-// UpdateMetricsForDispatchTask update metrics when a task is added
-func UpdateMetricsForDispatchTask(id int64, taskType proto.TaskType) {
+// UpdateMetricsForScheduleTask update metrics when a task is added
+func UpdateMetricsForScheduleTask(id int64, taskType proto.TaskType) {
 	DistTaskGauge.WithLabelValues(taskType.String(), WaitingStatus).Dec()
-	DistTaskStarttimeGauge.DeleteLabelValues(taskType.String(), WaitingStatus, fmt.Sprint(id))
-	DistTaskStarttimeGauge.WithLabelValues(taskType.String(), SchedulingStatus, fmt.Sprint(id)).SetToCurrentTime()
+	DistTaskStartTimeGauge.DeleteLabelValues(taskType.String(), WaitingStatus, fmt.Sprint(id))
+	DistTaskStartTimeGauge.WithLabelValues(taskType.String(), SchedulingStatus, fmt.Sprint(id)).SetToCurrentTime()
 }
 
 // UpdateMetricsForRunTask update metrics when a task starts running
 func UpdateMetricsForRunTask(task *proto.Task) {
-	DistTaskStarttimeGauge.DeleteLabelValues(task.Type.String(), SchedulingStatus, fmt.Sprint(task.ID))
+	DistTaskStartTimeGauge.DeleteLabelValues(task.Type.String(), SchedulingStatus, fmt.Sprint(task.ID))
 	DistTaskGauge.WithLabelValues(task.Type.String(), SchedulingStatus).Dec()
 	DistTaskGauge.WithLabelValues(task.Type.String(), RunningStatus).Inc()
 }

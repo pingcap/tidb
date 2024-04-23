@@ -1,9 +1,0 @@
-[lightning]
-check-requirements=true
-
-[mydumper.csv]
-header = true
-header-schema-match = true
-
-[tikv-importer]
-duplicate-resolution = 'remove'

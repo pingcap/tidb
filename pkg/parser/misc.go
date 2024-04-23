@@ -29,6 +29,17 @@ func isIdentExtend(ch byte) bool {
 	return ch >= 0x80
 }
 
+// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+func isInCorrectIdentifierName(name string) bool {
+	if len(name) == 0 {
+		return true
+	}
+	if name[len(name)-1] == ' ' {
+		return true
+	}
+	return false
+}
+
 // Initialize a lookup table for isUserVarChar
 var isUserVarCharTable [256]bool
 
@@ -788,8 +799,6 @@ var tokenMap = map[string]int{
 	"TABLES":                   tables,
 	"TABLESAMPLE":              tableSample,
 	"TABLESPACE":               tablespace,
-	"TELEMETRY":                telemetry,
-	"TELEMETRY_ID":             telemetryID,
 	"TEMPORARY":                temporary,
 	"TEMPTABLE":                temptable,
 	"TERMINATED":               terminated,

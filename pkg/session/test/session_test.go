@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -43,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
@@ -65,13 +63,6 @@ func TestSchemaCheckerSQL(t *testing.T) {
 	tk.MustExec(`create table t1 (id int, c int);`)
 	// insert data
 	tk.MustExec(`insert into t values(1, 1);`)
-
-	// The schema version is out of date in the first transaction, but the SQL can be retried.
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk.MustExec(`begin;`)
-	tk1.MustExec(`alter table t add index idx(c);`)
-	tk.MustExec(`insert into t values(2, 2);`)
-	tk.MustExec(`commit;`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
 	atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 1)
@@ -294,7 +285,7 @@ func TestParseWithParams(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	se := tk.Session()
-	exec := se.(sqlexec.RestrictedSQLExecutor)
+	exec := se.GetRestrictedSQLExecutor()
 
 	// test compatibility with ExcuteInternal
 	_, err := exec.ParseWithParams(context.TODO(), "SELECT 4")
@@ -423,7 +414,7 @@ func TestStmtHints(t *testing.T) {
 	val = int64(1) * 1024 * 1024
 	require.True(t, tk.Session().GetSessionVars().MemTracker.CheckBytesLimit(val))
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[util:3126]Hint MEMORY_QUOTA(`3145728`) is ignored as conflicting/duplicated.")
+	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[planner:3126]Hint MEMORY_QUOTA(`3145728`) is ignored as conflicting/duplicated.")
 
 	// Test NO_INDEX_MERGE hint
 	tk.Session().GetSessionVars().SetEnableIndexMerge(true)
@@ -572,52 +563,6 @@ func TestFieldText(t *testing.T) {
 	}
 }
 
-// TestRowLock . See http://dev.mysql.com/doc/refman/5.7/en/commit.html.
-func TestRowLock(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-
-	tk.MustExec("drop table if exists t")
-	txn, err := tk.Session().Txn(true)
-	require.True(t, kv.ErrInvalidTxn.Equal(err))
-	require.False(t, txn.Valid())
-	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
-	tk.MustExec("insert t values (11, 2, 3)")
-	tk.MustExec("insert t values (12, 2, 3)")
-	tk.MustExec("insert t values (13, 2, 3)")
-
-	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk1.MustExec("begin")
-	tk1.MustExec("update t set c2=21 where c1=11")
-
-	tk2.MustExec("begin")
-	tk2.MustExec("update t set c2=211 where c1=11")
-	tk2.MustExec("commit")
-
-	// tk1 will retry and the final value is 21
-	tk1.MustExec("commit")
-
-	// Check the result is correct
-	tk.MustQuery("select c2 from t where c1=11").Check(testkit.Rows("21"))
-
-	tk1.MustExec("begin")
-	tk1.MustExec("update t set c2=21 where c1=11")
-
-	tk2.MustExec("begin")
-	tk2.MustExec("update t set c2=22 where c1=12")
-	tk2.MustExec("commit")
-
-	tk1.MustExec("commit")
-}
-
 func TestMatchIdentity(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -663,31 +608,6 @@ func TestMatchIdentity(t *testing.T) {
 	// FIXME: we *should* match example.com instead
 	// as long as skip-name-resolve is not set (DEFAULT)
 	require.Equal(t, "%", identity.Hostname)
-}
-
-func TestBinaryReadOnly(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (i int key)")
-	id, _, _, err := tk.Session().PrepareStmt("select i from t where i = ?")
-	require.NoError(t, err)
-	id2, _, _, err := tk.Session().PrepareStmt("insert into t values (?)")
-	require.NoError(t, err)
-	tk.MustExec("set autocommit = 0")
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	require.Equal(t, 0, session.GetHistory(tk.Session()).Count())
-	tk.MustExec("insert into t values (1)")
-	require.Equal(t, 1, session.GetHistory(tk.Session()).Count())
-	_, err = tk.Session().ExecutePreparedStmt(context.Background(), id2, expression.Args2Expressions4Test(2))
-	require.NoError(t, err)
-	require.Equal(t, 2, session.GetHistory(tk.Session()).Count())
-	tk.MustExec("commit")
 }
 
 func TestHandleAssertionFailureForPartitionedTable(t *testing.T) {

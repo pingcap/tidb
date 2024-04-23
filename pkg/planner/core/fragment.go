@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -219,7 +220,7 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask,
 	return newTasks
 }
 
-func (f *Fragment) init(p PhysicalPlan) error {
+func (f *Fragment) init(p base.PhysicalPlan) error {
 	switch x := p.(type) {
 	case *PhysicalTableScan:
 		if f.TableScan != nil {
@@ -252,7 +253,7 @@ func (f *Fragment) init(p PhysicalPlan) error {
 // after untwist, there will be two plans in `forest` slice:
 // - ExchangeSender -> Projection (c1) -> TableScan(t)
 // - ExchangeSender -> Projection (c2) -> TableScan(s)
-func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []PhysicalPlan, forest *[]*PhysicalExchangeSender) error {
+func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPlan, forest *[]*PhysicalExchangeSender) error {
 	cur := stack[len(stack)-1]
 	switch x := cur.(type) {
 	case *PhysicalTableScan, *PhysicalExchangeReceiver, *PhysicalCTE: // This should be the leave node.
@@ -330,7 +331,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []PhysicalPlan, fo
 
 func (e *mppTaskGenerator) buildFragments(s *PhysicalExchangeSender) ([]*Fragment, error) {
 	forest := make([]*PhysicalExchangeSender, 0, 1)
-	err := e.untwistPlanAndRemoveUnionAll([]PhysicalPlan{s}, &forest)
+	err := e.untwistPlanAndRemoveUnionAll([]base.PhysicalPlan{s}, &forest)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -427,8 +428,8 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 // flipCTEReader fix the plan tree. In the func generateTasksForCTEReader, we create the plan tree like ParentPlan->CTEConsumer->ExchangeReceiver.
 // The CTEConsumer has no real meaning in MPP's execution. We prune it to make the plan become ParentPlan->ExchangeReceiver.
 // But the Receiver needs a schema since itself doesn't hold the schema. So the final plan become ParentPlan->ExchangeReceiver->CTEConsumer.
-func (f *Fragment) flipCTEReader(currentPlan PhysicalPlan) {
-	newChildren := make([]PhysicalPlan, len(currentPlan.Children()))
+func (f *Fragment) flipCTEReader(currentPlan base.PhysicalPlan) {
+	newChildren := make([]base.PhysicalPlan, len(currentPlan.Children()))
 	for i := 0; i < len(currentPlan.Children()); i++ {
 		child := currentPlan.Children()[i]
 		newChildren[i] = child
@@ -487,7 +488,7 @@ func (e *mppTaskGenerator) addReaderTasksForCTEStorage(storageID int, tasks ...*
 	}
 }
 
-func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
+func partitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
 	columns []*expression.Column, columnNames types.NameSlice) ([]table.PhysicalTable, error) {
 	idxArr, err := PartitionPruning(ctx, tbl, conds, partitionNames, columns, columnNames)
 	if err != nil {
@@ -554,7 +555,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		tbl := tmp.(table.PartitionedTable)
 		if !tiFlashStaticPrune {
 			var partitions []table.PhysicalTable
-			partitions, err = partitionPruning(e.ctx, tbl, ts.PlanPartInfo.PruningConds, ts.PlanPartInfo.PartitionNames, ts.PlanPartInfo.Columns, ts.PlanPartInfo.ColumnNames)
+			partitions, err = partitionPruning(e.ctx.GetPlanCtx(), tbl, ts.PlanPartInfo.PruningConds, ts.PlanPartInfo.PartitionNames, ts.PlanPartInfo.Columns, ts.PlanPartInfo.ColumnNames)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -626,7 +627,7 @@ func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *Physi
 	for i, p := range partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges)
+		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetDistSQLCtx(), []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -638,7 +639,7 @@ func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *Physi
 }
 
 func (e *mppTaskGenerator) constructMPPBuildTaskForNonPartitionTable(tid int64, isCommonHandle bool, splitedRanges []*ranger.Range) (*kv.MPPBuildTasksRequest, error) {
-	kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{tid}, isCommonHandle, splitedRanges)
+	kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetDistSQLCtx(), []int64{tid}, isCommonHandle, splitedRanges)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

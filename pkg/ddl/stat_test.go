@@ -16,13 +16,11 @@ package ddl_test
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"strconv"
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
@@ -32,71 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
-
-func TestDDLStatsInfo(t *testing.T) {
-	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	d := domain.DDL()
-
-	tk := testkit.NewTestKit(t, store)
-	ctx := tk.Session()
-	dbInfo, err := testSchemaInfo(store, "test_stat")
-	require.NoError(t, err)
-	testCreateSchema(t, ctx, d, dbInfo)
-	tblInfo, err := testTableInfo(store, "t", 2)
-	require.NoError(t, err)
-	testCreateTable(t, ctx, d, dbInfo, tblInfo)
-	err = sessiontxn.NewTxn(context.Background(), ctx)
-	require.NoError(t, err)
-
-	m := testGetTable(t, domain, tblInfo.ID)
-	// insert t values (1, 1), (2, 2), (3, 3)
-	_, err = m.AddRecord(ctx, types.MakeDatums(1, 1))
-	require.NoError(t, err)
-	_, err = m.AddRecord(ctx, types.MakeDatums(2, 2))
-	require.NoError(t, err)
-	_, err = m.AddRecord(ctx, types.MakeDatums(3, 3))
-	require.NoError(t, err)
-	ctx.StmtCommit(context.Background())
-	require.NoError(t, ctx.CommitTxn(context.Background()))
-
-	job := buildCreateIdxJob(dbInfo, tblInfo, true, "idx", "c1")
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/checkBackfillWorkerNum", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/checkBackfillWorkerNum"))
-	}()
-
-	ctx = testkit.NewTestKit(t, store).Session()
-	done := make(chan error, 1)
-	go func() {
-		ctx.SetValue(sessionctx.QueryString, "skip")
-		done <- d.DoDDLJob(ctx, job)
-	}()
-
-	exit := false
-	// a copy of ddl.ddlJobReorgHandle
-	ddlJobReorgHandle := "ddl_job_reorg_handle"
-	for !exit {
-		select {
-		case err := <-done:
-			require.NoError(t, err)
-			exit = true
-		case wg := <-ddl.TestCheckWorkerNumCh:
-			varMap, err := d.Stats(nil)
-			wg.Done()
-			require.NoError(t, err)
-			_, err = hex.DecodeString(varMap[ddlJobReorgHandle].(string))
-			require.NoError(t, err)
-		}
-	}
-}
 
 func TestGetDDLInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -108,9 +46,7 @@ func TestGetDDLInfo(t *testing.T) {
 	require.NoError(t, err)
 
 	dbInfo2 := &model.DBInfo{
-		ID:    2,
-		Name:  model.NewCIStr("b"),
-		State: model.StateNone,
+		ID: 2,
 	}
 	job := &model.Job{
 		ID:       1,
@@ -164,7 +100,7 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args: []interface{}{unique, model.NewCIStr(indexName),
+		Args: []any{unique, model.NewCIStr(indexName),
 			[]*ast.IndexPartSpecification{{
 				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
 				Length: types.UnspecifiedLength}}},

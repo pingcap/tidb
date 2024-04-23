@@ -19,8 +19,8 @@ import (
 	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/trace"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/cobra"
 	"sourcegraph.com/sourcegraph/appdash"
 )
@@ -36,7 +36,7 @@ func NewStreamCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			build.LogInfo(build.BR)
-			utils.LogEnvVariables()
+			logutil.LogEnvVariables()
 			task.LogArguments(c)
 			return nil
 		},
@@ -57,7 +57,7 @@ func NewStreamCommand() *cobra.Command {
 		command.Root().HelpFunc()(command, strings)
 	})
 
-	command.Hidden = true
+	command.Hidden = false
 	return command
 }
 

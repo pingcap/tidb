@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -406,7 +407,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		comment := fmt.Sprintf("case:%v sql:%s", i, sql)
 		stmt, err := s.p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		sctx := MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
@@ -420,7 +421,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		for _, f := range tc.flags {
 			flag = flag | f
 		}
-		_, err = logicalOptimize(ctx, flag, p.(LogicalPlan))
+		_, err = logicalOptimize(ctx, flag, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		trace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Logical
 		require.NotNil(t, trace, comment)

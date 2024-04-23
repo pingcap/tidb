@@ -318,14 +318,14 @@ func TestCreateTableWithInfo(t *testing.T) {
 	d := dom.DDL()
 	require.NotNil(t, d)
 	info := []*model.TableInfo{{
-		ID:   42,
+		ID:   42042, // Note, we must ensure the table ID is globally unique!
 		Name: model.NewCIStr("t"),
 	}}
 
 	require.NoError(t, d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), info, ddl.OnExistError, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
 		return false
 	})))
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't'").Check(testkit.Rows("42"))
+	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 't'").Check(testkit.Rows("42042"))
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 
 	var id int64
@@ -637,19 +637,6 @@ func TestLockTables(t *testing.T) {
 	tk.MustGetErrMsg("commit",
 		"previous statement: insert into t1 set a=1: [domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 
-	// Test lock table by other session in transaction and commit with retry.
-	tk.MustExec("unlock tables")
-	tk2.MustExec("unlock tables")
-	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=0")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t1 set a=1")
-	tk2.MustExec("lock tables t1 write")
-	tk.MustGetDBError("commit", infoschema.ErrTableLocked)
-
-	// Test for lock the same table multiple times.
-	tk2.MustExec("lock tables t1 write")
-	tk2.MustExec("lock tables t1 write, t2 read")
-
 	// Test lock tables and drop tables
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
@@ -793,9 +780,9 @@ func TestAddColumn2(t *testing.T) {
 	oldRow, err := tables.RowWithCols(writeOnlyTable, tk.Session(), kv.IntHandle(1), writeOnlyTable.WritableCols())
 	require.NoError(t, err)
 	require.Equal(t, 3, len(oldRow))
-	err = writeOnlyTable.RemoveRecord(tk.Session(), kv.IntHandle(1), oldRow)
+	err = writeOnlyTable.RemoveRecord(tk.Session().GetTableCtx(), kv.IntHandle(1), oldRow)
 	require.NoError(t, err)
-	_, err = writeOnlyTable.AddRecord(tk.Session(), types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
+	_, err = writeOnlyTable.AddRecord(tk.Session().GetTableCtx(), types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	require.NoError(t, err)
 	tk.Session().StmtCommit(ctx)
 	err = tk.Session().CommitTxn(ctx)

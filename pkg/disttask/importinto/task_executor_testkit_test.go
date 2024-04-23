@@ -20,10 +20,10 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -46,10 +46,12 @@ func TestPostProcessStepExecutor(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2), (3, 4)")
 	res := tk.MustQuery("admin checksum table t").Rows()
 	stepMeta := &importinto.PostProcessStepMeta{
-		Checksum: importinto.Checksum{
-			Sum:  uint64(asInt(res[0][2].(string))),
-			KVs:  uint64(asInt(res[0][3].(string))),
-			Size: uint64(asInt(res[0][4].(string))),
+		Checksum: map[int64]importinto.Checksum{
+			-1: {
+				Sum:  uint64(asInt(res[0][2].(string))),
+				KVs:  uint64(asInt(res[0][3].(string))),
+				Size: uint64(asInt(res[0][4].(string))),
+			},
 		},
 	}
 
@@ -68,24 +70,26 @@ func TestPostProcessStepExecutor(t *testing.T) {
 
 	bytes, err := json.Marshal(stepMeta)
 	require.NoError(t, err)
-	executor := importinto.NewPostProcessStepExecutor(1, taskMeta, zap.NewExample())
+	executor := importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 
-	stepMeta.Checksum.Sum += 1
+	tmp := stepMeta.Checksum[-1]
+	tmp.Sum += 1
+	stepMeta.Checksum[-1] = tmp
 	bytes, err = json.Marshal(stepMeta)
 	require.NoError(t, err)
-	executor = importinto.NewPostProcessStepExecutor(1, taskMeta, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.ErrorContains(t, err, "checksum mismatched remote vs local")
 
 	taskMeta.Plan.Checksum = config.OpLevelOptional
-	executor = importinto.NewPostProcessStepExecutor(1, taskMeta, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 
 	taskMeta.Plan.Checksum = config.OpLevelOff
-	executor = importinto.NewPostProcessStepExecutor(1, taskMeta, zap.NewExample())
+	executor = importinto.NewPostProcessStepExecutor(1, store, taskMeta, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
 }

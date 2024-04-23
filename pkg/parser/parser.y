@@ -868,8 +868,6 @@ import (
 	statsLocked                "STATS_LOCKED"
 	statsMeta                  "STATS_META"
 	statsTopN                  "STATS_TOPN"
-	telemetry                  "TELEMETRY"
-	telemetryID                "TELEMETRY_ID"
 	tidb                       "TIDB"
 	tiFlash                    "TIFLASH"
 	topn                       "TOPN"
@@ -1003,6 +1001,7 @@ import (
 	CallStmt                   "CALL statement"
 	IndexAdviseStmt            "INDEX ADVISE statement"
 	ImportIntoStmt             "IMPORT INTO statement"
+	ImportFromSelectStmt       "SELECT statement of IMPORT INTO"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
@@ -1212,6 +1211,7 @@ import (
 	LocalOpt                               "Local opt"
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
+	LowPriorityOpt                         "LOAD DATA low priority option"
 	MaxValPartOpt                          "MAXVALUE partition option"
 	NullPartOpt                            "NULL Partition option"
 	NumLiteral                             "Num/Int/Float/Decimal Literal"
@@ -1546,6 +1546,7 @@ import (
 	EncryptionOpt     "Encryption option 'Y' or 'N'"
 	FirstOrNext       "FIRST or NEXT"
 	RowOrRows         "ROW or ROWS"
+	Replica           "{REPLICA | SLAVE}"
 
 %type	<ident>
 	Identifier                      "identifier or unreserved keyword"
@@ -3951,6 +3952,13 @@ BuiltinFunction:
 		}
 	}
 |	identifier '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args:   $3.([]ast.ExprNode),
+		}
+	}
+|	"REPLACE" '(' ExpressionList ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
@@ -6933,8 +6941,6 @@ TiDBKeyword:
 |	"STATS_HEALTHY"
 |	"STATS_LOCKED"
 |	"HISTOGRAMS_IN_FLIGHT"
-|	"TELEMETRY"
-|	"TELEMETRY_ID"
 |	"TIDB"
 |	"TIFLASH"
 |	"TOPN"
@@ -8787,7 +8793,12 @@ TableName:
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.TableName{Schema: model.NewCIStr($1), Name: model.NewCIStr($3)}
+		schema := $1
+		if isInCorrectIdentifierName(schema) {
+			yylex.AppendError(ErrWrongDBName.GenWithStackByArgs(schema))
+			return 1
+		}
+		$$ = &ast.TableName{Schema: model.NewCIStr(schema), Name: model.NewCIStr($3)}
 	}
 |	'*' '.' Identifier
 	{
@@ -11125,18 +11136,6 @@ AdminStmt:
 			Tp: ast.AdminReloadStatistics,
 		}
 	}
-|	"ADMIN" "SHOW" "TELEMETRY"
-	{
-		$$ = &ast.AdminStmt{
-			Tp: ast.AdminShowTelemetry,
-		}
-	}
-|	"ADMIN" "RESET" "TELEMETRY_ID"
-	{
-		$$ = &ast.AdminStmt{
-			Tp: ast.AdminResetTelemetryID,
-		}
-	}
 |	"ADMIN" "FLUSH" StatementScope "PLAN_CACHE"
 	{
 		$$ = &ast.AdminStmt{
@@ -11353,6 +11352,15 @@ ShowStmt:
 	{
 		$$ = &ast.ShowStmt{
 			Tp: ast.ShowBinlogStatus,
+		}
+	}
+|	"SHOW" Replica "STATUS"
+	// From MySQL 8.0.22, use SHOW REPLICA STATUS in place of SHOW SLAVE STATUS,
+	// which is deprecated from that release. In releases before MySQL 8.0.22,
+	// use SHOW SLAVE STATUS.
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowReplicaStatus,
 		}
 	}
 |	"SHOW" OptFull "PROCESSLIST"
@@ -11830,6 +11838,10 @@ ShowTableAliasOpt:
 		$$ = $2.(*ast.TableName)
 	}
 
+Replica:
+	"REPLICA"
+|	"SLAVE"
+
 FlushStmt:
 	"FLUSH" NoWriteToBinLogAliasOpt FlushOption
 	{
@@ -12126,6 +12138,7 @@ ExplainableStmt:
 		$$ = sel
 	}
 |	AlterTableStmt
+|	ImportIntoStmt
 
 StatementList:
 	Statement
@@ -14319,23 +14332,24 @@ RevokeRoleStmt:
  * for load stmt with format see https://github.com/pingcap/tidb/issues/40499
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit FormatOpt DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
+	"LOAD" "DATA" LowPriorityOpt LocalOpt "INFILE" stringLit FormatOpt DuplicateOpt "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt LoadDataOptionListOpt
 	{
 		x := &ast.LoadDataStmt{
+			LowPriority:        $3.(bool),
 			FileLocRef:         ast.FileLocServerOrRemote,
-			Path:               $5,
-			Format:             $6.(*string),
-			OnDuplicate:        $7.(ast.OnDuplicateKeyHandlingType),
-			Table:              $10.(*ast.TableName),
-			Charset:            $11.(*string),
-			FieldsInfo:         $12.(*ast.FieldsClause),
-			LinesInfo:          $13.(*ast.LinesClause),
-			IgnoreLines:        $14.(*uint64),
-			ColumnsAndUserVars: $15.([]*ast.ColumnNameOrUserVar),
-			ColumnAssignments:  $16.([]*ast.Assignment),
-			Options:            $17.([]*ast.LoadDataOpt),
+			Path:               $6,
+			Format:             $7.(*string),
+			OnDuplicate:        $8.(ast.OnDuplicateKeyHandlingType),
+			Table:              $11.(*ast.TableName),
+			Charset:            $12.(*string),
+			FieldsInfo:         $13.(*ast.FieldsClause),
+			LinesInfo:          $14.(*ast.LinesClause),
+			IgnoreLines:        $15.(*uint64),
+			ColumnsAndUserVars: $16.([]*ast.ColumnNameOrUserVar),
+			ColumnAssignments:  $17.([]*ast.Assignment),
+			Options:            $18.([]*ast.LoadDataOpt),
 		}
-		if $3 != nil {
+		if $4 != nil {
 			x.FileLocRef = ast.FileLocClient
 			// See https://dev.mysql.com/doc/refman/5.7/en/load-data.html#load-data-duplicate-key-handling
 			// If you do not specify IGNORE or REPLACE modifier , then we set default behavior to IGNORE when LOCAL modifier is specified
@@ -14352,6 +14366,15 @@ LoadDataStmt:
 		x.Columns = columns
 
 		$$ = x
+	}
+
+LowPriorityOpt:
+	{
+		$$ = false
+	}
+|	"LOW_PRIORITY"
+	{
+		$$ = true
 	}
 
 FormatOpt:
@@ -14605,6 +14628,54 @@ ImportIntoStmt:
 			Format:             $8.(*string),
 			Options:            $9.([]*ast.LoadDataOpt),
 		}
+	}
+|	"IMPORT" "INTO" TableName ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt "FROM" ImportFromSelectStmt LoadDataOptionListOpt
+	/* LoadDataSetSpecOpt is used to avoid shift/reduce conflict, we don't support it actually */
+	{
+		st := &ast.ImportIntoStmt{
+			Table:              $3.(*ast.TableName),
+			ColumnsAndUserVars: $4.([]*ast.ColumnNameOrUserVar),
+			Select:             $7.(ast.ResultSetNode),
+			Options:            $8.([]*ast.LoadDataOpt),
+		}
+		for _, cu := range st.ColumnsAndUserVars {
+			if cu.ColumnName == nil {
+				yylex.AppendError(yylex.Errorf("Cannot use user variable(%s) in IMPORT INTO FROM SELECT statement.", cu.UserVar.Name))
+				return 1
+			}
+		}
+		if $5.([]*ast.Assignment) != nil {
+			yylex.AppendError(yylex.Errorf("Cannot use SET clause in IMPORT INTO FROM SELECT statement."))
+			return 1
+		}
+		$$ = st
+	}
+
+ImportFromSelectStmt:
+	SelectStmt
+	{
+		$$ = $1
+	}
+|	SetOprStmt
+	{
+		$$ = $1
+	}
+|	SelectStmtWithClause
+	{
+		$$ = $1
+	}
+|	SubSelect
+	{
+		var sel ast.ResultSetNode
+		switch x := $1.(*ast.SubqueryExpr).Query.(type) {
+		case *ast.SelectStmt:
+			x.IsInBraces = true
+			sel = x
+		case *ast.SetOprStmt:
+			x.IsInBraces = true
+			sel = x
+		}
+		$$ = sel.(ast.StmtNode)
 	}
 
 /*********************************************************************

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -69,7 +71,7 @@ func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expre
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}
-	statsTable := statistics.PseudoTable(p.TableInfo, false)
+	statsTable := statistics.PseudoTable(p.TableInfo, false, false)
 	stats := &property.StatsInfo{
 		RowCount:     float64(statsTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, len(p.TableInfo.Columns)),
@@ -115,21 +117,22 @@ func (p *LogicalShowDDLJobs) DeriveStats(_ []*property.StatsInfo, selfSchema *ex
 }
 
 // RecursiveDeriveStats4Test is a exporter just for test.
-func RecursiveDeriveStats4Test(p LogicalPlan) (*property.StatsInfo, error) {
-	return p.recursiveDeriveStats(nil)
+func RecursiveDeriveStats4Test(p base.LogicalPlan) (*property.StatsInfo, error) {
+	return p.RecursiveDeriveStats(nil)
 }
 
 // GetStats4Test is a exporter just for test.
-func GetStats4Test(p LogicalPlan) *property.StatsInfo {
+func GetStats4Test(p base.LogicalPlan) *property.StatsInfo {
 	return p.StatsInfo()
 }
 
-func (p *baseLogicalPlan) recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+// RecursiveDeriveStats implements LogicalPlan interface.
+func (p *baseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
 	childStats := make([]*property.StatsInfo, len(p.children))
 	childSchema := make([]*expression.Schema, len(p.children))
 	cumColGroups := p.self.ExtractColGroups(colGroups)
 	for i, child := range p.children {
-		childProfile, err := child.recursiveDeriveStats(cumColGroups)
+		childProfile, err := child.RecursiveDeriveStats(cumColGroups)
 		if err != nil {
 			return nil, err
 		}
@@ -151,7 +154,7 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 		return p.StatsInfo(), nil
 	}
 	if len(childStats) > 1 {
-		err := ErrInternal.GenWithStack("LogicalPlans with more than one child should implement their own DeriveStats().")
+		err := plannererrors.ErrInternal.GenWithStack("LogicalPlans with more than one child should implement their own DeriveStats().")
 		return nil, err
 	}
 	if p.StatsInfo() != nil {
@@ -175,8 +178,8 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	tbl := ds.tableStats.HistColl
 	ndvs := make([]property.GroupNDV, 0, len(colGroups))
 	for idxID, idx := range tbl.Indices {
-		colsLen := len(tbl.Idx2ColumnIDs[idxID])
-		// tbl.Idx2ColumnIDs may only contain the prefix of index columns.
+		colsLen := len(tbl.Idx2ColUniqueIDs[idxID])
+		// tbl.Idx2ColUniqueIDs may only contain the prefix of index columns.
 		// But it may exceeds the total index since the index would contain the handle column if it's not a unique index.
 		// We append the handle at fillIndexPath.
 		if colsLen < len(idx.Info.Columns) {
@@ -185,7 +188,7 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 			colsLen--
 		}
 		idxCols := make([]int64, colsLen)
-		copy(idxCols, tbl.Idx2ColumnIDs[idxID])
+		copy(idxCols, tbl.Idx2ColUniqueIDs[idxID])
 		slices.Sort(idxCols)
 		for _, g := range colGroups {
 			// We only want those exact matches.
@@ -218,8 +221,8 @@ func init() {
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
 }
 
-// getTblInfoForUsedStatsByPhysicalID get table name, partition name and TableInfo that will be used to record used stats.
-func getTblInfoForUsedStatsByPhysicalID(sctx sessionctx.Context, id int64) (fullName string, tblInfo *model.TableInfo) {
+// getTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable that will be used to record used stats.
+func getTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
 	is := domain.GetDomain(sctx).InfoSchema()
@@ -261,13 +264,14 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 
 	statsRecord := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
 	name, tblInfo := getTblInfoForUsedStatsByPhysicalID(ds.SCtx(), ds.physicalTableID)
-	statsRecord[ds.physicalTableID] = &stmtctx.UsedStatsInfoForTable{
-		Name:          name,
-		TblInfo:       tblInfo,
-		Version:       tableStats.StatsVersion,
-		RealtimeCount: tableStats.HistColl.RealtimeCount,
-		ModifyCount:   tableStats.HistColl.ModifyCount,
-	}
+	statsRecord.RecordUsedInfo(ds.physicalTableID, &stmtctx.UsedStatsInfoForTable{
+		Name:            name,
+		TblInfo:         tblInfo,
+		Version:         tableStats.StatsVersion,
+		RealtimeCount:   tableStats.HistColl.RealtimeCount,
+		ModifyCount:     tableStats.HistColl.ModifyCount,
+		ColAndIdxStatus: ds.statisticTable.ColAndIdxExistenceMap,
+	})
 
 	for _, col := range ds.schema.Columns {
 		tableStats.ColNDVs[col.UniqueID] = cardinality.EstimateColumnNDV(ds.statisticTable, col.ID)
@@ -342,7 +346,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			selected = path
 			break
 		}
-		if path.OnlyPointRange(ds.SCtx()) {
+		if path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()) {
 			if path.IsTablePath() || path.Index.Unique {
 				if path.IsSingleScan {
 					selected = path
@@ -359,7 +363,13 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		for _, uniqueIdx := range uniqueIdxsWithDoubleScan {
 			uniqueIdxAccessCols = append(uniqueIdxAccessCols, uniqueIdx.GetCol2LenFromAccessConds(ds.SCtx()))
 			// Find the unique index with the minimal number of ranges as `uniqueBest`.
-			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) {
+			/*
+				If the number of scan ranges are equal, choose the one with the least table predicates - meaning the unique index with the most index predicates.
+				Because the most index predicates means that it is more likely to fetch 0 index rows.
+				Example in the test "TestPointgetIndexChoosen".
+			*/
+			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) ||
+				(len(uniqueIdx.Ranges) == len(uniqueBest.Ranges) && len(uniqueIdx.TableFilters) < len(uniqueBest.TableFilters)) {
 				uniqueBest = uniqueIdx
 			}
 		}
@@ -463,9 +473,10 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 	// two preprocess here.
 	// 1: PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	// 2: EliminateNoPrecisionCast here can convert query 'cast(c<int> as bigint) = 1' to 'c = 1' to leverage access range.
+	exprCtx := ds.SCtx().GetExprCtx()
 	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i] = expression.PushDownNot(ds.SCtx(), expr)
-		ds.pushedDownConds[i] = expression.EliminateNoPrecisionLossCast(ds.SCtx(), ds.pushedDownConds[i])
+		ds.pushedDownConds[i] = expression.PushDownNot(exprCtx, expr)
+		ds.pushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, ds.pushedDownConds[i])
 	}
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath() {
@@ -517,17 +528,18 @@ func getMinSelectivityFromPaths(paths []*util.AccessPath, totalRowCount float64)
 func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (_ *property.StatsInfo, err error) {
 	ts.Source.initStats(nil)
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	exprCtx := ts.SCtx().GetExprCtx()
 	for i, expr := range ts.AccessConds {
 		// TODO The expressions may be shared by TableScan and several IndexScans, there would be redundant
 		// `PushDownNot` function call in multiple `DeriveStats` then.
-		ts.AccessConds[i] = expression.PushDownNot(ts.SCtx(), expr)
+		ts.AccessConds[i] = expression.PushDownNot(exprCtx, expr)
 	}
 	ts.SetStats(ts.Source.deriveStatsByFilter(ts.AccessConds, nil))
 	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
 	// TODO: support clustered index.
 	if ts.HandleCols != nil {
 		// TODO: restrict mem usage of table ranges.
-		ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessConds, ts.SCtx(), ts.HandleCols.GetCol(0).RetType, 0)
+		ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessConds, ts.SCtx().GetRangerCtx(), ts.HandleCols.GetCol(0).RetType, 0)
 	} else {
 		isUnsigned := false
 		if ts.Source.tableInfo.PKIsHandle {
@@ -546,8 +558,9 @@ func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.S
 // DeriveStats implements LogicalPlan DeriveStats interface.
 func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	is.Source.initStats(nil)
+	exprCtx := is.SCtx().GetExprCtx()
 	for i, expr := range is.AccessConds {
-		is.AccessConds[i] = expression.PushDownNot(is.SCtx(), expr)
+		is.AccessConds[i] = expression.PushDownNot(exprCtx, expr)
 	}
 	is.SetStats(is.Source.deriveStatsByFilter(is.AccessConds, nil))
 	if len(is.AccessConds) == 0 {
@@ -1002,7 +1015,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 	if p.cte.seedPartPhysicalPlan == nil {
 		// Build push-downed predicates.
 		if len(p.cte.pushDownPredicates) > 0 {
-			newCond := expression.ComposeDNFCondition(p.SCtx(), p.cte.pushDownPredicates...)
+			newCond := expression.ComposeDNFCondition(p.SCtx().GetExprCtx(), p.cte.pushDownPredicates...)
 			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.cte.seedPartLogicalPlan.QueryBlockOffset())
 			newSel.SetChildren(p.cte.seedPartLogicalPlan)
 			p.cte.seedPartLogicalPlan = newSel
@@ -1059,4 +1072,27 @@ func (p *LogicalCTETable) DeriveStats(_ []*property.StatsInfo, _ *expression.Sch
 func (p *LogicalSequence) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	p.SetStats(childStats[len(childStats)-1])
 	return p.StatsInfo(), nil
+}
+
+// loadTableStats loads the stats of the table and store it in the statement `UsedStatsInfo` if it didn't exist
+func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) {
+	statsRecord := ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
+	if statsRecord.GetUsedInfo(pid) != nil {
+		return
+	}
+
+	pctx := ctx.GetPlanCtx()
+	tableStats := getStatsTable(pctx, tblInfo, pid)
+	name, _ := getTblInfoForUsedStatsByPhysicalID(pctx, pid)
+	usedStats := &stmtctx.UsedStatsInfoForTable{
+		Name:          name,
+		TblInfo:       tblInfo,
+		RealtimeCount: tableStats.HistColl.RealtimeCount,
+		ModifyCount:   tableStats.HistColl.ModifyCount,
+		Version:       tableStats.Version,
+	}
+	if tableStats.Pseudo {
+		usedStats.Version = statistics.PseudoVersion
+	}
+	statsRecord.RecordUsedInfo(pid, usedStats)
 }

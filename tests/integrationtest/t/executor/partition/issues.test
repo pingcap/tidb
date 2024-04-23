@@ -263,11 +263,15 @@ CREATE TABLE `t` (
   PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`col_51`) PARTITIONS 5;
-insert into t values (9223372036854775807), (9223372036854775808), (9223372036854775809);
+insert into t values (9223372036854775807), (9223372036854775808), (9223372036854775809), (9223372036854775812), (9223372036854775813);
 analyze table t;
 desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
 --sorted_result
 SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
+
+explain select * from t where col_51 between 9223372036854775812 and 9223372036854775813;
+--sorted_result
+select * from t where col_51 between 9223372036854775812 and 9223372036854775813;
 
 drop table if exists t;
 CREATE TABLE `t` (
@@ -328,3 +332,13 @@ explain select * from t where col_29 between -2 and 1;
 --sorted_result
 select * from t where col_29 between -2 and 1;
 
+# TestIssue50427
+explain select * from t where col_29 between -7 and -6;
+--sorted_result
+select * from t where col_29 between -7 and -6;
+
+# TestIssue52198
+create table issue52198 (a int, b int, primary key (b)) partition by hash(b) partitions 5;
+insert into issue52198 values (1,1);
+select space(1), b from issue52198 where b in (1);
+drop table issue52198;

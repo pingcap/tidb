@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -58,17 +59,17 @@ func TestGroupNDVs(t *testing.T) {
 		err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
 		tk.Session().GetSessionVars().PlanColumnID.Store(0)
-		builder, _ := core.NewPlanBuilder().Init(tk.Session(), ret.InfoSchema, hint.NewQBHintHandler(nil))
+		builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err, comment)
-		p, err = core.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(core.LogicalPlan))
+		p, err = core.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
-		lp := p.(core.LogicalPlan)
+		lp := p.(base.LogicalPlan)
 		_, err = core.RecursiveDeriveStats4Test(lp)
 		require.NoError(t, err, comment)
 		var agg *core.LogicalAggregation
 		var join *core.LogicalJoin
-		stack := make([]core.LogicalPlan, 0, 2)
+		stack := make([]base.LogicalPlan, 0, 2)
 		traversed := false
 		for !traversed {
 			switch v := lp.(type) {

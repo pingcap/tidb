@@ -33,9 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable/featuretag/disttask"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -45,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -183,8 +182,8 @@ func TestCreateDropDatabase(t *testing.T) {
 	tk.MustExec("create database drop_test;")
 	tk.MustExec("use drop_test;")
 	tk.MustExec("drop database drop_test;")
-	tk.MustGetDBError("drop table t;", plannercore.ErrNoDB)
-	tk.MustGetDBError("select * from t;", plannercore.ErrNoDB)
+	tk.MustGetDBError("drop table t;", plannererrors.ErrNoDB)
+	tk.MustGetDBError("select * from t;", plannererrors.ErrNoDB)
 
 	tk.MustExecToErr("drop database mysql")
 
@@ -580,7 +579,7 @@ func TestShardRowIDBits(t *testing.T) {
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	maxID := 1<<(64-15-1) - 1
-	alloc := tbl.Allocators(tk.Session()).Get(autoid.RowIDAllocType)
+	alloc := tbl.Allocators(tk.Session().GetTableCtx()).Get(autoid.RowIDAllocType)
 	err = alloc.Rebase(context.Background(), int64(maxID)-1, false)
 	require.NoError(t, err)
 	tk.MustExec("insert into t1 values(1)")
@@ -884,14 +883,14 @@ func TestLoadDDLDistributeVars(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.Equal(t, variable.DefTiDBEnableDistTask, disttask.TiDBEnableDistTask)
 
+	require.Equal(t, variable.DefTiDBEnableDistTask, variable.EnableDistTask.Load())
 	tk.MustGetDBError("set @@global.tidb_enable_dist_task = invalid_val", variable.ErrWrongValueForVar)
-	require.Equal(t, disttask.TiDBEnableDistTask, variable.EnableDistTask.Load())
+	require.Equal(t, variable.DefTiDBEnableDistTask, variable.EnableDistTask.Load())
 	tk.MustExec("set @@global.tidb_enable_dist_task = 'on'")
 	require.Equal(t, true, variable.EnableDistTask.Load())
-	tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_dist_task = %v", disttask.TiDBEnableDistTask))
-	require.Equal(t, disttask.TiDBEnableDistTask, variable.EnableDistTask.Load())
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_dist_task = %v", false))
+	require.Equal(t, false, variable.EnableDistTask.Load())
 }
 
 // this test will change the fail-point `mockAutoIDChange`, so we move it to the `testRecoverTable` suite
@@ -903,7 +902,6 @@ func TestRenameTable(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
-
 	tk.MustExec("drop database if exists rename1")
 	tk.MustExec("drop database if exists rename2")
 	tk.MustExec("drop database if exists rename3")

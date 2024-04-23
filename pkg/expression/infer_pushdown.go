@@ -27,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -80,7 +82,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 	return ret
 }
 
-func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
+func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, storeType kv.StoreType) bool {
 	pbCode := scalarFunc.Function.PbCode()
 	// Check whether this function can be pushed.
 	if unspecified := pbCode <= tipb.ScalarFuncSig_Unspecified; unspecified || !canFuncBePushed(scalarFunc, storeType) {
@@ -94,18 +96,14 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 			storageName = "storage layer"
 		}
 		warnErr := errors.NewNoStackError("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now.")
-		sc := pc.ctx.GetSessionVars().StmtCtx
-		if sc.InExplainStmt {
-			sc.AppendWarning(warnErr)
-		} else {
-			sc.AppendExtraWarning(warnErr)
-		}
+
+		ctx.AppendWarning(warnErr)
 		return false
 	}
 	canEnumPush := canEnumPushdownPreliminarily(scalarFunc)
 	// Check whether all of its parameters can be pushed.
 	for _, arg := range scalarFunc.GetArgs() {
-		if !canExprPushDown(arg, pc, storeType, canEnumPush) {
+		if !canExprPushDown(ctx, arg, storeType, canEnumPush) {
 			return false
 		}
 	}
@@ -121,42 +119,34 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 	return true
 }
 
-func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
+func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreType, canEnumPush bool) bool {
+	pc := ctx.PbConverter()
 	if storeType == kv.TiFlash {
-		sc := pc.ctx.GetSessionVars().StmtCtx
 		switch expr.GetType().GetType() {
 		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 			if expr.GetType().GetType() == mysql.TypeEnum && canEnumPush {
 				break
 			}
 			warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
-			if sc.InExplainStmt {
-				sc.AppendWarning(warnErr)
-			} else {
-				sc.AppendExtraWarning(warnErr)
-			}
+			ctx.AppendWarning(warnErr)
 			return false
 		case mysql.TypeNewDecimal:
 			if !expr.GetType().IsDecimalValid() {
 				warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
-				if sc.InExplainStmt {
-					sc.AppendWarning(warnErr)
-				} else {
-					sc.AppendExtraWarning(warnErr)
-				}
+				ctx.AppendWarning(warnErr)
 				return false
 			}
 		}
 	}
 	switch x := expr.(type) {
 	case *CorrelatedColumn:
-		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column) != nil
+		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column, true) != nil
 	case *Constant:
 		return pc.conOrCorColToPBExpr(expr) != nil
 	case *Column:
-		return pc.columnToPBExpr(x) != nil
+		return pc.columnToPBExpr(x, true) != nil
 	case *ScalarFunction:
-		return canScalarFuncPushDown(x, pc, storeType)
+		return canScalarFuncPushDown(ctx, x, storeType)
 	}
 	return false
 }
@@ -182,7 +172,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, ast.Mod, ast.IntDiv,
 
 		// math functions.
-		ast.Ceil, ast.Ceiling, ast.Floor, ast.Sqrt, ast.Sign, ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Exp, ast.Pow,
+		ast.Ceil, ast.Ceiling, ast.Floor, ast.Sqrt, ast.Sign, ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Exp, ast.Pow, ast.Power,
 
 		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 		// open the following switchers if we implement them in coprocessor via `cmath`
@@ -205,8 +195,8 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
-		ast.JSONInsert /*ast.JSONReplace,*/, ast.JSONRemove, ast.JSONLength,
-		ast.JSONUnquote, ast.JSONContains, ast.JSONValid, ast.JSONMemberOf,
+		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONLength, ast.JSONMergePatch,
+		ast.JSONUnquote, ast.JSONContains, ast.JSONValid, ast.JSONMemberOf, ast.JSONArrayAppend,
 
 		// date functions.
 		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
@@ -274,7 +264,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.LastDay, ast.WeekOfYear, ast.ToSeconds,
 		ast.FromDays, ast.ToDays,
 
-		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
+		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Power, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
 		ast.JSONLength, ast.JSONDepth, ast.JSONExtract, ast.JSONUnquote, ast.JSONArray, ast.JSONContainsPath, ast.JSONValid, ast.JSONKeys,
 		ast.Repeat, ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
@@ -318,7 +308,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CastStringAsInt /*, tipb.ScalarFuncSig_CastDurationAsInt, tipb.ScalarFuncSig_CastJsonAsInt*/ :
 			// TiFlash cast only support cast to Int64 or the source type is the same as the target type
 			return (sourceType.GetType() == retType.GetType() && mysql.HasUnsignedFlag(sourceType.GetFlag()) == mysql.HasUnsignedFlag(retType.GetFlag())) || retType.GetType() == mysql.TypeLonglong
-		case tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastStringAsReal, tipb.ScalarFuncSig_CastTimeAsReal: /*, tipb.ScalarFuncSig_CastDecimalAsReal,
+		case tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastStringAsReal, tipb.ScalarFuncSig_CastTimeAsReal, tipb.ScalarFuncSig_CastDecimalAsReal: /*
 			  tipb.ScalarFuncSig_CastDurationAsReal, tipb.ScalarFuncSig_CastJsonAsReal*/
 			// TiFlash cast only support cast to Float64 or the source type is the same as the target type
 			return sourceType.GetType() == retType.GetType() || retType.GetType() == mysql.TypeDouble
@@ -427,11 +417,89 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 	return true
 }
 
+// PushDownContext is the context used for push down expressions
+type PushDownContext struct {
+	evalCtx           EvalContext
+	client            kv.Client
+	warnHandler       contextutil.WarnAppender
+	groupConcatMaxLen uint64
+}
+
+type pushDownWarnHandler struct {
+	inExplainStmt      bool
+	appendWarning      func(err error)
+	appendExtraWarning func(err error)
+}
+
+func (h *pushDownWarnHandler) AppendWarning(err error) {
+	if h.inExplainStmt {
+		h.appendWarning(err)
+	} else {
+		h.appendExtraWarning(err)
+	}
+}
+
+// NewPushDownContext returns a new PushDownContext
+func NewPushDownContext(evalCtx EvalContext, client kv.Client, inExplainStmt bool, appendWarning func(err error), appendExtraWarning func(err error), groupConcatMaxLen uint64) PushDownContext {
+	var warnHandler contextutil.WarnAppender
+	if appendWarning != nil && appendExtraWarning != nil {
+		warnHandler = &pushDownWarnHandler{
+			inExplainStmt:      inExplainStmt,
+			appendWarning:      appendWarning,
+			appendExtraWarning: appendExtraWarning,
+		}
+	}
+
+	return PushDownContext{
+		evalCtx:           evalCtx,
+		client:            client,
+		warnHandler:       warnHandler,
+		groupConcatMaxLen: groupConcatMaxLen,
+	}
+}
+
+// NewPushDownContextFromSessionVars builds a new PushDownContext from session vars.
+func NewPushDownContextFromSessionVars(evalCtx EvalContext, sessVars *variable.SessionVars, client kv.Client) PushDownContext {
+	return NewPushDownContext(
+		evalCtx,
+		client,
+		sessVars.StmtCtx.InExplainStmt,
+		sessVars.StmtCtx.AppendWarning,
+		sessVars.StmtCtx.AppendExtraWarning,
+		sessVars.GroupConcatMaxLen)
+}
+
+// EvalCtx returns the eval context
+func (ctx PushDownContext) EvalCtx() EvalContext {
+	return ctx.evalCtx
+}
+
+// PbConverter returns a new PbConverter
+func (ctx PushDownContext) PbConverter() PbConverter {
+	return NewPBConverter(ctx.client, ctx.evalCtx)
+}
+
+// Client returns the kv client
+func (ctx PushDownContext) Client() kv.Client {
+	return ctx.client
+}
+
+// GetGroupConcatMaxLen returns the max length of group_concat
+func (ctx PushDownContext) GetGroupConcatMaxLen() uint64 {
+	return ctx.groupConcatMaxLen
+}
+
+// AppendWarning appends a warning to be handled by the internal handler
+func (ctx PushDownContext) AppendWarning(err error) {
+	if ctx.warnHandler != nil {
+		ctx.warnHandler.AppendWarning(err)
+	}
+}
+
 // PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprsWithExtraInfo(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
-	pc := PbConverter{ctx: ctx, client: client}
+func PushDownExprsWithExtraInfo(ctx PushDownContext, exprs []Expression, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
 	for _, expr := range exprs {
-		if canExprPushDown(expr, pc, storeType, canEnumPush) {
+		if canExprPushDown(ctx, expr, storeType, canEnumPush) {
 			pushed = append(pushed, expr)
 		} else {
 			remained = append(remained, expr)
@@ -441,19 +509,19 @@ func PushDownExprsWithExtraInfo(ctx EvalContext, exprs []Expression, client kv.C
 }
 
 // PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprs(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
-	return PushDownExprsWithExtraInfo(ctx, exprs, client, storeType, false)
+func PushDownExprs(ctx PushDownContext, exprs []Expression, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
+	return PushDownExprsWithExtraInfo(ctx, exprs, storeType, false)
 }
 
 // CanExprsPushDownWithExtraInfo return true if all the expr in exprs can be pushed down
-func CanExprsPushDownWithExtraInfo(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) bool {
-	_, remained := PushDownExprsWithExtraInfo(ctx, exprs, client, storeType, canEnumPush)
+func CanExprsPushDownWithExtraInfo(ctx PushDownContext, exprs []Expression, storeType kv.StoreType, canEnumPush bool) bool {
+	_, remained := PushDownExprsWithExtraInfo(ctx, exprs, storeType, canEnumPush)
 	return len(remained) == 0
 }
 
 // CanExprsPushDown return true if all the expr in exprs can be pushed down
-func CanExprsPushDown(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
-	return CanExprsPushDownWithExtraInfo(ctx, exprs, client, storeType, false)
+func CanExprsPushDown(ctx PushDownContext, exprs []Expression, storeType kv.StoreType) bool {
+	return CanExprsPushDownWithExtraInfo(ctx, exprs, storeType, false)
 }
 
 func storeTypeMask(storeType kv.StoreType) uint32 {

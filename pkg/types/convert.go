@@ -754,7 +754,7 @@ func getValidFloatPrefix(ctx Context, s string, isFuncCast bool) (valid string, 
 }
 
 // ToString converts an interface to a string.
-func ToString(value interface{}) (string, error) {
+func ToString(value any) (string, error) {
 	switch v := value.(type) {
 	case bool:
 		if v {

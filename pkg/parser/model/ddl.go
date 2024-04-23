@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 )
 
@@ -454,6 +455,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
 		TraceInfo:       parentJob.TraceInfo,
+		LocalMode:       parentJob.LocalMode,
 	}
 }
 
@@ -558,6 +560,13 @@ type Job struct {
 
 	// CDCWriteSource indicates the source of CDC write.
 	CDCWriteSource uint64 `json:"cdc_write_source"`
+
+	// LocalMode indicates whether the job is running in local TiDB.
+	// Only happens when tidb_enable_fast_ddl = on
+	LocalMode bool `json:"local_mode"`
+
+	// SQLMode for executing DDL query.
+	SQLMode mysql.SQLMode `json:"sql_mode"`
 }
 
 // InvolvingSchemaInfo returns the schema info involved in the job.
@@ -732,8 +741,8 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, LocalMode: %t",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.LocalMode)
 	if job.ReorgMeta != nil {
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))

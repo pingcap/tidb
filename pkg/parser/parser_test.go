@@ -504,8 +504,6 @@ func TestAdminStmt(t *testing.T) {
 		{"admin capture bindings", true, "ADMIN CAPTURE BINDINGS"},
 		{"admin evolve bindings", true, "ADMIN EVOLVE BINDINGS"},
 		{"admin reload bindings", true, "ADMIN RELOAD BINDINGS"},
-		{"admin show telemetry", true, "ADMIN SHOW TELEMETRY"},
-		{"admin reset telemetry_id", true, "ADMIN RESET TELEMETRY_ID"},
 		// This case would be removed once TiDB PR to remove ADMIN RELOAD STATISTICS is merged.
 		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
 		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
@@ -1152,7 +1150,7 @@ AAAAAAAAAAAA5gm5Mg==
 		{"query watch remove", false, ""},
 
 		// for issue 34325, "replace into" with hints
-		{"replace /*+ SET_VAR(sql_mode='ALLOW_INVALID_DATES') */ into t values ('2004-04-31');", true, "REPLACE /*+ SET_VAR(sql_mode = ALLOW_INVALID_DATES)*/ INTO `t` VALUES (_UTF8MB4'2004-04-31')"},
+		{"replace /*+ SET_VAR(sql_mode='ALLOW_INVALID_DATES') */ into t values ('2004-04-31');", true, "REPLACE /*+ SET_VAR(sql_mode = 'ALLOW_INVALID_DATES')*/ INTO `t` VALUES (_UTF8MB4'2004-04-31')"},
 	}
 	RunTest(t, table, false)
 }
@@ -1278,6 +1276,8 @@ func TestDBAStmt(t *testing.T) {
 		{"show backups where start_time > now() - interval 10 hour", true, "SHOW BACKUPS WHERE `start_time`>DATE_SUB(NOW(), INTERVAL 10 HOUR)"},
 		{"show backup", false, ""},
 		{"show restore", false, ""},
+		{"show replica status", true, "SHOW REPLICA STATUS"},
+		{"show slave status", true, "SHOW REPLICA STATUS"},
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
@@ -2947,6 +2947,21 @@ func TestDDL(t *testing.T) {
 		{"create table t (d date default (current_date()))", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
 		{"create table t (d date default (curdate()))", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
 		{"create table t (d date default curdate())", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default current_date())", true, "CREATE TABLE `t` (`d` DATE DEFAULT CURRENT_DATE())"},
+		{"create table t (d date default date_format(now(),'%Y-%m'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m'))"},
+		{"create table t (d date default (date_format(now(),'%Y-%m')))", true, "CREATE TABLE `t` (`d` DATE DEFAULT DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m'))"},
+		{"create table t (d date default date_format(now(),'%Y-%m-%d'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d'))"},
+		{"create table t (d date default date_format(now(),'%Y-%m-%d %H.%i.%s'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d %H.%i.%s'))"},
+		{"create table t (d date default date_format(now(),'%Y-%m-%d %H:%i:%s'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT DATE_FORMAT(NOW(), _UTF8MB4'%Y-%m-%d %H:%i:%s'))"},
+		{"create table t (d date default date_format(now(),'%b %d %Y %h:%i %p'))", true, "CREATE TABLE `t` (`d` DATE DEFAULT DATE_FORMAT(NOW(), _UTF8MB4'%b %d %Y %h:%i %p'))"},
+		{"create table t (a varchar(32) default (replace(upper(uuid()), '-', '')))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT REPLACE(UPPER(UUID()), _UTF8MB4'-', _UTF8MB4''))"},
+		{"create table t (a varchar(32) default replace(upper(uuid()), '-', ''))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT REPLACE(UPPER(UUID()), _UTF8MB4'-', _UTF8MB4''))"},
+		{"create table t (a varchar(32) default (replace(convert(upper(uuid()) using utf8mb4), '-', '')))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT REPLACE(CONVERT(UPPER(UUID()) USING 'utf8mb4'), _UTF8MB4'-', _UTF8MB4''))"},
+		{"create table t (a varchar(32) default replace(convert(upper(uuid()) using utf8mb4), '-', ''))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT REPLACE(CONVERT(UPPER(UUID()) USING 'utf8mb4'), _UTF8MB4'-', _UTF8MB4''))"},
+		{"create table t (a int default upper(substring_index(user(),'@',1)))", true, "CREATE TABLE `t` (`a` INT DEFAULT UPPER(SUBSTRING_INDEX(USER(), _UTF8MB4'@', 1)))"},
+		{"create table t (a int default (upper(substring_index(user(),'@',1))))", true, "CREATE TABLE `t` (`a` INT DEFAULT UPPER(SUBSTRING_INDEX(USER(), _UTF8MB4'@', 1)))"},
+		{"create table t (a varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d')))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT STR_TO_DATE(_UTF8MB4'1980-01-01', _UTF8MB4'%Y-%m-%d'))"},
+		{"create table t (a varchar(32) default str_to_date('1980-01-01','%Y-%m-%d'))", true, "CREATE TABLE `t` (`a` VARCHAR(32) DEFAULT STR_TO_DATE(_UTF8MB4'1980-01-01', _UTF8MB4'%Y-%m-%d'))"},
 
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
@@ -3960,6 +3975,12 @@ func TestErrorMsg(t *testing.T) {
 
 	_, _, err = p.Parse("create table t(f_year year(5))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", "", "")
 	require.EqualError(t, err, "[parser:1818]Supports only YEAR or YEAR(4) column")
+
+	_, _, err = p.Parse("create table ``.t (id int);", "", "")
+	require.EqualError(t, err, "[parser:1102]Incorrect database name ''")
+
+	_, _, err = p.Parse("create table ` `.t (id int);", "", "")
+	require.EqualError(t, err, "[parser:1102]Incorrect database name ' '")
 
 	_, _, err = p.Parse("select ifnull(a,0) & ifnull(a,0) like '55' ESCAPE '\\\\a' from t;", "", "")
 	require.EqualError(t, err, "[parser:1210]Incorrect arguments to ESCAPE")

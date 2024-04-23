@@ -31,7 +31,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -134,7 +136,7 @@ func TestWeakConsistencyRead(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, c int, c1 int, unique index i(c))")
 
-	execAndCheck := func(sql string, rows [][]interface{}, isolationLevel kv.IsoLevel) {
+	execAndCheck := func(sql string, rows [][]any, isolationLevel kv.IsoLevel) {
 		ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 			require.Equal(t, req.IsolationLevel, isolationLevel)
 		})
@@ -176,21 +178,21 @@ func TestWeakConsistencyRead(t *testing.T) {
 }
 
 func TestMarshalSQLWarn(t *testing.T) {
-	warns := []stmtctx.SQLWarn{
+	warns := []contextutil.SQLWarn{
 		{
-			Level: stmtctx.WarnLevelError,
+			Level: contextutil.WarnLevelError,
 			Err:   errors.New("any error"),
 		},
 		{
-			Level: stmtctx.WarnLevelError,
+			Level: contextutil.WarnLevelError,
 			Err:   errors.Trace(errors.New("any error")),
 		},
 		{
-			Level: stmtctx.WarnLevelWarning,
+			Level: contextutil.WarnLevelWarning,
 			Err:   variable.ErrUnknownSystemVar.GenWithStackByArgs("unknown"),
 		},
 		{
-			Level: stmtctx.WarnLevelWarning,
+			Level: contextutil.WarnLevelWarning,
 			Err:   errors.Trace(variable.ErrUnknownSystemVar.GenWithStackByArgs("unknown")),
 		},
 	}
@@ -207,7 +209,7 @@ func TestMarshalSQLWarn(t *testing.T) {
 	// We only need that the results of `show warnings` are the same.
 	bytes, err := json.Marshal(warns)
 	require.NoError(t, err)
-	var newWarns []stmtctx.SQLWarn
+	var newWarns []contextutil.SQLWarn
 	err = json.Unmarshal(bytes, &newWarns)
 	require.NoError(t, err)
 	tk.Session().GetSessionVars().StmtCtx.SetWarnings(newWarns)
@@ -299,7 +301,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 }
 
 func TestStmtHintsClone(t *testing.T) {
-	hints := stmtctx.StmtHints{}
+	hints := hint.StmtHints{}
 	value := reflect.ValueOf(&hints).Elem()
 	for i := 0; i < value.NumField(); i++ {
 		field := value.Field(i)
@@ -331,7 +333,7 @@ func TestNewStmtCtx(t *testing.T) {
 	sc.AppendWarning(errors.NewNoStackError("err1"))
 	warnings := sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err1", warnings[0].Err.Error())
 
 	tz := time.FixedZone("UTC+1", 2*60*60)
@@ -343,7 +345,7 @@ func TestNewStmtCtx(t *testing.T) {
 	sc.AppendWarning(errors.NewNoStackError("err2"))
 	warnings = sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err2", warnings[0].Err.Error())
 }
 
@@ -403,7 +405,7 @@ func TestResetStmtCtx(t *testing.T) {
 	sc.AppendWarning(errors.NewNoStackError("err2"))
 	warnings := sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
-	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err2", warnings[0].Err.Error())
 	levels = errctx.LevelMap{}
 	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn

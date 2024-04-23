@@ -44,13 +44,13 @@ TableReader	1999.00	root		data:TableRangeScan
 explain format = 'brief' select t1.c1, t1.c2 from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
 IndexReader	0.00	root		index:IndexRangeScan
-└─IndexRangeScan	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false
+└─IndexRangeScan	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
 explain format = 'brief' select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	estRows	task	access object	operator info
 HashJoin	2481.25	root		left outer join, equal:[eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c1)]
 ├─TableReader(Build)	1985.00	root		data:Selection
 │ └─Selection	1985.00	cop[tikv]		not(isnull(explain_easy_stats.t2.c1))
-│   └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false
+│   └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false, stats:partial[c1:missing]
 └─TableReader(Probe)	1998.00	root		data:TableRangeScan
   └─TableRangeScan	1998.00	cop[tikv]	table:t1	range:(1,+inf], keep order:false
 explain format = 'brief' update t1 set t1.c2 = 2 where t1.c1 = 1;
@@ -61,8 +61,8 @@ explain format = 'brief' delete from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
 └─IndexLookUp	0.00	root		
-  ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false
-  └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t1	keep order:false
+  ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
+  └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:partial[c2:missing]
 explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info
 Projection	1985.00	root		Column#7
@@ -82,9 +82,9 @@ TopN	1.00	root		explain_easy_stats.t2.c2, offset:0, count:1
 explain format = 'brief' select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	estRows	task	access object	operator info
 IndexLookUp	0.00	root		
-├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf], keep order:false
+├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf], keep order:false, stats:partial[c2:missing]
 └─Selection(Probe)	0.00	cop[tikv]		lt(explain_easy_stats.t1.c3, 1)
-  └─TableRowIDScan	0.00	cop[tikv]	table:t1	keep order:false
+  └─TableRowIDScan	0.00	cop[tikv]	table:t1	keep order:false, stats:partial[c2:missing]
 explain format = 'brief' select * from t1 where c1 = 1 and c2 > 1;
 id	estRows	task	access object	operator info
 Selection	0.50	root		gt(explain_easy_stats.t1.c2, 1)
@@ -178,7 +178,9 @@ id	estRows	task	access object	operator info
 Point_Get	1.00	root	table:index_prune, index:PRIMARY(a, b)	
 explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b ORDER BY a limit 1;
 id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:index_prune, index:PRIMARY(a, b)	
+TopN	1.00	root		explain_easy_stats.index_prune.a, offset:0, count:1
+└─StreamAgg	1.00	root		group by:explain_easy_stats.index_prune.b, funcs:firstrow(explain_easy_stats.index_prune.a)->explain_easy_stats.index_prune.a, funcs:firstrow(explain_easy_stats.index_prune.b)->explain_easy_stats.index_prune.b, funcs:firstrow(explain_easy_stats.index_prune.c)->explain_easy_stats.index_prune.c
+  └─Point_Get	1.00	root	table:index_prune, index:PRIMARY(a, b)	
 drop table if exists t1, t2, t3, index_prune;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
 drop table if exists tbl;

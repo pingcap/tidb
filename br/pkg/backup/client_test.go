@@ -5,7 +5,6 @@ package backup_test
 import (
 	"context"
 	"encoding/json"
-	"math"
 	"testing"
 	"time"
 
@@ -22,12 +21,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
@@ -60,7 +55,6 @@ func createBackupSuite(t *testing.T) *testBackup {
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	mockMgr := &conn.Mgr{PdController: &pdutil.PdController{}}
 	mockMgr.SetPDClient(s.mockPDClient)
-	mockMgr.SetHTTP([]string{"test"}, nil)
 	s.backupClient = backup.NewBackupClient(s.ctx, mockMgr)
 
 	s.cluster, err = mock.NewCluster()
@@ -132,91 +126,6 @@ func TestGetTS(t *testing.T) {
 	ts, err = s.backupClient.GetTS(s.ctx, time.Minute, backupts)
 	require.NoError(t, err)
 	require.Equal(t, backupts, ts)
-}
-
-func TestBuildTableRangeIntHandle(t *testing.T) {
-	type Case struct {
-		ids []int64
-		trs []kv.KeyRange
-	}
-	low := codec.EncodeInt(nil, math.MinInt64)
-	high := kv.Key(codec.EncodeInt(nil, math.MaxInt64)).PrefixNext()
-	cases := []Case{
-		{ids: []int64{1}, trs: []kv.KeyRange{
-			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
-		}},
-		{ids: []int64{1, 2, 3}, trs: []kv.KeyRange{
-			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
-			{StartKey: tablecodec.EncodeRowKey(2, low), EndKey: tablecodec.EncodeRowKey(2, high)},
-			{StartKey: tablecodec.EncodeRowKey(3, low), EndKey: tablecodec.EncodeRowKey(3, high)},
-		}},
-		{ids: []int64{1, 3}, trs: []kv.KeyRange{
-			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
-			{StartKey: tablecodec.EncodeRowKey(3, low), EndKey: tablecodec.EncodeRowKey(3, high)},
-		}},
-	}
-	for _, cs := range cases {
-		t.Log(cs)
-		tbl := &model.TableInfo{Partition: &model.PartitionInfo{Enable: true}}
-		for _, id := range cs.ids {
-			tbl.Partition.Definitions = append(tbl.Partition.Definitions,
-				model.PartitionDefinition{ID: id})
-		}
-		ranges, err := backup.BuildTableRanges(tbl)
-		require.NoError(t, err)
-		require.Equal(t, cs.trs, ranges)
-	}
-
-	tbl := &model.TableInfo{ID: 7}
-	ranges, err := backup.BuildTableRanges(tbl)
-	require.NoError(t, err)
-	require.Equal(t, []kv.KeyRange{
-		{StartKey: tablecodec.EncodeRowKey(7, low), EndKey: tablecodec.EncodeRowKey(7, high)},
-	}, ranges)
-}
-
-func TestBuildTableRangeCommonHandle(t *testing.T) {
-	type Case struct {
-		ids []int64
-		trs []kv.KeyRange
-	}
-	low, err_l := codec.EncodeKey(time.UTC, nil, []types.Datum{types.MinNotNullDatum()}...)
-	require.NoError(t, err_l)
-	high, err_h := codec.EncodeKey(time.UTC, nil, []types.Datum{types.MaxValueDatum()}...)
-	require.NoError(t, err_h)
-	high = kv.Key(high).PrefixNext()
-	cases := []Case{
-		{ids: []int64{1}, trs: []kv.KeyRange{
-			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
-		}},
-		{ids: []int64{1, 2, 3}, trs: []kv.KeyRange{
-			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
-			{StartKey: tablecodec.EncodeRowKey(2, low), EndKey: tablecodec.EncodeRowKey(2, high)},
-			{StartKey: tablecodec.EncodeRowKey(3, low), EndKey: tablecodec.EncodeRowKey(3, high)},
-		}},
-		{ids: []int64{1, 3}, trs: []kv.KeyRange{
-			{StartKey: tablecodec.EncodeRowKey(1, low), EndKey: tablecodec.EncodeRowKey(1, high)},
-			{StartKey: tablecodec.EncodeRowKey(3, low), EndKey: tablecodec.EncodeRowKey(3, high)},
-		}},
-	}
-	for _, cs := range cases {
-		t.Log(cs)
-		tbl := &model.TableInfo{Partition: &model.PartitionInfo{Enable: true}, IsCommonHandle: true}
-		for _, id := range cs.ids {
-			tbl.Partition.Definitions = append(tbl.Partition.Definitions,
-				model.PartitionDefinition{ID: id})
-		}
-		ranges, err := backup.BuildTableRanges(tbl)
-		require.NoError(t, err)
-		require.Equal(t, cs.trs, ranges)
-	}
-
-	tbl := &model.TableInfo{ID: 7, IsCommonHandle: true}
-	ranges, err_r := backup.BuildTableRanges(tbl)
-	require.NoError(t, err_r)
-	require.Equal(t, []kv.KeyRange{
-		{StartKey: tablecodec.EncodeRowKey(7, low), EndKey: tablecodec.EncodeRowKey(7, high)},
-	}, ranges)
 }
 
 func TestOnBackupRegionErrorResponse(t *testing.T) {

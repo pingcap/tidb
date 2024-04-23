@@ -99,12 +99,12 @@ type TxnAdvisable interface {
 	// AdviseWarmup provides warmup for inner state
 	AdviseWarmup() error
 	// AdviseOptimizeWithPlan providers optimization according to the plan
-	AdviseOptimizeWithPlan(plan interface{}) error
+	AdviseOptimizeWithPlan(plan any) error
 }
 
 // AdviseOptimizeWithPlanAndThenWarmUp first do `AdviseOptimizeWithPlan` to optimize the txn with plan
 // and then do `AdviseWarmup` to do some tso fetch if necessary
-func AdviseOptimizeWithPlanAndThenWarmUp(sctx sessionctx.Context, plan interface{}) error {
+func AdviseOptimizeWithPlanAndThenWarmUp(sctx sessionctx.Context, plan any) error {
 	txnManager := GetTxnManager(sctx)
 	if err := txnManager.AdviseOptimizeWithPlan(plan); err != nil {
 		return err
@@ -152,6 +152,8 @@ type TxnContextProvider interface {
 	OnLocalTemporaryTableCreated()
 	// ActivateTxn activates the transaction.
 	ActivateTxn() (kv.Transaction, error)
+	// SetOptionsBeforeCommit is called after execution and before commit, which sets necessary options for the transaction.
+	SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error
 }
 
 // TxnManager is an interface providing txn context management in session
@@ -209,6 +211,8 @@ type TxnManager interface {
 	ActivateTxn() (kv.Transaction, error)
 	// GetCurrentStmt returns the current statement node
 	GetCurrentStmt() ast.StmtNode
+	// SetOptionsBeforeCommit is called after execution and before commit, which sets necessary options for the transaction.
+	SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error
 }
 
 // NewTxn starts a new optimistic and active txn, it can be used for the below scenes:

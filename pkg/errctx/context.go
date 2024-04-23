@@ -39,7 +39,7 @@ type LevelMap [errGroupCount]Level
 // Context defines how to handle an error
 type Context struct {
 	levelMap    LevelMap
-	warnHandler contextutil.WarnHandler
+	warnHandler contextutil.WarnAppender
 }
 
 // LevelMap returns the `levelMap` of the context.
@@ -80,8 +80,8 @@ func (ctx *Context) WithErrGroupLevels(levels LevelMap) Context {
 	}
 }
 
-// appendWarning appends the error to warning. If the inner `warnHandler` is nil, do nothing.
-func (ctx *Context) appendWarning(err error) {
+// AppendWarning appends the error to warning. If the inner `warnHandler` is nil, do nothing.
+func (ctx *Context) AppendWarning(err error) {
 	intest.Assert(ctx.warnHandler != nil)
 	if w := ctx.warnHandler; w != nil {
 		// warnHandler should always not be nil, check fn != nil here to just make code safe.
@@ -148,7 +148,7 @@ func (ctx *Context) HandleErrorWithAlias(internalErr error, err error, warnErr e
 	case LevelError:
 		return err
 	case LevelWarn:
-		ctx.appendWarning(warnErr)
+		ctx.AppendWarning(warnErr)
 	case LevelIgnore:
 	}
 
@@ -156,12 +156,12 @@ func (ctx *Context) HandleErrorWithAlias(internalErr error, err error, warnErr e
 }
 
 // NewContext creates an error context to handle the errors and warnings
-func NewContext(handler contextutil.WarnHandler) Context {
+func NewContext(handler contextutil.WarnAppender) Context {
 	return NewContextWithLevels(LevelMap{}, handler)
 }
 
 // NewContextWithLevels creates an error context to handle the errors and warnings
-func NewContextWithLevels(levels LevelMap, handler contextutil.WarnHandler) Context {
+func NewContextWithLevels(levels LevelMap, handler contextutil.WarnAppender) Context {
 	intest.Assert(handler != nil)
 	return Context{
 		warnHandler: handler,
@@ -188,6 +188,8 @@ const (
 	ErrGroupDividedByZero
 	// ErrGroupAutoIncReadFailed is the group of auto increment read failed errors
 	ErrGroupAutoIncReadFailed
+	// ErrGroupNoMatchedPartition is the group of no partition is matched errors.
+	ErrGroupNoMatchedPartition
 	// errGroupCount is the count of all `ErrGroup`. Please leave it at the end of the list.
 	errGroupCount
 )
@@ -209,12 +211,20 @@ func init() {
 		ErrGroupBadNull: {
 			errno.ErrBadNull,
 			errno.ErrWarnNullToNotnull,
+			errno.ErrNoDefaultForField,
 		},
 		ErrGroupDividedByZero: {
 			errno.ErrDivisionByZero,
 		},
 		ErrGroupAutoIncReadFailed: {
 			errno.ErrAutoincReadFailed,
+		},
+		ErrGroupNoMatchedPartition: {
+			errno.ErrNoPartitionForGivenValue,
+			errno.ErrRowDoesNotMatchGivenPartitionSet,
+		},
+		ErrGroupDupKey: {
+			errno.ErrDupEntry,
 		},
 	}
 

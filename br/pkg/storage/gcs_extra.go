@@ -141,26 +141,31 @@ func (w *GCSWriter) readChunk(ch chan chunk) {
 			break
 		}
 
-		select {
-		case <-w.ctx.Done():
-			data.cleanup()
-			w.err.CompareAndSwap(nil, w.ctx.Err())
-		default:
-			part := &xmlMPUPart{
-				uploadBase: w.uploadBase,
-				uploadID:   w.uploadID,
-				buf:        data.buf,
-				partNumber: data.num,
-			}
-			if w.err.Load() == nil {
-				if err := part.Upload(); err != nil {
-					w.err.Store(err)
+		func() {
+			activeUploadWorkerCnt.Add(1)
+			defer activeUploadWorkerCnt.Add(-1)
+
+			select {
+			case <-w.ctx.Done():
+				data.cleanup()
+				w.err.CompareAndSwap(nil, w.ctx.Err())
+			default:
+				part := &xmlMPUPart{
+					uploadBase: w.uploadBase,
+					uploadID:   w.uploadID,
+					buf:        data.buf,
+					partNumber: data.num,
 				}
+				if w.err.Load() == nil {
+					if err := part.Upload(); err != nil {
+						w.err.Store(err)
+					}
+				}
+				part.buf = nil
+				w.appendMPUPart(part)
+				data.cleanup()
 			}
-			part.buf = nil
-			w.appendMPUPart(part)
-			data.cleanup()
-		}
+		}()
 	}
 }
 
@@ -194,6 +199,9 @@ func (w *GCSWriter) Close() error {
 		return err
 	}
 
+	if len(w.xmlMPUParts) == 0 {
+		return nil
+	}
 	err := w.finalizeXMLMPU()
 	if err == nil {
 		return nil

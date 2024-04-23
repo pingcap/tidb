@@ -39,6 +39,7 @@ func (do *Domain) initDomainSysVars() {
 
 	setGlobalResourceControlFunc := do.setGlobalResourceControl
 	variable.SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
+	variable.SetLowResolutionTSOUpdateInterval = do.setLowResolutionTSOUpdateInterval
 }
 
 // setStatsCacheCapacity sets statsCache cap
@@ -50,23 +51,23 @@ func (do *Domain) setStatsCacheCapacity(c int64) {
 	do.StatsHandle().SetStatsCacheCapacity(c)
 }
 
-func (do *Domain) setPDClientDynamicOption(name, sVal string) {
+func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 	switch name {
 	case variable.TiDBTSOClientBatchMaxWaitTime:
 		val, err := strconv.ParseFloat(sVal, 64)
 		if err != nil {
-			break
+			return err
 		}
 		err = do.updatePDClient(pd.MaxTSOBatchWaitInterval, time.Duration(float64(time.Millisecond)*val))
 		if err != nil {
-			break
+			return err
 		}
 		variable.MaxTSOBatchWaitInterval.Store(val)
 	case variable.TiDBEnableTSOFollowerProxy:
 		val := variable.TiDBOptOn(sVal)
 		err := do.updatePDClient(pd.EnableTSOFollowerProxy, val)
 		if err != nil {
-			break
+			return err
 		}
 		variable.EnableTSOFollowerProxy.Store(val)
 	case variable.PDEnableFollowerHandleRegion:
@@ -75,10 +76,11 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) {
 		// If pd support more APIs in follower, the pd option may be changed.
 		err := do.updatePDClient(pd.EnableFollowerHandle, val)
 		if err != nil {
-			break
+			return err
 		}
 		variable.EnablePDFollowerHandleRegion.Store(val)
 	}
+	return nil
 }
 
 func (*Domain) setGlobalResourceControl(enable bool) {
@@ -89,8 +91,12 @@ func (*Domain) setGlobalResourceControl(enable bool) {
 	}
 }
 
+func (do *Domain) setLowResolutionTSOUpdateInterval(interval time.Duration) error {
+	return do.store.GetOracle().SetLowResolutionTimestampUpdateInterval(interval)
+}
+
 // updatePDClient is used to set the dynamic option into the PD client.
-func (do *Domain) updatePDClient(option pd.DynamicOption, val interface{}) error {
+func (do *Domain) updatePDClient(option pd.DynamicOption, val any) error {
 	store, ok := do.store.(interface{ GetPDClient() pd.Client })
 	if !ok {
 		return nil

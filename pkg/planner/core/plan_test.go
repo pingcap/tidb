@@ -18,20 +18,23 @@ import (
 	"bytes"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/stretchr/testify/require"
 )
@@ -50,7 +53,7 @@ func TestEncodeDecodePlan(t *testing.T) {
 	getPlanTree := func() (str1, str2 string) {
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(core.Plan)
+		p, ok := info.Plan.(base.Plan)
 		require.True(t, ok)
 		encodeStr := core.EncodePlan(p)
 		planTree, err := plancodec.DecodePlan(encodeStr)
@@ -325,7 +328,7 @@ func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, i
 	tk.MustQuery(sql1)
 	info := tk.Session().ShowProcess()
 	require.NotNil(t, info)
-	physicalPlan, ok := info.Plan.(core.PhysicalPlan)
+	physicalPlan, ok := info.Plan.(base.PhysicalPlan)
 	require.True(t, ok)
 	normalized1, digest1 := core.NormalizePlan(physicalPlan)
 
@@ -338,7 +341,7 @@ func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, i
 	tk.MustQuery(sql2)
 	info = tk.Session().ShowProcess()
 	require.NotNil(t, info)
-	physicalPlan, ok = info.Plan.(core.PhysicalPlan)
+	physicalPlan, ok = info.Plan.(base.PhysicalPlan)
 	require.True(t, ok)
 	normalized2, digest2 := core.NormalizePlan(physicalPlan)
 
@@ -368,7 +371,8 @@ func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -409,7 +413,7 @@ func BenchmarkDecodePlan(b *testing.B) {
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
-	p, ok := info.Plan.(core.PhysicalPlan)
+	p, ok := info.Plan.(base.PhysicalPlan)
 	require.True(b, ok)
 	// TODO: optimize the encode plan performance when encode plan with runtimeStats
 	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
@@ -436,7 +440,7 @@ func BenchmarkEncodePlan(b *testing.B) {
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
-	p, ok := info.Plan.(core.PhysicalPlan)
+	p, ok := info.Plan.(base.PhysicalPlan)
 	require.True(b, ok)
 	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	b.ResetTimer()
@@ -460,7 +464,7 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
-	p, ok := info.Plan.(core.PhysicalPlan)
+	p, ok := info.Plan.(base.PhysicalPlan)
 	require.True(b, ok)
 	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	b.ResetTimer()
@@ -531,7 +535,7 @@ func TestCopPaging(t *testing.T) {
 }
 
 func TestBuildFinalModeAggregation(t *testing.T) {
-	aggSchemaBuilder := func(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) *expression.Schema {
+	aggSchemaBuilder := func(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc) *expression.Schema {
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs))...)
 		for _, agg := range aggFuncs {
 			newCol := &expression.Column{
@@ -545,7 +549,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	isFinalAggMode := func(mode aggregation.AggFunctionMode) bool {
 		return mode == aggregation.FinalMode || mode == aggregation.CompleteMode
 	}
-	checkResult := func(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
+	checkResult := func(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
 		for partialIsCop := 0; partialIsCop < 2; partialIsCop++ {
 			for isMPPTask := 0; isMPPTask < 2; isMPPTask++ {
 				partial, final, _ := core.BuildFinalModeAggregation(sctx, &core.AggInfo{
@@ -706,4 +710,29 @@ func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
 	newSort, ok = newPlan.(*core.PhysicalSort)
 	require.Equal(t, ok, true)
 	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
+}
+
+func TestImportIntoBuildPlan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustExec("create table t2 (a int, b int);")
+	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1 FROM select a from t2;"),
+		plannererrors.ErrWrongValueCountOnRow)
+	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a) FROM select * from t2;"),
+		plannererrors.ErrWrongValueCountOnRow)
+
+	time.Sleep(100 * time.Millisecond)
+	now := tk.MustQuery("select now(6)").Rows()[0][0].(string)
+	time.Sleep(100 * time.Millisecond)
+	tk.MustExec("create table t3 (a int, b int);")
+	// set tidb_snapshot will fail without this
+	tk.MustExec(`replace into mysql.tidb(variable_name, variable_value) values ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800')`)
+	tk.MustExec("set tidb_snapshot = '" + now + "'")
+	require.ErrorContains(t, tk.ExecToErr("IMPORT INTO t1 FROM select * from t2"),
+		"can not execute write statement when 'tidb_snapshot' is set")
+	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t3 FROM select * from t2"),
+		infoschema.ErrTableNotExists)
 }

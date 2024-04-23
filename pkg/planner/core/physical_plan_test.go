@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -29,12 +30,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/internal"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -213,12 +217,12 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 
 	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	lastWarn := warnings[len(warnings)-1]
-	err = core.ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
+	err = plannererrors.ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
 	require.True(t, terror.ErrorEqual(err, lastWarn.Err))
 }
 
 func TestMPPHintsWithBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -267,7 +271,7 @@ func TestMPPHintsWithBinding(t *testing.T) {
 }
 
 func TestJoinHintCompatibilityWithBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -389,7 +393,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 		require.NoError(t, err, comment)
 
 		require.Equal(t, tt.plan, core.ToString(p), comment)
-		root, ok := p.(core.PhysicalPlan)
+		root, ok := p.(base.PhysicalPlan)
 		if !ok {
 			continue
 		}
@@ -397,7 +401,7 @@ func TestDAGPlanBuilderSplitAvg(t *testing.T) {
 	}
 }
 
-func testDAGPlanBuilderSplitAvg(t *testing.T, root core.PhysicalPlan) {
+func testDAGPlanBuilderSplitAvg(t *testing.T, root base.PhysicalPlan) {
 	if p, ok := root.(*core.PhysicalTableReader); ok {
 		if p.TablePlans != nil {
 			baseAgg := p.TablePlans[len(p.TablePlans)-1]
@@ -435,4 +439,81 @@ func TestPhysicalPlanMemoryTrace(t *testing.T) {
 	size = pp.MemoryUsage()
 	pp.MPPPartitionCols = append(pp.MPPPartitionCols, &property.MPPPartitionColumn{})
 	require.Greater(t, pp.MemoryUsage(), size)
+}
+
+func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int, client_type tinyint, client_no char(18), taxpayer_no varchar(50), status tinyint, update_time datetime)")
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t1")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("create table t2 (id int, company_no char(18), name varchar(200), tax_registry_no varchar(30))")
+	tk.MustExec("insert into t1(id, taxpayer_no, client_no, client_type, status, update_time) values (1, 'TAX001', 'Z9005', 1, 1, '2024-02-18 10:00:00'), (2, 'TAX002', 'Z9005', 1, 0, '2024-02-18 09:00:00'), (3, 'TAX003', 'Z9005', 2, 1, '2024-02-18 08:00:00'), (4, 'TAX004', 'Z9006', 1, 1, '2024-02-18 12:00:00')")
+	tk.MustExec("insert into t2(id, company_no, name, tax_registry_no) values (1, 'Z9005', 'AA', 'aaa'), (2, 'Z9006', 'BB', 'bbb'), (3, 'Z9007', 'CC', 'ccc')")
+
+	sql := "select company_no, ifnull((select /*+ read_from_storage(tiflash[test.t1]) */ taxpayer_no from test.t1 where client_no = c.company_no and client_type = 1 and status = 1 order by update_time desc limit 1), tax_registry_no) as tax_registry_no from test.t2 c where company_no = 'Z9005' limit 1"
+	tk.MustExec(sql)
+	info := tk.Session().ShowProcess()
+	require.NotNil(t, info)
+	p, ok := info.Plan.(base.Plan)
+	require.True(t, ok)
+
+	var findSelection func(p base.Plan) *core.PhysicalSelection
+	findSelection = func(p base.Plan) *core.PhysicalSelection {
+		if p == nil {
+			return nil
+		}
+		switch v := p.(type) {
+		case *core.PhysicalSelection:
+			if len(v.Children()) == 1 {
+				if ts, ok := v.Children()[0].(*core.PhysicalTableScan); ok && ts.Table.Name.L == "t1" {
+					return v
+				}
+			}
+			return nil
+		case *core.PhysicalTableReader:
+			for _, child := range v.TablePlans {
+				if sel := findSelection(child); sel != nil {
+					return sel
+				}
+			}
+			return nil
+		default:
+			physicayPlan := p.(base.PhysicalPlan)
+			for _, child := range physicayPlan.Children() {
+				if sel := findSelection(child); sel != nil {
+					return sel
+				}
+			}
+			return nil
+		}
+	}
+	sel := findSelection(p)
+	require.NotNil(t, sel)
+	ts := sel.Children()[0].(*core.PhysicalTableScan)
+	require.NotNil(t, ts)
+	// manually push down the condition `client_no = c.company_no`
+	var selected expression.Expression
+	for _, cond := range sel.Conditions {
+		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.Function.PbCode() == tipb.ScalarFuncSig_EQString {
+			selected = cond
+			break
+		}
+	}
+	if selected != nil {
+		core.PushedDown(sel, ts, []expression.Expression{selected}, 0.1)
+	}
+
+	pb, err := ts.ToPB(tk.Session().GetBuildPBCtx(), kv.TiFlash)
+	require.NoError(t, err)
+	// make sure the pushed down filter condition is correct
+	require.Equal(t, 1, len(pb.TblScan.PushedDownFilterConditions))
+	require.Equal(t, tipb.ExprType_ColumnRef, pb.TblScan.PushedDownFilterConditions[0].Children[0].Tp)
+	// make sure the correlated columns are extracted correctly
+	correlated := ts.ExtractCorrelatedCols()
+	require.Equal(t, 1, len(correlated))
+	require.Equal(t, "test.t2.company_no", correlated[0].String())
 }

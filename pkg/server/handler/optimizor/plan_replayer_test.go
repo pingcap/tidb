@@ -94,10 +94,10 @@ func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.D
 	srv.SetDomain(dom)
 	require.NoError(t, err)
 	go func() {
-		err := srv.Run()
+		err := srv.Run(nil)
 		require.NoError(t, err)
 	}()
-
+	<-server.RunInGoTestChan
 	client.Port = testutil.GetPortFromTCPAddr(srv.ListenAddr())
 	client.StatusPort = testutil.GetPortFromTCPAddr(srv.StatusListenerAddr())
 	client.WaitUntilServerOnline()
@@ -189,8 +189,8 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	require.True(t, rows.Next(), "unexpected data")
 	var dbName, tableName string
 	var modifyCount, count int64
-	var other interface{}
-	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count)
+	var other any
+	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count, &other)
 	require.NoError(t, err)
 	require.Equal(t, "planReplayer", dbName)
 	require.Equal(t, "t", tableName)
@@ -246,6 +246,101 @@ func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerC
 	require.NoError(t, rows.Close())
 
 	return filename, filename3
+}
+
+func TestIssue43192(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	// 1. setup and prepare plan replayer files by manual command and capture
+	server, client := prepareServerAndClientForTest(t, store, dom)
+	defer server.Close()
+
+	filename := prepareData4Issue43192(t, client, dom)
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
+
+	// 2. check the contents of the plan replayer zip files.
+	var filesInReplayer []string
+	collectFileNameAndAssertFileSize := func(f *zip.File) {
+		// collect file name
+		filesInReplayer = append(filesInReplayer, f.Name)
+	}
+
+	// 2-1. check the plan replayer file from manual command
+	resp0, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, resp0.Body.Close())
+	}()
+	body, err := io.ReadAll(resp0.Body)
+	require.NoError(t, err)
+	forEachFileInZipBytes(t, body, collectFileNameAndAssertFileSize)
+	slices.Sort(filesInReplayer)
+	require.Equal(t, expectedFilesInReplayer, filesInReplayer)
+
+	// 3. check plan replayer load
+	// 3-1. write the plan replayer file from manual command to a file
+	path := "/tmp/plan_replayer.zip"
+	fp, err := os.Create(path)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
+	defer func() {
+		require.NoError(t, fp.Close())
+		require.NoError(t, os.Remove(path))
+	}()
+
+	_, err = io.Copy(fp, bytes.NewReader(body))
+	require.NoError(t, err)
+	require.NoError(t, fp.Sync())
+
+	// 3-2. connect to tidb and use PLAN REPLAYER LOAD to load this file
+	db, err := sql.Open("mysql", client.GetDSN(func(config *mysql.Config) {
+		config.AllowAllFiles = true
+	}))
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	tk := testkit.NewDBTestKit(t, db)
+	tk.MustExec("use planReplayer")
+	tk.MustExec("drop table planReplayer.t")
+	tk.MustExec(`plan replayer load "/tmp/plan_replayer.zip"`)
+
+	// 3-3. check whether binding takes effect
+	tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
+	rows := tk.MustQuery("select @@last_plan_from_binding")
+	require.True(t, rows.Next(), "unexpected data")
+	var count int64
+	err = rows.Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), count)
+}
+
+func prepareData4Issue43192(t *testing.T, client *testserverclient.TestServerClient, dom *domain.Domain) string {
+	h := dom.StatsHandle()
+	db, err := sql.Open("mysql", client.GetDSN())
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	tk := testkit.NewDBTestKit(t, db)
+
+	tk.MustExec("create database planReplayer")
+	tk.MustExec("use planReplayer")
+	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b));")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	tk.MustExec("create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)")
+	rows := tk.MustQuery("plan replayer dump explain select a, b from t where a in (1, 2, 3)")
+	require.True(t, rows.Next(), "unexpected data")
+	var filename string
+	require.NoError(t, rows.Scan(&filename))
+	require.NoError(t, rows.Close())
+	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
+	require.True(t, rows.Next(), "unexpected data")
+	return filename
 }
 
 func forEachFileInZipBytes(t *testing.T, b []byte, fn func(file *zip.File)) {

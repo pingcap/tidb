@@ -24,12 +24,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -149,8 +150,8 @@ type LoadDataWorker struct {
 func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
 	// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
 	// meaning of this flag is not clear. I can only reuse it here.
-	stmtCtx.DupKeyAsWarning = true
 	levels := stmtCtx.ErrLevels()
+	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
 	stmtCtx.SetErrLevels(levels)
 	stmtCtx.SetTypeFlags(stmtCtx.TypeFlags().WithTruncateAsWarning(true))
@@ -257,7 +258,7 @@ sendReaderInfoLoop:
 	return err
 }
 
-func (e *LoadDataWorker) setResult(colAssignExprWarnings []stmtctx.SQLWarn) {
+func (e *LoadDataWorker) setResult(colAssignExprWarnings []contextutil.SQLWarn) {
 	stmtCtx := e.UserSctx.GetSessionVars().StmtCtx
 	numWarnings := uint64(stmtCtx.WarningCount())
 	numRecords := stmtCtx.RecordRows()
@@ -273,7 +274,7 @@ func (e *LoadDataWorker) setResult(colAssignExprWarnings []stmtctx.SQLWarn) {
 	}
 
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
-	warns := make([]stmtctx.SQLWarn, numWarnings)
+	warns := make([]contextutil.SQLWarn, numWarnings)
 	n := copy(warns, stmtCtx.GetWarnings())
 	for i := 0; i < int(numRecords) && n < len(warns); i++ {
 		n += copy(warns[n:], colAssignExprWarnings)
@@ -344,7 +345,7 @@ type encodeWorker struct {
 	colAssignExprs []expression.Expression
 	// sessionCtx generate warnings when rewrite AST node into expression.
 	// we should generate such warnings for each row encoded.
-	exprWarnings []stmtctx.SQLWarn
+	exprWarnings []contextutil.SQLWarn
 	killer       *sqlkiller.SQLKiller
 	rows         [][]types.Datum
 }
@@ -540,7 +541,7 @@ func (w *encodeWorker) parserData2TableData(
 	}
 	for i := 0; i < len(w.colAssignExprs); i++ {
 		// eval expression of `SET` clause
-		d, err := w.colAssignExprs[i].Eval(w.Ctx(), chunk.Row{})
+		d, err := w.colAssignExprs[i].Eval(w.Ctx().GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			if w.controller.Restrictive {
 				return nil, err

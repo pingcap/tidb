@@ -126,7 +126,10 @@ func (b *builtinGetParamStringSig) vectorized() bool {
 }
 
 func (b *builtinGetParamStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	sessionVars := ctx.GetSessionVars()
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
 	n := input.NumRows()
 	idx, err := b.bufAllocator.get()
 	if err != nil {
@@ -178,7 +181,10 @@ func (b *builtinSetStringVarSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 		return err
 	}
 	result.ReserveString(n)
-	sessionVars := ctx.GetSessionVars()
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
 	_, collation := sessionVars.GetCharsetInfo()
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
@@ -217,7 +223,10 @@ func (b *builtinSetIntVarSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	}
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
@@ -255,7 +264,10 @@ func (b *builtinSetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, 
 	}
 	result.ResizeFloat64(n, false)
 	f64s := result.Float64s()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
@@ -293,7 +305,10 @@ func (b *builtinSetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 	}
 	result.ResizeDecimal(n, false)
 	decs := result.Decimals()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
@@ -330,7 +345,10 @@ func (b *builtinGetStringVarSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 		return err
 	}
 	result.ReserveString(n)
-	sessionVars := ctx.GetSessionVars()
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) {
 			result.AppendNull()
@@ -367,7 +385,10 @@ func (b *builtinGetIntVarSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0)
 	i64s := result.Int64s()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -386,6 +407,8 @@ func (b *builtinGetRealVarSig) vectorized() bool {
 	return true
 }
 
+// NOTE: get/set variable vectorized eval was disabled. See more in
+// https://github.com/pingcap/tidb/pull/8412
 func (b *builtinGetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
@@ -399,14 +422,21 @@ func (b *builtinGetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, 
 	result.ResizeFloat64(n, false)
 	result.MergeNulls(buf0)
 	f64s := result.Float64s()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		if v, ok := sessionVars.GetUserVarVal(varName); ok {
-			f64s[i] = v.GetFloat64()
+			d, err := v.ToFloat64(typeCtx(ctx))
+			if err != nil {
+				return err
+			}
+			f64s[i] = d
 			continue
 		}
 		result.SetNull(i, true)
@@ -418,6 +448,8 @@ func (b *builtinGetDecimalVarSig) vectorized() bool {
 	return true
 }
 
+// NOTE: get/set variable vectorized eval was disabled. See more in
+// https://github.com/pingcap/tidb/pull/8412
 func (b *builtinGetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
@@ -431,14 +463,21 @@ func (b *builtinGetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 	result.ResizeDecimal(n, false)
 	result.MergeNulls(buf0)
 	decs := result.Decimals()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		if v, ok := sessionVars.GetUserVarVal(varName); ok {
-			decs[i] = *v.GetMysqlDecimal()
+			d, err := v.ToDecimal(typeCtx(ctx))
+			if err != nil {
+				return err
+			}
+			decs[i] = *d
 			continue
 		}
 		result.SetNull(i, true)

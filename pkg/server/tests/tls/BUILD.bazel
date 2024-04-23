@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "tls_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "tls_test.go",
+    ],
+    flaky = True,
+    shard_count = 8,
+    deps = [
+        "//pkg/config",
+        "//pkg/metrics",
+        "//pkg/server",
+        "//pkg/server/internal/testserverclient",
+        "//pkg/server/internal/testutil",
+        "//pkg/server/internal/util",
+        "//pkg/server/tests/servertestkit",
+        "//pkg/session",
+        "//pkg/sessionctx/variable",
+        "//pkg/store/mockstore/unistore",
+        "//pkg/testkit/testsetup",
+        "//pkg/util",
+        "//pkg/util/topsql/state",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

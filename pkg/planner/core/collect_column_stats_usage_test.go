@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -66,13 +67,19 @@ func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableI
 	return colName
 }
 
-func checkColumnStatsUsage(t *testing.T, is infoschema.InfoSchema, lp LogicalPlan, histNeededOnly bool, expected []string, comment string) {
-	var tblColIDs []model.TableItemID
-	if histNeededOnly {
-		_, tblColIDs = CollectColumnStatsUsage(lp, false, true)
+func getStatsLoadItem(t *testing.T, is infoschema.InfoSchema, item model.StatsLoadItem, comment string) string {
+	str := getColumnName(t, is, item.TableItemID, comment)
+	if item.FullLoad {
+		str += " full"
 	} else {
-		tblColIDs, _ = CollectColumnStatsUsage(lp, true, false)
+		str += " meta"
 	}
+	return str
+}
+
+func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
+	var tblColIDs []model.TableItemID
+	tblColIDs, _, _ = CollectColumnStatsUsage(lp, true, false)
 	cols := make([]string, 0, len(tblColIDs))
 	for _, tblColID := range tblColIDs {
 		col := getColumnName(t, is, tblColID, comment)
@@ -80,6 +87,18 @@ func checkColumnStatsUsage(t *testing.T, is infoschema.InfoSchema, lp LogicalPla
 	}
 	sort.Strings(cols)
 	require.Equal(t, expected, cols, comment)
+}
+
+func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
+	var loadItems []model.StatsLoadItem
+	_, loadItems, _ = CollectColumnStatsUsage(lp, false, true)
+	cols := make([]string, 0, len(loadItems))
+	for _, item := range loadItems {
+		col := getStatsLoadItem(t, is, item, comment)
+		cols = append(cols, col)
+	}
+	sort.Strings(cols)
+	require.Equal(t, expected, cols, comment+", we get %v", cols)
 }
 
 func TestCollectPredicateColumns(t *testing.T) {
@@ -257,25 +276,27 @@ func TestCollectPredicateColumns(t *testing.T) {
 		}
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err, comment)
-		lp, ok := p.(LogicalPlan)
+		lp, ok := p.(base.LogicalPlan)
 		require.True(t, ok, comment)
 		// We check predicate columns twice, before and after logical optimization. Some logical plan patterns may occur before
 		// logical optimization while others may occur after logical optimization.
-		checkColumnStatsUsage(t, s.is, lp, false, tt.res, comment)
+		checkColumnStatsUsageForPredicates(t, s.is, lp, tt.res, comment)
 		lp, err = logicalOptimize(ctx, builder.GetOptFlag(), lp)
 		require.NoError(t, err, comment)
-		checkColumnStatsUsage(t, s.is, lp, false, tt.res, comment)
+		checkColumnStatsUsageForPredicates(t, s.is, lp, tt.res, comment)
 	}
 }
 
 func TestCollectHistNeededColumns(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/disablePseudoCheck", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/disablePseudoCheck")
 	tests := []struct {
 		pruneMode string
 		sql       string
@@ -283,45 +304,45 @@ func TestCollectHistNeededColumns(t *testing.T) {
 	}{
 		{
 			sql: "select * from t where a > 2",
-			res: []string{"t.a"},
+			res: []string{"t.a full", "t.b meta", "t.c meta", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta"},
 		},
 		{
 			sql: "select * from t where b in (2, 5) or c = 5",
-			res: []string{"t.b", "t.c"},
+			res: []string{"t.a meta", "t.b full", "t.c full", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta"},
 		},
 		{
 			sql: "select * from t where a + b > 1",
-			res: []string{"t.a", "t.b"},
+			res: []string{"t.a full", "t.b full", "t.c meta", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta"},
 		},
 		{
 			sql: "select b, count(a) from t where b > 1 group by b having count(a) > 2",
-			res: []string{"t.b"},
+			res: []string{"t.a meta", "t.b full"},
 		},
 		{
 			sql: "select * from t as x join t2 as y on x.b + y.b > 2 and x.c > 1 and y.a < 1",
-			res: []string{"t.c", "t2.a"},
+			res: []string{"t.a meta", "t.b meta", "t.c full", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta", "t2.a full", "t2.b meta", "t2.c meta"},
 		},
 		{
 			sql: "select * from t2 where t2.b > all(select b from t where t.c > 2)",
-			res: []string{"t.c"},
+			res: []string{"t.b meta", "t.c full", "t2.a meta", "t2.b meta", "t2.c meta"},
 		},
 		{
 			sql: "select * from t2 where t2.b > any(select b from t where t.c > 2)",
-			res: []string{"t.c"},
+			res: []string{"t.b meta", "t.c full", "t2.a meta", "t2.b meta", "t2.c meta"},
 		},
 		{
 			sql: "select * from t2 where t2.b in (select b from t where t.c > 2)",
-			res: []string{"t.c"},
+			res: []string{"t.b meta", "t.c full", "t2.a meta", "t2.b meta", "t2.c meta"},
 		},
 		{
 			pruneMode: "static",
 			sql:       "select * from pt1 where ptn < 20 and b > 1",
-			res:       []string{"pt1.p1.b", "pt1.p1.ptn", "pt1.p2.b", "pt1.p2.ptn"},
+			res:       []string{"pt1.p1.a meta", "pt1.p1.b full", "pt1.p1.c meta", "pt1.p1.c_str meta", "pt1.p1.d meta", "pt1.p1.d_str meta", "pt1.p1.e meta", "pt1.p1.e_str meta", "pt1.p1.f meta", "pt1.p1.g meta", "pt1.p1.h meta", "pt1.p1.i_date meta", "pt1.p1.ptn full", "pt1.p2.a meta", "pt1.p2.b full", "pt1.p2.c meta", "pt1.p2.c_str meta", "pt1.p2.d meta", "pt1.p2.d_str meta", "pt1.p2.e meta", "pt1.p2.e_str meta", "pt1.p2.f meta", "pt1.p2.g meta", "pt1.p2.h meta", "pt1.p2.i_date meta", "pt1.p2.ptn full"},
 		},
 		{
 			pruneMode: "dynamic",
 			sql:       "select * from pt1 where ptn < 20 and b > 1",
-			res:       []string{"pt1.b", "pt1.ptn"},
+			res:       []string{"pt1.a meta", "pt1.b full", "pt1.c meta", "pt1.c_str meta", "pt1.d meta", "pt1.d_str meta", "pt1.e meta", "pt1.e_str meta", "pt1.f meta", "pt1.g meta", "pt1.h meta", "pt1.i_date meta", "pt1.ptn full"},
 		},
 	}
 
@@ -340,12 +361,12 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		}
 		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
-		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		err = Preprocess(context.Background(), s.sctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err, comment)
 		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err, comment)
-		lp, ok := p.(LogicalPlan)
+		lp, ok := p.(base.LogicalPlan)
 		require.True(t, ok, comment)
 		flags := builder.GetOptFlag()
 		// JoinReOrder may need columns stats so collecting hist-needed columns must happen before JoinReOrder.
@@ -353,6 +374,6 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		flags &= ^(flagJoinReOrder | flagPrunColumnsAgain)
 		lp, err = logicalOptimize(ctx, flags, lp)
 		require.NoError(t, err, comment)
-		checkColumnStatsUsage(t, s.is, lp, true, tt.res, comment)
+		checkColumnStatsUsageForStatsLoad(t, s.is, lp, tt.res, comment)
 	}
 }

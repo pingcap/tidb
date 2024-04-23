@@ -70,7 +70,7 @@ func TestConcurrentMap(t *testing.T) {
 
 func TestConcurrentMapMemoryUsage(t *testing.T) {
 	m := newConcurrentMap()
-	const iterations = 1024 * hack.LoadFactorNum / hack.LoadFactorDen
+	var iterations = 1024 * hack.LoadFactorNum / hack.LoadFactorDen
 	var memUsage int64
 	wg := &sync.WaitGroup{}
 	wg.Add(2)

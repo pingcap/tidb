@@ -18,8 +18,8 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
@@ -70,7 +70,7 @@ type SessionStates struct {
 	SystemVars           map[string]string            `json:"sys-vars,omitempty"`
 	PreparedStmts        map[uint32]*PreparedStmtInfo `json:"prepared-stmts,omitempty"`
 	PreparedStmtID       uint32                       `json:"prepared-stmt-id,omitempty"`
-	Status               uint16                       `json:"status,omitempty"`
+	Status               uint32                       `json:"status,omitempty"`
 	CurrentDB            string                       `json:"current-db,omitempty"`
 	LastTxnInfo          string                       `json:"txn-info,omitempty"`
 	LastQueryInfo        *QueryInfo                   `json:"query-info,omitempty"`
@@ -81,7 +81,7 @@ type SessionStates struct {
 	SequenceLatestValues map[int64]int64              `json:"seq-values,omitempty"`
 	LastAffectedRows     int64                        `json:"affected-rows,omitempty"`
 	LastInsertID         uint64                       `json:"last-insert-id,omitempty"`
-	Warnings             []stmtctx.SQLWarn            `json:"warnings,omitempty"`
+	Warnings             []contextutil.SQLWarn        `json:"warnings,omitempty"`
 	// Define it as string to avoid cycle import.
 	Bindings            string                                            `json:"bindings,omitempty"`
 	ResourceGroupName   string                                            `json:"rs-group,omitempty"`

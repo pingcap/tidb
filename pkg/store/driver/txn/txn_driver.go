@@ -17,6 +17,7 @@ package txn
 import (
 	"bytes"
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -29,6 +30,7 @@ import (
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -46,7 +48,8 @@ type tikvTxn struct {
 	idxNameCache        map[int64]*model.TableInfo
 	snapshotInterceptor kv.SnapshotInterceptor
 	// columnMapsCache is a cache used for the mutation checker
-	columnMapsCache interface{}
+	columnMapsCache    any
+	isCommitterWorking atomic.Bool
 }
 
 // NewTiKVTxn returns a new Transaction.
@@ -58,7 +61,7 @@ func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	totalLimit := kv.TxnTotalSizeLimit.Load()
 	txn.GetUnionStore().SetEntrySizeLimit(entryLimit, totalLimit)
 
-	return &tikvTxn{txn, make(map[int64]*model.TableInfo), nil, nil}
+	return &tikvTxn{txn, make(map[int64]*model.TableInfo), nil, nil, atomic.Bool{}}
 }
 
 func (txn *tikvTxn) GetTableInfo(id int64) *model.TableInfo {
@@ -78,6 +81,10 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 }
 
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
+	if intest.InTest {
+		txn.isCommitterWorking.Store(true)
+		defer txn.isCommitterWorking.Store(false)
+	}
 	keys := toTiKVKeys(keysInput)
 	err := txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
 	if err != nil {
@@ -87,6 +94,10 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 }
 
 func (txn *tikvTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn func(), keysInput ...kv.Key) error {
+	if intest.InTest {
+		txn.isCommitterWorking.Store(true)
+		defer txn.isCommitterWorking.Store(false)
+	}
 	keys := toTiKVKeys(keysInput)
 	err := txn.KVTxn.LockKeysFunc(ctx, lockCtx, fn, keys...)
 	if err != nil {
@@ -96,6 +107,9 @@ func (txn *tikvTxn) LockKeysFunc(ctx context.Context, lockCtx *kv.LockCtx, fn fu
 }
 
 func (txn *tikvTxn) Commit(ctx context.Context) error {
+	if intest.InTest {
+		txn.isCommitterWorking.Store(true)
+	}
 	err := txn.KVTxn.Commit(ctx)
 	return txn.extractKeyErr(err)
 }
@@ -121,7 +135,6 @@ func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 // The Iterator must be Closed after use.
 func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (iter kv.Iterator, err error) {
 	var dirtyIter, snapIter kv.Iterator
-
 	if dirtyIter, err = txn.GetMemBuffer().Iter(k, upperBound); err != nil {
 		return nil, err
 	}
@@ -197,10 +210,13 @@ func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
-	return newMemBuffer(txn.KVTxn.GetMemBuffer())
+	return newMemBuffer(txn.KVTxn.GetMemBuffer(), txn.IsPipelined())
 }
 
-func (txn *tikvTxn) SetOption(opt int, val interface{}) {
+func (txn *tikvTxn) SetOption(opt int, val any) {
+	if intest.InTest {
+		txn.assertCommitterNotWorking()
+	}
 	switch opt {
 	case kv.BinlogInfo:
 		txn.SetBinlogExecutor(&binlogExecutor{
@@ -284,10 +300,12 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case kv.SizeLimits:
 		limits := val.(kv.TxnSizeLimits)
 		txn.KVTxn.GetUnionStore().SetEntrySizeLimit(limits.Entry, limits.Total)
+	case kv.SessionID:
+		txn.KVTxn.SetSessionID(val.(uint64))
 	}
 }
 
-func (txn *tikvTxn) GetOption(opt int) interface{} {
+func (txn *tikvTxn) GetOption(opt int) any {
 	switch opt {
 	case kv.GuaranteeLinearizability:
 		return !txn.KVTxn.IsCasualConsistency()
@@ -305,24 +323,25 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 }
 
 // SetVars sets variables to the transaction.
-func (txn *tikvTxn) SetVars(vars interface{}) {
+func (txn *tikvTxn) SetVars(vars any) {
 	if vs, ok := vars.(*tikv.Variables); ok {
 		txn.KVTxn.SetVars(vs)
 	}
 }
 
-func (txn *tikvTxn) GetVars() interface{} {
+func (txn *tikvTxn) GetVars() any {
 	return txn.KVTxn.GetVars()
 }
 
 func (txn *tikvTxn) extractKeyErr(err error) error {
 	if e, ok := errors.Cause(err).(*tikverr.ErrKeyExist); ok {
-		return txn.extractKeyExistsErr(e.GetKey())
+		return txn.extractKeyExistsErr(e)
 	}
 	return extractKeyErr(err)
 }
 
-func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
+func (txn *tikvTxn) extractKeyExistsErr(errExist *tikverr.ErrKeyExist) error {
+	var key kv.Key = errExist.GetKey()
 	tableID, indexID, isRecord, err := tablecodec.DecodeKeyHead(key)
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
@@ -333,7 +352,19 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	if tblInfo == nil {
 		return genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find table info"))
 	}
-	value, err := txn.KVTxn.GetUnionStore().GetMemBuffer().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
+	var value []byte
+	if txn.IsPipelined() {
+		value = errExist.Value
+		if len(value) == 0 {
+			return genKeyExistsError(
+				"UNKNOWN",
+				key.String(),
+				errors.New("The value is empty (a delete)"),
+			)
+		}
+	} else {
+		value, err = txn.KVTxn.GetUnionStore().GetMemBuffer().GetMemDB().SelectValueHistory(key, func(value []byte) bool { return len(value) != 0 })
+	}
 	if err != nil {
 		return genKeyExistsError("UNKNOWN", key.String(), err)
 	}
@@ -413,6 +444,26 @@ func (txn *tikvTxn) DoneFairLocking(ctx context.Context) error {
 // IsInFairLockingMode adapts the method signature of `KVTxn` to satisfy kv.FairLockingController.
 func (txn *tikvTxn) IsInFairLockingMode() bool {
 	return txn.KVTxn.IsInAggressiveLockingMode()
+}
+
+// MayFlush wraps the flush function and extract the error.
+func (txn *tikvTxn) MayFlush() error {
+	if !txn.IsPipelined() {
+		return nil
+	}
+	if intest.InTest {
+		txn.isCommitterWorking.Store(true)
+	}
+	_, err := txn.KVTxn.GetMemBuffer().Flush(false)
+	return txn.extractKeyErr(err)
+}
+
+// assertCommitterNotWorking asserts that the committer is not working, so it's safe to modify the options for txn and committer.
+// It panics when committer is working, only use it when test with --tags=intest tag.
+func (txn *tikvTxn) assertCommitterNotWorking() {
+	if txn.isCommitterWorking.Load() {
+		panic("committer is working")
+	}
 }
 
 // TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.

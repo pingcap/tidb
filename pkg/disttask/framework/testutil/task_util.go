@@ -28,12 +28,8 @@ import (
 
 // CreateSubTask adds a new task to subtask table.
 // used for testing.
-func CreateSubTask(t *testing.T, gm *storage.TaskManager, taskID int64, step proto.Step, execID string, meta []byte, tp proto.TaskType, concurrency int, isRevert bool) {
-	state := proto.SubtaskStatePending
-	if isRevert {
-		state = proto.SubtaskStateRevertPending
-	}
-	InsertSubtask(t, gm, taskID, step, execID, meta, state, tp, concurrency)
+func CreateSubTask(t *testing.T, gm *storage.TaskManager, taskID int64, step proto.Step, execID string, meta []byte, tp proto.TaskType, concurrency int) {
+	InsertSubtask(t, gm, taskID, step, execID, meta, proto.SubtaskStatePending, tp, concurrency)
 }
 
 // InsertSubtask adds a new subtask of any state to subtask table.
@@ -41,7 +37,7 @@ func InsertSubtask(t *testing.T, gm *storage.TaskManager, taskID int64, step pro
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
-		_, err := sqlexec.ExecSQL(ctx, se, `
+		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			insert into mysql.tidb_background_subtask(`+storage.InsertSubtaskColumns+`) values`+
 			`(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{}', '{}')`,
 			step, taskID, execID, meta, state, proto.Type2Int(tp), concurrency)

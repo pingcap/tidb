@@ -21,104 +21,44 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
-// ParseSimpleExprWithTableInfo parses simple expression string to Expression.
+// ParseSimpleExprWithTableInfo now is only used by some external repo like tiflow to make sure they are not break.
+// Deprecated: please use ParseSimpleExpr instead.
+func ParseSimpleExprWithTableInfo(ctx BuildContext, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
+	return ParseSimpleExpr(ctx, exprStr, WithTableInfo("", tableInfo))
+}
+
+// ParseSimpleExpr parses simple expression string to Expression.
 // The expression string must only reference the column in table Info.
-func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
-	if len(exprStr) == 0 {
-		return nil, nil
+func ParseSimpleExpr(ctx BuildContext, exprStr string, opts ...BuildOption) (Expression, error) {
+	if exprStr == "" {
+		intest.Assert(false)
+		// This should never happen. Return a clear error message in case we have some unexpected bugs.
+		return nil, errors.New("expression should not be an empty string")
 	}
 	exprStr = "select " + exprStr
 	var stmts []ast.StmtNode
 	var err error
 	var warns []error
-	if p, ok := ctx.(interface {
-		ParseSQL(context.Context, string, ...parser.ParseParam) ([]ast.StmtNode, []error, error)
-	}); ok {
+	if p, ok := ctx.(sqlexec.SQLParser); ok {
 		stmts, warns, err = p.ParseSQL(context.Background(), exprStr)
 	} else {
 		stmts, warns, err = parser.New().ParseSQL(exprStr)
 	}
 	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+		ctx.GetEvalCtx().AppendWarning(util.SyntaxWarn(warn))
 	}
 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-	return RewriteSimpleExprWithTableInfo(ctx, tableInfo, expr, false)
-}
-
-// ParseSimpleExprCastWithTableInfo parses simple expression string to Expression.
-// And the expr returns will cast to the target type.
-func ParseSimpleExprCastWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo, targetFt *types.FieldType) (Expression, error) {
-	e, err := ParseSimpleExprWithTableInfo(ctx, exprStr, tableInfo)
-	if err != nil {
-		return nil, err
-	}
-	e = BuildCastFunction(ctx, e, targetFt)
-	return e, nil
-}
-
-// RewriteSimpleExprWithTableInfo rewrites simple ast.ExprNode to expression.Expression.
-func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo, expr ast.ExprNode, allowCastArray bool) (Expression, error) {
-	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	columns, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
-	if err != nil {
-		return nil, err
-	}
-	e, err := RewriteAstExpr(ctx, expr, NewSchema(columns...), names, allowCastArray)
-	if err != nil {
-		return nil, err
-	}
-	return e, nil
-}
-
-// ParseSimpleExprsWithNames parses simple expression string to Expression.
-// The expression string must only reference the column in the given NameSlice.
-func ParseSimpleExprsWithNames(ctx sessionctx.Context, exprStr string, schema *Schema, names types.NameSlice) ([]Expression, error) {
-	exprStr = "select " + exprStr
-	var stmts []ast.StmtNode
-	var err error
-	var warns []error
-	if p, ok := ctx.(interface {
-		ParseSQL(context.Context, string, ...parser.ParseParam) ([]ast.StmtNode, []error, error)
-	}); ok {
-		stmts, warns, err = p.ParseSQL(context.Background(), exprStr)
-	} else {
-		stmts, warns, err = parser.New().ParseSQL(exprStr)
-	}
-	if err != nil {
-		return nil, errors.Trace(util.SyntaxWarn(err))
-	}
-	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
-	}
-
-	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
-	exprs := make([]Expression, 0, len(fields))
-	for _, field := range fields {
-		expr, err := RewriteSimpleExprWithNames(ctx, field.Expr, schema, names)
-		if err != nil {
-			return nil, err
-		}
-		exprs = append(exprs, expr)
-	}
-	return exprs, nil
-}
-
-// RewriteSimpleExprWithNames rewrites simple ast.ExprNode to expression.Expression.
-func RewriteSimpleExprWithNames(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names []*types.FieldName) (Expression, error) {
-	e, err := RewriteAstExpr(ctx, expr, schema, names, false)
-	if err != nil {
-		return nil, err
-	}
-	return e, nil
+	return BuildSimpleExpr(ctx, expr, opts...)
 }
 
 // FindFieldName finds the column name from NameSlice.

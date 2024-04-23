@@ -16,6 +16,7 @@ package testserverclient
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -36,14 +37,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -386,11 +388,11 @@ func (cli *TestServerClient) RunTestLoadDataWithSelectIntoOutfile(t *testing.T) 
 		dbt.MustExec("create table t1 (i int, r real, d decimal(10, 5), s varchar(100), dt datetime, ts timestamp, j json)")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t1 with thread=1", outfile))
 
-		fetchResults := func(table string) [][]interface{} {
-			var res [][]interface{}
+		fetchResults := func(table string) [][]any {
+			var res [][]any
 			row := dbt.MustQuery("select * from " + table + " order by i")
 			for row.Next() {
-				r := make([]interface{}, 7)
+				r := make([]any, 7)
 				require.NoError(t, row.Scan(&r[0], &r[1], &r[2], &r[3], &r[4], &r[5], &r[6]))
 				res = append(res, r)
 			}
@@ -831,7 +833,7 @@ func (*TestServerClient) Rows(t *testing.T, rows *sql.Rows) []string {
 		cols, err := rows.Columns()
 		require.NoError(t, err)
 		rawResult := make([][]byte, len(cols))
-		dest := make([]interface{}, len(cols))
+		dest := make([]any, len(cols))
 		for i := range rawResult {
 			dest[i] = &rawResult[i]
 		}
@@ -1774,39 +1776,6 @@ func (cli *TestServerClient) RunTestLoadData(t *testing.T, server *server.Server
 	})
 }
 
-func (cli *TestServerClient) RunTestConcurrentUpdate(t *testing.T) {
-	dbName := "Concurrent"
-	cli.RunTestsOnNewDB(t, func(config *mysql.Config) {
-		config.Params["sql_mode"] = "''"
-	}, dbName, func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("drop table if exists test2")
-		dbt.MustExec("create table test2 (a int, b int)")
-		dbt.MustExec("insert test2 values (1, 1)")
-		dbt.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-
-		txn1, err := dbt.GetDB().Begin()
-		require.NoError(t, err)
-		_, err = txn1.Exec(fmt.Sprintf("USE `%s`;", dbName))
-		require.NoError(t, err)
-
-		txn2, err := dbt.GetDB().Begin()
-		require.NoError(t, err)
-		_, err = txn2.Exec(fmt.Sprintf("USE `%s`;", dbName))
-		require.NoError(t, err)
-
-		_, err = txn2.Exec("update test2 set a = a + 1 where b = 1")
-		require.NoError(t, err)
-		err = txn2.Commit()
-		require.NoError(t, err)
-
-		_, err = txn1.Exec("update test2 set a = a + 1 where b = 1")
-		require.NoError(t, err)
-
-		err = txn1.Commit()
-		require.NoError(t, err)
-	})
-}
-
 func (cli *TestServerClient) RunTestExplainForConn(t *testing.T) {
 	cli.RunTestsOnNewDB(t, nil, "explain_for_conn", func(dbt *testkit.DBTestKit) {
 		dbt.MustExec("drop table if exists t")
@@ -2663,76 +2632,98 @@ func (cli *TestServerClient) RunTestInfoschemaClientErrors(t *testing.T) {
 	})
 }
 
-func (cli *TestServerClient) RunTestStmtCountLimit(t *testing.T) {
-	originalStmtCountLimit := config.GetGlobalConfig().Performance.StmtCountLimit
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.StmtCountLimit = 3
+func (cli *TestServerClient) RunTestSQLModeIsLoadedBeforeQuery(t *testing.T) {
+	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "set global sql_mode='NO_BACKSLASH_ESCAPES';")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, `
+		CREATE TABLE t1 (
+			id bigint(20) NOT NULL,
+			t text DEFAULT NULL,
+			PRIMARY KEY (id)
+		);`)
+		require.NoError(t, err)
+
+		// use another new connection
+		conn1, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn1.ExecContext(ctx, "insert into t1 values (1, 'ab\\\\c');")
+		require.NoError(t, err)
+		result, err := conn1.QueryContext(ctx, "select t from t1 where id = 1;")
+		require.NoError(t, err)
+		require.True(t, result.Next())
+		var tStr string
+		require.NoError(t, result.Scan(&tStr))
+
+		require.Equal(t, "ab\\\\c", tStr)
 	})
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.Performance.StmtCountLimit = originalStmtCountLimit
+}
+
+func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
+	readConnCount := func(resourceGroupName string) float64 {
+		metric, err := metrics.ConnGauge.GetMetricWith(map[string]string{
+			metrics.LblResourceGroup: resourceGroupName,
 		})
-	}()
+		require.NoError(t, err)
+		output := &dto.Metric{}
+		metric.Write(output)
+
+		return output.GetGauge().GetValue()
+	}
+
+	resourceGroupConnCountReached := func(t *testing.T, resourceGroupName string, expected float64) {
+		require.Eventually(t, func() bool {
+			return readConnCount(resourceGroupName) == expected
+		}, 5*time.Second, 100*time.Millisecond)
+	}
 
 	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
-		dbt.MustExec("create table t (id int key);")
-		dbt.MustExec("set @@tidb_disable_txn_auto_retry=0;")
-		dbt.MustExec("set autocommit=0;")
-		dbt.MustExec("begin optimistic;")
-		dbt.MustExec("insert into t values (1);")
-		dbt.MustExec("insert into t values (2);")
-		_, err := dbt.GetDB().Query("select * from t for update;")
-		require.Error(t, err)
-		require.Equal(t, "Error 1105 (HY000): statement count 4 exceeds the transaction limitation, transaction has been rollback, autocommit = false", err.Error())
-		dbt.MustExec("insert into t values (3);")
-		dbt.MustExec("commit;")
-		rows := dbt.MustQuery("select * from t;")
-		var id int
-		count := 0
-		for rows.Next() {
-			rows.Scan(&id)
-			count++
-		}
-		require.NoError(t, rows.Close())
-		require.Equal(t, 3, id)
-		require.Equal(t, 1, count)
+		ctx := context.Background()
+		dbt.GetDB().SetMaxIdleConns(0)
 
-		dbt.MustExec("delete from t;")
-		dbt.MustExec("commit;")
-		dbt.MustExec("set @@tidb_disable_txn_auto_retry=0;")
-		dbt.MustExec("set autocommit=0;")
-		dbt.MustExec("begin optimistic;")
-		dbt.MustExec("insert into t values (1);")
-		dbt.MustExec("insert into t values (2);")
-		_, err = dbt.GetDB().Exec("insert into t values (3);")
-		require.Error(t, err)
-		require.Equal(t, "Error 1105 (HY000): statement count 4 exceeds the transaction limitation, transaction has been rollback, autocommit = false", err.Error())
-		dbt.MustExec("commit;")
-		rows = dbt.MustQuery("select count(*) from t;")
-		for rows.Next() {
-			rows.Scan(&count)
+		// start 100 connections
+		conns := make([]*sql.Conn, 100)
+		for i := 0; i < 100; i++ {
+			conn, err := dbt.GetDB().Conn(ctx)
+			require.NoError(t, err)
+			conns[i] = conn
 		}
-		require.NoError(t, rows.Close())
-		require.Equal(t, 0, count)
+		resourceGroupConnCountReached(t, "default", 100.0)
 
-		dbt.MustExec("delete from t;")
-		dbt.MustExec("commit;")
-		dbt.MustExec("set @@tidb_batch_commit=1;")
-		dbt.MustExec("set @@tidb_disable_txn_auto_retry=0;")
-		dbt.MustExec("set autocommit=0;")
-		dbt.MustExec("begin optimistic;")
-		dbt.MustExec("insert into t values (1);")
-		dbt.MustExec("insert into t values (2);")
-		dbt.MustExec("insert into t values (3);")
-		dbt.MustExec("insert into t values (4);")
-		dbt.MustExec("insert into t values (5);")
-		dbt.MustExec("commit;")
-		rows = dbt.MustQuery("select count(*) from t;")
-		for rows.Next() {
-			rows.Scan(&count)
+		// close 50 connections
+		for i := 0; i < 50; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
 		}
-		require.NoError(t, rows.Close())
-		require.Equal(t, 5, count)
+		resourceGroupConnCountReached(t, "default", 50.0)
+
+		// close 25 connections
+		for i := 50; i < 75; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 25.0)
+
+		// change the following 25 connections from `default` resource group to `test`
+		dbt.MustExec("create resource group test RU_PER_SEC = 1000;")
+		for i := 75; i < 100; i++ {
+			_, err := conns[i].ExecContext(ctx, "set resource group test")
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 0.0)
+		resourceGroupConnCountReached(t, "test", 25.0)
+
+		// close 25 connections
+		for i := 75; i < 100; i++ {
+			err := conns[i].Close()
+			require.NoError(t, err)
+		}
+		resourceGroupConnCountReached(t, "default", 0.0)
+		resourceGroupConnCountReached(t, "test", 0.0)
 	})
 }
 

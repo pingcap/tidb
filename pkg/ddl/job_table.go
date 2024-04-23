@@ -51,6 +51,7 @@ import (
 var (
 	addingDDLJobConcurrent      = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
+	localWorkerWaitingDuration  = 10 * time.Millisecond
 )
 
 func init() {
@@ -64,23 +65,26 @@ type jobType int
 
 func (t jobType) String() string {
 	switch t {
-	case general:
+	case jobTypeGeneral:
 		return "general"
-	case reorg:
+	case jobTypeReorg:
 		return "reorg"
+	case jobTypeLocal:
+		return "local"
 	}
 	return "unknown job type: " + strconv.Itoa(int(t))
 }
 
 const (
-	general jobType = iota
-	reorg
+	jobTypeGeneral jobType = iota
+	jobTypeReorg
+	jobTypeLocal
 )
 
 func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool, error)) (*model.Job, error) {
 	not := "not"
 	label := "get_job_general"
-	if tp == reorg {
+	if tp == jobTypeReorg {
 		not = ""
 		label = "get_job_reorg"
 	}
@@ -200,7 +204,7 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 }
 
 func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
-	return d.getJob(sess, general, func(job *model.Job) (bool, error) {
+	return d.getJob(sess, jobTypeGeneral, func(job *model.Job) (bool, error) {
 		if !d.runningJobs.checkRunnable(job) {
 			return false, nil
 		}
@@ -220,19 +224,9 @@ func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
 }
 
 func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
-	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
+	return d.getJob(sess, jobTypeReorg, func(job *model.Job) (bool, error) {
 		if !d.runningJobs.checkRunnable(job) {
 			return false, nil
-		}
-		if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
-			job.ReorgMeta != nil &&
-			job.ReorgMeta.IsFastReorg &&
-			ingest.LitBackCtxMgr != nil {
-			succeed := ingest.LitBackCtxMgr.MarkJobProcessing(job.ID)
-			if !succeed {
-				// We only allow one task to use ingest at the same time in order to limit the CPU/memory usage.
-				return false, nil
-			}
 		}
 		// Check if there is any block ddl running, like drop schema and flashback cluster.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where "+
@@ -243,6 +237,21 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 		rows, err := sess.Execute(d.ctx, sql, "check conflict jobs")
 		return len(rows) == 0, err
 	})
+}
+
+// startLocalWorkerLoop starts the local worker loop to run the DDL job of v2.
+func (d *ddl) startLocalWorkerLoop() {
+	for {
+		select {
+		case <-d.ctx.Done():
+			return
+		case task, ok := <-d.localJobCh:
+			if !ok {
+				return
+			}
+			d.delivery2LocalWorker(d.localWorkerPool, task)
+		}
+	}
 }
 
 func (d *ddl) startDispatchLoop() {
@@ -263,7 +272,7 @@ func (d *ddl) startDispatchLoop() {
 	defer ticker.Stop()
 	isOnce := false
 	for {
-		if isChanClosed(d.ctx.Done()) {
+		if d.ctx.Err() != nil {
 			return
 		}
 		if !d.isOwner() {
@@ -272,6 +281,15 @@ func (d *ddl) startDispatchLoop() {
 			time.Sleep(dispatchLoopWaitingDuration)
 			continue
 		}
+		failpoint.Inject("ownerResignAfterDispatchLoopCheck", func() {
+			if ingest.ResignOwnerForTest.Load() {
+				err2 := d.ownerManager.ResignOwner(context.Background())
+				if err2 != nil {
+					logutil.BgLogger().Info("resign meet error", zap.Error(err2))
+				}
+				ingest.ResignOwnerForTest.Store(false)
+			}
+		})
 		select {
 		case <-d.ddlJobCh:
 		case <-ticker.C:
@@ -342,10 +360,11 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 	d.mu.hook.OnGetJobBefore(pool.tp().String())
 	d.mu.RUnlock()
 
+	startTime := time.Now()
 	job, err := getJob(se)
 	if job == nil || err != nil {
 		if err != nil {
-			logutil.BgLogger().Warn("get job met error", zap.String("category", "ddl"), zap.Error(err))
+			wk.jobLogger(job).Warn("get job met error", zap.Duration("take time", time.Since(startTime)), zap.Error(err))
 		}
 		pool.put(wk)
 		return
@@ -354,11 +373,48 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 	d.mu.hook.OnGetJobAfter(pool.tp().String(), job)
 	d.mu.RUnlock()
 
-	d.delivery2worker(wk, pool, job)
+	d.delivery2Worker(wk, pool, job)
 }
 
-// delivery2worker owns the worker, need to put it back to the pool in this function.
-func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
+// delivery2LocalWorker runs the DDL job of v2 in local.
+// send the result to the error channels in the task.
+// delivery2Localworker owns the worker, need to put it back to the pool in this function.
+func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
+	job := task.job
+	wk, err := pool.get()
+	if err != nil {
+		task.NotifyError(err)
+		return
+	}
+	for wk == nil {
+		select {
+		case <-d.ctx.Done():
+			return
+		case <-time.After(localWorkerWaitingDuration):
+		}
+		wk, err = pool.get()
+		if err != nil {
+			task.NotifyError(err)
+			return
+		}
+	}
+	d.wg.Run(func() {
+		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
+		defer func() {
+			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
+		}()
+
+		err := wk.HandleLocalDDLJob(d.ddlCtx, job)
+		pool.put(wk)
+		if err != nil {
+			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
+		}
+		task.NotifyError(err)
+	})
+}
+
+// delivery2Worker owns the worker, need to put it back to the pool in this function.
+func (d *ddl) delivery2Worker(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
 	d.runningJobs.add(job)
 	d.wg.Run(func() {
@@ -373,7 +429,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			if variable.EnableMDL.Load() {
 				exist, version, err := checkMDLInfo(job.ID, d.sessPool)
 				if err != nil {
-					logutil.BgLogger().Warn("check MDL info failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
+					wk.jobLogger(job).Warn("check MDL info failed", zap.Error(err))
 					// Release the worker resource.
 					pool.put(wk)
 					return
@@ -385,14 +441,13 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 						return
 					}
 					d.setAlreadyRunOnce(job.ID)
-					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
+					cleanMDLInfo(d.sessPool, job.ID, d.etcdCli, job.State == model.JobStateSynced)
 					// Don't have a worker now.
 					return
 				}
 			} else {
 				err := waitSchemaSynced(d.ddlCtx, job, 2*d.lease)
 				if err != nil {
-					logutil.BgLogger().Warn("wait ddl job sync failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
 					time.Sleep(time.Second)
 					// Release the worker resource.
 					pool.put(wk)
@@ -403,9 +458,10 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 		}
 
 		schemaVer, err := wk.HandleDDLJobTable(d.ddlCtx, job)
+		logCtx := wk.logCtx
 		pool.put(wk)
 		if err != nil {
-			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
+			logutil.Logger(logCtx).Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
 		} else {
 			failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
 				if val.(bool) {
@@ -421,11 +477,9 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			// the newest schema.
 			err := waitSchemaChanged(d.ddlCtx, d.lease*2, schemaVer, job)
 			if err != nil {
-				// May be caused by server closing, shouldn't clean the MDL info.
-				logutil.BgLogger().Info("wait latest schema version error", zap.String("category", "ddl"), zap.Error(err))
 				return
 			}
-			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli)
+			cleanMDLInfo(d.sessPool, job.ID, d.etcdCli, job.State == model.JobStateSynced)
 			d.synced(job)
 
 			if RunInGoTest {
@@ -443,7 +497,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 }
 
 func (*ddl) markJobProcessing(se *sess.Session, job *model.Job) error {
-	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), fmt.Sprintf(
 		"update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID),
 		"mark_job_processing")
@@ -453,7 +507,7 @@ func (*ddl) markJobProcessing(se *sess.Session, job *model.Job) error {
 func (d *ddl) getTableByTxn(r autoid.Requirement, schemaID, tableID int64) (*model.DBInfo, table.Table, error) {
 	var tbl table.Table
 	var dbInfo *model.DBInfo
-	err := kv.RunInNewTxn(d.ctx, r.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(d.ctx, r.Store(), false, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		dbInfo, err1 = t.GetDatabase(schemaID)
@@ -496,7 +550,7 @@ func insertDDLJobs2Table(se *sess.Session, updateRawArgs bool, jobs ...*model.Jo
 		}
 		fmt.Fprintf(&sql, "(%d, %t, %s, %s, %s, %d, %t)", job.ID, job.MayNeedReorg(), strconv.Quote(job2SchemaIDs(job)), strconv.Quote(job2TableIDs(job)), util.WrapKey2String(b), job.Type, !job.NotStarted())
 	}
-	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	_, err := se.Execute(ctx, sql.String(), "insert_job")
 	logutil.BgLogger().Debug("add job to mysql.tidb_ddl_job table", zap.String("category", "ddl"), zap.String("sql", sql.String()))
@@ -532,6 +586,9 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 		slices.Sort(s)
 		return strings.Join(s, ",")
 	case model.ActionTruncateTable:
+		if schema {
+			return strconv.FormatInt(job.SchemaID, 10)
+		}
 		return strconv.FormatInt(job.TableID, 10) + "," + strconv.FormatInt(job.Args[0].(int64), 10)
 	}
 	if schema {
@@ -610,6 +667,7 @@ func getCheckpointReorgHandle(se *sess.Session, job *model.Job) (startKey, endKe
 			}
 			if len(cp.EndKey) > 0 {
 				endKey = cp.EndKey
+				endKey = adjustEndKeyAcrossVersion(job, endKey)
 			}
 		}
 	}
@@ -696,4 +754,30 @@ func getJobsBySQL(se *sess.Session, tbl, condition string) ([]*model.Job, error)
 		jobs = append(jobs, &job)
 	}
 	return jobs, nil
+}
+
+func filterProcessingJobIDs(se *sess.Session, jobIDs []int64) ([]int64, error) {
+	if len(jobIDs) == 0 {
+		return nil, nil
+	}
+
+	var sb strings.Builder
+	for i, id := range jobIDs {
+		if i != 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(strconv.FormatInt(id, 10))
+	}
+	sql := fmt.Sprintf(
+		"SELECT job_id FROM mysql.tidb_ddl_job WHERE job_id IN (%s) AND processing",
+		sb.String())
+	rows, err := se.Execute(context.Background(), sql, "filter_processing_job_ids")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ret := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		ret = append(ret, row.GetInt64(0))
+	}
+	return ret, nil
 }

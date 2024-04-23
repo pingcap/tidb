@@ -427,7 +427,7 @@ alter resource group rg1 ru_per_sec = 200;
 drop user user1;
 drop resource group if exists rg1;
 
-# *******TestLocalOnlyRole*******
+# *******TestNoneRole*******
 admin unset bdr role;
 create database bdr_mode;
 use bdr_mode;
@@ -564,5 +564,9 @@ alter table t add column c int null;
 -- error 8263
 alter table t add column d int not null;
 alter table t add column d int not null default 10;
+alter table t add column e int default 10;
+alter table t add column f int comment "test";
+alter table t add column g int default 10 comment "test";
+alter table t add column h int as (a + 1) virtual;
 admin unset bdr role;
 drop database bdr_mode;

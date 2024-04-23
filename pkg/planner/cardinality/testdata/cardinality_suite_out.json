@@ -24,7 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 752.004166655054
+        "Count": 735.504166655054
       },
       {
         "Start": 900,
@@ -74,12 +74,12 @@
       {
         "Start": 300,
         "End": 899,
-        "Count": 4498.5
+        "Count": 4500
       },
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1201.196869573942
+        "Count": 1193.696869573942
       },
       {
         "Start": 900,
@@ -104,7 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-        "Count": 1211.5288209899081
+        "Count": 1237.5288209899081
       },
       {
         "Start": 200,
@@ -964,6 +964,10 @@
     "Name": "TestOrderingIdxSelectivityThreshold",
     "Cases": [
       {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_ratio = -1",
+        "Result": null
+      },
+      {
         "Query": "set @@tidb_opt_ordering_index_selectivity_threshold = 0",
         "Result": null
       },
@@ -1055,6 +1059,16 @@
           "  ├─IndexFullScan(Build) 49.76 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  or(and(ge(test.t.b, 0), le(test.t.b, 100)), and(ge(test.t.c, 0), le(test.t.c, 100)))",
           "    └─TableRowIDScan 49.76 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 100.00 cop[tikv] table:t range:[-inf,1000), keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1170,6 +1184,161 @@
           "  └─TopN(Probe) 1.00 cop[tikv]  test.t.c, offset:0, count:1",
           "    └─Selection 5.00 cop[tikv]  ge(test.t.c, 9900)",
           "      └─TableRowIDScan 500.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 100.00 cop[tikv] table:t range:[-inf,1000), keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestOrderingIdxSelectivityRatio",
+    "Cases": [
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_threshold = 0",
+        "Result": null
+      },
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_ratio = -1",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+        "Result": [
+          "Limit 10.00 root  offset:0, count:10",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexFullScan(Build) 100.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 100.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_ratio = 0",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+        "Result": [
+          "Limit 10.00 root  offset:0, count:10",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_ratio = 0.1",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 91.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 91.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+        "Result": [
+          "Limit 10.00 root  offset:0, count:10",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexFullScan(Build) 100.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 100.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "set @@tidb_opt_ordering_index_selectivity_ratio = 0.5",
+        "Result": null
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 451.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 451.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+        "Result": [
+          "Limit 10.00 root  offset:0, count:10",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexFullScan(Build) 460.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 460.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+        "Result": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─TableReader 1.00 root  data:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
+          "      └─TableRangeScan 10.00 cop[tikv] table:t range:[-inf,500), keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1352,7 +1521,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -1421,7 +1590,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -1510,7 +1679,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 3080
@@ -1536,7 +1705,7 @@
                           {
                             "github.com/pingcap/tidb/pkg/planner/cardinality.crossValidationSelectivity": [
                               {
-                                "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                                   "EssentialLoaded": true,
                                   "InValidForCollPseudo": false,
                                   "IsInvalid": false,
@@ -1586,7 +1755,7 @@
                                 ]
                               },
                               {
-                                "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                                   "EssentialLoaded": true,
                                   "InValidForCollPseudo": false,
                                   "IsInvalid": false,
@@ -1723,7 +1892,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 3080
@@ -1749,7 +1918,7 @@
                           {
                             "github.com/pingcap/tidb/pkg/planner/cardinality.crossValidationSelectivity": [
                               {
-                                "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                                   "EssentialLoaded": true,
                                   "InValidForCollPseudo": false,
                                   "IsInvalid": false,
@@ -1909,7 +2078,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -1978,7 +2147,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -2073,7 +2242,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 2980
@@ -2164,7 +2333,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 2980
@@ -2281,7 +2450,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -2416,7 +2585,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -2554,7 +2723,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 3080
@@ -2705,7 +2874,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 3080
@@ -2731,7 +2900,7 @@
                           {
                             "github.com/pingcap/tidb/pkg/planner/cardinality.crossValidationSelectivity": [
                               {
-                                "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                                   "EssentialLoaded": true,
                                   "InValidForCollPseudo": false,
                                   "IsInvalid": false,
@@ -2977,7 +3146,7 @@
                           {
                             "github.com/pingcap/tidb/pkg/planner/cardinality.crossValidationSelectivity": [
                               {
-                                "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                                "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                                   "EssentialLoaded": true,
                                   "InValidForCollPseudo": false,
                                   "IsInvalid": false,
@@ -3272,7 +3441,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -3412,7 +3581,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.ColumnStatsIsInvalid": {
                       "EssentialLoaded": true,
                       "InValidForCollPseudo": false,
                       "IsInvalid": false,
@@ -3561,7 +3730,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 2980
@@ -3690,7 +3859,7 @@
                     ]
                   },
                   {
-                    "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                    "github.com/pingcap/tidb/pkg/statistics.IndexStatsIsInvalid": {
                       "CollPseudo": false,
                       "IsInvalid": false,
                       "TotalCount": 2980
@@ -3851,6 +4020,53 @@
           "    │ └─IndexRangeScan 1000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
           "    └─Selection(Probe) 2000.00 cop[tikv]  eq(test.t.a, 0)",
           "      └─TableRowIDScan 1000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestSubsetIdxCardinality",
+    "Cases": [
+      {
+        "Query": "explain format = 'brief' select distinct a from t",
+        "Result": [
+          "StreamAgg 31.00 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
+          "└─IndexReader 31.00 root  index:StreamAgg",
+          "  └─StreamAgg 31.00 cop[tikv]  group by:test.t.a, ",
+          "    └─IndexFullScan 1280.00 cop[tikv] table:t, index:iabc(a, b, c) keep order:true"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select distinct b from t",
+        "Result": [
+          "HashAgg 14.00 root  group by:test.t.b, funcs:firstrow(test.t.b)->test.t.b",
+          "└─IndexReader 14.00 root  index:HashAgg",
+          "  └─HashAgg 14.00 cop[tikv]  group by:test.t.b, ",
+          "    └─IndexFullScan 1280.00 cop[tikv] table:t, index:iabc(a, b, c) keep order:false"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select distinct a, b, c from t",
+        "Result": [
+          "StreamAgg 70.00 root  group by:test.t.a, test.t.b, test.t.c, funcs:firstrow(test.t.a)->test.t.a, funcs:firstrow(test.t.b)->test.t.b, funcs:firstrow(test.t.c)->test.t.c",
+          "└─IndexReader 70.00 root  index:StreamAgg",
+          "  └─StreamAgg 70.00 cop[tikv]  group by:test.t.a, test.t.b, test.t.c, ",
+          "    └─IndexFullScan 1280.00 cop[tikv] table:t, index:iabc(a, b, c) keep order:true"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select a, b from t where a = 1 and b = 1 and c = 1",
+        "Result": [
+          "Projection 16.00 root  test.t.a, test.t.b",
+          "└─IndexReader 16.00 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 16.00 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1 1,1 1 1], keep order:false"
+        ]
+      },
+      {
+        "Query": "explain format = 'brief' select a, b from t where a = 1 and b = 1",
+        "Result": [
+          "IndexReader 20.32 root  index:IndexRangeScan",
+          "└─IndexRangeScan 20.32 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1,1 1], keep order:false"
         ]
       }
     ]

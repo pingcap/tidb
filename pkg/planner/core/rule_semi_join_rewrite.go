@@ -20,13 +20,25 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
+// semiJoinRewriter rewrites semi join to inner join with aggregation.
+// Note: This rewriter is only used for exists subquery.
+// And it also requires the hint `SEMI_JOIN_REWRITE` to be set.
+// For example:
+//
+//	select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ * from s where s.a = t.a);
+//
+// will be rewriten to:
+//
+//	select * from t join (select a from s group by a) s on t.a = s.a;
 type semiJoinRewriter struct {
 }
 
-func (smj *semiJoinRewriter) optimize(_ context.Context, p LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (smj *semiJoinRewriter) optimize(_ context.Context, p base.LogicalPlan, _ *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	newLogicalPlan, err := smj.recursivePlan(p)
 	return newLogicalPlan, planChanged, err
@@ -36,11 +48,11 @@ func (*semiJoinRewriter) name() string {
 	return "semi_join_rewrite"
 }
 
-func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
+func (smj *semiJoinRewriter) recursivePlan(p base.LogicalPlan) (base.LogicalPlan, error) {
 	if _, ok := p.(*LogicalCTE); ok {
 		return p, nil
 	}
-	newChildren := make([]LogicalPlan, 0, len(p.Children()))
+	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		newChild, err := smj.recursivePlan(child)
 		if err != nil {
@@ -59,7 +71,7 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 	join.preferJoinType &= ^h.PreferRewriteSemiJoin
 
 	if join.JoinType == LeftOuterSemiJoin {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin."))
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin.")
 		return p, nil
 	}
 
@@ -67,7 +79,7 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 
 	// If there's left condition or other condition, we cannot rewrite
 	if len(join.LeftConditions) > 0 || len(join.OtherConditions) > 0 {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("SEMI_JOIN_REWRITE() is inapplicable for SemiJoin with left conditions or other conditions."))
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("SEMI_JOIN_REWRITE() is inapplicable for SemiJoin with left conditions or other conditions.")
 		return p, nil
 	}
 
@@ -93,7 +105,7 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 	aggOutputCols := make([]*expression.Column, 0, len(join.EqualConditions))
 	for i := range join.EqualConditions {
 		innerCol := join.EqualConditions[i].GetArgs()[1].(*expression.Column)
-		firstRow, err := aggregation.NewAggFuncDesc(join.SCtx(), ast.AggFuncFirstRow, []expression.Expression{innerCol}, false)
+		firstRow, err := aggregation.NewAggFuncDesc(join.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{innerCol}, false)
 		if err != nil {
 			return nil, err
 		}

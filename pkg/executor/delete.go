@@ -144,6 +144,11 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			rowCount++
 		}
 		chk = chunk.Renew(chk, e.MaxChunkSize())
+		if txn, _ := e.Ctx().Txn(false); txn != nil {
+			if err := txn.MayFlush(); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
@@ -222,6 +227,11 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 			}
 		}
 		chk = exec.TryNewCacheChunk(e.Children(0))
+		if txn, _ := e.Ctx().Txn(false); txn != nil {
+			if err := txn.MayFlush(); err != nil {
+				return err
+			}
+		}
 	}
 
 	return e.removeRowsInTblRowMap(tblRowMap)
@@ -243,7 +253,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 }
 
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum) error {
-	err := t.RemoveRecord(ctx, h, data)
+	err := t.RemoveRecord(ctx.GetTableCtx(), h, data)
 	if err != nil {
 		return err
 	}

@@ -22,23 +22,21 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
-	"go.uber.org/zap"
 )
 
 type mergeSortExecutor struct {
-	jobID               int64
-	idxNum              int
-	ptbl                table.PhysicalTable
-	bc                  ingest.BackendCtx
-	cloudStoreURI       string
+	taskexecutor.EmptyStepExecutor
+	jobID         int64
+	idxNum        int
+	ptbl          table.PhysicalTable
+	cloudStoreURI string
+
 	mu                  sync.Mutex
 	subtaskSortedKVMeta *external.SortedKVMeta
 }
@@ -47,14 +45,12 @@ func newMergeSortExecutor(
 	jobID int64,
 	idxNum int,
 	ptbl table.PhysicalTable,
-	bc ingest.BackendCtx,
 	cloudStoreURI string,
 ) (*mergeSortExecutor, error) {
 	return &mergeSortExecutor{
 		jobID:         jobID,
 		idxNum:        idxNum,
 		ptbl:          ptbl,
-		bc:            bc,
 		cloudStoreURI: cloudStoreURI,
 	}, nil
 }
@@ -67,12 +63,8 @@ func (*mergeSortExecutor) Init(ctx context.Context) error {
 func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort executor run subtask")
 
-	sm := &BackfillSubTaskMeta{}
-	err := json.Unmarshal(subtask.Meta, sm)
+	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
 	if err != nil {
-		logutil.BgLogger().Error("unmarshal error",
-			zap.String("category", "ddl"),
-			zap.Error(err))
 		return err
 	}
 
@@ -93,26 +85,21 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	prefix := path.Join(strconv.Itoa(int(m.jobID)), strconv.Itoa(int(subtask.ID)))
-
-	partSize, err := getMergeSortPartSize(int(variable.GetDDLReorgWorkerCounter()), m.idxNum)
-	if err != nil {
-		return err
-	}
+	res := m.GetResource()
+	memSizePerCon := res.Mem.Capacity() / int64(subtask.Concurrency)
+	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
 
 	return external.MergeOverlappingFiles(
 		ctx,
 		sm.DataFiles,
 		store,
-		int64(partSize),
-		64*1024,
+		partSize,
 		prefix,
 		external.DefaultBlockSize,
-		external.DefaultMemSizeLimit,
-		8*1024,
-		1*size.MB,
-		8*1024,
 		onClose,
-		int(variable.GetDDLReorgWorkerCounter()), true)
+		subtask.Concurrency,
+		true,
+	)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
@@ -122,21 +109,16 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 
 func (m *mergeSortExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
-	var subtaskMeta BackfillSubTaskMeta
-	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
-		return errors.Trace(err)
+	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	if err != nil {
+		return err
 	}
-	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
+	sm.MetaGroups = []*external.SortedKVMeta{m.subtaskSortedKVMeta}
 	m.subtaskSortedKVMeta = nil
-	newMeta, err := json.Marshal(subtaskMeta)
+	newMeta, err := json.Marshal(sm)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	subtask.Meta = newMeta
-	return nil
-}
-
-func (*mergeSortExecutor) Rollback(ctx context.Context) error {
-	logutil.Logger(ctx).Info("merge sort executor rollback backfill add index task")
 	return nil
 }

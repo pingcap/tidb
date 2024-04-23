@@ -57,14 +57,21 @@ var (
 //		TID:2 -> int64
 //	}
 //
+// DDL version 2
+// Names -> {
+//		Name:DBname\x00tablename -> tableID
+// }
 
 var (
 	mMetaPrefix          = []byte("m")
 	mNextGlobalIDKey     = []byte("NextGlobalID")
 	mSchemaVersionKey    = []byte("SchemaVersionKey")
 	mDBs                 = []byte("DBs")
+	mNames               = []byte("Names")
+	mDDLV2Initialized    = []byte("DDLV2Initialized")
 	mDBPrefix            = "DB"
 	mTablePrefix         = "Table"
+	mNameSep             = []byte("\x00")
 	mSequencePrefix      = "SID"
 	mSeqCyclePrefix      = "SequenceCycle"
 	mTableIDPrefix       = "TID"
@@ -160,23 +167,39 @@ func (ver DDLTableVersion) Bytes() []byte {
 	return []byte(strconv.Itoa(int(ver)))
 }
 
+// Option is for Meta option.
+type Option func(m *Meta)
+
+// WithUpdateTableName is for updating the name of the table.
+// Only used for ddl v2.
+func WithUpdateTableName() Option {
+	return func(m *Meta) {
+		m.needUpdateName = true
+	}
+}
+
 // Meta is for handling meta information in a transaction.
 type Meta struct {
-	txn        *structure.TxStructure
-	StartTS    uint64 // StartTS is the txn's start TS.
-	jobListKey JobListKeyType
+	txn            *structure.TxStructure
+	StartTS        uint64 // StartTS is the txn's start TS.
+	jobListKey     JobListKeyType
+	needUpdateName bool
 }
 
 // NewMeta creates a Meta in transaction txn.
 // If the current Meta needs to handle a job, jobListKey is the type of the job's list.
-func NewMeta(txn kv.Transaction) *Meta {
+func NewMeta(txn kv.Transaction, options ...Option) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
-	return &Meta{txn: t,
+	m := &Meta{txn: t,
 		StartTS:    txn.StartTS(),
 		jobListKey: DefaultJobListKey,
 	}
+	for _, opt := range options {
+		opt(m)
+	}
+	return m
 }
 
 // NewSnapshotMeta creates a Meta with snapshot.
@@ -662,7 +685,7 @@ func (m *Meta) UpdateDatabase(dbInfo *model.DBInfo) error {
 }
 
 // CreateTableOrView creates a table with tableInfo in database.
-func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
+func (m *Meta) CreateTableOrView(dbID int64, dbName string, tableInfo *model.TableInfo) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -680,7 +703,13 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 		return errors.Trace(err)
 	}
 
-	return m.txn.HSet(dbKey, tableKey, data)
+	if err := m.txn.HSet(dbKey, tableKey, data); err != nil {
+		return errors.Trace(err)
+	}
+	if m.needUpdateName {
+		return errors.Trace(m.CreateTableName(dbName, tableInfo.Name.L, tableInfo.ID))
+	}
+	return nil
 }
 
 // SetBDRRole write BDR role into storage.
@@ -784,17 +813,23 @@ func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
 // and rebases the table autoID.
-func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIncID, autoRandID int64) error {
-	err := m.CreateTableOrView(dbID, tableInfo)
+func (m *Meta) CreateTableAndSetAutoID(dbID int64, dbName string, tableInfo *model.TableInfo, autoIDs AutoIDGroup) error {
+	err := m.CreateTableOrView(dbID, dbName, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoIncID)
+	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoIDs.RowID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if tableInfo.AutoRandomBits > 0 {
-		_, err = m.txn.HInc(m.dbKey(dbID), m.autoRandomTableIDKey(tableInfo.ID), autoRandID)
+		_, err = m.txn.HInc(m.dbKey(dbID), m.autoRandomTableIDKey(tableInfo.ID), autoIDs.RandomID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if tableInfo.SepAutoInc() && tableInfo.GetAutoIncrementColInfo() != nil {
+		_, err = m.txn.HInc(m.dbKey(dbID), m.autoIncrementIDKey(tableInfo.ID), autoIDs.IncrementID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -803,8 +838,8 @@ func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, a
 }
 
 // CreateSequenceAndSetSeqValue creates sequence with tableInfo in database, and rebase the sequence seqValue.
-func (m *Meta) CreateSequenceAndSetSeqValue(dbID int64, tableInfo *model.TableInfo, seqValue int64) error {
-	err := m.CreateTableOrView(dbID, tableInfo)
+func (m *Meta) CreateSequenceAndSetSeqValue(dbID int64, dbName string, tableInfo *model.TableInfo, seqValue int64) error {
+	err := m.CreateTableOrView(dbID, dbName, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -842,7 +877,7 @@ func (m *Meta) DropPolicy(policyID int64) error {
 }
 
 // DropDatabase drops whole database.
-func (m *Meta) DropDatabase(dbID int64) error {
+func (m *Meta) DropDatabase(dbID int64, dbName string) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.txn.HClear(dbKey); err != nil {
@@ -853,13 +888,16 @@ func (m *Meta) DropDatabase(dbID int64) error {
 		return errors.Trace(err)
 	}
 
+	if m.needUpdateName {
+		return errors.Trace(m.DropDatabaseName(dbName))
+	}
 	return nil
 }
 
 // DropSequence drops sequence in database.
 // Sequence is made of table struct and kv value pair.
-func (m *Meta) DropSequence(dbID int64, tblID int64) error {
-	err := m.DropTableOrView(dbID, tblID)
+func (m *Meta) DropSequence(dbID int64, dbName string, tblID int64, tbName string) error {
+	err := m.DropTableOrView(dbID, dbName, tblID, tbName)
 	if err != nil {
 		return err
 	}
@@ -874,7 +912,7 @@ func (m *Meta) DropSequence(dbID int64, tblID int64) error {
 // DropTableOrView drops table in database.
 // If delAutoID is true, it will delete the auto_increment id key-value of the table.
 // For rename table, we do not need to rename auto_increment id key-value.
-func (m *Meta) DropTableOrView(dbID int64, tblID int64) error {
+func (m *Meta) DropTableOrView(dbID int64, dbName string, tblID int64, tbName string) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -889,6 +927,9 @@ func (m *Meta) DropTableOrView(dbID int64, tblID int64) error {
 
 	if err := m.txn.HDel(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
+	}
+	if m.needUpdateName {
+		return errors.Trace(m.DropTableName(dbName, tbName))
 	}
 	return nil
 }
@@ -935,6 +976,7 @@ func (m *Meta) IterTables(dbID int64, fn func(info *model.TableInfo) error) erro
 		if err != nil {
 			return errors.Trace(err)
 		}
+		tbInfo.DBID = dbID
 
 		err = fn(tbInfo)
 		return errors.Trace(err)
@@ -967,6 +1009,7 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		tbInfo.DBID = dbID
 
 		tables = append(tables, tbInfo)
 	}
@@ -1183,6 +1226,7 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 
 	tableInfo := &model.TableInfo{}
 	err = json.Unmarshal(value, tableInfo)
+	tableInfo.DBID = dbID
 	return tableInfo, errors.Trace(err)
 }
 
@@ -1492,6 +1536,98 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	err = m.txn.Set(diffKey, data)
 	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
+}
+
+// TableNameKey constructs the key for table name.
+func (*Meta) TableNameKey(dbName string, tableName string) kv.Key {
+	var sb strings.Builder
+	sb.Write(mNames)
+	sb.WriteByte(':')
+	sb.WriteString(strings.ToLower(dbName))
+	sb.Write(mNameSep)
+	sb.WriteString(strings.ToLower(tableName))
+	return kv.Key(sb.String())
+}
+
+// CheckTableNameExists checks if the table name exists.
+func (m *Meta) CheckTableNameExists(name []byte) error {
+	v, err := m.txn.Get(name)
+	if err == nil && v == nil {
+		err = ErrTableNotExists.FastGenByArgs(string(name))
+	}
+	return errors.Trace(err)
+}
+
+// CheckTableNameNotExists checks if the table name not exists.
+func (m *Meta) CheckTableNameNotExists(name []byte) error {
+	v, err := m.txn.Get(name)
+	if err == nil && v != nil {
+		err = ErrTableExists.FastGenByArgs(string(name))
+	}
+	return errors.Trace(err)
+}
+
+// CreateTableName creates a table name.
+// Used by CreateTable/RenameTable/TruncateTable/RecoverTable/RecoverSchema/CreateView...
+func (m *Meta) CreateTableName(dbName string, tableName string, tableID int64) error {
+	// Check if table exists.
+	key := m.TableNameKey(dbName, tableName)
+	if err := m.CheckTableNameNotExists(key); err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.Set(key, []byte(strconv.FormatInt(tableID, 10)))
+}
+
+// DropTableName drops a table name.
+// Used by DropTable/RenameTable/TruncateTable/DropView...
+func (m *Meta) DropTableName(dbName string, tableName string) error {
+	// Check if table exists.
+	key := m.TableNameKey(dbName, tableName)
+	if err := m.CheckTableNameExists(key); err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.Clear(key)
+}
+
+// DropDatabaseName drops a database name.
+// Used by DropDatabase.
+func (m *Meta) DropDatabaseName(dbName string) error {
+	// iterate all tables
+	prefix := m.TableNameKey(dbName, "")
+	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, _ []byte) error {
+		return m.txn.Clear(key)
+	})
+}
+
+// ClearAllTableNames clears all table names.
+func (m *Meta) ClearAllTableNames() error {
+	prefix := kv.Key(fmt.Sprintf("%s:", mNames))
+	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, _ []byte) error {
+		return m.txn.Clear(key)
+	})
+}
+
+// SetDDLV2Initialized set DDLV2Initialized.
+func (m *Meta) SetDDLV2Initialized(b bool) error {
+	var data []byte
+	if b {
+		data = []byte("1")
+	} else {
+		data = []byte("0")
+	}
+	return m.txn.Set(mDDLV2Initialized, data)
+}
+
+// GetDDLV2Initialized gets DDLV2Initialized
+func (m *Meta) GetDDLV2Initialized() (initialized bool, err error) {
+	val, err := m.txn.Get(mDDLV2Initialized)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return false, nil
+	}
+	return bytes.Equal(val, []byte("1")), nil
 }
 
 // GroupRUStats keeps the ru consumption statistics data.

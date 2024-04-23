@@ -33,3 +33,6 @@ data-encryption-method = "aes256-ctr"
 [security.encryption.master-key]
 type = "file"
 path = "/tmp/backup_restore_test/master-key-file"
+
+[log-backup]
+max-flush-interval = "50s"

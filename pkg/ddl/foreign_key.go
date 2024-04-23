@@ -707,7 +707,7 @@ func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKI
 
 	var buf strings.Builder
 	buf.WriteString("select 1 from %n.%n where ")
-	paramsList := make([]interface{}, 0, 4+len(fkInfo.Cols)*2)
+	paramsList := make([]any, 0, 4+len(fkInfo.Cols)*2)
 	paramsList = append(paramsList, schema, table)
 	for i, col := range fkInfo.Cols {
 		if i == 0 {
@@ -738,7 +738,7 @@ func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKI
 	}
 	buf.WriteString(" from %n.%n ) limit 1")
 	paramsList = append(paramsList, fkInfo.RefSchema.L, fkInfo.RefTable.L)
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, buf.String(), paramsList...)
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, buf.String(), paramsList...)
 	if err != nil {
 		return errors.Trace(err)
 	}

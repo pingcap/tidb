@@ -285,6 +285,11 @@ func (s *MemStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	return nil
 }
 
+// Close implements ExternalStorage interface.
+func (s *MemStorage) Close() {
+	s.dataStore = nil
+}
+
 // memFileReader is the struct to read data from an opend mem storage file
 type memFileReader struct {
 	br       *bytes.Reader

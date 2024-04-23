@@ -46,13 +46,13 @@ done
 
 rm -f $LOG
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" --log-file $LOG --filter "${DB}1.*" || cat $LOG
-load_cnt=$(cat $LOG | grep "restore stat done" | wc -l)
-load_db1_cnt=$(cat $LOG | grep "restore stat done" | grep "${DB}1" | wc -l)
+load_cnt=$(cat $LOG | grep "restore statistic data done" | wc -l)
+load_db1_cnt=$(cat $LOG | grep "restore statistic data done" | grep "${DB}1" | wc -l)
 load_mark=$((${load_cnt}+10*${load_db1_cnt}))
 echo "load stats count: ${load_cnt}; db1 count: ${load_db1_cnt}; load mark: ${load_mark}"
 
 if [ "${load_mark}" -ne "11" ]; then
     echo "TEST: [$TEST_NAME] fail on load stats"
-    echo $(cat $LOG | grep "restore stat done")
+    echo $(cat $LOG | grep "restore statistic data done")
     exit 1
 fi

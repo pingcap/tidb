@@ -129,7 +129,7 @@ func TestTransaction(t *testing.T) {
 }
 
 func inTxn(ctx sessionctx.Context) bool {
-	return (ctx.GetSessionVars().Status & mysql.ServerStatusInTrans) > 0
+	return ctx.GetSessionVars().InTxn()
 }
 
 func TestRole(t *testing.T) {

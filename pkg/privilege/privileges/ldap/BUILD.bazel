@@ -12,9 +12,12 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/privilege/conn",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
         "@com_github_go_ldap_ldap_v3//:ldap",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -29,5 +32,6 @@ go_test(
         "test/ldap.key",
     ],
     flaky = True,
+    shard_count = 4,
     deps = ["@com_github_stretchr_testify//require"],
 )

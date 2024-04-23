@@ -17,11 +17,10 @@ package sqlexec
 import (
 	"context"
 
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -47,17 +46,17 @@ type RestrictedSQLExecutor interface {
 	// Attention: it does not prevent you from doing parse("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
 	// One argument should be a standalone entity. It should not "concat" with other placeholders and characters.
 	// This function only saves you from processing potentially unsafe parameters.
-	ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error)
+	ParseWithParams(ctx context.Context, sql string, args ...any) (ast.StmtNode, error)
 	// ExecRestrictedStmt run sql statement in ctx with some restrictions.
 	ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error)
 	// ExecRestrictedSQL run sql string in ctx with internal session.
-	ExecRestrictedSQL(ctx context.Context, opts []OptionFuncAlias, sql string, args ...interface{}) ([]chunk.Row, []*ast.ResultField, error)
+	ExecRestrictedSQL(ctx context.Context, opts []OptionFuncAlias, sql string, args ...any) ([]chunk.Row, []*ast.ResultField, error)
 }
 
 // ExecOption is a struct defined for ExecRestrictedStmt/SQL option.
 type ExecOption struct {
 	AnalyzeSnapshot    *bool
-	TrackSysProc       func(id uint64, ctx sessionctx.Context) error
+	TrackSysProc       func(id uint64, ctx sysproctrack.TrackProc) error
 	UnTrackSysProc     func(id uint64)
 	PartitionPruneMode string
 	SnapshotTS         uint64
@@ -119,7 +118,7 @@ func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
 }
 
 // ExecOptionWithSysProcTrack tells ExecRestrictedStmt/SQL to track sys process.
-func ExecOptionWithSysProcTrack(procID uint64, track func(id uint64, ctx sessionctx.Context) error, untrack func(id uint64)) OptionFuncAlias {
+func ExecOptionWithSysProcTrack(procID uint64, track func(id uint64, ctx sysproctrack.TrackProc) error, untrack func(id uint64)) OptionFuncAlias {
 	return func(option *ExecOption) {
 		option.TrackSysProcID = procID
 		option.TrackSysProc = track
@@ -144,14 +143,8 @@ type SQLExecutor interface {
 	// Execute is only used by plugins. It can be removed soon.
 	Execute(ctx context.Context, sql string) ([]RecordSet, error)
 	// ExecuteInternal means execute sql as the internal sql.
-	ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (RecordSet, error)
+	ExecuteInternal(ctx context.Context, sql string, args ...any) (RecordSet, error)
 	ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (RecordSet, error)
-	// allowed when tikv disk full happened.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
-	// clear allowed flag
-	ClearDiskFullOpt()
-	// GetSessionVars is used to read some result after ExecuteXXX
-	GetSessionVars() *variable.SessionVars
 }
 
 // SQLParser is an interface provides parsing sql statement.
@@ -239,8 +232,8 @@ func DrainRecordSet(ctx context.Context, rs RecordSet, maxChunkSize int) ([]chun
 
 // ExecSQL executes the sql and returns the result.
 // TODO: consider retry.
-func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
-	rs, err := se.(SQLExecutor).ExecuteInternal(ctx, sql, args...)
+func ExecSQL(ctx context.Context, exec SQLExecutor, sql string, args ...any) ([]chunk.Row, error) {
+	rs, err := exec.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}

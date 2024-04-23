@@ -13,9 +13,11 @@ go_test(
     ],
     deps = [
         "//pkg/config",
+        "//pkg/ddl/ingest",
         "//pkg/testkit",
         "//tests/realtikvtest",
         "//tests/realtikvtest/addindextestutil",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
     ],
 )

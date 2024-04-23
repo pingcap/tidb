@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
@@ -110,7 +111,7 @@ func NewHandle(
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
 	pool util.SessionPool,
-	tracker sessionctx.SysProcTracker,
+	tracker sysproctrack.Tracker,
 	autoAnalyzeProcIDGetter func() uint64,
 ) (*Handle, error) {
 	handle := &Handle{
@@ -149,7 +150,7 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID)
 }
 
-// GetTableStatsForAutoAnalyze is to get table stats but it will
+// GetTableStatsForAutoAnalyze is to get table stats but it will not return pseudo stats.
 func (h *Handle) GetTableStatsForAutoAnalyze(tblInfo *model.TableInfo) *statistics.Table {
 	return h.getPartitionStats(tblInfo, tblInfo.ID, false)
 }
@@ -160,17 +161,22 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	return h.getPartitionStats(tblInfo, pid, true)
 }
 
+// GetPartitionStatsForAutoAnalyze is to get partition stats but it will not return pseudo stats.
+func (h *Handle) GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid int64) *statistics.Table {
+	return h.getPartitionStats(tblInfo, pid, false)
+}
+
 func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPseudo bool) *statistics.Table {
 	var tbl *statistics.Table
 	if h == nil {
-		tbl = statistics.PseudoTable(tblInfo, false)
+		tbl = statistics.PseudoTable(tblInfo, false, false)
 		tbl.PhysicalID = pid
 		return tbl
 	}
 	tbl, ok := h.Get(pid)
 	if !ok {
 		if returnPseudo {
-			tbl = statistics.PseudoTable(tblInfo, false)
+			tbl = statistics.PseudoTable(tblInfo, false, true)
 			tbl.PhysicalID = pid
 			if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
 				h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
@@ -195,8 +201,14 @@ func (h *Handle) FlushStats() {
 	}
 }
 
+// StartWorker starts the background collector worker inside
+func (h *Handle) StartWorker() {
+	h.StatsUsage.StartWorker()
+}
+
 // Close stops the background
 func (h *Handle) Close() {
 	h.Pool.Close()
 	h.StatsCache.Close()
+	h.StatsUsage.Close()
 }

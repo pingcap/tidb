@@ -22,33 +22,8 @@ select sum(json_extract(summary, '$.row_count')) from tidb_background_subtask;
 sum(json_extract(summary, '$.row_count'))
 54
 truncate table tidb_background_subtask;
+truncate table tidb_background_subtask_history;
 use mysql;
-show create table mysql.tidb_background_subtask_history;
-Table	Create Table
-tidb_background_subtask_history	CREATE TABLE `tidb_background_subtask_history` (
-  `id` bigint(20) NOT NULL AUTO_INCREMENT,
-  `step` int(11) DEFAULT NULL,
-  `namespace` varchar(256) DEFAULT NULL,
-  `task_key` varchar(256) DEFAULT NULL,
-  `ddl_physical_tid` bigint(20) DEFAULT NULL,
-  `type` int(11) DEFAULT NULL,
-  `exec_id` varchar(256) DEFAULT NULL,
-  `exec_expired` timestamp NULL DEFAULT NULL,
-  `state` varchar(64) NOT NULL,
-  `checkpoint` longblob NOT NULL,
-  `concurrency` int(11) DEFAULT NULL,
-  `create_time` timestamp NULL DEFAULT NULL,
-  `start_time` bigint(20) DEFAULT NULL,
-  `state_update_time` bigint(20) DEFAULT NULL,
-  `end_time` timestamp NULL DEFAULT NULL,
-  `meta` longblob DEFAULT NULL,
-  `ordinal` int(11) DEFAULT NULL,
-  `error` blob DEFAULT NULL,
-  `summary` json DEFAULT NULL,
-  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
-  KEY `idx_task_key` (`task_key`),
-  KEY `idx_state_update_time` (`state_update_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 insert into tidb_background_subtask(id, state, checkpoint) values (1, 0, "");
 insert into tidb_background_subtask_history select * from tidb_background_subtask;
 select * from tidb_background_subtask_history;

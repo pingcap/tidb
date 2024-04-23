@@ -36,9 +36,12 @@ func TestShowStatsMeta(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("analyze table t, t1")
 	result := tk.MustQuery("show stats_meta")
+	result = result.Sort()
 	require.Len(t, result.Rows(), 2)
 	require.Equal(t, "t", result.Rows()[0][1])
 	require.Equal(t, "t1", result.Rows()[1][1])
+	require.NotEqual(t, "<nil>", result.Rows()[0][6])
+	require.NotEqual(t, "<nil>", result.Rows()[1][6])
 	result = tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Len(t, result.Rows(), 1)
 	require.Equal(t, "t", result.Rows()[0][1])
@@ -94,7 +97,7 @@ func TestShowStatsHistograms(t *testing.T) {
 	tk.MustExec("analyze table t index idx_b")
 	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'idx_b'")
 	require.Len(t, res.Rows(), 1)
-	res.CheckAt([]int{10}, [][]interface{}{{"allLoaded"}})
+	res.CheckAt([]int{10}, [][]any{{"allLoaded"}})
 }
 
 func TestShowStatsBuckets(t *testing.T) {
@@ -279,7 +282,6 @@ func TestShowStatusSnapshot(t *testing.T) {
 	tk.MustExec("drop database if exists test;")
 	tk.MustExec("create database test;")
 	tk.MustExec("use test;")
-	tk.MustExec("create table t (a int);")
 
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -290,13 +292,17 @@ func TestShowStatusSnapshot(t *testing.T) {
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
 
-	snapshotTime := time.Now()
-
-	tk.MustExec("drop table t;")
-	tk.MustQuery("show table status;").Check(testkit.Rows())
-	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
-	result := tk.MustQuery("show table status;")
-	require.Equal(t, "t", result.Rows()[0][0])
+	for _, cacheSize := range []int{1024, 0} {
+		tk.MustExec("set @@global.tidb_schema_cache_size = ?", cacheSize)
+		tk.MustExec("create table t (a int);")
+		snapshotTime := time.Now()
+		tk.MustExec("drop table t;")
+		tk.MustQuery("show table status;").Check(testkit.Rows())
+		tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
+		result := tk.MustQuery("show table status;")
+		require.Equal(t, "t", result.Rows()[0][0])
+		tk.MustExec("set @@tidb_snapshot = null;")
+	}
 }
 
 func TestShowStatsExtended(t *testing.T) {
@@ -373,14 +379,14 @@ func TestShowColumnStatsUsage(t *testing.T) {
 	result := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Sort()
 	rows := result.Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, rows[0], []interface{}{"test", "t1", "", t1.Meta().Columns[0].Name.O, "<nil>", "2021-10-20 08:00:00"})
+	require.Equal(t, rows[0], []any{"test", "t1", "", t1.Meta().Columns[0].Name.O, "<nil>", "2021-10-20 08:00:00"})
 
 	result = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't2'").Sort()
 	rows = result.Rows()
 
 	require.Len(t, rows, 2)
-	require.Equal(t, rows[0], []interface{}{"test", "t2", "global", t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
-	require.Equal(t, rows[1], []interface{}{"test", "t2", p0.Name.O, t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
+	require.Equal(t, rows[0], []any{"test", "t2", "global", t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
+	require.Equal(t, rows[1], []any{"test", "t2", p0.Name.O, t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
 }
 
 func TestShowAnalyzeStatus(t *testing.T) {
@@ -402,7 +408,7 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.Equal(t, "", rows[0][2])
 	require.Equal(t, "analyze table all columns with 256 buckets, 500 topn, 1 samplerate", rows[0][3])
 	require.Equal(t, "2", rows[0][4])
-	checkTime := func(val interface{}) {
+	checkTime := func(val any) {
 		str, ok := val.(string)
 		require.True(t, ok)
 		_, err := time.Parse(time.DateTime, str)

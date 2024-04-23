@@ -1291,3 +1291,15 @@ create temporary table t2(id int primary key, v int);
 select * from t2 where id=234;
 id	v
 commit;
+drop table if exists t;
+create table t(a int, b int as ((grouping(a))) stored);
+Error 1111 (HY000): Invalid use of group function
+create table t(a int);
+alter table t add column  b int as ((grouping(a))) stored;
+Error 1111 (HY000): Invalid use of group function
+drop table t;
+drop table if exists t;
+create table t (a bigint auto_random, b int, c char(255), primary key(a, b) clustered);
+select TIDB_ROW_ID_SHARDING_INFO from information_schema.tables where TABLE_SCHEMA = 'ddl__db_integration' and TABLE_NAME = 't';
+TIDB_ROW_ID_SHARDING_INFO
+PK_AUTO_RANDOM_BITS=5

@@ -8,6 +8,10 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/membuf",
     visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
 )
 
 go_test(

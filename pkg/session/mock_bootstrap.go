@@ -66,8 +66,9 @@ var allDDLs = []string{
 	"alter table mock_sys_t alter index idx_v invisible",
 	"alter table mock_sys_partition add partition (partition p6 values less than (8192))",
 	"alter table mock_sys_partition drop partition p6",
-	"alter table mock_sys_t add index mul_idx1(c1), add index mul_idx2(c1)",
-	"alter table mock_sys_t drop index mul_idx1, drop index mul_idx2",
+	// Should not use multi-schema change to add index in bootstrap DDL.
+	// "alter table mock_sys_t add index mul_idx1(c1), add index mul_idx2(c1)",
+	// "alter table mock_sys_t drop index mul_idx1, drop index mul_idx2",
 	// TODO: Support check the DB for ActionAlterPlacementPolicy.
 	// "alter database mock_sys_db_placement placement policy = 'alter_x'",
 	"alter table mock_sys_t add index rename_idx1(c1)",
@@ -159,6 +160,7 @@ func addMockBootstrapVersionForTest(s types.Session) {
 
 	TestHook.OnBootstrapBefore(s)
 	if MockUpgradeToVerLatestKind == defaultMockUpgradeToVerLatest {
+		// TODO if we run all tests in this pkg, it will append again, and fail the test.
 		bootstrapVersion = append(bootstrapVersion, mockUpgradeToVerLatest)
 	} else {
 		bootstrapVersion = append(bootstrapVersion, mockSimpleUpgradeToVerLatest)

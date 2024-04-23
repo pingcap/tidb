@@ -743,6 +743,28 @@ func (n *SelectField) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+func (n *SelectField) Match(col *ColumnNameExpr, ignoreAsName bool) bool {
+	// if col specify a table name, resolve from table source directly.
+	if col.Name.Table.L == "" {
+		if n.AsName.L == "" || ignoreAsName {
+			if curCol, isCol := n.Expr.(*ColumnNameExpr); isCol {
+				return curCol.Name.Name.L == col.Name.Name.L
+			} else if _, isFunc := n.Expr.(*FuncCallExpr); isFunc {
+				// Fix issue 7331
+				// If there are some function calls in SelectField, we check if
+				// ColumnNameExpr in GroupByClause matches one of these function calls.
+				// Example: select concat(k1,k2) from t group by `concat(k1,k2)`,
+				// `concat(k1,k2)` matches with function call concat(k1, k2).
+				return strings.ToLower(n.Text()) == col.Name.Name.L
+			}
+			// a expression without as name can't be matched.
+			return false
+		}
+		return n.AsName.L == col.Name.Name.L
+	}
+	return false
+}
+
 // FieldList represents field list in select statement.
 type FieldList struct {
 	node
@@ -1865,6 +1887,7 @@ const (
 type LoadDataStmt struct {
 	dmlNode
 
+	LowPriority       bool
 	FileLocRef        FileLocRefTp
 	Path              string
 	Format            *string
@@ -1884,6 +1907,9 @@ type LoadDataStmt struct {
 // Restore implements Node interface.
 func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("LOAD DATA ")
+	if n.LowPriority {
+		ctx.WriteKeyWord("LOW_PRIORITY ")
+	}
 	switch n.FileLocRef {
 	case FileLocServerOrRemote:
 	case FileLocClient:
@@ -2108,6 +2134,7 @@ type ImportIntoStmt struct {
 	Path               string
 	Format             *string
 	Options            []*LoadDataOpt
+	Select             ResultSetNode
 }
 
 var _ SensitiveStmtNode = &ImportIntoStmt{}
@@ -2144,10 +2171,16 @@ func (n *ImportIntoStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	ctx.WriteKeyWord(" FROM ")
-	ctx.WriteString(n.Path)
-	if n.Format != nil {
-		ctx.WriteKeyWord(" FORMAT ")
-		ctx.WriteString(*n.Format)
+	if n.Select != nil {
+		if err := n.Select.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.Select")
+		}
+	} else {
+		ctx.WriteString(n.Path)
+		if n.Format != nil {
+			ctx.WriteKeyWord(" FORMAT ")
+			ctx.WriteString(*n.Format)
+		}
 	}
 
 	if len(n.Options) > 0 {
@@ -2193,6 +2226,13 @@ func (n *ImportIntoStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.ColumnAssignments[i] = node.(*Assignment)
+	}
+	if n.Select != nil {
+		node, ok := n.Select.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Select = node.(ResultSetNode)
 	}
 	return v.Leave(n)
 }
@@ -3010,6 +3050,7 @@ const (
 	ShowImportJobs
 	ShowCreateProcedure
 	ShowBinlogStatus
+	ShowReplicaStatus
 )
 
 const (
@@ -3391,6 +3432,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("PLACEMENT LABELS")
 		case ShowSessionStates:
 			ctx.WriteKeyWord("SESSION_STATES")
+		case ShowReplicaStatus:
+			ctx.WriteKeyWord("REPLICA STATUS")
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}

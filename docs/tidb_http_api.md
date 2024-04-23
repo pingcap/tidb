@@ -186,16 +186,20 @@
     ```
 
     ```shell
-    $curl http://127.0.0.1:10080/mvcc/key/test/t1/1
+    $curl http://127.0.0.1:10080/mvcc/key/test/t/1
     {
-        "info": {
-            "writes": [
-                {
-                    "commit_ts": 405179368526053380,
-                    "short_value": "CAICAkE=",
-                    "start_ts": 405179368526053377
-                }
-            ]
+        "key": "74800000000000006E5F728000000000000001",
+        "region_id": 4,
+        "value": {
+            "info": {
+                "writes": [
+                    {
+                        "start_ts": 448662063415296001,
+                        "commit_ts": 448662063415296003,
+                        "short_value": "gAABAAAAAQEAAQ=="
+                    }
+                ]
+            }
         }
     }
     ```
@@ -240,19 +244,25 @@
 
     ```protobuf
     enum Op {
-	Put = 0;
-	Del = 1;
-	Lock = 2;
-	Rollback = 3;
-	// insert operation has a constraint that key should not exist before.
-	Insert = 4;
-	PessimisticLock = 5;
-	CheckNotExists = 6;
+        Put = 0;
+        Del = 1;
+        Lock = 2;
+        Rollback = 3;
+        // insert operation has a constraint that key should not exist before.
+        Insert = 4;
+        PessimisticLock = 5;
+        CheckNotExists = 6;
     }
     ```
 
+    *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `t1(p1)` for example:*
+
+    ```shell
+    $curl http://127.0.0.1:10080/mvcc/key/test/t1(p1)/1
+    ```
+
     *Hint: The method to convert the Hex format key returned by TiDB API into the format recognized by [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control).*
-    
+
     Step 1: Get the hex format of the key you need. For example you could find the key by the following TiDB API.
 
      ```shell
@@ -288,21 +298,21 @@
 
      Step 3: Encode the key to make it memcomparable in tikv with [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control)
 
-     ```
+     ```shell
      ./tikv-ctl --encode 't\200\000\000\000\000\000\010\306_r\200\000\000\000\000\000\000\001'
      7480000000000008FFC65F728000000000FF0000010000000000FA
      ```
 
      Step 4: Convert the key from hex format to escaped format again since most `tikv-ctl` commands only accept keys in escaped format while the `--encode` command outputs the key in hex format.
-     
-     ```
+
+     ```shell
      ./tikv-ctl --to-escaped '7480000000000008FFC65F728000000000FF0000010000000000FA'
      t\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372
      ```
 
      Step 5: Add a prefix "z" to the key. Then the key can be recognized by [tikv-ctl](https://docs.pingcap.com/tidb/stable/tikv-control). For example, use the following command to scan from tikv.
 
-     ```
+     ```shell
      ./tikv-ctl  --host "<tikv_ip>:<port>" scan --from 'zt\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372' --limit 5 --show-cf write,lock,default 
         key: zt\200\000\000\000\000\000\010\377\306_r\200\000\000\000\000\377\000\000\001\000\000\000\000\000\372
          write cf value: start_ts: 445971968923271174 commit_ts: 445971968923271175 short_value: 800002000000020308000900736869726C79613422
@@ -414,6 +424,7 @@ timezone.*
     ```shell
     curl http://{TiDBIP}:10080/tables/{db}/{table}/scatter
     ```
+
     *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `test(p1)` for example.*
 
     **Note**: The `scatter-range` scheduler may conflict with the global scheduler, do not use it for long periods on the larger table.
@@ -423,6 +434,7 @@ timezone.*
     ```shell
     curl http://{TiDBIP}:10080/tables/{db}/{table}/stop-scatter
     ```
+
     *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `test(p1)` for example.*
 
 1. Get TiDB server settings
@@ -533,7 +545,8 @@ timezone.*
     ```shell
     curl http://{TiDBIP}:10080/ddl/history
     ```
-	**Note**: When the DDL history is very very long, it may consume a lot memory and even cause OOM. Consider adding `start_job_id` and `limit`.
+
+    **Note**: When the DDL history is very very long, it may consume a lot memory and even cause OOM. Consider adding `start_job_id` and `limit`.
 
 1. Get count {number} TiDB DDL job history information.
 
@@ -543,18 +556,18 @@ timezone.*
 
 1. Get count {number} TiDB DDL job history information, start with job {id}
 
-	```shell
-	curl http://{TIDBIP}:10080/ddl/history?start_job_id={id}&limit={number}
-	```
+    ```shell
+    curl http://{TIDBIP}:10080/ddl/history?start_job_id={id}&limit={number}
+    ```
 
 1. Download TiDB debug info
 
     ```shell
     curl http://{TiDBIP}:10080/debug/zip?seconds=60 --output debug.zip
     ```
-    
+
     zip file will include:
-    
+
     - Go heap pprof(after GC)
     - Go cpu pprof(10s)
     - Go mutex pprof
@@ -562,7 +575,7 @@ timezone.*
     - TiDB config and version
 
     Param:
-    
+
     - seconds: profile time(s), default is 10s. 
 
 1. Get statistics data of specified table.
@@ -576,6 +589,7 @@ timezone.*
     ```shell
     curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyyMMddHHmmss}
     ```
+
     ```shell
     curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyy-MM-dd HH:mm:ss}
     ```
@@ -588,22 +602,24 @@ timezone.*
 
     Return value:
 
-    * timeout, return status code: 400, message: `timeout`
-    * If it returns normally, status code: 200, message example:
+    - timeout, return status code: 400, message: `timeout`
+    - If it returns normally, status code: 200, message example:
+
         ```text
         {
           "Skipped": false,
           "SkippedCommitterCounter": 0
         }
         ```
+
         `Skipped`: false indicates that the current binlog is not in the skipped state, otherwise, it is in the skipped state
         `SkippedCommitterCounter`: Represents how many transactions are currently being committed in the skipped state. By default, the API will return after waiting until all skipped-binlog transactions are committed. If this value is greater than 0, it means that you need to wait until them are committed .
 
     Param:
 
-    * op=nowait: return after binlog status is recoverd, do not wait until the skipped-binlog transactions are committed.
-    * op=reset: reset `SkippedCommitterCounter` to 0 to avoid the problem that `SkippedCommitterCounter` is not cleared due to some unusual cases.
-    * op=status: Get the current status of binlog recovery.
+    - op=nowait: return after binlog status is recoverd, do not wait until the skipped-binlog transactions are committed.
+    - op=reset: reset `SkippedCommitterCounter` to 0 to avoid the problem that `SkippedCommitterCounter` is not cleared due to some unusual cases.
+    - op=status: Get the current status of binlog recovery.
 
 1. Enable/disable async commit feature
 
@@ -634,7 +650,7 @@ timezone.*
     # reset the size of the ballast object (2GB in this example)
     curl -v -X POST -d "2147483648" http://{TiDBIP}:10080/debug/ballast-object-sz
     ```
-    
+
 1. Set deadlock history table capacity
 
     ```shell
@@ -652,7 +668,7 @@ timezone.*
     ```shell
     curl -X POST -d "transaction_id_digest_min_duration={number}" http://{TiDBIP}:10080/settings
     ```
-    
+
     Unit of duration here is ms.
 
 1. Set transaction summary table (`TRX_SUMMARY`) capacity
@@ -661,7 +677,7 @@ timezone.*
     curl -X POST -d "transaction_summary_capacity={number}" http://{TiDBIP}:10080/settings
     ```
 
-1. Send upgrade operations to the cluster. The operations here include `start`, `finish` and `show`.
+1. The commands are used to handle smooth upgrade mode(refer to the [TiDB Smooth Upgrade](https://github.com/pingcap/docs/blob/4aa0b1d5078617cc06bd1957c5c93e86efb4668d/smooth-upgrade-tidb.md) for details) operations. We can send these upgrade operations to the cluster. The operations here include `start`, `finish` and `show`.
 
    ```shell
    curl -X POST http://{TiDBIP}:10080/upgrade/{op}

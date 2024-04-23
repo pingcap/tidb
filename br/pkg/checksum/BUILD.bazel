@@ -40,9 +40,9 @@ go_test(
     embed = [":checksum"],
     flaky = True,
     deps = [
-        "//br/pkg/backup",
         "//br/pkg/metautil",
         "//br/pkg/mock",
+        "//pkg/distsql",
         "//pkg/kv",
         "//pkg/parser/model",
         "//pkg/sessionctx/variable",

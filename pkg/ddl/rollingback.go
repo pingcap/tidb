@@ -82,7 +82,7 @@ func convertAddIdxJob2RollbackJob(
 	}
 
 	// the second and the third args will be used in onDropIndex.
-	job.Args = []interface{}{idxNames, ifExists, getPartitionIDs(tblInfo)}
+	job.Args = []any{idxNames, ifExists, getPartitionIDs(tblInfo)}
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StateDeleteOnly)
 	if err1 != nil {
@@ -197,7 +197,7 @@ func rollingbackAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 	columnInfo.State = model.StateDeleteOnly
 	job.SchemaState = model.StateDeleteOnly
 
-	job.Args = []interface{}{col.Name}
+	job.Args = []any{col.Name}
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfo.State)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -339,7 +339,19 @@ func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
-	job.Args = []interface{}{partNames}
+	if job.Type == model.ActionReorganizePartition ||
+		job.Type == model.ActionAlterTablePartitioning ||
+		job.Type == model.ActionRemovePartitioning {
+		partInfo := &model.PartitionInfo{}
+		var pNames []string
+		err = job.DecodeArgs(&pNames, &partInfo)
+		if err != nil {
+			return ver, err
+		}
+		job.Args = []any{partNames, partInfo}
+	} else {
+		job.Args = []any{partNames}
+	}
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)

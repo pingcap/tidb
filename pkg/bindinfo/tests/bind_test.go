@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -320,19 +321,17 @@ func TestBindingSymbolList(t *testing.T) {
 	stmt, err := parser.New().ParseOneStmt("select a, b from test . t where a = 1 limit 0, 1", "", "")
 	require.NoError(t, err)
 
-	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-	bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.OriginalSQL)
-	bind := bindData.Bindings[0]
-	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` = 1 LIMIT 0,1", bind.BindSQL)
-	require.Equal(t, "test", bindData.Db)
-	require.Equal(t, bindinfo.Enabled, bind.Status)
-	require.NotNil(t, bind.Charset)
-	require.NotNil(t, bind.Collation)
-	require.NotNil(t, bind.CreateTime)
-	require.NotNil(t, bind.UpdateTime)
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", binding.OriginalSQL)
+	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` = 1 LIMIT 0,1", binding.BindSQL)
+	require.Equal(t, "test", binding.Db)
+	require.Equal(t, bindinfo.Enabled, binding.Status)
+	require.NotNil(t, binding.Charset)
+	require.NotNil(t, binding.Collation)
+	require.NotNil(t, binding.CreateTime)
+	require.NotNil(t, binding.UpdateTime)
 }
 
 // TestBindingInListWithSingleLiteral tests sql with "IN (Lit)", fixes #44298
@@ -347,14 +346,14 @@ func TestBindingInListWithSingleLiteral(t *testing.T) {
 
 	// GIVEN
 	sqlcmd := "select a, b from t where a in (1)"
-	binding := `create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)`
+	bindingStmt := `create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)`
 
 	// before binding
 	tk.MustQuery(sqlcmd)
 	require.Equal(t, "t:ia", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex(sqlcmd, "ia(a)"))
 
-	tk.MustExec(binding)
+	tk.MustExec(bindingStmt)
 
 	// after binding
 	tk.MustQuery(sqlcmd)
@@ -367,19 +366,17 @@ func TestBindingInListWithSingleLiteral(t *testing.T) {
 	stmt, err := parser.New().ParseOneStmt("select a, b from test . t where a in (1)", "", "")
 	require.NoError(t, err)
 
-	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-	bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` in ( ... )", bindData.OriginalSQL)
-	bind := bindData.Bindings[0]
-	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` IN (1,2,3)", bind.BindSQL)
-	require.Equal(t, "test", bindData.Db)
-	require.Equal(t, bindinfo.Enabled, bind.Status)
-	require.NotNil(t, bind.Charset)
-	require.NotNil(t, bind.Collation)
-	require.NotNil(t, bind.CreateTime)
-	require.NotNil(t, bind.UpdateTime)
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` in ( ... )", binding.OriginalSQL)
+	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` IN (1,2,3)", binding.BindSQL)
+	require.Equal(t, "test", binding.Db)
+	require.Equal(t, bindinfo.Enabled, binding.Status)
+	require.NotNil(t, binding.Charset)
+	require.NotNil(t, binding.Collation)
+	require.NotNil(t, binding.CreateTime)
+	require.NotNil(t, binding.UpdateTime)
 }
 
 func TestBestPlanInBaselines(t *testing.T) {
@@ -405,15 +402,13 @@ func TestBestPlanInBaselines(t *testing.T) {
 
 	stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, "select a, b from t where a = 1 limit 0, 1")
 
-	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-	bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.OriginalSQL)
-	bind := bindData.Bindings[0]
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `ia`)*/ `a`,`b` FROM `test`.`t` WHERE `a` = 1 LIMIT 0,1", bind.BindSQL)
-	require.Equal(t, "test", bindData.Db)
-	require.Equal(t, bindinfo.Enabled, bind.Status)
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", binding.OriginalSQL)
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `ia`)*/ `a`,`b` FROM `test`.`t` WHERE `a` = 1 LIMIT 0,1", binding.BindSQL)
+	require.Equal(t, "test", binding.Db)
+	require.Equal(t, bindinfo.Enabled, binding.Status)
 
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 10")
 	require.Equal(t, "t:ia", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
@@ -422,6 +417,19 @@ func TestBestPlanInBaselines(t *testing.T) {
 	tk.MustQuery("select a, b from t where b = 3 limit 1, 100")
 	require.Equal(t, "t:ib", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"))
+}
+
+func TestIssue50646(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create database TICASE;`)
+	tk.MustExec(`use TICASE;`)
+	tk.MustExec(`create table t(a int, b int, index idx(a));`)
+	tk.MustExec(`create table t1(a int, b int, index idx(a));`)
+	tk.MustExec(`create global binding for delete t, t1 from t use index(idx) join t1 use index(idx) on t.a=t1.a using delete /*+ merge_join(t) */ t, t1 from t use index(idx) join t1 use index(idx) on t.a=t1.a;`)
+	tk.MustHavePlan(`delete /*+ inl_merge_join(t) */ t, t1 from t ignore index(idx) join t1 ignore index(idx) on t.a=t1.a;`, "MergeJoin")
+	tk.MustExec(`delete t, t1 from t ignore index(idx) join t1 ignore index(idx) on t.a=t1.a;`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 }
 
 func TestErrorBind(t *testing.T) {
@@ -441,19 +449,17 @@ func TestErrorBind(t *testing.T) {
 
 	stmt, err := parser.New().ParseOneStmt("select * from test . t where i > ?", "", "")
 	require.NoError(t, err)
-	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-	bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `i` > ?", bindData.OriginalSQL)
-	bind := bindData.Bindings[0]
-	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 100", bind.BindSQL)
-	require.Equal(t, "test", bindData.Db)
-	require.Equal(t, bindinfo.Enabled, bind.Status)
-	require.NotNil(t, bind.Charset)
-	require.NotNil(t, bind.Collation)
-	require.NotNil(t, bind.CreateTime)
-	require.NotNil(t, bind.UpdateTime)
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `i` > ?", binding.OriginalSQL)
+	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 100", binding.BindSQL)
+	require.Equal(t, "test", binding.Db)
+	require.Equal(t, bindinfo.Enabled, binding.Status)
+	require.NotNil(t, binding.Charset)
+	require.NotNil(t, binding.Collation)
+	require.NotNil(t, binding.CreateTime)
+	require.NotNil(t, binding.UpdateTime)
 
 	tk.MustExec("drop index index_t on t")
 	rs, err := tk.Exec("select * from t where i > 10")
@@ -500,71 +506,53 @@ func TestHintsSetID(t *testing.T) {
 	// Verify the added Binding contains ID with restored query block.
 	stmt, err := parser.New().ParseOneStmt("select * from t where a > ?", "", "")
 	require.NoError(t, err)
-	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-	bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 1)
-	bind := bindData.Bindings[0]
-	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
+	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(t, idx_a) */ * from t where a > 10")
-	_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-	bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 1)
-	bind = bindData.Bindings[0]
-	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
+	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
+	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@sel_1 t, idx_a) */ * from t where a > 10")
-	_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-	bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 1)
-	bind = bindData.Bindings[0]
-	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
+	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
+	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@qb1 t, idx_a) qb_name(qb1) */ * from t where a > 10")
-	_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-	bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 1)
-	bind = bindData.Bindings[0]
-	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
+	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
+	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(T, IDX_A) */ * from t where a > 10")
-	_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-	bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 1)
-	bind = bindData.Bindings[0]
-	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
+	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
+	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	err = tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
 	require.True(t, terror.ErrorEqual(err, parser.ErrParse))
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
-	_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-	bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 1)
-	bind = bindData.Bindings[0]
-	require.Equal(t, "", bind.ID)
+	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
+	require.Equal(t, "", binding.ID)
 }
 
 func TestBindingWithIsolationRead(t *testing.T) {
@@ -582,7 +570,8 @@ func TestBindingWithIsolationRead(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -870,4 +859,256 @@ func TestJoinOrderHintWithBinding(t *testing.T) {
 	require.Equal(t, res[0][0], "select * from ( `test` . `t1` join `test` . `t2` on `t1` . `a` = `t2` . `a` ) left join `test` . `t3` on `t2` . `b` = `t3` . `b`")
 
 	tk.MustExec("drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+}
+
+func TestNormalizeStmtForBinding(t *testing.T) {
+	tests := []struct {
+		sql        string
+		normalized string
+		digest     string
+	}{
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3),('x', 'y'))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x,y) in ((1, 3), ('3', 1), (2, 3),('x', 'y'),('x', 'y'))", "select ? from `b` where row ( `x` , `y` ) in ( ... )", "ab6c607d118c24030807f8d1c7c846ec23e3b752fd88ed763bb8e26fbfa56a83"},
+		{"select 1 from b where (x) in ((1), ('3'), (2),('x'),('x'))", "select ? from `b` where ( `x` ) in ( ( ... ) )", "03e6e1eb3d76b69363922ff269284b359ca73351001ba0e82d3221c740a6a14c"},
+		{"select 1 from b where (x) in ((1), ('3'), (2),('x'))", "select ? from `b` where ( `x` ) in ( ( ... ) )", "03e6e1eb3d76b69363922ff269284b359ca73351001ba0e82d3221c740a6a14c"},
+	}
+	for _, test := range tests {
+		stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, test.sql)
+		n, digest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+		require.Equal(t, test.normalized, n)
+		require.Equal(t, test.digest, digest)
+	}
+}
+
+func showBinding(tk *testkit.TestKit, showStmt string) [][]any {
+	rows := tk.MustQuery(showStmt).Sort().Rows()
+	result := make([][]any, len(rows))
+	for i, r := range rows {
+		result[i] = append(result[i], r[:4]...)
+		result[i] = append(result[i], r[8:10]...)
+	}
+	return result
+}
+
+func removeAllBindings(tk *testkit.TestKit, global bool) {
+	scope := "session"
+	if global {
+		scope = "global"
+	}
+	res := showBinding(tk, fmt.Sprintf("show %v bindings", scope))
+	for _, r := range res {
+		if r[4] == "builtin" {
+			continue
+		}
+		tk.MustExec(fmt.Sprintf("drop %v binding for sql digest '%v'", scope, r[5]))
+	}
+	tk.MustQuery(fmt.Sprintf("show %v bindings", scope)).Check(testkit.Rows()) // empty
+}
+
+func testFuzzyBindingHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	for _, db := range []string{"db1", "db2", "db3"} {
+		tk.MustExec(`create database ` + db)
+		tk.MustExec(`use ` + db)
+		tk.MustExec(`create table t1 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+		tk.MustExec(`create table t2 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+		tk.MustExec(`create table t3 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+	}
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
+
+	for _, c := range []struct {
+		binding   string
+		qTemplate string
+	}{
+		// use index
+		{`create global binding using select /*+ use_index(t1, c) */ * from *.t1 where a=1`,
+			`select * from %st1 where a=1000`},
+		{`create global binding using select /*+ use_index(t1, c) */ * from *.t1 where d<1`,
+			`select * from %st1 where d<10000`},
+		{`create global binding using select /*+ use_index(t1, c) */ * from *.t1, *.t2 where t1.d<1`,
+			`select * from %st1, t2 where t1.d<100`},
+		{`create global binding using select /*+ use_index(t1, c) */ * from *.t1, *.t2 where t1.d<1`,
+			`select * from t1, %st2 where t1.d<100`},
+		{`create global binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from *.t1, *.t2 where t1.d<1`,
+			`select * from %st1, t2 where t1.d<100`},
+		{`create global binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from *.t1, *.t2 where t1.d<1`,
+			`select * from t1, %st2 where t1.d<100`},
+		{`create global binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from *.t1, *.t2, *.t3 where t1.d<1`,
+			`select * from %st1, t2, t3 where t1.d<100`},
+		{`create global binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from *.t1, *.t2, *.t3 where t1.d<1`,
+			`select * from t1, t2, %st3 where t1.d<100`},
+
+		// ignore index
+		{`create global binding using select /*+ ignore_index(t1, b) */ * from *.t1 where b=1`,
+			`select * from %st1 where b=1000`},
+		{`create global binding using select /*+ ignore_index(t1, b) */ * from *.t1 where b>1`,
+			`select * from %st1 where b>1000`},
+		{`create global binding using select /*+ ignore_index(t1, b) */ * from *.t1 where b in (1,2)`,
+			`select * from %st1 where b in (1)`},
+		{`create global binding using select /*+ ignore_index(t1, b) */ * from *.t1 where b in (1,2)`,
+			`select * from %st1 where b in (1,2,3,4,5)`},
+
+		// order index hint
+		{`create global binding using select /*+ order_index(t1, a) */ a from *.t1 where a<10 order by a limit 10`,
+			`select a from %st1 where a<10000 order by a limit 10`},
+		{`create global binding using select /*+ order_index(t1, b) */ b from *.t1 where b>10 order by b limit 1111`,
+			`select b from %st1 where b>2 order by b limit 10`},
+
+		// no order index hint
+		{`create global binding using select /*+ no_order_index(t1, c) */ c from *.t1 where c<10 order by c limit 10`,
+			`select c from %st1 where c<10000 order by c limit 10`},
+		{`create global binding using select /*+ no_order_index(t1, d) */ d from *.t1 where d>10 order by d limit 1111`,
+			`select d from %st1 where d>2 order by d limit 10`},
+
+		// agg hint
+		{`create global binding using select /*+ hash_agg() */ count(*) from *.t1 group by a`,
+			`select count(*) from %st1 group by a`},
+		{`create global binding using select /*+ stream_agg() */ count(*) from *.t1 group by b`,
+			`select count(*) from %st1 group by b`},
+
+		// to_cop hint
+		{`create global binding using select /*+ agg_to_cop() */ sum(a) from *.t1`,
+			`select sum(a) from %st1`},
+		{`create global binding using select /*+ limit_to_cop() */ a from *.t1 limit 10`,
+			`select a from %st1 limit 101`},
+
+		// index merge hint
+		{`create global binding using select /*+ use_index_merge(t1, c, d) */ * from *.t1 where c=1 or d=1`,
+			`select * from %st1 where c=1000 or d=1000`},
+		{`create global binding using select /*+ no_index_merge() */ * from *.t1 where a=1 or b=1`,
+			`select * from %st1 where a=1000 or b=1000`},
+
+		// join type hint
+		{`create global binding using select /*+ hash_join(t1) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from %st1, t2 where t1.a=t2.a`},
+		{`create global binding using select /*+ hash_join(t2) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create global binding using select /*+ hash_join(t2) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create global binding using select /*+ hash_join_build(t1) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create global binding using select /*+ hash_join_probe(t1) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create global binding using select /*+ merge_join(t1) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from %st1, t2 where t1.a=t2.a`},
+		{`create global binding using select /*+ merge_join(t2) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create global binding using select /*+ merge_join(t2) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create global binding using select /*+ inl_join(t1) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from %st1, t2 where t1.a=t2.a`},
+		{`create global binding using select /*+ inl_join(t2) */ * from *.t1, *.t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create global binding using select /*+ inl_join(t2) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+
+		// no join type hint
+		{`create global binding using select /*+ no_hash_join(t1) */ * from *.t1, *.t2 where t1.b=t2.b`,
+			`select * from %st1, t2 where t1.b=t2.b`},
+		{`create global binding using select /*+ no_hash_join(t2) */ * from *.t1, *.t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create global binding using select /*+ no_hash_join(t2) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create global binding using select /*+ no_merge_join(t1) */ * from *.t1, *.t2 where t1.b=t2.b`,
+			`select * from %st1, t2 where t1.b=t2.b`},
+		{`create global binding using select /*+ no_merge_join(t2) */ * from *.t1, *.t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create global binding using select /*+ no_merge_join(t2) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create global binding using select /*+ no_index_join(t1) */ * from *.t1, *.t2 where t1.b=t2.b`,
+			`select * from %st1, t2 where t1.b=t2.b`},
+		{`create global binding using select /*+ no_index_join(t2) */ * from *.t1, *.t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create global binding using select /*+ no_index_join(t2) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+
+		// join order hint
+		{`create global binding using select /*+ leading(t2) */ * from *.t1, *.t2 where t1.b=t2.b`,
+			`select * from %st1, t2 where t1.b=t2.b`},
+		{`create global binding using select /*+ leading(t2) */ * from *.t1, *.t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create global binding using select /*+ leading(t2, t1) */ * from *.t1, *.t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create global binding using select /*+ leading(t1, t2) */ * from *.t1, *.t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create global binding using select /*+ leading(t1) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create global binding using select /*+ leading(t2) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create global binding using select /*+ leading(t2,t3) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create global binding using select /*+ leading(t2,t3,t1) */ * from *.t1, *.t2, *.t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+	} {
+		removeAllBindings(tk, true)
+		tk.MustExec(c.binding)
+		for _, currentDB := range []string{"db1", "db2", "db3"} {
+			tk.MustExec(`use ` + currentDB)
+			for _, db := range []string{"db1.", "db2.", "db3.", ""} {
+				query := fmt.Sprintf(c.qTemplate, db)
+				tk.MustExec(query)
+				tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+				tk.MustExec(query)
+				tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+			}
+		}
+	}
+}
+
+func TestFuzzyBindingHints(t *testing.T) {
+	testFuzzyBindingHints(t)
+}
+
+func TestFuzzyBindingHintsWithSourceReturning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	for _, db := range []string{"db1", "db2", "db3"} {
+		tk.MustExec(`create database ` + db)
+		tk.MustExec(`use ` + db)
+		tk.MustExec(`create table t1 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+		tk.MustExec(`create table t2 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+		tk.MustExec(`create table t3 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+	}
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
+
+	for _, c := range []struct {
+		binding   string
+		qTemplate string
+	}{
+		// use index
+		{`create global binding using select /*+ use_index(t1, c) */ * from *.t1 where a=1`,
+			`select * from %st1 where a=1000`},
+
+		// ignore index
+		{`create global binding using select /*+ ignore_index(t1, b) */ * from *.t1 where b=1`,
+			`select * from %st1 where b=1000`},
+
+		// order index hint
+		{`create global binding using select /*+ order_index(t1, a) */ a from *.t1 where a<10 order by a limit 10`,
+			`select a from %st1 where a<10000 order by a limit 10`},
+	} {
+		removeAllBindings(tk, true)
+		tk.MustExec(c.binding)
+		for _, currentDB := range []string{"db1", "db2", "db3"} {
+			tk.MustExec(`use ` + currentDB)
+			for _, db := range []string{"db1.", "db2.", "db3.", ""} {
+				query := fmt.Sprintf(c.qTemplate, db)
+				tk.MustExec(query)
+				tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+				sctx := tk.Session()
+				sctx.SetValue(bindinfo.GetBindingReturnNil, true)
+				tk.MustExec(query)
+				sctx.ClearValue(bindinfo.GetBindingReturnNil)
+				tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+				bindinfo.GetBindingReturnNilBool.Store(false)
+			}
+		}
+	}
 }

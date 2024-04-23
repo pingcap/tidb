@@ -471,3 +471,17 @@ func TestExplainFormatInCtx(t *testing.T) {
 		}
 	}
 }
+
+func TestExplainImportFromSelect(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	tk.MustExec("create table t_o (a int primary key)")
+	tk.MustExec("insert into t values (2)")
+	rs := tk.MustQuery("explain import into t_o from select * from t").Rows()
+	require.Contains(t, rs[0][0], "ImportInto")
+	require.Contains(t, rs[1][0], "TableReader")
+	require.Contains(t, rs[2][0], "TableFullScan")
+}

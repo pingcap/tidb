@@ -188,7 +188,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	go e.wait4JoinWorkers()
 }
 
-func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
+func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r any) {
 	if r != nil {
 		e.IndexLookUpJoin.finished.Store(true)
 		err := fmt.Errorf("%v", r)
@@ -458,7 +458,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		resultCh:          e.resultCh,
 		joinKeyBuf:        make([]byte, 1),
 		outerRowStatus:    make([]outerRowStatusFlag, 0, e.MaxChunkSize()),
-		rowIter:           chunk.NewIterator4Slice([]chunk.Row{}).(*chunk.Iterator4Slice),
+		rowIter:           chunk.NewIterator4Slice([]chunk.Row{}),
 	}
 	iw.memTracker.AttachTo(e.memTracker)
 	if len(copiedRanges) != 0 {
@@ -666,7 +666,7 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 		func() {
 			iw.buildHashTableForOuterResult(task, h)
 		},
-		func(r interface{}) {
+		func(r any) {
 			var err error
 			if r != nil {
 				err = errors.Errorf("%v", r)

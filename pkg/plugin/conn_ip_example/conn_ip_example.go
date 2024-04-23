@@ -94,7 +94,7 @@ func OnShutdown(ctx context.Context, manifest *plugin.Manifest) error {
 func OnGeneralEvent(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
 	fmt.Println("## conn_ip_example OnGeneralEvent called ##")
 	if sctx != nil {
-		fmt.Printf("---- session status: %d\n", sctx.Status)
+		fmt.Printf("---- session status: %d\n", sctx.Status())
 		digest, _ := sctx.StmtCtx.SQLDigest()
 		fmt.Printf("---- statement sql: %s, digest: %s\n", sctx.StmtCtx.OriginalSQL, digest)
 		if len(sctx.StmtCtx.Tables) > 0 {

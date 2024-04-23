@@ -356,11 +356,11 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[2])
 }
 
-func buildAggTester(funcName string, tp byte, numRows int, results ...interface{}) aggTest {
+func buildAggTester(funcName string, tp byte, numRows int, results ...any) aggTest {
 	return buildAggTesterWithFieldType(funcName, types.NewFieldType(tp), numRows, results...)
 }
 
-func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows int, results ...interface{}) aggTest {
+func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows int, results ...any) aggTest {
 	pt := aggTest{
 		dataType: ft,
 		numRows:  numRows,
@@ -373,7 +373,7 @@ func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows i
 	return pt
 }
 
-func testMultiArgsMergePartialResult(t *testing.T, ctx sessionctx.Context, p multiArgsAggTest) {
+func testMultiArgsMergePartialResult(t *testing.T, ctx *mock.Context, p multiArgsAggTest) {
 	srcChk := p.genSrcChk()
 	iter := chunk.NewIterator4Chunk(srcChk)
 
@@ -448,7 +448,7 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx sessionctx.Context, p mul
 }
 
 // for multiple args in aggfuncs such as json_objectagg(c1, c2)
-func buildMultiArgsAggTester(funcName string, tps []byte, rt byte, numRows int, results ...interface{}) multiArgsAggTest {
+func buildMultiArgsAggTester(funcName string, tps []byte, rt byte, numRows int, results ...any) multiArgsAggTest {
 	fts := make([]*types.FieldType, len(tps))
 	for i := 0; i < len(tps); i++ {
 		fts[i] = types.NewFieldType(tps[i])
@@ -456,7 +456,7 @@ func buildMultiArgsAggTester(funcName string, tps []byte, rt byte, numRows int, 
 	return buildMultiArgsAggTesterWithFieldType(funcName, fts, types.NewFieldType(rt), numRows, results...)
 }
 
-func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldType, rt *types.FieldType, numRows int, results ...interface{}) multiArgsAggTest {
+func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldType, rt *types.FieldType, numRows int, results ...any) multiArgsAggTest {
 	dataGens := make([]func(i int) types.Datum, len(fts))
 	for i := 0; i < len(fts); i++ {
 		dataGens[i] = getDataGenFunc(fts[i])
@@ -666,7 +666,7 @@ func testAggMemFunc(t *testing.T, p aggMemTest) {
 	}
 }
 
-func testMultiArgsAggFunc(t *testing.T, ctx sessionctx.Context, p multiArgsAggTest) {
+func testMultiArgsAggFunc(t *testing.T, ctx *mock.Context, p multiArgsAggTest) {
 	srcChk := p.genSrcChk()
 
 	args := make([]expression.Expression, len(p.dataTypes))
@@ -790,7 +790,7 @@ func testMultiArgsAggMemFunc(t *testing.T, p multiArgsAggMemTest) {
 	}
 }
 
-func benchmarkAggFunc(b *testing.B, ctx sessionctx.Context, p aggTest) {
+func benchmarkAggFunc(b *testing.B, ctx *mock.Context, p aggTest) {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
 	for i := 0; i < p.numRows; i++ {
 		dt := p.dataGen(i)
@@ -838,7 +838,7 @@ func benchmarkAggFunc(b *testing.B, ctx sessionctx.Context, p aggTest) {
 	})
 }
 
-func benchmarkMultiArgsAggFunc(b *testing.B, ctx sessionctx.Context, p multiArgsAggTest) {
+func benchmarkMultiArgsAggFunc(b *testing.B, ctx *mock.Context, p multiArgsAggTest) {
 	srcChk := chunk.NewChunkWithCapacity(p.dataTypes, p.numRows)
 	for i := 0; i < p.numRows; i++ {
 		for j := 0; j < len(p.dataGens); j++ {
@@ -892,7 +892,7 @@ func benchmarkMultiArgsAggFunc(b *testing.B, ctx sessionctx.Context, p multiArgs
 	})
 }
 
-func baseBenchmarkAggFunc(b *testing.B, ctx sessionctx.Context, finalFunc aggfuncs.AggFunc, input []chunk.Row, output *chunk.Chunk) {
+func baseBenchmarkAggFunc(b *testing.B, ctx aggfuncs.AggFuncUpdateContext, finalFunc aggfuncs.AggFunc, input []chunk.Row, output *chunk.Chunk) {
 	finalPr, _ := finalFunc.AllocPartialResult()
 	output.Reset()
 	b.ResetTimer()

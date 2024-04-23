@@ -217,6 +217,9 @@ type stmtSummaryByDigestElement struct {
 	// request-units
 	resourceGroupName string
 	StmtRUSummary
+
+	planCacheUnqualifiedCount int64
+	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -238,7 +241,7 @@ type StmtExecInfo struct {
 	ParseLatency        time.Duration
 	CompileLatency      time.Duration
 	StmtCtx             *stmtctx.StatementContext
-	CopTasks            *stmtctx.CopTasksDetails
+	CopTasks            *execdetails.CopTasksDetails
 	ExecDetail          *execdetails.ExecDetails
 	MemMax              int64
 	DiskMax             int64
@@ -257,6 +260,8 @@ type StmtExecInfo struct {
 	KeyspaceID        uint32
 	ResourceGroupName string
 	RUDetail          *util.RUDetails
+
+	PlanCacheUnqualified string
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -855,6 +860,10 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	} else {
 		ssElement.planInCache = false
 	}
+	if sei.PlanCacheUnqualified != "" {
+		ssElement.planCacheUnqualifiedCount++
+		ssElement.lastPlanCacheUnqualified = sei.PlanCacheUnqualified
+	}
 
 	// SPM
 	if sei.PlanInBinding {
@@ -917,7 +926,7 @@ func formatSQL(sql string) string {
 }
 
 // Format the backoffType map to a string or nil.
-func formatBackoffTypes(backoffMap map[string]int) interface{} {
+func formatBackoffTypes(backoffMap map[string]int) any {
 	type backoffStat struct {
 		backoffType string
 		count       int
@@ -969,7 +978,7 @@ func avgSumFloat(sum float64, count int64) float64 {
 	return 0
 }
 
-func convertEmptyToNil(str string) interface{} {
+func convertEmptyToNil(str string) any {
 	if str == "" {
 		return nil
 	}

@@ -302,6 +302,11 @@ func (b *builtinSleepSig) vectorized() bool {
 // vecEvalInt evals a builtinSleepSig in a vectorized manner.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
 func (b *builtinSleepSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	vars, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return err
+	}
+
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -317,12 +322,11 @@ func (b *builtinSleepSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 
-	ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+	ec := errCtx(ctx)
 	for i := 0; i < n; i++ {
 		isNull := buf.IsNull(i)
 		val := buf.GetFloat64(i)
 
-		sessVars := ctx.GetSessionVars()
 		if isNull || val < 0 {
 			// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
 			err := ec.HandleErrorWithAlias(errBadNull,
@@ -339,7 +343,7 @@ func (b *builtinSleepSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 			return errIncorrectArgs.GenWithStackByArgs("sleep")
 		}
 
-		if isKilled := doSleep(val, sessVars); isKilled {
+		if isKilled := doSleep(val, vars); isKilled {
 			for j := i; j < n; j++ {
 				i64s[j] = 1
 			}

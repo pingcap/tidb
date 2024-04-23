@@ -101,9 +101,9 @@ func TestSetVar(t *testing.T) {
 	require.False(t, vars.IsAutocommit())
 
 	tk.MustExec("set @@sql_mode = 'strict_trans_tables'")
-	require.True(t, vars.StrictSQLMode)
+	require.True(t, vars.SQLMode.HasStrictMode())
 	tk.MustExec("set @@sql_mode = ''")
-	require.False(t, vars.StrictSQLMode)
+	require.False(t, vars.SQLMode.HasStrictMode())
 
 	tk.MustExec("set names utf8")
 	charset, collation := vars.GetCharsetInfo()
@@ -453,15 +453,21 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@cte_max_recursion_depth").Check(testkit.Rows("0"))
 
 	// test for tidb_redact_log
-	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("OFF"))
 	tk.MustExec("set global tidb_redact_log = 1")
-	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("ON"))
 	tk.MustExec("set global tidb_redact_log = 0")
-	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("OFF"))
 	tk.MustExec("set session tidb_redact_log = 0")
-	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("OFF"))
 	tk.MustExec("set session tidb_redact_log = 1")
-	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("ON"))
+	tk.MustExec("set session tidb_redact_log = oFf")
+	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("OFF"))
+	tk.MustExec("set session tidb_redact_log = marker")
+	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("MARKER"))
+	tk.MustExec("set session tidb_redact_log = On")
+	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("ON"))
 
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
@@ -1752,4 +1758,35 @@ func TestSetTopSQLVariables(t *testing.T) {
 
 	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF", "tidb_top_sql_max_meta_count 5000", "tidb_top_sql_max_time_series_count 20"))
 	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF", "tidb_top_sql_max_meta_count 5000", "tidb_top_sql_max_time_series_count 20"))
+}
+
+func TestDivPrecisionIncrement(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Default is 4.
+	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("4"))
+
+	tk.MustExec("set @@div_precision_increment = 4")
+	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("4"))
+	// Min val is 0.
+	tk.MustExec("set @@div_precision_increment = -1")
+	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@div_precision_increment = 0")
+	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@div_precision_increment = 30")
+	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("30"))
+
+	tk.MustExec("set @@div_precision_increment = 8")
+	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("8"))
+
+	// Max val is 30.
+	tk.MustExec("set @@div_precision_increment = 31")
+	tk.MustQuery("select @@div_precision_increment;").Check(testkit.Rows("30"))
+
+	// Test set global.
+	tk.MustExec("set global div_precision_increment = 4")
 }

@@ -676,4 +676,13 @@ show create table t;
 alter table t drop CONSTRAINT chk;
 show create table t;
 
+# Related issue TiDB#50972, constraint expression should ignore schema and table name when restore
+set @@global.tidb_enable_check_constraint = 1;
+drop table if exists t;
+create table t(a int, check((test.t.a > 1)));
+show create table t;
+alter table t add constraint chk check((test.t.a < 100));
+show create table t;
+drop table if exists t;
+
 set @@global.tidb_enable_check_constraint = 0;

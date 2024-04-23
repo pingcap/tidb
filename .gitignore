@@ -13,6 +13,7 @@ tests/integrationtest/integration-test.out
 tests/integrationtest/integrationtest_tidb-server
 tests/integrationtest/portgenerator
 tests/integrationtest/s/
+tests/integrationtest/replayer/
 *.fail.go
 tools/bin/
 vendor
@@ -34,8 +35,10 @@ bazel-bin
 bazel-out
 bazel-testlogs
 bazel-tidb
+MODULE.bazel.lock
 .ijwb/
 /oom_record/
 *.log.json
 genkeyword
 test_coverage
+coverage.dat

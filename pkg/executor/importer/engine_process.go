@@ -17,9 +17,10 @@ package importer
 import (
 	"context"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"go.uber.org/zap"
 )
 
@@ -28,10 +29,10 @@ func ProcessChunk(
 	ctx context.Context,
 	chunk *checkpoints.ChunkCheckpoint,
 	tableImporter *TableImporter,
-	dataEngine,
-	indexEngine *backend.OpenedEngine,
+	dataEngine, indexEngine *backend.OpenedEngine,
 	progress *Progress,
 	logger *zap.Logger,
+	groupChecksum *verification.KVGroupChecksum,
 ) error {
 	// if the key are ordered, LocalWrite can optimize the writing.
 	// table has auto-incremented _tidb_rowid must satisfy following restrictions:
@@ -65,27 +66,19 @@ func ProcessChunk(
 		}
 	}()
 
-	return ProcessChunkWith(ctx, chunk, tableImporter, dataWriter, indexWriter, progress, logger)
+	return ProcessChunkWithWriter(ctx, chunk, tableImporter, dataWriter, indexWriter, progress, logger, groupChecksum)
 }
 
-// ProcessChunkWith processes a chunk, and write kv pairs to dataWriter and indexWriter.
-func ProcessChunkWith(
+// ProcessChunkWithWriter processes a chunk, and write kv pairs to dataWriter and indexWriter.
+func ProcessChunkWithWriter(
 	ctx context.Context,
 	chunk *checkpoints.ChunkCheckpoint,
 	tableImporter *TableImporter,
 	dataWriter, indexWriter backend.EngineWriter,
 	progress *Progress,
 	logger *zap.Logger,
+	groupChecksum *verification.KVGroupChecksum,
 ) error {
-	parser, err := tableImporter.getParser(ctx, chunk)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err2 := parser.Close(); err2 != nil {
-			logger.Warn("close parser failed", zap.Error(err2))
-		}
-	}()
 	encoder, err := tableImporter.getKVEncoder(chunk)
 	if err != nil {
 		return err
@@ -98,10 +91,28 @@ func ProcessChunkWith(
 
 	// TODO: right now we use this chunk processor for global sort too, will
 	// impl another one for it later.
-	cp := NewLocalSortChunkProcessor(
-		parser, encoder, tableImporter.kvStore.GetCodec(), chunk, logger,
-		tableImporter.diskQuotaLock, dataWriter, indexWriter,
-	)
+	var cp ChunkProcessor
+	switch tableImporter.DataSourceType {
+	case DataSourceTypeFile:
+		parser, err := tableImporter.getParser(ctx, chunk)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err2 := parser.Close(); err2 != nil {
+				logger.Warn("close parser failed", zap.Error(err2))
+			}
+		}()
+		cp = NewFileChunkProcessor(
+			parser, encoder, tableImporter.GetKeySpace(), chunk, logger,
+			tableImporter.diskQuotaLock, dataWriter, indexWriter, groupChecksum,
+		)
+	case DataSourceTypeQuery:
+		cp = newQueryChunkProcessor(
+			tableImporter.rowCh, encoder, tableImporter.GetKeySpace(), logger,
+			tableImporter.diskQuotaLock, dataWriter, indexWriter, groupChecksum,
+		)
+	}
 	err = cp.Process(ctx)
 	if err != nil {
 		return err

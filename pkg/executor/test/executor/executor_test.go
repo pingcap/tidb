@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -61,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -322,9 +324,9 @@ func TestCheckIndex(t *testing.T) {
 	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
 	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
-	_, err = tb.AddRecord(ctx, recordVal1)
+	_, err = tb.AddRecord(ctx.GetTableCtx(), recordVal1)
 	require.NoError(t, err)
-	_, err = tb.AddRecord(ctx, recordVal2)
+	_, err = tb.AddRecord(ctx.GetTableCtx(), recordVal2)
 	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -332,7 +334,6 @@ func TestCheckIndex(t *testing.T) {
 
 	mockCtx := mock.NewContext()
 	idx := tb.Indices()[0]
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 
 	_, err = se.Execute(context.Background(), "admin check index t idx_inexistent")
 	require.Error(t, err)
@@ -343,7 +344,7 @@ func TestCheckIndex(t *testing.T) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), kv.IntHandle(3), nil)
+	_, err = idx.Create(mockCtx.GetTableCtx(), txn, types.MakeDatums(int64(30)), kv.IntHandle(3), nil)
 	require.NoError(t, err)
 	key := tablecodec.EncodeRowKey(tb.Meta().ID, kv.IntHandle(4).Encoded())
 	setColValue(t, txn, key, types.NewDatum(int64(40)))
@@ -358,7 +359,7 @@ func TestCheckIndex(t *testing.T) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(40)), kv.IntHandle(4), nil)
+	_, err = idx.Create(mockCtx.GetTableCtx(), txn, types.MakeDatums(int64(40)), kv.IntHandle(4), nil)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -371,9 +372,9 @@ func TestCheckIndex(t *testing.T) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), kv.IntHandle(3))
+	err = idx.Delete(mockCtx.GetTableCtx(), txn, types.MakeDatums(int64(30)), kv.IntHandle(3))
 	require.NoError(t, err)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), kv.IntHandle(2))
+	err = idx.Delete(mockCtx.GetTableCtx(), txn, types.MakeDatums(int64(20)), kv.IntHandle(2))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -463,7 +464,7 @@ func TestTimestampDefaultValueTimeZone(t *testing.T) {
 	tk.MustExec(`set time_zone = '+00:00'`)
 	timeIn0 := tk.MustQuery("select b from t").Rows()[0][0]
 	require.NotEqual(t, timeIn8, timeIn0)
-	datumTimeIn8, err := expression.GetTimeValue(tk.Session(), timeIn8, mysql.TypeTimestamp, 0, nil)
+	datumTimeIn8, err := expression.GetTimeValue(tk.Session().GetExprCtx(), timeIn8, mysql.TypeTimestamp, 0, nil)
 	require.NoError(t, err)
 	tIn8To0 := datumTimeIn8.GetMysqlTime()
 	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
@@ -585,7 +586,7 @@ func TestTiDBLastQueryInfo(t *testing.T) {
 	tk.MustExec("create table t (a int primary key, v int)")
 	tk.MustQuery("select json_extract(@@tidb_last_query_info, '$.start_ts'), json_extract(@@tidb_last_query_info, '$.start_ts')").Check(testkit.Rows("0 0"))
 
-	toUint64 := func(str interface{}) uint64 {
+	toUint64 := func(str any) uint64 {
 		res, err := strconv.ParseUint(str.(string), 10, 64)
 		require.NoError(t, err)
 		return res
@@ -721,7 +722,7 @@ func TestUnreasonablyClose(t *testing.T) {
 	// To enable the shuffleExec operator.
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
-	var opsNeedsCovered = []plannercore.PhysicalPlan{
+	var opsNeedsCovered = []base.PhysicalPlan{
 		&plannercore.PhysicalHashJoin{},
 		&plannercore.PhysicalMergeJoin{},
 		&plannercore.PhysicalIndexJoin{},
@@ -781,15 +782,15 @@ func TestUnreasonablyClose(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
 
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NotNil(t, p)
 
 		// This for loop level traverses the plan tree to get which operators are covered.
 		var hasCTE bool
-		for child := []plannercore.PhysicalPlan{p.(plannercore.PhysicalPlan)}; len(child) != 0; {
-			newChild := make([]plannercore.PhysicalPlan, 0, len(child))
+		for child := []base.PhysicalPlan{p.(base.PhysicalPlan)}; len(child) != 0; {
+			newChild := make([]base.PhysicalPlan, 0, len(child))
 			for _, ch := range child {
 				found := false
 				for k, t := range opsNeedsCovered {
@@ -871,7 +872,7 @@ func TestTwiceCloseUnionExec(t *testing.T) {
 		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is)
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		e := executorBuilder.Build(p)
 		chk := exec.NewFirstChunk(e)
@@ -1370,7 +1371,7 @@ func TestCollectDMLRuntimeStats(t *testing.T) {
 	getRootStats := func() string {
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(plannercore.Plan)
+		p, ok := info.Plan.(base.Plan)
 		require.True(t, ok)
 		stats := tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(p.ID())
 		return stats.String()
@@ -1499,7 +1500,7 @@ func TestGetResultRowsCount(t *testing.T) {
 		}
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(plannercore.Plan)
+		p, ok := info.Plan.(base.Plan)
 		require.True(t, ok)
 		cnt := executor.GetResultRowsCount(tk.Session().GetSessionVars().StmtCtx, p)
 		require.Equal(t, ca.row, cnt, fmt.Sprintf("sql: %v", ca.sql))
@@ -1776,7 +1777,7 @@ func TestUnion2(t *testing.T) {
 	terr = errors.Cause(err).(*terror.Error)
 	require.Equal(t, errors.ErrCode(mysql.ErrWrongUsage), terr.Code())
 
-	tk.MustGetDBError("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1", plannercore.ErrWrongUsage)
+	tk.MustGetDBError("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1", plannererrors.ErrWrongUsage)
 
 	tk.MustExec("(select a from t limit 1) union all select a from t limit 1")
 	tk.MustExec("(select a from t order by a) union all select a from t order by a")
@@ -1942,10 +1943,18 @@ func TestIsPointGet(t *testing.T) {
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
-		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
+		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx.GetSessionVars(), p)
 		require.NoError(t, err)
 		require.Equal(t, result, ret)
 	}
+}
+
+func TestPointGetOrderby(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int key)")
+	require.Equal(t, tk.ExecToErr("select * from t where i = 1 order by j limit 10;").Error(), "[planner:1054]Unknown column 'j' in 'order clause'")
 }
 
 func TestClusteredIndexIsPointGet(t *testing.T) {
@@ -1975,7 +1984,7 @@ func TestClusteredIndexIsPointGet(t *testing.T) {
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
 		require.NoError(t, err)
-		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
+		ret, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx.GetSessionVars(), p)
 		require.NoError(t, err)
 		require.Equal(t, result, ret)
 	}
@@ -2246,7 +2255,7 @@ func TestHistoryReadInTxn(t *testing.T) {
 
 				// After `ExecRestrictedSQL` with a specified snapshot and use current session, the original snapshot ts should not be reset
 				// See issue: https://github.com/pingcap/tidb/issues/34529
-				exec := tk.Session().(sqlexec.RestrictedSQLExecutor)
+				exec := tk.Session().GetRestrictedSQLExecutor()
 				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 				rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(ts2), sqlexec.ExecOptionUseCurSession}, "select * from his_t0 where id=1")
 				require.NoError(t, err)
@@ -2511,7 +2520,7 @@ func TestAdmin(t *testing.T) {
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
 	require.NoError(t, err)
 	require.Len(t, tb.Indices(), 1)
-	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), kv.IntHandle(1), nil)
+	_, err = tb.Indices()[0].Create(mock.NewContext().GetTableCtx(), txn, types.MakeDatums(int64(10)), kv.IntHandle(1), nil)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -2617,7 +2626,7 @@ func TestIsFastPlan(t *testing.T) {
 		}
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(plannercore.Plan)
+		p, ok := info.Plan.(base.Plan)
 		require.True(t, ok)
 		ok = executor.IsFastPlan(p)
 		require.Equal(t, ca.isFastPlan, ok)
@@ -2774,4 +2783,150 @@ func TestIssues40463(t *testing.T) {
 	tk.MustExec("INSERT INTO `07ccc74e-14c3-4685-bb41-c78a069b1a6d` VALUES (616295989348159438,'0000-00-00',1.00000,1.7989023),(2215857492573998768,'1970-02-02',0.00000,1.7989023),(2215857492573998768,'1983-05-13',0.00000,1.7989023),(-2840083604831267906,'1984-01-30',1.00000,1.7989023),(599388718360890339,'1986-09-09',1.00000,1.7989023),(3506764933630033073,'1987-11-22',1.00000,1.7989023),(3506764933630033073,'2002-02-26',1.00000,1.7989023),(3506764933630033073,'2003-05-14',1.00000,1.7989023),(3506764933630033073,'2007-05-16',1.00000,1.7989023),(3506764933630033073,'2017-02-20',1.00000,1.7989023),(3506764933630033073,'2017-08-06',1.00000,1.7989023),(2215857492573998768,'2019-02-18',1.00000,1.7989023),(3506764933630033073,'2020-08-11',1.00000,1.7989023),(3506764933630033073,'2028-06-07',1.00000,1.7989023),(3506764933630033073,'2036-08-16',1.00000,1.7989023);")
 
 	tk.MustQuery("select  /*+ use_index_merge( `4f380f26-9af6-4df8-959d-ad6296eff914` ) */ /*+  stream_agg() */  approx_percentile( `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` , 77 ) as r0 , `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` as r1 from `4f380f26-9af6-4df8-959d-ad6296eff914` where not( IsNull( `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` ) ) and not( `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` in ( select `8a93bdc5-2214-4f96-b5a7-1ba4c0d396ae` from `07ccc74e-14c3-4685-bb41-c78a069b1a6d` where `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` in ( select `a60d6b5c-08bd-4a6d-b951-716162d004a5` from `ba35a09f-76f4-40aa-9b48-13154a24bdd2` where not( `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` between 'bpkfo' and '59' ) and not( `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` in ( select `fb753d37-6252-4bd3-9bd1-0059640e7861` from `ba35a09f-76f4-40aa-9b48-13154a24bdd2` where IsNull( `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` ) or not( `4f380f26-9af6-4df8-959d-ad6296eff914`.`43ca0135-1650-429b-8887-9eabcae2a234` in ( select `8a93bdc5-2214-4f96-b5a7-1ba4c0d396ae` from `07ccc74e-14c3-4685-bb41-c78a069b1a6d` where IsNull( `4f380f26-9af6-4df8-959d-ad6296eff914`.`43ca0135-1650-429b-8887-9eabcae2a234` ) and not( `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` between 'neud' and 'bpkfo' ) ) ) ) ) ) ) ) group by `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67`;")
+}
+
+func TestIssue38756(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustQuery("SELECT SQRT(1) FROM t").Check(testkit.Rows("1", "1", "1"))
+	tk.MustQuery("(SELECT DISTINCT SQRT(1) FROM t)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT DISTINCT cast(1 as double) FROM t").Check(testkit.Rows("1"))
+}
+
+func TestIssue50043(t *testing.T) {
+	testIssue50043WithInitSQL(t, "")
+}
+
+func TestIssue50043WithPipelinedDML(t *testing.T) {
+	testIssue50043WithInitSQL(t, "set @@tidb_dml_type=bulk")
+}
+
+func testIssue50043WithInitSQL(t *testing.T, initSQL string) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(initSQL)
+	// Test simplified case by update.
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2),unique key idx2 ( c1 ));")
+	tk.MustExec("insert into t values (0,NULL);")
+	tk.MustExec("alter table t alter column c2 drop default;")
+	tk.MustExec("update t set c2 = 5 where c1 = 0;")
+	tk.MustQuery("select * from t order by c1,c2").Check(testkit.Rows("0 5.00000000000000000"))
+
+	// Test simplified case by insert on duplicate key update.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2));")
+	tk.MustExec("alter table t alter column c2 drop default;")
+	tk.MustExec("alter table t add unique key idx4 ( c1 );")
+	tk.MustExec("insert into t values (0, NULL), (1, 1);")
+	tk.MustExec("insert into t values (0, 2) ,(1, 3) on duplicate key update c2 = 5;")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t order by c1,c2").Check(testkit.Rows("0 5.00000000000000000", "1 5.00000000000000000"))
+
+	// Test Issue 50043.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2));")
+	tk.MustExec("alter table t alter column c2 drop default;")
+	tk.MustExec("alter table t add unique key idx4 ( c1 );")
+	tk.MustExec("insert into t values (0, NULL), (1, 1);")
+	tk.MustExec("insert ignore into t values (0, 2) ,(1, 3) on duplicate key update c2 = 5, c1 = 0")
+	tk.MustQuery("select * from t order by c1,c2").Check(testkit.Rows("0 5.00000000000000000", "1 1.00000000000000000"))
+}
+
+func TestIssue51324(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int key, a int, b enum('a', 'b'))")
+	tk.MustGetErrMsg("insert into t values ()", "[table:1364]Field 'id' doesn't have a default value")
+	tk.MustExec("insert into t set id = 1")
+	tk.MustExec("insert into t set id = 2, a = NULL, b = NULL")
+	tk.MustExec("insert into t set id = 3, a = DEFAULT, b = DEFAULT")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 <nil> <nil>", "2 <nil> <nil>", "3 <nil> <nil>"))
+
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("alter table t alter column b drop default")
+	tk.MustGetErrMsg("insert into t set id = 4;", "[table:1364]Field 'a' doesn't have a default value")
+	tk.MustExec("insert into t set id = 5, a = NULL, b = NULL;")
+	tk.MustGetErrMsg("insert into t set id = 6, a = DEFAULT, b = DEFAULT;", "[table:1364]Field 'a' doesn't have a default value")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 <nil> <nil>", "2 <nil> <nil>", "3 <nil> <nil>", "5 <nil> <nil>"))
+
+	tk.MustExec("insert ignore into t set id = 4;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustExec("insert ignore into t set id = 6, a = DEFAULT, b = DEFAULT;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 <nil> <nil>", "2 <nil> <nil>", "3 <nil> <nil>", "4 <nil> <nil>", "5 <nil> <nil>", "6 <nil> <nil>"))
+	tk.MustExec("update t set id = id + 10")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("11 <nil> <nil>", "12 <nil> <nil>", "13 <nil> <nil>", "14 <nil> <nil>", "15 <nil> <nil>", "16 <nil> <nil>"))
+
+	// Test not null case.
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (id int key, a int not null, b enum('a', 'b') not null)")
+	tk.MustGetErrMsg("insert into t values ()", "[table:1364]Field 'id' doesn't have a default value")
+	tk.MustGetErrMsg("insert into t set id = 1", "[table:1364]Field 'a' doesn't have a default value")
+	tk.MustGetErrMsg("insert into t set id = 2, a = NULL, b = NULL", "[table:1048]Column 'a' cannot be null")
+	tk.MustGetErrMsg("insert into t set id = 2, a = 2, b = NULL", "[table:1048]Column 'b' cannot be null")
+	tk.MustGetErrMsg("insert into t set id = 3, a = DEFAULT, b = DEFAULT", "[table:1364]Field 'a' doesn't have a default value")
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("alter table t alter column b drop default")
+	tk.MustExec("insert ignore into t set id = 4;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustExec("insert ignore into t set id = 5, a = NULL, b = NULL;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null", "Warning 1048 Column 'b' cannot be null"))
+	tk.MustExec("insert ignore into t set id = 6, a = 6,    b = NULL;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'b' cannot be null"))
+	tk.MustExec("insert ignore into t set id = 7, a = DEFAULT, b = DEFAULT;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("4 0 a", "5 0 ", "6 6 ", "7 0 a"))
+
+	// Test add column with OriginDefaultValue case.
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (id int, unique key idx (id))")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("alter table t add column a int default 1")
+	tk.MustExec("alter table t add column b int default null")
+	tk.MustExec("alter table t add column c int not null")
+	tk.MustExec("alter table t add column d int not null default 1")
+	tk.MustExec("insert ignore into t (id) values (2)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'c' doesn't have a default value"))
+	tk.MustExec("insert ignore into t (id) values (1),(2) on duplicate key update id = id+10")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'c' doesn't have a default value"))
+	tk.MustExec("alter table t alter column a drop default")
+	tk.MustExec("alter table t alter column b drop default")
+	tk.MustExec("alter table t alter column c drop default")
+	tk.MustExec("alter table t alter column d drop default")
+	tk.MustExec("insert ignore into t (id) values (3)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value", "Warning 1364 Field 'b' doesn't have a default value", "Warning 1364 Field 'c' doesn't have a default value", "Warning 1364 Field 'd' doesn't have a default value"))
+	tk.MustExec("insert ignore into t (id) values (11),(12),(3) on duplicate key update id = id+10")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1364 Field 'a' doesn't have a default value", "Warning 1364 Field 'b' doesn't have a default value", "Warning 1364 Field 'c' doesn't have a default value", "Warning 1364 Field 'd' doesn't have a default value"))
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("13 <nil> <nil> 0 0", "21 1 <nil> 0 1", "22 1 <nil> 0 1"))
+}
+
+func TestDecimalDivPrecisionIncrement(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a decimal(3,0), b decimal(3,0))")
+	tk.MustExec("insert into t values (8, 7), (9, 7)")
+	tk.MustQuery("select a/b from t").Check(testkit.Rows("1.1429", "1.2857"))
+
+	tk.MustExec("set div_precision_increment = 7")
+	tk.MustQuery("select a/b from t").Check(testkit.Rows("1.1428571", "1.2857143"))
+
+	tk.MustExec("set div_precision_increment = 30")
+	tk.MustQuery("select a/b from t").Check(testkit.Rows("1.142857142857142857142857142857", "1.285714285714285714285714285714"))
+
+	tk.MustExec("set div_precision_increment = 4")
+	tk.MustQuery("select avg(a) from t").Check(testkit.Rows("8.5000"))
+
+	tk.MustExec("set div_precision_increment = 4")
+	tk.MustQuery("select avg(a/b) from t").Check(testkit.Rows("1.21428571"))
+
+	tk.MustExec("set div_precision_increment = 10")
+	tk.MustQuery("select avg(a/b) from t").Check(testkit.Rows("1.21428571428571428550"))
 }

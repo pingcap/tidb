@@ -19,13 +19,12 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -42,15 +41,75 @@ const (
 	ScalarSubQFlag     byte = 5
 )
 
-// EvalAstExpr evaluates ast expression directly.
-// Note: initialized in planner/core
-// import expression and planner/core together to use EvalAstExpr
-var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
+// EvalSimpleAst evaluates a simple ast expression directly.
+// This function is used to evaluate some "simple" expressions with limited context.
+// See `BuildSimpleExpr` for more details about the differences.
+var EvalSimpleAst func(ctx BuildContext, expr ast.ExprNode) (types.Datum, error)
 
-// RewriteAstExpr rewrites ast expression directly.
-// Note: initialized in planner/core
-// import expression and planner/core together to use EvalAstExpr
-var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice, allowCastArray bool) (Expression, error)
+// BuildOptions is used to provide optional settings to build an expression
+type BuildOptions struct {
+	// InputSchema is the input schema for expression to build
+	InputSchema *Schema
+	// InputNames is the input names for expression to build
+	InputNames types.NameSlice
+	// SourceTableDB is the database that the source table located
+	SourceTableDB model.CIStr
+	// SourceTable is used to provide some extra column info.
+	SourceTable *model.TableInfo
+	// AllowCastArray specifies whether to allow casting to an array type.
+	AllowCastArray bool
+	// TargetFieldType indicates to cast the expression to the target field type if it is not nil
+	TargetFieldType *types.FieldType
+}
+
+// BuildOption is a function to apply optional settings
+type BuildOption func(*BuildOptions)
+
+// WithTableInfo specifies table meta for the expression to build.
+// When this option is specified, it will use the table meta to resolve column names.
+func WithTableInfo(db string, tblInfo *model.TableInfo) BuildOption {
+	return func(options *BuildOptions) {
+		options.SourceTableDB = model.NewCIStr(db)
+		options.SourceTable = tblInfo
+	}
+}
+
+// WithInputSchemaAndNames specifies the input schema and names for the expression to build.
+func WithInputSchemaAndNames(schema *Schema, names types.NameSlice, table *model.TableInfo) BuildOption {
+	return func(options *BuildOptions) {
+		options.InputSchema = schema
+		options.InputNames = names
+		options.SourceTable = table
+	}
+}
+
+// WithAllowCastArray specifies whether to allow casting to an array type.
+func WithAllowCastArray(allow bool) BuildOption {
+	return func(options *BuildOptions) {
+		options.AllowCastArray = allow
+	}
+}
+
+// WithCastExprTo indicates that we need to the cast the generated expression to the target type
+func WithCastExprTo(targetFt *types.FieldType) BuildOption {
+	return func(options *BuildOptions) {
+		options.TargetFieldType = targetFt
+	}
+}
+
+// BuildSimpleExpr builds a simple expression from an ast node.
+// This function is used to build some "simple" expressions with limited context.
+// The below expressions are not supported:
+//   - Subquery
+//   - Param marker (e.g. `?`)
+//   - Variable (e.g. `@a`)
+//   - Window functions
+//   - Aggregate functions
+//   - Other special functions such as `GROUPING`
+//
+// If you want to build a more complex expression, you should use `EvalAstExprWithPlanCtx` or `RewriteAstExprWithPlanCtx`
+// in `github.com/pingcap/tidb/pkg/planner/util`. They are more powerful but need planner context to build expressions.
+var BuildSimpleExpr func(ctx BuildContext, expr ast.ExprNode, opts ...BuildOption) (Expression, error)
 
 // VecExpr contains all vectorized evaluation methods.
 type VecExpr interface {
@@ -237,24 +296,13 @@ func ExprNotNull(expr Expression) bool {
 	return mysql.HasNotNullFlag(expr.GetType().GetFlag())
 }
 
-// HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
-// We should ignore overflow errors when evaluating selection conditions:
-//
-//	INSERT INTO t VALUES ("999999999999999999");
-//	SELECT * FROM t WHERE v;
-func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err error) (int64, error) {
-	if sc.InSelectStmt && err != nil && types.ErrOverflow.Equal(err) {
-		return -1, nil
-	}
-	return val, err
-}
-
 // EvalBool evaluates expression list to a boolean value. The first returned value
 // indicates bool result of the expression list, the second returned value indicates
 // whether the result of the expression list is null, it can only be true when the
 // first returned values is false.
 func EvalBool(ctx EvalContext, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
 	hasNull := false
+	tc := typeCtx(ctx)
 	for _, expr := range exprList {
 		data, err := expr.Eval(ctx, row)
 		if err != nil {
@@ -273,12 +321,9 @@ func EvalBool(ctx EvalContext, exprList CNFExprs, row chunk.Row) (bool, bool, er
 			continue
 		}
 
-		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		i, err := data.ToBool(tc)
 		if err != nil {
-			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
-			if err != nil {
-				return false, false, err
-			}
+			return false, false, err
 		}
 		if i == 0 {
 			return false, false, nil
@@ -327,7 +372,7 @@ func deallocateZeroSlice(isZero []int8) {
 }
 
 // VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
-func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
+func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
 	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
 	// After the function finished, then we reset the input.Sel().
 	// The caller will handle the input.Sel() and selected slices.
@@ -366,14 +411,14 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 
 		// Take the implicit evalReal path if possible.
 		if CanImplicitEvalReal(expr) {
-			if err := implicitEvalReal(ctx, expr, input, buf); err != nil {
+			if err := implicitEvalReal(ctx, vecEnabled, expr, input, buf); err != nil {
 				return nil, nil, err
 			}
-		} else if err := EvalExpr(ctx, expr, eType, input, buf); err != nil {
+		} else if err := EvalExpr(ctx, vecEnabled, expr, eType, input, buf); err != nil {
 			return nil, nil, err
 		}
 
-		err = toBool(ctx.GetSessionVars().StmtCtx, tp, eType, buf, sel, isZero)
+		err = toBool(typeCtx(ctx), tp, eType, buf, sel, isZero)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -413,7 +458,7 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 	return selected, nulls, nil
 }
 
-func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+func toBool(tc types.Context, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
@@ -493,14 +538,14 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 						}
 					case mysql.TypeBit:
 						var bl types.BinaryLiteral = buf.GetBytes(i)
-						iVal, err := bl.ToInt(sc.TypeCtx())
+						iVal, err := bl.ToInt(tc)
 						if err != nil {
 							return err
 						}
 						fVal = float64(iVal)
 					}
 				} else {
-					fVal, err = types.StrToFloat(sc.TypeCtx(), sVal, false)
+					fVal, err = types.StrToFloat(tc, sVal, false)
 					if err != nil {
 						return err
 					}
@@ -541,8 +586,8 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 	return nil
 }
 
-func implicitEvalReal(ctx EvalContext, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
-	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
+func implicitEvalReal(ctx EvalContext, vecEnabled bool, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+	if expr.Vectorized() && vecEnabled {
 		err = expr.VecEvalReal(ctx, input, result)
 	} else {
 		ind, n := 0, input.NumRows()
@@ -570,8 +615,8 @@ func implicitEvalReal(ctx EvalContext, expr Expression, input *chunk.Chunk, resu
 // the environment variables and whether the expression can be vectorized.
 // Note: the input argument `evalType` is needed because of that when `expr` is
 // of the hybrid type(ENUM/SET/BIT), we need the invoker decide the actual EvalType.
-func EvalExpr(ctx EvalContext, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
-	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
+func EvalExpr(ctx EvalContext, vecEnabled bool, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
+	if expr.Vectorized() && vecEnabled {
 		switch evalType {
 		case types.ETInt:
 			err = expr.VecEvalInt(ctx, input, result)
@@ -703,7 +748,7 @@ func EvalExpr(ctx EvalContext, expr Expression, evalType types.EvalType, input *
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
-func composeConditionWithBinaryOp(ctx sessionctx.Context, conditions []Expression, funcName string) Expression {
+func composeConditionWithBinaryOp(ctx BuildContext, conditions []Expression, funcName string) Expression {
 	length := len(conditions)
 	if length == 0 {
 		return nil
@@ -719,12 +764,12 @@ func composeConditionWithBinaryOp(ctx sessionctx.Context, conditions []Expressio
 }
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func ComposeCNFCondition(ctx sessionctx.Context, conditions ...Expression) Expression {
+func ComposeCNFCondition(ctx BuildContext, conditions ...Expression) Expression {
 	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
-func ComposeDNFCondition(ctx sessionctx.Context, conditions ...Expression) Expression {
+func ComposeDNFCondition(ctx BuildContext, conditions ...Expression) Expression {
 	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicOr)
 }
 
@@ -817,18 +862,18 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
+func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("%v affects null check"))
+		ctx.SetSkipPlanCache(errors.NewNoStackError("%v affects null check"))
 	}
-	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
+	if ctx.IsInNullRejectCheck() {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
 		return expr
 	}
 	return evaluateExprWithNull(ctx, schema, expr)
 }
 
-func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
+func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
@@ -853,7 +898,7 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 // If the Expression is a non-constant value, it means the result is unknown.
 // The returned bool values indicates whether the value is influenced by the Null Constant transformed from schema column
 // when the value is Null Constant.
-func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schema, expr Expression) (Expression, bool) {
+func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, expr Expression) (Expression, bool) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
@@ -915,7 +960,7 @@ func evaluateExprWithNullInNullRejectCheck(ctx sessionctx.Context, schema *Schem
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
-func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
+func TableInfo2SchemaAndNames(ctx BuildContext, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
 	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
 	if err != nil {
 		return nil, nil, err
@@ -961,10 +1006,49 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 	return schema, names, nil
 }
 
+type ignoreTruncateExprCtx struct {
+	BuildContext
+	EvalContext
+	tc types.Context
+	ec errctx.Context
+}
+
+// ignoreTruncate returns a new BuildContext that ignores the truncate error.
+func ignoreTruncate(ctx BuildContext) BuildContext {
+	evalCtx := ctx.GetEvalCtx()
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+	if tc.Flags().IgnoreTruncateErr() && ec.LevelForGroup(errctx.ErrGroupTruncate) == errctx.LevelIgnore {
+		return ctx
+	}
+
+	tc = tc.WithFlags(tc.Flags().WithIgnoreTruncateErr(true))
+	ec = ec.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
+
+	return &ignoreTruncateExprCtx{
+		BuildContext: ctx,
+		EvalContext:  evalCtx,
+		tc:           tc,
+		ec:           ec,
+	}
+}
+
+// GetEvalCtx implements the BuildContext.EvalCtx().
+func (ctx *ignoreTruncateExprCtx) GetEvalCtx() EvalContext {
+	return ctx
+}
+
+// TypeCtx implements the EvalContext.TypeCtx().
+func (ctx *ignoreTruncateExprCtx) TypeCtx() types.Context {
+	return ctx.tc
+}
+
+// ErrCtx implements the EvalContext.ErrCtx().
+func (ctx *ignoreTruncateExprCtx) ErrCtx() errctx.Context {
+	return ctx.ec
+}
+
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-// This function is **unsafe** to be called concurrently, unless the `IgnoreTruncate` has been set to `true`. The only
-// known case which will call this function concurrently is `CheckTableExec`. Ref #18408 and #42341.
-func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
+func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
@@ -978,7 +1062,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 		newCol := &Column{
 			RetType:  col.FieldType.Clone(),
 			ID:       col.ID,
-			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: ctx.AllocPlanColumnID(),
 			Index:    col.Offset,
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
@@ -987,17 +1071,16 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	}
 	// Resolve virtual generated column.
 	mockSchema := NewSchema(columns...)
-	// Ignore redundant warning here.
-	flags := ctx.GetSessionVars().StmtCtx.TypeFlags()
-	if !flags.IgnoreTruncateErr() {
-		defer func() {
-			ctx.GetSessionVars().StmtCtx.SetTypeFlags(flags)
-		}()
-		ctx.GetSessionVars().StmtCtx.SetTypeFlags(flags.WithIgnoreTruncateErr(true))
-	}
 
+	truncateIgnored := false
 	for i, col := range colInfos {
 		if col.IsVirtualGenerated() {
+			if !truncateIgnored {
+				// Ignore redundant warning here.
+				ctx = ignoreTruncate(ctx)
+				truncateIgnored = true
+			}
+
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
@@ -1006,7 +1089,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			e, err := RewriteAstExpr(ctx, expr, mockSchema, names, true)
+			e, err := BuildSimpleExpr(ctx, expr, WithInputSchemaAndNames(mockSchema, names, tblInfo), WithAllowCastArray(true))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -1023,7 +1106,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 }
 
 // NewValuesFunc creates a new values function.
-func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *ScalarFunction {
+func NewValuesFunc(ctx BuildContext, offset int, retTp *types.FieldType) *ScalarFunction {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset, retTp}
 	bt, err := fc.getFunction(ctx, nil)
 	terror.Log(err)
@@ -1047,7 +1130,7 @@ func IsBinaryLiteral(expr Expression) bool {
 // 2. keepNull is false and arg is null, the istrue function returns 0.
 // The `wrapForInt` indicates whether we need to wrapIsTrue for non-logical Expression with int type.
 // TODO: remove this function. ScalarFunction should be newed in one place.
-func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapForInt bool) (Expression, error) {
+func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt bool) (Expression, error) {
 	if arg.GetType().EvalType() == types.ETInt {
 		if !wrapForInt {
 			return arg, nil
@@ -1140,7 +1223,7 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 
 // Args2Expressions4Test converts these values to an expression list.
 // This conversion is incomplete, so only use for test.
-func Args2Expressions4Test(args ...interface{}) []Expression {
+func Args2Expressions4Test(args ...any) []Expression {
 	exprs := make([]Expression, len(args))
 	for i, v := range args {
 		d := types.NewDatum(v)

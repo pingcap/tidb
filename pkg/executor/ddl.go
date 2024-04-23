@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -497,7 +498,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 		schemaName = strings.ToLower(e.Ctx().GetSessionVars().CurrentDB)
 	}
 	if schemaName == "" {
-		return nil, nil, errors.Trace(core.ErrNoDB)
+		return nil, nil, errors.Trace(plannererrors.ErrNoDB)
 	}
 	gcSafePoint, err := gcutil.GetGCSafePoint(e.Ctx())
 	if err != nil {
@@ -548,7 +549,7 @@ func (e *DDLExec) executeFlashBackCluster(s *ast.FlashBackToTimestampStmt) error
 	}
 
 	// Check `TO TIMESTAMP` clause
-	flashbackTS, err := staleread.CalculateAsOfTsExpr(context.Background(), e.Ctx(), s.FlashbackTS)
+	flashbackTS, err := staleread.CalculateAsOfTsExpr(context.Background(), e.Ctx().GetPlanCtx(), s.FlashbackTS)
 	if err != nil {
 		return err
 	}

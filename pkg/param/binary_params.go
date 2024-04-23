@@ -41,7 +41,7 @@ type BinaryParam struct {
 // ExecArgs parse execute arguments to datum slice.
 func ExecArgs(typectx types.Context, binaryParams []BinaryParam) (params []expression.Expression, err error) {
 	var (
-		tmp interface{}
+		tmp any
 	)
 
 	params = make([]expression.Expression, len(binaryParams))

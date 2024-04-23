@@ -12,8 +12,8 @@ go_library(
         "//pkg/errno",
         "//pkg/parser/model",
         "//pkg/parser/types",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/types",
+        "//pkg/util/context",
         "//pkg/util/dbterror",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
@@ -31,7 +31,7 @@ go_test(
     ],
     embed = [":sessionstates"],
     flaky = True,
-    shard_count = 15,
+    shard_count = 17,
     deps = [
         "//pkg/config",
         "//pkg/errno",

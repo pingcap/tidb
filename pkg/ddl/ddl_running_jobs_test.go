@@ -28,21 +28,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRunningJobs(t *testing.T) {
-	mkJob := func(id int64, schemaTableNames ...string) *model.Job {
-		var schemaInfos []model.InvolvingSchemaInfo
-		for _, schemaTableName := range schemaTableNames {
-			ss := strings.Split(schemaTableName, ".")
-			schemaInfos = append(schemaInfos, model.InvolvingSchemaInfo{
-				Database: ss[0],
-				Table:    ss[1],
-			})
-		}
-		return &model.Job{
-			ID:                  id,
-			InvolvingSchemaInfo: schemaInfos,
-		}
+func mkJob(id int64, schemaTableNames ...string) *model.Job {
+	schemaInfos := make([]model.InvolvingSchemaInfo, len(schemaTableNames))
+	for _, schemaTableName := range schemaTableNames {
+		ss := strings.Split(schemaTableName, ".")
+		schemaInfos = append(schemaInfos, model.InvolvingSchemaInfo{
+			Database: ss[0],
+			Table:    ss[1],
+		})
 	}
+	return &model.Job{
+		ID:                  id,
+		InvolvingSchemaInfo: schemaInfos,
+	}
+}
+
+func TestRunningJobs(t *testing.T) {
 	orderedAllIDs := func(ids string) string {
 		ss := strings.Split(ids, ",")
 		ssid := make([]int, len(ss))
@@ -95,18 +96,38 @@ func TestRunningJobs(t *testing.T) {
 	runnable = j.checkRunnable(mkJob(0, "db100.t100"))
 	require.False(t, runnable)
 
+	job5.State = model.JobStateDone
 	j.remove(job5)
 	require.Equal(t, "1,2,3,4", orderedAllIDs(j.allIDs()))
 	runnable = j.checkRunnable(mkJob(0, "db100.t100"))
 	require.True(t, runnable)
 
+	job3.State = model.JobStateDone
 	j.remove(job3)
 	require.Equal(t, "1,2,4", orderedAllIDs(j.allIDs()))
 	runnable = j.checkRunnable(mkJob(0, "db1.t100"))
 	require.True(t, runnable)
 
+	job1.State = model.JobStateDone
 	j.remove(job1)
 	require.Equal(t, "2,4", orderedAllIDs(j.allIDs()))
 	runnable = j.checkRunnable(mkJob(0, "db1.t1"))
 	require.True(t, runnable)
+}
+
+func TestOwnerRetireThenToBeOwner(t *testing.T) {
+	j := newRunningJobs()
+	require.Equal(t, "", j.allIDs())
+	job := mkJob(1, "test.t1")
+	j.add(job)
+	require.False(t, j.checkRunnable(job))
+	// retire
+	j.clear()
+	// to be owner, try to start a new job.
+	require.False(t, j.checkRunnable(job))
+	// previous job removed.
+	j.remove(job)
+	require.True(t, j.checkRunnable(job))
+	j.add(job)
+	require.False(t, j.checkRunnable(job))
 }

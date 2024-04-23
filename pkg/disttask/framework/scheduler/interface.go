@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
@@ -25,27 +26,33 @@ import (
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
 	// GetTopUnfinishedTasks returns unfinished tasks, limited by MaxConcurrentTask*2,
-	// to make sure lower priority tasks can be scheduled if resource is enough.
-	// The returned tasks are sorted by task order, see proto.Task, and only contains
-	// some fields, see row2TaskBasic.
-	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Task, error)
-	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
+	// to make sure lower rank tasks can be scheduled if resource is enough.
+	// The returned tasks are sorted by task order, see proto.Task.
+	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error)
+	// GetAllSubtasks gets all subtasks with basic columns.
+	GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error)
+	GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
-	UpdateTaskAndAddSubTasks(ctx context.Context, task *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
+	GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error)
 	GCSubtasks(ctx context.Context) error
 	GetAllNodes(ctx context.Context) ([]proto.ManagedNode, error)
 	DeleteDeadNodes(ctx context.Context, nodes []string) error
+	// TransferTasks2History transfer tasks, and it's related subtasks to history tables.
 	TransferTasks2History(ctx context.Context, tasks []*proto.Task) error
 	// CancelTask updated task state to canceling.
 	CancelTask(ctx context.Context, taskID int64) error
 	// FailTask updates task state to Failed and updates task error.
 	FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error
+	// RevertTask updates task state to reverting, and task error.
+	RevertTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error
 	// RevertedTask updates task state to reverted.
 	RevertedTask(ctx context.Context, taskID int64) error
 	// PauseTask updated task state to pausing.
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
 	// PausedTask updated task state to paused.
 	PausedTask(ctx context.Context, taskID int64) error
+	// ResumedTask updated task state from resuming to running.
+	ResumedTask(ctx context.Context, taskID int64) error
 	// SucceedTask updates a task to success state.
 	SucceedTask(ctx context.Context, taskID int64) error
 	// SwitchTaskStep switches the task to the next step and add subtasks in one
@@ -65,21 +72,21 @@ type TaskManager interface {
 	// we only consider pending/running subtasks, subtasks related to revert are
 	// not considered.
 	GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error)
+	// GetActiveSubtasks returns subtasks of the task that are in pending/running state.
+	GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.SubtaskBase, error)
 	// GetSubtaskCntGroupByStates returns the count of subtasks of some step group by state.
 	GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
-	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
-	TransferSubTasks2History(ctx context.Context, taskID int64) error
-	UpdateSubtasksExecIDs(ctx context.Context, taskID int64, subtasks []*proto.Subtask) error
+	GetSubtaskErrors(ctx context.Context, taskID int64) ([]error, error)
+	UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.SubtaskBase) error
 	// GetManagedNodes returns the nodes managed by dist framework and can be used
 	// to execute tasks. If there are any nodes with background role, we use them,
 	// else we use nodes without role.
 	// returned nodes are sorted by node id(host:port).
 	GetManagedNodes(ctx context.Context) ([]proto.ManagedNode, error)
-	GetTaskExecutorIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
-	GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
-	GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)
-	GetTaskExecutorIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
+
+	// GetAllSubtasksByStepAndState gets all subtasks by given states for one step.
+	GetAllSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error
 	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error
@@ -92,7 +99,7 @@ type TaskManager interface {
 type Extension interface {
 	// OnTick is used to handle the ticker event, if business impl need to do some periodical work, you can
 	// do it here, but don't do too much work here, because the ticker interval is small, and it will block
-	// the event is generated every checkTaskRunningInterval, and only when the task NOT FINISHED and NO ERROR.
+	// the event is generated every CheckTaskRunningInterval, and only when the task NOT FINISHED and NO ERROR.
 	OnTick(ctx context.Context, task *proto.Task)
 
 	// OnNextSubtasksBatch is used to generate batch of subtasks for next stage
@@ -101,13 +108,13 @@ type Extension interface {
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks scheduled has all finished with no error.
 	// when next step is StepDone, it should return nil, nil.
-	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, execIDs []string, step proto.Step) (subtaskMetas [][]byte, err error)
+	OnNextSubtasksBatch(ctx context.Context, h storage.TaskHandle, task *proto.Task, execIDs []string, step proto.Step) (subtaskMetas [][]byte, err error)
 
 	// OnDone is called when task is done, either finished successfully or failed
 	// with error.
 	// if the task is failed when initializing scheduler, or it's an unknown task,
 	// we don't call this function.
-	OnDone(ctx context.Context, h TaskHandle, task *proto.Task) error
+	OnDone(ctx context.Context, h storage.TaskHandle, task *proto.Task) error
 
 	// GetEligibleInstances is used to get the eligible instances for the task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
@@ -122,11 +129,22 @@ type Extension interface {
 	// GetNextStep is used to get the next step for the task.
 	// if task runs successfully, it should go from StepInit to business steps,
 	// then to StepDone, then scheduler will mark it as finished.
-	GetNextStep(task *proto.Task) proto.Step
+	// NOTE: don't depend on task meta to decide the next step, if it's really needed,
+	// initialize required fields on scheduler.Init
+	GetNextStep(task *proto.TaskBase) proto.Step
+}
+
+// Param is used to pass parameters when creating scheduler.
+type Param struct {
+	taskMgr        TaskManager
+	nodeMgr        *NodeManager
+	slotMgr        *SlotManager
+	serverID       string
+	allocatedSlots bool
 }
 
 // schedulerFactoryFn is used to create a scheduler.
-type schedulerFactoryFn func(ctx context.Context, taskMgr TaskManager, nodeMgr *NodeManager, task *proto.Task) Scheduler
+type schedulerFactoryFn func(ctx context.Context, task *proto.Task, param Param) Scheduler
 
 var schedulerFactoryMap = struct {
 	syncutil.RWMutex

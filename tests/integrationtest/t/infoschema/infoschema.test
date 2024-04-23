@@ -1,7 +1,9 @@
 # TestIndexComment
+use infoschema__infoschema;
 DROP TABLE IF EXISTS `t1`;
-create table t1 (c1 VARCHAR(10) NOT NULL COMMENT 'Abcdefghijabcd', c2 INTEGER COMMENT 'aBcdefghijab',c3 INTEGER COMMENT '01234567890', c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER, c8 VARCHAR(100), c9 CHAR(50), c10 DATETIME, c11 DATETIME, c12 DATETIME,c13 DATETIME, INDEX i1 (c1) COMMENT 'i1 comment',INDEX i2(c2) ) COMMENT='ABCDEFGHIJabc';
+create table test.t1 (c1 VARCHAR(10) NOT NULL COMMENT 'Abcdefghijabcd', c2 INTEGER COMMENT 'aBcdefghijab',c3 INTEGER COMMENT '01234567890', c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER, c8 VARCHAR(100), c9 CHAR(50), c10 DATETIME, c11 DATETIME, c12 DATETIME,c13 DATETIME, INDEX i1 (c1) COMMENT 'i1 comment',INDEX i2(c2) ) COMMENT='ABCDEFGHIJabc';
 SELECT index_comment,char_length(index_comment),COLUMN_NAME FROM information_schema.statistics WHERE table_name='t1' and table_schema="infoschema__infoschema" ORDER BY index_comment;
+SELECT index_comment,char_length(index_comment),COLUMN_NAME FROM information_schema.statistics WHERE table_name='t1' and table_schema="test" ORDER BY index_comment;
 
 # TestIssue42440
 show create table information_schema.ddl_jobs;
@@ -22,6 +24,37 @@ insert infoschema__infoschema.t2 values(1,'334'),(4,'3443435'),(5,'fdf43t536653'
 create table infoschema__infoschema.t3 (id int primary key, a text);
 insert infoschema__infoschema.t3 values(1,'334'),(4,'3443435'),(5,'fdf43t536653');
 rename table infoschema__infoschema.t2 to mysql.t2, infoschema__infoschema.t3 to mysql.t3;
-SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA = 'mysql') AND (TABLE_NAME = 't2');
-SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA = 'mysql') AND (TABLE_NAME = 't3');
+SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'mysql' AND TABLE_NAME = 't2';
+SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'mysql' AND TABLE_NAME = 't3';
+SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA in ('mysql', 'test') and TABLE_NAME in ('t1', 't2');
+SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA= 'mysql' or TABLE_SCHEMA = 'test') and (TABLE_NAME = 't1' or TABLE_NAME = 't2');
+desc format='brief' SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA= 'mysql' or TABLE_SCHEMA = 'test') and (TABLE_NAME = 't1' or TABLE_NAME = 't2');
+desc format='brief' SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA in ('mysql', 'test') and TABLE_NAME in ('t1', 't2');
+SELECT count(*) FROM information_schema.TABLES WHERE TABLE_NAME in ('t1', 't2') and TABLE_SCHEMA = 'mysql';
+SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_NAME = 't1' or TABLE_NAME = 't2') and TABLE_SCHEMA = 'mysql';
 drop table mysql.t1, mysql.t2, mysql.t3;
+
+# TestTablesColumn
+create table infoschema__infoschema.t4(a int, INDEX i1 (a));
+create table infoschema__infoschema.t5(a int, INDEX i1 (a));
+insert into infoschema__infoschema.t4 values(1);
+insert into infoschema__infoschema.t5 values(1);
+SELECT count(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'infoschema__infoschema' AND TABLE_NAME = 't4';
+SELECT count(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'infoschema__infoschema' AND TABLE_NAME != 't4';
+analyze table infoschema__infoschema.t4;
+analyze table infoschema__infoschema.t5;
+select * from information_schema.STATISTICS where table_schema = 'infoschema__infoschema' and lower(table_name) != 't4';
+select table_type from information_schema.tables where (table_name='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+select table_type, table_rows from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+select table_type, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
+select engine, DATA_LENGTH from information_schema.tables where upper(table_name) = 'T5' and table_schema = 'infoschema__infoschema';
+explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
+select engine, DATA_LENGTH from information_schema.tables where lower(table_name) = 't5' and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
+explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or lower(table_name) = 't5') and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
+select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or table_name = 't5') and table_schema = 'infoschema__infoschema';
+explain select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
+select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' and upper(table_name) ='T4' and table_schema = 'infoschema__infoschema';
+

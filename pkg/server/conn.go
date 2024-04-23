@@ -74,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
@@ -90,13 +91,13 @@ import (
 	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -360,29 +361,23 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 }
 
 func (cc *clientConn) Close() error {
+	// Be careful, this function should be re-entrant. It might be called more than once for a single connection.
+	// Any logic which is not idempotent should be in closeConn() and wrapped with `cc.closeOnce.Do`, like decresing
+	// metrics, releasing resources, etc.
+	//
+	// TODO: avoid calling this function multiple times. It's not intuitive that a connection can be closed multiple
+	// times.
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
-	resourceGroupName, count := "", 0
-	if ctx := cc.getCtx(); ctx != nil {
-		resourceGroupName = ctx.GetSessionVars().ResourceGroupName
-		count = cc.server.ConnNumByResourceGroup[resourceGroupName]
-		if count <= 1 {
-			delete(cc.server.ConnNumByResourceGroup, resourceGroupName)
-		} else {
-			cc.server.ConnNumByResourceGroup[resourceGroupName]--
-		}
-	}
 	cc.server.rwlock.Unlock()
-	return closeConn(cc, resourceGroupName, count)
+	return closeConn(cc)
 }
 
 // closeConn is idempotent and thread-safe.
 // It will be called on the same `clientConn` more than once to avoid connection leak.
-func closeConn(cc *clientConn, resourceGroupName string, count int) error {
+func closeConn(cc *clientConn) error {
 	var err error
 	cc.closeOnce.Do(func() {
-		metrics.ConnGauge.WithLabelValues(resourceGroupName).Set(float64(count))
-
 		if cc.connectionID > 0 {
 			cc.server.dom.ReleaseConnID(cc.connectionID)
 			cc.connectionID = 0
@@ -396,8 +391,12 @@ func closeConn(cc *clientConn, resourceGroupName string, count int) error {
 			}
 		}
 		// Close statements and session
-		// This will release advisory locks, row locks, etc.
+		// At first, it'll decrese the count of connections in the resource group, update the corresponding gauge.
+		// Then it'll close the statements and session, which release advisory locks, row locks, etc.
 		if ctx := cc.getCtx(); ctx != nil {
+			resourceGroupName := ctx.GetSessionVars().ResourceGroupName
+			metrics.ConnGauge.WithLabelValues(resourceGroupName).Dec()
+
 			err = ctx.Close()
 		}
 	})
@@ -406,14 +405,7 @@ func closeConn(cc *clientConn, resourceGroupName string, count int) error {
 
 func (cc *clientConn) closeWithoutLock() error {
 	delete(cc.server.clients, cc.connectionID)
-	name := cc.getCtx().GetSessionVars().ResourceGroupName
-	count := cc.server.ConnNumByResourceGroup[name]
-	if count <= 1 {
-		delete(cc.server.ConnNumByResourceGroup, name)
-	} else {
-		cc.server.ConnNumByResourceGroup[name]--
-	}
-	return closeConn(cc, name, count-1)
+	return closeConn(cc)
 }
 
 // writeInitialHandshake sends server version, connection ID, server capability, collation, server status
@@ -1148,9 +1140,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
-				var startTS uint64
+				var timestamp uint64
 				if ctx := cc.getCtx(); ctx != nil && ctx.GetSessionVars() != nil && ctx.GetSessionVars().TxnCtx != nil {
-					startTS = ctx.GetSessionVars().TxnCtx.StartTS
+					timestamp = ctx.GetSessionVars().TxnCtx.StartTS
+					if timestamp == 0 && ctx.GetSessionVars().TxnCtx.StaleReadTs > 0 {
+						// for state-read query.
+						timestamp = ctx.GetSessionVars().TxnCtx.StaleReadTs
+					}
 				}
 				logutil.Logger(ctx).Info("command dispatched failed",
 					zap.String("connInfo", cc.String()),
@@ -1158,7 +1154,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					zap.String("status", cc.SessionStatusToString()),
 					zap.Stringer("sql", getLastStmtInConn{cc}),
 					zap.String("txn_mode", txnMode),
-					zap.Uint64("timestamp", startTS),
+					zap.Uint64("timestamp", timestamp),
 					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
 				)
 			}
@@ -1171,19 +1167,22 @@ func (cc *clientConn) Run(ctx context.Context) {
 	}
 }
 
-func errStrForLog(err error, enableRedactLog bool) string {
-	if enableRedactLog {
+func errStrForLog(err error, redactMode string) string {
+	if redactMode != errors.RedactLogDisable {
 		// currently, only ErrParse is considered when enableRedactLog because it may contain sensitive information like
 		// password or accesskey
 		if parser.ErrParse.Equal(err) {
-			return "fail to parse SQL and can't redact when enable log redaction"
+			return "fail to parse SQL, and must redact the whole error when enable log redaction"
 		}
 	}
+	var ret string
 	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 		// Do not log stack for duplicated entry error.
-		return err.Error()
+		ret = err.Error()
+	} else {
+		ret = errors.ErrorStack(err)
 	}
-	return errors.ErrorStack(err)
+	return ret
 }
 
 func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
@@ -1207,7 +1206,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	if counter != nil {
 		counter.Inc()
 	} else {
-		label := strconv.Itoa(int(cmd))
+		label := server_metrics.CmdToString(cmd)
 		if err != nil {
 			metrics.QueryTotalCounter.WithLabelValues(label, "Error", resourceGroupName).Inc()
 		} else {
@@ -1260,7 +1259,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cfg := config.GetGlobalConfig()
 	if cfg.OpenTracing.Enable {
 		var r tracing.Region
-		r, ctx = tracing.StartRegionEx(ctx, "server.dispatch")
+		r, ctx = tracing.StartRegionWithNewRootSpan(ctx, "server.dispatch")
 		defer r.End()
 	}
 
@@ -1716,7 +1715,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	warns := sc.GetWarnings()
 	parserWarns := warns[len(prevWarns):]
 
-	var pointPlans []plannercore.Plan
+	var pointPlans []base.Plan
 	cc.ctx.GetSessionVars().InMultiStmts = false
 	if len(stmts) > 1 {
 		// The client gets to choose if it allows multi-statements, and
@@ -1735,7 +1734,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			case variable.OnInt:
 				// multi statement is fully permitted, do nothing
 			default:
-				warn := stmtctx.SQLWarn{Level: stmtctx.WarnLevelWarning, Err: servererr.ErrMultiStatementDisabled}
+				warn := contextutil.SQLWarn{Level: contextutil.WarnLevelWarning, Err: servererr.ErrMultiStatementDisabled}
 				parserWarns = append(parserWarns, warn)
 			}
 		}
@@ -1798,7 +1797,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			}
 			// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 			// server and fallback to TiKV.
-			warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
+			warns := append(parserWarns, contextutil.SQLWarn{Level: contextutil.WarnLevelError, Err: err})
 			delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
 			_, err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
 			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
@@ -1818,7 +1817,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 // prefetchPointPlanKeys extracts the point keys in multi-statement query,
 // use BatchGet to get the keys, so the values will be cached in the snapshot cache, save RPC call cost.
 // For pessimistic transaction, the keys will be batch locked.
-func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode, sqls string) ([]plannercore.Plan, error) {
+func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode, sqls string) ([]base.Plan, error) {
 	txn, err := cc.ctx.Txn(false)
 	if err != nil {
 		return nil, err
@@ -1839,23 +1838,20 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			return nil, nil
 		}
 	}
-	pointPlans := make([]plannercore.Plan, len(stmts))
+	pointPlans := make([]base.Plan, len(stmts))
 	var idxKeys []kv.Key //nolint: prealloc
 	var rowKeys []kv.Key //nolint: prealloc
 	isCommonHandle := make(map[string]bool, 0)
 
-	handlePlan := func(p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
+	handlePlan := func(sctx sessionctx.Context, p base.PhysicalPlan, resetStmtCtxFn func()) error {
 		var tableID int64
 		switch v := p.(type) {
 		case *plannercore.PointGetPlan:
-			if v.PartitionDef != nil {
-				tableID = v.PartitionDef.ID
-			} else {
-				tableID = v.TblInfo.ID
-			}
+			v.PrunePartitions(sctx)
+			tableID = executor.GetPhysID(v.TblInfo, v.PartitionIdx)
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
-				idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
+				idxKey, err1 := plannercore.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, v.IndexValues, tableID)
 				if err1 != nil {
 					return err1
 				}
@@ -1865,20 +1861,21 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
 		case *plannercore.BatchPointGetPlan:
-			if v.PartitionDefs != nil && len(v.PartitionIDs) == 0 {
-				// skip when PartitionIDs is not initialized.
+			_, isTableDual := v.PrunePartitionsAndValues(sctx)
+			if isTableDual {
 				return nil
 			}
+			pi := v.TblInfo.GetPartitionInfo()
 			getPhysID := func(i int) int64 {
-				if v.PartitionDefs == nil {
+				if pi == nil || i >= len(v.PartitionIdxs) {
 					return v.TblInfo.ID
 				}
-				return v.PartitionIDs[i]
+				return executor.GetPhysID(v.TblInfo, &v.PartitionIdxs[i])
 			}
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
 				for i, idxVals := range v.IndexValues {
-					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, getPhysID(i))
+					idxKey, err1 := plannercore.EncodeUniqueIndexKey(cc.getCtx(), v.TblInfo, v.IndexInfo, idxVals, getPhysID(i))
 					if err1 != nil {
 						return err1
 					}
@@ -1907,7 +1904,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			// error might happen, see https://github.com/pingcap/tidb/issues/39664
 			return nil, nil
 		}
-		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
+		p := plannercore.TryFastPlan(cc.ctx.Session.GetPlanCtx(), stmt)
 		pointPlans[i] = p
 		if p == nil {
 			continue
@@ -1923,7 +1920,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 					zap.String("type", fmt.Sprintf("%T", stmt)))
 				continue
 			}
-			err = handlePlan(x.SelectPlan, func() {
+			err = handlePlan(cc.ctx.Session, x.SelectPlan, func() {
 				executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
 			})
 			if err != nil {
@@ -1936,7 +1933,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 					zap.String("type", fmt.Sprintf("%T", stmt)))
 				continue
 			}
-			err = handlePlan(x.SelectPlan, func() {
+			err = handlePlan(cc.ctx.Session, x.SelectPlan, func() {
 				executor.ResetDeleteStmtCtx(sc, deleteStmt, vars)
 			})
 			if err != nil {
@@ -2001,7 +1998,7 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 // Currently, the first return value is used to fall back to TiKV when TiFlash is down.
 func (cc *clientConn) handleStmt(
 	ctx context.Context, stmt ast.StmtNode,
-	warns []stmtctx.SQLWarn, lastStmt bool,
+	warns []contextutil.SQLWarn, lastStmt bool,
 ) (bool, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
@@ -2611,9 +2608,7 @@ func (cc getLastStmtInConn) String() string {
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		sql := string(hack.String(data))
-		if cc.ctx.GetSessionVars().EnableRedactLog {
-			sql = parser.Normalize(sql)
-		}
+		sql = parser.Normalize(sql, cc.ctx.GetSessionVars().EnableRedactLog)
 		return executor.FormatSQL(sql).String()
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
@@ -2645,7 +2640,7 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	case mysql.ComStmtReset:
 		return "ResetStmt"
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return parser.Normalize(executor.FormatSQL(string(hack.String(data))).String())
+		return parser.Normalize(executor.FormatSQL(string(hack.String(data))).String(), errors.RedactLogEnable)
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return executor.FormatSQL(cc.preparedStmt2StringNoArgs(stmtID)).String()
@@ -2676,8 +2671,8 @@ func (cc *clientConn) Flush(ctx context.Context) error {
 type compressionStats struct{}
 
 // Stats returns the connection statistics.
-func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{}, 3)
+func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]any, error) {
+	m := make(map[string]any, 3)
 
 	switch vars.CompressionAlgorithm {
 	case mysql.CompressionNone:

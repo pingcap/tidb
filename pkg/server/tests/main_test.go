@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import (
 
 func TestMain(m *testing.M) {
 	server.RunInGoTest = true
+	server.RunInGoTestChan = make(chan struct{})
 	testsetup.SetupForCommonTest()
 	topsqlstate.EnableTopSQL()
 	unistore.CheckResourceTagForTopSQLInGoTest = true

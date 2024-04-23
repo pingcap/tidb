@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -44,11 +45,11 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	builder, _ := plannercore.NewPlanBuilder().Init(se, dom.InfoSchema(), hint.NewQBHintHandler(nil))
+	builder, _ := plannercore.NewPlanBuilder().Init(se.GetPlanCtx(), dom.InfoSchema(), hint.NewQBHintHandler(nil))
 	plan, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
 
-	logicalPlan, err := plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), plan.(plannercore.LogicalPlan))
+	logicalPlan, err := plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 	require.NoError(t, err)
 
 	// Obtain the leaf plan
@@ -634,6 +635,7 @@ func TestMetricTableExtractor(t *testing.T) {
 			quantiles: []float64{0},
 		},
 	}
+	se.GetSessionVars().TimeZone = time.Local
 	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
 	for _, ca := range cases {
 		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
@@ -647,7 +649,7 @@ func TestMetricTableExtractor(t *testing.T) {
 			require.EqualValues(t, ca.quantiles, metricTableExtractor.Quantiles)
 		}
 		if !ca.skipRequest {
-			promQL := metricTableExtractor.GetMetricTablePromQL(se, "tidb_query_duration")
+			promQL := metricTableExtractor.GetMetricTablePromQL(se.GetPlanCtx(), "tidb_query_duration")
 			require.EqualValues(t, promQL, ca.promQL, "SQL: %v", ca.sql)
 			start, end := metricTableExtractor.StartTime, metricTableExtractor.EndTime
 			require.GreaterOrEqual(t, end.UnixNano(), start.UnixNano())
@@ -1048,6 +1050,7 @@ func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
+	se.GetSessionVars().TimeZone = time.Local
 	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
 
 	var cases = []struct {
@@ -1569,6 +1572,14 @@ func TestColumns(t *testing.T) {
 		skipRequest        bool
 	}{
 		{
+			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where lower(column_name)=lower('T');`,
+			columnName: set.NewStringSet(),
+		},
+		{
+			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where column_name=lower('T');`,
+			columnName: set.NewStringSet("t"),
+		},
+		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where column_name='T';`,
 			columnName: set.NewStringSet("t"),
 		},
@@ -1708,14 +1719,14 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 
 	var cases = []struct {
 		prepared string
-		userVars []interface{}
-		params   []interface{}
+		userVars []any
+		params   []any
 		checker  func(extractor plannercore.MemTablePredicateExtractor)
 	}{
 		{
 			prepared: "select * from information_schema.TIKV_REGION_STATUS where table_id = ?",
-			userVars: []interface{}{1},
-			params:   []interface{}{1},
+			userVars: []any{1},
+			params:   []any{1},
 			checker: func(extractor plannercore.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.TiKVRegionStatusExtractor)
 				tableids := rse.GetTablesID()
@@ -1725,8 +1736,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		},
 		{
 			prepared: "select * from information_schema.TIKV_REGION_STATUS where table_id = ? or table_id = ?",
-			userVars: []interface{}{1, 2},
-			params:   []interface{}{1, 2},
+			userVars: []any{1, 2},
+			params:   []any{1, 2},
 			checker: func(extractor plannercore.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.TiKVRegionStatusExtractor)
 				tableids := rse.GetTablesID()
@@ -1736,8 +1747,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		},
 		{
 			prepared: "select * from information_schema.TIKV_REGION_STATUS where table_id in (?,?)",
-			userVars: []interface{}{1, 2},
-			params:   []interface{}{1, 2},
+			userVars: []any{1, 2},
+			params:   []any{1, 2},
 			checker: func(extractor plannercore.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.TiKVRegionStatusExtractor)
 				tableids := rse.GetTablesID()
@@ -1747,8 +1758,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		},
 		{
 			prepared: "select * from information_schema.COLUMNS where table_name like ?",
-			userVars: []interface{}{`"a%"`},
-			params:   []interface{}{"a%"},
+			userVars: []any{`"a%"`},
+			params:   []any{"a%"},
 			checker: func(extractor plannercore.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.ColumnsTableExtractor)
 				require.EqualValues(t, []string{"a%"}, rse.TableNamePatterns)
@@ -1756,8 +1767,8 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		},
 		{
 			prepared: "select * from information_schema.tidb_hot_regions_history where update_time>=?",
-			userVars: []interface{}{"cast('2019-10-10 10:10:10' as datetime)"},
-			params: []interface{}{func() types.Time {
+			userVars: []any{"cast('2019-10-10 10:10:10' as datetime)"},
+			params: []any{func() types.Time {
 				tt, err := types.ParseTimestamp(tk.Session().GetSessionVars().StmtCtx.TypeCtx(), "2019-10-10 10:10:10")
 				require.NoError(t, err)
 				return tt
@@ -1808,5 +1819,124 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		require.NoError(t, err)
 		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
+	}
+}
+
+func TestInformSchemaTableExtract(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	var cases = []struct {
+		sql           string
+		skipRequest   bool
+		colPredicates map[string]set.StringSet
+	}{
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where lower(table_name)='T';`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("T"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_name=lower('T');`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("t"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where lower(table_name)=lower('T');`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("t"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where upper(table_name)=upper('T');`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("T"),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_schema='TS';`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_schema": set.NewStringSet("ts"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TABLES where table_name in ('TEST','t') and table_schema in ('A','b')",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name":   set.NewStringSet("test", "t"),
+				"table_schema": set.NewStringSet("a", "b"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.TABLES where table_name ='t' or table_name ='A'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("t", "a"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.REFERENTIAL_CONSTRAINTS where table_name ='t' or table_name ='A'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("t", "a"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.KEY_COLUMN_USAGE where table_name ='t' or table_name ='A'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("t", "a"),
+			},
+		},
+		{
+			sql:         "select * from information_schema.STATISTICS where table_name ='t' or table_name ='A'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("t", "a"),
+			},
+		},
+		{
+			sql:           "select * from information_schema.STATISTICS where table_name ='t' and table_name ='A'",
+			skipRequest:   true,
+			colPredicates: map[string]set.StringSet{},
+		},
+		{
+			sql:           "select * from information_schema.STATISTICS where table_name ='t' and table_schema ='A' and table_schema = 'b'",
+			skipRequest:   true,
+			colPredicates: map[string]set.StringSet{},
+		},
+		{
+			sql:           "select * from information_schema.STATISTICS where table_schema ='A' or lower(table_schema) = 'a'",
+			skipRequest:   false,
+			colPredicates: map[string]set.StringSet{},
+		},
+		{
+			sql:         "select * from information_schema.STATISTICS where (table_schema ='A' or lower(table_schema) = 'a') and table_name='t'",
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name": set.NewStringSet("t"),
+			},
+		},
+		{
+			sql:           "select * from information_schema.STATISTICS where table_schema ='A' or lower(table_schema) = 'b'",
+			skipRequest:   false,
+			colPredicates: map[string]set.StringSet{},
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
+		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaTablesExtractor)
+		require.Equal(t, ca.skipRequest, columnsTableExtractor.SkipRequest, "SQL: %v", ca.sql)
+		require.Equal(t, ca.colPredicates, columnsTableExtractor.ColPredicates, "SQL: %v", ca.sql)
 	}
 }

@@ -119,6 +119,8 @@ const (
 	LastSeenStr                       = "LAST_SEEN"
 	PlanInCacheStr                    = "PLAN_IN_CACHE"
 	PlanCacheHitsStr                  = "PLAN_CACHE_HITS"
+	PlanCacheUnqualifiedStr           = "PLAN_CACHE_UNQUALIFIED"
+	LastPlanCacheUnqualifiedStr       = "LAST_PLAN_CACHE_UNQUALIFIED_REASON"
 	PlanInBindingStr                  = "PLAN_IN_BINDING"
 	QuerySampleTextStr                = "QUERY_SAMPLE_TEXT"
 	PrevSampleTextStr                 = "PREV_SAMPLE_TEXT"
@@ -142,45 +144,45 @@ type columnInfo interface {
 	getTimeLocation() *time.Location
 }
 
-type columnFactory func(info columnInfo, record *StmtRecord) interface{}
+type columnFactory func(info columnInfo, record *StmtRecord) any
 
 var columnFactoryMap = map[string]columnFactory{
-	ClusterTableInstanceColumnNameStr: func(info columnInfo, record *StmtRecord) interface{} {
+	ClusterTableInstanceColumnNameStr: func(info columnInfo, _ *StmtRecord) any {
 		return info.getInstanceAddr()
 	},
-	SummaryBeginTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	SummaryBeginTimeStr: func(info columnInfo, record *StmtRecord) any {
 		beginTime := time.Unix(record.Begin, 0)
 		if beginTime.Location() != info.getTimeLocation() {
 			beginTime = beginTime.In(info.getTimeLocation())
 		}
 		return types.NewTime(types.FromGoTime(beginTime), mysql.TypeTimestamp, 0)
 	},
-	SummaryEndTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	SummaryEndTimeStr: func(info columnInfo, record *StmtRecord) any {
 		endTime := time.Unix(record.End, 0)
 		if endTime.Location() != info.getTimeLocation() {
 			endTime = endTime.In(info.getTimeLocation())
 		}
 		return types.NewTime(types.FromGoTime(endTime), mysql.TypeTimestamp, 0)
 	},
-	StmtTypeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	StmtTypeStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.StmtType
 	},
-	SchemaNameStr: func(info columnInfo, record *StmtRecord) interface{} {
+	SchemaNameStr: func(_ columnInfo, record *StmtRecord) any {
 		return convertEmptyToNil(record.SchemaName)
 	},
-	DigestStr: func(info columnInfo, record *StmtRecord) interface{} {
+	DigestStr: func(_ columnInfo, record *StmtRecord) any {
 		return convertEmptyToNil(record.Digest)
 	},
-	DigestTextStr: func(info columnInfo, record *StmtRecord) interface{} {
+	DigestTextStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.NormalizedSQL
 	},
-	TableNamesStr: func(info columnInfo, record *StmtRecord) interface{} {
+	TableNamesStr: func(_ columnInfo, record *StmtRecord) any {
 		return convertEmptyToNil(record.TableNames)
 	},
-	IndexNamesStr: func(info columnInfo, record *StmtRecord) interface{} {
+	IndexNamesStr: func(_ columnInfo, record *StmtRecord) any {
 		return convertEmptyToNil(strings.Join(record.IndexNames, ","))
 	},
-	SampleUserStr: func(info columnInfo, record *StmtRecord) interface{} {
+	SampleUserStr: func(_ columnInfo, record *StmtRecord) any {
 		sampleUser := ""
 		for key := range record.AuthUsers {
 			sampleUser = key
@@ -188,258 +190,258 @@ var columnFactoryMap = map[string]columnFactory{
 		}
 		return convertEmptyToNil(sampleUser)
 	},
-	ExecCountStr: func(info columnInfo, record *StmtRecord) interface{} {
+	ExecCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.ExecCount
 	},
-	SumErrorsStr: func(info columnInfo, record *StmtRecord) interface{} {
+	SumErrorsStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.SumErrors
 	},
-	SumWarningsStr: func(info columnInfo, record *StmtRecord) interface{} {
+	SumWarningsStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.SumWarnings
 	},
-	SumLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
+	SumLatencyStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.SumLatency)
 	},
-	MaxLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxLatencyStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MaxLatency)
 	},
-	MinLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MinLatencyStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MinLatency)
 	},
-	AvgLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgLatencyStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumLatency), record.ExecCount)
 	},
-	AvgParseLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgParseLatencyStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumParseLatency), record.ExecCount)
 	},
-	MaxParseLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxParseLatencyStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MaxParseLatency)
 	},
-	AvgCompileLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgCompileLatencyStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumCompileLatency), record.ExecCount)
 	},
-	MaxCompileLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxCompileLatencyStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MaxCompileLatency)
 	},
-	SumCopTaskNumStr: func(info columnInfo, record *StmtRecord) interface{} {
+	SumCopTaskNumStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.SumNumCopTasks
 	},
-	MaxCopProcessTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxCopProcessTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MaxCopProcessTime)
 	},
-	MaxCopProcessAddressStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxCopProcessAddressStr: func(_ columnInfo, record *StmtRecord) any {
 		return convertEmptyToNil(record.MaxCopProcessAddress)
 	},
-	MaxCopWaitTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxCopWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MaxCopWaitTime)
 	},
-	MaxCopWaitAddressStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxCopWaitAddressStr: func(_ columnInfo, record *StmtRecord) any {
 		return convertEmptyToNil(record.MaxCopWaitAddress)
 	},
-	AvgProcessTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgProcessTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumProcessTime), record.ExecCount)
 	},
-	MaxProcessTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxProcessTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MaxProcessTime)
 	},
-	AvgWaitTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumWaitTime), record.ExecCount)
 	},
-	MaxWaitTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MaxWaitTime)
 	},
-	AvgBackoffTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgBackoffTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumBackoffTime), record.ExecCount)
 	},
-	MaxBackoffTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxBackoffTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MaxBackoffTime)
 	},
-	AvgTotalKeysStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgTotalKeysStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(record.SumTotalKeys, record.ExecCount)
 	},
-	MaxTotalKeysStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxTotalKeysStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxTotalKeys
 	},
-	AvgProcessedKeysStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgProcessedKeysStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(record.SumProcessedKeys, record.ExecCount)
 	},
-	MaxProcessedKeysStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxProcessedKeysStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxProcessedKeys
 	},
-	AvgRocksdbDeleteSkippedCountStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgRocksdbDeleteSkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumRocksdbDeleteSkippedCount), record.ExecCount)
 	},
-	MaxRocksdbDeleteSkippedCountStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxRocksdbDeleteSkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbDeleteSkippedCount
 	},
-	AvgRocksdbKeySkippedCountStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgRocksdbKeySkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumRocksdbKeySkippedCount), record.ExecCount)
 	},
-	MaxRocksdbKeySkippedCountStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxRocksdbKeySkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbKeySkippedCount
 	},
-	AvgRocksdbBlockCacheHitCountStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgRocksdbBlockCacheHitCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumRocksdbBlockCacheHitCount), record.ExecCount)
 	},
-	MaxRocksdbBlockCacheHitCountStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxRocksdbBlockCacheHitCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbBlockCacheHitCount
 	},
-	AvgRocksdbBlockReadCountStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgRocksdbBlockReadCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumRocksdbBlockReadCount), record.ExecCount)
 	},
-	MaxRocksdbBlockReadCountStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxRocksdbBlockReadCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbBlockReadCount
 	},
-	AvgRocksdbBlockReadByteStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgRocksdbBlockReadByteStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumRocksdbBlockReadByte), record.ExecCount)
 	},
-	MaxRocksdbBlockReadByteStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxRocksdbBlockReadByteStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbBlockReadByte
 	},
-	AvgPrewriteTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgPrewriteTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumPrewriteTime), record.CommitCount)
 	},
-	MaxPrewriteTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxPrewriteTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MaxPrewriteTime)
 	},
-	AvgCommitTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgCommitTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumCommitTime), record.CommitCount)
 	},
-	MaxCommitTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxCommitTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MaxCommitTime)
 	},
-	AvgGetCommitTsTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgGetCommitTsTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumGetCommitTsTime), record.CommitCount)
 	},
-	MaxGetCommitTsTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxGetCommitTsTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MaxGetCommitTsTime)
 	},
-	AvgCommitBackoffTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgCommitBackoffTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(record.SumCommitBackoffTime, record.CommitCount)
 	},
-	MaxCommitBackoffTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxCommitBackoffTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxCommitBackoffTime
 	},
-	AvgResolveLockTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgResolveLockTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(record.SumResolveLockTime, record.CommitCount)
 	},
-	MaxResolveLockTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxResolveLockTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxResolveLockTime
 	},
-	AvgLocalLatchWaitTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgLocalLatchWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumLocalLatchTime), record.CommitCount)
 	},
-	MaxLocalLatchWaitTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxLocalLatchWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MaxLocalLatchTime)
 	},
-	AvgWriteKeysStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgWriteKeysStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgFloat(record.SumWriteKeys, record.CommitCount)
 	},
-	MaxWriteKeysStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxWriteKeysStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxWriteKeys
 	},
-	AvgWriteSizeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgWriteSizeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgFloat(record.SumWriteSize, record.CommitCount)
 	},
-	MaxWriteSizeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxWriteSizeStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxWriteSize
 	},
-	AvgPrewriteRegionsStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgPrewriteRegionsStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgFloat(record.SumPrewriteRegionNum, record.CommitCount)
 	},
-	MaxPrewriteRegionsStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxPrewriteRegionsStr: func(_ columnInfo, record *StmtRecord) any {
 		return int(record.MaxPrewriteRegionNum)
 	},
-	AvgTxnRetryStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgTxnRetryStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgFloat(record.SumTxnRetry, record.CommitCount)
 	},
-	MaxTxnRetryStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxTxnRetryStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxTxnRetry
 	},
-	SumExecRetryStr: func(info columnInfo, record *StmtRecord) interface{} {
+	SumExecRetryStr: func(_ columnInfo, record *StmtRecord) any {
 		return int(record.ExecRetryCount)
 	},
-	SumExecRetryTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	SumExecRetryTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.ExecRetryTime)
 	},
-	SumBackoffTimesStr: func(info columnInfo, record *StmtRecord) interface{} {
+	SumBackoffTimesStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.SumBackoffTimes
 	},
-	BackoffTypesStr: func(info columnInfo, record *StmtRecord) interface{} {
+	BackoffTypesStr: func(_ columnInfo, record *StmtRecord) any {
 		return formatBackoffTypes(record.BackoffTypes)
 	},
-	AvgMemStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgMemStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(record.SumMem, record.ExecCount)
 	},
-	MaxMemStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxMemStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxMem
 	},
-	AvgDiskStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgDiskStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(record.SumDisk, record.ExecCount)
 	},
-	MaxDiskStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxDiskStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxDisk
 	},
-	AvgKvTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgKvTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumKVTotal), record.CommitCount)
 	},
-	AvgPdTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgPdTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumPDTotal), record.CommitCount)
 	},
-	AvgBackoffTotalTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgBackoffTotalTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumBackoffTotal), record.CommitCount)
 	},
-	AvgWriteSQLRespTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgWriteSQLRespTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumWriteSQLRespTotal), record.CommitCount)
 	},
-	MaxResultRowsStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxResultRowsStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxResultRows
 	},
-	MinResultRowsStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MinResultRowsStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MinResultRows
 	},
-	AvgResultRowsStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgResultRowsStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(record.SumResultRows, record.ExecCount)
 	},
-	PreparedStr: func(info columnInfo, record *StmtRecord) interface{} {
+	PreparedStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.Prepared
 	},
-	AvgAffectedRowsStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgAffectedRowsStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgFloat(int64(record.SumAffectedRows), record.ExecCount)
 	},
-	FirstSeenStr: func(info columnInfo, record *StmtRecord) interface{} {
+	FirstSeenStr: func(info columnInfo, record *StmtRecord) any {
 		firstSeen := record.FirstSeen
 		if firstSeen.Location() != info.getTimeLocation() {
 			firstSeen = firstSeen.In(info.getTimeLocation())
 		}
 		return types.NewTime(types.FromGoTime(firstSeen), mysql.TypeTimestamp, 0)
 	},
-	LastSeenStr: func(info columnInfo, record *StmtRecord) interface{} {
+	LastSeenStr: func(info columnInfo, record *StmtRecord) any {
 		lastSeen := record.LastSeen
 		if lastSeen.Location() != info.getTimeLocation() {
 			lastSeen = lastSeen.In(info.getTimeLocation())
 		}
 		return types.NewTime(types.FromGoTime(lastSeen), mysql.TypeTimestamp, 0)
 	},
-	PlanInCacheStr: func(info columnInfo, record *StmtRecord) interface{} {
+	PlanInCacheStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.PlanInCache
 	},
-	PlanCacheHitsStr: func(info columnInfo, record *StmtRecord) interface{} {
+	PlanCacheHitsStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.PlanCacheHits
 	},
-	PlanInBindingStr: func(info columnInfo, record *StmtRecord) interface{} {
+	PlanInBindingStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.PlanInBinding
 	},
-	QuerySampleTextStr: func(info columnInfo, record *StmtRecord) interface{} {
+	QuerySampleTextStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.SampleSQL
 	},
-	PrevSampleTextStr: func(info columnInfo, record *StmtRecord) interface{} {
+	PrevSampleTextStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.PrevSQL
 	},
-	PlanDigestStr: func(info columnInfo, record *StmtRecord) interface{} {
+	PlanDigestStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.PlanDigest
 	},
-	PlanStr: func(info columnInfo, record *StmtRecord) interface{} {
+	PlanStr: func(_ columnInfo, record *StmtRecord) any {
 		plan, err := plancodec.DecodePlan(record.SamplePlan)
 		if err != nil {
 			logutil.BgLogger().Error("decode plan in statement summary failed",
@@ -449,38 +451,44 @@ var columnFactoryMap = map[string]columnFactory{
 		}
 		return plan
 	},
-	BinaryPlan: func(info columnInfo, record *StmtRecord) interface{} {
+	BinaryPlan: func(_ columnInfo, record *StmtRecord) any {
 		return record.SampleBinaryPlan
 	},
-	Charset: func(info columnInfo, record *StmtRecord) interface{} {
+	Charset: func(_ columnInfo, record *StmtRecord) any {
 		return record.Charset
 	},
-	Collation: func(info columnInfo, record *StmtRecord) interface{} {
+	Collation: func(_ columnInfo, record *StmtRecord) any {
 		return record.Collation
 	},
-	PlanHint: func(info columnInfo, record *StmtRecord) interface{} {
+	PlanHint: func(_ columnInfo, record *StmtRecord) any {
 		return record.PlanHint
 	},
-	AvgRequestUnitRead: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgRequestUnitRead: func(_ columnInfo, record *StmtRecord) any {
 		return avgSumFloat(record.SumRRU, record.ExecCount)
 	},
-	MaxRequestUnitRead: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxRequestUnitRead: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRRU
 	},
-	AvgRequestUnitWrite: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgRequestUnitWrite: func(_ columnInfo, record *StmtRecord) any {
 		return avgSumFloat(record.SumWRU, record.ExecCount)
 	},
-	MaxRequestUnitWrite: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxRequestUnitWrite: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxWRU
 	},
-	AvgQueuedRcTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	AvgQueuedRcTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumRUWaitDuration), record.ExecCount)
 	},
-	MaxQueuedRcTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+	MaxQueuedRcTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return int64(record.MaxRUWaitDuration)
 	},
-	ResourceGroupName: func(info columnInfo, record *StmtRecord) interface{} {
+	ResourceGroupName: func(_ columnInfo, record *StmtRecord) any {
 		return record.ResourceGroupName
+	},
+	PlanCacheUnqualifiedStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.PlanCacheUnqualifiedCount
+	},
+	LastPlanCacheUnqualifiedStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.LastPlanCacheUnqualified
 	},
 }
 
@@ -497,7 +505,7 @@ func makeColumnFactories(columns []*model.ColumnInfo) []columnFactory {
 }
 
 // Format the backoffType map to a string or nil.
-func formatBackoffTypes(backoffMap map[string]int) interface{} {
+func formatBackoffTypes(backoffMap map[string]int) any {
 	type backoffStat struct {
 		backoffType string
 		count       int
@@ -549,7 +557,7 @@ func avgSumFloat(sum float64, count int64) float64 {
 	return 0
 }
 
-func convertEmptyToNil(str string) interface{} {
+func convertEmptyToNil(str string) any {
 	if str == "" {
 		return nil
 	}
