@@ -85,6 +85,7 @@ type BuildContext interface {
 	// IsUseCache indicates whether to cache the build expression in plan cache.
 	IsUseCache() bool
 	// SetSkipPlanCache sets to skip the plan cache and records the reason.
+<<<<<<< HEAD
 	SetSkipPlanCache(reason error)
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
@@ -92,6 +93,22 @@ type BuildContext interface {
 	Value(key fmt.Stringer) any
 	// SetValue saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value any)
+=======
+	SetSkipPlanCache(reason string)
+	// AllocPlanColumnID allocates column id for plan.
+	AllocPlanColumnID() int64
+	// SetInNullRejectCheck sets the flag to indicate whether the expression is in null reject check.
+	SetInNullRejectCheck(in bool)
+	// IsInNullRejectCheck returns the flag to indicate whether the expression is in null reject check.
+	IsInNullRejectCheck() bool
+	// SetInUnionCast sets the flag to indicate whether the expression is in union cast.
+	SetInUnionCast(in bool)
+	// IsInUnionCast indicates whether executing in special cast context that negative unsigned num will be zero.
+	IsInUnionCast() bool
+	// ConnectionID indicates the connection ID of the current session.
+	// If the context is not in a session, it should return 0.
+	ConnectionID() uint64
+>>>>>>> 8f062f2698d (expression: remove `InInsertOrUpdate` in `BuildExpression` (#52716))
 }
 
 // ExprContext contains full context for expression building and evaluating.

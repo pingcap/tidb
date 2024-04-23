@@ -278,4 +278,35 @@ func TestSessionBuildContext(t *testing.T) {
 	require.True(t, impl.IsUseCache())
 	impl.SetSkipPlanCache(errors.New("mockReason"))
 	require.False(t, impl.IsUseCache())
+<<<<<<< HEAD:pkg/expression/contextimpl/sessionctx_test.go
+=======
+
+	// Alloc column id
+	prevID := vars.PlanColumnID.Load()
+	colID := impl.AllocPlanColumnID()
+	require.Equal(t, colID, prevID+1)
+	colID = impl.AllocPlanColumnID()
+	require.Equal(t, colID, prevID+2)
+	vars.AllocPlanColumnID()
+	colID = impl.AllocPlanColumnID()
+	require.Equal(t, colID, prevID+4)
+
+	// InNullRejectCheck
+	require.False(t, impl.IsInNullRejectCheck())
+	impl.SetInNullRejectCheck(true)
+	require.True(t, impl.IsInNullRejectCheck())
+	impl.SetInNullRejectCheck(false)
+	require.False(t, impl.IsInNullRejectCheck())
+
+	// InUnionCast
+	require.False(t, impl.IsInUnionCast())
+	impl.SetInUnionCast(true)
+	require.True(t, impl.IsInUnionCast())
+	impl.SetInUnionCast(false)
+	require.False(t, impl.IsInUnionCast())
+
+	// ConnID
+	vars.ConnectionID = 123
+	require.Equal(t, uint64(123), impl.ConnectionID())
+>>>>>>> 8f062f2698d (expression: remove `InInsertOrUpdate` in `BuildExpression` (#52716)):pkg/expression/contextsession/sessionctx_test.go
 }

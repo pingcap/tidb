@@ -51,7 +51,7 @@ drop table test_zero_date;
 create table test_zero_date (a int);
 insert into test_zero_date values (0);
 alter table test_zero_date modify a date;
-Error 1292 (22007): Truncated incorrect date value: '0'
+Error 1292 (22007): Incorrect date value: '0'
 set session sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES';
 drop table test_zero_date;
 create table test_zero_date (a timestamp default 0);
@@ -59,7 +59,7 @@ Error 1067 (42000): Invalid default value for 'a'
 create table test_zero_date (a int);
 insert into test_zero_date values (0);
 alter table test_zero_date modify a date;
-Error 1292 (22007): Truncated incorrect date value: '0'
+Error 1292 (22007): Incorrect date value: '0'
 drop table if exists test_zero_date;
 set session sql_mode=default;
 drop table if exists t;

@@ -120,6 +120,15 @@ func (ctx *ExprCtxExtendedImpl) GetGroupConcatMaxLen() uint64 {
 	return ctx.sctx.GetSessionVars().GroupConcatMaxLen
 }
 
+<<<<<<< HEAD:pkg/expression/contextimpl/sessionctx.go
+=======
+// ConnectionID indicates the connection ID of the current session.
+// If the context is not in a session, it should return 0.
+func (ctx *ExprCtxExtendedImpl) ConnectionID() uint64 {
+	return ctx.sctx.GetSessionVars().ConnectionID
+}
+
+>>>>>>> 8f062f2698d (expression: remove `InInsertOrUpdate` in `BuildExpression` (#52716)):pkg/expression/contextsession/sessionctx.go
 // SessionEvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.
 type SessionEvalContext struct {
 	sctx  sessionctx.Context
