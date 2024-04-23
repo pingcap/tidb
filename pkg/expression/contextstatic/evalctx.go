@@ -200,6 +200,8 @@ var defaultSQLMode = func() mysql.SQLMode {
 }()
 
 // StaticEvalContext implements `EvalContext` to provide a static context for expression evaluation.
+// The "static" means comparing with `SessionEvalContext`, its internal state does not relay on the session or other
+// complex contexts that keeps immutable for most fields.
 type StaticEvalContext struct {
 	id uint64
 	staticEvalCtxState
