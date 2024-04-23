@@ -3002,3 +3002,15 @@ func TestIssue43527(t *testing.T) {
 		"SELECT @total := @total + d FROM (SELECT d FROM test) AS temp, (SELECT @total := b FROM test) AS T1 where @total >= 100",
 	).Check(testkit.Rows("200", "300", "400", "500"))
 }
+
+func TestIssue52772(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(code varchar(32)) CHARSET=utf8 COLLATE=utf8_general_ci;")
+	tk.MustExec("create table t2(code varchar(32)) CHARSET=utf8 COLLATE=utf8_bin;")
+
+	tk.MustQuery("select * from t1 join t2 on t1.code=t2.code and t1.code in ('1') and t2.code in ('1');")
+}

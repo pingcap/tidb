@@ -1980,7 +1980,7 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 			tp.SetCharset(coll.Charset)
 			tp.SetCollate(coll.Collation)
 			er.ctxStack[i] = expression.BuildCastFunction(er.sctx, er.ctxStack[i], tp)
-			er.ctxStack[i].SetCoercibility(expression.CoercibilityExplicit)
+			// er.ctxStack[i].SetCoercibility(expression.CoercibilityExplicit)
 		}
 	}
 }
