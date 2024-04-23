@@ -194,6 +194,7 @@ go_library(
         "//pkg/util/chunk",
         "//pkg/util/codec",
         "//pkg/util/collate",
+        "//pkg/util/context",
         "//pkg/util/cteutil",
         "//pkg/util/dbterror",
         "//pkg/util/dbterror/exeerrors",

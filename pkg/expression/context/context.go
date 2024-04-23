@@ -19,15 +19,16 @@ import (
 
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 // EvalContext is used to evaluate an expression
 type EvalContext interface {
+	contextutil.WarnHandler
 	// CtxID indicates the id of the context.
 	CtxID() uint64
 	// SQLMode returns the sql mode
@@ -38,12 +39,6 @@ type EvalContext interface {
 	ErrCtx() errctx.Context
 	// Location returns the timezone info
 	Location() *time.Location
-	// AppendWarning append warnings to the context.
-	AppendWarning(err error)
-	// WarningCount gets warning count.
-	WarningCount() int
-	// TruncateWarnings truncates warnings begin from start and returns the truncated warnings.
-	TruncateWarnings(start int) []stmtctx.SQLWarn
 	// CurrentDB return the current database name
 	CurrentDB() string
 	// CurrentTime returns the current time.

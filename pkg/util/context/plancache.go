@@ -42,7 +42,7 @@ type PlanCacheTracker struct {
 	forcePlanCache       bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
 	alwaysWarnSkipCache  bool
 
-	warnHandler WarnHandler
+	warnHandler WarnAppender
 }
 
 // ForceSetSkipPlanCache forces to skip plan cache.
@@ -140,7 +140,7 @@ func (h *PlanCacheTracker) PlanCacheUnqualified() string {
 }
 
 // NewPlanCacheTracker creates a new PlanCacheTracker.
-func NewPlanCacheTracker(warnHandler WarnHandler) PlanCacheTracker {
+func NewPlanCacheTracker(warnHandler WarnAppender) PlanCacheTracker {
 	return PlanCacheTracker{
 		warnHandler: warnHandler,
 	}
@@ -152,7 +152,7 @@ func NewPlanCacheTracker(warnHandler WarnHandler) PlanCacheTracker {
 type RangeFallbackHandler struct {
 	planCacheTracker *PlanCacheTracker
 
-	warnHandler                WarnHandler
+	warnHandler                WarnAppender
 	reportRangeFallbackWarning sync.Once
 }
 
@@ -167,7 +167,7 @@ func (h *RangeFallbackHandler) RecordRangeFallback(rangeMaxSize int64) {
 }
 
 // NewRangeFallbackHandler creates a new RangeFallbackHandler.
-func NewRangeFallbackHandler(planCacheTracker *PlanCacheTracker, warnHandler WarnHandler) RangeFallbackHandler {
+func NewRangeFallbackHandler(planCacheTracker *PlanCacheTracker, warnHandler WarnAppender) RangeFallbackHandler {
 	return RangeFallbackHandler{
 		planCacheTracker: planCacheTracker,
 		warnHandler:      warnHandler,
