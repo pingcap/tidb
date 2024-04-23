@@ -82,7 +82,6 @@ func (b *balancer) balance(ctx context.Context, sm *Manager) {
 
 	schedulers := sm.getSchedulers()
 	for _, sch := range schedulers {
-		// filter with sch.GetTask().TargetScope
 		nodeIDs := filterByScope(managedNodes, sch.GetTask().TargetScope)
 		if err := b.balanceSubtasks(ctx, sch, nodeIDs); err != nil {
 			b.logger.Warn("failed to balance subtasks",
