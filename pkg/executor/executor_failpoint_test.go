@@ -699,3 +699,21 @@ func TestHandleForeignKeyCascadePanic(t *testing.T) {
 	err := tk.ExecToErr("replace into t1 values (1, 2);")
 	require.ErrorContains(t, err, "handleForeignKeyCascadeError")
 }
+
+func TestBuildProjectionForIndexJoinPanic(t *testing.T) {
+	// Test no goroutine leak.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a int, b varchar(8));")
+	tk.MustExec("insert into t1 values(1,'1');")
+	tk.MustExec("create table t2(a int , b varchar(8) GENERATED ALWAYS AS (c) VIRTUAL, c varchar(8), PRIMARY KEY (a));")
+	tk.MustExec("insert into t2(a) values(1);")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/buildProjectionForIndexJoinPanic", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/buildProjectionForIndexJoinPanic"))
+	}()
+	err := tk.QueryToErr("select /*+ tidb_inlj(t2) */ t2.b, t1.b from t1 join t2 ON t2.a=t1.a;")
+	require.ErrorContains(t, err, "buildProjectionForIndexJoinPanic")
+}

@@ -1066,6 +1066,49 @@ func TestMDLTruncateTable(t *testing.T) {
 	require.True(t, timetk3.After(timeMain))
 }
 
+func TestTruncateTableAndSchemaDependence(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int);")
+
+	var wg sync.WaitGroup
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	wg.Add(2)
+	var timetk2 time.Time
+	var timetk3 time.Time
+
+	one := false
+	f := func(job *model.Job) {
+		if one {
+			return
+		}
+		one = true
+		go func() {
+			tk3.MustExec("drop database test")
+			timetk3 = time.Now()
+			wg.Done()
+		}()
+		time.Sleep(3 * time.Second)
+	}
+
+	hook.OnJobUpdatedExported.Store(&f)
+	dom.DDL().SetHook(hook)
+
+	go func() {
+		tk2.MustExec("truncate table test.t")
+		timetk2 = time.Now()
+		wg.Done()
+	}()
+
+	wg.Wait()
+	require.True(t, timetk3.After(timetk2))
+}
+
 func TestInsertIgnore(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 

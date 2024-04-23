@@ -61,6 +61,14 @@ func TestV2Basic(t *testing.T) {
 	require.NotNil(t, getTableInfo)
 	require.True(t, is.TableExists(schemaName, tableName))
 
+	gotTblInfo, err := is.TableInfoByName(schemaName, tableName)
+	require.NoError(t, err)
+	require.Same(t, gotTblInfo, getTableInfo.Meta())
+
+	gotTblInfo, err = is.TableInfoByName(schemaName, model.NewCIStr("notexist"))
+	require.Error(t, err)
+	require.Nil(t, gotTblInfo)
+
 	getDBInfo, ok = is.SchemaByID(dbInfo.ID)
 	require.True(t, ok)
 	require.Equal(t, dbInfo, getDBInfo)
@@ -68,6 +76,39 @@ func TestV2Basic(t *testing.T) {
 	getTableInfo, ok = is.TableByID(tblInfo.ID)
 	require.True(t, ok)
 	require.NotNil(t, getTableInfo)
+
+	gotTblInfo, ok = is.TableInfoByID(tblInfo.ID)
+	require.True(t, ok)
+	require.Same(t, gotTblInfo, getTableInfo.Meta())
+
+	// negative id should always be seen as not exists
+	getTableInfo, ok = is.TableByID(-1)
+	require.False(t, ok)
+	require.Nil(t, getTableInfo)
+	gotTblInfo, ok = is.TableInfoByID(-1)
+	require.False(t, ok)
+	require.Nil(t, gotTblInfo)
+	getDBInfo, ok = is.SchemaByID(-1)
+	require.False(t, ok)
+	require.Nil(t, getDBInfo)
+
+	gotTblInfo, ok = is.TableInfoByID(1234567)
+	require.False(t, ok)
+	require.Nil(t, gotTblInfo)
+
+	tables := is.SchemaTables(schemaName)
+	require.Equal(t, 1, len(tables))
+	require.Equal(t, tblInfo.ID, tables[0].Meta().ID)
+
+	tblInfos := is.SchemaTableInfos(schemaName)
+	require.Equal(t, 1, len(tblInfos))
+	require.Same(t, tables[0].Meta(), tblInfos[0])
+
+	tables = is.SchemaTables(model.NewCIStr("notexist"))
+	require.Equal(t, 0, len(tables))
+
+	tblInfos = is.SchemaTableInfos(model.NewCIStr("notexist"))
+	require.Equal(t, 0, len(tblInfos))
 
 	require.Equal(t, int64(2), is.SchemaMetaVersion())
 	// TODO: support FindTableByPartitionID.

@@ -10,8 +10,6 @@ create table t6 (c int(10), c1 varchar(256) default (date_format(now(),'%b %d %Y
 Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `KindString %b %d %Y %h:%i %p`.
 create table t7 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H:%i:%s %p')));
 Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `KindString %Y-%m-%d %H:%i:%s %p`.
-alter table t0 add column c2 date default (date_format(now(),'%Y-%m'));
-Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
 SET @x := NOW();
 insert into t0(c) values (1);
 insert into t0 values (2, default);
@@ -63,15 +61,23 @@ t2	CREATE TABLE `t2` (
   `c` int(10) DEFAULT NULL,
   `c1` varchar(256) DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d %H.%i.%s')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t0 add column c2 date default (date_format(now(),'%Y-%m'));
+Error 1292 (22007): Incorrect datetime value: '2024-04'
 alter table t0 add index idx(c1);
 alter table t1 add index idx(c1);
-insert into t0 values (3, default);
+alter table t0 add column c2 date default (date_format(now(),'%Y-%m-%d'));
+alter table t0 add column c3 enum('y','n') default (date_format(now(),'%Y-%m-%d'));
+Error 1265 (01000): Data truncated for column '%s' at row %d
+alter table t0 add column c4 blob default (date_format(now(),'%Y-%m-%d'));
+insert into t0 values (3, default, default, default);
 insert into t1 values (3, default);
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
   `c` int(10) DEFAULT NULL,
   `c1` varchar(256) DEFAULT date_format(now(), _utf8mb4'%Y-%m'),
+  `c2` date DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d'),
+  `c4` blob DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d'),
   KEY `idx` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
@@ -83,13 +89,15 @@ t1	CREATE TABLE `t1` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t0 modify column c1 varchar(30) default 'xx';
 alter table t1 modify column c1 varchar(30) default 'xx';
-insert into t0 values (4, default);
+insert into t0 values (4, default, default, default);
 insert into t1 values (4, default);
 show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
   `c` int(10) DEFAULT NULL,
   `c1` varchar(30) DEFAULT 'xx',
+  `c2` date DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d'),
+  `c4` blob DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d'),
   KEY `idx` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
@@ -100,9 +108,9 @@ t1	CREATE TABLE `t1` (
   KEY `idx` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t0 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
-Error 1292 (22007): Incorrect datetime value: '2024-03'
+Error 1292 (22007): Incorrect datetime value:<time>
 alter table t0 alter column c1 SET DEFAULT (date_format(now(), '%Y-%m-%d'));
-insert into t0 values (5, default);
+insert into t0 values (5, default, default, default);
 alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
 Error 1292 (22007): Incorrect datetime value: 'xx'
 delete from t1 where c = 4;
@@ -114,7 +122,9 @@ show create table t0;
 Table	Create Table
 t0	CREATE TABLE `t0` (
   `c` int(10) DEFAULT NULL,
-  `c1` varchar(30) DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')
+  `c1` varchar(30) DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d'),
+  `c2` date DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d'),
+  `c4` blob DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
 Table	Create Table
@@ -229,13 +239,11 @@ create table t6 (c int(10), c1 varchar(32) default (str_to_date(upper('1980-01-0
 Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `str_to_date with disallowed args`.
 create table t6 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01',upper('%Y-%m-%d'))));
 Error 3770 (HY000): Default value expression of column 'c1' contains a disallowed function: `str_to_date with disallowed args`.
-alter table t0 add column c3 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d'));
-Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
+alter table t0 add column c3 datetime default (str_to_date('1980-01-01','%Y-%m-%d'));
 alter table t0 add column c4 int default (str_to_date('1980-01-01','%Y-%m-%d'));
-Error 1674 (HY000): Statement is unsafe because it uses a system function that may return a different value on the slave
 insert into t0(c) values (1),(2),(3);
 insert into t1(c) values (1),(2),(3);
-insert into t0 values (4, default, default);
+insert into t0 values (4, default, default, default, default);
 insert into t1 values (4, default, default);
 insert into t3(c) values (1);
 Error 1292 (22007): Incorrect datetime value: '0000-00-00 00:00:00'
@@ -249,11 +257,11 @@ set session sql_mode=@sqlMode;
 insert into t2(c) values (5);
 Error 1292 (22007): Incorrect datetime value: '0000-00-00 00:00:00'
 select * from t0;
-c	c1	c2
-1	1980-01-01	9999-01-01
-2	1980-01-01	9999-01-01
-3	1980-01-01	9999-01-01
-4	1980-01-01	9999-01-01
+c	c1	c2	c3	c4
+1	1980-01-01	9999-01-01	1980-01-01 00:00:00	19800101
+2	1980-01-01	9999-01-01	1980-01-01 00:00:00	19800101
+3	1980-01-01	9999-01-01	1980-01-01 00:00:00	19800101
+4	1980-01-01	9999-01-01	1980-01-01 00:00:00	19800101
 select * from t1;
 c	c1	c2
 1	19800101	99990101
@@ -272,6 +280,8 @@ t0	CREATE TABLE `t0` (
   `c` int(10) DEFAULT NULL,
   `c1` varchar(32) DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),
   `c2` date DEFAULT str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d'),
+  `c3` datetime DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),
+  `c4` int(11) DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),
   KEY `idx` (`c`,`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 show create table t1;
@@ -291,7 +301,7 @@ t2	CREATE TABLE `t2` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t0 add index idx1(c1);
 alter table t1 add unique index idx1(c, c1);
-insert into t0 values (5, default, default);
+insert into t0 values (5, default, default, default, default);
 insert into t1 values (5, default, default);
 show create table t0;
 Table	Create Table
@@ -299,6 +309,8 @@ t0	CREATE TABLE `t0` (
   `c` int(10) DEFAULT NULL,
   `c1` varchar(32) DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),
   `c2` date DEFAULT str_to_date(_utf8mb4'9999-01-01', _utf8mb4'%Y-%m-%d'),
+  `c3` datetime DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),
+  `c4` int(11) DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),
   KEY `idx` (`c`,`c1`),
   KEY `idx1` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -313,7 +325,7 @@ t1	CREATE TABLE `t1` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t0 alter column c2 set default (current_date());
 alter table t1 modify column c1 varchar(30) default 'xx';
-insert into t0 values (6, default, default);
+insert into t0 values (6, default, default, default, default);
 insert into t1 values (6, default, default);
 show create table t0;
 Table	Create Table
@@ -321,6 +333,8 @@ t0	CREATE TABLE `t0` (
   `c` int(10) DEFAULT NULL,
   `c1` varchar(32) DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),
   `c2` date DEFAULT CURRENT_DATE,
+  `c3` datetime DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),
+  `c4` int(11) DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),
   KEY `idx` (`c`,`c1`),
   KEY `idx1` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -335,16 +349,16 @@ t1	CREATE TABLE `t1` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t0 alter column c1 drop default;
 alter table t1 modify column c1 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d'));
-insert into t0 values (7, default, default);
+insert into t0 values (7, default, default, default, default);
 Error 1364 (HY000): Field 'c1' doesn't have a default value
 insert into t1 values (7, default, default);
 select * from t0 where c < 6;
-c	c1	c2
-1	1980-01-01	9999-01-01
-2	1980-01-01	9999-01-01
-3	1980-01-01	9999-01-01
-4	1980-01-01	9999-01-01
-5	1980-01-01	9999-01-01
+c	c1	c2	c3	c4
+1	1980-01-01	9999-01-01	1980-01-01 00:00:00	19800101
+2	1980-01-01	9999-01-01	1980-01-01 00:00:00	19800101
+3	1980-01-01	9999-01-01	1980-01-01 00:00:00	19800101
+4	1980-01-01	9999-01-01	1980-01-01 00:00:00	19800101
+5	1980-01-01	9999-01-01	1980-01-01 00:00:00	19800101
 select c, c1 from t0 where c = 6 and c2 = date_format(now(),'%Y-%m-%d');;
 c	c1
 6	1980-01-01
@@ -371,6 +385,8 @@ Table	Create Table
 t0	CREATE TABLE `t0` (
   `c` int(10) DEFAULT NULL,
   `c1` varchar(32),
+  `c3` datetime DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),
+  `c4` int(11) DEFAULT str_to_date(_utf8mb4'1980-01-01', _utf8mb4'%Y-%m-%d'),
   KEY `idx` (`c`,`c1`),
   KEY `idx1` (`c1`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin

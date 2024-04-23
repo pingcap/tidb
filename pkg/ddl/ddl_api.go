@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	rg "github.com/pingcap/tidb/pkg/domain/resourcegroup"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -405,29 +406,24 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 
 		tbReplicaInfo := tbl.TiFlashReplica
 		if !shouldModifyTiFlashReplica(tbReplicaInfo, tiflashReplica) {
-			logutil.BgLogger().Info("skip repeated processing table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
+			logutil.BgLogger().Info("skip repeated processing table",
+				zap.Int64("tableID", tbl.ID),
+				zap.Int64("schemaID", dbInfo.ID),
+				zap.String("tableName", tbl.Name.String()),
+				zap.String("schemaName", dbInfo.Name.String()))
 			skip++
 			continue
 		}
 
-		// Ban setting replica count for tables in system database.
-		if tbl.TempTableType != model.TempTableNone {
-			logutil.BgLogger().Info("skip processing temporary table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
-			skip++
-			continue
-		}
-
-		charsetOk := true
-		// Ban setting replica count for tables which has charset not supported by TiFlash
-		for _, col := range tbl.Cols() {
-			_, ok := charset.TiFlashSupportedCharsets[col.GetCharset()]
-			if !ok {
-				charsetOk = false
-				break
-			}
-		}
-		if !charsetOk {
-			logutil.BgLogger().Info("skip processing schema table, unsupported charset", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
+		// If table is not supported, add err to warnings.
+		err = isTableTiFlashSupported(dbName, tbl)
+		if err != nil {
+			logutil.BgLogger().Info("skip processing table", zap.Int64("tableID", tbl.ID),
+				zap.Int64("schemaID", dbInfo.ID),
+				zap.String("tableName", tbl.Name.String()),
+				zap.String("schemaName", dbInfo.Name.String()),
+				zap.Error(err))
+			sctx.GetSessionVars().StmtCtx.AppendNote(err)
 			skip++
 			continue
 		}
@@ -2267,7 +2263,8 @@ func BuildTableInfo(
 		if len(hiddenCols) > 0 {
 			AddIndexColumnFlag(tbInfo, idxInfo)
 		}
-		_, err = validateCommentLength(ctx.GetSessionVars(), idxInfo.Name.String(), &idxInfo.Comment, dbterror.ErrTooLongIndexComment)
+		sessionVars := ctx.GetSessionVars()
+		_, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, idxInfo.Name.String(), &idxInfo.Comment, dbterror.ErrTooLongIndexComment)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -2621,7 +2618,8 @@ func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 
-	if _, err = validateCommentLength(ctx.GetSessionVars(), tbInfo.Name.L, &tbInfo.Comment, dbterror.ErrTooLongTableComment); err != nil {
+	sessionVars := ctx.GetSessionVars()
+	if _, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, tbInfo.Name.L, &tbInfo.Comment, dbterror.ErrTooLongTableComment); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -3391,7 +3389,7 @@ func parseAndEvalBoolExpr(ctx expression.BuildContext, l, r string, colInfo *mod
 		return false, err
 	}
 	e.SetCharsetAndCollation(colInfo.GetCharset(), colInfo.GetCollate())
-	res, _, err1 := e.EvalInt(ctx, chunk.Row{})
+	res, _, err1 := e.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 	if err1 != nil {
 		return false, err1
 	}
@@ -4308,7 +4306,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 						return nil, errors.Trace(err)
 					}
 					return nil, errors.Trace(dbterror.ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
-				case ast.Rand, ast.UUID, ast.UUIDToBin, ast.Replace, ast.Upper, ast.DateFormat, ast.StrToDate:
+				case ast.Rand, ast.UUID, ast.UUIDToBin, ast.Replace, ast.Upper:
 					return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction.GenWithStackByArgs())
 				}
 			}
@@ -5562,7 +5560,9 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	if col.Comment, err = value.ToString(); err != nil {
 		return errors.Trace(err)
 	}
-	col.Comment, err = validateCommentLength(ctx.GetSessionVars(), col.Name.L, &col.Comment, dbterror.ErrTooLongFieldComment)
+
+	sessionVars := ctx.GetSessionVars()
+	col.Comment, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, col.Name.L, &col.Comment, dbterror.ErrTooLongFieldComment)
 	return errors.Trace(err)
 }
 
@@ -6370,7 +6370,8 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
-	if _, err = validateCommentLength(ctx.GetSessionVars(), ident.Name.L, &spec.Comment, dbterror.ErrTooLongTableComment); err != nil {
+	sessionVars := ctx.GetSessionVars()
+	if _, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, ident.Name.L, &spec.Comment, dbterror.ErrTooLongTableComment); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -6511,7 +6512,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		return errors.Trace(err)
 	}
 
-	err = isTableTiFlashSupported(schema, tb)
+	err = isTableTiFlashSupported(schema.Name, tb.Meta())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6640,16 +6641,18 @@ func (d *ddl) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) error
 	return nil
 }
 
-func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
+func isTableTiFlashSupported(dbName model.CIStr, tbl *model.TableInfo) error {
 	// Memory tables and system tables are not supported by TiFlash
-	if util.IsMemOrSysDB(schema.Name.L) {
+	if util.IsMemOrSysDB(dbName.L) {
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
-	} else if tb.Meta().TempTableType != model.TempTableNone {
+	} else if tbl.TempTableType != model.TempTableNone {
 		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("set on tiflash")
+	} else if tbl.IsView() || tbl.IsSequence() {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(dbName, tbl.Name, "BASE TABLE")
 	}
 
 	// Tables that has charset are not supported by TiFlash
-	for _, col := range tb.Cols() {
+	for _, col := range tbl.Cols() {
 		_, ok := charset.TiFlashSupportedCharsets[col.GetCharset()]
 		if !ok {
 			return dbterror.ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable.GenWithStackByArgs(col.GetCharset())
@@ -7413,7 +7416,8 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
 	if indexOption != nil {
-		if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), &indexOption.Comment, dbterror.ErrTooLongIndexComment); err != nil {
+		sessionVars := ctx.GetSessionVars()
+		if _, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, indexName.String(), &indexOption.Comment, dbterror.ErrTooLongIndexComment); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -7665,7 +7669,8 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
 	if indexOption != nil {
-		if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), &indexOption.Comment, dbterror.ErrTooLongIndexComment); err != nil {
+		sessionVars := ctx.GetSessionVars()
+		if _, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, indexName.String(), &indexOption.Comment, dbterror.ErrTooLongIndexComment); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -8069,7 +8074,7 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 // validateCommentLength checks comment length of table, column, or index
 // If comment length is more than the standard length truncate it
 // and store the comment length upto the standard comment length size.
-func validateCommentLength(vars *variable.SessionVars, name string, comment *string, errTooLongComment *terror.Error) (string, error) {
+func validateCommentLength(ec errctx.Context, sqlMode mysql.SQLMode, name string, comment *string, errTooLongComment *terror.Error) (string, error) {
 	if comment == nil {
 		return "", nil
 	}
@@ -8086,11 +8091,11 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 	}
 	if len(*comment) > maxLen {
 		err := errTooLongComment.GenWithStackByArgs(name, maxLen)
-		if vars.SQLMode.HasStrictMode() {
+		if sqlMode.HasStrictMode() {
 			// may be treated like an error.
 			return "", err
 		}
-		vars.StmtCtx.AppendWarning(err)
+		ec.AppendWarning(err)
 		*comment = (*comment)[:maxLen]
 	}
 	return *comment, nil
@@ -8231,7 +8236,8 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes 
 				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
 		}
-		newVal, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &colType)
+		evalCtx := ctx.GetEvalCtx()
+		newVal, err := val.ConvertTo(evalCtx.TypeCtx(), &colType)
 		if err != nil {
 			return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}

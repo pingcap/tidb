@@ -15,12 +15,18 @@
 package addindextest
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func init() {
@@ -107,9 +113,9 @@ func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
 	tk.MustExec("update employee set pid=0 where id=1")
 	tk.MustGetErrMsg("alter table employee add foreign key fk_1(pid) references employee(id)",
 		"[ddl:1452]Cannot add or update a child row: a foreign key constraint fails (`fk_index`.`employee`, CONSTRAINT `fk_1` FOREIGN KEY (`pid`) REFERENCES `employee` (`id`))")
-	tk.MustExec("update employee set pid=null where id=1")
 	tk.MustExec("insert into employee (pid) select pid from employee")
-	tk.MustExec("update employee set pid=id-1 where id>1 and pid is null")
+	tk.MustExec("update employee set pid=id")
+
 	tk.MustExec("alter table employee add foreign key fk_1(pid) references employee(id)")
 }
 
@@ -146,4 +152,51 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 	tk.MustExec("create table t (a bigint, b int, primary key (a) clustered)")
 	tk.MustExec("insert into t values (-9223372036854775808, 1),(-9223372036854775807, 1)")
 	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
+}
+
+func alwaysRemoveFirstJobID(ids []int64) ([]int64, error) {
+	return ids[1:], nil
+}
+
+func TestLitBackendCtxMgr(t *testing.T) {
+	ctx := context.Background()
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	sortPath := t.TempDir()
+	staleJobDir := filepath.Join(sortPath, "100")
+	staleJobDir2 := filepath.Join(sortPath, "101")
+	err := os.MkdirAll(staleJobDir, 0o700)
+	require.NoError(t, err)
+	err = os.MkdirAll(staleJobDir2, 0o700)
+	require.NoError(t, err)
+
+	mgr := ingest.NewLitBackendCtxMgr(sortPath, 1024*1024*1024, alwaysRemoveFirstJobID)
+
+	ok, err := mgr.CheckMoreTasksAvailable(ctx)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	// due to alwaysRemoveFirstJobID, the first jobID will be removed
+	require.NoDirExists(t, staleJobDir)
+	require.DirExists(t, staleJobDir2)
+
+	jobID := int64(102)
+	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	backendCtx, err := mgr.Register(ctx, jobID, false, nil, discovery, "TestLitBackendCtxMgr")
+	require.NoError(t, err)
+	require.NotNil(t, backendCtx)
+
+	expectedDir := filepath.Join(sortPath, "102")
+	require.DirExists(t, staleJobDir2)
+	require.DirExists(t, expectedDir)
+
+	bc, ok := mgr.Load(jobID)
+	require.True(t, ok)
+	require.Equal(t, backendCtx, bc)
+	_, ok = mgr.Load(101)
+	require.False(t, ok)
+
+	mgr.Unregister(jobID)
+	require.NoDirExists(t, expectedDir)
+	_, ok = mgr.Load(jobID)
+	require.False(t, ok)
 }

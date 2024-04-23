@@ -165,7 +165,7 @@ func (c *inFunctionClass) verifyArgs(ctx BuildContext, args []Expression) ([]Exp
 			case columnType.GetType() == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
 				if constant.Value.GetInt64() < 0 {
 					if MaybeOverOptimized4PlanCache(ctx, args) {
-						ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackErrorf("Bit Column in (%v)", constant.Value.GetInt64()))
+						ctx.SetSkipPlanCache(errors.NewNoStackErrorf("Bit Column in (%v)", constant.Value.GetInt64()))
 					}
 					continue
 				}
@@ -198,7 +198,7 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstLevel() == ConstStrict {
-			val, isNull, err := b.args[i].EvalInt(ctx, chunk.Row{})
+			val, isNull, err := b.args[i].EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -291,7 +291,7 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	collator := collate.GetCollator(b.collation)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstLevel() == ConstStrict {
-			val, isNull, err := b.args[i].EvalString(ctx, chunk.Row{})
+			val, isNull, err := b.args[i].EvalString(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -364,7 +364,7 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.hashSet = set.NewFloat64Set()
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstLevel() == ConstStrict {
-			val, isNull, err := b.args[i].EvalReal(ctx, chunk.Row{})
+			val, isNull, err := b.args[i].EvalReal(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -435,7 +435,7 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.hashSet = set.NewStringSet()
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstLevel() == ConstStrict {
-			val, isNull, err := b.args[i].EvalDecimal(ctx, chunk.Row{})
+			val, isNull, err := b.args[i].EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -515,7 +515,7 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.hashSet = make(map[types.CoreTime]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstLevel() == ConstStrict {
-			val, isNull, err := b.args[i].EvalTime(ctx, chunk.Row{})
+			val, isNull, err := b.args[i].EvalTime(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -586,7 +586,7 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx BuildContext) error 
 	b.hashSet = make(map[time.Duration]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
 		if b.args[i].ConstLevel() == ConstStrict {
-			val, isNull, err := b.args[i].EvalDuration(ctx, chunk.Row{})
+			val, isNull, err := b.args[i].EvalDuration(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}

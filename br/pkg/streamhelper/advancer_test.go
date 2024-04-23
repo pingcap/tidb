@@ -265,21 +265,20 @@ func TestClearCache(t *testing.T) {
 		return nil
 	}
 	failedStoreID := uint64(0)
-	hasFailed := false
+	hasFailed := atomic.NewBool(false)
 	for _, s := range c.stores {
 		s.clientMu.Lock()
+		sid := s.GetID()
 		s.onGetRegionCheckpoint = func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
-			// mark this store cache cleared
-			failedStoreID = s.GetID()
-			if !hasFailed {
-				hasFailed = true
+			// mark one store failed is enough
+			if hasFailed.CompareAndSwap(false, true) {
+				// mark this store cache cleared
+				failedStoreID = sid
 				return errors.New("failed to get checkpoint")
 			}
 			return nil
 		}
 		s.clientMu.Unlock()
-		// mark one store failed is enough
-		break
 	}
 	env := &testEnv{fakeCluster: c, testCtx: t}
 	adv := streamhelper.NewCheckpointAdvancer(env)
@@ -540,4 +539,56 @@ func TestCheckPointResume(t *testing.T) {
 	//with time passed, the checkpoint will exceed the limit again
 	c.advanceClusterTimeBy(2 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
+}
+
+func TestOwnershipLost(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter(manyRegions(0, 10240)...)
+	installSubscribeSupport(c)
+	ctx, cancel := context.WithCancel(context.Background())
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.OnStart(ctx)
+	adv.OnBecomeOwner(ctx)
+	require.NoError(t, adv.OnTick(ctx))
+	c.advanceCheckpoints()
+	c.flushAll()
+	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "pause")
+	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/FlushSubscriber.Clear.timeoutMs", "return(500)")
+	wg := new(sync.WaitGroup)
+	wg.Add(adv.TEST_registerCallbackForSubscriptions(wg.Done))
+	cancel()
+	failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend")
+	wg.Wait()
+}
+
+func TestSubscriptionPanic(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter(manyRegions(0, 20)...)
+	installSubscribeSupport(c)
+	ctx, cancel := context.WithCancel(context.Background())
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.OnStart(ctx)
+	adv.OnBecomeOwner(ctx)
+	wg := new(sync.WaitGroup)
+	wg.Add(adv.TEST_registerCallbackForSubscriptions(wg.Done))
+
+	require.NoError(t, adv.OnTick(ctx))
+	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "5*panic")
+	ckpt := c.advanceCheckpoints()
+	c.flushAll()
+	cnt := 0
+	for {
+		require.NoError(t, adv.OnTick(ctx))
+		cnt++
+		if env.checkpoint >= ckpt {
+			break
+		}
+		if cnt > 100 {
+			t.Fatalf("After 100 times, the progress cannot be advanced.")
+		}
+	}
+	cancel()
+	wg.Wait()
 }

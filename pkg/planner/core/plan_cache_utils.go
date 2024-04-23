@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -78,7 +79,7 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 // paramSQL is the corresponding parameterized sql like 'select * from t where a<? and b>?'.
 // paramStmt is the Node of paramSQL.
 func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, isPrepStmt bool,
-	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*PlanCacheStmt, Plan, int, error) {
+	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*PlanCacheStmt, base.Plan, int, error) {
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
 	paramStmt.Accept(&extractor)
@@ -121,10 +122,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	prepared := &ast.Prepared{
-		Stmt:          paramStmt,
-		StmtType:      ast.GetStmtLabel(paramStmt),
-		Params:        extractor.markers,
-		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
+		Stmt:     paramStmt,
+		StmtType: ast.GetStmtLabel(paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
@@ -158,14 +157,14 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	// parameters are unknown here, so regard them all as NULL.
 	// For non-prepared statements, all parameters are already initialized at `ParameterizeAST`, so no need to set NULL.
 	if isPrepStmt {
-		for i := range prepared.Params {
-			param := prepared.Params[i].(*driver.ParamMarkerExpr)
+		for i := range extractor.markers {
+			param := extractor.markers[i].(*driver.ParamMarkerExpr)
 			param.Datum.SetNull()
 			param.InExecute = false
 		}
 	}
 
-	var p Plan
+	var p base.Plan
 	destBuilder, _ := NewPlanBuilder().Init(sctx.GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
 	p, err = destBuilder.Build(ctx, paramStmt)
 	if err != nil {
@@ -194,6 +193,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
 		QueryFeatures:       features,
+		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
+		Params:              extractor.markers,
 	}
 	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
@@ -343,7 +344,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
-	Plan              Plan
+	Plan              base.Plan
 	OutPutNames       []*types.FieldName
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	memoryUsage       int64
@@ -368,7 +369,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		return v.memoryUsage
 	}
 	switch x := v.Plan.(type) {
-	case PhysicalPlan:
+	case base.PhysicalPlan:
 		sum = x.MemoryUsage()
 	case *Insert:
 		sum = x.MemoryUsage()
@@ -397,7 +398,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
-func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
+func NewPlanCacheValue(plan base.Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
 	matchOpts *utilpc.PlanCacheMatchOpts, stmtHints *hint.StmtHints) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
@@ -446,11 +447,23 @@ type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared
 	StmtDB      string // which DB the statement will be processed over
 	VisitInfos  []visitInfo
-	ColumnInfos any
-	// Executor is only used for point get scene.
-	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
-	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
-	Executor any
+	Params      []ast.ParamMarkerExpr
+
+	// To further improve the performance of PointGet, cache execution info for PointGet directly.
+	// Use any to avoid cycle import.
+	// TODO: caching execution info directly is risky and tricky to the optimizer, refactor it later.
+	PointGet struct {
+		ColumnInfos any
+		ColumnNames any
+		// Executor is only used for point get scene.
+		// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
+		// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
+		Executor any
+		Plan     any // the cached PointGet Plan
+	}
+
+	// below fields are for PointGet short path
+	SchemaVersion int64
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
@@ -569,7 +582,7 @@ func checkTypesCompatibility4PC(tpsExpected, tpsActual []*types.FieldType) bool 
 	return true
 }
 
-func isSafePointGetPath4PlanCache(sctx PlanContext, path *util.AccessPath) bool {
+func isSafePointGetPath4PlanCache(sctx base.PlanContext, path *util.AccessPath) bool {
 	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
 	// these assumptions may be broken after parameters change.
 

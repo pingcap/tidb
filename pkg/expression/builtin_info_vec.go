@@ -408,7 +408,7 @@ func (b *builtinTiDBDecodeKeySig) vecEvalString(ctx EvalContext, input *chunk.Ch
 
 	decode := DecodeKeyFromString
 	if decode == nil {
-		decode = func(_ types.Context, _ infoschema.InfoSchemaMetaVersion, s string) string {
+		decode = func(_ types.Context, _ infoschema.MetaOnlyInfoSchema, s string) string {
 			return s
 		}
 	}

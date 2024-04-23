@@ -26,12 +26,12 @@ import (
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/stretchr/testify/require"
@@ -104,12 +104,12 @@ func TestCheckRequirements(t *testing.T) {
 
 	// make checkTotalFileSize pass
 	c.TotalFileSize = 1
-	// global sort with thread count < 16
-	c.ThreadCnt = 15
+	// global sort with thread count < 8
+	c.ThreadCnt = 7
 	c.CloudStorageURI = "s3://test"
 	err = c.CheckRequirements(ctx, conn)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
-	require.ErrorContains(t, err, "global sort requires at least 16 threads")
+	require.ErrorContains(t, err, "global sort requires at least 8 threads")
 
 	// reset fields, make global sort thread check pass
 	c.ThreadCnt = 1
@@ -166,7 +166,7 @@ func TestCheckRequirements(t *testing.T) {
 	_, err = etcdCli.Delete(ctx, pitrKey)
 	require.NoError(t, err)
 	// example: /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
-	cdcKey := utils.CDCPrefix + "testcluster/test_ns/changefeed/info/test_cf"
+	cdcKey := cdcutil.CDCPrefix + "testcluster/test_ns/changefeed/info/test_cf"
 	_, err = etcdCli.Put(ctx, cdcKey, `{"state":"normal"}`)
 	require.NoError(t, err)
 	err = c.CheckRequirements(ctx, conn)
@@ -179,7 +179,7 @@ func TestCheckRequirements(t *testing.T) {
 	require.NoError(t, c.CheckRequirements(ctx, conn))
 
 	// with global sort
-	c.Plan.ThreadCnt = 16
+	c.Plan.ThreadCnt = 8
 	c.Plan.CloudStorageURI = ":"
 	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataInvalidURI)
 	c.Plan.CloudStorageURI = "sdsdsdsd://sdsdsdsd"

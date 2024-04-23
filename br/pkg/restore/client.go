@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	tidalloc "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
@@ -56,9 +55,11 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -106,7 +107,7 @@ type Client struct {
 	toolClient    split.SplitClient
 	fileImporter  FileImporter
 	rawKVClient   *RawKVBatchClient
-	workerPool    *utils.WorkerPool
+	workerPool    *tidbutil.WorkerPool
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
 
@@ -213,12 +214,13 @@ func NewRestoreClient(
 	pdHTTPCli pdhttp.Client,
 	tlsConf *tls.Config,
 	keepaliveConf keepalive.ClientParameters,
-	isRawKv bool,
 ) *Client {
 	return &Client{
-		pdClient:           pdClient,
-		pdHTTPClient:       pdHTTPCli,
-		toolClient:         split.NewSplitClient(pdClient, pdHTTPCli, tlsConf, isRawKv),
+		pdClient:     pdClient,
+		pdHTTPClient: pdHTTPCli,
+		// toolClient reuse the split.SplitClient to do miscellaneous things. It doesn't
+		// call split related functions so set the arguments to arbitrary values.
+		toolClient:         split.NewClient(pdClient, pdHTTPCli, tlsConf, maxSplitKeysOnce, 3),
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
 		switchCh:           make(chan struct{}),
@@ -554,7 +556,11 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 		useTokenBucket = true
 	}
 
-	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
+	var splitClientOpts []split.ClientOptionalParameter
+	if isRawKvMode {
+		splitClientOpts = append(splitClientOpts, split.WithRawKV())
+	}
+	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.GetStoreCount()+1, splitClientOpts...)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
 }
@@ -666,7 +672,17 @@ func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) 
 // SetConcurrency sets the concurrency of dbs tables files.
 func (rc *Client) SetConcurrency(c uint) {
 	log.Info("download worker pool", zap.Uint("size", c))
-	rc.workerPool = utils.NewWorkerPool(c, "file")
+	if rc.granularity == string(CoarseGrained) {
+		// we believe 32 is large enough for download worker pool.
+		// it won't reach the limit if sst files distribute evenly.
+		// when restore memory usage is still too high, we should reduce concurrencyPerStore
+		// to sarifice some speed to reduce memory usage.
+		count := uint(rc.storeCount) * rc.concurrencyPerStore * 32
+		log.Info("download coarse worker pool", zap.Uint("size", count))
+		rc.workerPool = tidbutil.NewWorkerPool(count, "file")
+		return
+	}
+	rc.workerPool = tidbutil.NewWorkerPool(c, "file")
 }
 
 // SetConcurrencyPerStore sets the concurrency of download files for each store.
@@ -862,7 +878,7 @@ func (rc *Client) CreateDatabases(ctx context.Context, dbs []*metautil.Database)
 
 	log.Info("create databases in db pool", zap.Int("pool size", len(rc.dbPool)))
 	eg, ectx := errgroup.WithContext(ctx)
-	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "DB DDL workers")
+	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "DB DDL workers")
 	for _, db_ := range dbs {
 		db := db_
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
@@ -1098,7 +1114,7 @@ func (rc *Client) createTablesWithDBPool(ctx context.Context,
 	createOneTable func(ctx context.Context, db *DB, t *metautil.Table) error,
 	tables []*metautil.Table) error {
 	eg, ectx := errgroup.WithContext(ctx)
-	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "DDL workers")
+	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "DDL workers")
 	for _, t := range tables {
 		table := t
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
@@ -1112,7 +1128,7 @@ func (rc *Client) createTablesWithDBPool(ctx context.Context,
 func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, newTS uint64, outCh chan<- CreatedTable) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
-	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
+	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
@@ -1412,7 +1428,7 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int
 	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
-	client := split.NewSplitClient(rc.GetPDClient(), rc.pdHTTPClient, rc.GetTLSConfig(), false)
+	client := split.NewClient(rc.GetPDClient(), rc.pdHTTPClient, rc.GetTLSConfig(), maxSplitKeysOnce, 3)
 	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
 }
 
@@ -1543,8 +1559,8 @@ LOOPFORTABLE:
 					// wait for download worker notified
 					rc.fileImporter.cond.Wait()
 				}
-				eg.Go(restoreFn)
 				rc.fileImporter.cond.L.Unlock()
+				rc.workerPool.ApplyOnErrorGroup(eg, restoreFn)
 			} else {
 				// if we are not use coarse granularity which means
 				// we still pipeline split & scatter regions and import sst files
@@ -1717,7 +1733,7 @@ func concurrentHandleTablesCh(
 	inCh <-chan *CreatedTable,
 	outCh chan<- *CreatedTable,
 	errCh chan<- error,
-	workers *utils.WorkerPool,
+	workers *tidbutil.WorkerPool,
 	processFun func(context.Context, *CreatedTable) error,
 	deferFun func()) {
 	eg, ectx := errgroup.WithContext(ctx)
@@ -1765,7 +1781,7 @@ func (rc *Client) GoValidateChecksum(
 ) chan *CreatedTable {
 	log.Info("Start to validate checksum")
 	outCh := DefaultOutputTableChan()
-	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
+	workers := tidbutil.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		start := time.Now()
 		defer func() {
@@ -1870,7 +1886,7 @@ func (rc *Client) GoUpdateMetaAndLoadStats(
 ) chan *CreatedTable {
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan()
-	workers := utils.NewWorkerPool(statsConcurrency, "UpdateStats")
+	workers := tidbutil.NewWorkerPool(statsConcurrency, "UpdateStats")
 
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		oldTable := tbl.OldTable
@@ -1924,7 +1940,7 @@ func (rc *Client) GoUpdateMetaAndLoadStats(
 func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTable, updateCh glue.Progress, errCh chan<- error) chan *CreatedTable {
 	log.Info("Start to wait tiflash replica sync")
 	outCh := DefaultOutputTableChan()
-	workers := utils.NewWorkerPool(4, "WaitForTiflashReady")
+	workers := tidbutil.NewWorkerPool(4, "WaitForTiflashReady")
 	// TODO support tiflash store changes
 	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
 	if err != nil {
@@ -2036,7 +2052,7 @@ func (rc *Client) FailpointDoChecksumForLogRestore(
 	}
 
 	eg, ectx := errgroup.WithContext(ctx)
-	pool := utils.NewWorkerPool(4, "checksum for log restore")
+	pool := tidbutil.NewWorkerPool(4, "checksum for log restore")
 	infoSchema := rc.GetDomain().InfoSchema()
 	// downstream id -> upstream id
 	reidRules := make(map[int64]int64)
