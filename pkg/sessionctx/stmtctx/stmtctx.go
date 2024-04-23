@@ -26,7 +26,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -112,7 +111,7 @@ type StatementContext struct {
 	// copying this object will make the copied TypeCtx field to refer a wrong `AppendWarnings` func.
 	_ nocopy.NoCopy
 
-	_ constructor.Constructor `ctor:"NewStmtCtx,NewStmtCtxWithTimeZone,Reset"`
+	_ constructor.Constructor `ctor:"NewStmtCtxWithTimeZone,Reset"`
 
 	ctxID uint64
 
@@ -163,12 +162,13 @@ type StatementContext struct {
 	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
 	InShowWarning          bool
-	UseCache               bool
-	ForcePlanCache         bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
-	CacheType              PlanCacheType
-	BatchCheck             bool
-	IgnoreExplainIDSuffix  bool
-	MultiSchemaInfo        *model.MultiSchemaInfo
+
+	contextutil.PlanCacheTracker
+	contextutil.RangeFallbackHandler
+
+	BatchCheck            bool
+	IgnoreExplainIDSuffix bool
+	MultiSchemaInfo       *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
@@ -364,9 +364,6 @@ type StatementContext struct {
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan []int64
 
-	// RangeFallback indicates that building complete ranges exceeds the memory limit so it falls back to less accurate ranges such as full range.
-	RangeFallback bool
-
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
 	IsExplainAnalyzeDML bool
@@ -421,6 +418,8 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, defaultErrLevels, sc)
+	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
+	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	return sc
 }
 
@@ -431,6 +430,8 @@ func (sc *StatementContext) Reset() {
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, defaultErrLevels, sc)
+	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
+	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 }
 
 // CtxID returns the context id of the statement
@@ -712,19 +713,6 @@ const (
 	SessionNonPrepared
 )
 
-// SetSkipPlanCache sets to skip the plan cache and records the reason.
-func (sc *StatementContext) SetSkipPlanCache(reason error) {
-	if !sc.UseCache {
-		return // avoid unnecessary warnings
-	}
-
-	if sc.ForcePlanCache {
-		sc.AppendWarning(errors.NewNoStackErrorf("force plan-cache: may use risky cached plan: %s", reason.Error()))
-		return
-	}
-	sc.setSkipPlanCache(reason)
-}
-
 // SetHintWarning sets the hint warning and records the reason.
 func (sc *StatementContext) SetHintWarning(reason string) {
 	sc.AppendWarning(plannererrors.ErrInternal.FastGen(reason))
@@ -733,29 +721,6 @@ func (sc *StatementContext) SetHintWarning(reason string) {
 // SetHintWarningFromError sets the hint warning and records the reason.
 func (sc *StatementContext) SetHintWarningFromError(reason error) {
 	sc.AppendWarning(reason)
-}
-
-// ForceSetSkipPlanCache sets to skip the plan cache and records the reason.
-func (sc *StatementContext) ForceSetSkipPlanCache(reason error) {
-	if sc.CacheType == DefaultNoCache {
-		return
-	}
-	sc.setSkipPlanCache(reason)
-}
-
-func (sc *StatementContext) setSkipPlanCache(reason error) {
-	sc.UseCache = false
-	switch sc.CacheType {
-	case DefaultNoCache:
-		sc.AppendWarning(errors.NewNoStackError("unknown cache type"))
-	case SessionPrepared:
-		sc.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: %s", reason.Error()))
-	case SessionNonPrepared:
-		if sc.InExplainStmt && sc.ExplainFormat == "plan_cache" {
-			// use "plan_cache" rather than types.ExplainFormatPlanCache to avoid import cycle
-			sc.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", reason.Error()))
-		}
-	}
 }
 
 // TableEntry presents table in db.
@@ -1126,19 +1091,6 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 		atomic.StoreInt64(&sc.lockWaitStartTime, startTime)
 	}
 	return time.Unix(0, startTime)
-}
-
-// RecordRangeFallback records range fallback.
-func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
-	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
-	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
-	if sc.UseCache {
-		sc.SetSkipPlanCache(errors.NewNoStackError("in-list is too long"))
-	}
-	if !sc.RangeFallback {
-		sc.AppendWarning(errors.NewNoStackErrorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
-		sc.RangeFallback = true
-	}
 }
 
 // UseDynamicPartitionPrune indicates whether dynamic partition is used during the query

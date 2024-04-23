@@ -104,7 +104,7 @@ func (ctx *ExprCtxExtendedImpl) Rng() *mathutil.MysqlRng {
 // IsUseCache indicates whether to cache the build expression in plan cache.
 // If SetSkipPlanCache is invoked, it should return false.
 func (ctx *ExprCtxExtendedImpl) IsUseCache() bool {
-	return ctx.sctx.GetSessionVars().StmtCtx.UseCache
+	return ctx.sctx.GetSessionVars().StmtCtx.UseCache()
 }
 
 // SetSkipPlanCache sets to skip the plan cache and records the reason.

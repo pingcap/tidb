@@ -281,8 +281,8 @@ func (c *Context) GetRangerCtx() *rangerctx.RangerContext {
 		OptPrefixIndexSingleScan: c.GetSessionVars().OptPrefixIndexSingleScan,
 		OptimizerFixControl:      c.GetSessionVars().OptimizerFixControl,
 
-		// TODO: avoid using the whole `StmtCtx` here.
-		RangeFallbackHandler: c.GetSessionVars().StmtCtx,
+		PlanCacheTracker:     &c.GetSessionVars().StmtCtx.PlanCacheTracker,
+		RangeFallbackHandler: &c.GetSessionVars().StmtCtx.RangeFallbackHandler,
 	}
 }
 

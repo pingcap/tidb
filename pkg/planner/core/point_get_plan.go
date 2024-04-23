@@ -348,7 +348,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 	//    - This should NOT be cached and should already be having PartitionIdx set!
 	// 2) Converted to PointGet from checkTblIndexForPointPlan
 	//    and it does not have the PartitionIdx set
-	if !p.SCtx().GetSessionVars().StmtCtx.UseCache &&
+	if !p.SCtx().GetSessionVars().StmtCtx.UseCache() &&
 		p.PartitionIdx != nil {
 		return false
 	}
