@@ -1952,6 +1952,13 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 	if colLen != 1 {
 		return
 	}
+	if !collate.NewCollationEnabled() {
+		// See https://github.com/pingcap/tidb/issues/52772
+		// This function will apply CoercibilityExplicit to the casted expression, but some checks(during ColumnSubstituteImpl) is missed when the new
+		// collation is disabled, then lead to panic.
+		// To work around this issue, we can skip the function, it should be good since the collation is disabled.
+		return
+	}
 	for i := stkLen - elemCnt; i < stkLen; i++ {
 		// todo: consider refining the code and reusing expression.BuildCollationFunction here
 		if er.ctxStack[i].GetType().EvalType() == types.ETString {
