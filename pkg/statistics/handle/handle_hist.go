@@ -222,8 +222,15 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 	} else {
 		task = lastTask
 	}
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 	resultChan := h.StatsLoad.Singleflight.DoChan(task.TableItemID.Key(), func() (any, error) {
 		return h.handleOneItemTask(sctx, task)
+=======
+	result := stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
+	resultChan := s.StatsLoad.Singleflight.DoChan(task.Item.Key(), func() (any, error) {
+		err := s.handleOneItemTask(task)
+		return nil, err
+>>>>>>> 8629068c0f0 (*: avoid concurrently using the session in the syncload (#52830)):pkg/statistics/handle/syncload/stats_syncload.go
 	})
 	timeout := time.Until(task.ToTimeout)
 	select {
@@ -242,12 +249,31 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 	}
 }
 
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask) (result *stmtctx.StatsLoadResult, err error) {
+=======
+func isVaildForRetry(task *statstypes.NeededItemTask) bool {
+	task.Retry++
+	return task.Retry <= RetryCount
+}
+
+func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err error) {
+	se, err := s.statsHandle.SPool().Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	sctx.GetSessionVars().StmtCtx.Priority = mysql.HighPriority
+>>>>>>> 8629068c0f0 (*: avoid concurrently using the session in the syncload (#52830)):pkg/statistics/handle/syncload/stats_syncload.go
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err = errors.Errorf("stats loading panicked: %v", r)
+		}
+		if err == nil { // only recycle when no error
+			sctx.GetSessionVars().StmtCtx.Priority = mysql.NoPriority
+			s.statsHandle.SPool().Put(se)
 		}
 	}()
 	result = &stmtctx.StatsLoadResult{Item: task.TableItemID}
