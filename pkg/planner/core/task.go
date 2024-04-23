@@ -427,6 +427,15 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	// To avoid the performance issue, add a projection here above the Join operator to prune useless columns explicitly.
 	// TODO(hyb): transfer Join executors' schema to TiFlash through DagRequest, and use it directly in TiFlash.
 	defaultSchema := BuildPhysicalJoinSchema(p.JoinType, p)
+	hashColArray := make([]*expression.Column, 0, len(task.hashCols))
+	// For task.hashCols, these columns may not be contained in pruned columns:
+	// select A.id from A join B on A.id = B.id; Suppose B is probe side, and it's hash inner join.
+	// After column prune, the output schema of A join B will be A.id only; while the task's hashCols will be B.id.
+	// To make matters worse, the hashCols may be used to check if extra cast projection needs to be added, then the newly
+	// added projection will expect B.id as input schema. So make sure hashCols are included in task.p's schema.
+	for _, hashCol := range task.hashCols {
+		hashColArray = append(hashColArray, hashCol.Col)
+	}
 	if p.schema.Len() < defaultSchema.Len() {
 		if p.schema.Len() > 0 {
 			proj := PhysicalProjection{
@@ -434,20 +443,38 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 
 			proj.SetSchema(p.Schema().Clone())
+			for _, hashCol := range hashColArray {
+				if !proj.Schema().Contains(hashCol) {
+					proj.Schema().Append(hashCol)
+				}
+			}
 			attachPlan2Task(proj, task)
 		} else {
-			constOne := expression.NewOne()
-			expr := make([]expression.Expression, 0, 1)
-			expr = append(expr, constOne)
-			proj := PhysicalProjection{
-				Exprs: expr,
-			}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
+			if len(hashColArray) == 0 {
+				constOne := expression.NewOne()
+				expr := make([]expression.Expression, 0, 1)
+				expr = append(expr, constOne)
+				proj := PhysicalProjection{
+					Exprs: expr,
+				}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 
-			proj.schema = expression.NewSchema(&expression.Column{
-				UniqueID: proj.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  constOne.GetType(),
-			})
-			attachPlan2Task(proj, task)
+				proj.schema = expression.NewSchema(&expression.Column{
+					UniqueID: proj.SCtx().GetSessionVars().AllocPlanColumnID(),
+					RetType:  constOne.GetType(),
+				})
+				attachPlan2Task(proj, task)
+			} else {
+				proj := PhysicalProjection{
+					Exprs: make([]expression.Expression, 0, len(hashColArray)),
+				}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
+
+				for _, hashCol := range hashColArray {
+					proj.Exprs = append(proj.Exprs, hashCol)
+				}
+
+				proj.SetSchema(expression.NewSchema(hashColArray...))
+				attachPlan2Task(proj, task)
+			}
 		}
 	}
 	p.schema = defaultSchema
