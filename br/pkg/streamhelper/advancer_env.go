@@ -4,6 +4,7 @@ package streamhelper
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -58,7 +59,7 @@ func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, e
 }
 
 func (c PDRegionScanner) RemoveGCSafepoint(ctx context.Context) error {
-	_, err := c.UpdateServiceGCSafePoint(ctx, logBackupServiceID, 0, 0)
+	_, err := c.UpdateServiceGCSafePoint(ctx, logBackupServiceID, 0, math.MaxUint64)
 	return err
 }
 
