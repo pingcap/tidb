@@ -15,6 +15,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util/intest",
+        "//pkg/util/mathutil",
     ],
 )
 

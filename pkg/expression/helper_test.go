@@ -163,6 +163,7 @@ func TestCurrentTimestampTimeZone(t *testing.T) {
 	require.NoError(t, err)
 	err = sessionVars.SetSystemVar("time_zone", "+00:00")
 	require.NoError(t, err)
+	sessionVars.StmtCtx.SetTimeZone(sessionVars.Location())
 	v, err := GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp, nil)
 	require.NoError(t, err)
 	require.EqualValues(t, types.NewTime(
@@ -174,6 +175,7 @@ func TestCurrentTimestampTimeZone(t *testing.T) {
 	// would get different value.
 	err = sessionVars.SetSystemVar("time_zone", "+08:00")
 	require.NoError(t, err)
+	sessionVars.StmtCtx.SetTimeZone(sessionVars.Location())
 	v, err = GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp, nil)
 	require.NoError(t, err)
 	require.EqualValues(t, types.NewTime(

@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
@@ -206,6 +208,18 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		task1, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
+		select {
+		case <-stmtCtx1.StatsLoad.ResultCh:
+			t.Logf("stmtCtx1.ResultCh should not get anything")
+			t.FailNow()
+		case <-stmtCtx2.StatsLoad.ResultCh:
+			t.Logf("stmtCtx2.ResultCh should not get anything")
+			t.FailNow()
+		case <-task1.ResultCh:
+			t.Logf("task1.ResultCh should not get anything")
+			t.FailNow()
+		default:
+		}
 
 		require.NoError(t, failpoint.Disable(fp.failPath))
 		task3, err3 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
@@ -228,4 +242,81 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		topn := stat.Columns[tableInfo.Columns[2].ID].TopN
 		require.Greater(t, hg.Len()+topn.Num(), 0)
 	}
+}
+
+func TestRetry(t *testing.T) {
+	originConfig := config.GetGlobalConfig()
+	newConfig := config.NewConfig()
+	newConfig.Performance.StatsLoadConcurrency = 0 // no worker to consume channel
+	config.StoreGlobalConfig(newConfig)
+	defer config.StoreGlobalConfig(originConfig)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("set @@session.tidb_analyze_version=2")
+	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	defer func() {
+		dom.StatsHandle().SetLease(oriLease)
+	}()
+	testKit.MustExec("analyze table t")
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+
+	h := dom.StatsHandle()
+
+	neededColumns := make([]model.StatsLoadItem, 1)
+	neededColumns[0] = model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[2].ID, IsIndex: false}, FullLoad: true}
+	timeout := time.Nanosecond * mathutil.MaxInt
+
+	// clear statsCache
+	h.Clear()
+	require.NoError(t, dom.StatsHandle().Update(is))
+
+	// no stats at beginning
+	stat := h.GetTableStats(tableInfo)
+	c, ok := stat.Columns[tableInfo.Columns[2].ID]
+	require.True(t, !ok || (c.Histogram.Len()+c.TopN.Num() == 0))
+
+	stmtCtx1 := stmtctx.NewStmtCtx()
+	h.SendLoadRequests(stmtCtx1, neededColumns, timeout)
+	stmtCtx2 := stmtctx.NewStmtCtx()
+	h.SendLoadRequests(stmtCtx2, neededColumns, timeout)
+
+	exitCh := make(chan struct{})
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/mockReadStatsForOneFail", "return(true)"))
+	var (
+		task1 *types.NeededItemTask
+		err1  error
+	)
+
+	for i := 0; i < syncload.RetryCount; i++ {
+		task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+		require.Error(t, err1)
+		require.NotNil(t, task1)
+		select {
+		case <-task1.ResultCh:
+			t.Logf("task1.ResultCh should not get nothing")
+			t.FailNow()
+		default:
+		}
+	}
+	result, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+	require.NoError(t, err1)
+	require.Nil(t, result)
+	select {
+	case <-task1.ResultCh:
+	default:
+		t.Logf("task1.ResultCh should get nothing")
+		t.FailNow()
+	}
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/mockReadStatsForOneFail"))
 }
