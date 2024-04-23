@@ -71,15 +71,20 @@ func genLeftOuterJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFilter
 						resultChk = chunk.New(resultTypes, sessCtx.GetSessionVars().MaxChunkSize, sessCtx.GetSessionVars().MaxChunkSize)
 					}
 					rightRow := rightChunk.GetRow(rightIndex)
-					ok, err := codec.EqualChunkRow(sessCtx.GetSessionVars().StmtCtx.TypeCtx(), leftRow, leftKeyTypes, leftKeyIndex,
-						rightRow, rightKeyTypes, rightKeyIndex)
-					require.NoError(t, err)
-					if ok && otherConditions != nil {
-						// key is match, check other condition
-						ok, err = evalOtherCondition(sessCtx, leftRow, rightRow, shallowRow, otherConditions)
+					valid := !containsNullKey(leftRow, leftKeyIndex) && !containsNullKey(rightRow, rightKeyIndex)
+					if valid {
+						ok, err := codec.EqualChunkRow(sessCtx.GetSessionVars().StmtCtx.TypeCtx(), leftRow, leftKeyTypes, leftKeyIndex,
+							rightRow, rightKeyTypes, rightKeyIndex)
 						require.NoError(t, err)
+						valid = ok
 					}
-					if ok {
+					if valid && otherConditions != nil {
+						// key is match, check other condition
+						ok, err := evalOtherCondition(sessCtx, leftRow, rightRow, shallowRow, otherConditions)
+						require.NoError(t, err)
+						valid = ok
+					}
+					if valid {
 						// construct result chunk
 						hasAtLeastOneMatch = true
 						appendToResultChk(leftRow, rightRow, leftUsedColumns, rightUsedColumns, resultChk)
