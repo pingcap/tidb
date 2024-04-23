@@ -292,9 +292,16 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return nil, err
 	}
 
-	txn.SetOption(kv.ResourceGroupTagger, p.sctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
-
 	sessVars := p.sctx.GetSessionVars()
+
+	if txn.IsPipelined() {
+		if sessVars.StmtCtx.KvExecCounter != nil {
+			// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+			txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
+		}
+		txn.SetOption(kv.ResourceGroupTagger, p.sctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
+	}
+
 	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
 	sessVars.TxnCtxMu.Unlock()
