@@ -148,7 +148,20 @@ func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {
 func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return h.getByVersionNoLock(version)
+	is := h.getByVersionNoLock(version)
+	if is == nil {
+		return nil
+	}
+	if h.store != nil {
+		ver, _ := h.store.CurrentVersion(kv.GlobalTxnScope)
+		return &InfoSchemaWithTS{
+			InfoSchema: is,
+			Timestamp:  ver.Ver,
+		}
+	}
+	return &InfoSchemaWithTS{
+		InfoSchema: is,
+	}
 }
 
 func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
