@@ -56,6 +56,7 @@ go_library(
         "//pkg/util/paging",
         "//pkg/util/replayer",
         "//pkg/util/rowcodec",
+        "//pkg/util/servicescope",
         "//pkg/util/size",
         "//pkg/util/sqlkiller",
         "//pkg/util/stmtsummary/v2:stmtsummary",

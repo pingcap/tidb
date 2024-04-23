@@ -73,6 +73,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/servicescope"
 	"github.com/pingcap/tidb/pkg/util/signal"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/sys/linux"
@@ -676,7 +677,12 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 
 	if actualFlags[nmTiDBServiceScope] {
-		cfg.Instance.TiDBServiceScope = *serviceScope
+		if servicescope.IsValidServiceScope(*serviceScope) {
+			cfg.Instance.TiDBServiceScope = *serviceScope
+		} else {
+			err = fmt.Errorf("the tidb-service-scope value '%s' is invalid. It must be 64 characters or fewer and consist only of letters (a-z, A-Z), numbers (0-9), hyphens (-), and underscores (_)", *serviceScope)
+			terror.MustNil(err)
+		}
 	}
 }
 
