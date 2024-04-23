@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
@@ -154,6 +155,14 @@ func TestStoreRemoved(t *testing.T) {
 	}
 	sub.HandleErrors(ctx)
 	req.NoError(sub.PendingErrors())
+
+	last := len(sub.Events())
+	time.Sleep(100 * time.Microsecond)
+	req.Eventually(func() bool {
+		noProg := len(sub.Events()) != last
+		last = len(sub.Events())
+		return noProg
+	}, 3*time.Second, 100*time.Millisecond, "len = %d", len(sub.Events()))
 
 	sub.Drop()
 	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
