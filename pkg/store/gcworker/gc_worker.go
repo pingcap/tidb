@@ -311,7 +311,7 @@ func (w *GCWorker) getGCSafePoint(ctx context.Context, pdClient pd.Client) (uint
 	var err error
 	keyspaceID := keyspace.CurrentKeyspaceMeta.Id
 	if keyspace.IsCurrentTiDBUseKeyspaceLevelGC() {
-		gcSafePoint, err = pdClient.UpdateGCSafePointV2(ctx, uint32(keyspaceID), 0)
+		gcSafePoint, err = pdClient.UpdateGCSafePointV2(ctx, keyspaceID, 0)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -367,7 +367,7 @@ func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) 
 	logutil.Logger(ctx).Info("start keyspace delete range", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
 		zap.Int("concurrency", concurrency),
-		zap.Uint32("keyspaceID", uint32(keyspaceID)),
+		zap.Uint32("keyspaceID", keyspaceID),
 		zap.Uint64("GCSafepoint", safePoint))
 
 	// Do deleteRanges.
@@ -748,12 +748,12 @@ func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint ui
 
 	if keyspace.IsCurrentTiDBUseKeyspaceLevelGC() {
 		keyspaceID := keyspace.CurrentKeyspaceMeta.Id
-		minSafePoint, err = w.pdClient.UpdateServiceSafePointV2(ctx, uint32(keyspaceID), gcWorkerServiceSafePointID, ttl, safePoint)
+		minSafePoint, err = w.pdClient.UpdateServiceSafePointV2(ctx, keyspaceID, gcWorkerServiceSafePointID, ttl, safePoint)
 		logutil.Logger(ctx).Info("[gc worker] update the service safe point of keyspace level gc safe point",
 			zap.String("uuid", w.uuid),
 			zap.Uint64("req-service-safe-point", safePoint),
 			zap.Uint64("resp-min-service-safe-point", minSafePoint),
-			zap.Uint32("keyspace-id", uint32(keyspaceID)))
+			zap.Uint32("keyspace-id", keyspaceID))
 	} else {
 		// It is the situation when the keyspace is not set.
 		minSafePoint, err = w.pdClient.UpdateServiceGCSafePoint(ctx, gcWorkerServiceSafePointID, ttl, safePoint)
@@ -1199,7 +1199,7 @@ func (w *GCWorker) resolveLocks(
 		// When enable keyspace level gc, legacyResolveLocks only resolve specified keyspace locks.
 		keyspaceID := keyspace.CurrentKeyspaceMeta.Id
 		// resolve locks in `keyspaceID` range.
-		txnLeftBound, txnRightBound = keyspace.GetKeyspaceTxnRange(uint32(keyspaceID))
+		txnLeftBound, txnRightBound = keyspace.GetKeyspaceTxnRange(keyspaceID)
 		err = w.resolveLocksByKeyspaceRange(ctx, txnLeftBound, txnRightBound, runner, safePoint)
 		errMsg = "[gc worker] keyspace resolve locks err."
 	} else {
@@ -1338,7 +1338,7 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 	for {
 		if keyspace.IsCurrentTiDBUseKeyspaceLevelGC() {
 			keyspaceID := keyspace.CurrentKeyspaceMeta.Id
-			newSafePoint, err = w.pdClient.UpdateGCSafePointV2(ctx, uint32(keyspaceID), safePoint)
+			newSafePoint, err = w.pdClient.UpdateGCSafePointV2(ctx, keyspaceID, safePoint)
 			logutil.Logger(ctx).Info("[gc worker] update keyspace gc safe point",
 				zap.String("uuid", w.uuid),
 				zap.Uint64("req-gc-safe-point", safePoint),
