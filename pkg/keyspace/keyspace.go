@@ -121,12 +121,12 @@ func IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	return false
 }
 
-// IsCurrentTiDBUseGlobalGC return true if TiDB set 'keyspace-name' and use global gc.
-func IsCurrentTiDBUseGlobalGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
-	if keyspaceMeta == nil {
+// IsCurrentKeyspaceUseGlobalGC return true if TiDB set 'keyspace-name' and use global gc.
+func IsCurrentKeyspaceUseGlobalGC() bool {
+	if CurrentKeyspaceMeta == nil {
 		return true
 	}
-	if val, ok := keyspaceMeta.Config[KeyspaceMetaConfigGCManagementType]; ok {
+	if val, ok := CurrentKeyspaceMeta.Config[KeyspaceMetaConfigGCManagementType]; ok {
 		return val == KeyspaceMetaConfigGCManagementTypeGlobalGC
 	}
 	return true

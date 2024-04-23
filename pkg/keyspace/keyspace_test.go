@@ -15,13 +15,11 @@
 package keyspace
 
 import (
-	"encoding/hex"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 func TestSetKeyspaceNameInConf(t *testing.T) {
@@ -54,11 +52,16 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 	require.Equal(t, true, IsKeyspaceNameEmpty(getKeyspaceName))
 }
 
-func TestKeyspaceRange(t *testing.T) {
+func TestGetKeyspaceRange(t *testing.T) {
+	leftBound, rightBound := GetKeyspaceTxnRange(1)
+	expectLeftBound := codec.EncodeBytes(nil, []byte{'x', 0, 0, 1})
+	expectRightBound := codec.EncodeBytes(nil, []byte{'x', 0, 0, 2})
+	require.Equal(t, expectLeftBound, leftBound)
+	require.Equal(t, expectRightBound, rightBound)
 
-	left := GetKeyspaceTxnLeftBound(0xffffff)
-
-	logutil.BgLogger().Info("[gc worker] resolve locks by range",
-		zap.String("txnLeftBound", hex.EncodeToString(left)),
-	)
+	maxKeyspaceIDLeftBound, maxKeyspaceIDRightBound := GetKeyspaceTxnRange(maxKeyspaceID)
+	expectMaxKeyspaceIDLeftBound := codec.EncodeBytes(nil, []byte{'x', 0xff, 0xff, 0xff})
+	maxKeyspaceIDexpectRightBound := codec.EncodeBytes(nil, []byte{'y', 0, 0, 0})
+	require.Equal(t, expectMaxKeyspaceIDLeftBound, maxKeyspaceIDLeftBound)
+	require.Equal(t, maxKeyspaceIDexpectRightBound, maxKeyspaceIDRightBound)
 }
