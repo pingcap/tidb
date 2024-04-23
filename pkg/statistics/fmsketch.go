@@ -42,8 +42,8 @@ var fmSketchPool = sync.Pool{
 	},
 }
 
-// TODO: add this attribute to PB and persist it instead of using a fixed number(executor.maxSketchSize)
 // MaxSketchSize is the maximum size of the hashset in the FM sketch.
+// TODO: add this attribute to PB and persist it instead of using a fixed number(executor.maxSketchSize)
 const MaxSketchSize = 10000
 
 // FMSketch (Flajolet–Martin Sketch) is a probabilistic data structure used for estimating the number of distinct elements in a stream.
