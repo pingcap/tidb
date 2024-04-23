@@ -1110,7 +1110,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	return p.constructIndexJoinInnerSideTask(copTask, ds, nil, wrapper)
 }
 
-func (p *LogicalJoin) constructInnerByZippedChildren(zippedChildren []LogicalPlan, child base.PhysicalPlan) base.PhysicalPlan {
+func (p *LogicalJoin) constructInnerByZippedChildren(zippedChildren []base.LogicalPlan, child base.PhysicalPlan) base.PhysicalPlan {
 	for i := len(zippedChildren) - 1; i >= 0; i-- {
 		switch x := zippedChildren[i].(type) {
 		case *LogicalUnionScan:
