@@ -302,19 +302,6 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 
 // CheckAndDeriveCollationFromExprs derives collation information from these expressions, return error if derives collation error.
 func CheckAndDeriveCollationFromExprs(ctx BuildContext, funcName string, evalType types.EvalType, args ...Expression) (et *ExprCollation, err error) {
-	//defer func() {
-	//	if err != nil && !collate.NewCollationEnabled() {
-	//		// args[0] can't be nil here.
-	//		// Use the collation of the first argument instead of returning an error.
-	//		et = &ExprCollation{
-	//			Coer:      args[0].Coercibility(),
-	//			Repe:      args[0].Repertoire(),
-	//			Charset:   args[0].GetType().GetCharset(),
-	//			Collation: args[0].GetType().GetCollate(),
-	//		}
-	//		err = nil
-	//	}
-	//}()
 	ec := inferCollation(args...)
 	if ec == nil {
 		return nil, illegalMixCollationErr(funcName, args)
