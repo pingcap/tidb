@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"golang.org/x/sync/singleflight"
 )
 
 // StatsGC is used to GC unnecessary stats.
@@ -398,7 +397,6 @@ type NeededItemTask struct {
 type StatsLoad struct {
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
-	Singleflight   singleflight.Group
 	sync.Mutex
 }
 

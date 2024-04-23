@@ -91,7 +91,7 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 			task := &statstypes.NeededItemTask{
 				Item:      localItem,
 				ToTimeout: time.Now().Local().Add(timeout),
-				ResultCh:  make(chan stmtctx.StatsLoadResult),
+				ResultCh:  make(chan stmtctx.StatsLoadResult, 1),
 			}
 			select {
 			case s.StatsLoad.NeededItemsCh <- task:
@@ -241,33 +241,17 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 		task = lastTask
 	}
 	result := stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
-	resultChan := s.StatsLoad.Singleflight.DoChan(task.Item.Key(), func() (any, error) {
-		err := s.handleOneItemTask(task)
-		return nil, err
-	})
-	timeout := time.Until(task.ToTimeout)
-	select {
-	case sr := <-resultChan:
-		// sr.Val is always nil.
-		if sr.Err == nil {
-			task.ResultCh <- result
-			return nil, nil
-		}
-		if !isVaildForRetry(task) {
-			result.Error = sr.Err
-			task.ResultCh <- result
-			return nil, nil
-		}
-		return task, sr.Err
-	case <-time.After(timeout):
-		if !isVaildForRetry(task) {
-			result.Error = errors.New("stats loading timeout")
-			task.ResultCh <- result
-			return nil, nil
-		}
-		task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
-		return task, nil
+	err = s.handleOneItemTask(task)
+	if err == nil {
+		task.ResultCh <- result
+		return nil, nil
 	}
+	if !isVaildForRetry(task) {
+		result.Error = err
+		task.ResultCh <- result
+		return nil, nil
+	}
+	return task, err
 }
 
 func isVaildForRetry(task *statstypes.NeededItemTask) bool {
