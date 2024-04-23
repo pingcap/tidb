@@ -1818,8 +1818,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
+	var err error
 	defer func() {
-		if !skipLock {
+		if err == nil && !skipLock {
 			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs = append(sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs, tbl.Meta().ID)
 		}
 	}()
@@ -1841,7 +1842,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 		dom := domain.GetDomain(sctx)
 		domainSchema := dom.InfoSchema()
 		domainSchemaVer := domainSchema.SchemaMetaVersion()
-		var err error
 		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
 		if err != nil {
 			if !skipLock {
