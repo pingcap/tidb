@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -41,9 +40,11 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
@@ -957,6 +958,11 @@ func (s *mockGCSSuite) TestRegisterTask() {
 	}()
 	// wait for the task to be registered
 	<-importinto.TestSyncChan
+	// cannot run 2 import job to the same target table.
+	tk2 := testkit.NewTestKit(s.T(), s.store)
+	err = tk2.QueryToErr(sql)
+	s.ErrorIs(err, exeerrors.ErrLoadDataPreCheckFailed)
+	s.ErrorContains(err, "there is active job on the target table already")
 
 	client, err := importer.GetEtcdClient()
 	s.NoError(err)

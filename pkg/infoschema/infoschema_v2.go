@@ -28,9 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
-	fifo "github.com/scalalang2/golang-fifo"
-	"github.com/scalalang2/golang-fifo/sieve"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/tidwall/btree"
+	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -41,11 +42,13 @@ type tableItem struct {
 	tableName     string
 	tableID       int64
 	schemaVersion int64
+	tomb          bool
 }
 
 type schemaItem struct {
 	schemaVersion int64
 	dbInfo        *model.DBInfo
+	tomb          bool
 }
 
 func (si *schemaItem) Name() string {
@@ -60,10 +63,10 @@ type versionAndTimestamp struct {
 
 // Data is the core data struct of infoschema V2.
 type Data struct {
-	// For the TableByName API, sorted by {dbName, tableName, tableID} => schemaVersion
+	// For the TableByName API, sorted by {dbName, tableName, schemaVersion} => tableID
 	//
 	// If the schema version +1 but a specific table does not change, the old record is
-	// kept and no new {dbName, tableName, tableID} => schemaVersion+1 record been added.
+	// kept and no new {dbName, tableName, schemaVersion+1} => tableID record been added.
 	//
 	// It means as long as we can find an item in it, the item is available, even through the
 	// schema version maybe smaller than required.
@@ -71,19 +74,19 @@ type Data struct {
 	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
 	byName *btree.BTreeG[tableItem]
 
-	// For the TableByID API, sorted by {tableID}
+	// For the TableByID API, sorted by {tableID, schemaVersion} => dbID
 	// To reload model.TableInfo, we need both table ID and database ID for meta kv API.
 	// It provides the tableID => databaseID mapping.
 	//
 	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
-	// But this mapping should be synced with byName.
+	// But this mapping MUST be synced with byName.
 	byID *btree.BTreeG[tableItem]
 
 	// For the SchemaByName API, sorted by {dbName, schemaVersion} => model.DBInfo
 	// Stores the full data in memory.
 	schemaMap *btree.BTreeG[schemaItem]
 
-	tableCache fifo.Cache[tableCacheKey, table.Table]
+	tableCache *Sieve[tableCacheKey, table.Table]
 
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	mu struct {
@@ -93,6 +96,17 @@ type Data struct {
 
 	// For information_schema/metrics_schema/performance_schema etc
 	specials map[string]*schemaTables
+
+	// pid2tid is used by FindTableInfoByPartitionID, it stores {partitionID, schemaVersion} => table ID
+	// Need full data in memory!
+	pid2tid *btree.BTreeG[partitionItem]
+}
+
+type partitionItem struct {
+	partitionID   int64
+	schemaVersion int64
+	tableID       int64
+	tomb          bool
 }
 
 func (isd *Data) getVersionByTS(ts uint64) (int64, bool) {
@@ -138,12 +152,12 @@ type tableCacheKey struct {
 // NewData creates an infoschema V2 data struct.
 func NewData() *Data {
 	ret := &Data{
-		byID:      btree.NewBTreeG[tableItem](compareByID),
-		byName:    btree.NewBTreeG[tableItem](compareByName),
-		schemaMap: btree.NewBTreeG[schemaItem](compareSchemaItem),
-		// TODO: limit by size instead of by table count.
-		tableCache: sieve.New[tableCacheKey, table.Table](1000),
+		byID:       btree.NewBTreeG[tableItem](compareByID),
+		byName:     btree.NewBTreeG[tableItem](compareByName),
+		schemaMap:  btree.NewBTreeG[schemaItem](compareSchemaItem),
+		tableCache: newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
 		specials:   make(map[string]*schemaTables),
+		pid2tid:    btree.NewBTreeG[partitionItem](comparePartitionItem),
 	}
 	return ret
 }
@@ -152,6 +166,11 @@ func (isd *Data) add(item tableItem, tbl table.Table) {
 	isd.byID.Set(item)
 	isd.byName.Set(item)
 	isd.tableCache.Set(tableCacheKey{item.tableID, item.schemaVersion}, tbl)
+	if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+		for _, def := range pi.Definitions {
+			isd.pid2tid.Set(partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
+		}
+	}
 }
 
 func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
@@ -163,27 +182,15 @@ func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 }
 
 func (isd *Data) remove(item tableItem) {
+	item.tomb = true
+	isd.byID.Set(item)
+	isd.byName.Set(item)
 	isd.tableCache.Remove(tableCacheKey{item.tableID, item.schemaVersion})
 }
 
-func (isd *Data) deleteDB(name model.CIStr) {
-	dbInfo, schemaVersion := isd.schemaByName(name)
-	isd.schemaMap.Delete(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
-}
-
-func (isd *Data) schemaByName(name model.CIStr) (res *model.DBInfo, schemaVersion int64) {
-	var dbInfo model.DBInfo
-	dbInfo.Name = name
-
-	isd.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaVersion: math.MaxInt64}, func(item schemaItem) bool {
-		if item.Name() != name.L {
-			return false
-		}
-		res = item.dbInfo
-		schemaVersion = item.schemaVersion
-		return false
-	})
-	return res, schemaVersion
+func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
+	item := schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo, tomb: true}
+	isd.schemaMap.Set(item)
 }
 
 func compareByID(a, b tableItem) bool {
@@ -194,7 +201,7 @@ func compareByID(a, b tableItem) bool {
 		return false
 	}
 
-	return a.dbID < b.dbID
+	return a.schemaVersion < b.schemaVersion
 }
 
 func compareByName(a, b tableItem) bool {
@@ -212,13 +219,16 @@ func compareByName(a, b tableItem) bool {
 		return false
 	}
 
-	if a.tableID < b.tableID {
+	return a.schemaVersion < b.schemaVersion
+}
+
+func comparePartitionItem(a, b partitionItem) bool {
+	if a.partitionID < b.partitionID {
 		return true
 	}
-	if a.tableID > b.tableID {
+	if a.partitionID > b.partitionID {
 		return false
 	}
-
 	return a.schemaVersion < b.schemaVersion
 }
 
@@ -235,10 +245,9 @@ func compareSchemaItem(a, b schemaItem) bool {
 var _ InfoSchema = &infoschemaV2{}
 
 type infoschemaV2 struct {
-	*infoSchema   // in fact, we only need the infoSchemaMisc inside it, but the builder rely on it.
-	r             autoid.Requirement
-	ts            uint64
-	schemaVersion int64
+	*infoSchema // in fact, we only need the infoSchemaMisc inside it, but the builder rely on it.
+	r           autoid.Requirement
+	ts          uint64
 	*Data
 }
 
@@ -284,6 +293,10 @@ func search(bt *btree.BTreeG[tableItem], schemaVersion int64, end tableItem, mat
 		}
 		return true
 	})
+	if ok && target.tomb {
+		// If the item is a tomb record, the table is dropped.
+		ok = false
+	}
 	return target, ok
 }
 
@@ -292,15 +305,19 @@ func (is *infoschemaV2) base() *infoSchema {
 }
 
 func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
+	if !tableIDIsValid(id) {
+		return
+	}
+
 	// Get from the cache.
-	key := tableCacheKey{id, is.schemaVersion}
+	key := tableCacheKey{id, is.infoSchema.schemaMetaVersion}
 	tbl, found := is.tableCache.Get(key)
 	if found && tbl != nil {
 		return tbl, true
 	}
 
 	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
-	itm, ok := search(is.byID, is.schemaVersion, tableItem{tableID: id, dbID: math.MaxInt64}, eq)
+	itm, ok := search(is.byID, is.infoSchema.schemaMetaVersion, tableItem{tableID: id, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
 		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
 		return nil, false
@@ -313,9 +330,16 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 		}
 		return nil, false
 	}
+	// get cache with old key
+	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
+	tbl, found = is.tableCache.Get(oldKey)
+	if found && tbl != nil {
+		is.tableCache.Set(key, tbl)
+		return tbl, true
+	}
 
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts, is.schemaVersion)
+	ret, err := loadTableInfo(is.r, is.Data, id, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
 	if err != nil || ret == nil {
 		return nil, false
 	}
@@ -337,30 +361,63 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 				return
 			}
 		}
-		return nil, ErrTableNotExists.GenWithStackByArgs(schema, tbl)
+		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
 
 	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
-	itm, ok := search(is.byName, is.schemaVersion, tableItem{dbName: schema.L, tableName: tbl.L, tableID: math.MaxInt64}, eq)
+	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema.L, tableName: tbl.L, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
 		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
-		return nil, ErrTableNotExists.GenWithStackByArgs(schema, tbl)
+		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
 
 	// Get from the cache.
-	key := tableCacheKey{itm.tableID, is.schemaVersion}
+	key := tableCacheKey{itm.tableID, is.infoSchema.schemaMetaVersion}
 	res, found := is.tableCache.Get(key)
 	if found && res != nil {
 		return res, nil
 	}
 
+	// get cache with old key
+	oldKey := tableCacheKey{itm.tableID, itm.schemaVersion}
+	res, found = is.tableCache.Get(oldKey)
+	if found && res != nil {
+		is.tableCache.Set(key, res)
+		return res, nil
+	}
+
 	// Maybe the table is evicted? need to reload.
-	ret, err := loadTableInfo(is.r, is.Data, itm.tableID, itm.dbID, is.ts, is.schemaVersion)
+	ret, err := loadTableInfo(is.r, is.Data, itm.tableID, itm.dbID, is.ts, is.infoSchema.schemaMetaVersion)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	is.tableCache.Set(key, ret)
 	return ret, nil
+}
+
+// TableInfoByName implements InfoSchema.TableInfoByName
+func (is *infoschemaV2) TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error) {
+	tbl, err := is.TableByName(schema, table)
+	return getTableInfo(tbl), err
+}
+
+// TableInfoByID implements InfoSchema.TableInfoByID
+func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
+	tbl, ok := is.TableByID(id)
+	return getTableInfo(tbl), ok
+}
+
+// SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
+func (is *infoschemaV2) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
+	return getTableInfoList(is.SchemaTables(schema))
+}
+
+// FindTableInfoByPartitionID implements InfoSchema.FindTableInfoByPartitionID
+func (is *infoschemaV2) FindTableInfoByPartitionID(
+	partitionID int64,
+) (*model.TableInfo, *model.DBInfo, *model.PartitionDefinition) {
+	tbl, db, partDef := is.FindTableByPartitionID(partitionID)
+	return getTableInfo(tbl), db, partDef
 }
 
 func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
@@ -375,9 +432,11 @@ func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok 
 			ok = false
 			return false
 		}
-		if item.schemaVersion <= is.schemaVersion {
-			ok = true
-			val = item.dbInfo
+		if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
+			if !item.tomb { // If the item is a tomb record, the database is dropped.
+				ok = true
+				val = item.dbInfo
+			}
 			return false
 		}
 		return true
@@ -385,70 +444,97 @@ func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok 
 	return
 }
 
-func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
-	is.Data.schemaMap.Scan(func(item schemaItem) bool {
-		// TODO: version?
-		schemas = append(schemas, item.dbInfo)
+func (is *infoschemaV2) allSchemas(visit func(*model.DBInfo)) {
+	var last *model.DBInfo
+	is.Data.schemaMap.Reverse(func(item schemaItem) bool {
+		if item.schemaVersion > is.infoSchema.schemaMetaVersion {
+			// Skip the versions that we are not looking for.
+			return true
+		}
+
+		// Dedup the same db record of different versions.
+		if last != nil && last.Name == item.dbInfo.Name {
+			return true
+		}
+		last = item.dbInfo
+
+		if !item.tomb {
+			visit(item.dbInfo)
+		}
 		return true
 	})
 	for _, sc := range is.Data.specials {
-		schemas = append(schemas, sc.dbInfo)
+		visit(sc.dbInfo)
 	}
+}
+
+func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
+	is.allSchemas(func(di *model.DBInfo) {
+		schemas = append(schemas, di)
+	})
 	return
 }
 
 func (is *infoschemaV2) AllSchemaNames() []model.CIStr {
 	rs := make([]model.CIStr, 0, is.Data.schemaMap.Len())
-	is.Data.schemaMap.Scan(func(item schemaItem) bool {
-		rs = append(rs, item.dbInfo.Name)
-		return true
+	is.allSchemas(func(di *model.DBInfo) {
+		rs = append(rs, di.Name)
 	})
-	for _, sc := range is.Data.specials {
-		rs = append(rs, sc.dbInfo.Name)
-	}
 	return rs
 }
 
-func (is *infoschemaV2) SchemaMetaVersion() int64 {
-	return is.schemaVersion
-}
-
 func (is *infoschemaV2) SchemaExists(schema model.CIStr) bool {
-	var ok bool
-	if isSpecialDB(schema.L) {
-		_, ok = is.Data.specials[schema.L]
-		return ok
-	}
-
-	// TODO: support different version
-	is.Data.schemaMap.Scan(func(item schemaItem) bool {
-		if item.dbInfo.Name.L == schema.L {
-			ok = true
-			return false
-		}
-		return true
-	})
+	_, ok := is.SchemaByName(schema)
 	return ok
 }
 
 func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	// TODO: This is quite inefficient! we need some better way or avoid this API.
-	dbInfos := is.AllSchemas()
-	for _, dbInfo := range dbInfos {
-		tbls := is.SchemaTables(dbInfo.Name)
-		for _, tbl := range tbls {
-			pi := tbl.Meta().GetPartitionInfo()
-			if pi == nil {
-				continue
+	var ok bool
+	var pi partitionItem
+	is.pid2tid.Descend(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
+		func(item partitionItem) bool {
+			if item.partitionID != partitionID {
+				return false
 			}
-			for _, p := range pi.Definitions {
-				if p.ID == partitionID {
-					return tbl, dbInfo, &p
-				}
+			if item.schemaVersion > is.infoSchema.schemaMetaVersion {
+				// Skip the record.
+				return true
 			}
+			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
+				ok = !item.tomb
+				pi = item
+				return false
+			}
+			return true
+		})
+	if !ok {
+		return nil, nil, nil
+	}
+
+	tbl, ok := is.TableByID(pi.tableID)
+	if !ok {
+		// something wrong?
+		return nil, nil, nil
+	}
+
+	dbID := tbl.Meta().DBID
+	dbInfo, ok := is.SchemaByID(dbID)
+	if !ok {
+		// something wrong?
+		return nil, nil, nil
+	}
+
+	partInfo := tbl.Meta().GetPartitionInfo()
+	var def *model.PartitionDefinition
+	for i := 0; i < len(partInfo.Definitions); i++ {
+		pdef := &partInfo.Definitions[i]
+		if pdef.ID == partitionID {
+			def = pdef
+			break
 		}
 	}
-	return nil, nil, nil
+
+	return tbl, dbInfo, def
 }
 
 func (is *infoschemaV2) TableExists(schema, table model.CIStr) bool {
@@ -469,11 +555,13 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 		return nil, false
 	}
 
-	is.Data.schemaMap.Scan(func(item schemaItem) bool {
+	is.Data.schemaMap.Reverse(func(item schemaItem) bool {
 		if item.dbInfo.ID == id {
-			ok = true
-			dbInfo = item.dbInfo
-			return false
+			if item.schemaVersion <= is.infoSchema.schemaMetaVersion {
+				ok = !item.tomb
+				dbInfo = item.dbInfo
+				return false
+			}
 		}
 		return true
 	})
@@ -537,7 +625,7 @@ func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts u
 
 		// table removed.
 		if tblInfo == nil {
-			return nil, errors.Trace(ErrTableNotExists.GenWithStackByArgs(
+			return nil, errors.Trace(ErrTableNotExists.FastGenByArgs(
 				fmt.Sprintf("(Schema ID %d)", dbID),
 				fmt.Sprintf("(Table ID %d)", tblID),
 			))
@@ -558,7 +646,7 @@ func loadTableInfo(r autoid.Requirement, infoData *Data, tblID, dbID int64, ts u
 		return nil, errors.Trace(err)
 	}
 	if res == nil {
-		return nil, errors.Trace(ErrTableNotExists.GenWithStackByArgs(
+		return nil, errors.Trace(ErrTableNotExists.FastGenByArgs(
 			fmt.Sprintf("(Schema ID %d)", dbID),
 			fmt.Sprintf("(Table ID %d)", tblID),
 		))
@@ -653,6 +741,33 @@ func updateInfoSchemaBundles(b *Builder) {
 	}
 }
 
+func oldSchemaInfo(b *Builder, diff *model.SchemaDiff) (*model.DBInfo, bool) {
+	if b.enableV2 {
+		return b.infoschemaV2.SchemaByID(diff.OldSchemaID)
+	}
+
+	oldRoDBInfo, ok := b.infoSchema.SchemaByID(diff.OldSchemaID)
+	if ok {
+		oldRoDBInfo = b.getSchemaAndCopyIfNecessary(oldRoDBInfo.Name.L)
+	}
+	return oldRoDBInfo, ok
+}
+
+// allocByID returns the Allocators of a table.
+func allocByID(b *Builder, id int64) (autoid.Allocators, bool) {
+	var is InfoSchema
+	if b.enableV2 {
+		is = &b.infoschemaV2
+	} else {
+		is = b.infoSchema
+	}
+	tbl, ok := is.TableByID(id)
+	if !ok {
+		return autoid.Allocators{}, false
+	}
+	return tbl.Allocators(nil), true
+}
+
 // TODO: more UT to check the correctness.
 func (b *Builder) applyTableUpdateV2(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
@@ -687,17 +802,18 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) []int64 {
 		return nil
 	}
 
-	b.infoData.deleteDB(di.Name)
 	tableIDs := make([]int64, 0, len(di.Tables))
-	for _, tbl := range di.Tables {
+	tables := b.infoschemaV2.SchemaTables(di.Name)
+	for _, table := range tables {
+		tbl := table.Meta()
 		tableIDs = appendAffectedIDs(tableIDs, tbl)
 	}
 
-	di = di.Clone()
 	for _, id := range tableIDs {
 		b.deleteBundle(b.infoSchema, id)
 		b.applyDropTableV2(diff, di, id, nil)
 	}
+	b.infoData.deleteDB(di, diff.Version)
 	return tableIDs
 }
 
@@ -708,9 +824,17 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 	}
 
 	table, ok := b.infoschemaV2.TableByID(tableID)
-
 	if !ok {
 		return nil
+	}
+
+	// The old DBInfo still holds a reference to old table info, we need to remove it.
+	b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, table.Meta())
+
+	if pi := table.Meta().GetPartitionInfo(); pi != nil {
+		for _, def := range pi.Definitions {
+			b.infoData.pid2tid.Set(partitionItem{def.ID, diff.Version, table.Meta().ID, true})
+		}
 	}
 
 	b.infoData.remove(tableItem{
@@ -721,8 +845,6 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 		schemaVersion: diff.Version,
 	})
 
-	// The old DBInfo still holds a reference to old table info, we need to remove it.
-	b.deleteReferredForeignKeys(dbInfo, tableID)
 	return affected
 }
 
@@ -740,7 +862,7 @@ func (b *Builder) applyModifySchemaCharsetAndCollateV2(m *meta.Meta, diff *model
 	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	newDBInfo.Charset = di.Charset
 	newDBInfo.Collate = di.Collate
-	b.infoschemaV2.deleteDB(di.Name)
+	b.infoschemaV2.deleteDB(di, diff.Version)
 	b.infoschemaV2.addDB(diff.Version, newDBInfo)
 	return nil
 }
@@ -758,7 +880,7 @@ func (b *Builder) applyModifySchemaDefaultPlacementV2(m *meta.Meta, diff *model.
 	}
 	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	newDBInfo.PlacementPolicyRef = di.PlacementPolicyRef
-	b.infoschemaV2.deleteDB(di.Name)
+	b.infoschemaV2.deleteDB(di, diff.Version)
 	b.infoschemaV2.addDB(diff.Version, newDBInfo)
 	return nil
 }
@@ -767,17 +889,59 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
 	if b.deltaUpdate {
 		b.completeUpdateTablesV2(is)
 		for tblID := range b.updateTables {
-			b.updateTableBundles(is, tblID)
+			b.updateTableBundlesV2(is, tblID)
 		}
 		return
 	}
 
-	// do full update bundles
+	// do full update bundles and policyRefs.
 	// TODO: This is quite inefficient! we need some better way or avoid this API.
 	is.ruleBundleMap = make(map[int64]*placement.Bundle)
 	for _, dbInfo := range is.AllSchemas() {
 		for _, tbl := range is.SchemaTables(dbInfo.Name) {
-			b.updateTableBundles(is, tbl.Meta().ID)
+			b.updateTableBundlesV2(is, tbl.Meta().ID)
+		}
+	}
+}
+
+func (b *bundleInfoBuilder) updateTableBundlesV2(infoSchemaInterface InfoSchema, tableID int64) {
+	is := infoSchemaInterface.base()
+	tbl, ok := infoSchemaInterface.TableByID(tableID)
+	if !ok {
+		b.deleteBundle(is, tableID)
+		delete(is.policyRefMap, tableID)
+		return
+	}
+
+	getter := &policyGetter{is: is}
+	bundle, err := placement.NewTableBundle(getter, tbl.Meta())
+	if err != nil {
+		logutil.BgLogger().Error("create table bundle failed", zap.Error(err))
+	} else if bundle != nil {
+		is.policyRefMap[tableID] = tbl.Meta().PlacementPolicyRef
+		is.ruleBundleMap[tableID] = bundle
+	} else {
+		b.deleteBundle(is, tableID)
+		delete(is.policyRefMap, tableID)
+	}
+
+	if tbl.Meta().Partition == nil {
+		return
+	}
+
+	for _, par := range tbl.Meta().Partition.Definitions {
+		bundle, err = placement.NewPartitionBundle(getter, par)
+		if err != nil {
+			logutil.BgLogger().Error("create partition bundle failed",
+				zap.Error(err),
+				zap.Int64("partition id", par.ID),
+			)
+		} else if bundle != nil {
+			is.policyRefMap[par.ID] = par.PlacementPolicyRef
+			is.ruleBundleMap[par.ID] = bundle
+		} else {
+			b.deleteBundle(is, par.ID)
+			delete(is.policyRefMap, par.ID)
 		}
 	}
 }
@@ -787,23 +951,15 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 		return
 	}
 
-	// TODO: This is quite inefficient! we need some better way or avoid this API.
-	for _, dbInfo := range is.AllSchemas() {
-		for _, tbl := range is.SchemaTables(dbInfo.Name) {
-			tblInfo := tbl.Meta()
-			if tblInfo.PlacementPolicyRef != nil {
-				if _, ok := b.updatePolicies[tblInfo.PlacementPolicyRef.ID]; ok {
-					b.markTableBundleShouldUpdate(tblInfo.ID)
-				}
-			}
+	for id := range b.updatePolicies {
+		if _, ok := is.policyRefMap[id]; ok {
+			b.markTableBundleShouldUpdate(id)
+		}
+	}
 
-			if tblInfo.Partition != nil {
-				for _, par := range tblInfo.Partition.Definitions {
-					if _, ok := b.updatePartitions[par.ID]; ok {
-						b.markTableBundleShouldUpdate(tblInfo.ID)
-					}
-				}
-			}
+	for id := range b.updatePartitions {
+		if _, ok := is.policyRefMap[id]; ok {
+			b.markTableBundleShouldUpdate(id)
 		}
 	}
 }

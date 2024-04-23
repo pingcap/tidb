@@ -88,16 +88,20 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 		func() error {
 			stores, err = util.GetAllTiKVStores(ctx, pdClient, storeBehavior)
 			failpoint.Inject("hint-GetAllTiKVStores-error", func(val failpoint.Value) {
+				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
 				if val.(bool) {
-					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
 					err = status.Error(codes.Unknown, "Retryable error")
+				} else {
+					err = context.Canceled
 				}
 			})
 
 			failpoint.Inject("hint-GetAllTiKVStores-cancel", func(val failpoint.Value) {
+				logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-cancel injected.")
 				if val.(bool) {
-					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-cancel injected.")
 					err = status.Error(codes.Canceled, "Cancel Retry")
+				} else {
+					err = context.Canceled
 				}
 			})
 
@@ -377,11 +381,11 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 			if e != nil {
 				return e
 			}
+			defer resp.Body.Close()
 			err = fn(resp)
 			if err != nil {
 				return err
 			}
-			_ = resp.Body.Close()
 			return nil
 		}, utils.NewPDReqBackoffer())
 		if err != nil {

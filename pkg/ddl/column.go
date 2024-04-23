@@ -40,18 +40,17 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -186,6 +185,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		addColumnEvent := statsutil.NewAddColumnEvent(
+			job.SchemaID,
 			tblInfo,
 			[]*model.ColumnInfo{columnInfo},
 		)
@@ -715,7 +715,7 @@ func (w *worker) doModifyColumnTypeWithData(
 
 				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 				//nolint:forcetypeassert
-				_, _, err = sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, valStr)
+				_, _, err = sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, valStr)
 				if err != nil {
 					job.State = model.JobStateCancelled
 					failpoint.Return(ver, err)
@@ -795,6 +795,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Refactor the job args to add the old index ids into delete range table.
 		job.Args = []any{rmIdxIDs, getPartitionIDs(tblInfo)}
 		modifyColumnEvent := statsutil.NewModifyColumnEvent(
+			job.SchemaID,
 			tblInfo,
 			[]*model.ColumnInfo{changingCol},
 		)
@@ -1338,7 +1339,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	// Since every updateColumnWorker handle their own work individually, we can cache warning in statement context when casting datum.
 	oldWarn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
 	if oldWarn == nil {
-		oldWarn = []stmtctx.SQLWarn{}
+		oldWarn = []contextutil.SQLWarn{}
 	} else {
 		oldWarn = oldWarn[:0]
 	}
@@ -1346,7 +1347,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	val := w.rowMap[w.oldColInfo.ID]
 	col := w.newColInfo
 	if val.Kind() == types.KindNull && col.FieldType.GetType() == mysql.TypeTimestamp && mysql.HasNotNullFlag(col.GetFlag()) {
-		if v, err := expression.GetTimeCurrentTimestamp(w.sessCtx.GetExprCtx(), col.GetType(), col.GetDecimal()); err == nil {
+		if v, err := expression.GetTimeCurrentTimestamp(w.sessCtx.GetExprCtx().GetEvalCtx(), col.GetType(), col.GetDecimal()); err == nil {
 			// convert null value to timestamp should be substituted with current timestamp if NOT_NULL flag is set.
 			w.rowMap[w.oldColInfo.ID] = v
 		}
@@ -1767,7 +1768,7 @@ func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTrunc
 	}
 	buf.WriteString(" limit 1")
 	//nolint:forcetypeassert
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, buf.String(), paramsList...)
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, buf.String(), paramsList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1947,7 +1948,9 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (any, error) {
 	var err error
 	odValue := col.GetDefaultValue()
-	if odValue == nil && mysql.HasNotNullFlag(col.GetFlag()) {
+	if odValue == nil && mysql.HasNotNullFlag(col.GetFlag()) ||
+		// It's for drop column and modify column.
+		(col.DefaultIsExpr && odValue != strings.ToUpper(ast.CurrentTimestamp) && ctx == nil) {
 		switch col.GetType() {
 		// Just use enum field's first element for OriginDefaultValue.
 		case mysql.TypeEnum:
@@ -1971,12 +1974,35 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 		if ctx == nil {
 			t = time.Now()
 		} else {
-			t, _ = expression.GetStmtTimestamp(ctx.GetExprCtx())
+			t, _ = expression.GetStmtTimestamp(ctx.GetExprCtx().GetEvalCtx())
 		}
 		if col.GetType() == mysql.TypeTimestamp {
 			odValue = types.NewTime(types.FromGoTime(t.UTC()), col.GetType(), col.GetDecimal()).String()
 		} else if col.GetType() == mysql.TypeDatetime {
 			odValue = types.NewTime(types.FromGoTime(t), col.GetType(), col.GetDecimal()).String()
+		}
+		return odValue, nil
+	}
+
+	if col.DefaultIsExpr && ctx != nil {
+		valStr, ok := odValue.(string)
+		if !ok {
+			return nil, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String())
+		}
+		oldValue := strings.ToLower(valStr)
+		// It's checked in getFuncCallDefaultValue.
+		if !strings.Contains(oldValue, fmt.Sprintf("%s(%s(),", ast.DateFormat, ast.Now)) &&
+			!strings.Contains(oldValue, ast.StrToDate) {
+			return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction)
+		}
+
+		defVal, err := table.GetColDefaultValue(ctx.GetExprCtx(), col)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		odValue, err = defVal.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	return odValue, nil
@@ -2043,6 +2069,15 @@ func getChangingIndexOriginName(changingIdx *model.IndexInfo) string {
 
 func getChangingColumnOriginName(changingColumn *model.ColumnInfo) string {
 	columnName := strings.TrimPrefix(changingColumn.Name.O, changingColumnPrefix)
+	var pos int
+	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
+		return columnName
+	}
+	return columnName[:pos]
+}
+
+func getExpressionIndexOriginName(expressionIdx *model.ColumnInfo) string {
+	columnName := strings.TrimPrefix(expressionIdx.Name.O, expressionIndexPrefix+"_")
 	var pos int
 	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
 		return columnName

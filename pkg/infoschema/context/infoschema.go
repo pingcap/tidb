@@ -14,10 +14,43 @@
 
 package context
 
-// InfoSchemaMetaVersion is a workaround. Due to circular dependency,
-// can not return the complete interface. But SchemaMetaVersion is widely used for logging.
-// So we give a convenience for that.
-// FIXME: remove this interface
-type InfoSchemaMetaVersion interface {
+import (
+	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/parser/model"
+)
+
+// MetaOnlyInfoSchema is a workaround.
+// Due to circular dependency cannot return the complete interface.
+// But MetaOnlyInfoSchema is widely used for scenes that require meta only, so we give a convenience for that.
+type MetaOnlyInfoSchema interface {
 	SchemaMetaVersion() int64
+	SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
+	SchemaExists(schema model.CIStr) bool
+	TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error)
+	TableInfoByID(id int64) (*model.TableInfo, bool)
+	FindTableInfoByPartitionID(partitionID int64) (*model.TableInfo, *model.DBInfo, *model.PartitionDefinition)
+	TableExists(schema, table model.CIStr) bool
+	SchemaByID(id int64) (*model.DBInfo, bool)
+	AllSchemas() []*model.DBInfo
+	AllSchemaNames() []model.CIStr
+	SchemaTableInfos(schema model.CIStr) []*model.TableInfo
+	Misc
+}
+
+// Misc contains the methods that are not closely related to InfoSchema.
+type Misc interface {
+	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
+	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
+	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
+	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
+	// AllPlacementBundles is used to get all placement bundles
+	AllPlacementBundles() []*placement.Bundle
+	// AllPlacementPolicies returns all placement policies
+	AllPlacementPolicies() []*model.PolicyInfo
+	// AllResourceGroups returns all resource groups
+	AllResourceGroups() []*model.ResourceGroupInfo
+	// HasTemporaryTable returns whether information schema has temporary table
+	HasTemporaryTable() bool
+	// GetTableReferredForeignKeys gets the table's ReferredFKInfo by lowercase schema and table name.
+	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
 }

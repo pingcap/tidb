@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
-var _ Misc = &infoSchemaMisc{}
+var _ context.Misc = &infoSchemaMisc{}
 
 type sortedTables []table.Table
 
@@ -59,14 +59,17 @@ type infoSchema struct {
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
-
-	// schemaMetaVersion is the version of schema, and we should check version when change schema.
-	schemaMetaVersion int64
 }
 
 type infoSchemaMisc struct {
+	// schemaMetaVersion is the version of schema, and we should check version when change schema.
+	schemaMetaVersion int64
+
 	// ruleBundleMap stores all placement rules
 	ruleBundleMap map[int64]*placement.Bundle
+
+	// policyRefMap stores all policyRefInfo for tables.
+	policyRefMap map[int64]*model.PolicyRefInfo
 
 	// policyMap stores all placement policies.
 	policyMutex sync.RWMutex
@@ -104,7 +107,17 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 		tables: make(map[string]table.Table),
 	}
 	result.schemaMap["test"] = tableNames
+	var tableIDs map[int64]struct{}
 	for _, tb := range tbList {
+		intest.AssertFunc(func() bool {
+			if tableIDs == nil {
+				tableIDs = make(map[int64]struct{})
+			}
+			_, ok := tableIDs[tb.ID]
+			intest.Assert(!ok)
+			tableIDs[tb.ID] = struct{}{}
+			return true
+		})
 		tb.DBID = dbInfo.ID
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
@@ -163,10 +176,6 @@ func (is *infoSchema) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bo
 	return tableNames.dbInfo, true
 }
 
-func (is *infoSchema) SchemaMetaVersion() int64 {
-	return is.schemaMetaVersion
-}
-
 func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
 	_, ok := is.schemaMap[schema.L]
 	return ok
@@ -178,7 +187,13 @@ func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err
 			return
 		}
 	}
-	return nil, ErrTableNotExists.GenWithStackByArgs(schema, table)
+	return nil, ErrTableNotExists.FastGenByArgs(schema, table)
+}
+
+// TableInfoByName implements InfoSchema.TableInfoByName
+func (is *infoSchema) TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error) {
+	tbl, err := is.TableByName(schema, table)
+	return getTableInfo(tbl), err
 }
 
 // TableIsView indicates whether the schema.table is a view.
@@ -236,6 +251,10 @@ func SchemaByTable(is InfoSchema, tableInfo *model.TableInfo) (val *model.DBInfo
 }
 
 func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
+	if !tableIDIsValid(id) {
+		return nil, false
+	}
+
 	slice := is.sortedTablesBuckets[tableBucketIdx(id)]
 	idx := slice.searchTable(id)
 	if idx == -1 {
@@ -244,13 +263,23 @@ func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 	return slice[idx], true
 }
 
-// allocByID returns the Allocators of a table.
-func allocByID(is InfoSchema, id int64) (autoid.Allocators, bool) {
+// TableInfoByID implements InfoSchema.TableInfoByID
+func (is *infoSchema) TableInfoByID(id int64) (*model.TableInfo, bool) {
 	tbl, ok := is.TableByID(id)
-	if !ok {
-		return autoid.Allocators{}, false
-	}
-	return tbl.Allocators(nil), true
+	return getTableInfo(tbl), ok
+}
+
+// FindTableInfoByPartitionID implements InfoSchema.FindTableInfoByPartitionID
+func (is *infoSchema) FindTableInfoByPartitionID(
+	partitionID int64,
+) (*model.TableInfo, *model.DBInfo, *model.PartitionDefinition) {
+	tbl, db, partDef := is.FindTableByPartitionID(partitionID)
+	return getTableInfo(tbl), db, partDef
+}
+
+// SchemaTableInfos implements InfoSchema.FindTableInfoByPartitionID
+func (is *infoSchema) SchemaTableInfos(schema model.CIStr) []*model.TableInfo {
+	return getTableInfoList(is.SchemaTables(schema))
 }
 
 // AllSchemaNames returns all the schemas' names.
@@ -312,6 +341,10 @@ func (is *infoSchemaMisc) HasTemporaryTable() bool {
 	return len(is.temporaryTableIDs) != 0
 }
 
+func (is *infoSchemaMisc) SchemaMetaVersion() int64 {
+	return is.schemaMetaVersion
+}
+
 // GetSequenceByName gets the sequence by name.
 func GetSequenceByName(is InfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
 	tbl, err := is.TableByName(schema, sequence)
@@ -351,10 +384,10 @@ func init() {
 		Tables:  infoSchemaTables,
 	}
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
-	util.GetSequenceByName = func(is any, schema, sequence model.CIStr) (util.SequenceTable, error) {
+	util.GetSequenceByName = func(is context.MetaOnlyInfoSchema, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
 	}
-	mock.MockInfoschema = func(tbList []*model.TableInfo) context.InfoSchemaMetaVersion {
+	mock.MockInfoschema = func(tbList []*model.TableInfo) context.MetaOnlyInfoSchema {
 		return MockInfoSchema(tbList)
 	}
 }
@@ -666,8 +699,32 @@ func (ts *SessionExtendedInfoSchema) TableByName(schema, table model.CIStr) (tab
 	return ts.InfoSchema.TableByName(schema, table)
 }
 
+// TableInfoByName implements InfoSchema.TableInfoByName
+func (ts *SessionExtendedInfoSchema) TableInfoByName(schema, table model.CIStr) (*model.TableInfo, error) {
+	tbl, err := ts.TableByName(schema, table)
+	return getTableInfo(tbl), err
+}
+
+// TableInfoByID implements InfoSchema.TableInfoByID
+func (ts *SessionExtendedInfoSchema) TableInfoByID(id int64) (*model.TableInfo, bool) {
+	tbl, ok := ts.TableByID(id)
+	return getTableInfo(tbl), ok
+}
+
+// FindTableInfoByPartitionID implements InfoSchema.FindTableInfoByPartitionID
+func (ts *SessionExtendedInfoSchema) FindTableInfoByPartitionID(
+	partitionID int64,
+) (*model.TableInfo, *model.DBInfo, *model.PartitionDefinition) {
+	tbl, db, partDef := ts.FindTableByPartitionID(partitionID)
+	return getTableInfo(tbl), db, partDef
+}
+
 // TableByID implements InfoSchema.TableByID
 func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
+	if !tableIDIsValid(id) {
+		return nil, false
+	}
+
 	if ts.LocalTemporaryTables != nil {
 		if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
 			return tbl, true
@@ -738,4 +795,23 @@ func FindTableByTblOrPartID(is InfoSchema, id int64) (table.Table, *model.Partit
 	}
 	tbl, _, partDef := is.FindTableByPartitionID(id)
 	return tbl, partDef
+}
+
+func getTableInfo(tbl table.Table) *model.TableInfo {
+	if tbl == nil {
+		return nil
+	}
+	return tbl.Meta()
+}
+
+func getTableInfoList(tables []table.Table) []*model.TableInfo {
+	if tables == nil {
+		return nil
+	}
+
+	infoLost := make([]*model.TableInfo, 0, len(tables))
+	for _, tbl := range tables {
+		infoLost = append(infoLost, tbl.Meta())
+	}
+	return infoLost
 }

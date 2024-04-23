@@ -22,22 +22,21 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 type mergeSortExecutor struct {
 	taskexecutor.EmptyStepExecutor
-	jobID               int64
-	idxNum              int
-	ptbl                table.PhysicalTable
-	cloudStoreURI       string
+	jobID         int64
+	idxNum        int
+	ptbl          table.PhysicalTable
+	cloudStoreURI string
+
 	mu                  sync.Mutex
 	subtaskSortedKVMeta *external.SortedKVMeta
 }
@@ -86,26 +85,21 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	prefix := path.Join(strconv.Itoa(int(m.jobID)), strconv.Itoa(int(subtask.ID)))
-
-	partSize, err := getMergeSortPartSize(int(variable.GetDDLReorgWorkerCounter()), m.idxNum)
-	if err != nil {
-		return err
-	}
+	res := m.GetResource()
+	memSizePerCon := res.Mem.Capacity() / int64(subtask.Concurrency)
+	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
 
 	return external.MergeOverlappingFiles(
 		ctx,
 		sm.DataFiles,
 		store,
-		int64(partSize),
-		64*1024,
+		partSize,
 		prefix,
 		external.DefaultBlockSize,
-		external.DefaultMemSizeLimit,
-		8*1024,
-		1*size.MB,
-		8*1024,
 		onClose,
-		int(variable.GetDDLReorgWorkerCounter()), true)
+		subtask.Concurrency,
+		true,
+	)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {

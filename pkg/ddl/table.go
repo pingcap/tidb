@@ -186,6 +186,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	createTableEvent := statsutil.NewCreateTableEvent(
+		job.SchemaID,
 		tbInfo,
 	)
 	asyncNotifyEvent(d, createTableEvent)
@@ -194,8 +195,11 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 
 func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo, fkCheck bool) (ver int64, err error) {
 	switch tbInfo.State {
-	case model.StateNone:
-		// create table in non-public state
+	case model.StateNone, model.StatePublic:
+		// create table in non-public or public state. The function `createTable` will always reset
+		// the `tbInfo.State` with `model.StateNone`, so it's fine to just call the `createTable` with
+		// public state.
+		// when `br` restores table, the state of `tbInfo` will be public.
 		tbInfo, err = createTable(d, t, job, fkCheck)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -260,6 +264,7 @@ func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 
 	for i := range args {
 		createTableEvent := statsutil.NewCreateTableEvent(
+			job.SchemaID,
 			args[i],
 		)
 		asyncNotifyEvent(d, createTableEvent)
@@ -409,6 +414,7 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
 			dropTableEvent := statsutil.NewDropTableEvent(
+				job.SchemaID,
 				tblInfo,
 			)
 			asyncNotifyEvent(d, dropTableEvent)
@@ -554,7 +560,7 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 	tableInfo := recoverInfo.TableInfo.Clone()
 	tableInfo.State = model.StatePublic
 	tableInfo.UpdateTS = t.StartTS
-	err = t.CreateTableAndSetAutoID(recoverInfo.SchemaID, recoverInfo.OldSchemaName, tableInfo, recoverInfo.AutoIDs.RowID, recoverInfo.AutoIDs.RandomID)
+	err = t.CreateTableAndSetAutoID(recoverInfo.SchemaID, recoverInfo.OldSchemaName, tableInfo, recoverInfo.AutoIDs)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -853,6 +859,7 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	truncateTableEvent := statsutil.NewTruncateTableEvent(
+		job.SchemaID,
 		tblInfo,
 		oldTblInfo,
 	)

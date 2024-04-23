@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/sessionctx/stmtctx",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/distsql/context",
         "//pkg/domain/resourcegroup",
         "//pkg/errctx",
         "//pkg/parser",
@@ -26,7 +27,6 @@ go_library(
         "//pkg/util/resourcegrouptag",
         "//pkg/util/topsql/stmtstats",
         "//pkg/util/tracing",
-        "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@org_golang_x_exp//maps",
         "@org_uber_go_atomic//:atomic",
@@ -50,6 +50,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",
+        "//pkg/util/context",
         "//pkg/util/execdetails",
         "//pkg/util/hint",
         "@com_github_pingcap_errors//:errors",

@@ -59,7 +59,7 @@ func TestConfigureRestoreClient(t *testing.T) {
 		RestoreCommonConfig: restoreComCfg,
 		DdlBatchSize:        128,
 	}
-	client := restore.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{}, false)
+	client := restore.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{})
 	ctx := context.Background()
 	err := configureRestoreClient(ctx, client, restoreCfg)
 	require.NoError(t, err)
@@ -260,6 +260,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 			&backuppb.CipherInfo{
 				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 			}),
+		true,
 	)
 	require.NoError(t, err)
 	return dbs

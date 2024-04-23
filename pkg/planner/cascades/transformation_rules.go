@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/memo"
+	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -34,7 +36,7 @@ import (
 // Transformation defines the interface for the transformation rules.
 type Transformation interface {
 	// GetPattern gets the cached pattern of the rule.
-	GetPattern() *memo.Pattern
+	GetPattern() *pattern.Pattern
 	// Match is used to check whether the GroupExpr satisfies all the requirements of the transformation rule.
 	//
 	// The pattern only identifies the operator type, some transformation rules also need
@@ -53,7 +55,7 @@ type Transformation interface {
 }
 
 // TransformationRuleBatch is a batch of transformation rules.
-type TransformationRuleBatch map[memo.Operand][]Transformation
+type TransformationRuleBatch map[pattern.Operand][]Transformation
 
 // DefaultRuleBatches contain all the transformation rules.
 // Each batch will be applied to the memo independently.
@@ -65,7 +67,7 @@ var DefaultRuleBatches = []TransformationRuleBatch{
 
 // TiDBLayerOptimizationBatch does the optimization in the TiDB layer.
 var TiDBLayerOptimizationBatch = TransformationRuleBatch{
-	memo.OperandSelection: {
+	pattern.OperandSelection: {
 		NewRulePushSelDownSort(),
 		NewRulePushSelDownProjection(),
 		NewRulePushSelDownAggregation(),
@@ -74,14 +76,14 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRulePushSelDownWindow(),
 		NewRuleMergeAdjacentSelection(),
 	},
-	memo.OperandAggregation: {
+	pattern.OperandAggregation: {
 		NewRuleMergeAggregationProjection(),
 		NewRuleEliminateSingleMaxMin(),
 		NewRuleEliminateOuterJoinBelowAggregation(),
 		NewRuleTransformAggregateCaseToSelection(),
 		NewRuleTransformAggToProj(),
 	},
-	memo.OperandLimit: {
+	pattern.OperandLimit: {
 		NewRuleTransformLimitToTopN(),
 		NewRulePushLimitDownProjection(),
 		NewRulePushLimitDownUnionAll(),
@@ -89,25 +91,25 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 		NewRuleMergeAdjacentLimit(),
 		NewRuleTransformLimitToTableDual(),
 	},
-	memo.OperandProjection: {
+	pattern.OperandProjection: {
 		NewRuleEliminateProjection(),
 		NewRuleMergeAdjacentProjection(),
 		NewRuleEliminateOuterJoinBelowProjection(),
 	},
-	memo.OperandTopN: {
+	pattern.OperandTopN: {
 		NewRulePushTopNDownProjection(),
 		NewRulePushTopNDownOuterJoin(),
 		NewRulePushTopNDownUnionAll(),
 		NewRuleMergeAdjacentTopN(),
 	},
-	memo.OperandApply: {
+	pattern.OperandApply: {
 		NewRuleTransformApplyToJoin(),
 		NewRulePullSelectionUpApply(),
 	},
-	memo.OperandJoin: {
+	pattern.OperandJoin: {
 		NewRuleTransformJoinCondToSel(),
 	},
-	memo.OperandWindow: {
+	pattern.OperandWindow: {
 		NewRuleMergeAdjacentWindow(),
 	},
 }
@@ -116,22 +118,22 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 // For example, rules about pushing down Operators like Selection, Limit,
 // Aggregation into TiKV layer should be inside this batch.
 var TiKVLayerOptimizationBatch = TransformationRuleBatch{
-	memo.OperandDataSource: {
+	pattern.OperandDataSource: {
 		NewRuleEnumeratePaths(),
 	},
-	memo.OperandSelection: {
+	pattern.OperandSelection: {
 		NewRulePushSelDownTiKVSingleGather(),
 		NewRulePushSelDownTableScan(),
 		NewRulePushSelDownIndexScan(),
 		NewRuleMergeAdjacentSelection(),
 	},
-	memo.OperandAggregation: {
+	pattern.OperandAggregation: {
 		NewRulePushAggDownGather(),
 	},
-	memo.OperandLimit: {
+	pattern.OperandLimit: {
 		NewRulePushLimitDownTiKVSingleGather(),
 	},
-	memo.OperandTopN: {
+	pattern.OperandTopN: {
 		NewRulePushTopNDownTiKVSingleGather(),
 	},
 }
@@ -142,20 +144,20 @@ var TiKVLayerOptimizationBatch = TransformationRuleBatch{
 // as for scalar functions, we need to inject a Projection for them
 // below the TopN/Sort.
 var PostTransformationBatch = TransformationRuleBatch{
-	memo.OperandProjection: {
+	pattern.OperandProjection: {
 		NewRuleEliminateProjection(),
 		NewRuleMergeAdjacentProjection(),
 	},
-	memo.OperandAggregation: {
+	pattern.OperandAggregation: {
 		NewRuleInjectProjectionBelowAgg(),
 	},
-	memo.OperandTopN: {
+	pattern.OperandTopN: {
 		NewRuleInjectProjectionBelowTopN(),
 	},
 }
 
 type baseRule struct {
-	pattern *memo.Pattern
+	pattern *pattern.Pattern
 }
 
 // Match implements Transformation Interface.
@@ -164,7 +166,7 @@ func (*baseRule) Match(_ *memo.ExprIter) bool {
 }
 
 // GetPattern implements Transformation Interface.
-func (r *baseRule) GetPattern() *memo.Pattern {
+func (r *baseRule) GetPattern() *pattern.Pattern {
 	return r.pattern
 }
 
@@ -177,8 +179,8 @@ type PushSelDownTableScan struct {
 // The pattern of this rule is: `Selection -> TableScan`
 func NewRulePushSelDownTableScan() Transformation {
 	rule := &PushSelDownTableScan{}
-	ts := memo.NewPattern(memo.OperandTableScan, memo.EngineTiKVOrTiFlash)
-	p := memo.BuildPattern(memo.OperandSelection, memo.EngineTiKVOrTiFlash, ts)
+	ts := pattern.NewPattern(pattern.OperandTableScan, pattern.EngineTiKVOrTiFlash)
+	p := pattern.BuildPattern(pattern.OperandSelection, pattern.EngineTiKVOrTiFlash, ts)
 	rule.pattern = p
 	return rule
 }
@@ -197,7 +199,7 @@ func (*PushSelDownTableScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 	if ts.HandleCols == nil {
 		return nil, false, false, nil
 	}
-	accesses, remained := ranger.DetachCondsForColumn(ts.SCtx(), sel.Conditions, ts.HandleCols.GetCol(0))
+	accesses, remained := ranger.DetachCondsForColumn(ts.SCtx().GetRangerCtx(), sel.Conditions, ts.HandleCols.GetCol(0))
 	if accesses == nil {
 		return nil, false, false, nil
 	}
@@ -230,10 +232,10 @@ type PushSelDownIndexScan struct {
 // The pattern of this rule is `Selection -> IndexScan`.
 func NewRulePushSelDownIndexScan() Transformation {
 	rule := &PushSelDownIndexScan{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandSelection,
-		memo.EngineTiKVOnly,
-		memo.NewPattern(memo.OperandIndexScan, memo.EngineTiKVOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandSelection,
+		pattern.EngineTiKVOnly,
+		pattern.NewPattern(pattern.OperandIndexScan, pattern.EngineTiKVOnly),
 	)
 	return rule
 }
@@ -259,7 +261,7 @@ func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		copy(conditions, sel.Conditions)
 		copy(conditions[len(sel.Conditions):], is.AccessConds)
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(is.SCtx(), conditions, is.IdxCols, is.IdxColLens, is.SCtx().GetSessionVars().RangeMaxSize)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(is.SCtx().GetRangerCtx(), conditions, is.IdxCols, is.IdxColLens, is.SCtx().GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return nil, false, false, err
 	}
@@ -268,7 +270,7 @@ func (*PushSelDownIndexScan) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 		// or the pushed down conditions are the same with before.
 		sameConds := true
 		for i := range res.AccessConds {
-			if !res.AccessConds[i].Equal(is.SCtx().GetExprCtx(), is.AccessConds[i]) {
+			if !res.AccessConds[i].Equal(is.SCtx().GetExprCtx().GetEvalCtx(), is.AccessConds[i]) {
 				sameConds = false
 				break
 			}
@@ -311,9 +313,9 @@ type PushSelDownTiKVSingleGather struct {
 // NewRulePushSelDownTiKVSingleGather creates a new Transformation PushSelDownTiKVSingleGather.
 // The pattern of this rule is `Selection -> TiKVSingleGather -> Any`.
 func NewRulePushSelDownTiKVSingleGather() Transformation {
-	any1 := memo.NewPattern(memo.OperandAny, memo.EngineTiKVOrTiFlash)
-	tg := memo.BuildPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly, any1)
-	p := memo.BuildPattern(memo.OperandSelection, memo.EngineTiDBOnly, tg)
+	any1 := pattern.NewPattern(pattern.OperandAny, pattern.EngineTiKVOrTiFlash)
+	tg := pattern.BuildPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly, any1)
+	p := pattern.BuildPattern(pattern.OperandSelection, pattern.EngineTiDBOnly, tg)
 
 	rule := &PushSelDownTiKVSingleGather{}
 	rule.pattern = p
@@ -331,7 +333,7 @@ func (*PushSelDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []
 	childGroup := old.Children[0].Children[0].Group
 	var pushed, remained []expression.Expression
 	sctx := sg.SCtx()
-	pushed, remained = expression.PushDownExprs(sctx.GetExprCtx(), sel.Conditions, sctx.GetClient(), kv.TiKV)
+	pushed, remained = expression.PushDownExprs(plannercore.GetPushDownCtx(sctx), sel.Conditions, kv.TiKV)
 	if len(pushed) == 0 {
 		return nil, false, false, nil
 	}
@@ -367,7 +369,7 @@ type EnumeratePaths struct {
 // The pattern of this rule is: `DataSource`.
 func NewRuleEnumeratePaths() Transformation {
 	rule := &EnumeratePaths{}
-	rule.pattern = memo.NewPattern(memo.OperandDataSource, memo.EngineTiDBOnly)
+	rule.pattern = pattern.NewPattern(pattern.OperandDataSource, pattern.EngineTiDBOnly)
 	return rule
 }
 
@@ -377,7 +379,7 @@ func (*EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupEx
 	gathers := ds.Convert2Gathers()
 	for _, gather := range gathers {
 		expr := memo.Convert2GroupExpr(gather)
-		expr.Children[0].SetEngineType(memo.EngineTiKV)
+		expr.Children[0].SetEngineType(pattern.EngineTiKV)
 		newExprs = append(newExprs, expr)
 	}
 	return newExprs, true, false, nil
@@ -393,10 +395,10 @@ type PushAggDownGather struct {
 // The pattern of this rule is: `Aggregation -> TiKVSingleGather`.
 func NewRulePushAggDownGather() Transformation {
 	rule := &PushAggDownGather{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandAggregation,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandAggregation,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -420,7 +422,7 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 		}
 	}
 	childEngine := expr.Children[0].GetExpr().Children[0].EngineType
-	if childEngine != memo.EngineTiKV {
+	if childEngine != pattern.EngineTiKV {
 		// TODO: Remove this check when we have implemented TiFlashAggregation.
 		return false
 	}
@@ -491,10 +493,10 @@ type PushSelDownSort struct {
 // The pattern of this rule is: `Selection -> Sort`.
 func NewRulePushSelDownSort() Transformation {
 	rule := &PushSelDownSort{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandSelection,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandSort, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandSelection,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandSort, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -524,10 +526,10 @@ type PushSelDownProjection struct {
 // The pattern of this rule is: `Selection -> Projection`.
 func NewRulePushSelDownProjection() Transformation {
 	rule := &PushSelDownProjection{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandSelection,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandSelection,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandProjection, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -586,10 +588,10 @@ type PushSelDownAggregation struct {
 // The pattern of this rule is `Selection -> Aggregation`.
 func NewRulePushSelDownAggregation() Transformation {
 	rule := &PushSelDownAggregation{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandSelection,
-		memo.EngineAll,
-		memo.NewPattern(memo.OperandAggregation, memo.EngineAll),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandSelection,
+		pattern.EngineAll,
+		pattern.NewPattern(pattern.OperandAggregation, pattern.EngineAll),
 	)
 	return rule
 }
@@ -664,10 +666,10 @@ type PushSelDownWindow struct {
 // The pattern of this rule is `Selection -> Window`.
 func NewRulePushSelDownWindow() Transformation {
 	rule := &PushSelDownWindow{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandSelection,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandWindow, memo.EngineAll),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandSelection,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandWindow, pattern.EngineAll),
 	)
 	return rule
 }
@@ -727,10 +729,10 @@ type TransformLimitToTopN struct {
 // The pattern of this rule is `Limit -> Sort`.
 func NewRuleTransformLimitToTopN() Transformation {
 	rule := &TransformLimitToTopN{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandLimit,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandSort, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandLimit,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandSort, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -760,10 +762,10 @@ type PushLimitDownProjection struct {
 // The pattern of this rule is `Limit->Projection->X` to `Projection->Limit->X`.
 func NewRulePushLimitDownProjection() Transformation {
 	rule := &PushLimitDownProjection{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandLimit,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandLimit,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandProjection, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -803,10 +805,10 @@ type PushLimitDownUnionAll struct {
 // The pattern of this rule is `Limit->UnionAll->X`.
 func NewRulePushLimitDownUnionAll() Transformation {
 	rule := &PushLimitDownUnionAll{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandLimit,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandUnionAll, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandLimit,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandUnionAll, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -857,7 +859,7 @@ func (*pushDownJoin) predicatePushDown(
 	leftCond []expression.Expression,
 	rightCond []expression.Expression,
 	remainCond []expression.Expression,
-	dual plannercore.LogicalPlan,
+	dual base.LogicalPlan,
 ) {
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond []expression.Expression
@@ -955,10 +957,10 @@ type PushSelDownJoin struct {
 // The pattern of this rule is `Selection -> Join`.
 func NewRulePushSelDownJoin() Transformation {
 	rule := &PushSelDownJoin{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandSelection,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandSelection,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandJoin, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -1025,7 +1027,7 @@ type TransformJoinCondToSel struct {
 // The pattern of this rule is: `Join`.
 func NewRuleTransformJoinCondToSel() Transformation {
 	rule := &TransformJoinCondToSel{}
-	rule.pattern = memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly)
+	rule.pattern = pattern.NewPattern(pattern.OperandJoin, pattern.EngineTiDBOnly)
 	return rule
 }
 
@@ -1069,10 +1071,10 @@ type PushSelDownUnionAll struct {
 // The pattern of this rule is `Selection -> UnionAll`.
 func NewRulePushSelDownUnionAll() Transformation {
 	rule := &PushSelDownUnionAll{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandSelection,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandUnionAll, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandSelection,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandUnionAll, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -1104,10 +1106,10 @@ type EliminateProjection struct {
 // The pattern of this rule is `Projection -> Any`.
 func NewRuleEliminateProjection() Transformation {
 	rule := &EliminateProjection{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandProjection,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandProjection,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandAny, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -1147,10 +1149,10 @@ type MergeAdjacentProjection struct {
 // The pattern of this rule is `Projection -> Projection`.
 func NewRuleMergeAdjacentProjection() Transformation {
 	rule := &MergeAdjacentProjection{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandProjection,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandProjection,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandProjection, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -1195,10 +1197,10 @@ type PushTopNDownOuterJoin struct {
 // The pattern of this rule is: `TopN -> Join`.
 func NewRulePushTopNDownOuterJoin() Transformation {
 	rule := &PushTopNDownOuterJoin{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandTopN,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandTopN,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandJoin, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -1278,10 +1280,10 @@ type PushTopNDownProjection struct {
 // The pattern of this rule is `TopN->Projection->X` to `Projection->TopN->X`.
 func NewRulePushTopNDownProjection() Transformation {
 	rule := &PushTopNDownProjection{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandTopN,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandTopN,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandProjection, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -1342,10 +1344,10 @@ type PushTopNDownUnionAll struct {
 // The pattern of this rule is `TopN->UnionAll->X`.
 func NewRulePushTopNDownUnionAll() Transformation {
 	rule := &PushTopNDownUnionAll{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandTopN,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandUnionAll, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandTopN,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandUnionAll, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -1392,10 +1394,10 @@ type PushTopNDownTiKVSingleGather struct {
 // The pattern of this rule is `TopN -> TiKVSingleGather`.
 func NewRulePushTopNDownTiKVSingleGather() Transformation {
 	rule := &PushTopNDownTiKVSingleGather{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandTopN,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandTopN,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -1441,10 +1443,10 @@ type MergeAdjacentTopN struct {
 // The pattern of this rule is `TopN->TopN->X`.
 func NewRuleMergeAdjacentTopN() Transformation {
 	rule := &MergeAdjacentTopN{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandTopN,
-		memo.EngineAll,
-		memo.NewPattern(memo.OperandTopN, memo.EngineAll),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandTopN,
+		pattern.EngineAll,
+		pattern.NewPattern(pattern.OperandTopN, pattern.EngineAll),
 	)
 	return rule
 }
@@ -1459,7 +1461,7 @@ func (*MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
 		return false
 	}
 	for i := 0; i < len(topN.ByItems); i++ {
-		if !topN.ByItems[i].Equal(topN.SCtx().GetExprCtx(), child.ByItems[i]) {
+		if !topN.ByItems[i].Equal(topN.SCtx().GetExprCtx().GetEvalCtx(), child.ByItems[i]) {
 			return false
 		}
 	}
@@ -1503,10 +1505,10 @@ type MergeAggregationProjection struct {
 // The pattern of this rule is: `Aggregation -> Projection`.
 func NewRuleMergeAggregationProjection() Transformation {
 	rule := &MergeAggregationProjection{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandAggregation,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandProjection, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandAggregation,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandProjection, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -1559,10 +1561,10 @@ type EliminateSingleMaxMin struct {
 // The pattern of this rule is `max/min->X`.
 func NewRuleEliminateSingleMaxMin() Transformation {
 	rule := &EliminateSingleMaxMin{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandAggregation,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandAggregation,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandAny, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -1660,10 +1662,10 @@ type MergeAdjacentSelection struct {
 // The pattern of this rule is `Selection->Selection->X`.
 func NewRuleMergeAdjacentSelection() Transformation {
 	rule := &MergeAdjacentSelection{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandSelection,
-		memo.EngineAll,
-		memo.NewPattern(memo.OperandSelection, memo.EngineAll),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandSelection,
+		pattern.EngineAll,
+		pattern.NewPattern(pattern.OperandSelection, pattern.EngineAll),
 	)
 	return rule
 }
@@ -1693,10 +1695,10 @@ type MergeAdjacentLimit struct {
 // The pattern of this rule is `Limit->Limit->X`.
 func NewRuleMergeAdjacentLimit() Transformation {
 	rule := &MergeAdjacentLimit{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandLimit,
-		memo.EngineAll,
-		memo.NewPattern(memo.OperandLimit, memo.EngineAll),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandLimit,
+		pattern.EngineAll,
+		pattern.NewPattern(pattern.OperandLimit, pattern.EngineAll),
 	)
 	return rule
 }
@@ -1735,9 +1737,9 @@ type TransformLimitToTableDual struct {
 // The pattern of this rule is `Limit->X`.
 func NewRuleTransformLimitToTableDual() Transformation {
 	rule := &TransformLimitToTableDual{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandLimit,
-		memo.EngineAll,
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandLimit,
+		pattern.EngineAll,
 	)
 	return rule
 }
@@ -1767,10 +1769,10 @@ type PushLimitDownOuterJoin struct {
 // The pattern of this rule is `Limit -> Join`.
 func NewRulePushLimitDownOuterJoin() Transformation {
 	rule := &PushLimitDownOuterJoin{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandLimit,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandLimit,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandJoin, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -1828,10 +1830,10 @@ type PushLimitDownTiKVSingleGather struct {
 // The pattern of this rule is `Limit -> TiKVSingleGather`.
 func NewRulePushLimitDownTiKVSingleGather() Transformation {
 	rule := &PushLimitDownTiKVSingleGather{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandLimit,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandTiKVSingleGather, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandLimit,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -1923,10 +1925,10 @@ type EliminateOuterJoinBelowAggregation struct {
 // The pattern of this rule is `Aggregation->Join->X`.
 func NewRuleEliminateOuterJoinBelowAggregation() Transformation {
 	rule := &EliminateOuterJoinBelowAggregation{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandAggregation,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandAggregation,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandJoin, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -1985,10 +1987,10 @@ type EliminateOuterJoinBelowProjection struct {
 // The pattern of this rule is `Projection->Join->X`.
 func NewRuleEliminateOuterJoinBelowProjection() Transformation {
 	rule := &EliminateOuterJoinBelowProjection{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandProjection,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandJoin, memo.EngineTiDBOnly),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandProjection,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandJoin, pattern.EngineTiDBOnly),
 	)
 	return rule
 }
@@ -2039,9 +2041,9 @@ type TransformAggregateCaseToSelection struct {
 // The pattern of this rule is `Agg->X`.
 func NewRuleTransformAggregateCaseToSelection() Transformation {
 	rule := &TransformAggregateCaseToSelection{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandAggregation,
-		memo.EngineTiDBOnly,
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandAggregation,
+		pattern.EngineTiDBOnly,
 	)
 	return rule
 }
@@ -2088,9 +2090,9 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 	caseArgsNum := len(caseArgs)
 
 	// `case when a>0 then null else a end` should be converted to `case when !(a>0) then a else null end`.
-	var nullFlip = caseArgsNum == 3 && caseArgs[1].Equal(ctx.GetExprCtx(), expression.NewNull()) && !caseArgs[2].Equal(ctx.GetExprCtx(), expression.NewNull())
+	var nullFlip = caseArgsNum == 3 && caseArgs[1].Equal(ctx.GetExprCtx().GetEvalCtx(), expression.NewNull()) && !caseArgs[2].Equal(ctx.GetExprCtx().GetEvalCtx(), expression.NewNull())
 	// `case when a>0 then 0 else a end` should be converted to `case when !(a>0) then a else 0 end`.
-	var zeroFlip = !nullFlip && caseArgsNum == 3 && caseArgs[1].Equal(ctx.GetExprCtx(), expression.NewZero())
+	var zeroFlip = !nullFlip && caseArgsNum == 3 && caseArgs[1].Equal(ctx.GetExprCtx().GetEvalCtx(), expression.NewZero())
 
 	var outputIdx int
 	if nullFlip || zeroFlip {
@@ -2107,7 +2109,7 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 		// =>
 		//   newAggFuncDesc: COUNT(DISTINCT y), newCondition: x = 'foo'
 
-		if aggFuncName == ast.AggFuncCount && r.isOnlyOneNotNull(ctx.GetExprCtx(), caseArgs, caseArgsNum, outputIdx) {
+		if aggFuncName == ast.AggFuncCount && r.isOnlyOneNotNull(ctx.GetExprCtx().GetEvalCtx(), caseArgs, caseArgsNum, outputIdx) {
 			newAggFuncDesc := aggFuncDesc.Clone()
 			newAggFuncDesc.Args = []expression.Expression{caseArgs[outputIdx]}
 			return true, newConditions, []*aggregation.AggFuncDesc{newAggFuncDesc}
@@ -2123,8 +2125,8 @@ func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAg
 	//   => newAggFuncDesc: SUM(cnt), newCondition: x = 'foo'
 
 	switch {
-	case r.allowsSelection(aggFuncName) && (caseArgsNum == 2 || caseArgs[3-outputIdx].Equal(ctx.GetExprCtx(), expression.NewNull())), // Case A1
-		aggFuncName == ast.AggFuncSum && caseArgsNum == 3 && caseArgs[3-outputIdx].Equal(ctx.GetExprCtx(), expression.NewZero()): // Case A2
+	case r.allowsSelection(aggFuncName) && (caseArgsNum == 2 || caseArgs[3-outputIdx].Equal(ctx.GetExprCtx().GetEvalCtx(), expression.NewNull())), // Case A1
+		aggFuncName == ast.AggFuncSum && caseArgsNum == 3 && caseArgs[3-outputIdx].Equal(ctx.GetExprCtx().GetEvalCtx(), expression.NewZero()): // Case A2
 		newAggFuncDesc := aggFuncDesc.Clone()
 		newAggFuncDesc.Args = []expression.Expression{caseArgs[outputIdx]}
 		return true, newConditions, []*aggregation.AggFuncDesc{newAggFuncDesc}
@@ -2159,9 +2161,9 @@ type TransformAggToProj struct {
 // The pattern of this rule is `Agg`.
 func NewRuleTransformAggToProj() Transformation {
 	rule := &TransformAggToProj{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandAggregation,
-		memo.EngineTiDBOnly,
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandAggregation,
+		pattern.EngineTiDBOnly,
 	)
 	return rule
 }
@@ -2222,9 +2224,9 @@ type InjectProjectionBelowTopN struct {
 // The pattern of this rule is: a single TopN
 func NewRuleInjectProjectionBelowTopN() Transformation {
 	rule := &InjectProjectionBelowTopN{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandTopN,
-		memo.EngineTiDBOnly,
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandTopN,
+		pattern.EngineTiDBOnly,
 	)
 	return rule
 }
@@ -2317,9 +2319,9 @@ type InjectProjectionBelowAgg struct {
 // The pattern of this rule is: a single Aggregation.
 func NewRuleInjectProjectionBelowAgg() Transformation {
 	rule := &InjectProjectionBelowAgg{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandAggregation,
-		memo.EngineTiDBOnly,
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandAggregation,
+		pattern.EngineTiDBOnly,
 	)
 	return rule
 }
@@ -2430,7 +2432,7 @@ type TransformApplyToJoin struct {
 // The pattern of this rule is: `Apply -> (X, Y)`.
 func NewRuleTransformApplyToJoin() Transformation {
 	rule := &TransformApplyToJoin{}
-	rule.pattern = memo.NewPattern(memo.OperandApply, memo.EngineTiDBOnly)
+	rule.pattern = pattern.NewPattern(pattern.OperandApply, pattern.EngineTiDBOnly)
 	return rule
 }
 
@@ -2481,11 +2483,11 @@ type PullSelectionUpApply struct {
 // The pattern of this rule is: `Apply -> (Any<outer>, Selection<inner>)`.
 func NewRulePullSelectionUpApply() Transformation {
 	rule := &PullSelectionUpApply{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandApply,
-		memo.EngineTiDBOnly,
-		memo.NewPattern(memo.OperandAny, memo.EngineTiDBOnly),       // outer child
-		memo.NewPattern(memo.OperandSelection, memo.EngineTiDBOnly), // inner child
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandApply,
+		pattern.EngineTiDBOnly,
+		pattern.NewPattern(pattern.OperandAny, pattern.EngineTiDBOnly),       // outer child
+		pattern.NewPattern(pattern.OperandSelection, pattern.EngineTiDBOnly), // inner child
 	)
 	return rule
 }
@@ -2524,10 +2526,10 @@ type MergeAdjacentWindow struct {
 // The pattern of this rule is `Window -> Window`.
 func NewRuleMergeAdjacentWindow() Transformation {
 	rule := &MergeAdjacentWindow{}
-	rule.pattern = memo.BuildPattern(
-		memo.OperandWindow,
-		memo.EngineAll,
-		memo.NewPattern(memo.OperandWindow, memo.EngineAll),
+	rule.pattern = pattern.BuildPattern(
+		pattern.OperandWindow,
+		pattern.EngineAll,
+		pattern.NewPattern(pattern.OperandWindow, pattern.EngineAll),
 	)
 	return rule
 }
@@ -2542,8 +2544,8 @@ func (*MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
 
 	// Whether Partition, OrderBy and Frame parts are the same.
 	if !(curWinPlan.EqualPartitionBy(nextWinPlan) &&
-		curWinPlan.EqualOrderBy(ctx.GetExprCtx(), nextWinPlan) &&
-		curWinPlan.EqualFrame(ctx.GetExprCtx(), nextWinPlan)) {
+		curWinPlan.EqualOrderBy(ctx.GetExprCtx().GetEvalCtx(), nextWinPlan) &&
+		curWinPlan.EqualFrame(ctx.GetExprCtx().GetEvalCtx(), nextWinPlan)) {
 		return false
 	}
 

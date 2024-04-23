@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "base",
+    srcs = [
+        "misc_base.go",
+        "plan_base.go",
+        "task_base.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/base",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/kv",
+        "//pkg/planner/context",
+        "//pkg/planner/funcdep",
+        "//pkg/planner/property",
+        "//pkg/planner/util/coreusage",
+        "//pkg/types",
+        "//pkg/util/execdetails",
+        "//pkg/util/tracing",
+        "@com_github_pingcap_tipb//go-tipb",
+    ],
+)

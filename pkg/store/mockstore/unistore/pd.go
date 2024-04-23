@@ -113,8 +113,10 @@ func (c *pdClient) GetServiceDiscovery() pd.ServiceDiscovery {
 	return NewMockPDServiceDiscovery(c.addrs)
 }
 
-var _ pd.ServiceDiscovery = (*mockPDServiceDiscovery)(nil)
-var _ pd.ServiceClient = (*mockPDServiceClient)(nil)
+var (
+	_ pd.ServiceDiscovery = (*mockPDServiceDiscovery)(nil)
+	_ pd.ServiceClient    = (*mockPDServiceClient)(nil)
+)
 
 type mockPDServiceClient struct {
 	addr string
@@ -131,7 +133,7 @@ func (c *mockPDServiceClient) GetAddress() string {
 	return c.addr
 }
 
-func (c *mockPDServiceClient) GetHTTPAddress() string {
+func (c *mockPDServiceClient) GetURL() string {
 	return c.addr
 }
 
@@ -194,9 +196,9 @@ func (c *mockPDServiceDiscovery) GetServingEndpointClientConn() *grpc.ClientConn
 
 func (c *mockPDServiceDiscovery) GetClientConns() *sync.Map { return nil }
 
-func (c *mockPDServiceDiscovery) GetServingAddr() string { return "" }
+func (c *mockPDServiceDiscovery) GetServingURL() string { return "" }
 
-func (c *mockPDServiceDiscovery) GetBackupAddrs() []string { return nil }
+func (c *mockPDServiceDiscovery) GetBackupURLs() []string { return nil }
 
 func (c *mockPDServiceDiscovery) GetServiceClient() pd.ServiceClient {
 	if len(c.clis) > 0 {
@@ -221,6 +223,10 @@ func (c *mockPDServiceDiscovery) AddServingAddrSwitchedCallback(callbacks ...fun
 
 func (c *mockPDServiceDiscovery) AddServiceAddrsSwitchedCallback(callbacks ...func()) {}
 
+func (c *mockPDServiceDiscovery) AddServingURLSwitchedCallback(callbacks ...func()) {}
+
+func (c *mockPDServiceDiscovery) AddServiceURLsSwitchedCallback(callbacks ...func()) {}
+
 type mockTSFuture struct {
 	pdc  *pdClient
 	ctx  context.Context
@@ -235,7 +241,7 @@ func (m *mockTSFuture) Wait() (int64, int64, error) {
 	return m.pdc.GetTS(m.ctx)
 }
 
-func (c *pdClient) GetLeaderAddr() string { return "mockpd" }
+func (c *pdClient) GetLeaderURL() string { return "mockpd" }
 
 func (c *pdClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
 	c.gcSafePointMu.Lock()

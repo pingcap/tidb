@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"go.uber.org/zap"
 )
@@ -492,7 +491,6 @@ type DelRangeExecWrapper interface {
 // It consumes the delete ranges by directly insert rows into mysql.gc_delete_range.
 type sessionDelRangeExecWrapper struct {
 	sctx sessionctx.Context
-	s    sqlexec.SQLExecutor
 	ts   uint64
 
 	// temporary values
@@ -501,9 +499,7 @@ type sessionDelRangeExecWrapper struct {
 
 func newDelRangeExecWrapper(sctx sessionctx.Context) DelRangeExecWrapper {
 	return &sessionDelRangeExecWrapper{
-		sctx: sctx,
-		s:    sctx.(sqlexec.SQLExecutor),
-
+		sctx:       sctx,
 		paramsList: nil,
 	}
 }
@@ -531,10 +527,10 @@ func (sdr *sessionDelRangeExecWrapper) AppendParamsList(jobID, elemID int64, sta
 
 func (sdr *sessionDelRangeExecWrapper) ConsumeDeleteRange(ctx context.Context, sql string) error {
 	// set session disk full opt
-	sdr.s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	_, err := sdr.s.ExecuteInternal(ctx, sql, sdr.paramsList...)
+	sdr.sctx.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	_, err := sdr.sctx.GetSQLExecutor().ExecuteInternal(ctx, sql, sdr.paramsList...)
 	// clear session disk full opt
-	sdr.s.ClearDiskFullOpt()
+	sdr.sctx.GetSessionVars().ClearDiskFullOpt()
 	sdr.paramsList = nil
 	return errors.Trace(err)
 }

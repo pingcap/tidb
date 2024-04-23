@@ -4,7 +4,6 @@ package utils
 
 import (
 	"context"
-	"database/sql"
 	"strconv"
 	"strings"
 
@@ -24,30 +23,8 @@ const (
 )
 
 var (
-	// check sql.DB and sql.Conn implement QueryExecutor and DBExecutor
-	_ DBExecutor = &sql.DB{}
-	_ DBExecutor = &sql.Conn{}
-
 	logBackupTaskCount = atomic.NewInt32(0)
 )
-
-// QueryExecutor is a interface for exec query
-type QueryExecutor interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
-
-// StmtExecutor define both query and exec methods
-type StmtExecutor interface {
-	QueryExecutor
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
-// DBExecutor is a interface for statements and txn
-type DBExecutor interface {
-	StmtExecutor
-	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
-}
 
 // CheckLogBackupEnabled checks if LogBackup is enabled in cluster.
 // this mainly used in three places.
@@ -56,12 +33,7 @@ type DBExecutor interface {
 // 3. Telemetry of log backup feature usage (every 6 hours).
 // NOTE: this result shouldn't be cached by caller. because it may change every time in one cluster.
 func CheckLogBackupEnabled(ctx sessionctx.Context) bool {
-	executor, ok := ctx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		// shouldn't happen
-		log.Error("unable to translate executor from sessionctx", zap.String("category", "backup"))
-		return false
-	}
+	executor := ctx.GetRestrictedSQLExecutor()
 	enabled, err := IsLogBackupEnabled(executor)
 	if err != nil {
 		// if it failed by any reason. we can simply return true this time.

@@ -367,7 +367,7 @@ func (t *TableCommon) WritableConstraint() []*table.Constraint {
 func (t *TableCommon) CheckRowConstraint(ctx table.MutateContext, rowToCheck []types.Datum) error {
 	ectx := ctx.GetExprCtx()
 	for _, constraint := range t.WritableConstraint() {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ectx, chunk.MutRowFromDatums(rowToCheck).ToRow())
+		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ectx.GetEvalCtx(), chunk.MutRowFromDatums(rowToCheck).ToRow())
 		if err != nil {
 			return err
 		}
@@ -475,7 +475,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			if col.ChangeStateInfo != nil {
 				// TODO: Check overflow or ignoreTruncate.
-				value, err = table.CastColumnValue(sctx.GetSessionVars(), oldData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+				value, err = table.CastColumnValue(sctx.GetExprCtx(), oldData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 				if err != nil {
 					logutil.BgLogger().Info("update record cast value failed", zap.Any("col", col), zap.Uint64("txnStartTS", txn.StartTS()),
 						zap.String("handle", h.String()), zap.Any("val", oldData[col.DependencyColumnOffset]), zap.Error(err))
@@ -487,7 +487,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			if needChecksum {
 				if col.ChangeStateInfo != nil {
 					// TODO: Check overflow or ignoreTruncate.
-					v, err := table.CastColumnValue(sctx.GetSessionVars(), newData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+					v, err := table.CastColumnValue(sctx.GetExprCtx(), newData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 					if err != nil {
 						return err
 					}
@@ -509,7 +509,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 			value = oldData[col.Offset]
 			if col.ChangeStateInfo != nil {
 				// TODO: Check overflow or ignoreTruncate.
-				value, err = table.CastColumnValue(sctx.GetSessionVars(), newData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+				value, err = table.CastColumnValue(sctx.GetExprCtx(), newData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 				if err != nil {
 					return err
 				}
@@ -629,7 +629,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx table.MutateContext
 		colSize[col.ID] = int64(newLen - oldLen)
 	}
 	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 0, 1, colSize)
-	return memBuffer.MayFlush()
+	return nil
 }
 
 func (t *TableCommon) rebuildIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
@@ -926,7 +926,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 			if needChecksum {
 				if col.ChangeStateInfo != nil {
 					// TODO: Check overflow or ignoreTruncate.
-					v, err := table.CastColumnValue(sctx.GetSessionVars(), r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+					v, err := table.CastColumnValue(sctx.GetExprCtx(), r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 					if err != nil {
 						return nil, err
 					}
@@ -945,7 +945,7 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		// for the new insert statement, we should use the casted value of relative column to insert.
 		if col.ChangeStateInfo != nil && col.State != model.StatePublic {
 			// TODO: Check overflow or ignoreTruncate.
-			value, err = table.CastColumnValue(sctx.GetSessionVars(), r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+			value, err = table.CastColumnValue(sctx.GetExprCtx(), r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 			if err != nil {
 				return nil, err
 			}
@@ -1016,9 +1016,9 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		if t.meta.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
 			_, err = txn.Get(ctx, key)
-		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
+		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() || txn.IsPipelined() {
 			var v []byte
-			v, err = txn.GetMemBuffer().Get(ctx, key)
+			v, err = txn.GetMemBuffer().GetLocal(ctx, key)
 			if err != nil {
 				setPresume = true
 			}
@@ -1123,9 +1123,6 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 		colSize[col.ID] = int64(size) - 1
 	}
 	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSize)
-	if err = memBuffer.MayFlush(); err != nil {
-		return nil, err
-	}
 	return recordID, nil
 }
 
@@ -1345,7 +1342,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 		// The changing column datum derived from related column should be casted here.
 		// Otherwise, the existed changing indexes will not be deleted.
 		relatedColDatum := r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset]
-		value, err := table.CastColumnValue(ctx.GetSessionVars(), relatedColDatum, t.Columns[len(r)].ColumnInfo, false, false)
+		value, err := table.CastColumnValue(ctx.GetExprCtx(), relatedColDatum, t.Columns[len(r)].ColumnInfo, false, false)
 		if err != nil {
 			logutil.BgLogger().Info("remove record cast value failed", zap.Any("col", t.Columns[len(r)]),
 				zap.String("handle", h.String()), zap.Any("val", relatedColDatum), zap.Error(err))
@@ -1403,10 +1400,7 @@ func (t *TableCommon) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []typ
 		colSize[col.ID] = -int64(size - 1)
 	}
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.physicalTableID, -1, 1, colSize)
-	if err != nil {
-		return err
-	}
-	return memBuffer.MayFlush()
+	return err
 }
 
 func (t *TableCommon) addInsertBinlog(ctx table.MutateContext, h kv.Handle, row []types.Datum, colIDs []int64) error {
@@ -2318,14 +2312,15 @@ func SetPBColumnsDefaultValue(ctx expression.BuildContext, pbColumns []*tipb.Col
 			continue
 		}
 
-		sessVars := ctx.GetSessionVars()
+		evalCtx := ctx.GetEvalCtx()
 		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(ctx, c)
 		if err != nil {
 			return err
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(sessVars.StmtCtx.TimeZone(), nil, d)
-		err = sessVars.StmtCtx.HandleError(err)
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(evalCtx.Location(), nil, d)
+		ec := evalCtx.ErrCtx()
+		err = ec.HandleError(err)
 		if err != nil {
 			return err
 		}
@@ -2352,7 +2347,7 @@ type TemporaryTable struct {
 func TempTableFromMeta(tblInfo *model.TableInfo) tableutil.TempTable {
 	return &TemporaryTable{
 		modified:        false,
-		stats:           statistics.PseudoTable(tblInfo, false),
+		stats:           statistics.PseudoTable(tblInfo, false, false),
 		autoIDAllocator: autoid.NewAllocatorFromTempTblInfo(tblInfo),
 		meta:            tblInfo,
 	}

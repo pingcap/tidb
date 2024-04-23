@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -70,7 +71,7 @@ func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expre
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}
-	statsTable := statistics.PseudoTable(p.TableInfo, false)
+	statsTable := statistics.PseudoTable(p.TableInfo, false, false)
 	stats := &property.StatsInfo{
 		RowCount:     float64(statsTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, len(p.TableInfo.Columns)),
@@ -116,21 +117,22 @@ func (p *LogicalShowDDLJobs) DeriveStats(_ []*property.StatsInfo, selfSchema *ex
 }
 
 // RecursiveDeriveStats4Test is a exporter just for test.
-func RecursiveDeriveStats4Test(p LogicalPlan) (*property.StatsInfo, error) {
-	return p.recursiveDeriveStats(nil)
+func RecursiveDeriveStats4Test(p base.LogicalPlan) (*property.StatsInfo, error) {
+	return p.RecursiveDeriveStats(nil)
 }
 
 // GetStats4Test is a exporter just for test.
-func GetStats4Test(p LogicalPlan) *property.StatsInfo {
+func GetStats4Test(p base.LogicalPlan) *property.StatsInfo {
 	return p.StatsInfo()
 }
 
-func (p *baseLogicalPlan) recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+// RecursiveDeriveStats implements LogicalPlan interface.
+func (p *baseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error) {
 	childStats := make([]*property.StatsInfo, len(p.children))
 	childSchema := make([]*expression.Schema, len(p.children))
 	cumColGroups := p.self.ExtractColGroups(colGroups)
 	for i, child := range p.children {
-		childProfile, err := child.recursiveDeriveStats(cumColGroups)
+		childProfile, err := child.RecursiveDeriveStats(cumColGroups)
 		if err != nil {
 			return nil, err
 		}
@@ -176,8 +178,8 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 	tbl := ds.tableStats.HistColl
 	ndvs := make([]property.GroupNDV, 0, len(colGroups))
 	for idxID, idx := range tbl.Indices {
-		colsLen := len(tbl.Idx2ColumnIDs[idxID])
-		// tbl.Idx2ColumnIDs may only contain the prefix of index columns.
+		colsLen := len(tbl.Idx2ColUniqueIDs[idxID])
+		// tbl.Idx2ColUniqueIDs may only contain the prefix of index columns.
 		// But it may exceeds the total index since the index would contain the handle column if it's not a unique index.
 		// We append the handle at fillIndexPath.
 		if colsLen < len(idx.Info.Columns) {
@@ -186,7 +188,7 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 			colsLen--
 		}
 		idxCols := make([]int64, colsLen)
-		copy(idxCols, tbl.Idx2ColumnIDs[idxID])
+		copy(idxCols, tbl.Idx2ColUniqueIDs[idxID])
 		slices.Sort(idxCols)
 		for _, g := range colGroups {
 			// We only want those exact matches.
@@ -220,7 +222,7 @@ func init() {
 }
 
 // getTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable that will be used to record used stats.
-func getTblInfoForUsedStatsByPhysicalID(sctx PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
+func getTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
 	is := domain.GetDomain(sctx).InfoSchema()
@@ -263,11 +265,12 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	statsRecord := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
 	name, tblInfo := getTblInfoForUsedStatsByPhysicalID(ds.SCtx(), ds.physicalTableID)
 	statsRecord.RecordUsedInfo(ds.physicalTableID, &stmtctx.UsedStatsInfoForTable{
-		Name:          name,
-		TblInfo:       tblInfo,
-		Version:       tableStats.StatsVersion,
-		RealtimeCount: tableStats.HistColl.RealtimeCount,
-		ModifyCount:   tableStats.HistColl.ModifyCount,
+		Name:            name,
+		TblInfo:         tblInfo,
+		Version:         tableStats.StatsVersion,
+		RealtimeCount:   tableStats.HistColl.RealtimeCount,
+		ModifyCount:     tableStats.HistColl.ModifyCount,
+		ColAndIdxStatus: ds.statisticTable.ColAndIdxExistenceMap,
 	})
 
 	for _, col := range ds.schema.Columns {
@@ -536,7 +539,7 @@ func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.S
 	// TODO: support clustered index.
 	if ts.HandleCols != nil {
 		// TODO: restrict mem usage of table ranges.
-		ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessConds, ts.SCtx(), ts.HandleCols.GetCol(0).RetType, 0)
+		ts.Ranges, _, _, err = ranger.BuildTableRange(ts.AccessConds, ts.SCtx().GetRangerCtx(), ts.HandleCols.GetCol(0).RetType, 0)
 	} else {
 		isUnsigned := false
 		if ts.Source.tableInfo.PKIsHandle {

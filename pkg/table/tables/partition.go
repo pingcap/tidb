@@ -649,7 +649,7 @@ func fixOldVersionPartitionInfo(sctx expression.BuildContext, str string) (int64
 	if err != nil {
 		return 0, false
 	}
-	ret, isNull, err := tmp.EvalInt(sctx, chunk.Row{})
+	ret, isNull, err := tmp.EvalInt(sctx.GetEvalCtx(), chunk.Row{})
 	if err != nil || isNull {
 		return 0, false
 	}
@@ -947,7 +947,7 @@ func (lp *ForListPruning) buildListPartitionValueMap(ctx expression.BuildContext
 			if err != nil {
 				return errors.Trace(err)
 			}
-			v, isNull, err := expr.EvalInt(ctx, chunk.Row{})
+			v, isNull, err := expr.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1088,12 +1088,12 @@ func (lp *ForListColumnPruning) genConstExprKey(ctx expression.BuildContext, exp
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	v, err := expr.Eval(ctx, chunk.Row{})
+	v, err := expr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	tc, ec := sc.TypeCtx(), sc.ErrCtx()
+	evalCtx := ctx.GetEvalCtx()
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
 	key, err := lp.genKey(tc, ec, v)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1293,11 +1293,11 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.BuildContext, tp
 		}
 	case model.PartitionTypeHash:
 		// Note that only LIST and RANGE supports REORGANIZE PARTITION
-		idx, err = t.locateHashPartition(ctx, partitionExpr, num, r)
+		idx, err = t.locateHashPartition(ctx.GetEvalCtx(), partitionExpr, num, r)
 	case model.PartitionTypeKey:
 		idx, err = partitionExpr.LocateKeyPartition(num, r)
 	case model.PartitionTypeList:
-		idx, err = partitionExpr.locateListPartition(ctx, r)
+		idx, err = partitionExpr.locateListPartition(ctx.GetEvalCtx(), r)
 	case model.PartitionTypeNone:
 		idx = 0
 	}
@@ -1354,7 +1354,7 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx expression.BuildContex
 	defer t.evalBufferPool.Put(evalBuffer)
 	idx := sort.Search(len(upperBounds), func(i int) bool {
 		evalBuffer.SetDatums(r...)
-		ret, isNull, err := upperBounds[i].EvalInt(ctx, evalBuffer.ToRow())
+		ret, isNull, err := upperBounds[i].EvalInt(ctx.GetEvalCtx(), evalBuffer.ToRow())
 		if err != nil {
 			lastError = err
 			return true // Does not matter, will propagate the last error anyway.
@@ -1375,7 +1375,7 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx expression.BuildContex
 		if t.meta.Partition.Expr != "" {
 			e, err := expression.ParseSimpleExpr(ctx, t.meta.Partition.Expr, expression.WithTableInfo("", t.meta))
 			if err == nil {
-				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+				val, _, err := e.EvalInt(ctx.GetEvalCtx(), chunk.MutRowFromDatums(r).ToRow())
 				if err == nil {
 					valueMsg = strconv.FormatInt(val, 10)
 				}
@@ -1414,7 +1414,7 @@ func (t *partitionedTable) locateRangePartition(ctx expression.BuildContext, par
 		evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 		defer t.evalBufferPool.Put(evalBuffer)
 		evalBuffer.SetDatums(r...)
-		val, isNull, err = partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
+		val, isNull, err = partitionExpr.Expr.EvalInt(ctx.GetEvalCtx(), evalBuffer.ToRow())
 		if err != nil {
 			return 0, err
 		}
@@ -1439,7 +1439,7 @@ func (t *partitionedTable) locateRangePartition(ctx expression.BuildContext, par
 		if t.meta.Partition.Expr != "" {
 			e, err := expression.ParseSimpleExpr(ctx, t.meta.Partition.Expr, expression.WithTableInfo("", t.meta))
 			if err == nil {
-				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+				val, _, err := e.EvalInt(ctx.GetEvalCtx(), chunk.MutRowFromDatums(r).ToRow())
 				if err == nil {
 					if unsigned {
 						valueMsg = fmt.Sprintf("%d", uint64(val))
@@ -1763,24 +1763,27 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 		}
 	}
 
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	memBuffer := txn.GetMemBuffer()
+	sh := memBuffer.Staging()
+	defer memBuffer.Cleanup(sh)
+
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
 	if from != to {
+		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		_, err = t.GetPartition(to).AddRecord(ctx, newData)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// UpdateRecord should be side effect free, but there're two steps here.
-		// What would happen if step1 succeed but step2 meets error? It's hard
-		// to rollback.
-		// So this special order is chosen: add record first, errors such as
-		// 'Key Already Exists' will generally happen during step1, errors are
-		// unlikely to happen in step2.
-		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
-		if err != nil {
-			logutil.BgLogger().Error("update partition record fails", zap.String("message", "new record inserted while old record is not removed"), zap.Error(err))
-			return errors.Trace(err)
-		}
+
 		newTo, newFrom := int64(0), int64(0)
 		if _, ok := t.reorganizePartitions[to]; ok {
 			newTo, err = t.locateReorgPartition(ectx, newData)
@@ -1798,24 +1801,28 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 		}
 		if newTo == newFrom && newTo != 0 {
 			// Update needs to be done in StateDeleteOnly as well
-			tbl := t.GetPartition(newTo)
-			return tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
-		}
-		if newTo != 0 && t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
-			tbl := t.GetPartition(newTo)
-			_, err = tbl.AddRecord(ctx, newData)
+			err = t.GetPartition(newTo).UpdateRecord(gctx, ctx, h, currData, newData, touched)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			memBuffer.Release(sh)
+			return nil
 		}
+
 		if newFrom != 0 {
-			tbl := t.GetPartition(newFrom)
-			err = tbl.RemoveRecord(ctx, h, currData)
+			err = t.GetPartition(newFrom).RemoveRecord(ctx, h, currData)
 			// TODO: Can this happen? When the data is not yet backfilled?
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
+		if newTo != 0 && t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
+			_, err = t.GetPartition(newTo).AddRecord(ctx, newData)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		memBuffer.Release(sh)
 		return nil
 	}
 	tbl := t.GetPartition(to)
@@ -1844,7 +1851,13 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 			if err != nil {
 				return errors.Trace(err)
 			}
+			memBuffer.Release(sh)
 			return nil
+		}
+		tbl = t.GetPartition(newFrom)
+		err = tbl.RemoveRecord(ctx, h, currData)
+		if err != nil {
+			return errors.Trace(err)
 		}
 		if t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
 			tbl = t.GetPartition(newTo)
@@ -1853,12 +1866,8 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx table.MutateContext,
 				return errors.Trace(err)
 			}
 		}
-		tbl = t.GetPartition(newFrom)
-		err = tbl.RemoveRecord(ctx, h, currData)
-		if err != nil {
-			return errors.Trace(err)
-		}
 	}
+	memBuffer.Release(sh)
 	return nil
 }
 

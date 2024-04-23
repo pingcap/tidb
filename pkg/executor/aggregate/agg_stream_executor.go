@@ -64,7 +64,11 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	}
 	// If panic in Open, the children executor should be closed because they are open.
 	defer closeBaseExecutor(&e.BaseExecutor)
+	return e.OpenSelf()
+}
 
+// OpenSelf just opens the StreamAggExec.
+func (e *StreamAggExec) OpenSelf() error {
 	e.childResult = exec.TryNewCacheChunk(e.Children(0))
 	e.executed = false
 	e.IsChildReturnEmpty = true
@@ -169,7 +173,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 	allMemDelta := int64(0)
 	exprCtx := e.Ctx().GetExprCtx()
 	for i, aggFunc := range e.AggFuncs {
-		memDelta, err := aggFunc.UpdatePartialResult(exprCtx, e.groupRows, e.partialResults[i])
+		memDelta, err := aggFunc.UpdatePartialResult(exprCtx.GetEvalCtx(), e.groupRows, e.partialResults[i])
 		if err != nil {
 			return err
 		}
@@ -217,7 +221,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	exprCtx := e.Ctx().GetExprCtx()
 	for i, aggFunc := range e.AggFuncs {
-		err := aggFunc.AppendFinalResult2Chunk(exprCtx, e.partialResults[i], chk)
+		err := aggFunc.AppendFinalResult2Chunk(exprCtx.GetEvalCtx(), e.partialResults[i], chk)
 		if err != nil {
 			return err
 		}

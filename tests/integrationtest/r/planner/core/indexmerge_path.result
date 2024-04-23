@@ -737,3 +737,251 @@ IndexMerge	11.00	root		type: union
 ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t1, index:PRIMARY(a, b)	range:[1 2,1 2], keep order:false, stats:pseudo
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:mvi(cast(`j` as unsigned array))	range:[1,1], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	11.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t, t1;
+create table t (a int, b varchar(30), c float, j json, pk int primary key,
+key mvi1(c, (cast(j->'$.a' as unsigned array)), b),
+key mvi2(a, (cast(j->'$.c' as unsigned array))),
+key mvi3((cast(j->'$.d' as unsigned array)), c),
+key idx(b, c)
+);
+explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
+(
+json_overlaps(j->'$.a', '[4,5,6]') or
+(2 member of (j->'$.a'))
+) and
+c = 10 and
+a = 20;
+id	estRows	task	access object	operator info
+Selection	0.01	root		or(json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY)), json_memberof(cast(2, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.a")))
+└─IndexMerge	0.40	root		type: union
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 4,10 4], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 5,10 5], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 6,10 6], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 2,10 2], keep order:false, stats:pseudo
+  └─Selection(Probe)	0.40	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 20), eq(planner__core__indexmerge_path.t.c, 10)
+    └─TableRowIDScan	0.40	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
+(
+c = 1 or
+c = 2 or
+c = 3
+) and
+json_overlaps(j->'$.a', '[4,5,6]');
+id	estRows	task	access object	operator info
+Selection	0.72	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY))
+└─IndexMerge	0.90	root		type: union
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 4,1 4], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 5,1 5], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 6,1 6], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[2 4,2 4], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[2 5,2 5], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[2 6,2 6], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 4,3 4], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 5,3 5], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 6,3 6], keep order:false, stats:pseudo
+  └─Selection(Probe)	0.90	cop[tikv]		or(eq(planner__core__indexmerge_path.t.c, 1), or(eq(planner__core__indexmerge_path.t.c, 2), eq(planner__core__indexmerge_path.t.c, 3)))
+    └─TableRowIDScan	0.90	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
+(
+c = 1 or
+c = 2 or
+c = 3
+) and
+(json_contains(j->'$.a', '[4,5,6]'));
+id	estRows	task	access object	operator info
+TableReader	24.00	root		data:Selection
+└─Selection	24.00	cop[tikv]		json_contains(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY)), or(eq(planner__core__indexmerge_path.t.c, 1), or(eq(planner__core__indexmerge_path.t.c, 2), eq(planner__core__indexmerge_path.t.c, 3)))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
+(
+c = 1 or
+c = 2 or
+c = 3
+) and
+json_contains(j->'$.a', '[2]');
+id	estRows	task	access object	operator info
+IndexMerge	0.30	root		type: union
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[1 2,1 2], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[2 2,2 2], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 2,3 2], keep order:false, stats:pseudo
+└─Selection(Probe)	0.30	cop[tikv]		json_contains(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[2]", json BINARY)), or(eq(planner__core__indexmerge_path.t.c, 1), or(eq(planner__core__indexmerge_path.t.c, 2), eq(planner__core__indexmerge_path.t.c, 3)))
+  └─TableRowIDScan	0.30	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
+(
+1 member of (j->'$.a') or
+2 member of (j->'$.a')
+) and
+c = 10 and
+a = 20;
+id	estRows	task	access object	operator info
+IndexMerge	0.20	root		type: union
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 1,10 1], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 2,10 2], keep order:false, stats:pseudo
+└─Selection(Probe)	0.20	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 20), eq(planner__core__indexmerge_path.t.c, 10), or(json_memberof(cast(1, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.a")), json_memberof(cast(2, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.a")))
+  └─TableRowIDScan	0.20	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format=brief select /*+ use_index_merge(t, mvi1) */ * from t where
+(
+1 member of (j->'$.a') or
+2 member of (j->'$.d')
+) and
+a = 20;
+id	estRows	task	access object	operator info
+TableReader	8.00	root		data:Selection
+└─Selection	8.00	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 20), or(json_memberof(cast(1, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.a")), json_memberof(cast(2, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.d")))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format=brief select /*+ use_index_merge(t, mvi1, mvi3) */ * from t where
+c = 5 and
+(
+1 member of (j->'$.a') or
+2 member of (j->'$.d')
+) and
+a = 20;
+id	estRows	task	access object	operator info
+IndexMerge	0.20	root		type: union
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[5 1,5 1], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi3(cast(json_extract(`j`, _utf8mb4'$.d') as unsigned array), c)	range:[2 5,2 5], keep order:false, stats:pseudo
+└─Selection(Probe)	0.20	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 20), eq(planner__core__indexmerge_path.t.c, 5), or(json_memberof(cast(1, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.a")), json_memberof(cast(2, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.d")))
+  └─TableRowIDScan	0.20	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, primary) */ * from t where
+(
+pk = 2 or
+json_overlaps(j->'$.a', '[4,5,6]') or
+json_contains(j->'$.c', '[3]')
+) and
+a = 1 and
+b = '2' and
+c = 3;
+id	estRows	task	access object	operator info
+Selection	0.00	root		or(eq(planner__core__indexmerge_path.t.pk, 2), or(json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY)), json_contains(json_extract(planner__core__indexmerge_path.t.j, "$.c"), cast("[3]", json BINARY))))
+└─IndexMerge	0.00	root		type: union
+  ├─TableRangeScan(Build)	1.00	cop[tikv]	table:t	range:[2,2], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 4 "2",3 4 "2"], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 5 "2",3 5 "2"], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 6 "2",3 6 "2"], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi2(a, cast(json_extract(`j`, _utf8mb4'$.c') as unsigned array))	range:[1 3,1 3], keep order:false, stats:pseudo
+  └─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), eq(planner__core__indexmerge_path.t.b, "2"), eq(planner__core__indexmerge_path.t.c, 3)
+    └─TableRowIDScan	1.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, primary) */ * from t where
+a = 1 and
+b = '2' and
+c = 3 and
+(
+pk = 2 or
+(3 member of (j->'$.a')) or
+(3 member of (j->'$.c'))
+);
+id	estRows	task	access object	operator info
+IndexMerge	0.00	root		type: union
+├─TableRangeScan(Build)	1.00	cop[tikv]	table:t	range:[2,2], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[3 3 "2",3 3 "2"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi2(a, cast(json_extract(`j`, _utf8mb4'$.c') as unsigned array))	range:[1 3,1 3], keep order:false, stats:pseudo
+└─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), eq(planner__core__indexmerge_path.t.b, "2"), eq(planner__core__indexmerge_path.t.c, 3), or(eq(planner__core__indexmerge_path.t.pk, 2), or(json_memberof(cast(3, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.a")), json_memberof(cast(3, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.c"))))
+  └─TableRowIDScan	1.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
+a = 1 and
+b = '2' and
+(
+c = 20 or
+(c = 10 and 3 member of (j->'$.a')) or
+3 member of (j->'$.c')
+);
+id	estRows	task	access object	operator info
+IndexMerge	0.20	root		type: union
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx(b, c)	range:["2" 20,"2" 20], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 3 "2",10 3 "2"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi2(a, cast(json_extract(`j`, _utf8mb4'$.c') as unsigned array))	range:[1 3,1 3], keep order:false, stats:pseudo
+└─Selection(Probe)	0.20	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), eq(planner__core__indexmerge_path.t.b, "2"), or(eq(planner__core__indexmerge_path.t.c, 20), or(and(eq(planner__core__indexmerge_path.t.c, 10), json_memberof(cast(3, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.a"))), json_memberof(cast(3, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.c"))))
+  └─TableRowIDScan	0.20	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
+a = 1 and
+(json_overlaps(j->'$.a', '[4,5,6]')) and
+(
+(b = '2' and c > 20) or
+c = 10 or
+3 member of (j->'$.c')
+);
+id	estRows	task	access object	operator info
+Selection	6.41	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY))
+└─IndexMerge	0.03	root		type: union
+  ├─IndexRangeScan(Build)	33.33	cop[tikv]	table:t, index:idx(b, c)	range:("2" 20,"2" +inf], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 4,10 4], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 5,10 5], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 6,10 6], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi2(a, cast(json_extract(`j`, _utf8mb4'$.c') as unsigned array))	range:[1 3,1 3], keep order:false, stats:pseudo
+  └─Selection(Probe)	0.03	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), or(and(eq(planner__core__indexmerge_path.t.b, "2"), gt(planner__core__indexmerge_path.t.c, 20)), or(eq(planner__core__indexmerge_path.t.c, 10), json_memberof(cast(3, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.c"))))
+    └─TableRowIDScan	33.73	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format=brief select /*+ use_index_merge(t, mvi1, mvi2, idx) */ * from t where
+a = 1 and
+(json_overlaps(j->'$.a', '[4,5,6]')) and
+(
+(b > '2' and c = 20) or
+(c = 10) or
+(3 member of (j->'$.c'))
+);
+id	estRows	task	access object	operator info
+Selection	0.56	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.a"), cast("[4,5,6]", json BINARY))
+└─IndexMerge	0.70	root		type: union
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[20 4,20 4], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[20 5,20 5], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[20 6,20 6], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 4,10 4], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 5,10 5], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(c, cast(json_extract(`j`, _utf8mb4'$.a') as unsigned array), b)	range:[10 6,10 6], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi2(a, cast(json_extract(`j`, _utf8mb4'$.c') as unsigned array))	range:[1 3,1 3], keep order:false, stats:pseudo
+  └─Selection(Probe)	0.70	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), or(and(gt(planner__core__indexmerge_path.t.b, "2"), eq(planner__core__indexmerge_path.t.c, 20)), or(eq(planner__core__indexmerge_path.t.c, 10), json_memberof(cast(3, json BINARY), json_extract(planner__core__indexmerge_path.t.j, "$.c"))))
+    └─TableRowIDScan	0.70	cop[tikv]	table:t	keep order:false, stats:pseudo
+create table t1 (a int, b int, c int, d int, j json, key kb(b, (cast(j as unsigned array))), key(d, c));
+explain format=brief select * from t1 where (c=1 or b=1) and (1 member of (j));
+id	estRows	task	access object	operator info
+TableReader	15.99	root		data:Selection
+└─Selection	15.99	cop[tikv]		json_memberof(cast(1, json BINARY), planner__core__indexmerge_path.t1.j), or(eq(planner__core__indexmerge_path.t1.c, 1), eq(planner__core__indexmerge_path.t1.b, 1))
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format=brief select * from t1 where (c=1 or b=1) and (1 member of (j)) and d=1;
+id	estRows	task	access object	operator info
+IndexMerge	0.20	root		type: union
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t1, index:d(d, c)	range:[1 1,1 1], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t1, index:kb(b, cast(`j` as unsigned array))	range:[1 1,1 1], keep order:false, stats:pseudo
+└─Selection(Probe)	0.20	cop[tikv]		eq(planner__core__indexmerge_path.t1.d, 1), json_memberof(cast(1, json BINARY), planner__core__indexmerge_path.t1.j), or(eq(planner__core__indexmerge_path.t1.c, 1), eq(planner__core__indexmerge_path.t1.b, 1))
+  └─TableRowIDScan	0.20	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t;
+CREATE TABLE `t` (
+`col_37` json DEFAULT NULL,
+`col_38` timestamp NOT NULL DEFAULT '2010-07-09 00:00:00',
+UNIQUE KEY `idx_14` (`col_38`,(cast(`col_37` as unsigned array))),
+UNIQUE KEY `idx_15` (`col_38`,(cast(`col_37` as unsigned array))),
+PRIMARY KEY (`col_38`) /*T![clustered_index] CLUSTERED */,
+UNIQUE KEY `idx_17` ((cast(`col_37` as unsigned array)),`col_38`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+INSERT INTO `t` VALUES('[12474495489656359869, 14407883655486982855, 4221184636468364556, 6110001961631615601, 15150776080990746179]','1970-03-12 00:00:00'),('[6085355592952464235]','1971-01-16 00:00:00'),('[5781707929468111406, 16382828507784518403]','1972-01-16 00:00:00'),('[6085355592952464235]','1972-08-02 00:00:00'),('[6085355592952464235]','1972-12-11 00:00:00'),('[6085355592952464235]','1972-12-21 00:00:00'),('[6085355592952464235]','1973-02-14 00:00:00'),('[6887567370081687232]','1973-05-04 00:00:00'),('[6085355592952464235]','1974-02-01 00:00:00'),('[6085355592952464235]','1974-04-27 00:00:00'),('[16443375232588053566, 15492284538739550474, 2631295588571312304, 15742669945672063486]','1974-06-09 00:00:00'),('[9489266093076991482, 4698969158339636571]','1975-10-26 00:00:00'),('[6085355592952464235]','1977-05-08 00:00:00'),('[898235511450526702, 6252566703278238786, 2261772813075859625]','1978-07-03 00:00:00'),(NULL,'1980-06-27 00:00:00'),('[10831919791216851694, 7541902588294758305, 6034300002828730755]','1980-07-30 00:00:00'),('[6085355592952464235]','1981-09-12 00:00:00'),('[6085355592952464235]','1982-05-30 00:00:00'),('[6085355592952464235]','1982-07-31 00:00:00'),('[4146363158315189712, 2391002653963544762]','1983-07-25 00:00:00'),('[6085355592952464235]','1985-01-26 00:00:00'),('[6085355592952464235]','1985-05-16 00:00:00'),('[9223372036854775807, 9558194088702539102, 6167960273278105650, 14757902754926577696, 16653691901076809579]','1986-03-08 00:00:00'),('[6085355592952464235]','1991-06-27 00:00:00'),('[6085355592952464235]','1991-11-22 00:00:00'),('[742183856683888275, 7870014111942346276, 3252208608007118384, 2554457559079886925, 3461660288536208965]','1991-12-01 00:00:00'),('[0, 7309322092917510049, 8282059475463020025, 9223372036854775807, 8236948484299513601]','1992-01-21 00:00:00'),('[6085355592952464235]','1992-07-30 00:00:00'),('[6085355592952464235]','1995-07-09 00:00:00'),('[4954624538838377461, 9223372036854775807]','1995-11-02 00:00:00'),('[6085355592952464235]','1997-09-24 00:00:00'),('[5541636548306836534]','1997-12-17 00:00:00'),('[2372084030128780091, 0, 8333919059399068469, 9097701366128382209, 12909943251581664025]','1998-03-08 00:00:00'),('[6085355592952464235]','1998-04-13 00:00:00'),('[6085355592952464235]','1999-04-10 00:00:00'),('[6085355592952464235]','1999-07-15 00:00:00'),('[13926602438239746596]','1999-08-08 00:00:00'),('[10622617655435321115, 12031447777564406671, 17187531506212239808, 13120343177240635444, 8528250079171510200]','1999-12-01 00:00:00'),('[3790911999833529022, 2343296225186042787, 6819537424069776784, 13270403636857415720]','2003-08-09 00:00:00'),('[10824194962777929518]','2006-11-05 00:00:00'),('[2689347729697653937, 6029425564270989071, 9613953820717421747, 9437566388707504417]','2008-02-25 00:00:00'),('[6085355592952464235]','2008-03-30 00:00:00'),('[15449121625659667298, 4541516510957888209, 1305529769721308891]','2008-11-07 00:00:00'),('[10699242186188846571, 7856577436586720260, 8851292429056441309, 11943637602148518975, 13317850842658892320]','2010-03-31 00:00:00'),('[1662225601861974430, 18092909239123653024, 11501141468789287862]','2012-04-15 00:00:00'),('[13015616341752575134]','2012-05-12 00:00:00'),('[6085355592952464235]','2012-06-13 00:00:00'),('[9806827176336778774, 6082939478820303687, 12353605732184995966, 17191985691142039533, 9223372036854775808]','2012-08-16 00:00:00'),('[6085355592952464235]','2012-10-14 00:00:00'),('[6085355592952464235]','2012-12-23 00:00:00'),('[6085355592952464235]','2013-04-17 00:00:00'),('[6085355592952464235]','2014-02-20 00:00:00'),('[6085355592952464235]','2015-08-06 00:00:00'),('[6085355592952464235]','2016-01-22 00:00:00'),('[6085355592952464235]','2016-05-27 00:00:00'),('[6085355592952464235]','2016-09-01 00:00:00'),('[6085355592952464235]','2017-01-19 00:00:00'),('[6085355592952464235]','2017-04-25 00:00:00'),('[2496954412283132814]','2017-10-20 00:00:00'),('[6011416056008097080, 8401732621063949750]','2018-10-20 00:00:00'),('[6085355592952464235]','2021-02-25 00:00:00'),('[6085355592952464235]','2021-05-23 00:00:00'),('[4765021307809451011, 166985960251921671, 7945653371704683528]','2021-08-27 00:00:00'),('[6085355592952464235]','2021-10-01 00:00:00'),('[6085355592952464235]','2023-09-08 00:00:00'),('[4298760996497097950, 16695885851907831657, 2, 211742148607907698]','2023-11-12 00:00:00'),('[6085355592952464235]','2024-11-06 00:00:00'),('[6085355592952464235]','2025-11-12 00:00:00'),('[6085355592952464235]','2026-08-05 00:00:00'),('[6085355592952464235]','2031-08-28 00:00:00'),('[6647303358869413442, 10003252368309984244, 3086718564738761942]','2031-10-01 00:00:00'),('[6085355592952464235]','2031-11-24 00:00:00'),('[6085355592952464235]','2032-04-23 00:00:00'),('[9201885267580925888, 9223372036854775808, 5257631883611568331, 11129612187092235508, 6214786545776627889]','2034-03-09 00:00:00'),('[7556387559865010847, 8798123769176200972]','2034-04-13 00:00:00'),('[13333584050314732558, 2379710530233660250, 12902416123543393674, 9259958507508213510, 17541647851839401835]','2035-02-17 00:00:00'),('[6085355592952464235]','2035-08-06 00:00:00'),('[14219119990701343056, 12146509442366889994, 11781375265446394500, 18446744073709551615, 7261133173516561900]','2035-11-08 00:00:00'),('[8809661147955879571, 4218874689382899073]','2035-12-11 00:00:00'),('[10187587245884493942, 9223372036854775807, 2, 928955973542912301]','2036-05-26 00:00:00');
+EXPLAIN SELECT /*+ use_index_merge(t)*/ MIN(col_37)  FROM t WHERE col_38 BETWEEN '1984-12-13' AND '1975-01-28' OR JSON_CONTAINS(col_37, '138480458355390957') GROUP BY col_38 HAVING col_38 != '1988-03-22';
+id	estRows	task	access object	operator info
+Projection_8	6.66	root		planner__core__indexmerge_path.t.col_37->Column#7
+└─IndexMerge_13	6.66	root		type: union
+  ├─TableFullScan_9(Build)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  ├─IndexRangeScan_10(Build)	10.00	cop[tikv]	table:t, index:idx_17(cast(`col_37` as unsigned array), col_38)	range:[138480458355390957,138480458355390957], keep order:false, stats:pseudo
+  └─Selection_12(Probe)	6.66	cop[tikv]		ne(planner__core__indexmerge_path.t.col_38, 1988-03-22 00:00:00.000000)
+    └─TableRowIDScan_11	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+SELECT /*+ use_index_merge(t)*/ MIN(col_37)  FROM t WHERE col_38 BETWEEN '1984-12-13' AND '1975-01-28' OR JSON_CONTAINS(col_37, '138480458355390957') GROUP BY col_38 HAVING col_38 != '1988-03-22';
+MIN(col_37)
+drop table if exists t1;
+CREATE TABLE `t1` (
+`col_44` date NOT NULL,
+`col_45` json DEFAULT NULL,
+`col_46` blob NOT NULL,
+PRIMARY KEY (`col_44`) /*T![clustered_index] CLUSTERED */,
+UNIQUE KEY `idx_16` (`col_46`(3)),
+KEY `idx_17` ((cast(`col_45` as double array)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+INSERT INTO t1 VALUES('1988-07-19','[0.9233398239291353, 0.9396459773262974, 0.540018481999012, 0.181978533893545]',x'652539286c5f7e6b482a7265575a');
+SELECT col_44, col_45 FROM t1 WHERE NOT (col_44 BETWEEN '1980-03-18' AND '2011-10-24') GROUP BY col_46,col_45 HAVING JSON_CONTAINS(col_45, '0.540018481999012') OR JSON_OVERLAPS(col_45, '[0.5785147169732324,0.8314968898215304,0.5226516826882698]');
+col_44	col_45
+EXPLAIN format=brief SELECT /*+ use_index_merge(t1) */ col_44, col_45 FROM t1 WHERE NOT (col_44 BETWEEN '1980-03-18' AND '2011-10-24') GROUP BY col_46,col_45 HAVING JSON_CONTAINS(col_45, '0.540018481999012') OR JSON_OVERLAPS(col_45, '[0.5785147169732324,0.8314968898215304,0.5226516826882698]');
+id	estRows	task	access object	operator info
+Selection	31.95	root		or(json_contains(planner__core__indexmerge_path.t1.col_45, cast(cast("0.540018481999012", json BINARY), json BINARY)), json_overlaps(planner__core__indexmerge_path.t1.col_45, cast(cast("[0.5785147169732324,0.8314968898215304,0.5226516826882698]", json BINARY), json BINARY)))
+└─IndexMerge	26.59	root		type: union
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:idx_17(cast(`col_45` as double array))	range:[0.540018481999012,0.540018481999012], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:idx_17(cast(`col_45` as double array))	range:[0.5785147169732324,0.5785147169732324], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:idx_17(cast(`col_45` as double array))	range:[0.8314968898215304,0.8314968898215304], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:idx_17(cast(`col_45` as double array))	range:[0.5226516826882698,0.5226516826882698], keep order:false, stats:pseudo
+  └─Selection(Probe)	26.59	cop[tikv]		or(lt(planner__core__indexmerge_path.t1.col_44, 1980-03-18 00:00:00.000000), gt(planner__core__indexmerge_path.t1.col_44, 2011-10-24 00:00:00.000000))
+    └─TableRowIDScan	39.94	cop[tikv]	table:t1	keep order:false, stats:pseudo

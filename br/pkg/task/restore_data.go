@@ -13,7 +13,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -58,7 +57,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 		return errors.Trace(err)
 	}
 
-	resolveTS, numBackupStore, err := ReadBackupMetaData(ctx, externStorage)
+	resolveTS, numStores, err := ReadBackupMetaData(ctx, externStorage)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -77,13 +76,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	tc.EnableGlobalKill = false
 	tidbconfig.StoreGlobalConfig(tc)
 
-	client := restore.NewRestoreClient(
-		mgr.GetPDClient(),
-		mgr.GetPDHTTPClient(),
-		mgr.GetTLSConfig(),
-		keepaliveCfg,
-		false,
-	)
+	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
 
 	restoreTS, err := client.GetTS(ctx)
 	if err != nil {
@@ -128,26 +121,23 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 			if err != nil {
 				return errors.Trace(err)
 			}
-			numOnlineStore := len(allStores)
-			// in this version, it suppose to have the same number of tikvs between backup cluster and restore cluster
-			if numOnlineStore != numBackupStore {
-				log.Warn("the restore meta contains the number of tikvs inconsist with the resore cluster, retry ...", zap.Int("current stores", len(allStores)), zap.Int("backup stores", numBackupStore))
-				return errors.Annotatef(berrors.ErrRestoreTotalKVMismatch,
-					"number of tikvs mismatch")
-			}
 			return nil
 		},
 		utils.NewPDReqBackofferExt(),
 	)
+	restoreNumStores := len(allStores)
+	if restoreNumStores != numStores {
+		log.Warn("the number of stores in the cluster has changed", zap.Int("origin", numStores), zap.Int("current", restoreNumStores))
+	}
 
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	log.Debug("total tikv", zap.Int("total", numBackupStore), zap.String("progress file", cfg.ProgressFile))
+	log.Debug("total tikv", zap.Int("total", restoreNumStores), zap.String("progress file", cfg.ProgressFile))
 	// progress = read meta + send recovery + iterate tikv + (1 * prepareflashback + 1 * flashback)
-	progress := g.StartProgress(ctx, cmdName, int64(numBackupStore*3+2), !cfg.LogProgress)
-	go progressFileWriterRoutine(ctx, progress, int64(numBackupStore*3+2), cfg.ProgressFile)
+	progress := g.StartProgress(ctx, cmdName, int64(restoreNumStores*3+2), !cfg.LogProgress)
+	go progressFileWriterRoutine(ctx, progress, int64(restoreNumStores*3+2), cfg.ProgressFile)
 
 	// restore tikv data from a snapshot volume
 	var totalRegions int

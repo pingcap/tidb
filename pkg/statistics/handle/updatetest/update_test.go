@@ -368,7 +368,7 @@ func TestAutoUpdate(t *testing.T) {
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.2")
 		defer func() {
 			exec.AutoAnalyzeMinCnt = 1000
-			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.5")
 		}()
 
 		do := dom
@@ -473,7 +473,7 @@ func TestAutoUpdatePartition(t *testing.T) {
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
 		defer func() {
 			exec.AutoAnalyzeMinCnt = 1000
-			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.5")
 		}()
 
 		do := dom
@@ -633,9 +633,7 @@ func TestLoadHistCorrelation(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.Update(dom.InfoSchema()))
 	result := testKit.MustQuery("show stats_histograms where Table_name = 't'")
-	// After https://github.com/pingcap/tidb/pull/37444, `show stats_histograms` displays the columns whose hist/topn/cmsketch
-	// are not loaded and their stats status is allEvicted.
-	require.Len(t, result.Rows(), 1)
+	require.Len(t, result.Rows(), 0)
 	testKit.MustExec("explain select * from t where c = 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't'")
@@ -808,7 +806,7 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.1")
 		defer func() {
 			exec.AutoAnalyzeMinCnt = 1000
-			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.5")
 		}()
 
 		require.NoError(t, h.Update(is))

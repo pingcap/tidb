@@ -6,10 +6,12 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"go.uber.org/zap"
@@ -62,6 +64,20 @@ func isGRPCCancel(err error) bool {
 	return false
 }
 
+// ConstantBackoff is a backoffer that retry forever until success.
+type ConstantBackoff time.Duration
+
+// NextBackoff returns a duration to wait before retrying again
+func (c ConstantBackoff) NextBackoff(err error) time.Duration {
+	return time.Duration(c)
+}
+
+// Attempt returns the remain attempt times
+func (c ConstantBackoff) Attempt() int {
+	// A large enough value. Also still safe for arithmetic operations (won't easily overflow).
+	return math.MaxInt16
+}
+
 // RetryState is the mutable state needed for retrying.
 // It likes the `utils.Backoffer`, but more fundamental:
 // this only control the backoff time and knows nothing about what error happens.
@@ -72,6 +88,15 @@ type RetryState struct {
 
 	maxBackoff  time.Duration
 	nextBackoff time.Duration
+}
+
+// InitialRetryState make the initial state for retrying.
+func InitialRetryState(maxRetryTimes int, initialBackoff, maxBackoff time.Duration) RetryState {
+	return RetryState{
+		maxRetry:    maxRetryTimes,
+		maxBackoff:  maxBackoff,
+		nextBackoff: initialBackoff,
+	}
 }
 
 // Whether in the current state we can retry.
@@ -94,39 +119,15 @@ func (rs *RetryState) GiveUp() {
 	rs.retryTimes = rs.maxRetry
 }
 
-// InitialRetryState make the initial state for retrying.
-func InitialRetryState(maxRetryTimes int, initialBackoff, maxBackoff time.Duration) RetryState {
-	return RetryState{
-		maxRetry:    maxRetryTimes,
-		maxBackoff:  maxBackoff,
-		nextBackoff: initialBackoff,
-	}
-}
-
-// RecordRetry simply record retry times, and no backoff
-func (rs *RetryState) RecordRetry() {
-	rs.retryTimes++
-}
-
 // ReduceRetry reduces retry times for 1.
 func (rs *RetryState) ReduceRetry() {
 	rs.retryTimes--
-}
-
-// RetryTimes returns the retry times.
-// usage: unit test.
-func (rs *RetryState) RetryTimes() int {
-	return rs.retryTimes
 }
 
 // Attempt implements the `Backoffer`.
 // TODO: Maybe use this to replace the `exponentialBackoffer` (which is nearly homomorphic to this)?
 func (rs *RetryState) Attempt() int {
 	return rs.maxRetry - rs.retryTimes
-}
-
-func (rs *RetryState) StopRetry() {
-	rs.retryTimes = rs.maxRetry
 }
 
 // NextBackoff implements the `Backoffer`.
@@ -264,6 +265,9 @@ func (bo *pdReqBackoffer) NextBackoff(err error) time.Duration {
 		}
 	}
 
+	failpoint.Inject("set-attempt-to-one", func(_ failpoint.Value) {
+		bo.attempt = 1
+	})
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime
 	}

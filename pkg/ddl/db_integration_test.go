@@ -29,6 +29,7 @@ import (
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -72,7 +73,7 @@ func TestCreateTableIfNotExistsLike(t *testing.T) {
 	require.GreaterOrEqual(t, len(warnings), 1)
 	lastWarn := warnings[len(warnings)-1]
 	require.Truef(t, terror.ErrorEqual(infoschema.ErrTableExists, lastWarn.Err), "err %v", lastWarn.Err)
-	require.Equal(t, stmtctx.WarnLevelNote, lastWarn.Level)
+	require.Equal(t, contextutil.WarnLevelNote, lastWarn.Level)
 
 	// Test duplicate create-table without `LIKE` clause
 	tk.MustExec("create table if not exists ct(b bigint, c varchar(60));")
@@ -1657,6 +1658,12 @@ func TestDefaultValueAsExpressions(t *testing.T) {
 	tk.MustExec("create table t2(c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', '')), index idx(c1));")
 	tk.MustExec("insert into t2(c) values (1),(2),(3);")
 	tk.MustGetErrCode("alter table t2 modify column c1 varchar(30) default 'xx';", errno.WarnDataTruncated)
+	// test add column for enum
+	nowStr := time.Now().Format("2006-01")
+	sql := fmt.Sprintf("alter table t2 add column c3 enum('%v','n')", nowStr) + " default (date_format(now(),'%Y-%m'))"
+	tk.MustExec(sql)
+	tk.MustExec("insert into t2(c) values (4);")
+	tk.MustQuery("select c3 from t2").Check(testkit.Rows(nowStr, nowStr, nowStr, nowStr))
 }
 
 func TestChangingDBCharset(t *testing.T) {
@@ -3013,4 +3020,65 @@ func TestOptimizeTable(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 	tk := testkit.NewTestKit(t, store)
 	tk.MustGetErrMsg("optimize table t", "[ddl:8200]OPTIMIZE TABLE is not supported")
+}
+
+func TestIssue52680(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table issue52680 (id bigint primary key auto_increment) auto_id_cache=1;")
+	tk.MustExec("insert into issue52680 values(default),(default);")
+	tk.MustQuery("select * from issue52680").Check(testkit.Rows("1", "2"))
+
+	is := dom.InfoSchema()
+	ti, err := is.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
+	require.NoError(t, err)
+
+	ddlutil.EmulatorGCDisable()
+	defer ddlutil.EmulatorGCEnable()
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	testSteps := []struct {
+		sql    string
+		expect meta.AutoIDGroup
+	}{
+		{sql: "", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
+		{sql: "drop table issue52680", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 0, RandomID: 0}},
+		{sql: "recover table issue52680", expect: meta.AutoIDGroup{RowID: 0, IncrementID: 4000, RandomID: 0}},
+	}
+	for _, step := range testSteps {
+		if step.sql != "" {
+			tk.MustExec(step.sql)
+		}
+
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		m := meta.NewMeta(txn)
+		idAcc := m.GetAutoIDAccessors(ti.DBID, ti.ID)
+		ids, err := idAcc.Get()
+		require.NoError(t, err)
+		require.Equal(t, ids, step.expect)
+		txn.Rollback()
+	}
+
+	tk.MustQuery("show table issue52680 next_row_id").Check(testkit.Rows(
+		"test issue52680 id 1 _TIDB_ROWID",
+		"test issue52680 id 3 AUTO_INCREMENT",
+	))
+
+	is = dom.InfoSchema()
+	ti1, err := is.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("issue52680"))
+	require.NoError(t, err)
+	require.Equal(t, ti1.ID, ti.ID)
+
+	tk.MustExec("insert into issue52680 values(default);")
+	tk.MustQuery("select * from issue52680").Check(testkit.Rows("1", "2", "3"))
 }

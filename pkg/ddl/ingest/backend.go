@@ -21,14 +21,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tikv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	lightning "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/errormanager"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
@@ -128,7 +128,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 		SQLMode: mysql.ModeStrictAllTables,
 		SysVars: bc.sysVars,
 		IndexID: indexID,
-	}, lightning.DupeResAlgErr)
+	}, lightning.ErrorOnDup)
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
 
@@ -160,7 +160,7 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 			SQLMode: mysql.ModeStrictAllTables,
 			SysVars: bc.sysVars,
 			IndexID: ei.indexID,
-		}, lightning.DupeResAlgErr)
+		}, lightning.ErrorOnDup)
 		return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 	}
 	return nil

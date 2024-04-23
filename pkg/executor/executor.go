@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
@@ -931,13 +932,6 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	defer func() { e.done = true }()
 
-	// See the comment of `ColumnInfos2ColumnsAndNames`. It's fixing #42341
-	originalTypeFlags := e.Ctx().GetSessionVars().StmtCtx.TypeFlags()
-	defer func() {
-		e.Ctx().GetSessionVars().StmtCtx.SetTypeFlags(originalTypeFlags)
-	}()
-	e.Ctx().GetSessionVars().StmtCtx.SetTypeFlags(originalTypeFlags.WithIgnoreTruncateErr(true))
-
 	idxNames := make([]string, 0, len(e.indexInfos))
 	for _, idx := range e.indexInfos {
 		if idx.MVIndex {
@@ -1459,10 +1453,10 @@ func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
-	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, pctx planctx.PlanContext) ([]types.Datum, error) {
+	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p base.PhysicalPlan, is infoschema.InfoSchema, pctx planctx.PlanContext) ([]types.Datum, error) {
 		defer func(begin time.Time) {
 			s := pctx.GetSessionVars()
-			s.StmtCtx.SetSkipPlanCache(errors.NewNoStackError("query has uncorrelated sub-queries is un-cacheable"))
+			s.StmtCtx.SetSkipPlanCache("query has uncorrelated sub-queries is un-cacheable")
 			s.RewritePhaseInfo.PreprocessSubQueries++
 			s.RewritePhaseInfo.DurationPreprocessSubQuery += time.Since(begin)
 		}(time.Now())
@@ -1621,7 +1615,7 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.childResult.NumRows() == 0 {
 			return nil
 		}
-		e.selected, err = expression.VectorizedFilter(e.Ctx().GetExprCtx(), e.Ctx().GetSessionVars().EnableVectorizedExpression, e.filters, e.inputIter, e.selected)
+		e.selected, err = expression.VectorizedFilter(e.Ctx().GetExprCtx().GetEvalCtx(), e.Ctx().GetSessionVars().EnableVectorizedExpression, e.filters, e.inputIter, e.selected)
 		if err != nil {
 			return err
 		}
@@ -1636,7 +1630,7 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 	exprCtx := e.Ctx().GetExprCtx()
 	for {
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			selected, _, err := expression.EvalBool(exprCtx, e.filters, e.inputRow)
+			selected, _, err := expression.EvalBool(exprCtx.GetEvalCtx(), e.filters, e.inputRow)
 			if err != nil {
 				return err
 			}
@@ -2249,7 +2243,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IndexUsageCollector = ctx.NewStmtIndexUsageCollector()
 	}
 
-	sc.ForcePlanCache = fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false)
+	sc.SetForcePlanCache(fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false))
+	sc.SetAlwaysWarnSkipCache(sc.InExplainStmt && sc.ExplainFormat == "plan_cache")
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
@@ -2312,6 +2307,10 @@ func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
 	if snapshot == nil {
 		return
 	}
+	// pipelined dml may already flush in background, don't touch it to avoid race.
+	if txn, ok := snapshot.(kv.Transaction); ok && txn.IsPipelined() {
+		return
+	}
 	snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 	if sc.KvExecCounter != nil {
 		snapshot.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())
@@ -2372,7 +2371,7 @@ type groupByChecksum struct {
 
 func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]groupByChecksum, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
-	rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
 	if err != nil {
 		return nil, err
 	}
@@ -2500,7 +2499,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			se.GetSessionVars().SnapshotTS = 0
 		}()
 	}
-	_, err = se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
+	_, err = se.GetSQLExecutor().ExecuteInternal(ctx, "begin")
 	if err != nil {
 		trySaveErr(err)
 		return
@@ -2589,7 +2588,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	}
 
 	queryToRow := func(se sessionctx.Context, sql string) ([]chunk.Row, error) {
-		rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+		rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
 		if err != nil {
 			return nil, err
 		}

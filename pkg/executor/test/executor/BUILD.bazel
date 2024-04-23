@@ -27,6 +27,7 @@ go_test(
         "//pkg/parser/terror",
         "//pkg/planner",
         "//pkg/planner/core",
+        "//pkg/planner/core/base",
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",

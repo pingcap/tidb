@@ -340,7 +340,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	if (mysql.HasUnsignedFlag(args[0].GetType().GetFlag()) || mysql.HasUnsignedFlag(args[1].GetType().GetFlag())) && !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode() {
+	if (mysql.HasUnsignedFlag(args[0].GetType().GetFlag()) || mysql.HasUnsignedFlag(args[1].GetType().GetFlag())) && !ctx.GetEvalCtx().SQLMode().HasNoUnsignedSubtractionMode() {
 		bf.tp.AddFlag(mysql.UnsignedFlag)
 	}
 	sig := &builtinArithmeticMinusIntSig{baseBuiltinFunc: bf}
@@ -661,7 +661,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp, ctx.GetSessionVars().GetDivPrecisionIncrement())
+	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp, ctx.GetEvalCtx().GetDivPrecisionIncrement())
 	sig := &builtinArithmeticDivideDecimalSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DivideDecimal)
 	return sig, nil
@@ -714,7 +714,7 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(ctx EvalContext, row chu
 	}
 
 	c := &types.MyDecimal{}
-	err = types.DecimalDiv(a, b, c, ctx.GetSessionVars().GetDivPrecisionIncrement())
+	err = types.DecimalDiv(a, b, c, ctx.GetDivPrecisionIncrement())
 	if err == types.ErrDivByZero {
 		return c, true, handleDivisionByZeroError(ctx)
 	} else if err == types.ErrTruncated {
@@ -829,7 +829,7 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(ctx EvalContext, row chun
 	}
 
 	c := &types.MyDecimal{}
-	err = types.DecimalDiv(num[0], num[1], c, ctx.GetSessionVars().GetDivPrecisionIncrement())
+	err = types.DecimalDiv(num[0], num[1], c, ctx.GetDivPrecisionIncrement())
 	if err == types.ErrDivByZero {
 		return 0, true, handleDivisionByZeroError(ctx)
 	}

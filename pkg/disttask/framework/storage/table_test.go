@@ -374,7 +374,7 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 		_, err := gm.CreateTask(ctx, taskKey, "test", 4, []byte("test"))
 		require.NoError(t, err)
 		require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
-			_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `
+			_, err := se.GetSQLExecutor().ExecuteInternal(ctx, `
 				update mysql.tidb_global_task set state = %? where task_key = %?`,
 				state, taskKey)
 			return err
@@ -382,24 +382,24 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 	}
 	// adjust task order
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
-		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `
+		_, err := se.GetSQLExecutor().ExecuteInternal(ctx, `
 				update mysql.tidb_global_task set create_time = current_timestamp`)
 		return err
 	}))
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
-		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `
+		_, err := se.GetSQLExecutor().ExecuteInternal(ctx, `
 				update mysql.tidb_global_task
 				set create_time = timestampadd(minute, -10, current_timestamp)
 				where task_key = 'key/5'`)
 		return err
 	}))
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
-		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, `
+		_, err := se.GetSQLExecutor().ExecuteInternal(ctx, `
 				update mysql.tidb_global_task set priority = 100 where task_key = 'key/6'`)
 		return err
 	}))
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
-		rs, err := sqlexec.ExecSQL(ctx, se, `
+		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 				select count(1) from mysql.tidb_global_task`)
 		require.Len(t, rs, 1)
 		require.Equal(t, int64(12), rs[0].GetInt64(0))
@@ -547,7 +547,6 @@ func TestSubTaskTable(t *testing.T) {
 	ok, err = sm.HasSubtasksInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
 	require.False(t, ok)
-
 	require.NoError(t, testutil.DeleteSubtasksByTaskID(ctx, sm, 1))
 
 	ok, err = sm.HasSubtasksInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending, proto.SubtaskStateRunning)
@@ -560,7 +559,11 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, subtasks, 0)
 
-	require.NoError(t, sm.FinishSubtask(ctx, "tidb1", 2, []byte{}))
+	subtasks, err = testutil.GetSubtasksByTaskID(ctx, sm, 2)
+	require.NoError(t, err)
+	require.Len(t, subtasks, 1)
+	subtaskID := subtasks[0].ID
+	require.NoError(t, sm.FinishSubtask(ctx, "tidb1", subtaskID, []byte{}))
 
 	subtasks, err = sm.GetAllSubtasksByStepAndState(ctx, 2, proto.StepOne, proto.SubtaskStateSucceed)
 	require.NoError(t, err)
@@ -569,7 +572,7 @@ func TestSubTaskTable(t *testing.T) {
 	rowCount, err := sm.GetSubtaskRowCount(ctx, 2, proto.StepOne)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), rowCount)
-	require.NoError(t, sm.UpdateSubtaskRowCount(ctx, 2, 100))
+	require.NoError(t, sm.UpdateSubtaskRowCount(ctx, subtaskID, 100))
 	rowCount, err = sm.GetSubtaskRowCount(ctx, 2, proto.StepOne)
 	require.NoError(t, err)
 	require.Equal(t, int64(100), rowCount)
@@ -1018,7 +1021,7 @@ func TestRunningSubtasksBack2Pending(t *testing.T) {
 	getAllSubtasks := func() []*proto.Subtask {
 		res := make([]*proto.Subtask, 0, 3)
 		require.NoError(t, sm.WithNewSession(func(se sessionctx.Context) error {
-			rs, err := sqlexec.ExecSQL(ctx, se, `
+			rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 				select cast(task_key as signed), exec_id, state, state_update_time
 				from mysql.tidb_background_subtask
 				order by task_key, exec_id, state`)

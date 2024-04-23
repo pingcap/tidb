@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -721,7 +722,7 @@ func TestUnreasonablyClose(t *testing.T) {
 	// To enable the shuffleExec operator.
 	tk.MustExec("set @@tidb_merge_join_concurrency=4")
 
-	var opsNeedsCovered = []plannercore.PhysicalPlan{
+	var opsNeedsCovered = []base.PhysicalPlan{
 		&plannercore.PhysicalHashJoin{},
 		&plannercore.PhysicalMergeJoin{},
 		&plannercore.PhysicalIndexJoin{},
@@ -788,8 +789,8 @@ func TestUnreasonablyClose(t *testing.T) {
 
 		// This for loop level traverses the plan tree to get which operators are covered.
 		var hasCTE bool
-		for child := []plannercore.PhysicalPlan{p.(plannercore.PhysicalPlan)}; len(child) != 0; {
-			newChild := make([]plannercore.PhysicalPlan, 0, len(child))
+		for child := []base.PhysicalPlan{p.(base.PhysicalPlan)}; len(child) != 0; {
+			newChild := make([]base.PhysicalPlan, 0, len(child))
 			for _, ch := range child {
 				found := false
 				for k, t := range opsNeedsCovered {
@@ -1370,7 +1371,7 @@ func TestCollectDMLRuntimeStats(t *testing.T) {
 	getRootStats := func() string {
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(plannercore.Plan)
+		p, ok := info.Plan.(base.Plan)
 		require.True(t, ok)
 		stats := tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(p.ID())
 		return stats.String()
@@ -1499,7 +1500,7 @@ func TestGetResultRowsCount(t *testing.T) {
 		}
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(plannercore.Plan)
+		p, ok := info.Plan.(base.Plan)
 		require.True(t, ok)
 		cnt := executor.GetResultRowsCount(tk.Session().GetSessionVars().StmtCtx, p)
 		require.Equal(t, ca.row, cnt, fmt.Sprintf("sql: %v", ca.sql))
@@ -2254,7 +2255,7 @@ func TestHistoryReadInTxn(t *testing.T) {
 
 				// After `ExecRestrictedSQL` with a specified snapshot and use current session, the original snapshot ts should not be reset
 				// See issue: https://github.com/pingcap/tidb/issues/34529
-				exec := tk.Session().(sqlexec.RestrictedSQLExecutor)
+				exec := tk.Session().GetRestrictedSQLExecutor()
 				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 				rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(ts2), sqlexec.ExecOptionUseCurSession}, "select * from his_t0 where id=1")
 				require.NoError(t, err)
@@ -2625,7 +2626,7 @@ func TestIsFastPlan(t *testing.T) {
 		}
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(plannercore.Plan)
+		p, ok := info.Plan.(base.Plan)
 		require.True(t, ok)
 		ok = executor.IsFastPlan(p)
 		require.Equal(t, ca.isFastPlan, ok)
@@ -2797,8 +2798,17 @@ func TestIssue38756(t *testing.T) {
 }
 
 func TestIssue50043(t *testing.T) {
+	testIssue50043WithInitSQL(t, "")
+}
+
+func TestIssue50043WithPipelinedDML(t *testing.T) {
+	testIssue50043WithInitSQL(t, "set @@tidb_dml_type=bulk")
+}
+
+func testIssue50043WithInitSQL(t *testing.T, initSQL string) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(initSQL)
 	// Test simplified case by update.
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 boolean ,c2 decimal ( 37 , 17 ), unique key idx1 (c1 ,c2),unique key idx2 ( c1 ));")

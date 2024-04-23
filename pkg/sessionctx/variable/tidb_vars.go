@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable/featuretag/disttask"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -1154,8 +1153,6 @@ const (
 	// Any idle transaction will be killed after being idle for `tidb_idle_transaction_timeout` seconds.
 	// This is similar to https://docs.percona.com/percona-server/5.7/management/innodb_kill_idle_trx.html and https://mariadb.com/kb/en/transaction-timeouts/
 	TiDBIdleTransactionTimeout = "tidb_idle_transaction_timeout"
-	// TiDBEnableParallelSort indicates if parallel sort is enabled.
-	TiDBEnableParallelSort = "enable_parallel_sort"
 	// TiDBLowResolutionTSOUpdateInterval defines how often to refresh low resolution timestamps.
 	TiDBLowResolutionTSOUpdateInterval = "tidb_low_resolution_tso_update_interval"
 	// TiDBDMLType indicates the execution type of DML in TiDB.
@@ -1377,7 +1374,7 @@ const (
 	DefTiDBSessionPlanCacheSize                    = 100
 	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
-	DefTiDBEnableDistTask                          = disttask.TiDBEnableDistTask
+	DefTiDBEnableDistTask                          = true
 	DefTiDBEnableFastCreateTable                   = false
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
@@ -1484,12 +1481,13 @@ const (
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
-	DefEnableParallelSort                             = false
 	DefTiDBTxnEntrySizeLimit                          = 0
 	DefTiDBSchemaCacheSize                            = 0
 	DefTiDBLowResolutionTSOUpdateInterval             = 2000
 	DefDivPrecisionIncrement                          = 4
 	DefTiDBDMLType                                    = "STANDARD"
+	DefGroupConcatMaxLen                              = uint64(1024)
+	DefDefaultWeekFormat                              = "0"
 )
 
 // Process global variables.

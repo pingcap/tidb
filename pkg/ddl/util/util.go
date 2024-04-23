@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -87,7 +88,7 @@ func LoadDoneDeleteRanges(ctx context.Context, sctx sessionctx.Context, safePoin
 }
 
 func loadDeleteRangesFromTable(ctx context.Context, sctx sessionctx.Context, table string, safePoint uint64) (ranges []DelRangeTask, _ error) {
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, loadDeleteRangeSQL, table, safePoint)
+	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, loadDeleteRangeSQL, table, safePoint)
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
@@ -130,13 +131,13 @@ func loadDeleteRangesFromTable(ctx context.Context, sctx sessionctx.Context, tab
 func CompleteDeleteRange(sctx sessionctx.Context, dr DelRangeTask, needToRecordDone bool) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
-	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "BEGIN")
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	if needToRecordDone {
-		_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
+		_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -146,27 +147,27 @@ func CompleteDeleteRange(sctx sessionctx.Context, dr DelRangeTask, needToRecordD
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "COMMIT")
+	_, err = sctx.GetSQLExecutor().ExecuteInternal(ctx, "COMMIT")
 	return errors.Trace(err)
 }
 
 // RemoveFromGCDeleteRange is exported for ddl pkg to use.
 func RemoveFromGCDeleteRange(sctx sessionctx.Context, jobID, elementID int64) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, completeDeleteRangeSQL, jobID, elementID)
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, completeDeleteRangeSQL, jobID, elementID)
 	return errors.Trace(err)
 }
 
 // RemoveMultiFromGCDeleteRange is exported for ddl pkg to use.
 func RemoveMultiFromGCDeleteRange(ctx context.Context, sctx sessionctx.Context, jobID int64) error {
-	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, completeDeleteMultiRangesSQL, jobID)
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, completeDeleteMultiRangesSQL, jobID)
 	return errors.Trace(err)
 }
 
 // DeleteDoneRecord removes a record from gc_delete_range_done table.
 func DeleteDoneRecord(sctx sessionctx.Context, dr DelRangeTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, deleteDoneRecordSQL, dr.JobID, dr.ElementID)
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, deleteDoneRecordSQL, dr.JobID, dr.ElementID)
 	return errors.Trace(err)
 }
 
@@ -175,7 +176,7 @@ func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, ol
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
 	return errors.Trace(err)
 }
 
@@ -194,7 +195,9 @@ func LoadDDLVars(ctx sessionctx.Context) error {
 // LoadGlobalVars loads global variable from mysql.global_variables.
 func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
-	if e, ok := sctx.(sqlexec.RestrictedSQLExecutor); ok {
+	// *mock.Context does not support SQL execution. Only do it when sctx is not `mock.Context`
+	if _, ok := sctx.(*mock.Context); !ok {
+		e := sctx.GetRestrictedSQLExecutor()
 		var buf strings.Builder
 		buf.WriteString(loadGlobalVars)
 		paramNames := make([]any, 0, len(varNames))
@@ -285,6 +288,54 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 	return errors.Trace(err)
 }
 
+// PutKVToEtcdMono puts key value to etcd monotonously.
+// etcdCli is client of etcd.
+// retryCnt is retry time when an error occurs.
+// opts are configures of etcd Operations.
+func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
+	opts ...clientv3.OpOption) error {
+	var err error
+	for i := 0; i < retryCnt; i++ {
+		if err = ctx.Err(); err != nil {
+			return errors.Trace(err)
+		}
+
+		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
+		var resp *clientv3.GetResponse
+		resp, err = etcdCli.Get(childCtx, key)
+		if err != nil {
+			cancel()
+			logutil.BgLogger().Warn("etcd-cli put kv failed", zap.String("category", "ddl"), zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
+			time.Sleep(KeyOpRetryInterval)
+			continue
+		}
+		prevRevision := int64(0)
+		if len(resp.Kvs) > 0 {
+			prevRevision = resp.Kvs[0].ModRevision
+		}
+
+		var txnResp *clientv3.TxnResponse
+		txnResp, err = etcdCli.Txn(childCtx).
+			If(clientv3.Compare(clientv3.ModRevision(key), "=", prevRevision)).
+			Then(clientv3.OpPut(key, val, opts...)).
+			Commit()
+
+		cancel()
+
+		if err == nil && txnResp.Succeeded {
+			return nil
+		}
+
+		if err == nil {
+			err = errors.New("performing compare-and-swap during PutKVToEtcd failed")
+		}
+
+		logutil.BgLogger().Warn("etcd-cli put kv failed", zap.String("category", "ddl"), zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
+		time.Sleep(KeyOpRetryInterval)
+	}
+	return errors.Trace(err)
+}
+
 // PutKVToEtcd puts key value to etcd.
 // etcdCli is client of etcd.
 // retryCnt is retry time when an error occurs.
@@ -331,7 +382,7 @@ func IsRaftKv2(ctx context.Context, sctx sessionctx.Context) (bool, error) {
 		return v2, nil
 	})
 
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, getRaftKvVersionSQL)
+	rs, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, getRaftKvVersionSQL)
 	if err != nil {
 		return false, err
 	}

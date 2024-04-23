@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -42,7 +43,8 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t1" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -66,7 +68,7 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 		tk.MustExec(tt)
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(core.Plan)
+		p, ok := info.Plan.(base.Plan)
 		require.True(t, ok)
 		normalized, digest := core.NormalizePlan(p)
 

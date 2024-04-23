@@ -25,10 +25,6 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -39,6 +35,10 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
@@ -46,7 +46,6 @@ import (
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -527,7 +526,7 @@ func createTableIndexes(ctx context.Context, executor storage.SessionExecutor, t
 func executeSQL(ctx context.Context, executor storage.SessionExecutor, logger *zap.Logger, sql string, args ...any) (err error) {
 	logger.Info("execute sql", zap.String("sql", sql), zap.Any("args", args))
 	return executor.WithNewSession(func(se sessionctx.Context) error {
-		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
+		_, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql, args...)
 		return err
 	})
 }
@@ -626,7 +625,7 @@ func startJob(ctx context.Context, logger *zap.Logger, taskHandle storage.TaskHa
 	err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
-				exec := se.(sqlexec.SQLExecutor)
+				exec := se.GetSQLExecutor()
 				return importer.StartJob(ctx, exec, taskMeta.JobID, jobStep)
 			})
 		},
@@ -649,7 +648,7 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskManager.WithNewSession(func(se sessionctx.Context) error {
-				exec := se.(sqlexec.SQLExecutor)
+				exec := se.GetSQLExecutor()
 				return importer.Job2Step(ctx, exec, taskMeta.JobID, step)
 			})
 		},
@@ -672,7 +671,7 @@ func (sch *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger
 				}); err != nil {
 					logger.Warn("flush table stats failed", zap.Error(err))
 				}
-				exec := se.(sqlexec.SQLExecutor)
+				exec := se.GetSQLExecutor()
 				return importer.FinishJob(ctx, exec, taskMeta.JobID, summary)
 			})
 		},
@@ -688,7 +687,7 @@ func (sch *ImportSchedulerExt) failJob(ctx context.Context, taskHandle storage.T
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
-				exec := se.(sqlexec.SQLExecutor)
+				exec := se.GetSQLExecutor()
 				return importer.FailJob(ctx, exec, taskMeta.JobID, errorMsg)
 			})
 		},
@@ -704,7 +703,7 @@ func (sch *ImportSchedulerExt) cancelJob(ctx context.Context, taskHandle storage
 	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
-				exec := se.(sqlexec.SQLExecutor)
+				exec := se.GetSQLExecutor()
 				return importer.CancelJob(ctx, exec, meta.JobID)
 			})
 		},

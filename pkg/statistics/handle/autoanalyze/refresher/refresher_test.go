@@ -54,8 +54,10 @@ func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
 	)
 	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
 	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
-	// Set the auto analyze ratio to 0.
-	tk.MustExec("set global tidb_auto_analyze_ratio = 0")
+	// HACK: Set the auto analyze ratio to 0.
+	// We don't allow users to set the ratio to 0 anymore, but we still need to test this case.
+	// Because we need to compilable with the old configuration.
+	tk.MustExec("update mysql.global_variables set variable_value = '0' where variable_name = 'tidb_auto_analyze_ratio'")
 	handle := dom.StatsHandle()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(dom.InfoSchema()))
@@ -381,6 +383,12 @@ func TestCalculateChangePercentage(t *testing.T) {
 			StatsVer: 2,
 		},
 	}
+	bothUnanalyzedMap := statistics.NewColAndIndexExistenceMap(0, 0)
+	bothAnalyzedMap := statistics.NewColAndIndexExistenceMap(2, 2)
+	bothAnalyzedMap.InsertCol(1, nil, true)
+	bothAnalyzedMap.InsertCol(2, nil, true)
+	bothAnalyzedMap.InsertIndex(1, nil, true)
+	bothAnalyzedMap.InsertIndex(2, nil, true)
 	tests := []struct {
 		name             string
 		tblStats         *statistics.Table
@@ -396,6 +404,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 					Columns:       unanalyzedColumns,
 					Indices:       unanalyzedIndices,
 				},
+				ColAndIdxExistenceMap: bothUnanalyzedMap,
 			},
 			autoAnalyzeRatio: 0.5,
 			want:             1,
@@ -410,7 +419,8 @@ func TestCalculateChangePercentage(t *testing.T) {
 					Indices:       analyzedIndices,
 					ModifyCount:   (exec.AutoAnalyzeMinCnt + 1) * 2,
 				},
-				LastAnalyzeVersion: 1,
+				ColAndIdxExistenceMap: bothAnalyzedMap,
+				LastAnalyzeVersion:    1,
 			},
 			autoAnalyzeRatio: 0.5,
 			want:             2,
@@ -466,6 +476,9 @@ func TestGetTableLastAnalyzeDurationForUnanalyzedTable(t *testing.T) {
 }
 
 func TestCheckIndexesNeedAnalyze(t *testing.T) {
+	analyzedMap := statistics.NewColAndIndexExistenceMap(1, 0)
+	analyzedMap.InsertCol(1, nil, true)
+	analyzedMap.InsertIndex(1, nil, false)
 	tests := []struct {
 		name     string
 		tblInfo  *model.TableInfo
@@ -483,7 +496,7 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 					},
 				},
 			},
-			tblStats: &statistics.Table{},
+			tblStats: &statistics.Table{ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 0)},
 			want:     nil,
 		},
 		{
@@ -507,7 +520,8 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 						},
 					},
 				},
-				LastAnalyzeVersion: 1,
+				ColAndIdxExistenceMap: analyzedMap,
+				LastAnalyzeVersion:    1,
 			},
 			want: []string{"index1"},
 		},
@@ -528,6 +542,11 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 	// 2023-12-31 10:00:00
 	lastUpdateTime := time.Date(2023, 12, 31, 10, 0, 0, 0, time.UTC)
 	lastUpdateTs := oracle.GoTimeToTS(lastUpdateTime)
+	unanalyzedMap := statistics.NewColAndIndexExistenceMap(0, 0)
+	analyzedMap := statistics.NewColAndIndexExistenceMap(2, 1)
+	analyzedMap.InsertCol(1, nil, true)
+	analyzedMap.InsertCol(2, nil, true)
+	analyzedMap.InsertIndex(1, nil, true)
 	tests := []struct {
 		name                       string
 		tblInfo                    *model.TableInfo
@@ -568,6 +587,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 						Pseudo:        false,
 						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
 					},
+					ColAndIdxExistenceMap: unanalyzedMap,
 				},
 				{
 					ID:   2,
@@ -577,6 +597,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 						Pseudo:        false,
 						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
 					},
+					ColAndIdxExistenceMap: unanalyzedMap,
 				},
 			},
 			defs: []model.PartitionDefinition{
@@ -639,8 +660,9 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version:            currentTs,
-					LastAnalyzeVersion: lastUpdateTs,
+					Version:               currentTs,
+					ColAndIdxExistenceMap: analyzedMap,
+					LastAnalyzeVersion:    lastUpdateTs,
 				},
 				{
 					ID:   2,
@@ -665,8 +687,9 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version:            currentTs,
-					LastAnalyzeVersion: lastUpdateTs,
+					Version:               currentTs,
+					ColAndIdxExistenceMap: analyzedMap,
+					LastAnalyzeVersion:    lastUpdateTs,
 				},
 			},
 			defs: []model.PartitionDefinition{
@@ -729,8 +752,9 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version:            currentTs,
-					LastAnalyzeVersion: lastUpdateTs,
+					Version:               currentTs,
+					ColAndIdxExistenceMap: analyzedMap,
+					LastAnalyzeVersion:    lastUpdateTs,
 				},
 				{
 					ID:   2,
@@ -755,8 +779,9 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 							},
 						},
 					},
-					Version:            currentTs,
-					LastAnalyzeVersion: lastUpdateTs,
+					Version:               currentTs,
+					ColAndIdxExistenceMap: analyzedMap,
+					LastAnalyzeVersion:    lastUpdateTs,
 				},
 			},
 			defs: []model.PartitionDefinition{
@@ -835,6 +860,7 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 				ModifyCount:   0,
 				Indices:       map[int64]*statistics.Index{},
 			},
+			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 0),
 		},
 		{
 			ID:   2,
@@ -850,8 +876,10 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 					},
 				},
 			},
+			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 1),
 		},
 	}
+
 	partitionIndexes := refresher.CheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(&tblInfo, partitionStats)
 	expected := map[string][]string{"index1": {"p0", "p1"}, "index2": {"p0"}}
 	require.Equal(t, len(expected), len(partitionIndexes))

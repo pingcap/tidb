@@ -4,7 +4,9 @@ package utils_test
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"math"
 	"testing"
 	"time"
 
@@ -78,6 +80,28 @@ func TestBackoffWithFatalError(t *testing.T) {
 		berrors.ErrKVDownloadFailed,
 		berrors.ErrKVRangeIsEmpty,
 	}, multierr.Errors(err))
+}
+
+func TestWithRetryReturnLastErr(t *testing.T) {
+	var counter int
+	backoffer := utils.NewBackoffer(10, time.Nanosecond, time.Nanosecond, utils.NewDefaultContext())
+	gRPCError := status.Error(codes.Unavailable, "transport is closing")
+	err := utils.WithRetryReturnLastErr(context.Background(), func() error {
+		defer func() { counter++ }()
+		switch counter {
+		case 0:
+			return gRPCError // nolint:wrapcheck
+		case 1:
+			return berrors.ErrKVEpochNotMatch
+		case 2:
+			return berrors.ErrKVDownloadFailed
+		case 3:
+			return berrors.ErrKVRangeIsEmpty
+		}
+		return nil
+	}, backoffer)
+	require.Equal(t, 4, counter)
+	require.ErrorIs(t, berrors.ErrKVRangeIsEmpty, err)
 }
 
 func TestBackoffWithFatalRawGRPCError(t *testing.T) {
@@ -190,4 +214,44 @@ func TestNewBackupSSTBackofferWithCancel(t *testing.T) {
 		berrors.ErrKVIngestFailed,
 		context.Canceled,
 	}, multierr.Errors(err))
+}
+
+func TestConstantBackoff(t *testing.T) {
+	backedOff := func(t *testing.T) {
+		backoffer := utils.ConstantBackoff(10 * time.Millisecond)
+		ctx, cancel := context.WithCancel(context.Background())
+		i := 0
+		ch := make(chan error)
+
+		go func() {
+			_, err := utils.WithRetryV2(ctx, backoffer, func(ctx context.Context) (struct{}, error) {
+				i += 1
+				return struct{}{}, fmt.Errorf("%d times, no meaning", i)
+			})
+			ch <- err
+		}()
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		require.Error(t, <-ch)
+		// Make sure we have backed off.
+		require.Less(t, i, 20)
+	}
+
+	infRetry := func(t *testing.T) {
+		backoffer := utils.ConstantBackoff(0)
+		ctx := context.Background()
+		i := math.MaxInt16
+
+		_, err := utils.WithRetryV2(ctx, backoffer, func(ctx context.Context) (struct{}, error) {
+			i -= 1
+			if i == 0 {
+				return struct{}{}, nil
+			}
+			return struct{}{}, fmt.Errorf("try %d more times", i)
+		})
+		require.NoError(t, err)
+	}
+
+	t.Run("backedOff", backedOff)
+	t.Run("infRetry", infRetry)
 }

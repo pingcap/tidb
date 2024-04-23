@@ -19,12 +19,12 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
@@ -44,6 +44,7 @@ type BackfillTaskMeta struct {
 	EleTypeKey []byte `json:"ele_type_key"`
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
+	EstimateRowSize int    `json:"estimate_row_size"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
@@ -107,13 +108,14 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		indexInfos = append(indexInfos, indexInfo)
 	}
 	cloudStorageURI := s.taskMeta.CloudStorageURI
+	estRowSize := s.taskMeta.EstimateRowSize
 
 	switch stage {
 	case proto.BackfillStepReadIndex:
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI)
+		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
@@ -189,7 +191,7 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) (execute.StepExecutor, error) {
+func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
 	switch task.Step {
 	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
 		return s.newBackfillSubtaskExecutor(task.Step)

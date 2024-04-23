@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -408,7 +409,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		require.NoError(t, err, "error %v, for resolve name, expr %s", err, tt.exprStr)
 		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		require.NoError(t, err, "error %v, for build plan, expr %s", err, tt.exprStr)
-		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		selection := p.(base.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
 		for i, cond := range selection.Conditions {
 			conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
@@ -624,7 +625,8 @@ func TestShardIndexOnTiFlash(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -664,7 +666,8 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -2583,6 +2586,43 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("2000-01-05 00:00:00"))
 	result = tk.MustQuery(`select timestamp(cast(105 as decimal(60, 5)))`)
 	result.Check(testkit.Rows("2000-01-05 00:00:00.00000"))
+
+	// fix issues #52262
+	// date time
+	result = tk.MustQuery(`select distinct -(DATE_ADD(DATE('2017-11-12 08:48:25'), INTERVAL 1 HOUR_MICROSECOND))`)
+	result.Check(testkit.Rows("-20171112000000.100000"))
+	result = tk.MustQuery(`select distinct (DATE_ADD(DATE('2017-11-12 08:48:25'), INTERVAL 1 HOUR_MICROSECOND))`)
+	result.Check(testkit.Rows("2017-11-12 00:00:00.100000"))
+	// duration
+	result = tk.MustQuery(`select distinct -cast(0.1 as time(1))`)
+	result.Check(testkit.Rows("-0.1"))
+	result = tk.MustQuery(`select distinct cast(0.1 as time(1))`)
+	result.Check(testkit.Rows("00:00:00.1"))
+	// date
+	result = tk.MustQuery(`select distinct -(DATE('2017-11-12 08:48:25.123'))`)
+	result.Check(testkit.Rows("-20171112"))
+	result = tk.MustQuery(`select distinct (DATE('2017-11-12 08:48:25.123'))`)
+	result.Check(testkit.Rows("2017-11-12"))
+	// timestamp
+	result = tk.MustQuery(`select distinct (Timestamp('2017-11-12 08:48:25.1'))`)
+	result.Check(testkit.Rows("2017-11-12 08:48:25.1"))
+	result = tk.MustQuery(`select distinct -(Timestamp('2017-11-12 08:48:25.1'))`)
+	result.Check(testkit.Rows("-20171112084825.1"))
+
+	tk.MustExec("create table t2(a DATETIME, b Timestamp, c TIME, d DATE)")
+	tk.MustExec(`insert into t2 values("2000-1-1 08:48:25.123", "2000-1-2 08:48:25.1", "11:11:12.1", "2000-1-3 08:48:25.1")`)
+	tk.MustExec("insert into t2 (select * from t2)")
+
+	result = tk.MustQuery(`select distinct -((a+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
+	result.Check(testkit.Rows("-20000101084825.100000"))
+	result = tk.MustQuery(`select distinct -((b+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
+	result.Check(testkit.Rows("-20000102084825.100000"))
+	result = tk.MustQuery(`select distinct -((c+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
+	result.Check(testkit.Rows("-111112.100000"))
+	result = tk.MustQuery(`select distinct -((d+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
+	result.Check(testkit.Rows("-20000103000000.100000"))
+
+	tk.MustExec("drop table t2")
 }
 
 func TestSetVariables(t *testing.T) {

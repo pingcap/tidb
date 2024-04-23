@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -375,11 +374,12 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	}
 	defer w.sessPool.Put(ctx)
 
-	executor, ok := ctx.(sqlexec.RestrictedSQLExecutor)
-	// `mock.Context` is used in tests, which doesn't implement RestrictedSQLExecutor
-	if !ok {
+	// `mock.Context` is used in tests, which doesn't support sql exec
+	if _, ok := ctx.(*mock.Context); ok {
 		return statistics.PseudoRowCount
 	}
+
+	executor := ctx.GetRestrictedSQLExecutor()
 	var rows []chunk.Row
 	if tblInfo.Partition != nil && len(tblInfo.Partition.DroppingDefinitions) > 0 {
 		// if Reorganize Partition, only select number of rows from the selected partitions!
@@ -500,7 +500,7 @@ func buildDescTableScanDAG(ctx sessionctx.Context, tbl table.PhysicalTable, hand
 	tblScanExec := constructDescTableScanPB(tbl.GetPhysicalID(), tbl.Meta(), handleCols)
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 	dagReq.Executors = append(dagReq.Executors, constructLimitPB(limit))
-	distsql.SetEncodeType(ctx, dagReq)
+	distsql.SetEncodeType(ctx.GetDistSQLCtx(), dagReq)
 	return dagReq, nil
 }
 
@@ -528,7 +528,7 @@ func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.
 	} else {
 		ranges = ranger.FullIntRange(false)
 	}
-	builder = b.SetHandleRanges(sctx.GetSessionVars().StmtCtx, tbl.GetPhysicalID(), tbl.Meta().IsCommonHandle, ranges)
+	builder = b.SetHandleRanges(sctx.GetDistSQLCtx(), tbl.GetPhysicalID(), tbl.Meta().IsCommonHandle, ranges)
 	builder.SetDAGRequest(dagPB).
 		SetStartTS(startTS).
 		SetKeepOrder(true).
@@ -547,7 +547,7 @@ func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.
 		return nil, errors.Trace(err)
 	}
 
-	result, err := distsql.Select(ctx.ddlJobCtx, sctx, kvReq, getColumnsTypes(handleCols))
+	result, err := distsql.Select(ctx.ddlJobCtx, sctx.GetDistSQLCtx(), kvReq, getColumnsTypes(handleCols))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -706,7 +706,10 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 			tb = tbl.(table.PhysicalTable)
 		}
 		if mergingTmpIdx {
-			start, end = tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|elements[0].ID)
+			firstElemTempID := tablecodec.TempIndexPrefix | elements[0].ID
+			lastElemTempID := tablecodec.TempIndexPrefix | elements[len(elements)-1].ID
+			start = tablecodec.EncodeIndexSeekKey(pid, firstElemTempID, nil)
+			end = tablecodec.EncodeIndexSeekKey(pid, lastElemTempID, []byte{255})
 		} else {
 			start, end, err = getTableRange(ctx, d, tb, ver.Ver, job.Priority)
 			if err != nil {
@@ -903,14 +906,23 @@ func CleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
 func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
 	element, startKey, endKey, physicalTableID, err = getDDLReorgHandle(r.s, job)
-	if job.ReorgMeta != nil && job.ReorgMeta.Version == model.ReorgMetaVersion0 && err == nil {
-		logutil.BgLogger().Info("job get table range for old version ReorgMetas", zap.String("category", "ddl"),
-			zap.Int64("jobID", job.ID), zap.Int64("job ReorgMeta version", job.ReorgMeta.Version), zap.Int64("physical table ID", physicalTableID),
-			zap.String("startKey", hex.EncodeToString(startKey)),
-			zap.String("current endKey", hex.EncodeToString(endKey)),
-			zap.String("endKey next", hex.EncodeToString(endKey.Next())))
-		endKey = endKey.Next()
+	if err != nil {
+		return element, startKey, endKey, physicalTableID, err
 	}
+	adjustedEndKey := adjustEndKeyAcrossVersion(job, endKey)
+	return element, startKey, adjustedEndKey, physicalTableID, nil
+}
 
-	return
+// #46306 changes the table range from [start_key, end_key] to [start_key, end_key.next).
+// For old version TiDB, the semantic is still [start_key, end_key], we need to adjust it in new version TiDB.
+func adjustEndKeyAcrossVersion(job *model.Job, endKey kv.Key) kv.Key {
+	if job.ReorgMeta != nil && job.ReorgMeta.Version == model.ReorgMetaVersion0 {
+		logutil.BgLogger().Info("adjust range end key for old version ReorgMetas",
+			zap.String("category", "ddl"),
+			zap.Int64("jobID", job.ID),
+			zap.Int64("reorgMetaVersion", job.ReorgMeta.Version),
+			zap.String("endKey", hex.EncodeToString(endKey)))
+		return endKey.Next()
+	}
+	return endKey
 }
