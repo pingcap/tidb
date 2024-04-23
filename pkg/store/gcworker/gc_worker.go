@@ -416,7 +416,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	 	3. At least one TiDB without `keyspace-name` is required in the whole cluster
 			which will to calculate and update global gc safe point in the whole cluster.
 	*/
-	if keyspace.IsCurrentKeyspaceUseGlobalGC() {
+	if keyspace.CurrentKeyspaceMeta != nil && keyspace.IsCurrentKeyspaceUseGlobalGC() {
 		// If we use global gc safe point, a tidb which has keyspace-name should only do delete range logic.
 		err = w.runKeyspaceGCJobInGlobalGC(ctx, concurrency)
 		if err != nil {
