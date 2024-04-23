@@ -490,7 +490,7 @@ type JobMeta struct {
 type Job struct {
 	ID   int64      `json:"id"`
 	Type ActionType `json:"type"`
-	// TableID means different for different job types:
+	// SchemaID means different for different job types:
 	// - ExchangeTablePartition: nt db id
 	SchemaID int64 `json:"schema_id"`
 	// TableID means different for different job types:
