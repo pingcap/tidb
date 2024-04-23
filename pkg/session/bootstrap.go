@@ -1087,6 +1087,7 @@ const (
 
 	// version 196
 	//   add column `target_scope` for 'mysql.tidb_global_task` table
+	//   add column `target_scope` for 'mysql.tidb_global_task_history` table
 	version196 = 196
 )
 
@@ -3086,6 +3087,7 @@ func upgradeToVer196(s sessiontypes.Session, ver int64) {
 	}
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN target_scope VARCHAR(256);")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN target_scope VARCHAR(256);")
 }
 
 func writeOOMAction(s sessiontypes.Session) {
