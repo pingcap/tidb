@@ -393,11 +393,6 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 }
 
 func TestColumnsBasic(t *testing.T) {
-	// todo enable nullable type if builder support nullable
-	//intTp := types.NewFieldType(mysql.TypeLonglong)
-	//uintTp := types.NewFieldType(mysql.TypeLonglong)
-	//uintTp.AddFlag(mysql.UnsignedFlag)
-	//stringTp := types.NewFieldType(mysql.TypeVarString)
 	notNullIntTp := types.NewFieldType(mysql.TypeLonglong)
 	notNullIntTp.AddFlag(mysql.NotNullFlag)
 	notNullUintTp := types.NewFieldType(mysql.TypeLonglong)
@@ -407,10 +402,18 @@ func TestColumnsBasic(t *testing.T) {
 	notNullString.AddFlag(mysql.NotNullFlag)
 	notNullBinaryStringTp := types.NewFieldType(mysql.TypeBlob)
 	notNullBinaryStringTp.AddFlag(mysql.NotNullFlag)
+	intTp := types.NewFieldType(mysql.TypeLonglong)
+	uintTp := types.NewFieldType(mysql.TypeLonglong)
+	uintTp.AddFlag(mysql.UnsignedFlag)
+	stringTp := types.NewFieldType(mysql.TypeVarString)
+	binaryStringTp := types.NewFieldType(mysql.TypeBlob)
 	buildKeyIndex := []int{0}
 	buildTypes := []*types.FieldType{notNullIntTp, notNullIntTp, notNullString, notNullUintTp, notNullBinaryStringTp, notNullIntTp}
 	buildKeyTypes := []*types.FieldType{notNullIntTp}
 	probeKeyTypes := []*types.FieldType{notNullIntTp}
+	buildTypesNullable := []*types.FieldType{intTp, intTp, stringTp, uintTp, binaryStringTp, intTp}
+	buildKeyTypesNullable := []*types.FieldType{intTp}
+	probeKeyTypesNullable := []*types.FieldType{intTp}
 	columnUsedByOtherConditions := [][]int{{2, 3}, {0, 2}, nil}
 	outputColumns := [][]int{{0, 1, 2, 3, 4, 5}, {2, 3, 4, 5, 1, 0}}
 	keepFilteredRows := []bool{true, false}
@@ -425,6 +428,7 @@ func TestColumnsBasic(t *testing.T) {
 					for _, buildFilter := range filters {
 						for _, withSel := range withSelCol {
 							checkColumns(t, withSel, buildFilter, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, keep, otherCondition, allColumns, usedFlag)
+							checkColumns(t, withSel, buildFilter, buildKeyIndex, buildTypesNullable, buildKeyTypesNullable, probeKeyTypesNullable, keep, otherCondition, allColumns, usedFlag)
 						}
 					}
 				}
@@ -474,6 +478,9 @@ func TestColumnsAllDataTypes(t *testing.T) {
 	buildTypes := []*types.FieldType{tinyTp, intTp, uintTp, yearTp, durationTp, enumTp, enumWithIntFlag, setTp, bitTp, jsonTp, floatTp, doubleTp, stringTp, datetimeTp, decimalTp, timestampTp, dateTp}
 	buildKeyTypes := []*types.FieldType{tinyTp}
 	probeKeyTypes := []*types.FieldType{tinyTp}
+	nullableBuildTypes := toNullableTypes(buildTypes)
+	nullableBuildKeyTypes := toNullableTypes(buildKeyTypes)
+	nullableProbeKeyTypes := toNullableTypes(probeKeyTypes)
 	outputColumns := make([]int, 0, len(buildTypes))
 	for index := range buildTypes {
 		outputColumns = append(outputColumns, index)
@@ -483,6 +490,7 @@ func TestColumnsAllDataTypes(t *testing.T) {
 	for _, keep := range keepFilteredRows {
 		for _, usedFlag := range needUsedFlag {
 			checkColumns(t, false, nil, buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, keep, nil, outputColumns, usedFlag)
+			checkColumns(t, false, nil, buildKeyIndex, nullableBuildTypes, nullableBuildKeyTypes, nullableProbeKeyTypes, keep, nil, outputColumns, usedFlag)
 		}
 	}
 }
