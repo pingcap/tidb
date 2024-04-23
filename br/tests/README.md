@@ -48,21 +48,7 @@ This folder contains all tests which relies on external processes such as TiDB.
     The versions must be ≥2.1.0.
 
     What's more, there must be dynamic link library for TiFlash, see make target `bin` to learn more.
-<<<<<<< HEAD
     You can install most of dependencies by running `download_tools.sh`.
-=======
-    You can install most of dependencies by running following commands:
-
-    ```sh
-    cd ${WORKSPACE}/tidb
-    rm -rf third_bin/
-    rm -rf bin/
-    br/tests/download_integration_test_binaries.sh
-    mkdir -p bin && mv third_bin/* bin/
-    rm -rf third_bin/
-    make failpoint-enable && make && make failpoint-disable #make tidb
-    ```
->>>>>>> d4a80587478 (br: add integration test for ingest corner case test (#52734))
 
 2. The following programs must be installed:
 
