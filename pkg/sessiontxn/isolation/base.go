@@ -294,14 +294,6 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	sessVars := p.sctx.GetSessionVars()
 
-	if txn.IsPipelined() {
-		if sessVars.StmtCtx.KvExecCounter != nil {
-			// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
-			txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
-		}
-		txn.SetOption(kv.ResourceGroupTagger, p.sctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
-	}
-
 	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
 	sessVars.TxnCtxMu.Unlock()
@@ -498,6 +490,10 @@ func (p *baseTxnContextProvider) SetOptionsOnTxnActive(txn kv.Transaction) {
 		txn.SetDiskFullOpt(sessVars.DiskFullOpt)
 	}
 	txn.SetOption(kv.InfoSchema, sessVars.TxnCtx.InfoSchema)
+	if sessVars.StmtCtx.KvExecCounter != nil {
+		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+		txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
+	}
 	txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
 	txn.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
 
