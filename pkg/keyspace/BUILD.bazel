@@ -26,8 +26,11 @@ go_test(
     srcs = ["keyspace_test.go"],
     embed = [":keyspace"],
     flaky = True,
+    shard_count = 3,
     deps = [
         "//pkg/config",
+        "//pkg/util/logutil",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
     ],
 )

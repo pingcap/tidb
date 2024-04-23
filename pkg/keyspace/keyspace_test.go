@@ -15,10 +15,13 @@
 package keyspace
 
 import (
+	"encoding/hex"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestSetKeyspaceNameInConf(t *testing.T) {
@@ -49,4 +52,13 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 
 	require.Equal(t, "", getKeyspaceName)
 	require.Equal(t, true, IsKeyspaceNameEmpty(getKeyspaceName))
+}
+
+func TestKeyspaceRange(t *testing.T) {
+
+	left := GetKeyspaceTxnLeftBound(0xffffff)
+
+	logutil.BgLogger().Info("[gc worker] resolve locks by range",
+		zap.String("txnLeftBound", hex.EncodeToString(left)),
+	)
 }

@@ -43,6 +43,12 @@ const (
 	KeyspaceMetaConfigGCManagementType = "gc_management_type"
 	// KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC is a type of GC management in keyspace meta config, it means this keyspace will calculate GC safe point by its own.
 	KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC = "keyspace_level_gc"
+	// KeyspaceMetaConfigGCManagementTypeGlobalGC is a type of GC management in keyspace meta config, it means this keyspace will use GC safe point by global GC.
+	KeyspaceMetaConfigGCManagementTypeGlobalGC = "global_gc"
+
+	maxKeyspaceID = 0xffffff
+
+	keyspaceTxnModePrefix byte = 'x'
 )
 
 // CodecV1 represents api v1 codec.
@@ -89,17 +95,23 @@ func WrapZapcoreWithKeyspace() zap.Option {
 	})
 }
 
-// NewEtcdSafePointKV is used to add prefix when set keyspace.
+// NewEtcdSafePointKV is used to add etcd namespace with keyspace prefix
+// if the current keyspace is configured with "gc_management_type" = "keyspace_level_gc".
 func NewEtcdSafePointKV(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
 	var etcdNameSpace string
-	if IsKeyspaceMetaUseKeyspaceLevelGC(CurrentKeyspaceMeta) {
+	if IsCurrentTiDBUseKeyspaceLevelGC() {
 		etcdNameSpace = MakeKeyspaceEtcdNamespace(codec)
 	}
 	return tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig, tikv.WithPrefix(etcdNameSpace))
 }
 
-// IsKeyspaceMetaUseKeyspaceLevelGC return true if keyspace meta config has 'gc_management_type' is 'keyspace_level_gc'.
-func IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
+// IsCurrentTiDBUseKeyspaceLevelGC return true if CurrentKeyspaceMeta not nil and CurrentKeyspaceMeta config has "gc_management_type" = "keyspace_level_gc".
+func IsCurrentTiDBUseKeyspaceLevelGC() bool {
+	return IsKeyspaceUseKeyspaceLevelGC(CurrentKeyspaceMeta)
+}
+
+// IsKeyspaceUseKeyspaceLevelGC return true if keyspace meta config has "gc_management_type" = "keyspace_level_gc".
+func IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	if keyspaceMeta == nil {
 		return false
 	}
@@ -109,32 +121,40 @@ func IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) boo
 	return false
 }
 
-// IsKeyspaceUseGlobalGC return true if TiDB set 'keyspace-name' and use global gc.
-func IsKeyspaceUseGlobalGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
-	return keyspaceMeta != nil && !IsKeyspaceMetaUseKeyspaceLevelGC(keyspaceMeta)
+// IsCurrentTiDBUseGlobalGC return true if TiDB set 'keyspace-name' and use global gc.
+func IsCurrentTiDBUseGlobalGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
+	if keyspaceMeta == nil {
+		return true
+	}
+	if val, ok := keyspaceMeta.Config[KeyspaceMetaConfigGCManagementType]; ok {
+		return val == KeyspaceMetaConfigGCManagementTypeGlobalGC
+	}
+	return true
 }
 
-// GetKeyspaceTxnPrefix return the keyspace txn prefix
-func GetKeyspaceTxnPrefix(keyspaceID uint32) []byte {
+// GetKeyspaceTxnLeftBound return the keyspace txn left boundary.
+func GetKeyspaceTxnLeftBound(keyspaceID uint32) []byte {
 	keyspaceIDBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(keyspaceIDBytes, keyspaceID)
-	txnLeftBound := codec.EncodeBytes(nil, append([]byte{'x'}, keyspaceIDBytes[1:]...))
+
+	// The first byte is keyspaceTxnModePrefix, and the next three bytes are converted from uint32
+	txnLeftBound := codec.EncodeBytes(nil, append([]byte{keyspaceTxnModePrefix}, keyspaceIDBytes[1:]...))
 	return txnLeftBound
 }
 
-// GetKeyspaceTxnRange return the keyspace range prefix
+// GetKeyspaceTxnRange return the keyspace txn left boundary and txn right boundary.
 func GetKeyspaceTxnRange(keyspaceID uint32) ([]byte, []byte) {
-	// Get keyspace range
-	txnLeftBound := GetKeyspaceTxnPrefix(keyspaceID)
+	// Get keyspace txn left boundary
+	txnLeftBound := GetKeyspaceTxnLeftBound(keyspaceID)
 
 	var txnRightBound []byte
-	if keyspaceID == 0xffffff {
-		var end [4]byte
-		binary.BigEndian.PutUint32(end[:], keyspaceID+1)
-		end[0] = 'x' + 1 // handle overflow for max keyspace id.
-		txnRightBound = codec.EncodeBytes(nil, end[:])
+	if keyspaceID == maxKeyspaceID {
+		// Directly set the right boundary of maxKeyspaceID to be {keyspaceTxnModePrefix + 1, 0, 0, 0}
+		maxKeyspaceIDTxnRightBound := [4]byte{keyspaceTxnModePrefix + 1, 0, 0, 0}
+		txnRightBound = codec.EncodeBytes(nil, maxKeyspaceIDTxnRightBound[:])
 	} else {
-		txnRightBound = GetKeyspaceTxnPrefix(keyspaceID + 1)
+		// The right boundary of the specified keyspace is the left boundary of keyspaceID + 1.
+		txnRightBound = GetKeyspaceTxnLeftBound(keyspaceID + 1)
 	}
 
 	return txnLeftBound, txnRightBound
