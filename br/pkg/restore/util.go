@@ -20,13 +20,13 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -510,18 +510,26 @@ func SplitRanges(
 	updateCh glue.Progress,
 	isRawKv bool,
 ) error {
-	splitter := NewRegionSplitter(split.NewSplitClient(
-		client.GetPDClient(),
-		client.pdHTTPClient,
-		client.GetTLSConfig(),
-		isRawKv,
-	))
-
-	return splitter.ExecuteSplit(ctx, ranges, client.GetStoreCount(), isRawKv, func(keys [][]byte) {
+	splitClientOpts := make([]split.ClientOptionalParameter, 0, 2)
+	splitClientOpts = append(splitClientOpts, split.WithOnSplit(func(keys [][]byte) {
 		for range keys {
 			updateCh.Inc()
 		}
-	})
+	}))
+	if isRawKv {
+		splitClientOpts = append(splitClientOpts, split.WithRawKV())
+	}
+
+	splitter := NewRegionSplitter(split.NewClient(
+		client.GetPDClient(),
+		client.pdHTTPClient,
+		client.GetTLSConfig(),
+		maxSplitKeysOnce,
+		client.GetStoreCount()+1,
+		splitClientOpts...,
+	))
+
+	return splitter.ExecuteSplit(ctx, ranges)
 }
 
 func findMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb.RewriteRule {
@@ -772,7 +780,7 @@ func CheckConsistencyAndValidPeer(regionInfos []*RecoverRegionInfo) (map[uint64]
 		if !keyEq(prevEndKey, iter.Key().([]byte)) {
 			log.Error("regions are not adjacent", zap.Uint64("pre region", prevRegion), zap.Uint64("cur region", v.RegionId))
 			// TODO, some enhancement may need, a PoC or test may need for decision
-			return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange,
+			return nil, errors.Annotatef(berrors.ErrInvalidRange,
 				"invalid region range")
 		}
 		prevEndKey = v.EndKey

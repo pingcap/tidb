@@ -21,7 +21,6 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-        "//pkg/planner/context",
         "//pkg/planner/util/fixcontrol",
         "//pkg/sessionctx/stmtctx",
         "//pkg/types",
@@ -31,6 +30,7 @@ go_library(
         "//pkg/util/collate",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/hack",
+        "//pkg/util/ranger/context",
         "@com_github_pingcap_errors//:errors",
     ],
 )
@@ -61,6 +61,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/collate",
+        "//pkg/util/context",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

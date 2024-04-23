@@ -274,7 +274,7 @@ func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64,
 		SetStartTS(startTS).
 		SetKeyRanges([]kv.KeyRange{{StartKey: start, EndKey: end}}).
 		SetKeepOrder(true).
-		SetFromSessionVars(c.SessionContext.GetSessionVars()).
+		SetFromSessionVars(c.SessionContext.GetDistSQLCtx()).
 		SetFromInfoSchema(c.SessionContext.GetDomainInfoSchema()).
 		SetConcurrency(1).
 		Build()
@@ -284,7 +284,7 @@ func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64,
 	if err != nil {
 		return nil, err
 	}
-	return distsql.Select(ctx, c.SessionContext, kvReq, c.FieldTypes)
+	return distsql.Select(ctx, c.SessionContext.GetDistSQLCtx(), kvReq, c.FieldTypes)
 }
 
 func fetchTableScanResult(
@@ -353,7 +353,7 @@ func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*m
 		return nil, err
 	}
 	dagReq.Executors = append(dagReq.Executors, execPB)
-	distsql.SetEncodeType(sCtx, dagReq)
+	distsql.SetEncodeType(sCtx.GetDistSQLCtx(), dagReq)
 	return dagReq, nil
 }
 

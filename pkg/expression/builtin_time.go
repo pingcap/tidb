@@ -298,7 +298,7 @@ func (c *dateLiteralFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if !ok {
 		panic("Unexpected parameter for date literal")
 	}
-	dt, err := con.Eval(ctx, chunk.Row{})
+	dt, err := con.Eval(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +306,7 @@ func (c *dateLiteralFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if !datePattern.MatchString(str) {
 		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, str)
 	}
-	tm, err := types.ParseDate(ctx.TypeCtx(), str)
+	tm, err := types.ParseDate(ctx.GetEvalCtx().TypeCtx(), str)
 	if err != nil {
 		return nil, err
 	}
@@ -1080,7 +1080,7 @@ func (c *monthNameFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(10)
@@ -1125,7 +1125,7 @@ func (c *dayNameFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(10)
@@ -1854,7 +1854,7 @@ func (c *strToDateFunctionClass) getRetTp(ctx BuildContext, arg Expression) (tp 
 		return tp, types.MaxFsp
 	}
 	strArg := WrapWithCastAsString(ctx, arg)
-	format, isNull, err := strArg.EvalString(ctx, chunk.Row{})
+	format, isNull, err := strArg.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil || isNull {
 		return
 	}
@@ -2289,7 +2289,7 @@ func (c *timeLiteralFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if !ok {
 		panic("Unexpected parameter for time literal")
 	}
-	dt, err := con.Eval(ctx, chunk.Row{})
+	dt, err := con.Eval(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -2297,7 +2297,7 @@ func (c *timeLiteralFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if !isDuration(str) {
 		return nil, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, str)
 	}
-	duration, _, err := types.ParseDuration(ctx.TypeCtx(), str, types.GetFsp(str))
+	duration, _, err := types.ParseDuration(ctx.GetEvalCtx().TypeCtx(), str, types.GetFsp(str))
 	if err != nil {
 		return nil, err
 	}
@@ -2590,7 +2590,7 @@ func (c *extractFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	}
 
 	args[0] = WrapWithCastAsString(ctx, args[0])
-	unit, _, err := args[0].EvalString(ctx, chunk.Row{})
+	unit, _, err := args[0].EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -3595,7 +3595,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		intervalEvalTp = types.ETInt
 	}
 
-	unit, _, err := args[2].EvalString(ctx, chunk.Row{})
+	unit, _, err := args[2].EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -4154,7 +4154,7 @@ func (c *unixTimestampFunctionClass) getFunction(ctx BuildContext, args []Expres
 			// Treat types.ETString as unspecified decimal.
 			retDecimal = types.UnspecifiedLength
 			if cnst, ok := args[0].(*Constant); ok {
-				tmpStr, _, err := cnst.EvalString(ctx, chunk.Row{})
+				tmpStr, _, err := cnst.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return nil, err
 				}
@@ -4471,7 +4471,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx BuildContext, args []Exp
 	if !ok {
 		panic("Unexpected parameter for timestamp literal")
 	}
-	dt, err := con.Eval(ctx, chunk.Row{})
+	dt, err := con.Eval(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
@@ -4482,7 +4482,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx BuildContext, args []Exp
 	if !timestampPattern.MatchString(str) {
 		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, str)
 	}
-	tm, err := types.ParseTime(ctx.TypeCtx(), str, mysql.TypeDatetime, types.GetFsp(str))
+	tm, err := types.ParseTime(ctx.GetEvalCtx().TypeCtx(), str, mysql.TypeDatetime, types.GetFsp(str))
 	if err != nil {
 		return nil, err
 	}
@@ -4688,7 +4688,7 @@ func (c *addTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 			sig.setPbCode(tipb.ScalarFuncSig_AddDatetimeAndString)
 		}
 	case mysql.TypeDate:
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
 		switch tp2.GetType() {
@@ -5087,7 +5087,7 @@ func (c *convertTzFunctionClass) getDecimal(ctx BuildContext, arg Expression) in
 		case types.ETReal, types.ETDecimal:
 			decimal = arg.GetType().GetDecimal()
 		case types.ETString:
-			str, isNull, err := dt.EvalString(ctx, chunk.Row{})
+			str, isNull, err := dt.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 			if err == nil && !isNull {
 				decimal = types.DateFSP(str)
 			}
@@ -5657,7 +5657,7 @@ func (c *subTimeFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 			sig.setPbCode(tipb.ScalarFuncSig_SubDatetimeAndString)
 		}
 	case mysql.TypeDate:
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
 		switch tp2.GetType() {
@@ -6148,7 +6148,7 @@ func (c *timestampAddFunctionClass) getFunction(ctx BuildContext, args []Express
 	if !ok {
 		return nil, errors.New("should not happened")
 	}
-	unit, null, err := con.EvalString(ctx, chunk.Row{})
+	unit, null, err := con.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	if null || err != nil {
 		return nil, errors.New("should not happened")
 	}
@@ -6532,7 +6532,7 @@ func (b *builtinLastDaySig) evalTime(ctx EvalContext, row chunk.Row) (types.Time
 func getExpressionFsp(ctx BuildContext, expression Expression) (int, error) {
 	constExp, isConstant := expression.(*Constant)
 	if isConstant {
-		str, isNil, err := constExp.EvalString(ctx, chunk.Row{})
+		str, isNil, err := constExp.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 		if isNil || err != nil {
 			return 0, err
 		}
@@ -6768,7 +6768,7 @@ func getFspByIntArg(ctx BuildContext, exps []Expression) (int, error) {
 	}
 	_, ok := exps[0].(*Constant)
 	if ok {
-		fsp, isNuLL, err := exps[0].EvalInt(ctx, chunk.Row{})
+		fsp, isNuLL, err := exps[0].EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 		if err != nil || isNuLL {
 			// If isNULL, it may be a bug of parser. Return 0 to be compatible with old version.
 			return 0, err

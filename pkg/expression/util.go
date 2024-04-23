@@ -344,7 +344,7 @@ func extractConstantEqColumnsOrScalar(ctx BuildContext, result []Expression, exp
 				if i == 0 {
 					continue
 				}
-				if !guard.Equal(ctx, v) {
+				if !guard.Equal(ctx.GetEvalCtx(), v) {
 					allArgsIsConst = false
 					break
 				}
@@ -601,7 +601,7 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			allConstant = allConstant && ok
 		}
 		if allConstant {
-			val, err := x.Eval(ctx, chunk.Row{})
+			val, err := x.Eval(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return nil, err
 			}
@@ -1165,7 +1165,7 @@ func DatumToConstant(d types.Datum, tp byte, flag uint) *Constant {
 
 // ParamMarkerExpression generate a getparam function expression.
 func ParamMarkerExpression(ctx variable.SessionVarsProvider, v *driver.ParamMarkerExpr, needParam bool) (*Constant, error) {
-	useCache := ctx.GetSessionVars().StmtCtx.UseCache
+	useCache := ctx.GetSessionVars().StmtCtx.UseCache()
 	isPointExec := ctx.GetSessionVars().StmtCtx.PointExec
 	tp := types.NewFieldType(mysql.TypeUnspecified)
 	types.InferParamTypeFromDatum(&v.Datum, tp)
@@ -1221,15 +1221,15 @@ func ConstructPositionExpr(p *driver.ParamMarkerExpr) *ast.PositionExpr {
 }
 
 // PosFromPositionExpr generates a position value from PositionExpr.
-func PosFromPositionExpr(ctx BuildContext, v *ast.PositionExpr) (int, bool, error) {
+func PosFromPositionExpr(ctx BuildContext, vars variable.SessionVarsProvider, v *ast.PositionExpr) (int, bool, error) {
 	if v.P == nil {
 		return v.N, false, nil
 	}
-	value, err := ParamMarkerExpression(ctx, v.P.(*driver.ParamMarkerExpr), false)
+	value, err := ParamMarkerExpression(vars, v.P.(*driver.ParamMarkerExpr), false)
 	if err != nil {
 		return 0, true, err
 	}
-	pos, isNull, err := GetIntFromConstant(ctx, value)
+	pos, isNull, err := GetIntFromConstant(ctx.GetEvalCtx(), value)
 	if err != nil || isNull {
 		return 0, true, err
 	}
@@ -1237,7 +1237,7 @@ func PosFromPositionExpr(ctx BuildContext, v *ast.PositionExpr) (int, bool, erro
 }
 
 // GetStringFromConstant gets a string value from the Constant expression.
-func GetStringFromConstant(ctx BuildContext, value Expression) (string, bool, error) {
+func GetStringFromConstant(ctx EvalContext, value Expression) (string, bool, error) {
 	con, ok := value.(*Constant)
 	if !ok {
 		err := errors.Errorf("Not a Constant expression %+v", value)
@@ -1251,7 +1251,7 @@ func GetStringFromConstant(ctx BuildContext, value Expression) (string, bool, er
 }
 
 // GetIntFromConstant gets an interger value from the Constant expression.
-func GetIntFromConstant(ctx BuildContext, value Expression) (int, bool, error) {
+func GetIntFromConstant(ctx EvalContext, value Expression) (int, bool, error) {
 	str, isNull, err := GetStringFromConstant(ctx, value)
 	if err != nil || isNull {
 		return 0, true, err
@@ -1465,10 +1465,10 @@ func ContainCorrelatedColumn(exprs []Expression) bool {
 // TODO: Do more careful check here.
 func MaybeOverOptimized4PlanCache(ctx BuildContext, exprs []Expression) bool {
 	// If we do not enable plan cache, all the optimization can work correctly.
-	if !ctx.GetSessionVars().StmtCtx.UseCache {
+	if !ctx.IsUseCache() {
 		return false
 	}
-	return containMutableConst(ctx, exprs)
+	return containMutableConst(ctx.GetEvalCtx(), exprs)
 }
 
 // containMutableConst checks if the expressions contain a lazy constant.
@@ -1496,7 +1496,7 @@ func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
 			v.ParamMarker = nil
 			if v.DeferredExpr != nil { // evaluate and update v.Value to convert v to a complete immutable constant.
 				// TODO: remove or hide DefferedExpr since it's too dangerous (hard to be consistent with v.Value all the time).
-				v.Value, err = v.DeferredExpr.Eval(ctx, chunk.Row{})
+				v.Value, err = v.DeferredExpr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 				if err != nil {
 					return err
 				}

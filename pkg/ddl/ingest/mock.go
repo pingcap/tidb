@@ -19,8 +19,8 @@ import (
 	"encoding/hex"
 	"sync"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -43,17 +43,8 @@ func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBacken
 	}
 }
 
-// MarkJobProcessing implements BackendCtxMgr.MarkJobProcessing interface.
-func (*MockBackendCtxMgr) MarkJobProcessing(_ int64) bool {
-	return true
-}
-
-// MarkJobFinish implements BackendCtxMgr.MarkJobFinish interface.
-func (*MockBackendCtxMgr) MarkJobFinish() {
-}
-
-// CheckAvailable implements BackendCtxMgr.Available interface.
-func (m *MockBackendCtxMgr) CheckAvailable() (bool, error) {
+// CheckMoreTasksAvailable implements BackendCtxMgr.CheckMoreTaskAvailable interface.
+func (m *MockBackendCtxMgr) CheckMoreTasksAvailable(context.Context) (bool, error) {
 	return len(m.runningJobs) == 0, nil
 }
 

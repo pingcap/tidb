@@ -17,7 +17,6 @@
 package cgroup
 
 import (
-	"fmt"
 	"math"
 	"os"
 	"runtime"
@@ -25,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 )
 
 // GetCgroupCPU returns the CPU usage and quota for the current cgroup.
@@ -93,7 +91,6 @@ func inContainer(path string) bool {
 			// see details from https://man7.org/linux/man-pages/man5/proc.5.html
 			// TODO: enhance this check, as overlay is not the only storage driver for container.
 			if len(v) > 8 && v[4] == "/" && v[8] == "overlay" {
-				log.Info(fmt.Sprintf("TiDB runs in a container, mount info: %s", line))
 				return true
 			}
 		}
