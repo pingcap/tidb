@@ -93,7 +93,7 @@ func (s *partitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *coreusa
 				children = append(children, us)
 			}
 			ua.SetChildren(children...)
-			ua.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("Static partition pruning mode"))
+			ua.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Static partition pruning mode")
 			return ua, nil
 		}
 		// Only one partition, no union all.
@@ -517,7 +517,7 @@ func (s *partitionProcessor) processHashOrKeyPartition(ds *DataSource, pi *model
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
 	}
 	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	tableDual.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("TableDual/Static partition pruning mode"))
+	tableDual.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("TableDual/Static partition pruning mode")
 	tableDual.schema = ds.Schema()
 	appendNoPartitionChildTraceStep(ds, tableDual, opt)
 	return tableDual, nil
@@ -1805,7 +1805,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	}
 	s.checkHintsApplicable(ds, partitionNameSet)
 
-	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("Static partition pruning mode"))
+	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Static partition pruning mode")
 	if len(children) == 0 {
 		// No result after table pruning.
 		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())

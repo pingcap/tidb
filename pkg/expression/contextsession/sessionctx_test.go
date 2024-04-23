@@ -300,7 +300,7 @@ func TestSessionBuildContext(t *testing.T) {
 	// PlanCache
 	vars.StmtCtx.EnablePlanCache()
 	require.True(t, impl.IsUseCache())
-	impl.SetSkipPlanCache(errors.New("mockReason"))
+	impl.SetSkipPlanCache("mockReason")
 	require.False(t, impl.IsUseCache())
 
 	// Alloc column id
