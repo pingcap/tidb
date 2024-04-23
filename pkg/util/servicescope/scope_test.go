@@ -21,10 +21,10 @@ import (
 )
 
 func TestScope(t *testing.T) {
-	require.True(t, IsValidServiceScope("789z-_"))
-	require.False(t, IsValidServiceScope("789z-_)"))
-	require.False(t, IsValidServiceScope("78912345678982u7389217897238917389127893781278937128973812728397281378932179837"))
-	require.True(t, IsValidServiceScope("scope1"))
-	require.True(t, IsValidServiceScope(""))
-	require.True(t, IsValidServiceScope("-----"))
+	require.NoError(t, CheckServiceScope("789z-_"))
+	require.Error(t, CheckServiceScope("789z-_)"))
+	require.Error(t, CheckServiceScope("78912345678982u7389217897238917389127893781278937128973812728397281378932179837"))
+	require.NoError(t, CheckServiceScope("scope1"))
+	require.NoError(t, CheckServiceScope(""))
+	require.NoError(t, CheckServiceScope("-----"))
 }
