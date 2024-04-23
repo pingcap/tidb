@@ -48,27 +48,6 @@ func TestBasic(t *testing.T) {
 	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
 }
 
-func TestRemoveSafepoint(t *testing.T) {
-	c := createFakeCluster(t, 4, false)
-	defer func() {
-		if t.Failed() {
-			fmt.Println(c)
-		}
-	}()
-	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
-	ctx := context.Background()
-	minCheckpoint := c.advanceCheckpoints()
-	env := &testEnv{fakeCluster: c, testCtx: t}
-	adv := streamhelper.NewCheckpointAdvancer(env)
-	coll := streamhelper.NewClusterCollector(ctx, env)
-	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
-	require.NoError(t, err)
-	r, err := coll.Finish(ctx)
-	require.NoError(t, err)
-	require.Len(t, r.FailureSubRanges, 0)
-	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
-}
-
 func TestTick(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	defer func() {
