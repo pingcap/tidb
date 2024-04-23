@@ -496,32 +496,56 @@ func TestInnerJoinProbeAllJoinKeys(t *testing.T) {
 
 	lTypes := []*types.FieldType{tinyTp, intTp, uintTp, yearTp, durationTp, enumTp, enumWithIntFlag, setTp, bitTp, jsonTp, floatTp, doubleTp, stringTp, datetimeTp, decimalTp, timestampTp, dateTp, binaryStringTp}
 	rTypes := lTypes
+	nullableLTypes := toNullableTypes(lTypes)
+	nullableRTypes := toNullableTypes(rTypes)
 	lUsed := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
 	rUsed := lUsed
+	rightAsBuildSide := []bool{true, false}
 
 	// single key
 	for i := 0; i < len(lTypes); i++ {
-		testJoinProbe(t, false, []int{i}, []int{i}, []*types.FieldType{lTypes[i]}, []*types.FieldType{rTypes[i]}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-		testJoinProbe(t, false, []int{i}, []int{i}, []*types.FieldType{lTypes[i]}, []*types.FieldType{rTypes[i]}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+		for _, rightAsBuild := range rightAsBuildSide {
+			lKeyTypes := []*types.FieldType{lTypes[i]}
+			rKeyTypes := []*types.FieldType{rTypes[i]}
+			testJoinProbe(t, false, []int{i}, []int{i}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+			testJoinProbe(t, false, []int{i}, []int{i}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+		}
 	}
 	// composed key
 	// fixed size, inlined
-	testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, []*types.FieldType{intTp, uintTp}, []*types.FieldType{intTp, uintTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-	testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, []*types.FieldType{intTp, uintTp}, []*types.FieldType{intTp, uintTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	for _, rightAsBuild := range rightAsBuildSide {
+		lKeyTypes := []*types.FieldType{intTp, uintTp}
+		rKeyTypes := []*types.FieldType{intTp, uintTp}
+		testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+		testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	}
 	// variable size, inlined
-	testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-	testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	for _, rightAsBuild := range rightAsBuildSide {
+		lKeyTypes := []*types.FieldType{intTp, binaryStringTp}
+		rKeyTypes := []*types.FieldType{intTp, binaryStringTp}
+		testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+		testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	}
 	// fixed size, not inlined
-	testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, []*types.FieldType{intTp, datetimeTp}, []*types.FieldType{intTp, datetimeTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-	testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, []*types.FieldType{intTp, datetimeTp}, []*types.FieldType{intTp, datetimeTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	for _, rightAsBuild := range rightAsBuildSide {
+		lKeyTypes := []*types.FieldType{intTp, datetimeTp}
+		rKeyTypes := []*types.FieldType{intTp, datetimeTp}
+		testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+		testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	}
 	// variable size, not inlined
-	testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, []*types.FieldType{intTp, decimalTp}, []*types.FieldType{intTp, decimalTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-	testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, []*types.FieldType{intTp, decimalTp}, []*types.FieldType{intTp, decimalTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	for _, rightAsBuild := range rightAsBuildSide {
+		lKeyTypes := []*types.FieldType{intTp, decimalTp}
+		rKeyTypes := []*types.FieldType{intTp, decimalTp}
+		testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+		testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+	}
 }
 
 func TestInnerJoinProbeOtherCondition(t *testing.T) {
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	intTp.AddFlag(mysql.NotNullFlag)
+	nullableIntTp := types.NewFieldType(mysql.TypeLonglong)
 	uintTp := types.NewFieldType(mysql.TypeLonglong)
 	uintTp.AddFlag(mysql.NotNullFlag)
 	uintTp.AddFlag(mysql.UnsignedFlag)
@@ -532,23 +556,29 @@ func TestInnerJoinProbeOtherCondition(t *testing.T) {
 	rTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
 
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
-	a := &expression.Column{Index: 1, RetType: intTp}
-	b := &expression.Column{Index: 8, RetType: intTp}
+	a := &expression.Column{Index: 1, RetType: nullableIntTp}
+	b := &expression.Column{Index: 8, RetType: nullableIntTp}
 	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
 	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
+	rightAsBuildSide := []bool{true, false}
 
-	testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, true, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 200)
-	testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, false, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 200)
+	for _, rightAsBuild := range rightAsBuildSide {
+		testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 200)
+		testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 200)
+	}
 }
 
 func TestInnerJoinProbeWithSel(t *testing.T) {
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	intTp.AddFlag(mysql.NotNullFlag)
+	nullableIntTp := types.NewFieldType(mysql.TypeLonglong)
 	uintTp := types.NewFieldType(mysql.TypeLonglong)
 	uintTp.AddFlag(mysql.NotNullFlag)
 	uintTp.AddFlag(mysql.UnsignedFlag)
+	nullableUIntTp := types.NewFieldType(mysql.TypeLonglong)
+	nullableIntTp.AddFlag(mysql.UnsignedFlag)
 	stringTp := types.NewFieldType(mysql.TypeVarString)
 	stringTp.AddFlag(mysql.NotNullFlag)
 
@@ -556,15 +586,20 @@ func TestInnerJoinProbeWithSel(t *testing.T) {
 	rTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
 
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
-	a := &expression.Column{Index: 1, RetType: intTp}
-	b := &expression.Column{Index: 8, RetType: uintTp}
+	a := &expression.Column{Index: 1, RetType: nullableIntTp}
+	b := &expression.Column{Index: 8, RetType: nullableUIntTp}
 	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
 	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
+	otherConditions := []expression.CNFExprs{otherCondition, nil}
 
-	testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, true, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 500)
-	testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, false, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 500)
-	testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, true, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, nil, 3, plannercore.InnerJoin, 500)
-	testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, false, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, nil, 3, plannercore.InnerJoin, 500)
+	rightAsBuildSide := []bool{true, false}
+
+	for _, rightAsBuild := range rightAsBuildSide {
+		for _, oc := range otherConditions {
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, oc, 3, plannercore.InnerJoin, 500)
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, oc, 3, plannercore.InnerJoin, 500)
+		}
+	}
 }
