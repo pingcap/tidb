@@ -275,6 +275,10 @@ func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, erro
 	return at, nil
 }
 
+func (f *fakeCluster) RemoveGCSafepoint(ctx context.Context) error {
+	return nil
+}
+
 func (f *fakeCluster) FetchCurrentTS(ctx context.Context) (uint64, error) {
 	return f.currentTS, nil
 }
