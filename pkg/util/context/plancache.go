@@ -71,11 +71,11 @@ func (h *PlanCacheTracker) SetSkipPlanCache(reason string) {
 	}
 
 	h.useCache = false
-	h.planCacheUnqualified = reason
 	h.warnSkipPlanCache(reason)
 }
 
 func (h *PlanCacheTracker) warnSkipPlanCache(reason string) {
+	h.planCacheUnqualified = reason
 	switch h.cacheType {
 	case DefaultNoCache:
 		h.warnHandler.AppendWarning(errors.NewNoStackError("unknown cache type"))
