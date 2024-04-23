@@ -1950,6 +1950,9 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 	if colLen != 1 {
 		return
 	}
+	if !collate.NewCollationEnabled() {
+		return
+	}
 	for i := stkLen - elemCnt; i < stkLen; i++ {
 		// todo: consider refining the code and reusing expression.BuildCollationFunction here
 		if er.ctxStack[i].GetType().EvalType() == types.ETString {

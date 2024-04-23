@@ -441,8 +441,6 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 		if v.InOperand {
 			newExpr = SetExprColumnInOperand(newExpr)
 		}
-		newExpr = newExpr.Clone()
-		newExpr.SetCoercibility(v.Coercibility())
 		return true, false, newExpr
 	case *ScalarFunction:
 		substituted := false
