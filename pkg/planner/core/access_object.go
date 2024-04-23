@@ -466,10 +466,7 @@ func getAccessObjectFromIndexScan(sctx base.PlanContext, is *PhysicalIndexScan, 
 	if is.TableAsName != nil && len(is.TableAsName.O) > 0 {
 		asName = is.TableAsName.O
 	}
-	var res *DynamicPartitionAccessObject
-	if !is.Index.Global {
-		res = getDynamicAccessPartition(sctx, is.Table, p, asName)
-	}
+	res := getDynamicAccessPartition(sctx, is.Table, p, asName)
 	if res == nil {
 		return DynamicPartitionAccessObjects(nil)
 	}
