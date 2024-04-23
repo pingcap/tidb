@@ -205,7 +205,7 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 	case InternalFuncToBinary:
 		return BuildToBinaryFunction(ctx, args[0]), nil
 	case ast.Sysdate:
-		if ctx.GetSessionVars().SysdateIsNow {
+		if ctx.GetSysdateIsNow() {
 			funcName = ast.Now
 		}
 	}
@@ -218,13 +218,13 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 	}
 
 	if !ok {
-		db := ctx.CurrentDB()
+		db := ctx.GetEvalCtx().CurrentDB()
 		if db == "" {
 			return nil, errors.Trace(plannererrors.ErrNoDB)
 		}
 		return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
-	noopFuncsMode := ctx.GetSessionVars().NoopFuncsMode
+	noopFuncsMode := ctx.GetNoopFuncsMode()
 	if noopFuncsMode != variable.OnInt {
 		if _, ok := noopFuncs[funcName]; ok {
 			err := ErrFunctionsNoopImpl.FastGenByArgs(funcName)
@@ -232,7 +232,7 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 				return nil, errors.Trace(err)
 			}
 			// NoopFuncsMode is Warn, append an error
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			ctx.GetEvalCtx().AppendWarning(err)
 		}
 	}
 	funcArgs := make([]Expression, len(args))
@@ -264,12 +264,12 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 		return FoldConstant(ctx, sf), nil
 	} else if fold == -1 {
 		// try to fold constants, and return the original function if errors/warnings occur
-		sc := ctx.GetSessionVars().StmtCtx
-		beforeWarns := sc.WarningCount()
+		evalCtx := ctx.GetEvalCtx()
+		beforeWarns := evalCtx.WarningCount()
 		newSf := FoldConstant(ctx, sf)
-		afterWarns := sc.WarningCount()
+		afterWarns := evalCtx.WarningCount()
 		if afterWarns > beforeWarns {
-			sc.TruncateWarnings(int(beforeWarns))
+			evalCtx.TruncateWarnings(beforeWarns)
 			return sf, nil
 		}
 		return newSf, nil

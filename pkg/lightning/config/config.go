@@ -80,9 +80,9 @@ const (
 	defaultLogicalImportBatchRows     = 65536
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
-	defaultMetaSchemaName     = "lightning_metadata"
-	defaultTaskInfoSchemaName = "lightning_task_info"
-	defaultMaxRecordRows      = 100
+	defaultMetaSchemaName           = "lightning_metadata"
+	defaultTaskInfoSchemaName       = "lightning_task_info"
+	DefaultRecordDuplicateThreshold = 10000
 
 	// autoDiskQuotaLocalReservedSpeed is the estimated size increase per
 	// millisecond per write thread the local backend may gain on all engines.
@@ -1339,7 +1339,7 @@ type Conflict struct {
 
 // adjust assigns default values and check illegal values. The arguments must be
 // adjusted before calling this function.
-func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
+func (c *Conflict) adjust(i *TikvImporter) error {
 	strategyConfigFrom := "conflict.strategy"
 	if c.Strategy == NoneOnDup {
 		if i.OnDuplicate == NoneOnDup && i.Backend == BackendTiDB {
@@ -1378,15 +1378,10 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 
 	if c.Threshold < 0 {
 		switch c.Strategy {
-		case ErrorOnDup:
+		case ErrorOnDup, NoneOnDup:
 			c.Threshold = 0
 		case IgnoreOnDup, ReplaceOnDup:
-			c.Threshold = math.MaxInt64
-		case NoneOnDup:
-			c.Threshold = 0
-			if i.Backend == BackendLocal && c.Strategy != NoneOnDup {
-				c.Threshold = math.MaxInt64
-			}
+			c.Threshold = DefaultRecordDuplicateThreshold
 		}
 	}
 	if c.Threshold > 0 && c.Strategy == ErrorOnDup {
@@ -1394,32 +1389,20 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 			`conflict.threshold cannot be set when use conflict.strategy = "error"`)
 	}
 
-	if c.MaxRecordRows < 0 {
-		maxErr := l.MaxError
-		// Compatible with the old behavior that records all syntax,charset,type errors.
-		maxAccepted := max(maxErr.Syntax.Load(), maxErr.Charset.Load(), maxErr.Type.Load())
-		if maxAccepted < defaultMaxRecordRows {
-			maxAccepted = defaultMaxRecordRows
+	if c.Strategy == ReplaceOnDup && i.Backend == BackendTiDB {
+		// due to we use batch insert, we can't know which row is duplicated.
+		if c.MaxRecordRows >= 0 {
+			// only warn when it is set by user.
+			log.L().Warn(`Cannot record duplication (conflict.max-record-rows > 0) when use tikv-importer.backend = \"tidb\" and conflict.strategy = \"replace\".
+				The value of conflict.max-record-rows has been converted to 0.`)
 		}
-		if maxAccepted > c.Threshold {
-			maxAccepted = c.Threshold
-		}
-		if c.Strategy == ReplaceOnDup && i.Backend == BackendTiDB {
-			// due to we use batch insert, we can't know which row is duplicated.
-			maxAccepted = 0
-		}
-		c.MaxRecordRows = maxAccepted
+		c.MaxRecordRows = 0
 	} else {
-		// only check it when it is set by user.
-		if c.MaxRecordRows > c.Threshold {
-			return common.ErrInvalidConfig.GenWithStack(
-				"conflict.max-record-rows (%d) cannot be larger than conflict.threshold (%d)",
-				c.MaxRecordRows, c.Threshold)
+		if c.MaxRecordRows >= 0 {
+			// only warn when it is set by user.
+			log.L().Warn("Setting conflict.max-record-rows does not take affect. The value of conflict.max-record-rows has been converted to conflict.threshold.")
 		}
-		if c.Strategy == ReplaceOnDup && i.Backend == BackendTiDB {
-			return common.ErrInvalidConfig.GenWithStack(
-				`cannot record duplication (conflict.max-record-rows > 0) when use tikv-importer.backend = "tidb" and conflict.strategy = "replace"`)
-		}
+		c.MaxRecordRows = c.Threshold
 	}
 	return nil
 }
@@ -1622,7 +1605,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	if err = cfg.Routes.adjust(&cfg.Mydumper); err != nil {
 		return err
 	}
-	return cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App)
+	return cfg.Conflict.adjust(&cfg.TikvImporter)
 }
 
 // AdjustForDDL acts like Adjust, but DDL will not use some functionalities so

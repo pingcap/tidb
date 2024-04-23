@@ -263,7 +263,7 @@ func initFlagSet() *flag.FlagSet {
 func main() {
 	fset := initFlagSet()
 	if args := fset.Args(); len(args) != 0 {
-		if args[0] == "collect-logs" && len(args) > 1 {
+		if args[0] == "collect-log" && len(args) > 1 {
 			output := "-"
 			if len(args) > 2 {
 				output = args[2]
@@ -908,7 +908,6 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 		closeDomainAndStorage(storage, dom)
 		log.Fatal("failed to create the server", zap.Error(err), zap.Stack("stack"))
 	}
-	mppcoordmanager.InstanceMPPCoordinatorManager.InitServerAddr(svr.GetStatusServerAddr())
 	svr.SetDomain(dom)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
 	go dom.MemoryUsageAlarmHandle().SetSessionManager(svr).Run()

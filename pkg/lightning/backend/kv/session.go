@@ -26,7 +26,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/errctx"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
-	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
+	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextsession"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -405,7 +405,7 @@ func (se *Session) GetPlanCtx() planctx.PlanContext {
 }
 
 // GetExprCtx returns the expression context of the session.
-func (se *Session) GetExprCtx() exprctx.BuildContext {
+func (se *Session) GetExprCtx() exprctx.ExprContext {
 	return se.exprCtx
 }
 

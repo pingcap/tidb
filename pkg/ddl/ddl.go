@@ -790,7 +790,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 			if err != nil {
 				return nil, err
 			}
-			sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+			sessForJob.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 			wk.sess = sess.NewSession(sessForJob)
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 			return wk, nil
@@ -831,6 +831,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		if err != nil {
 			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
 		}
+		d.runningJobs.clear()
 	})
 
 	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
@@ -862,19 +863,13 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
 
-	ctx, err := d.sessPool.Get()
-	if err != nil {
-		return err
-	}
-	defer d.sessPool.Put(ctx)
-
-	ingest.InitGlobalLightningEnv()
-	d.ownerManager.SetRetireOwnerHook(func() {
-		// Since this instance is not DDL owner anymore, we clean up the processing job info.
-		if ingest.LitBackCtxMgr != nil {
-			ingest.LitBackCtxMgr.MarkJobFinish()
+	ingest.InitGlobalLightningEnv(func(jobIDs []int64) ([]int64, error) {
+		se, err := d.sessPool.Get()
+		if err != nil {
+			return nil, err
 		}
-		d.runningJobs.clear()
+		defer d.sessPool.Put(se)
+		return filterProcessingJobIDs(sess.NewSession(se), jobIDs)
 	})
 
 	return nil

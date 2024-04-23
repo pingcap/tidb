@@ -61,6 +61,7 @@ type memIndexReader struct {
 	outputOffset  []int
 	cacheTable    kv.MemBuffer
 	keepOrder     bool
+	physTblIDIdx  int
 	compareExec
 }
 
@@ -87,6 +88,7 @@ func buildMemIndexReader(ctx context.Context, us *UnionScanExec, idxReader *Inde
 		cacheTable:    us.cacheTable,
 		keepOrder:     us.keepOrder,
 		compareExec:   us.compareExec,
+		physTblIDIdx:  us.physTblIDIdx,
 	}
 }
 
@@ -155,7 +157,7 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 		}
 
 		mutableRow.SetDatums(data...)
-		matched, _, err := expression.EvalBool(m.ctx.GetExprCtx(), m.conditions, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(m.ctx.GetExprCtx().GetEvalCtx(), m.conditions, mutableRow.ToRow())
 		if err != nil || !matched {
 			return err
 		}
@@ -191,7 +193,12 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 	}
 
 	ds := make([]types.Datum, 0, len(m.outputOffset))
-	for _, offset := range m.outputOffset {
+	for i, offset := range m.outputOffset {
+		if m.physTblIDIdx == i {
+			tid, _, _, _ := tablecodec.DecodeKeyHead(key)
+			ds = append(ds, types.NewIntDatum(tid))
+			continue
+		}
 		d, err := tablecodec.DecodeColumnValue(values[offset], tps[offset], m.ctx.GetSessionVars().Location())
 		if err != nil {
 			return nil, err
@@ -414,7 +421,7 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 		}
 
 		mutableRow.SetDatums(resultRows...)
-		matched, _, err := expression.EvalBool(m.ctx.GetExprCtx(), m.conditions, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(m.ctx.GetExprCtx().GetEvalCtx(), m.conditions, mutableRow.ToRow())
 		if err != nil || !matched {
 			return err
 		}
@@ -903,7 +910,7 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 
 			mutableRow := chunk.MutRowFromTypes(iter.retFieldTypes)
 			mutableRow.SetDatums(iter.datumRow...)
-			matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx(), iter.conditions, mutableRow.ToRow())
+			matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx().GetEvalCtx(), iter.conditions, mutableRow.ToRow())
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -919,7 +926,7 @@ func (iter *memRowsIterForTable) Next() ([]types.Datum, error) {
 		}
 
 		row := iter.chk.GetRow(0)
-		matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx(), iter.conditions, row)
+		matched, _, err := expression.EvalBool(iter.ctx.GetExprCtx().GetEvalCtx(), iter.conditions, row)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -960,7 +967,7 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 		}
 
 		iter.mutableRow.SetDatums(data...)
-		matched, _, err := expression.EvalBool(iter.memIndexReader.ctx.GetExprCtx(), iter.memIndexReader.conditions, iter.mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(iter.memIndexReader.ctx.GetExprCtx().GetEvalCtx(), iter.memIndexReader.conditions, iter.mutableRow.ToRow())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

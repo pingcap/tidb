@@ -142,7 +142,7 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 	}
 	for i := 0; i < len(en.columnAssignments); i++ {
 		// eval expression of `SET` clause
-		d, err := en.columnAssignments[i].Eval(en.SessionCtx.GetExprCtx(), chunk.Row{})
+		d, err := en.columnAssignments[i].Eval(en.SessionCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return nil, err
 		}

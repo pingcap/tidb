@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -483,7 +483,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		injectModifyJobArgFailPoint(job)
 	}
 
-	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 
 	if tasks[0].job.LocalMode {
 		for _, task := range tasks {
@@ -601,7 +601,7 @@ func (w *worker) registerMDLInfo(job *model.Job, ver int64) error {
 }
 
 // cleanMDLInfo cleans metadata lock info.
-func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client) {
+func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client, cleanETCD bool) {
 	if !variable.EnableMDL.Load() {
 		return
 	}
@@ -609,13 +609,13 @@ func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client) {
 	sctx, _ := pool.Get()
 	defer pool.Put(sctx)
 	se := sess.NewSession(sctx)
-	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), sql, "delete-mdl-info")
 	if err != nil {
 		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", jobID), zap.Error(err))
 		return
 	}
-	if ec != nil {
+	if cleanETCD && ec != nil {
 		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, jobID)
 		_, err = ec.Delete(context.Background(), path, clientv3.WithPrefix())
 		if err != nil {
@@ -693,7 +693,6 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	startTime := time.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-		markJobFinish(job)
 	}()
 
 	if JobNeedGC(job) {
@@ -741,15 +740,6 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	w.removeJobCtx(job)
 	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs)
 	return errors.Trace(err)
-}
-
-func markJobFinish(job *model.Job) {
-	if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
-		job.ReorgMeta != nil &&
-		job.ReorgMeta.IsFastReorg &&
-		ingest.LitBackCtxMgr != nil {
-		ingest.LitBackCtxMgr.MarkJobFinish()
-	}
 }
 
 func (w *worker) writeDDLSeqNum(job *model.Job) {
@@ -918,6 +908,21 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		if job.IsDone() {
 			job.State = model.JobStateSynced
 		}
+		// Inject the failpoint to prevent the progress of index creation.
+		failpoint.Inject("create-index-stuck-before-ddlhistory", func(v failpoint.Value) {
+			if sigFile, ok := v.(string); ok && job.Type == model.ActionAddIndex {
+				for {
+					time.Sleep(1 * time.Second)
+					if _, err := os.Stat(sigFile); err != nil {
+						if os.IsNotExist(err) {
+							continue
+						}
+						failpoint.Return(0, errors.Trace(err))
+					}
+					break
+				}
+			}
+		})
 		err = w.HandleJobDone(d, job, t)
 		return 0, err
 	}

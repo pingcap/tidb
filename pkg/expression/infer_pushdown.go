@@ -140,11 +140,11 @@ func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreTyp
 	}
 	switch x := expr.(type) {
 	case *CorrelatedColumn:
-		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column) != nil
+		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column, true) != nil
 	case *Constant:
 		return pc.conOrCorColToPBExpr(expr) != nil
 	case *Column:
-		return pc.columnToPBExpr(x) != nil
+		return pc.columnToPBExpr(x, true) != nil
 	case *ScalarFunction:
 		return canScalarFuncPushDown(ctx, x, storeType)
 	}
@@ -195,8 +195,8 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
-		ast.JSONInsert /*ast.JSONReplace,*/, ast.JSONRemove, ast.JSONLength,
-		ast.JSONUnquote, ast.JSONContains, ast.JSONValid, ast.JSONMemberOf,
+		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONLength, ast.JSONMergePatch,
+		ast.JSONUnquote, ast.JSONContains, ast.JSONValid, ast.JSONMemberOf, ast.JSONArrayAppend,
 
 		// date functions.
 		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
@@ -421,7 +421,7 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 type PushDownContext struct {
 	evalCtx           EvalContext
 	client            kv.Client
-	warnHandler       contextutil.WarnHandler
+	warnHandler       contextutil.WarnAppender
 	groupConcatMaxLen uint64
 }
 
@@ -441,7 +441,7 @@ func (h *pushDownWarnHandler) AppendWarning(err error) {
 
 // NewPushDownContext returns a new PushDownContext
 func NewPushDownContext(evalCtx EvalContext, client kv.Client, inExplainStmt bool, appendWarning func(err error), appendExtraWarning func(err error), groupConcatMaxLen uint64) PushDownContext {
-	var warnHandler contextutil.WarnHandler
+	var warnHandler contextutil.WarnAppender
 	if appendWarning != nil && appendExtraWarning != nil {
 		warnHandler = &pushDownWarnHandler{
 			inExplainStmt:      inExplainStmt,

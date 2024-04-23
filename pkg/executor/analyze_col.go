@@ -64,7 +64,7 @@ type AnalyzeColumnsExec struct {
 
 func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
-		return e.toV2().analyzeColumnsPushDownWithRetryV2(gp)
+		return e.toV2().analyzeColumnsPushDownV2(gp)
 	}
 	return e.toV1().analyzeColumnsPushDownV1()
 }

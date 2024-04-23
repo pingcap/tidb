@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable/featuretag/disttask"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -1375,7 +1374,7 @@ const (
 	DefTiDBSessionPlanCacheSize                    = 100
 	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
-	DefTiDBEnableDistTask                          = disttask.TiDBEnableDistTask
+	DefTiDBEnableDistTask                          = true
 	DefTiDBEnableFastCreateTable                   = false
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
@@ -1488,6 +1487,7 @@ const (
 	DefDivPrecisionIncrement                          = 4
 	DefTiDBDMLType                                    = "STANDARD"
 	DefGroupConcatMaxLen                              = uint64(1024)
+	DefDefaultWeekFormat                              = "0"
 )
 
 // Process global variables.

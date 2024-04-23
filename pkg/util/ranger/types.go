@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 )
 
 // MutableRanges represents a range may change after it is created.
@@ -96,8 +96,8 @@ func (ran *Range) Clone() *Range {
 }
 
 // IsPoint returns if the range is a point.
-func (ran *Range) IsPoint(sctx planctx.PlanContext) bool {
-	return ran.isPoint(sctx.GetSessionVars().StmtCtx.TypeCtx(), sctx.GetSessionVars().RegardNULLAsPoint)
+func (ran *Range) IsPoint(sctx *rangerctx.RangerContext) bool {
+	return ran.isPoint(sctx.TypeCtx, sctx.RegardNULLAsPoint)
 }
 
 func (ran *Range) isPoint(tc types.Context, regardNullAsPoint bool) bool {

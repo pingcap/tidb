@@ -321,7 +321,7 @@ func TestSplitCtxCancel(t *testing.T) {
 		client: mockCli,
 	}
 
-	_, _, err := client.SplitWaitAndScatter(ctx, &RegionInfo{}, [][]byte{{1}})
+	_, err := client.SplitWaitAndScatter(ctx, &RegionInfo{}, [][]byte{{1}})
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -357,7 +357,7 @@ func TestGetSplitKeyPerRegion(t *testing.T) {
 			},
 		},
 	}
-	result := GetSplitKeysOfRegions(sortedKeys, sortedRegions, false)
+	result := getSplitKeysOfRegions(sortedKeys, sortedRegions, false)
 	require.Equal(t, 3, len(result))
 	require.Equal(t, [][]byte{[]byte("b"), []byte("d")}, result[sortedRegions[0]])
 	require.Equal(t, [][]byte{[]byte("g"), []byte("j")}, result[sortedRegions[1]])
@@ -414,7 +414,7 @@ func TestGetSplitKeyPerRegion(t *testing.T) {
 		slices.SortFunc(expected[i], bytes.Compare)
 	}
 
-	got := GetSplitKeysOfRegions(sortedKeys, sortedRegions, false)
+	got := getSplitKeysOfRegions(sortedKeys, sortedRegions, false)
 	require.Equal(t, len(expected), len(got))
 	for region, gotKeys := range got {
 		require.Equal(t, expected[region.Region.GetId()], gotKeys)
@@ -608,7 +608,7 @@ func TestRegionConsistency(t *testing.T) {
 		},
 	}
 	for _, ca := range cases {
-		err := CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions)
+		err := checkRegionConsistency(ca.startKey, ca.endKey, ca.regions)
 		require.Error(t, err)
 		require.Regexp(t, ca.err, err.Error())
 	}

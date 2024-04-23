@@ -38,11 +38,9 @@ import (
 func TestHashAggRuntimeStat(t *testing.T) {
 	partialInfo := &aggregate.AggWorkerInfo{
 		Concurrency: 5,
-		WallTime:    int64(time.Second * 20),
 	}
 	finalInfo := &aggregate.AggWorkerInfo{
 		Concurrency: 8,
-		WallTime:    int64(time.Second * 10),
 	}
 	stats := &aggregate.HashAggRuntimeStats{
 		PartialConcurrency: 5,

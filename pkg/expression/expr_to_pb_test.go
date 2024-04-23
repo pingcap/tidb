@@ -45,7 +45,7 @@ func TestConstant2Pb(t *testing.T) {
 	var constExprs []Expression
 	ctx := mock.NewContext()
 	client := new(mock.Client)
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetExprCtx(), ctx.GetSessionVars(), client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
 
 	// can be transformed
 	constValue := new(Constant)
@@ -129,7 +129,7 @@ func TestColumn2Pb(t *testing.T) {
 	var colExprs []Expression
 	ctx := mock.NewContext()
 	client := new(mock.Client)
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetExprCtx(), ctx.GetSessionVars(), client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
 
 	colExprs = append(colExprs, genColumn(mysql.TypeSet, 1))
 	colExprs = append(colExprs, genColumn(mysql.TypeGeometry, 2))
@@ -222,7 +222,7 @@ func TestCompareFunc2Pb(t *testing.T) {
 	var compareExprs = make([]Expression, 0)
 	ctx := mock.NewContext()
 	client := new(mock.Client)
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetExprCtx(), ctx.GetSessionVars(), client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
 
 	funcNames := []string{ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE, ast.NullEQ}
 	for _, funcName := range funcNames {
@@ -508,7 +508,7 @@ func TestOtherFunc2Pb(t *testing.T) {
 func TestExprPushDownToFlash(t *testing.T) {
 	ctx := mock.NewContext()
 	client := new(mock.Client)
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetExprCtx(), ctx.GetSessionVars(), client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
 
 	exprs := make([]Expression, 0)
 
@@ -1424,7 +1424,7 @@ func TestExprOnlyPushDownToFlash(t *testing.T) {
 	exprs = append(exprs, function)
 
 	ctx := mock.NewContext()
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetExprCtx(), ctx.GetSessionVars(), client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
 	pushed, remained := PushDownExprs(pushDownCtx, exprs, kv.UnSpecified)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
@@ -1448,7 +1448,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 
 	exprs := make([]Expression, 0)
 
-	//jsonColumn := genColumn(mysql.TypeJSON, 1)
+	jsonColumn := genColumn(mysql.TypeJSON, 1)
 	intColumn := genColumn(mysql.TypeLonglong, 2)
 	realColumn := genColumn(mysql.TypeDouble, 3)
 	//decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
@@ -1492,7 +1492,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	exprs = append(exprs, function)
 
 	ctx := mock.NewContext()
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetExprCtx(), ctx.GetSessionVars(), client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
 	pushed, remained := PushDownExprs(pushDownCtx, exprs, kv.TiKV)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
@@ -1639,10 +1639,25 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			retType:      types.NewFieldType(mysql.TypeDouble),
 			args:         []Expression{realColumn, realColumn},
 		},
+		{
+			functionName: ast.JSONReplace,
+			retType:      types.NewFieldType(mysql.TypeJSON),
+			args:         []Expression{jsonColumn, stringColumn, jsonColumn, stringColumn, jsonColumn},
+		},
+		{
+			functionName: ast.JSONArrayAppend,
+			retType:      types.NewFieldType(mysql.TypeJSON),
+			args:         []Expression{jsonColumn, stringColumn, jsonColumn, stringColumn, jsonColumn},
+		},
+		{
+			functionName: ast.JSONMergePatch,
+			retType:      types.NewFieldType(mysql.TypeJSON),
+			args:         []Expression{jsonColumn, jsonColumn, jsonColumn},
+		},
 	}
 
 	ctx = mock.NewContext()
-	pushDownCtx = NewPushDownContextFromSessionVars(ctx.GetExprCtx(), ctx.GetSessionVars(), client)
+	pushDownCtx = NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
 	for _, tc := range testcases {
 		function, err = NewFunction(ctx, tc.functionName, tc.retType, tc.args...)
 		require.NoError(t, err)
@@ -1657,7 +1672,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 func TestExprOnlyPushDownToTiKV(t *testing.T) {
 	ctx := mock.NewContext()
 	client := new(mock.Client)
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetExprCtx(), ctx.GetSessionVars(), client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
 
 	function, err := NewFunction(ctx, "uuid", types.NewFieldType(mysql.TypeLonglong))
 	require.NoError(t, err)
@@ -1749,7 +1764,7 @@ func TestNewCollationsEnabled(t *testing.T) {
 	var colExprs []Expression
 	ctx := mock.NewContext()
 	client := new(mock.Client)
-	pushDownCtx := NewPushDownContextFromSessionVars(ctx.GetExprCtx(), ctx.GetSessionVars(), client)
+	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
 
 	colExprs = colExprs[:0]
 	colExprs = append(colExprs, genColumn(mysql.TypeVarchar, 1))
@@ -1912,4 +1927,21 @@ func TestPanicIfPbCodeUnspecified(t *testing.T) {
 	}()
 	pc := PbConverter{client: new(mock.Client), ctx: mock.NewContext()}
 	require.PanicsWithError(t, "unspecified PbCode: *expression.builtinBitAndSig", func() { pc.ExprToPB(fn) })
+}
+
+func TestProjectionColumn2Pb(t *testing.T) {
+	var colExprs []Expression
+	ctx := mock.NewContext()
+	client := new(mock.Client)
+
+	colExprs = append(colExprs, genColumn(mysql.TypeSet, 1))
+	colExprs = append(colExprs, genColumn(mysql.TypeShort, 2))
+	colExprs = append(colExprs, genColumn(mysql.TypeLong, 3))
+
+	// TypeSet column can't be converted to PB by default
+	_, err := ExpressionsToPBList(ctx, colExprs, client)
+	require.Error(t, err)
+
+	_, err = ProjectionExpressionsToPBList(ctx, colExprs, client)
+	require.NoError(t, err)
 }

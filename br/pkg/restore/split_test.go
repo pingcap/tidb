@@ -101,13 +101,10 @@ func (c *TestClient) GetRegionByID(ctx context.Context, regionID uint64) (*split
 	return region, nil
 }
 
-func (c *TestClient) SplitWaitAndScatter(
-	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
-) (*split.RegionInfo, []*split.RegionInfo, error) {
+func (c *TestClient) SplitWaitAndScatter(_ context.Context, _ *split.RegionInfo, keys [][]byte) ([]*split.RegionInfo, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	newRegions := make([]*split.RegionInfo, 0)
-	var region *split.RegionInfo
 	for _, key := range keys {
 		var target *split.RegionInfo
 		splitKey := codec.EncodeBytes([]byte{}, key)
@@ -131,10 +128,9 @@ func (c *TestClient) SplitWaitAndScatter(
 		c.nextRegionID++
 		target.Region.StartKey = splitKey
 		c.regions[target.Region.Id] = target
-		region = target
 		newRegions = append(newRegions, newRegion)
 	}
-	return region, newRegions, nil
+	return newRegions, nil
 }
 
 func (c *TestClient) GetOperator(context.Context, uint64) (*pdpb.GetOperatorResponse, error) {
@@ -168,14 +164,16 @@ func (c *TestClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) 
 }
 
 func TestScanEmptyRegion(t *testing.T) {
-	client := initTestClient(false)
+	mockPDCli := split.NewMockPDClientForSplit()
+	mockPDCli.SetRegions([][]byte{{}, {12}, {34}, {}})
+	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
 	ranges := initRanges()
 	// make ranges has only one
 	ranges = ranges[0:1]
 	regionSplitter := NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges)
 	// should not return error with only one range entry
 	require.NoError(t, err)
 }
@@ -188,26 +186,39 @@ func TestScanEmptyRegion(t *testing.T) {
 //	[, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
 //	[bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
 func TestSplitAndScatter(t *testing.T) {
-	client := initTestClient(false)
-	ranges := initRanges()
+	rangeBoundaries := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
+	encodeBytes(rangeBoundaries)
+	mockPDCli := split.NewMockPDClientForSplit()
+	mockPDCli.SetRegions(rangeBoundaries)
+	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
 	regionSplitter := NewRegionSplitter(client)
 	ctx := context.Background()
 
+	ranges := initRanges()
 	rules := initRewriteRules()
 	for i, rg := range ranges {
 		tmp, err := RewriteRange(&rg, rules)
 		require.NoError(t, err)
 		ranges[i] = *tmp
 	}
-	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges)
 	require.NoError(t, err)
-	regions := client.GetAllRegions()
-	if !validateRegions(regions) {
-		for _, region := range regions {
-			t.Logf("region: %v\n", region.Region)
+	regions := mockPDCli.Regions.ScanRange(nil, nil, 100)
+	expected := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbf"), []byte("bbh"), []byte("bbj"), []byte("cca"), []byte("xxe"), []byte("xxz"), []byte("")}
+	encodeBytes(expected)
+	require.Len(t, regions, len(expected)-1)
+	for i, region := range regions {
+		require.Equal(t, expected[i], region.Meta.StartKey)
+		require.Equal(t, expected[i+1], region.Meta.EndKey)
+	}
+}
+
+func encodeBytes(keys [][]byte) {
+	for i := range keys {
+		if len(keys[i]) == 0 {
+			continue
 		}
-		t.Log("get wrong result")
-		t.Fail()
+		keys[i] = codec.EncodeBytes(nil, keys[i])
 	}
 }
 
@@ -219,58 +230,22 @@ func TestRawSplit(t *testing.T) {
 			EndKey:   []byte{},
 		},
 	}
-	client := initTestClient(true)
 	ctx := context.Background()
+	rangeBoundaries := [][]byte{[]byte(""), []byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca"), []byte("")}
+	mockPDCli := split.NewMockPDClientForSplit()
+	mockPDCli.SetRegions(rangeBoundaries)
+	client := split.NewClient(mockPDCli, nil, nil, 100, 4, split.WithRawKV())
 
 	regionSplitter := NewRegionSplitter(client)
-	err := regionSplitter.ExecuteSplit(ctx, ranges, 1, true, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges)
 	require.NoError(t, err)
-	regions := client.GetAllRegions()
-	expectedKeys := []string{"", "aay", "bba", "bbh", "cca", ""}
-	if !validateRegionsExt(regions, expectedKeys, true) {
-		for _, region := range regions {
-			t.Logf("region: %v\n", region.Region)
-		}
-		t.Log("get wrong result")
-		t.Fail()
-	}
-}
 
-// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-func initTestClient(isRawKv bool) *TestClient {
-	peers := make([]*metapb.Peer, 1)
-	peers[0] = &metapb.Peer{
-		Id:      1,
-		StoreId: 1,
+	regions := mockPDCli.Regions.ScanRange(nil, nil, 100)
+	require.Len(t, regions, len(rangeBoundaries)-1)
+	for i, region := range regions {
+		require.Equal(t, rangeBoundaries[i], region.Meta.StartKey)
+		require.Equal(t, rangeBoundaries[i+1], region.Meta.EndKey)
 	}
-	keys := [6]string{"", "aay", "bba", "bbh", "cca", ""}
-	regions := make(map[uint64]*split.RegionInfo)
-	for i := uint64(1); i < 6; i++ {
-		startKey := []byte(keys[i-1])
-		if len(startKey) != 0 {
-			startKey = codec.EncodeBytesExt([]byte{}, startKey, isRawKv)
-		}
-		endKey := []byte(keys[i])
-		if len(endKey) != 0 {
-			endKey = codec.EncodeBytesExt([]byte{}, endKey, isRawKv)
-		}
-		regions[i] = &split.RegionInfo{
-			Leader: &metapb.Peer{
-				Id: i,
-			},
-			Region: &metapb.Region{
-				Id:       i,
-				Peers:    peers,
-				StartKey: startKey,
-				EndKey:   endKey,
-			},
-		}
-	}
-	stores := make(map[uint64]*metapb.Store)
-	stores[1] = &metapb.Store{
-		Id: 1,
-	}
-	return NewTestClient(stores, regions, 6)
 }
 
 // range: [aaa, aae), [aae, aaz), [ccd, ccf), [ccf, ccj)
@@ -308,40 +283,6 @@ func initRewriteRules() *RewriteRules {
 	return &RewriteRules{
 		Data: rules[:],
 	}
-}
-
-// expected regions after split:
-//
-//	[, aay), [aay, bba), [bba, bbf), [bbf, bbh), [bbh, bbj),
-//	[bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
-func validateRegions(regions map[uint64]*split.RegionInfo) bool {
-	keys := [...]string{"", "aay", "bba", "bbf", "bbh", "bbj", "cca", "xxe", "xxz", ""}
-	return validateRegionsExt(regions, keys[:], false)
-}
-
-func validateRegionsExt(regions map[uint64]*split.RegionInfo, expectedKeys []string, isRawKv bool) bool {
-	if len(regions) != len(expectedKeys)-1 {
-		return false
-	}
-FindRegion:
-	for i := 1; i < len(expectedKeys); i++ {
-		for _, region := range regions {
-			startKey := []byte(expectedKeys[i-1])
-			if len(startKey) != 0 {
-				startKey = codec.EncodeBytesExt([]byte{}, startKey, isRawKv)
-			}
-			endKey := []byte(expectedKeys[i])
-			if len(endKey) != 0 {
-				endKey = codec.EncodeBytesExt([]byte{}, endKey, isRawKv)
-			}
-			if bytes.Equal(region.Region.GetStartKey(), startKey) &&
-				bytes.Equal(region.Region.GetEndKey(), endKey) {
-				continue FindRegion
-			}
-		}
-		return false
-	}
-	return true
 }
 
 type fakeRestorer struct {

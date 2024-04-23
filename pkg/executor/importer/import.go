@@ -48,11 +48,11 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -593,7 +593,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if opt.Value.GetType().GetType() != mysql.TypeVarString {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		val, isNull, err2 := opt.Value.EvalString(seCtx.GetExprCtx(), chunk.Row{})
+		val, isNull, err2 := opt.Value.EvalString(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err2 != nil || isNull {
 			return "", exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -604,7 +604,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		if opt.Value.GetType().GetType() != mysql.TypeLonglong || mysql.HasIsBooleanFlag(opt.Value.GetType().GetFlag()) {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		val, isNull, err2 := opt.Value.EvalInt(seCtx.GetExprCtx(), chunk.Row{})
+		val, isNull, err2 := opt.Value.EvalInt(seCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err2 != nil || isNull {
 			return 0, exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
@@ -1283,11 +1283,11 @@ func (p *Plan) IsGlobalSort() bool {
 // CreateColAssignExprs creates the column assignment expressions using session context.
 // RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
 // so we sync it.
-func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]expression.Expression, []stmtctx.SQLWarn, error) {
+func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]expression.Expression, []contextutil.SQLWarn, error) {
 	e.colAssignMu.Lock()
 	defer e.colAssignMu.Unlock()
 	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
-	allWarnings := []stmtctx.SQLWarn{}
+	allWarnings := []contextutil.SQLWarn{}
 	for _, assign := range e.ColumnAssignments {
 		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), assign.Expr, nil, nil, false)
 		// col assign expr warnings is static, we should generate it for each row processed.
@@ -1354,7 +1354,7 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
 	Affected   uint64
-	Warnings   []stmtctx.SQLWarn
+	Warnings   []contextutil.SQLWarn
 	ColSizeMap map[int64]int64
 }
 

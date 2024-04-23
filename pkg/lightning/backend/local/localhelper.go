@@ -18,8 +18,6 @@ import (
 	"bytes"
 	"context"
 	"math"
-	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -27,8 +25,6 @@ import (
 	"github.com/pingcap/errors"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -36,25 +32,15 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
 
-const (
-	retrySplitMaxWaitTime = 4 * time.Second
-)
-
 var (
-	// the max total key size in a split region batch.
-	// our threshold should be smaller than TiKV's raft max entry size(default is 8MB).
-	maxBatchSplitSize = 6 * units.MiB
+
 	// the base exponential backoff time
 	// the variable is only changed in unit test for running test faster.
 	splitRegionBaseBackOffTime = time.Second
-	// the max retry times to split regions.
-	splitRetryTimes = 8
 )
 
 // SplitAndScatterRegionInBatches splits&scatter regions in batches.
@@ -97,176 +83,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 		}()
 	}
 
-	minKey := codec.EncodeBytes([]byte{}, ranges[0].Start)
-	maxKey := codec.EncodeBytes([]byte{}, ranges[len(ranges)-1].End)
-
-	scatterRegions := make([]*split.RegionInfo, 0)
-	var retryKeys [][]byte
-	waitTime := splitRegionBaseBackOffTime
-	for i := 0; i < splitRetryTimes; i++ {
-		log.FromContext(ctx).Info("split and scatter region",
-			logutil.Key("minKey", minKey),
-			logutil.Key("maxKey", maxKey),
-			zap.Int("retry", i),
-		)
-		err = nil
-		if i > 0 {
-			select {
-			case <-time.After(waitTime):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-			waitTime *= 2
-			if waitTime > retrySplitMaxWaitTime {
-				waitTime = retrySplitMaxWaitTime
-			}
-		}
-		var regions []*split.RegionInfo
-		regions, err = split.PaginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
-		log.FromContext(ctx).Info("paginate scan regions", zap.Int("count", len(regions)),
-			logutil.Key("start", minKey), logutil.Key("end", maxKey))
-		if err != nil {
-			log.FromContext(ctx).Warn("paginate scan region failed", logutil.Key("minKey", minKey), logutil.Key("maxKey", maxKey),
-				log.ShortError(err), zap.Int("retry", i))
-			continue
-		}
-
-		log.FromContext(ctx).Info("paginate scan region finished", logutil.Key("minKey", minKey), logutil.Key("maxKey", maxKey),
-			zap.Int("regions", len(regions)))
-
-		if len(ranges) == 0 {
-			log.FromContext(ctx).Info("no ranges need to be split, skipped.")
-			return nil
-		}
-
-		var splitKeyMap map[*split.RegionInfo][][]byte
-		if len(retryKeys) > 0 {
-			firstKeyEnc := codec.EncodeBytes([]byte{}, retryKeys[0])
-			lastKeyEnc := codec.EncodeBytes([]byte{}, retryKeys[len(retryKeys)-1])
-			if bytes.Compare(firstKeyEnc, regions[0].Region.StartKey) < 0 || !beforeEnd(lastKeyEnc, regions[len(regions)-1].Region.EndKey) {
-				log.FromContext(ctx).Warn("no valid key for split region",
-					logutil.Key("firstKey", firstKeyEnc), logutil.Key("lastKey", lastKeyEnc),
-					logutil.Key("firstRegionStart", regions[0].Region.StartKey),
-					logutil.Key("lastRegionEnd", regions[len(regions)-1].Region.EndKey))
-				return errors.New("check split keys failed")
-			}
-			splitKeyMap = split.GetSplitKeysOfRegions(retryKeys, regions, false)
-			retryKeys = retryKeys[:0]
-		} else {
-			splitKeyMap = getSplitKeysByRanges(ranges, regions)
-		}
-
-		type splitInfo struct {
-			region *split.RegionInfo
-			keys   [][]byte
-		}
-
-		var syncLock sync.Mutex
-		size := min(len(splitKeyMap), local.RegionSplitConcurrency)
-		ch := make(chan *splitInfo, size)
-		eg, splitCtx := errgroup.WithContext(ctx)
-
-		for splitWorker := 0; splitWorker < size; splitWorker++ {
-			eg.Go(func() error {
-				for sp := range ch {
-					var newRegions []*split.RegionInfo
-					var err1 error
-					region := sp.region
-					keys := sp.keys
-					slices.SortFunc(keys, bytes.Compare)
-					splitRegion := region
-					startIdx := 0
-					endIdx := 0
-					batchKeySize := 0
-					for endIdx <= len(keys) {
-						if endIdx == len(keys) ||
-							batchKeySize+len(keys[endIdx]) > maxBatchSplitSize ||
-							endIdx-startIdx >= local.RegionSplitBatchSize {
-							splitRegionStart := codec.EncodeBytes([]byte{}, keys[startIdx])
-							splitRegionEnd := codec.EncodeBytes([]byte{}, keys[endIdx-1])
-							if bytes.Compare(splitRegionStart, splitRegion.Region.StartKey) < 0 || !beforeEnd(splitRegionEnd, splitRegion.Region.EndKey) {
-								log.FromContext(ctx).Fatal("no valid key in region",
-									logutil.Key("startKey", splitRegionStart), logutil.Key("endKey", splitRegionEnd),
-									logutil.Key("regionStart", splitRegion.Region.StartKey), logutil.Key("regionEnd", splitRegion.Region.EndKey),
-									logutil.Region(splitRegion.Region), logutil.Leader(splitRegion.Leader))
-							}
-							splitRegion, newRegions, err1 = local.splitCli.SplitWaitAndScatter(splitCtx, splitRegion, keys[startIdx:endIdx])
-							if err1 != nil {
-								if strings.Contains(err1.Error(), "no valid key") {
-									for _, key := range keys {
-										log.FromContext(ctx).Warn("no valid key",
-											logutil.Key("startKey", region.Region.StartKey),
-											logutil.Key("endKey", region.Region.EndKey),
-											logutil.Key("key", codec.EncodeBytes([]byte{}, key)))
-									}
-									return err1
-								} else if common.IsContextCanceledError(err1) {
-									// do not retry on context.Canceled error
-									return err1
-								}
-								log.FromContext(ctx).Warn("split regions", log.ShortError(err1), zap.Int("retry time", i),
-									zap.Uint64("region_id", region.Region.Id))
-
-								syncLock.Lock()
-								retryKeys = append(retryKeys, keys[startIdx:]...)
-								// set global error so if we exceed retry limit, the function will return this error
-								err = multierr.Append(err, err1)
-								syncLock.Unlock()
-								break
-							}
-							log.FromContext(ctx).Info("batch split region", zap.Uint64("region_id", splitRegion.Region.Id),
-								zap.Int("keys", endIdx-startIdx), zap.Binary("firstKey", keys[startIdx]),
-								zap.Binary("end", keys[endIdx-1]))
-							slices.SortFunc(newRegions, func(i, j *split.RegionInfo) int {
-								return bytes.Compare(i.Region.StartKey, j.Region.StartKey)
-							})
-							syncLock.Lock()
-							scatterRegions = append(scatterRegions, newRegions...)
-							syncLock.Unlock()
-							// the region with the max start key is the region need to be further split.
-							if bytes.Compare(splitRegion.Region.StartKey, newRegions[len(newRegions)-1].Region.StartKey) < 0 {
-								splitRegion = newRegions[len(newRegions)-1]
-							}
-
-							batchKeySize = 0
-							startIdx = endIdx
-						}
-						if endIdx < len(keys) {
-							batchKeySize += len(keys[endIdx])
-						}
-						endIdx++
-					}
-				}
-				return nil
-			})
-		}
-	sendLoop:
-		for region, keys := range splitKeyMap {
-			select {
-			case ch <- &splitInfo{region: region, keys: keys}:
-			case <-ctx.Done():
-				// outer context is canceled, can directly return
-				close(ch)
-				return ctx.Err()
-			case <-splitCtx.Done():
-				// met critical error, stop process
-				break sendLoop
-			}
-		}
-		close(ch)
-		if splitError := eg.Wait(); splitError != nil {
-			retryKeys = retryKeys[:0]
-			err = splitError
-			continue
-		}
-
-		if len(retryKeys) == 0 {
-			break
-		}
-		slices.SortFunc(retryKeys, bytes.Compare)
-		minKey = codec.EncodeBytes([]byte{}, retryKeys[0])
-		maxKey = codec.EncodeBytes([]byte{}, nextKey(retryKeys[len(retryKeys)-1]))
-	}
+	scatterRegions, err := local.splitCli.SplitKeysAndScatter(ctx, getSplitKeysByRanges(ranges))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -294,7 +111,7 @@ func (local *Backend) hasRegion(ctx context.Context, regionID uint64) (bool, err
 	return regionInfo != nil, nil
 }
 
-func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo) map[*split.RegionInfo][][]byte {
+func getSplitKeysByRanges(ranges []common.Range) [][]byte {
 	checkKeys := make([][]byte, 0)
 	var lastEnd []byte
 	for _, rg := range ranges {
@@ -304,7 +121,7 @@ func getSplitKeysByRanges(ranges []common.Range, regions []*split.RegionInfo) ma
 		checkKeys = append(checkKeys, rg.End)
 		lastEnd = rg.End
 	}
-	return split.GetSplitKeysOfRegions(checkKeys, regions, false)
+	return checkKeys
 }
 
 func beforeEnd(key []byte, end []byte) bool {

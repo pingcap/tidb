@@ -21,7 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
@@ -47,7 +48,7 @@ type skewDistinctAggRewriter struct {
 // - The aggregate has 1 and only 1 distinct aggregate function (limited to count, avg, sum)
 //
 // This rule is disabled by default. Use tidb_opt_skew_distinct_agg to enable the rule.
-func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation, opt *util.LogicalOptimizeOp) LogicalPlan {
+func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation, opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
 	// only group aggregate is applicable
 	if len(agg.GroupByItems) == 0 {
 		return nil
@@ -263,7 +264,7 @@ func (*skewDistinctAggRewriter) isQualifiedAgg(aggFunc *aggregation.AggFuncDesc)
 	}
 }
 
-func appendSkewDistinctAggRewriteTraceStep(agg *LogicalAggregation, result LogicalPlan, opt *util.LogicalOptimizeOp) {
+func appendSkewDistinctAggRewriteTraceStep(agg *LogicalAggregation, result base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) {
 	reason := func() string {
 		return fmt.Sprintf("%v_%v has a distinct agg function", agg.TP(), agg.ID())
 	}
@@ -274,9 +275,9 @@ func appendSkewDistinctAggRewriteTraceStep(agg *LogicalAggregation, result Logic
 	opt.AppendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func (a *skewDistinctAggRewriter) optimize(ctx context.Context, p LogicalPlan, opt *util.LogicalOptimizeOp) (LogicalPlan, bool, error) {
+func (a *skewDistinctAggRewriter) optimize(ctx context.Context, p base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
-	newChildren := make([]LogicalPlan, 0, len(p.Children()))
+	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		newChild, planChanged, err := a.optimize(ctx, child, opt)
 		if err != nil {
