@@ -269,6 +269,8 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	if err != nil {
 		return err
 	}
+	sctx := se.(sessionctx.Context)
+	sctx.GetSessionVars().StmtCtx.Priority = mysql.HighPriority
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
@@ -276,10 +278,10 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 			err = errors.Errorf("stats loading panicked: %v", r)
 		}
 		if err == nil { // only recycle when no error
+			sctx.GetSessionVars().StmtCtx.Priority = mysql.NoPriority
 			s.statsHandle.SPool().Put(se)
 		}
 	}()
-	sctx := se.(sessionctx.Context)
 	item := task.Item.TableItemID
 	tbl, ok := s.statsHandle.Get(item.TableID)
 	if !ok {
