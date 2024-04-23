@@ -153,6 +153,9 @@ func TestLeftOuterJoinProbeBasic(t *testing.T) {
 				}
 				testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, tc.leftKeyTypes, tc.rightKeyTypes, tc.leftTypes, tc.rightTypes, value, tc.leftUsed,
 					tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, leftFilter, nil, tc.otherCondition, partitionNumber, plannercore.LeftOuterJoin, 200)
+				testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, toNullableTypes(tc.leftKeyTypes), toNullableTypes(tc.rightKeyTypes),
+					toNullableTypes(tc.leftTypes), toNullableTypes(tc.rightTypes), value, tc.leftUsed, tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition,
+					leftFilter, nil, tc.otherCondition, partitionNumber, plannercore.LeftOuterJoin, 200)
 			}
 		}
 	}
@@ -204,29 +207,52 @@ func TestLeftOuterJoinProbeAllJoinKeys(t *testing.T) {
 	rUsed := lUsed
 	joinType := plannercore.LeftOuterJoin
 
+	rightAsBuildSide := []bool{true, false}
+
 	// single key
 	for i := 0; i < len(lTypes); i++ {
-		testJoinProbe(t, false, []int{i}, []int{i}, []*types.FieldType{lTypes[i]}, []*types.FieldType{rTypes[i]}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
-		testJoinProbe(t, false, []int{i}, []int{i}, []*types.FieldType{lTypes[i]}, []*types.FieldType{rTypes[i]}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+		lKeyTypes := []*types.FieldType{lTypes[i]}
+		rKeyTypes := []*types.FieldType{rTypes[i]}
+		for _, rightAsBuild := range rightAsBuildSide {
+			testJoinProbe(t, false, []int{i}, []int{i}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+			testJoinProbe(t, false, []int{i}, []int{i}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+		}
 	}
 	// composed key
 	// fixed size, inlined
-	testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, []*types.FieldType{intTp, uintTp}, []*types.FieldType{intTp, uintTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
-	testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, []*types.FieldType{intTp, uintTp}, []*types.FieldType{intTp, uintTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+	for _, rightAsBuild := range rightAsBuildSide {
+		lKeyTypes := []*types.FieldType{intTp, uintTp}
+		rKeyTypes := []*types.FieldType{intTp, uintTp}
+		testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+		testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+	}
 	// variable size, inlined
-	testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
-	testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, []*types.FieldType{intTp, binaryStringTp}, []*types.FieldType{intTp, binaryStringTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+	for _, rightAsBuild := range rightAsBuildSide {
+		lKeyTypes := []*types.FieldType{intTp, binaryStringTp}
+		rKeyTypes := []*types.FieldType{intTp, binaryStringTp}
+		testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+		testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+	}
 	// fixed size, not inlined
-	testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, []*types.FieldType{intTp, datetimeTp}, []*types.FieldType{intTp, datetimeTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
-	testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, []*types.FieldType{intTp, datetimeTp}, []*types.FieldType{intTp, datetimeTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+	for _, rightAsBuild := range rightAsBuildSide {
+		lKeyTypes := []*types.FieldType{intTp, datetimeTp}
+		rKeyTypes := []*types.FieldType{intTp, datetimeTp}
+		testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+		testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+	}
 	// variable size, not inlined
-	testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, []*types.FieldType{intTp, decimalTp}, []*types.FieldType{intTp, decimalTp}, lTypes, rTypes, false, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
-	testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, []*types.FieldType{intTp, decimalTp}, []*types.FieldType{intTp, decimalTp}, lTypes, rTypes, true, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+	for _, rightAsBuild := range rightAsBuildSide {
+		lKeyTypes := []*types.FieldType{intTp, decimalTp}
+		rKeyTypes := []*types.FieldType{intTp, decimalTp}
+		testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+		testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, joinType, 100)
+	}
 }
 
 func TestLeftOuterJoinProbeOtherCondition(t *testing.T) {
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	intTp.AddFlag(mysql.NotNullFlag)
+	nullableIntTp := types.NewFieldType(mysql.TypeLonglong)
 	uintTp := types.NewFieldType(mysql.TypeLonglong)
 	uintTp.AddFlag(mysql.NotNullFlag)
 	uintTp.AddFlag(mysql.UnsignedFlag)
@@ -237,8 +263,8 @@ func TestLeftOuterJoinProbeOtherCondition(t *testing.T) {
 	rTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
 
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
-	a := &expression.Column{Index: 1, RetType: intTp}
-	b := &expression.Column{Index: 8, RetType: intTp}
+	a := &expression.Column{Index: 1, RetType: nullableIntTp}
+	b := &expression.Column{Index: 8, RetType: nullableIntTp}
 	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
 	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
@@ -255,6 +281,7 @@ func TestLeftOuterJoinProbeOtherCondition(t *testing.T) {
 				leftFilter = nil
 			}
 			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, leftFilter, nil, otherCondition, 3, joinType, 200)
+			testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, leftFilter, nil, otherCondition, 3, joinType, 200)
 		}
 	}
 }
@@ -262,9 +289,12 @@ func TestLeftOuterJoinProbeOtherCondition(t *testing.T) {
 func TestLeftOuterJoinProbeWithSel(t *testing.T) {
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	intTp.AddFlag(mysql.NotNullFlag)
+	nullableIntTp := types.NewFieldType(mysql.TypeLonglong)
 	uintTp := types.NewFieldType(mysql.TypeLonglong)
 	uintTp.AddFlag(mysql.NotNullFlag)
 	uintTp.AddFlag(mysql.UnsignedFlag)
+	nullableUIntTp := types.NewFieldType(mysql.TypeLonglong)
+	nullableUIntTp.AddFlag(mysql.UnsignedFlag)
 	stringTp := types.NewFieldType(mysql.TypeVarString)
 	stringTp.AddFlag(mysql.NotNullFlag)
 
@@ -272,8 +302,8 @@ func TestLeftOuterJoinProbeWithSel(t *testing.T) {
 	rTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
 
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
-	a := &expression.Column{Index: 1, RetType: intTp}
-	b := &expression.Column{Index: 8, RetType: uintTp}
+	a := &expression.Column{Index: 1, RetType: nullableIntTp}
+	b := &expression.Column{Index: 8, RetType: nullableUIntTp}
 	sf, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, a, b)
 	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
@@ -290,6 +320,7 @@ func TestLeftOuterJoinProbeWithSel(t *testing.T) {
 				leftFilter = nil
 			}
 			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, leftFilter, nil, otherCondition, 3, joinType, 500)
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, leftFilter, nil, otherCondition, 3, joinType, 500)
 		}
 	}
 }
