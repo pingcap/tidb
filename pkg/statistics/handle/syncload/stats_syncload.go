@@ -231,7 +231,7 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 	}
 	result := stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
 	resultChan := s.StatsLoad.Singleflight.DoChan(task.Item.Key(), func() (any, error) {
-		err := s.handleOneItemTask(sctx, task)
+		err := s.handleOneItemTask(task)
 		return nil, err
 	})
 	timeout := time.Until(task.ToTimeout)
@@ -264,12 +264,22 @@ func isVaildForRetry(task *statstypes.NeededItemTask) bool {
 	return task.Retry <= RetryCount
 }
 
-func (s *statsSyncLoad) handleOneItemTask(sctx sessionctx.Context, task *statstypes.NeededItemTask) (err error) {
+func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err error) {
+	se, err := s.statsHandle.SPool().Get()
+	if err != nil {
+		return err
+	}
+	sctx := se.(sessionctx.Context)
+	sctx.GetSessionVars().StmtCtx.Priority = mysql.HighPriority
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err = errors.Errorf("stats loading panicked: %v", r)
+		}
+		if err == nil { // only recycle when no error
+			sctx.GetSessionVars().StmtCtx.Priority = mysql.NoPriority
+			s.statsHandle.SPool().Put(se)
 		}
 	}()
 	item := task.Item.TableItemID
