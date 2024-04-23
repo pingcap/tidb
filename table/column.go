@@ -293,9 +293,27 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 // Set it to true only in FillVirtualColumnValue and UnionScanExec.Next()
 // If the handle of err is changed latter, the behavior of forceIgnoreTruncate also need to change.
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
+<<<<<<< HEAD:table/column.go
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	casted, err = val.ConvertTo(sc, &col.FieldType)
+=======
+func CastValue(sctx variable.SessionVarsProvider, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+	vars := sctx.GetSessionVars()
+	sc := vars.StmtCtx
+	return castColumnValue(sc.TypeCtx(), sc.ErrCtx(), vars.SQLMode, val, col, vars.ConnectionID, returnErr, forceIgnoreTruncate)
+}
+
+// CastColumnValue casts a value based on column type with expression BuildContext
+func CastColumnValue(ctx expression.BuildContext, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+	evalCtx := ctx.GetEvalCtx()
+	return castColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, col, ctx.ConnectionID(), returnErr, forceIgnoreTruncate)
+}
+
+// castColumnValue casts a value based on column type.
+func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, col *model.ColumnInfo, connID uint64, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+	casted, err = val.ConvertTo(tc, &col.FieldType)
+>>>>>>> 8f062f2698d (expression: remove `InInsertOrUpdate` in `BuildExpression` (#52716)):pkg/table/column.go
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {
 		return casted, err
@@ -310,7 +328,11 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
 		}
 		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), str)
+<<<<<<< HEAD:table/column.go
 	} else if (sc.InInsertStmt || sc.InUpdateStmt) && !casted.IsNull() &&
+=======
+	} else if !casted.IsNull() &&
+>>>>>>> 8f062f2698d (expression: remove `InInsertOrUpdate` in `BuildExpression` (#52716)):pkg/table/column.go
 		(col.GetType() == mysql.TypeDate || col.GetType() == mysql.TypeDatetime || col.GetType() == mysql.TypeTimestamp) {
 		str, err1 := val.ToString()
 		if err1 != nil {
