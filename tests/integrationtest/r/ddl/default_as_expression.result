@@ -62,7 +62,7 @@ t2	CREATE TABLE `t2` (
   `c1` varchar(256) DEFAULT date_format(now(), _utf8mb4'%Y-%m-%d %H.%i.%s')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t0 add column c2 date default (date_format(now(),'%Y-%m'));
-Error 1292 (22007): Incorrect datetime value: '2024-04'
+Error 1292 (22007): Incorrect date value:<time>
 alter table t0 add index idx(c1);
 alter table t1 add index idx(c1);
 alter table t0 add column c2 date default (date_format(now(),'%Y-%m-%d'));
