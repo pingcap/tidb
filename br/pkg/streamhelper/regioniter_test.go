@@ -84,7 +84,7 @@ func (c constantRegions) BlockGCUntil(ctx context.Context, at uint64) (uint64, e
 }
 
 func (c constantRegions) RemoveGCSafepoint(ctx context.Context) error {
-	return nil
+	return status.Error(codes.Unimplemented, "Unsupported operation")
 }
 
 // TODO: It should be able to synchoronize the current TS with the PD.
