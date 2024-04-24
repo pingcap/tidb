@@ -735,3 +735,25 @@ func TestRejectUnsupportedTables(t *testing.T) {
 	tk.MustExec("insert into cached values(1)")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on cached tables. Fallback to standard mode")
 }
+
+func TestOnDupInconsistency(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_dml_type=bulk")
+	tk.MustExec("set @@tidb_txn_assertion_level=strict")
+	tk.MustExec(
+		"create table tbl_1 ( " +
+			"col_1 set ( 'Alice','Charlie' )," +
+			"col_2 set ( 'Alice','Charlie' )," +
+			"unique key idx_1 ( col_1 ) " +
+			");",
+	)
+	tk.MustExec("insert into tbl_1 values ( 'Alice','Charlie' );")
+	tk.MustExec("insert into tbl_1 values ( 'Charlie','Alice' );")
+	tk.MustExec(
+		"insert ignore into tbl_1 values ( 'Alice', 'Charlie' ) on duplicate key update " +
+			"col_2 = 'Charlie', col_1 = 'Charlie';",
+	)
+	tk.MustExec("admin check table tbl_1;")
+}
