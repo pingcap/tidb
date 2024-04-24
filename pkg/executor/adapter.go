@@ -567,9 +567,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 	if txn.Valid() {
 		txnStartTS = txn.StartTS()
-	} else if staleread.IsStmtStaleness(a.Ctx) {
-		// for state-read stmt, txn.Valid() is false, then use stale-read-ts as txnStartTS to record in slow-log.
-		txnStartTS, _ = sessiontxn.GetTxnManager(a.Ctx).GetStmtReadTS()
 	}
 
 	return &recordSet{
