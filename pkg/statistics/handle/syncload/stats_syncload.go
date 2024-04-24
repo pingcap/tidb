@@ -134,14 +134,18 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 			if !ok {
 				return errors.New("sync load stats channel closed unexpectedly")
 			}
+			// this error is from statsSyncLoad.SendLoadRequests which start to task and send task into worker,
+			// not the stats loading error
 			if result.Err != nil {
 				errorMsgs = append(errorMsgs, result.Err.Error())
+			} else {
+				val := result.Val.(stmtctx.StatsLoadResult)
+				// this error is from the stats loading error
+				if val.HasError() {
+					errorMsgs = append(errorMsgs, val.ErrorMsg())
+				}
+				delete(resultCheckMap, val.Item)
 			}
-			val := result.Val.(stmtctx.StatsLoadResult)
-			if val.HasError() {
-				errorMsgs = append(errorMsgs, val.ErrorMsg())
-			}
-			delete(resultCheckMap, val.Item)
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
 			return errors.New("sync load stats timeout")
