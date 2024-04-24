@@ -27,7 +27,6 @@ import (
 )
 
 func TestIDAllocator(t *testing.T) {
-	ddl.IDAllocatorStep = 10
 	store := testkit.CreateMockStore(t)
 	ia := ddl.NewAllocator(store)
 

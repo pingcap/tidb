@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 )
 
-var (
+const (
 	// IDAllocatorStep is the default step for id allocator.
-	IDAllocatorStep = 100
+	IDAllocatorStep = 10
 )
 
 // IDAllocator is used to allocate global ID.
