@@ -451,24 +451,6 @@ func splitTableRanges(
 	return ranges, nil
 }
 
-func handleOneResult(
-	result *backfillResult,
-	scheduler backfillScheduler,
-	consumer *resultConsumer,
-	keeper *doneTaskKeeper,
-	totalAddedCount *int64,
-	taskSeq int,
-) error {
-	failpoint.Inject("MockGetIndexRecordErr", func() {
-		// Make sure this job didn't failed because by the "Write conflict" error.
-		if dbterror.ErrNotOwner.Equal(err) {
-			time.Sleep(50 * time.Millisecond)
-		}
-	})
-
-	return nil
-}
-
 func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 	taskIDAlloc *taskIDAllocator) []*reorgBackfillTask {
 	batchTasks := make([]*reorgBackfillTask, 0, len(kvRanges))
@@ -643,9 +625,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		return errors.Trace(err)
 	}
 
-	// TODO(lance6716): add comment and write to it
-	resultCh := make(chan *backfillResult, backfillTaskChanSize)
-
 	// process result goroutine
 	eg.Go(func() error {
 		totalAddedCount := reorgInfo.Job.GetRowCount()
@@ -656,7 +635,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			select {
 			case <-egCtx.Done():
 				return egCtx.Err()
-			case result, ok := <-resultCh:
+			case result, ok := <-scheduler.resultChan():
 				if !ok {
 					ddlLogger.Info("backfill workers successfully processed",
 						zap.Stringer("element", reorgInfo.currElement),
