@@ -101,6 +101,8 @@ const (
 	recoverCheckFlagDisableGC
 )
 
+var ddlLogger = logutil.BgLogger().With(zap.String("category", "ddl"))
+
 // OnExist specifies what to do when a new object has a name collision.
 type OnExist uint8
 

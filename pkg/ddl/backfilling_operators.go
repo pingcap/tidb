@@ -311,6 +311,7 @@ func (src *TableScanTaskSource) generateTasks() error {
 	endKey := src.endKey
 	for {
 		kvRanges, err := splitTableRanges(
+			src.ctx,
 			src.tbl,
 			src.store,
 			startKey,
