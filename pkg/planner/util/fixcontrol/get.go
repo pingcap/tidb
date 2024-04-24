@@ -47,6 +47,7 @@ const (
 	// Fix49736 controls whether to force the optimizer to use plan cache even if there is risky optimization.
 	// This fix-control is test-only.
 	Fix49736 uint64 = 49736
+	Fix52869 uint64 = 52869
 )
 
 // GetStr fetches the given key from the fix control map as a string type.
