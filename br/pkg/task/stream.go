@@ -454,13 +454,8 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context) error {
 	return nil
 }
 
-func (s *streamMgr) checkStreamStartEnable(g glue.Glue) error {
-	se, err := g.CreateSession(s.mgr.GetStorage())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
-	supportStream, err := utils.IsLogBackupEnabled(execCtx)
+func (s *streamMgr) checkStreamStartEnable(ctx context.Context) error {
+	supportStream, err := s.mgr.IsLogBackupEnabled(ctx, s.httpCli)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -555,7 +550,7 @@ func RunStreamStart(
 	}
 	defer streamMgr.close()
 
-	if err = streamMgr.checkStreamStartEnable(g); err != nil {
+	if err = streamMgr.checkStreamStartEnable(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	if err = streamMgr.adjustAndCheckStartTS(ctx); err != nil {
