@@ -50,12 +50,10 @@ type backfillScheduler interface {
 	setupWorkers() error
 	close(force bool)
 
-	// TODO(lance6716): remove ctx because ctor should pass it
-	sendTask(context.Context, *reorgBackfillTask) error
+	sendTask(*reorgBackfillTask) error
 	resultChan() <-chan *backfillResult
 
 	currentWorkerSize() int
-	// TODO(lance6716): move adjustWorkerSize inside impl
 	adjustWorkerSize() error
 }
 
@@ -124,10 +122,10 @@ func (b *txnBackfillScheduler) setupWorkers() error {
 	return b.adjustWorkerSize()
 }
 
-func (b *txnBackfillScheduler) sendTask(ctx context.Context, task *reorgBackfillTask) error {
+func (b *txnBackfillScheduler) sendTask(task *reorgBackfillTask) error {
 	select {
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-b.ctx.Done():
+		return b.ctx.Err()
 	case b.taskCh <- task:
 		return nil
 	}
@@ -416,10 +414,10 @@ func (b *ingestBackfillScheduler) close(force bool) {
 	}
 }
 
-func (b *ingestBackfillScheduler) sendTask(ctx context.Context, task *reorgBackfillTask) error {
+func (b *ingestBackfillScheduler) sendTask(task *reorgBackfillTask) error {
 	select {
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-b.ctx.Done():
+		return b.ctx.Err()
 	case b.taskCh <- task:
 		return nil
 	}

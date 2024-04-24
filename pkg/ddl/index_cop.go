@@ -107,11 +107,17 @@ func (c *copReqSender) run() {
 	}
 	se := sess.NewSession(sessCtx)
 	defer p.sessPool.Put(sessCtx)
+	var (
+		task *reorgBackfillTask
+		ok   bool
+	)
+
 	for {
-		if util.HasCancelled(c.ctx) {
+		select {
+		case <-c.ctx.Done():
 			return
+		case task, ok = <-p.tasksCh:
 		}
-		task, ok := <-p.tasksCh
 		if !ok {
 			return
 		}

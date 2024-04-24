@@ -355,10 +355,6 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		}
 	}, false)
 	for {
-		if err := w.ctx.Err(); err != nil {
-			logger.Info("backfill worker exit on context done")
-			return
-		}
 		select {
 		case <-w.ctx.Done():
 			logger.Info("backfill worker exit on context done")
@@ -378,7 +374,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 				result := &backfillResult{taskID: task.id, addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
 				select {
 				case <-w.ctx.Done():
-					// TODO(lance6716): check whether we should return here.
+					failpoint.Return()
 				case w.resultCh <- result:
 				}
 				failpoint.Continue()
@@ -399,7 +395,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		result := w.handleBackfillTask(d, task, bf)
 		select {
 		case <-w.ctx.Done():
-			// TODO(lance6716): check whether we should return here.
+			return
 		case w.resultCh <- result:
 		}
 
@@ -500,7 +496,6 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 
 // sendTasks sends tasks to workers, and returns remaining kvRanges that is not handled.
 func sendTasks(
-	ctx context.Context,
 	scheduler backfillScheduler,
 	t table.PhysicalTable,
 	kvRanges []kv.KeyRange,
@@ -509,7 +504,7 @@ func sendTasks(
 ) error {
 	batchTasks := getBatchTasks(t, reorgInfo, kvRanges, taskIDAlloc)
 	for _, task := range batchTasks {
-		if err := scheduler.sendTask(ctx, task); err != nil {
+		if err := scheduler.sendTask(task); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -704,7 +699,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				zap.String("startKey", hex.EncodeToString(start)),
 				zap.String("endKey", hex.EncodeToString(end)))
 
-			err2 = sendTasks(egCtx, scheduler, t, kvRanges, reorgInfo, taskIDAlloc)
+			err2 = sendTasks(scheduler, t, kvRanges, reorgInfo, taskIDAlloc)
 			if err2 != nil {
 				return errors.Trace(err2)
 			}
