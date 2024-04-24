@@ -544,9 +544,16 @@ func expectedIngestWorkerCnt(concurrency, avgRowSize int) (readerCnt, writerCnt 
 	return readerCnt, writerCnt
 }
 
+func (w *addIndexIngestWorker) sendResult(res *backfillResult) {
+	select {
+	case <-w.ctx.Done():
+	case w.resultCh <- res:
+	}
+}
+
 func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool.None)) {
 	defer util.Recover(metrics.LabelDDL, "ingestWorker.HandleTask", func() {
-		w.resultCh <- &backfillResult{taskID: rs.ID, err: dbterror.ErrReorgPanic}
+		w.sendResult(&backfillResult{taskID: rs.ID, err: dbterror.ErrReorgPanic})
 	}, false)
 	defer w.copReqSenderPool.recycleChunk(rs.Chunk)
 	result := &backfillResult{
@@ -556,20 +563,19 @@ func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool
 	if result.err != nil {
 		logutil.Logger(w.ctx).Error("encounter error when handle index chunk",
 			zap.Int("id", rs.ID), zap.Error(rs.Err))
-		// TODO(lance6716): SHIT!
-		w.resultCh <- result
+		w.sendResult(result)
 		return
 	}
 	err := w.d.isReorgRunnable(w.jobID, false)
 	if err != nil {
 		result.err = err
-		w.resultCh <- result
+		w.sendResult(result)
 		return
 	}
 	count, nextKey, err := w.WriteLocal(&rs)
 	if err != nil {
 		result.err = err
-		w.resultCh <- result
+		w.sendResult(result)
 		return
 	}
 	if count == 0 {
@@ -589,7 +595,7 @@ func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool
 	if ResultCounterForTest != nil && result.err == nil {
 		ResultCounterForTest.Add(1)
 	}
-	w.resultCh <- result
+	w.sendResult(result)
 }
 
 func (*addIndexIngestWorker) Close() {}

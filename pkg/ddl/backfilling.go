@@ -686,9 +686,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 
 	// generate task goroutine
 	eg.Go(func() error {
+		// we will modify the startKey in this goroutine, so copy them to avoid race.
+		start, end := startKey, endKey
 		taskIDAlloc := newTaskIDAllocator()
 		for {
-			kvRanges, err2 := splitTableRanges(egCtx, t, reorgInfo.d.store, startKey, endKey, backfillTaskChanSize)
+			kvRanges, err2 := splitTableRanges(egCtx, t, reorgInfo.d.store, start, end, backfillTaskChanSize)
 			if err2 != nil {
 				return errors.Trace(err2)
 			}
@@ -699,16 +701,16 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				zap.Stringer("type", bfWorkerType),
 				zap.Int("workerCnt", scheduler.currentWorkerSize()),
 				zap.Int("regionCnt", len(kvRanges)),
-				zap.String("startKey", hex.EncodeToString(startKey)),
-				zap.String("endKey", hex.EncodeToString(endKey)))
+				zap.String("startKey", hex.EncodeToString(start)),
+				zap.String("endKey", hex.EncodeToString(end)))
 
 			err2 = sendTasks(egCtx, scheduler, t, kvRanges, reorgInfo, taskIDAlloc)
 			if err2 != nil {
 				return errors.Trace(err2)
 			}
 
-			startKey = kvRanges[len(kvRanges)-1].EndKey
-			if startKey.Cmp(endKey) >= 0 {
+			start = kvRanges[len(kvRanges)-1].EndKey
+			if start.Cmp(end) >= 0 {
 				break
 			}
 		}
