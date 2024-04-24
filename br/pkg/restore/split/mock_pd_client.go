@@ -74,8 +74,13 @@ func (c *MockPDClientForSplit) setRegions(boundaries [][]byte) []*metapb.Region 
 			StartKey: boundaries[i-1],
 			EndKey:   boundaries[i],
 		}
+		p := &metapb.Peer{
+			Id:      c.lastRegionID,
+			StoreId: 1,
+		}
 		c.Regions.SetRegion(&pdtypes.Region{
-			Meta: r,
+			Meta:   r,
+			Leader: p,
 		})
 		ret = append(ret, r)
 	}
