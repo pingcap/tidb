@@ -157,7 +157,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		handleHist = &statistics.Histogram{}
 		handleCms = statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]))
 		handleTopn = statistics.NewTopN(int(e.opts[ast.AnalyzeOptNumTopN]))
-		handleFms = statistics.NewFMSketch(maxSketchSize)
+		handleFms = statistics.NewFMSketch(statistics.MaxSketchSize)
 		if e.analyzePB.IdxReq.Version != nil {
 			statsVer = int(*e.analyzePB.IdxReq.Version)
 		}
@@ -167,7 +167,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	for i := range collectors {
 		collectors[i] = &statistics.SampleCollector{
 			IsMerger:      true,
-			FMSketch:      statistics.NewFMSketch(maxSketchSize),
+			FMSketch:      statistics.NewFMSketch(statistics.MaxSketchSize),
 			MaxSampleSize: int64(e.opts[ast.AnalyzeOptNumSamples]),
 			CMSketch:      statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth])),
 		}
