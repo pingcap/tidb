@@ -300,7 +300,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 	}
 	mockDB.ExpectBegin()
 	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
-		WillReturnResult(driver.ResultNoRows)
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mockDB.ExpectCommit()
 
 	cfg := config.NewConfig()
@@ -511,7 +511,11 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 	}
 	mockDB.ExpectBegin()
 	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
-		WillReturnResult(driver.ResultNoRows)
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mockDB.ExpectCommit()
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mockDB.ExpectCommit()
 
 	cfg := config.NewConfig()
