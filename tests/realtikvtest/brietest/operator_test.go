@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -223,4 +224,34 @@ func TestOperator(t *testing.T) {
 
 	verifySchedulerNotStopped(req, cfg)
 	verifyGCNotStopped(req, cfg)
+}
+
+func TestFailure(t *testing.T) {
+	req := require.New(t)
+	req.NoError(failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/prepare_snap/PrepareConnectionsErr", "return()"))
+	// Make goleak happy.
+	req.NoError(failpoint.Enable("github.com/pingcap/tidb/br/pkg/task/operator/SkipReadyHint", "return()"))
+	defer func() {
+		req.NoError(failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/prepare_snap/PrepareConnectionsErr"))
+		req.NoError(failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/operator/SkipReadyHint"))
+	}()
+
+	cfg := operator.PauseGcConfig{
+		Config: task.Config{
+			PD: []string{"127.0.0.1:2379"},
+		},
+		TTL:       5 * time.Minute,
+		SafePoint: oracle.GoTimeToTS(time.Now()),
+	}
+
+	verifyGCNotStopped(req, cfg)
+	verifySchedulerNotStopped(req, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	err := operator.AdaptEnvForSnapshotBackup(ctx, &cfg)
+	require.Error(t, err)
+
+	verifyGCNotStopped(req, cfg)
+	verifySchedulerNotStopped(req, cfg)
 }
