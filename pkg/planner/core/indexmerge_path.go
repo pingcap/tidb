@@ -750,8 +750,8 @@ func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, index
 			false,
 		)
 		if !skipRangeScanCheck {
-			for _, path := range ds.possibleAccessPaths {
-				if len(path.AccessConds) != 0 {
+			for i := 1; i < len(ds.possibleAccessPaths); i++ {
+				if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
 					needConsiderIndexMerge = false
 					break
 				}
