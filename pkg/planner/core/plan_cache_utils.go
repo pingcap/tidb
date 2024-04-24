@@ -368,7 +368,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		connID:                   sessionVars.ConnectionID,
 		stmtText:                 stmtText,
 		schemaVersion:            schemaVersion,
-		tblVersionMap:            relatedSchemaVersion,
+		tblVersionMap:            make(map[int64]uint64),
 		lastUpdatedSchemaVersion: lastUpdatedSchemaVersion,
 		sqlMode:                  sessionVars.SQLMode,
 		timezoneOffset:           timezoneOffset,
@@ -383,6 +383,9 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
+	}
+	for k, v := range relatedSchemaVersion {
+		key.tblVersionMap[k] = v
 	}
 	return key, nil
 }
