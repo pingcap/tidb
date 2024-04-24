@@ -407,3 +407,14 @@ CREATE TABLE `t1` (
 INSERT INTO t1 VALUES('1988-07-19','[0.9233398239291353, 0.9396459773262974, 0.540018481999012, 0.181978533893545]',x'652539286c5f7e6b482a7265575a');
 SELECT col_44, col_45 FROM t1 WHERE NOT (col_44 BETWEEN '1980-03-18' AND '2011-10-24') GROUP BY col_46,col_45 HAVING JSON_CONTAINS(col_45, '0.540018481999012') OR JSON_OVERLAPS(col_45, '[0.5785147169732324,0.8314968898215304,0.5226516826882698]');
 EXPLAIN format=brief SELECT /*+ use_index_merge(t1) */ col_44, col_45 FROM t1 WHERE NOT (col_44 BETWEEN '1980-03-18' AND '2011-10-24') GROUP BY col_46,col_45 HAVING JSON_CONTAINS(col_45, '0.540018481999012') OR JSON_OVERLAPS(col_45, '[0.5785147169732324,0.8314968898215304,0.5226516826882698]');
+
+# TestIssue52869
+drop table if exists t;
+create table t(pk varbinary(255) primary key, a int, b varchar(50), c int, d varchar(45), index ia(a), index ib(b), index ic(c), index id(d));
+EXPLAIN format = brief SELECT /*+ use_index_merge(t) */ * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
+EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
+EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR d = '4');
+SET @@tidb_opt_fix_control = '52869:on';
+EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
+EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR d = '4');
+SET @@tidb_opt_fix_control = default;
