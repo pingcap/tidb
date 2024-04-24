@@ -940,6 +940,7 @@ func killQuery(conn *clientConn, maxExecutionTime bool) {
 			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
 		}
 	}
+	sessVars.SQLKiller.FinishResultSet()
 }
 
 // KillSysProcesses kill sys processes such as auto analyze.

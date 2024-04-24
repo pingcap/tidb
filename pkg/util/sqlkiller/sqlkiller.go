@@ -41,11 +41,19 @@ const (
 type SQLKiller struct {
 	Signal killSignal
 	ConnID uint64
+	Finish func() error
 }
 
 // SendKillSignal sends a kill signal to the query.
 func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 	atomic.CompareAndSwapUint32(&killer.Signal, 0, reason)
+}
+
+// FinishResultSet is used to finish the result set.
+func (killer *SQLKiller) FinishResultSet() {
+	if killer.Finish != nil {
+		killer.Finish()
+	}
 }
 
 // HandleSignal handles the kill signal and return the error.
@@ -79,4 +87,5 @@ func (killer *SQLKiller) HandleSignal() error {
 // Reset resets the SqlKiller.
 func (killer *SQLKiller) Reset() {
 	atomic.StoreUint32(&killer.Signal, 0)
+	killer.Finish = nil
 }
