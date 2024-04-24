@@ -52,8 +52,7 @@ var _ exprctx.ExprContext = struct {
 type ExprCtxExtendedImpl struct {
 	sctx sessionctx.Context
 	*SessionEvalContext
-	inNullRejectCheck atomic.Bool
-	inUnionCast       atomic.Bool
+	inUnionCast atomic.Bool
 }
 
 // NewExprExtendedImpl creates a new ExprCtxExtendedImpl.
@@ -117,14 +116,9 @@ func (ctx *ExprCtxExtendedImpl) AllocPlanColumnID() int64 {
 	return ctx.sctx.GetSessionVars().AllocPlanColumnID()
 }
 
-// SetInNullRejectCheck sets whether the expression is in null reject check.
-func (ctx *ExprCtxExtendedImpl) SetInNullRejectCheck(in bool) {
-	ctx.inNullRejectCheck.Store(in)
-}
-
 // IsInNullRejectCheck returns whether the expression is in null reject check.
 func (ctx *ExprCtxExtendedImpl) IsInNullRejectCheck() bool {
-	return ctx.inNullRejectCheck.Load()
+	return false
 }
 
 // SetInUnionCast sets the flag to indicate whether the expression is in union cast.
