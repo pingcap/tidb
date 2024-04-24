@@ -164,16 +164,9 @@ const (
 		ORDER BY _tidb_rowid LIMIT ?;
 	`
 
-	selectNullDataRows = `
-		SELECT _tidb_rowid
-		FROM %s.` + ConflictErrorTableName + `
-		WHERE key_data = "" and row_data = ""
-		LIMIT 1;
-	`
-
 	deleteNullDataRow = `
 		DELETE FROM %s.` + ConflictErrorTableName + `
-		WHERE key_data = "" and row_data = ""
+		WHERE key_data = ""
 		LIMIT ?;
 	`
 
@@ -646,6 +639,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					}
 				}
 				if err := indexKvRows.Err(); err != nil {
+					_ = indexKvRows.Close()
 					return errors.Trace(err)
 				}
 				if err := indexKvRows.Close(); err != nil {
@@ -657,7 +651,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err := fnDeleteKeys(indexGCtx, handleKeys); err != nil {
 					return errors.Trace(err)
 				}
-				if err := exec.Transact(ctx, "insert data conflict error record for conflict detection 'replace' mode",
+				if err := exec.Transact(ctx, "insert data conflict record for conflict detection 'replace' mode",
 					func(c context.Context, txn *sql.Tx) error {
 						sb := &strings.Builder{}
 						_, err2 := common.FprintfWithIdentifiers(sb, insertIntoConflictErrorData, em.schema)
@@ -838,6 +832,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					}
 				}
 				if err := dataKvRows.Err(); err != nil {
+					_ = dataKvRows.Close()
 					return errors.Trace(err)
 				}
 				if err := dataKvRows.Close(); err != nil {
@@ -871,27 +866,8 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		return errors.Trace(err)
 	}
 
+	hasRow := true
 	for {
-		nullDataRows, err := em.db.QueryContext(
-			ctx, common.SprintfWithIdentifiers(selectNullDataRows, em.schema))
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		hasRow := false
-		for nullDataRows.Next() {
-			hasRow = true
-		}
-		if err := nullDataRows.Err(); err != nil {
-			return errors.Trace(err)
-		}
-		if err := nullDataRows.Close(); err != nil {
-			return errors.Trace(err)
-		}
-		if !hasRow {
-			break
-		}
-
 		// delete the additionally inserted rows for nonclustered PK
 		if err := exec.Transact(ctx, "delete additionally inserted rows for conflict detection 'replace' mode",
 			func(c context.Context, txn *sql.Tx) error {
@@ -900,10 +876,20 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err2 != nil {
 					return errors.Trace(err2)
 				}
-				_, err := txn.ExecContext(c, sb.String(), rowLimit)
-				return errors.Trace(err)
+				result, err := txn.ExecContext(c, sb.String(), rowLimit)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				affected, err2 := result.RowsAffected()
+				if affected == 0 {
+					hasRow = false
+				}
+				return nil
 			}); err != nil {
 			return errors.Trace(err)
+		}
+		if !hasRow {
+			break
 		}
 	}
 

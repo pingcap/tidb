@@ -298,8 +298,10 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "raw_value"}))
 	}
-	mockDB.ExpectQuery("\\QSELECT _tidb_rowid FROM `lightning_task_info`.conflict_error_v2 WHERE key_data = \"\" and row_data = \"\" LIMIT 1\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid"}))
+	mockDB.ExpectBegin()
+	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
+		WillReturnResult(driver.ResultNoRows)
+	mockDB.ExpectCommit()
 
 	cfg := config.NewConfig()
 	cfg.Conflict.Strategy = config.ReplaceOnDup
@@ -507,15 +509,10 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		mockDB.ExpectQuery("\\QSELECT _tidb_rowid, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v2 WHERE table_name = ? AND is_data_kv = 1 AND _tidb_rowid >= ? and _tidb_rowid < ? ORDER BY _tidb_rowid LIMIT ?\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid", "raw_key", "raw_value"}))
 	}
-	mockDB.ExpectQuery("\\QSELECT _tidb_rowid FROM `lightning_task_info`.conflict_error_v2 WHERE key_data = \"\" and row_data = \"\" LIMIT 1\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid"}).
-			AddRow(1))
 	mockDB.ExpectBegin()
 	mockDB.ExpectExec("DELETE FROM `lightning_task_info`\\.conflict_error_v2.*").
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
-	mockDB.ExpectQuery("\\QSELECT _tidb_rowid FROM `lightning_task_info`.conflict_error_v2 WHERE key_data = \"\" and row_data = \"\" LIMIT 1\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"_tidb_rowid"}))
 
 	cfg := config.NewConfig()
 	cfg.Conflict.Strategy = config.ReplaceOnDup
