@@ -339,6 +339,13 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	return result
 }
 
+func (w *backfillWorker) sendResult(result *backfillResult) {
+	select {
+	case <-w.ctx.Done():
+	case w.resultCh <- result:
+	}
+}
+
 func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	logger := ddlLogger.With(zap.Stringer("worker", w))
 	var (
@@ -349,10 +356,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 
 	defer w.wg.Done()
 	defer util.Recover(metrics.LabelDDL, "backfillWorker.run", func() {
-		select {
-		case <-w.ctx.Done():
-		case w.resultCh <- &backfillResult{taskID: curTaskID, err: dbterror.ErrReorgPanic}:
-		}
+		w.sendResult(&backfillResult{taskID: curTaskID, err: dbterror.ErrReorgPanic})
 	}, false)
 	for {
 		select {
@@ -372,11 +376,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		failpoint.Inject("mockBackfillRunErr", func() {
 			if w.GetCtx().id == 0 {
 				result := &backfillResult{taskID: task.id, addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
-				select {
-				case <-w.ctx.Done():
-					failpoint.Return()
-				case w.resultCh <- result:
-				}
+				w.sendResult(result)
 				failpoint.Continue()
 			}
 		})
@@ -393,11 +393,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		// Change the batch size dynamically.
 		w.GetCtx().batchCnt = int(variable.GetDDLReorgBatchSize())
 		result := w.handleBackfillTask(d, task, bf)
-		select {
-		case <-w.ctx.Done():
-			return
-		case w.resultCh <- result:
-		}
+		w.sendResult(result)
 
 		if result.err != nil {
 			logger.Info("backfill worker exit on error",
