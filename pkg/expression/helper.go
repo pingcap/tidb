@@ -72,11 +72,8 @@ func getTimeCurrentTimeStamp(ctx EvalContext, tp byte, fsp int) (t types.Time, e
 		return value, err
 	}
 	value.SetCoreTime(types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond)))
-	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime || tp == mysql.TypeDate {
-		err = value.ConvertTimeZone(time.Local, ctx.Location())
-		if err != nil {
-			return value, err
-		}
+	if err = value.ConvertTimeZone(defaultTime.Location(), ctx.Location()); err != nil {
+		return value, err
 	}
 	return value, nil
 }

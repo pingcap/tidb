@@ -92,7 +92,7 @@ func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 }
 
 func TestArithmeticPlus(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx(t)
 	// case: 1
 	args := []any{int64(12), int64(1)}
 
@@ -103,7 +103,7 @@ func TestArithmeticPlus(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, intSig)
 
-	intResult, isNull, err := intSig.evalInt(ctx, chunk.Row{})
+	intResult, isNull, err := intSig.evalInt(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, int64(13), intResult)
@@ -118,7 +118,7 @@ func TestArithmeticPlus(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, realSig)
 
-	realResult, isNull, err := realSig.evalReal(ctx, chunk.Row{})
+	realResult, isNull, err := realSig.evalReal(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, 1.00001, realResult)
@@ -133,7 +133,7 @@ func TestArithmeticPlus(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, realSig)
 
-	realResult, isNull, err = realSig.evalReal(ctx, chunk.Row{})
+	realResult, isNull, err = realSig.evalReal(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, isNull)
 	require.Equal(t, float64(0), realResult)
@@ -148,7 +148,7 @@ func TestArithmeticPlus(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, realSig)
 
-	realResult, isNull, err = realSig.evalReal(ctx, chunk.Row{})
+	realResult, isNull, err = realSig.evalReal(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, isNull)
 	require.Equal(t, float64(0), realResult)
@@ -165,7 +165,7 @@ func TestArithmeticPlus(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, intSig)
 
-	intResult, _, err = intSig.evalInt(ctx, chunk.Row{})
+	intResult, _, err = intSig.evalInt(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(9007199254740993), intResult)
 
@@ -182,13 +182,13 @@ func TestArithmeticPlus(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, intSig)
 
-	intResult, _, err = intSig.evalInt(ctx, chunk.Row{})
+	intResult, _, err = intSig.evalInt(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(4), intResult)
 }
 
 func TestArithmeticMinus(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx(t)
 	// case: 1
 	args := []any{int64(12), int64(1)}
 
@@ -199,7 +199,7 @@ func TestArithmeticMinus(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, intSig)
 
-	intResult, isNull, err := intSig.evalInt(ctx, chunk.Row{})
+	intResult, isNull, err := intSig.evalInt(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, int64(11), intResult)
@@ -214,7 +214,7 @@ func TestArithmeticMinus(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, realSig)
 
-	realResult, isNull, err := realSig.evalReal(ctx, chunk.Row{})
+	realResult, isNull, err := realSig.evalReal(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, 1.02001, realResult)
@@ -229,7 +229,7 @@ func TestArithmeticMinus(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, realSig)
 
-	realResult, isNull, err = realSig.evalReal(ctx, chunk.Row{})
+	realResult, isNull, err = realSig.evalReal(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, isNull)
 	require.Equal(t, float64(0), realResult)
@@ -244,7 +244,7 @@ func TestArithmeticMinus(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, realSig)
 
-	realResult, isNull, err = realSig.evalReal(ctx, chunk.Row{})
+	realResult, isNull, err = realSig.evalReal(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, isNull)
 	require.Equal(t, float64(0), realResult)
@@ -259,14 +259,14 @@ func TestArithmeticMinus(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, realSig)
 
-	realResult, isNull, err = realSig.evalReal(ctx, chunk.Row{})
+	realResult, isNull, err = realSig.evalReal(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, isNull)
 	require.Equal(t, float64(0), realResult)
 }
 
 func TestArithmeticMultiply(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx(t)
 	testCases := []struct {
 		args   []any
 		expect []any
@@ -310,7 +310,7 @@ func TestArithmeticMultiply(t *testing.T) {
 		sig, err := funcs[ast.Mul].getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
 		require.NotNil(t, sig)
-		val, err := evalBuiltinFunc(sig, ctx, chunk.Row{})
+		val, err := evalBuiltinFunc(sig, ctx.GetEvalCtx(), chunk.Row{})
 		if tc.expect[1] == nil {
 			require.NoError(t, err)
 			testutil.DatumEqual(t, types.NewDatum(tc.expect[0]), val)
@@ -322,8 +322,7 @@ func TestArithmeticMultiply(t *testing.T) {
 }
 
 func TestArithmeticDivide(t *testing.T) {
-	ctx := createContext(t)
-
+	ctx := mockStmtTruncateAsWarningExprCtx(t)
 	testCases := []struct {
 		args   []any
 		expect any
@@ -384,14 +383,14 @@ func TestArithmeticDivide(t *testing.T) {
 		case *builtinArithmeticIntDivideDecimalSig:
 			require.Equal(t, tipb.ScalarFuncSig_IntDivideDecimal, sig.PbCode())
 		}
-		val, err := evalBuiltinFunc(sig, ctx, chunk.Row{})
+		val, err := evalBuiltinFunc(sig, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tc.expect), val)
 	}
 }
 
 func TestArithmeticIntDivide(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx(t)
 	testCases := []struct {
 		args   []any
 		expect []any
@@ -494,7 +493,7 @@ func TestArithmeticIntDivide(t *testing.T) {
 		sig, err := funcs[ast.IntDiv].getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
 		require.NotNil(t, sig)
-		val, err := evalBuiltinFunc(sig, ctx, chunk.Row{})
+		val, err := evalBuiltinFunc(sig, ctx.GetEvalCtx(), chunk.Row{})
 		if tc.expect[1] == nil {
 			require.NoError(t, err)
 			testutil.DatumEqual(t, types.NewDatum(tc.expect[0]), val)
@@ -506,7 +505,7 @@ func TestArithmeticIntDivide(t *testing.T) {
 }
 
 func TestArithmeticMod(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx(t)
 	testCases := []struct {
 		args   []any
 		expect any
@@ -637,7 +636,7 @@ func TestArithmeticMod(t *testing.T) {
 		sig, err := funcs[ast.Mod].getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
 		require.NotNil(t, sig)
-		val, err := evalBuiltinFunc(sig, ctx, chunk.Row{})
+		val, err := evalBuiltinFunc(sig, ctx.GetEvalCtx(), chunk.Row{})
 		switch sig.(type) {
 		case *builtinArithmeticModRealSig:
 			require.Equal(t, tipb.ScalarFuncSig_ModReal, sig.PbCode())
@@ -658,7 +657,7 @@ func TestArithmeticMod(t *testing.T) {
 }
 
 func TestDecimalErrOverflow(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx(t)
 	testCases := []struct {
 		args   []float64
 		opd    string
@@ -696,7 +695,7 @@ func TestDecimalErrOverflow(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, bf)
 		require.Equal(t, tc.sig, bf.PbCode())
-		_, err = evalBuiltinFunc(bf, ctx, chunk.Row{})
+		_, err = evalBuiltinFunc(bf, ctx.GetEvalCtx(), chunk.Row{})
 		require.EqualError(t, err, tc.errStr)
 	}
 }

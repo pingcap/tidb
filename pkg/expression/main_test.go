@@ -19,10 +19,12 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -57,19 +59,98 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func createContext(t *testing.T) *mock.Context {
-	ctx := mock.NewContext()
-	sqlMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
-	require.NoError(t, err)
-	require.True(t, sqlMode.HasStrictMode())
-	ctx.GetSessionVars().SQLMode = sqlMode
-	// sets default time zone to UTC+11 value to make it different with most CI and development environments and forbid
-	// some tests are success in some environments but failed in some others.
-	tz := time.FixedZone("UTC+11", 11*3600)
-	ctx.ResetSessionAndStmtTimeZone(tz)
-	sc := ctx.GetSessionVars().StmtCtx
-	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
-	require.NoError(t, ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864"))
-	ctx.GetSessionVars().PlanColumnID.Store(0)
+func mockEvalCtx(opts ...contextstatic.StaticEvalCtxOption) *contextstatic.StaticEvalContext {
+	ctx := contextstatic.NewStaticEvalContext(
+		// sets default time zone to UTC+11 value to make it different with most CI and development environments and forbid
+		// some tests are success in some environments but failed in some others.
+		contextstatic.WithLocation(time.FixedZone("UTC+11", 11*3600)),
+	)
+	if len(opts) > 0 {
+		ctx = ctx.Apply(opts...)
+	}
 	return ctx
+}
+
+func mockStmtTruncateAsWarningExprCtx(t testing.TB, opts ...any) *contextstatic.StaticExprContext {
+	flags := types.DefaultStmtFlags.WithTruncateAsWarning(true)
+	levelMap := stmtctx.DefaultStmtErrLevels
+	levelMap[errctx.ErrGroupTruncate] = errctx.LevelWarn
+	opts = append([]any{
+		contextstatic.WithTypeFlags(flags),
+		contextstatic.WithErrLevelMap(levelMap),
+	}, opts...)
+
+	return mockExprCtx(t, opts...)
+}
+
+func mockStmtIgnoreTruncateExprCtx(t testing.TB, opts ...any) *contextstatic.StaticExprContext {
+	flags := types.DefaultStmtFlags.WithIgnoreTruncateErr(true)
+	levelMap := stmtctx.DefaultStmtErrLevels
+	levelMap[errctx.ErrGroupTruncate] = errctx.LevelIgnore
+	opts = append([]any{
+		contextstatic.WithTypeFlags(flags),
+		contextstatic.WithErrLevelMap(levelMap),
+	}, opts...)
+	return mockExprCtx(t, opts...)
+}
+
+func mockStmtExprCtx(t testing.TB, opts ...any) *contextstatic.StaticExprContext {
+	opts = append([]any{
+		contextstatic.WithTypeFlags(types.DefaultStmtFlags),
+		contextstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels),
+	}, opts...)
+	return mockExprCtx(t, opts...)
+}
+
+func mockExprCtx(t testing.TB, opts ...any) *contextstatic.StaticExprContext {
+	evalOptions := make([]contextstatic.StaticEvalCtxOption, 0, len(opts))
+	exprOptions := make([]contextstatic.StaticExprCtxOption, 0, len(opts))
+	for _, opt := range opts {
+		if o, ok := opt.(contextstatic.StaticEvalCtxOption); ok {
+			evalOptions = append(evalOptions, o)
+			continue
+		}
+
+		if o, ok := opt.(contextstatic.StaticExprCtxOption); ok {
+			exprOptions = append(exprOptions, o)
+			continue
+		}
+
+		require.FailNow(t, "unexpected option type: %T", opt)
+	}
+
+	ctx := contextstatic.NewStaticExprContext(contextstatic.WithEvalCtx(mockEvalCtx(evalOptions...)))
+	if len(exprOptions) > 0 {
+		ctx = ctx.Apply(exprOptions...)
+	}
+	return ctx
+}
+
+func applyExprCtx(t testing.TB, ctx *contextstatic.StaticExprContext, opts ...any) *contextstatic.StaticExprContext {
+	evalOptions := make([]contextstatic.StaticEvalCtxOption, 0, len(opts))
+	exprOptions := make([]contextstatic.StaticExprCtxOption, 0, len(opts))
+	for _, opt := range opts {
+		if o, ok := opt.(contextstatic.StaticEvalCtxOption); ok {
+			evalOptions = append(evalOptions, o)
+			continue
+		}
+
+		if o, ok := opt.(contextstatic.StaticExprCtxOption); ok {
+			exprOptions = append(exprOptions, o)
+			continue
+		}
+
+		require.FailNow(t, "unexpected option type: %T", opt)
+	}
+
+	if len(evalOptions) > 0 {
+		exprOptions = append(
+			exprOptions,
+			contextstatic.WithEvalCtx(
+				ctx.GetEvalCtx().(*contextstatic.StaticEvalContext).Apply(evalOptions...),
+			),
+		)
+	}
+
+	return ctx.Apply(exprOptions...)
 }

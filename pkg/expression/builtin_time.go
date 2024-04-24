@@ -2524,7 +2524,7 @@ func evalNowWithFsp(ctx EvalContext, fsp int) (types.Time, bool, error) {
 		return types.ZeroTime, true, err
 	}
 
-	err = result.ConvertTimeZone(time.Local, location(ctx))
+	err = result.ConvertTimeZone(nowTs.Location(), location(ctx))
 	if err != nil {
 		return types.ZeroTime, true, err
 	}

@@ -27,7 +27,7 @@ import (
 )
 
 func TestCompareFunctionWithRefine(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx(t)
 
 	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong, mysql.NotNullFlag).build()
 	tests := []struct {
@@ -78,7 +78,7 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 }
 
 func TestCompare(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx(t)
 
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
 	timeVal := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
@@ -139,7 +139,7 @@ func TestCompare(t *testing.T) {
 		args := bf.getArgs()
 		require.Equal(t, test.tp, args[0].GetType().GetType())
 		require.Equal(t, test.tp, args[1].GetType().GetType())
-		res, err := evalBuiltinFunc(bf, ctx, chunk.Row{})
+		res, err := evalBuiltinFunc(bf, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		require.False(t, res.IsNull())
 		require.Equal(t, types.KindInt64, res.Kind())
@@ -172,7 +172,7 @@ func TestCompare(t *testing.T) {
 }
 
 func TestCoalesce(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx(t)
 
 	cases := []struct {
 		args     []any
@@ -204,7 +204,7 @@ func TestCoalesce(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Coalesce, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(ctx.GetEvalCtx(), chunk.Row{})
 
 		if test.getErr {
 			require.Error(t, err)
@@ -227,15 +227,7 @@ func TestCoalesce(t *testing.T) {
 }
 
 func TestIntervalFunc(t *testing.T) {
-	ctx := createContext(t)
-
-	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
-
+	ctx := mockStmtIgnoreTruncateExprCtx(t)
 	for _, test := range []struct {
 		args   []types.Datum
 		ret    int64
@@ -271,12 +263,12 @@ func TestIntervalFunc(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(test.args))
 		require.NoError(t, err)
 		if test.getErr {
-			v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+			v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 			require.Error(t, err)
 			require.Equal(t, test.ret, v.GetInt64())
 			continue
 		}
-		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx.GetEvalCtx(), chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, test.ret, v.GetInt64())
 	}
@@ -284,14 +276,7 @@ func TestIntervalFunc(t *testing.T) {
 
 // greatest/least function is compatible with MySQL 8.0
 func TestGreatestLeastFunc(t *testing.T) {
-	ctx := createContext(t)
-	sc := ctx.GetSessionVars().StmtCtx
-	oldTypeFlags := sc.TypeFlags()
-	defer func() {
-		sc.SetTypeFlags(oldTypeFlags)
-	}()
-	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
-
+	ctx := mockStmtIgnoreTruncateExprCtx(t)
 	decG := &types.MyDecimal{}
 	decL := &types.MyDecimal{}
 
@@ -373,7 +358,7 @@ func TestGreatestLeastFunc(t *testing.T) {
 	} {
 		f0, err := newFunctionForTest(ctx, ast.Greatest, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
-		d, err := f0.Eval(ctx, chunk.Row{})
+		d, err := f0.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if test.getErr {
 			require.Error(t, err)
 		} else {
@@ -387,7 +372,7 @@ func TestGreatestLeastFunc(t *testing.T) {
 
 		f1, err := newFunctionForTest(ctx, ast.Least, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
-		d, err = f1.Eval(ctx, chunk.Row{})
+		d, err = f1.Eval(ctx.GetEvalCtx(), chunk.Row{})
 		if test.getErr {
 			require.Error(t, err)
 		} else {
@@ -406,7 +391,7 @@ func TestGreatestLeastFunc(t *testing.T) {
 }
 
 func TestRefineArgsWithCastEnum(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx(t)
 	zeroUintConst := primitiveValsToConstants(ctx, []any{uint64(0)})[0]
 	enumType := types.NewFieldTypeBuilder().SetType(mysql.TypeEnum).SetElems([]string{"1", "2", "3"}).AddFlag(mysql.EnumSetAsIntFlag).Build()
 	enumCol := &Column{RetType: &enumType}
@@ -420,7 +405,7 @@ func TestRefineArgsWithCastEnum(t *testing.T) {
 }
 
 func TestIssue46475(t *testing.T) {
-	ctx := createContext(t)
+	ctx := mockStmtTruncateAsWarningExprCtx(t)
 	args := []any{nil, dt, nil}
 
 	f, err := newFunctionForTest(ctx, ast.Coalesce, primitiveValsToConstants(ctx, args)...)

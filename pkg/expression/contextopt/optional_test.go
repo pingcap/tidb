@@ -27,14 +27,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type mockSessionVarsProvider struct {
-	vars *variable.SessionVars
-}
-
-func (p mockSessionVarsProvider) GetSessionVars() *variable.SessionVars {
-	return p.vars
-}
-
 type mockEvalCtx struct {
 	context.EvalContext
 	props OptionalEvalPropProviders
@@ -99,7 +91,7 @@ func TestOptionalEvalPropProviders(t *testing.T) {
 			vars := variable.NewSessionVars(nil)
 			vars.TimeZone = time.UTC
 			vars.StmtCtx.SetTimeZone(time.UTC)
-			p = NewSessionVarsProvider(mockSessionVarsProvider{vars: vars})
+			p = NewSessionVarsProvider(SessionVarsAsProvider(vars))
 			r := SessionVarsPropReader{}
 			reader = r
 			verifyNoProvider = func(ctx context.EvalContext) {

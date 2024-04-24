@@ -29,6 +29,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -39,12 +43,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 type benchHelper struct {
-	ctx   *mock.Context
+	ctx   *contextstatic.StaticExprContext
 	exprs []Expression
 
 	inputTypes  []*types.FieldType
@@ -53,14 +56,10 @@ type benchHelper struct {
 	outputChunk *chunk.Chunk
 }
 
-func (h *benchHelper) init() {
+func (h *benchHelper) init(b *testing.B) {
 	numRows := 4 * 1024
 
-	h.ctx = mock.NewContext()
-	h.ctx.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
-	h.ctx.GetSessionVars().InitChunkSize = 32
-	h.ctx.GetSessionVars().MaxChunkSize = numRows
-
+	h.ctx = mockStmtExprCtx(b, contextstatic.WithLocation(time.Local))
 	h.inputTypes = make([]*types.FieldType, 0, 10)
 	ftb := types.NewFieldTypeBuilder()
 	ftb.SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
@@ -157,7 +156,7 @@ func (h *benchHelper) init() {
 
 func BenchmarkVectorizedExecute(b *testing.B) {
 	h := benchHelper{}
-	h.init()
+	h.init(b)
 	inputIter := chunk.NewIterator4Chunk(h.inputChunk)
 
 	evalCtx := h.ctx.GetEvalCtx()
@@ -174,8 +173,8 @@ func BenchmarkScalarFunctionClone(b *testing.B) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong)}
 	con1 := NewOne()
 	con2 := NewZero()
-	add := NewFunctionInternal(mock.NewContext(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), col, con1)
-	sub := NewFunctionInternal(mock.NewContext(), ast.Plus, types.NewFieldType(mysql.TypeLonglong), add, con2)
+	add := NewFunctionInternal(mockStmtExprCtx(b), ast.Plus, types.NewFieldType(mysql.TypeLonglong), col, con1)
+	sub := NewFunctionInternal(mockStmtExprCtx(b), ast.Plus, types.NewFieldType(mysql.TypeLonglong), add, con2)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		sub.Clone()
@@ -1300,7 +1299,20 @@ func genVecExprBenchCase(ctx BuildContext, funcName string, testCase vecExprBenc
 // testVectorizedEvalOneVec is used to verify that the vectorized
 // expression is evaluated correctly during projection
 func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
-	ctx := createContext(t)
+	vars := variable.NewSessionVars(nil)
+	ctx := mockStmtTruncateAsWarningExprCtx(t,
+		contextstatic.WithOptionalProperty(
+			contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
+			contextopt.KVStorePropProvider(func() kv.Storage {
+				return nil
+			}),
+		),
+	)
+
+	// keep timezone all the same to pass some `intest.Assert` for location assertion
+	vars.TimeZone = ctx.GetEvalCtx().Location()
+	vars.StmtCtx.SetTimeZone(vars.Location())
+
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, fts, input, output := genVecExprBenchCase(ctx, funcName, testCase)
@@ -1308,9 +1320,9 @@ func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 				return fmt.Sprintf("func: %v, case %+v, row: %v, rowData: %v", funcName, testCase, row, input.GetRow(row).GetDatumRow(fts))
 			}
 			output2 := output.CopyConstruct()
-			require.NoErrorf(t, evalOneVec(ctx, expr, input, output, 0), "func: %v, case: %+v", funcName, testCase)
+			require.NoErrorf(t, evalOneVec(ctx.GetEvalCtx(), expr, input, output, 0), "func: %v, case: %+v", funcName, testCase)
 			it := chunk.NewIterator4Chunk(input)
-			require.NoErrorf(t, evalOneColumn(ctx, expr, it, output2, 0), "func: %v, case: %+v", funcName, testCase)
+			require.NoErrorf(t, evalOneColumn(ctx.GetEvalCtx(), expr, it, output2, 0), "func: %v, case: %+v", funcName, testCase)
 
 			c1, c2 := output.Column(0), output2.Column(0)
 			switch expr.GetType().EvalType() {
@@ -1371,7 +1383,7 @@ func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 // benchmarkVectorizedEvalOneVec is used to get the effect of
 // using the vectorized expression evaluations during projection
 func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx(b)
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, _, input, output := genVecExprBenchCase(ctx, funcName, testCase)
@@ -1385,7 +1397,7 @@ func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases)
 			b.Run(exprName+"-EvalOneVec", func(b *testing.B) {
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					if err := evalOneVec(ctx, expr, input, output, 0); err != nil {
+					if err := evalOneVec(ctx.GetEvalCtx(), expr, input, output, 0); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -1394,7 +1406,7 @@ func benchmarkVectorizedEvalOneVec(b *testing.B, vecExprCases vecExprBenchCases)
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					it := chunk.NewIterator4Chunk(input)
-					if err := evalOneColumn(ctx, expr, it, output, 0); err != nil {
+					if err := evalOneColumn(ctx.GetEvalCtx(), expr, it, output, 0); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -1509,14 +1521,13 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
-			ctx := createContext(t)
+			vars := variable.NewSessionVars(nil)
+			vars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 			if testCase.aesModes == "" {
 				testCase.aesModes = "aes-128-ecb"
 			}
-			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
-			require.NoError(t, err)
 			if funcName == ast.CurrentUser || funcName == ast.User {
-				ctx.GetSessionVars().User = &auth.UserIdentity{
+				vars.User = &auth.UserIdentity{
 					Username:     "tidb",
 					Hostname:     "localhost",
 					CurrentUser:  true,
@@ -1526,7 +1537,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 			}
 			if funcName == ast.GetParam {
 				testTime := time.Now()
-				ctx.GetSessionVars().PlanCacheParams.Append(
+				vars.PlanCacheParams.Append(
 					types.NewIntDatum(1),
 					types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
 					types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
@@ -1540,7 +1551,31 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 					types.NewMysqlBitDatum([]byte{1}),
 					types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}))
 			}
-			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
+
+			exprCtx := mockStmtTruncateAsWarningExprCtx(t,
+				contextstatic.WithOptionalProperty(
+					contextopt.CurrentUserPropProvider(func() (*auth.UserIdentity, []*auth.RoleIdentity) {
+						return vars.User, vars.ActiveRoles
+					}),
+					contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
+					contextopt.InfoSchemaPropProvider(func(isDomain bool) infoschema.MetaOnlyInfoSchema {
+						return nil
+					}),
+					contextopt.DDLOwnerInfoProvider(func() bool {
+						return false
+					}),
+					contextopt.KVStorePropProvider(func() kv.Storage {
+						return nil
+					}),
+				),
+				contextstatic.WithBlockEncryptionMode(testCase.aesModes),
+			)
+
+			ctx := exprCtx.GetEvalCtx()
+			// reset timezone in SessionVars and StmtCtx to make some intest.Assert pass
+			vars.TimeZone = ctx.Location()
+			vars.StmtCtx.SetTimeZone(ctx.Location())
+			baseFunc, fts, input, output := genVecBuiltinFuncBenchCase(exprCtx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
 			baseFuncName = tmp[len(tmp)-1]
@@ -1555,14 +1590,14 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 			}
 			it := chunk.NewIterator4Chunk(input)
 			i := 0
-			var vecWarnCnt uint16
+			var vecWarnCnt int
 			switch testCase.retEvalType {
 			case types.ETInt:
 				err := baseFunc.vecEvalInt(ctx, input, output)
 				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
 				// do not forget to call ResizeXXX/ReserveXXX
 				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+				vecWarnCnt = ctx.WarningCount()
 				i64s := output.Int64s()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalInt(ctx, row)
@@ -1578,7 +1613,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
 				// do not forget to call ResizeXXX/ReserveXXX
 				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+				vecWarnCnt = ctx.WarningCount()
 				f64s := output.Float64s()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalReal(ctx, row)
@@ -1594,7 +1629,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
 				// do not forget to call ResizeXXX/ReserveXXX
 				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+				vecWarnCnt = ctx.WarningCount()
 				d64s := output.Decimals()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalDecimal(ctx, row)
@@ -1610,7 +1645,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
 				// do not forget to call ResizeXXX/ReserveXXX
 				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+				vecWarnCnt = ctx.WarningCount()
 				t64s := output.Times()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalTime(ctx, row)
@@ -1626,7 +1661,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
 				// do not forget to call ResizeXXX/ReserveXXX
 				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+				vecWarnCnt = ctx.WarningCount()
 				d64s := output.GoDurations()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalDuration(ctx, row)
@@ -1642,7 +1677,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
 				// do not forget to call ResizeXXX/ReserveXXX
 				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+				vecWarnCnt = ctx.WarningCount()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalJSON(ctx, row)
 					require.NoErrorf(t, err, commentf(i))
@@ -1658,7 +1693,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 				require.NoErrorf(t, err, "func: %v, case: %+v", baseFuncName, testCase)
 				// do not forget to call ResizeXXX/ReserveXXX
 				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
-				vecWarnCnt = ctx.GetSessionVars().StmtCtx.WarningCount()
+				vecWarnCnt = ctx.WarningCount()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalString(ctx, row)
 					require.NoErrorf(t, err, commentf(i))
@@ -1673,7 +1708,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 			}
 
 			// check warnings
-			totalWarns := ctx.GetSessionVars().StmtCtx.WarningCount()
+			totalWarns := ctx.WarningCount()
 			require.Equal(t, totalWarns, 2*vecWarnCnt)
 
 			if _, ok := baseFunc.(*builtinAddSubDateAsStringSig); ok {
@@ -1682,9 +1717,9 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 				continue
 			}
 
-			warns := ctx.GetSessionVars().StmtCtx.GetWarnings()
-			for i := 0; i < int(vecWarnCnt); i++ {
-				require.True(t, terror.ErrorEqual(warns[i].Err, warns[i+int(vecWarnCnt)].Err))
+			warns := ctx.TruncateWarnings(0)
+			for i := 0; i < vecWarnCnt; i++ {
+				require.True(t, terror.ErrorEqual(warns[i].Err, warns[i+vecWarnCnt].Err))
 			}
 		}
 	}
@@ -1699,7 +1734,7 @@ func testVectorizedBuiltinFuncForRand(t *testing.T, vecExprCases vecExprBenchCas
 		for _, testCase := range testCases {
 			require.Len(t, testCase.childrenTypes, 0)
 
-			ctx := mock.NewContext()
+			ctx := mockStmtExprCtx(t)
 			baseFunc, _, input, output := genVecBuiltinFuncBenchCase(ctx, funcName, testCase)
 			baseFuncName := fmt.Sprintf("%v", reflect.TypeOf(baseFunc))
 			tmp := strings.Split(baseFuncName, ".")
@@ -1708,7 +1743,7 @@ func testVectorizedBuiltinFuncForRand(t *testing.T, vecExprCases vecExprBenchCas
 			require.Truef(t, baseFunc.vectorized(), "func: %v", baseFuncName)
 			switch testCase.retEvalType {
 			case types.ETReal:
-				err := baseFunc.vecEvalReal(ctx, input, output)
+				err := baseFunc.vecEvalReal(ctx.GetEvalCtx(), input, output)
 				require.NoError(t, err)
 				// do not forget to call ResizeXXX/ReserveXXX
 				require.Equal(t, input.NumRows(), getColumnLen(output, testCase.retEvalType))
@@ -1727,7 +1762,15 @@ func testVectorizedBuiltinFuncForRand(t *testing.T, vecExprCases vecExprBenchCas
 // benchmarkVectorizedBuiltinFunc is used to get the effect of
 // using the vectorized expression evaluations
 func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases) {
-	ctx := mock.NewContext()
+	vars := variable.NewSessionVars(nil)
+	ctx := mockStmtExprCtx(b, contextstatic.WithOptionalProperty(
+		contextopt.NewSessionVarsProvider(contextopt.SessionVarsAsProvider(vars)),
+		contextopt.CurrentUserPropProvider(func() (*auth.UserIdentity, []*auth.RoleIdentity) {
+			return vars.User, vars.ActiveRoles
+		}),
+	))
+	vars.TimeZone = ctx.GetEvalCtx().Location()
+	vars.StmtCtx.SetTimeZone(vars.Location())
 	testFunc := make(map[string]bool)
 	argList := removeTestOptions(flag.Args())
 	testAll := len(argList) == 0
@@ -1739,12 +1782,9 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 			if testCase.aesModes == "" {
 				testCase.aesModes = "aes-128-ecb"
 			}
-			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
-			if err != nil {
-				panic(err)
-			}
+			ctx = applyExprCtx(b, ctx, contextstatic.WithBlockEncryptionMode(testCase.aesModes))
 			if funcName == ast.CurrentUser || funcName == ast.User {
-				ctx.GetSessionVars().User = &auth.UserIdentity{
+				vars.User = &auth.UserIdentity{
 					Username:     "tidb",
 					Hostname:     "localhost",
 					CurrentUser:  true,
@@ -1754,7 +1794,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 			}
 			if funcName == ast.GetParam {
 				testTime := time.Now()
-				ctx.GetSessionVars().PlanCacheParams.Append(
+				vars.PlanCacheParams.Append(
 					types.NewIntDatum(1),
 					types.NewDecimalDatum(types.NewDecFromStringForTest("20170118123950.123")),
 					types.NewTimeDatum(types.NewTime(types.FromGoTime(testTime), mysql.TypeTimestamp, 6)),
@@ -1777,48 +1817,49 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 				continue
 			}
 
+			evalCtx := ctx.GetEvalCtx()
 			b.Run(baseFuncName+"-VecBuiltinFunc", func(b *testing.B) {
 				b.ResetTimer()
 				switch testCase.retEvalType {
 				case types.ETInt:
 					for i := 0; i < b.N; i++ {
-						if err := baseFunc.vecEvalInt(ctx, input, output); err != nil {
+						if err := baseFunc.vecEvalInt(evalCtx, input, output); err != nil {
 							b.Fatal(err)
 						}
 					}
 				case types.ETReal:
 					for i := 0; i < b.N; i++ {
-						if err := baseFunc.vecEvalReal(ctx, input, output); err != nil {
+						if err := baseFunc.vecEvalReal(evalCtx, input, output); err != nil {
 							b.Fatal(err)
 						}
 					}
 				case types.ETDecimal:
 					for i := 0; i < b.N; i++ {
-						if err := baseFunc.vecEvalDecimal(ctx, input, output); err != nil {
+						if err := baseFunc.vecEvalDecimal(evalCtx, input, output); err != nil {
 							b.Fatal(err)
 						}
 					}
 				case types.ETDatetime, types.ETTimestamp:
 					for i := 0; i < b.N; i++ {
-						if err := baseFunc.vecEvalTime(ctx, input, output); err != nil {
+						if err := baseFunc.vecEvalTime(evalCtx, input, output); err != nil {
 							b.Fatal(err)
 						}
 					}
 				case types.ETDuration:
 					for i := 0; i < b.N; i++ {
-						if err := baseFunc.vecEvalDuration(ctx, input, output); err != nil {
+						if err := baseFunc.vecEvalDuration(evalCtx, input, output); err != nil {
 							b.Fatal(err)
 						}
 					}
 				case types.ETJson:
 					for i := 0; i < b.N; i++ {
-						if err := baseFunc.vecEvalJSON(ctx, input, output); err != nil {
+						if err := baseFunc.vecEvalJSON(evalCtx, input, output); err != nil {
 							b.Fatal(err)
 						}
 					}
 				case types.ETString:
 					for i := 0; i < b.N; i++ {
-						if err := baseFunc.vecEvalString(ctx, input, output); err != nil {
+						if err := baseFunc.vecEvalString(evalCtx, input, output); err != nil {
 							b.Fatal(err)
 						}
 					}
@@ -1834,7 +1875,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					for i := 0; i < b.N; i++ {
 						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							v, isNull, err := baseFunc.evalInt(ctx, row)
+							v, isNull, err := baseFunc.evalInt(evalCtx, row)
 							if err != nil {
 								b.Fatal(err)
 							}
@@ -1849,7 +1890,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					for i := 0; i < b.N; i++ {
 						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							v, isNull, err := baseFunc.evalReal(ctx, row)
+							v, isNull, err := baseFunc.evalReal(evalCtx, row)
 							if err != nil {
 								b.Fatal(err)
 							}
@@ -1864,7 +1905,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					for i := 0; i < b.N; i++ {
 						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							v, isNull, err := baseFunc.evalDecimal(ctx, row)
+							v, isNull, err := baseFunc.evalDecimal(evalCtx, row)
 							if err != nil {
 								b.Fatal(err)
 							}
@@ -1879,7 +1920,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					for i := 0; i < b.N; i++ {
 						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							v, isNull, err := baseFunc.evalTime(ctx, row)
+							v, isNull, err := baseFunc.evalTime(evalCtx, row)
 							if err != nil {
 								b.Fatal(err)
 							}
@@ -1894,7 +1935,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					for i := 0; i < b.N; i++ {
 						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							v, isNull, err := baseFunc.evalDuration(ctx, row)
+							v, isNull, err := baseFunc.evalDuration(evalCtx, row)
 							if err != nil {
 								b.Fatal(err)
 							}
@@ -1909,7 +1950,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					for i := 0; i < b.N; i++ {
 						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							v, isNull, err := baseFunc.evalJSON(ctx, row)
+							v, isNull, err := baseFunc.evalJSON(evalCtx, row)
 							if err != nil {
 								b.Fatal(err)
 							}
@@ -1924,7 +1965,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 					for i := 0; i < b.N; i++ {
 						output.Reset(testCase.retEvalType)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							v, isNull, err := baseFunc.evalString(ctx, row)
+							v, isNull, err := baseFunc.evalString(evalCtx, row)
 							if err != nil {
 								b.Fatal(err)
 							}
@@ -2008,12 +2049,12 @@ func generateRandomSel() []int {
 }
 
 func BenchmarkVecEvalBool(b *testing.B) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx(b)
 	selected := make([]bool, 0, 1024)
 	nulls := make([]bool, 0, 1024)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
-	vecEnabled := ctx.GetSessionVars().EnableVectorizedExpression
+	evalCtx := ctx.GetEvalCtx()
 	for numCols := 1; numCols <= 2; numCols++ {
 		typeCombination := make([]types.EvalType, numCols)
 		var combFunc func(nCols int)
@@ -2031,7 +2072,7 @@ func BenchmarkVecEvalBool(b *testing.B) {
 				b.Run("Vec-"+name, func(b *testing.B) {
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
-						_, _, err := VecEvalBool(ctx, vecEnabled, exprs, input, selected, nulls)
+						_, _, err := VecEvalBool(evalCtx, true, exprs, input, selected, nulls)
 						if err != nil {
 							b.Fatal(err)
 						}
@@ -2042,7 +2083,7 @@ func BenchmarkVecEvalBool(b *testing.B) {
 					for i := 0; i < b.N; i++ {
 						it := chunk.NewIterator4Chunk(input)
 						for row := it.Begin(); row != it.End(); row = it.Next() {
-							_, _, err := EvalBool(ctx, exprs, row)
+							_, _, err := EvalBool(evalCtx, exprs, row)
 							if err != nil {
 								b.Fatal(err)
 							}
@@ -2062,11 +2103,12 @@ func BenchmarkVecEvalBool(b *testing.B) {
 }
 
 func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
-	ctx := mock.NewContext()
+	ctx := mockStmtExprCtx(b)
 	selected := make([]bool, 0, 1024)
 	nulls := make([]bool, 0, 1024)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
+	evalCtx := ctx.GetEvalCtx()
 	for numCols := 1; numCols <= 2; numCols++ {
 		typeCombination := make([]types.EvalType, numCols)
 		var combFunc func(nCols int)
@@ -2085,7 +2127,7 @@ func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
 				b.Run("Vec-"+name, func(b *testing.B) {
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
-						_, _, err := vectorizedFilter(ctx, ctx.GetSessionVars().EnableVectorizedExpression, exprs, it, selected, nulls)
+						_, _, err := vectorizedFilter(evalCtx, true, exprs, it, selected, nulls)
 						if err != nil {
 							b.Fatal(err)
 						}
@@ -2094,7 +2136,7 @@ func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
 				b.Run("Row-"+name, func(b *testing.B) {
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
-						_, _, err := rowBasedFilter(ctx, exprs, it, selected, nulls)
+						_, _, err := rowBasedFilter(evalCtx, exprs, it, selected, nulls)
 						if err != nil {
 							b.Fatal(err)
 						}
@@ -2120,7 +2162,7 @@ func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
 	b.Run("Vec-special case", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _, err := vectorizedFilter(ctx, ctx.GetSessionVars().EnableVectorizedExpression, []Expression{expr}, it, selected, nulls)
+			_, _, err := vectorizedFilter(evalCtx, true, []Expression{expr}, it, selected, nulls)
 			if err != nil {
 				panic(err)
 			}
@@ -2129,7 +2171,7 @@ func BenchmarkRowBasedFilterAndVectorizedFilter(b *testing.B) {
 	b.Run("Row-special case", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _, err := rowBasedFilter(ctx, []Expression{expr}, it, selected, nulls)
+			_, _, err := rowBasedFilter(evalCtx, []Expression{expr}, it, selected, nulls)
 			if err != nil {
 				panic(err)
 			}
