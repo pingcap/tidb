@@ -503,3 +503,13 @@ SELECT count(1) FROM parent WHERE c = date_format(@x,'%Y-%m-%d');
 SELECT count(1) FROM child WHERE cc = date_format(@x,'%Y-%m-%d');
 show create table child;
 drop table parent, child;
+
+# expression default with JSON functions
+CREATE TABLE jd1 (id SERIAL, j JSON DEFAULT (JSON_OBJECT("foo", "bar")));
+SHOW CREATE TABLE jd1;
+
+CREATE TABLE jd2 (id SERIAL, j JSON DEFAULT (JSON_ARRAY("foo", "bar")));
+SHOW CREATE TABLE jd2;
+
+CREATE TABLE jd3 (id SERIAL, j JSON DEFAULT (JSON_QUOTE("foobar")));
+SHOW CREATE TABLE jd3;

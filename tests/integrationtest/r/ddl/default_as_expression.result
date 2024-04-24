@@ -939,3 +939,27 @@ child	CREATE TABLE `child` (
   CONSTRAINT `fk_1` FOREIGN KEY (`cc`) REFERENCES `parent` (`c`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table parent, child;
+CREATE TABLE jd1 (id SERIAL, j JSON DEFAULT (JSON_OBJECT("foo", "bar")));
+SHOW CREATE TABLE jd1;
+Table	Create Table
+jd1	CREATE TABLE `jd1` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `j` json DEFAULT json_object(_utf8mb4'foo', _utf8mb4'bar'),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+CREATE TABLE jd2 (id SERIAL, j JSON DEFAULT (JSON_ARRAY("foo", "bar")));
+SHOW CREATE TABLE jd2;
+Table	Create Table
+jd2	CREATE TABLE `jd2` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `j` json DEFAULT json_array(_utf8mb4'foo', _utf8mb4'bar'),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+CREATE TABLE jd3 (id SERIAL, j JSON DEFAULT (JSON_QUOTE("foobar")));
+SHOW CREATE TABLE jd3;
+Table	Create Table
+jd3	CREATE TABLE `jd3` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `j` json DEFAULT json_quote(_utf8mb4'foobar'),
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
