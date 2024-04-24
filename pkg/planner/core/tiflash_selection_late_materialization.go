@@ -170,6 +170,8 @@ func withHeavyCostFunctionForTiFlashPrefetch(cond expression.Expression) bool {
 			return true
 		case ast.JSONStorageFree, ast.JSONStorageSize, ast.JSONDepth, ast.JSONKeys, ast.JSONLength, ast.JSONContains, ast.JSONSearch, ast.JSONOverlaps, ast.JSONQuote:
 			return true
+		case ast.JSONSchemaValid:
+			return true
 		// some time functions
 		case ast.AddDate, ast.AddTime, ast.ConvertTz, ast.DateLiteral, ast.DateAdd, ast.DateFormat, ast.FromUnixTime, ast.GetFormat, ast.UTCTimestamp:
 			return true

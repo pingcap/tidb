@@ -1342,3 +1342,62 @@ func TestJSONMergePatch(t *testing.T) {
 		}
 	}
 }
+
+func TestJSONSchemaValid(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.JSONSchemaValid]
+	tbl := []struct {
+		Input    any
+		Expected any
+	}{
+		// nulls
+		{[]any{nil, `{}`}, nil},
+		{[]any{`{}`, nil}, nil},
+		{[]any{nil, nil}, nil},
+
+		// empty
+		{[]any{`{}`, `{}`}, 1},
+
+		// required
+		{[]any{`{"required": ["a","b"]}`, `{"a": 5}`}, 0},
+		{[]any{`{"required": ["a","b"]}`, `{"a": 5, "b": 6}`}, 1},
+
+		// type
+		{[]any{`{"type": ["string"]}`, `{}`}, 0},
+		{[]any{`{"type": ["string"]}`, `"foobar"`}, 1},
+		{[]any{`{"type": ["object"]}`, `{}`}, 1},
+		{[]any{`{"type": ["object"]}`, `"foobar"`}, 0},
+
+		// properties, type
+		{[]any{`{"properties": {"a": {"type": "number"}}}`, `{}`}, 1},
+		{[]any{`{"properties": {"a": {"type": "number"}}}`, `{"a": "foobar"}`}, 0},
+		{[]any{`{"properties": {"a": {"type": "number"}}}`, `{"a": 5}`}, 1},
+
+		// properties, minimum
+		{[]any{`{"properties": {"a": {"type": "number", "minimum": 6}}}`, `{"a": 5}`}, 0},
+
+		// properties, pattern
+		{[]any{`{"properties": {"a": {"type": "string", "pattern": "^a"}}}`, `{"a": "abc"}`}, 1},
+		{[]any{`{"properties": {"a": {"type": "string", "pattern": "^a"}}}`, `{"a": "cba"}`}, 0},
+	}
+	dtbl := tblToDtbl(tbl)
+	for _, tt := range dtbl {
+		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		if tt["Expected"][0].IsNull() {
+			require.True(t, d.IsNull())
+		} else {
+			testutil.DatumEqual(
+				t, tt["Expected"][0], d,
+				fmt.Sprintf("JSON_SCHEMA_VALID(%s,%s) = %d (expected: %d)",
+					tt["Input"][0].GetString(),
+					tt["Input"][1].GetString(),
+					d.GetInt64(),
+					tt["Expected"][0].GetInt64(),
+				),
+			)
+		}
+	}
+}
