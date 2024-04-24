@@ -43,7 +43,8 @@ func ExtractCorrelatedCols4PhysicalPlan(p base.PhysicalPlan) []*expression.Corre
 // ExtractCorColumnsBySchema4LogicalPlan only extracts the correlated columns that match the specified schema.
 // e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is returned.
-func ExtractCorColumnsBySchema4LogicalPlan(p base.LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
+func ExtractCorColumnsBySchema4LogicalPlan(p base.LogicalPlan,
+	schema *expression.Schema) []*expression.CorrelatedColumn {
 	corCols := ExtractCorrelatedCols4LogicalPlan(p)
 	return ExtractCorColumnsBySchema(corCols, schema, false)
 }
@@ -51,7 +52,8 @@ func ExtractCorColumnsBySchema4LogicalPlan(p base.LogicalPlan, schema *expressio
 // ExtractCorColumnsBySchema4PhysicalPlan only extracts the correlated columns that match the specified schema.
 // e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is returned.
-func ExtractCorColumnsBySchema4PhysicalPlan(p base.PhysicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
+func ExtractCorColumnsBySchema4PhysicalPlan(p base.PhysicalPlan,
+	schema *expression.Schema) []*expression.CorrelatedColumn {
 	corCols := ExtractCorrelatedCols4PhysicalPlan(p)
 	return ExtractCorColumnsBySchema(corCols, schema, true)
 }
@@ -59,7 +61,8 @@ func ExtractCorColumnsBySchema4PhysicalPlan(p base.PhysicalPlan, schema *express
 // ExtractCorColumnsBySchema only extracts the correlated columns that match the specified schema.
 // e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
 // only [t2.a] is returned.
-func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *expression.Schema, resolveIndex bool) []*expression.CorrelatedColumn {
+func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn,
+	schema *expression.Schema, resolveIndex bool) []*expression.CorrelatedColumn {
 	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
 	for _, corCol := range corCols {
 		idx := schema.ColumnIndex(&corCol.Column)
