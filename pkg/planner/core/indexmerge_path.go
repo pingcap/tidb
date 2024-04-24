@@ -16,7 +16,6 @@ package core
 
 import (
 	"cmp"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"math"
 	"slices"
 	"strings"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
