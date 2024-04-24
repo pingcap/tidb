@@ -111,10 +111,17 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 						zap.String("sql text", fmt.Sprintf("%.100v", info.Info)),
 						zap.Int64("sql memory usage", info.MemTracker.BytesConsumed()))
 					s.lastLogTime = time.Now()
+
+					if seconds := time.Since(s.killStartTime) / time.Second; seconds >= 60 {
+						logutil.BgLogger().Warn(fmt.Sprintf("global memory controller failed to kill the top-consumer in %ds, try to close the executors force", seconds))
+						s.sessionTracker.Killer.FinishResultSet()
+						goto Succ
+					}
 				}
 				return
 			}
 		}
+	Succ:
 		s.reset()
 		IsKilling.Store(false)
 		memory.MemUsageTop1Tracker.CompareAndSwap(s.sessionTracker, nil)

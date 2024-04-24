@@ -94,6 +94,7 @@ type recordSet struct {
 	lastErrs   []error
 	txnStartTS uint64
 	once       sync.Once
+	finishLock sync.Mutex
 }
 
 func (a *recordSet) Fields() []*ast.ResultField {
@@ -154,6 +155,8 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = util2.GetRecoverError(r)
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
+	a.finishLock.Lock()
+	defer a.finishLock.Unlock()
 
 	err = a.stmt.next(ctx, a.executor, req)
 	if err != nil {
@@ -184,16 +187,19 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 
 func (a *recordSet) Finish() error {
 	var err error
-	a.once.Do(func() {
-		err = exec.Close(a.executor)
-		cteErr := resetCTEStorageMap(a.stmt.Ctx)
-		if cteErr != nil {
-			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
-		}
-		if err == nil {
-			err = cteErr
-		}
-	})
+	if a.finishLock.TryLock() {
+		defer a.finishLock.Unlock()
+		a.once.Do(func() {
+			err = exec.Close(a.executor)
+			cteErr := resetCTEStorageMap(a.stmt.Ctx)
+			if cteErr != nil {
+				logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
+			}
+			if err == nil {
+				err = cteErr
+			}
+		})
+	}
 	if err != nil {
 		a.lastErrs = append(a.lastErrs, err)
 	}
