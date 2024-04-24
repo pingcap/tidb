@@ -15,6 +15,7 @@
 package context
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -25,6 +26,29 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
+
+// PlanColumnIDAllocator allocates column id for plan.
+type PlanColumnIDAllocator interface {
+	// AllocPlanColumnID allocates column id for plan.
+	AllocPlanColumnID() int64
+}
+
+// SimplePlanColumnIDAllocator implements PlanColumnIDAllocator
+type SimplePlanColumnIDAllocator struct {
+	id atomic.Int64
+}
+
+// NewSimplePlanColumnIDAllocator creates a new SimplePlanColumnIDAllocator.
+func NewSimplePlanColumnIDAllocator(offset int64) *SimplePlanColumnIDAllocator {
+	alloc := &SimplePlanColumnIDAllocator{}
+	alloc.id.Store(offset)
+	return alloc
+}
+
+// AllocPlanColumnID allocates column id for plan.
+func (a *SimplePlanColumnIDAllocator) AllocPlanColumnID() int64 {
+	return a.id.Add(1)
+}
 
 // EvalContext is used to evaluate an expression
 type EvalContext interface {

@@ -1240,6 +1240,7 @@ const (
 	DefTiDBEnableOuterJoinReorder                  = true
 	DefTiDBEnableNAAJ                              = true
 	DefTiDBAllowBatchCop                           = 1
+	DefBlockEncryptionMode                         = "aes-128-ecb"
 	DefTiDBAllowMPPExecution                       = true
 	DefTiDBAllowTiFlashCop                         = false
 	DefTiDBHashExchangeWithNewCollation            = true
