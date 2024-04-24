@@ -16,6 +16,7 @@ package core
 
 import (
 	"cmp"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"math"
 	"slices"
 	"strings"
@@ -743,10 +744,17 @@ func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, index
 	needConsiderIndexMerge := true
 	// if current index merge hint is nil, once there is a no-access-cond in one of possible access path.
 	if len(ds.indexMergeHints) == 0 {
-		for i := 1; i < len(ds.possibleAccessPaths); i++ {
-			if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
-				needConsiderIndexMerge = false
-				break
+		skipRangeScanCheck := fixcontrol.GetBoolWithDefault(
+			ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
+			fixcontrol.Fix52869,
+			false,
+		)
+		if !skipRangeScanCheck {
+			for _, path := range ds.possibleAccessPaths {
+				if len(path.AccessConds) != 0 {
+					needConsiderIndexMerge = false
+					break
+				}
 			}
 		}
 		if needConsiderIndexMerge {
