@@ -88,10 +88,6 @@ type BuildContext interface {
 	// in most cases except for the method `isNullRejected` in planner.
 	// See the comments for `isNullRejected` in planner for more details.
 	IsInNullRejectCheck() bool
-	// SetInUnionCast sets the flag to indicate whether the expression is in union cast.
-	SetInUnionCast(in bool)
-	// IsInUnionCast indicates whether executing in special cast context that negative unsigned num will be zero.
-	IsInUnionCast() bool
 	// ConnectionID indicates the connection ID of the current session.
 	// If the context is not in a session, it should return 0.
 	ConnectionID() uint64
