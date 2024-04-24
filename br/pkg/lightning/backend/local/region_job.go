@@ -30,10 +30,14 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+<<<<<<< HEAD:br/pkg/lightning/backend/local/region_job.go
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
+=======
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+>>>>>>> 0805e850d41 (br: handle region leader miss (#52822)):pkg/lightning/backend/local/region_job.go
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -627,7 +631,8 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 
 		leader := j.region.Leader
 		if leader == nil {
-			leader = j.region.Region.GetPeers()[0]
+			return nil, errors.Annotatef(berrors.ErrPDLeaderNotFound,
+				"region id %d has no leader", j.region.Region.Id)
 		}
 
 		cli, err := clientFactory.Create(ctx, leader.StoreId)
