@@ -338,8 +338,8 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 				key := string(kv.Key)
 				tidbIDInResp := key[strings.LastIndex(key, "/")+1:]
 				// We need to check if the tidb ID is in the updatedMap, in case that deleting etcd is failed, and tidb server is down.
-				isUpdated := updatedMap[tidbIDInResp] != ""
-				succ = isUpdatedLatestVersion(string(kv.Key), string(kv.Value), latestVer, notMatchVerCnt, intervalCnt, isUpdated)
+				nodeAlive := updatedMap[tidbIDInResp] != ""
+				succ = isUpdatedLatestVersion(string(kv.Key), string(kv.Value), latestVer, notMatchVerCnt, intervalCnt, nodeAlive)
 				if !succ {
 					break
 				}
@@ -375,14 +375,14 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 	}
 }
 
-func isUpdatedLatestVersion(key, val string, latestVer int64, notMatchVerCnt, intervalCnt int, isUpdated bool) bool {
+func isUpdatedLatestVersion(key, val string, latestVer int64, notMatchVerCnt, intervalCnt int, nodeAlive bool) bool {
 	ver, err := strconv.Atoi(val)
 	if err != nil {
 		logutil.BgLogger().Info("syncer check all versions, convert value to int failed, continue checking.", zap.String("category", "ddl"),
 			zap.String("ddl", key), zap.String("value", val), zap.Error(err))
 		return false
 	}
-	if int64(ver) < latestVer && isUpdated {
+	if int64(ver) < latestVer && nodeAlive {
 		if notMatchVerCnt%intervalCnt == 0 {
 			logutil.BgLogger().Info("syncer check all versions, someone is not synced, continue checking", zap.String("category", "ddl"),
 				zap.String("ddl", key), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))

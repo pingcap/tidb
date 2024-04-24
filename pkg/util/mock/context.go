@@ -229,6 +229,11 @@ func (c *Context) GetPlanCtx() planctx.PlanContext {
 	return c
 }
 
+// GetNullRejectCheckExprCtx gets the expression context with null rejected check.
+func (c *Context) GetNullRejectCheckExprCtx() exprctx.ExprContext {
+	return exprctx.WithNullRejectCheck(c)
+}
+
 // GetExprCtx returns the expression context of the session.
 func (c *Context) GetExprCtx() exprctx.ExprContext {
 	return c

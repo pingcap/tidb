@@ -1493,7 +1493,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
-		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp)
+		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp, false)
 		if err != nil {
 			er.err = err
 			return retNode, false
@@ -1950,6 +1950,13 @@ func (er *expressionRewriter) deriveCollationForIn(colLen int, _ int, args []exp
 func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen int, coll *expression.ExprCollation) {
 	// We don't handle the cases if the element is a tuple, such as (a, b, c) in ((x1, y1, z1), (x2, y2, z2)).
 	if colLen != 1 {
+		return
+	}
+	if !collate.NewCollationEnabled() {
+		// See https://github.com/pingcap/tidb/issues/52772
+		// This function will apply CoercibilityExplicit to the casted expression, but some checks(during ColumnSubstituteImpl) is missed when the new
+		// collation is disabled, then lead to panic.
+		// To work around this issue, we can skip the function, it should be good since the collation is disabled.
 		return
 	}
 	for i := stkLen - elemCnt; i < stkLen; i++ {

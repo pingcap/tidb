@@ -63,7 +63,8 @@ var (
 // }
 
 var (
-	mMetaPrefix          = []byte("m")
+	mMetaPrefix = []byte("m")
+	// the value inside it is actually the max current used ID, not next id.
 	mNextGlobalIDKey     = []byte("NextGlobalID")
 	mSchemaVersionKey    = []byte("SchemaVersionKey")
 	mDBs                 = []byte("DBs")
@@ -473,6 +474,8 @@ func (m *Meta) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
 // To solve this problem, we always check the schema diff at first, if the diff is empty, we know at t2 moment we can only see the v9 schema,
 // so make neededSchemaVersion = neededSchemaVersion - 1.
 // For `Reload`, we can also do this: if the newest version's diff is not set yet, it is ok to load the previous version's infoSchema, and wait for the next reload.
+// if there are multiple consecutive jobs failed or cancelled after the schema version
+// increased, the returned 'version - 1' might still not have diff.
 func (m *Meta) GetSchemaVersionWithNonEmptyDiff() (int64, error) {
 	v, err := m.txn.GetInt64(mSchemaVersionKey)
 	if err != nil {
@@ -1267,6 +1270,8 @@ var (
 
 var (
 	// DefaultJobListKey keeps all actions of DDL jobs except "add index".
+	// this and below list are always appended, so the order is the same as the
+	// job's creation order.
 	DefaultJobListKey JobListKeyType = mDDLJobListKey
 	// AddIndexJobListKey only keeps the action of adding index.
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList

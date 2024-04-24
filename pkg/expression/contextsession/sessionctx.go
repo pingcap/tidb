@@ -17,7 +17,6 @@ package contextsession
 import (
 	"context"
 	"math"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -52,8 +51,6 @@ var _ exprctx.ExprContext = struct {
 type ExprCtxExtendedImpl struct {
 	sctx sessionctx.Context
 	*SessionEvalContext
-	inNullRejectCheck atomic.Bool
-	inUnionCast       atomic.Bool
 }
 
 // NewExprExtendedImpl creates a new ExprCtxExtendedImpl.
@@ -117,24 +114,9 @@ func (ctx *ExprCtxExtendedImpl) AllocPlanColumnID() int64 {
 	return ctx.sctx.GetSessionVars().AllocPlanColumnID()
 }
 
-// SetInNullRejectCheck sets whether the expression is in null reject check.
-func (ctx *ExprCtxExtendedImpl) SetInNullRejectCheck(in bool) {
-	ctx.inNullRejectCheck.Store(in)
-}
-
 // IsInNullRejectCheck returns whether the expression is in null reject check.
 func (ctx *ExprCtxExtendedImpl) IsInNullRejectCheck() bool {
-	return ctx.inNullRejectCheck.Load()
-}
-
-// SetInUnionCast sets the flag to indicate whether the expression is in union cast.
-func (ctx *ExprCtxExtendedImpl) SetInUnionCast(in bool) {
-	ctx.inUnionCast.Store(in)
-}
-
-// IsInUnionCast indicates whether executing in special cast context that negative unsigned num will be zero.
-func (ctx *ExprCtxExtendedImpl) IsInUnionCast() bool {
-	return ctx.inUnionCast.Load()
+	return false
 }
 
 // GetWindowingUseHighPrecision determines whether to compute window operations without loss of precision.
@@ -146,12 +128,6 @@ func (ctx *ExprCtxExtendedImpl) GetWindowingUseHighPrecision() bool {
 // GetGroupConcatMaxLen returns the value of the 'group_concat_max_len' system variable.
 func (ctx *ExprCtxExtendedImpl) GetGroupConcatMaxLen() uint64 {
 	return ctx.sctx.GetSessionVars().GroupConcatMaxLen
-}
-
-// InInsertOrUpdate returns whether when are building an expression for insert or update statement.
-func (ctx *ExprCtxExtendedImpl) InInsertOrUpdate() bool {
-	sc := ctx.sctx.GetSessionVars().StmtCtx
-	return sc.InInsertStmt || sc.InUpdateStmt
 }
 
 // ConnectionID indicates the connection ID of the current session.

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/distsql"
@@ -312,7 +313,8 @@ func getDupDetectClient(
 ) (import_sstpb.ImportSST_DuplicateDetectClient, error) {
 	leader := region.Leader
 	if leader == nil {
-		leader = region.Region.GetPeers()[0]
+		return nil, errors.Annotatef(berrors.ErrPDLeaderNotFound,
+			"region id %d has no leader", region.Region.Id)
 	}
 	importClient, err := importClientFactory.Create(ctx, leader.GetStoreId())
 	if err != nil {

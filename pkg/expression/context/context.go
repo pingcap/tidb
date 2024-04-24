@@ -83,17 +83,11 @@ type BuildContext interface {
 	SetSkipPlanCache(reason string)
 	// AllocPlanColumnID allocates column id for plan.
 	AllocPlanColumnID() int64
-	// SetInNullRejectCheck sets the flag to indicate whether the expression is in null reject check.
-	SetInNullRejectCheck(in bool)
 	// IsInNullRejectCheck returns the flag to indicate whether the expression is in null reject check.
+	// It should always return `false` in most implementations because we do not want to do null reject check
+	// in most cases except for the method `isNullRejected` in planner.
+	// See the comments for `isNullRejected` in planner for more details.
 	IsInNullRejectCheck() bool
-	// SetInUnionCast sets the flag to indicate whether the expression is in union cast.
-	SetInUnionCast(in bool)
-	// IsInUnionCast indicates whether executing in special cast context that negative unsigned num will be zero.
-	IsInUnionCast() bool
-	// Deprecated: This method is deprecated and may be removed in the future because it is coupled with statement.
-	// InInsertOrUpdate returns whether when are building an expression for insert or update statement.
-	InInsertOrUpdate() bool
 	// ConnectionID indicates the connection ID of the current session.
 	// If the context is not in a session, it should return 0.
 	ConnectionID() uint64
@@ -108,6 +102,21 @@ type ExprContext interface {
 	GetWindowingUseHighPrecision() bool
 	// GetGroupConcatMaxLen returns the value of the 'group_concat_max_len' system variable.
 	GetGroupConcatMaxLen() uint64
+}
+
+// NullRejectCheckExprContext is a wrapper to return true for `IsInNullRejectCheck`.
+type NullRejectCheckExprContext struct {
+	ExprContext
+}
+
+// WithNullRejectCheck returns a new `NullRejectCheckExprContext` with the given `ExprContext`.
+func WithNullRejectCheck(ctx ExprContext) *NullRejectCheckExprContext {
+	return &NullRejectCheckExprContext{ExprContext: ctx}
+}
+
+// IsInNullRejectCheck always returns true for `NullRejectCheckExprContext`
+func (ctx *NullRejectCheckExprContext) IsInNullRejectCheck() bool {
+	return true
 }
 
 // AssertLocationWithSessionVars asserts the location in the context and session variables are the same.
