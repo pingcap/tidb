@@ -880,7 +880,10 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				if err != nil {
 					return errors.Trace(err)
 				}
-				affected, err2 := result.RowsAffected()
+				affected, err := result.RowsAffected()
+				if err != nil {
+					return errors.Trace(err)
+				}
 				if affected == 0 {
 					hasRow = false
 				}
