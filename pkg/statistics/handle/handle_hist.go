@@ -33,6 +33,7 @@ import (
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -41,6 +42,25 @@ import (
 // RetryCount is the max retry count for a sync load task.
 const RetryCount = 3
 
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
+=======
+type statsSyncLoad struct {
+	statsHandle statstypes.StatsHandle
+	StatsLoad   statstypes.StatsLoad
+}
+
+var globalStatsSyncLoadSingleFlight singleflight.Group
+
+// NewStatsSyncLoad creates a new StatsSyncLoad.
+func NewStatsSyncLoad(statsHandle statstypes.StatsHandle) statstypes.StatsSyncLoad {
+	s := &statsSyncLoad{statsHandle: statsHandle}
+	cfg := config.GetGlobalConfig()
+	s.StatsLoad.NeededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
+	s.StatsLoad.TimeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
+	return s
+}
+
+>>>>>>> cd90f818809 (statistics: support global singleflight for sync load (#52796)):pkg/statistics/handle/syncload/stats_syncload.go
 type statsWrapper struct {
 	col *statistics.Column
 	idx *statistics.Index
@@ -81,6 +101,7 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 	}
 	sc.StatsLoad.Timeout = timeout
 	sc.StatsLoad.NeededItems = remainedItems
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 	sc.StatsLoad.ResultCh = make(chan stmtctx.StatsLoadResult, len(remainedItems))
 	tasks := make([]*NeededItemTask, 0)
 	for _, item := range remainedItems {
@@ -100,6 +121,29 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 		case <-timer.C:
 			return errors.New("sync load stats channel is full and timeout sending task to channel")
 		}
+=======
+	sc.StatsLoad.ResultCh = make([]<-chan singleflight.Result, 0, len(remainedItems))
+	for _, item := range remainedItems {
+		localItem := item
+		resultCh := globalStatsSyncLoadSingleFlight.DoChan(localItem.Key(), func() (any, error) {
+			timer := time.NewTimer(timeout)
+			defer timer.Stop()
+			task := &statstypes.NeededItemTask{
+				Item:      localItem,
+				ToTimeout: time.Now().Local().Add(timeout),
+				ResultCh:  make(chan stmtctx.StatsLoadResult, 1),
+			}
+			select {
+			case s.StatsLoad.NeededItemsCh <- task:
+				result, ok := <-task.ResultCh
+				intest.Assert(ok, "task.ResultCh cannot be closed")
+				return result, nil
+			case <-timer.C:
+				return nil, errors.New("sync load stats channel is full and timeout sending task to channel")
+			}
+		})
+		sc.StatsLoad.ResultCh = append(sc.StatsLoad.ResultCh, resultCh)
+>>>>>>> cd90f818809 (statistics: support global singleflight for sync load (#52796)):pkg/statistics/handle/syncload/stats_syncload.go
 	}
 	sc.StatsLoad.LoadStartTime = time.Now()
 	return nil
@@ -125,25 +169,34 @@ func (*Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	metrics.SyncLoadCounter.Inc()
 	timer := time.NewTimer(sc.StatsLoad.Timeout)
 	defer timer.Stop()
-	for {
+	for _, resultCh := range sc.StatsLoad.ResultCh {
 		select {
-		case result, ok := <-sc.StatsLoad.ResultCh:
+		case result, ok := <-resultCh:
 			if !ok {
 				return errors.New("sync load stats channel closed unexpectedly")
 			}
-			if result.HasError() {
-				errorMsgs = append(errorMsgs, result.ErrorMsg())
-			}
-			delete(resultCheckMap, result.Item)
-			if len(resultCheckMap) == 0 {
-				metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
-				return nil
+			// this error is from statsSyncLoad.SendLoadRequests which start to task and send task into worker,
+			// not the stats loading error
+			if result.Err != nil {
+				errorMsgs = append(errorMsgs, result.Err.Error())
+			} else {
+				val := result.Val.(stmtctx.StatsLoadResult)
+				// this error is from the stats loading error
+				if val.HasError() {
+					errorMsgs = append(errorMsgs, val.ErrorMsg())
+				}
+				delete(resultCheckMap, val.Item)
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
 			return errors.New("sync load stats timeout")
 		}
 	}
+	if len(resultCheckMap) == 0 {
+		metrics.SyncLoadHistogram.Observe(float64(time.Since(sc.StatsLoad.LoadStartTime).Milliseconds()))
+		return nil
+	}
+	return nil
 }
 
 // removeHistLoadedColumns removed having-hist columns based on neededColumns and statsCache.
@@ -229,6 +282,7 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 	} else {
 		task = lastTask
 	}
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
 	resultChan := h.StatsLoad.Singleflight.DoChan(task.TableItemID.Key(), func() (any, error) {
 		err := h.handleOneItemTask(task)
@@ -256,7 +310,20 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 		}
 		task.ToTimeout.Add(time.Duration(sctx.GetSessionVars().StatsLoadSyncWait.Load()) * time.Microsecond)
 		return task, nil
+=======
+	result := stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
+	err = s.handleOneItemTask(task)
+	if err == nil {
+		task.ResultCh <- result
+		return nil, nil
+>>>>>>> cd90f818809 (statistics: support global singleflight for sync load (#52796)):pkg/statistics/handle/syncload/stats_syncload.go
 	}
+	if !isVaildForRetry(task) {
+		result.Error = err
+		task.ResultCh <- result
+		return nil, nil
+	}
+	return task, err
 }
 
 func isVaildForRetry(task *NeededItemTask) bool {
