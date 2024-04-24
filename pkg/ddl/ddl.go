@@ -368,7 +368,7 @@ type ddlCtx struct {
 	stateSyncer  syncer.StateSyncer
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *statsutil.DDLEvent
-	lease        time.Duration        // lease is schema lease.
+	lease        time.Duration        // lease is schema lease, default 45s, see config.Lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
 	infoCache    *infoschema.InfoCache
 	statsHandle  *handle.Handle
@@ -398,6 +398,7 @@ type ddlCtx struct {
 	// hook may be modified.
 	mu struct {
 		sync.RWMutex
+		// see newDefaultCallBack for its value in normal flow.
 		hook        Callback
 		interceptor Interceptor
 	}

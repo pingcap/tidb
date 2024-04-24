@@ -102,7 +102,7 @@ type worker struct {
 	sess            *sess.Session // sess is used and only used in running DDL job.
 	delRangeManager delRangeManager
 	logCtx          context.Context
-	lockSeqNum      bool
+	seqNumLocked    bool
 
 	*ddlCtx
 }
@@ -213,6 +213,7 @@ func (d *ddl) limitDDLJobs(ch chan *limitJobTask, handler func(tasks []*limitJob
 	tasks := make([]*limitJobTask, 0, batchAddingJobs)
 	for {
 		select {
+		// the channel is never closed
 		case task := <-ch:
 			tasks = tasks[:0]
 			jobLen := len(ch)
@@ -393,11 +394,11 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		return errors.Trace(err)
 	}
 	defer d.sessPool.Put(se)
-	job, err := getJobsBySQL(sess.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
+	jobs, err := getJobsBySQL(sess.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(job) != 0 {
+	if len(jobs) != 0 {
 		return errors.Errorf("Can't add ddl job, have flashback cluster job")
 	}
 
@@ -744,7 +745,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 func (w *worker) writeDDLSeqNum(job *model.Job) {
 	w.ddlSeqNumMu.Lock()
 	w.ddlSeqNumMu.seqNum++
-	w.lockSeqNum = true
+	w.seqNumLocked = true
 	job.SeqNum = w.ddlSeqNumMu.seqNum
 }
 
@@ -799,12 +800,12 @@ func (w *JobContext) setDDLLabelForTopSQL(jobQuery string) {
 }
 
 func (w *worker) unlockSeqNum(err error) {
-	if w.lockSeqNum {
+	if w.seqNumLocked {
 		if err != nil {
 			// if meet error, we should reset seqNum.
 			w.ddlSeqNumMu.seqNum--
 		}
-		w.lockSeqNum = false
+		w.seqNumLocked = false
 		w.ddlSeqNumMu.Unlock()
 	}
 }
