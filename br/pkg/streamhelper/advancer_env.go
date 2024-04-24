@@ -58,7 +58,7 @@ func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, e
 	return at, nil
 }
 
-func (c PDRegionScanner) RemoveGCSafepoint(ctx context.Context) error {
+func (c PDRegionScanner) UnblockGC(ctx context.Context) error {
 	// set ttl to 0, means remove the safe point.
 	_, err := c.UpdateServiceGCSafePoint(ctx, logBackupServiceID, 0, math.MaxUint64)
 	return err
