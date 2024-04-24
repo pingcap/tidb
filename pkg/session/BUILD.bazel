@@ -155,6 +155,7 @@ go_test(
         "//pkg/domain",
         "//pkg/executor",
         "//pkg/expression",
+        "//pkg/expression/contextsession",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/parser",

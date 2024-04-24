@@ -287,11 +287,6 @@ type planCtxImpl struct {
 	*planctximpl.PlanCtxExtendedImpl
 }
 
-type exprCtxImpl struct {
-	*Session
-	*exprctximpl.ExprCtxExtendedImpl
-}
-
 // Session is a trimmed down Session type which only wraps our own trimmed-down
 // transaction type and provides the session variables to the TiDB library
 // optimized for Lightning.
@@ -300,7 +295,7 @@ type Session struct {
 	planctx.EmptyPlanContextExtended
 	txn     transaction
 	Vars    *variable.SessionVars
-	exprCtx *exprCtxImpl
+	exprCtx *exprctximpl.SessionExprContext
 	planctx *planCtxImpl
 	tblctx  *tbctximpl.TableContextImpl
 	// currently, we only set `CommonAddRecordCtx`
@@ -363,10 +358,7 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	}
 	vars.TxnCtx = nil
 	s.Vars = vars
-	s.exprCtx = &exprCtxImpl{
-		Session:             s,
-		ExprCtxExtendedImpl: exprctximpl.NewExprExtendedImpl(s),
-	}
+	s.exprCtx = exprctximpl.NewSessionExprContext(s)
 	s.planctx = &planCtxImpl{
 		Session:             s,
 		PlanCtxExtendedImpl: planctximpl.NewPlanCtxExtendedImpl(s),

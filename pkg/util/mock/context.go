@@ -60,7 +60,7 @@ var (
 // Context represents mocked sessionctx.Context.
 type Context struct {
 	planctx.EmptyPlanContextExtended
-	*exprctximpl.ExprCtxExtendedImpl
+	*exprctximpl.SessionExprContext
 	txn           wrapTxn    // mock global variable
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
@@ -617,7 +617,7 @@ func NewContext() *Context {
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
-	sctx.ExprCtxExtendedImpl = exprctximpl.NewExprExtendedImpl(sctx)
+	sctx.SessionExprContext = exprctximpl.NewSessionExprContext(sctx)
 	sctx.tblctx = tbctximpl.NewTableContextImpl(sctx, sctx)
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32

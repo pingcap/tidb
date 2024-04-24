@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/contextsession"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -183,7 +184,7 @@ type session struct {
 	sessionManager util.SessionManager
 
 	pctx    *planContextImpl
-	exprctx *expressionContextImpl
+	exprctx *contextsession.SessionExprContext
 	tblctx  *tbctximpl.TableContextImpl
 
 	statsCollector *usage.SessionStatsItem
@@ -3609,7 +3610,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.sessionVars = variable.NewSessionVars(s)
-	s.exprctx = newExpressionContextImpl(s)
+	s.exprctx = contextsession.NewSessionExprContext(s)
 	s.pctx = newPlanContextImpl(s)
 	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
 
@@ -3672,7 +3673,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		stmtStats:             stmtstats.CreateStatementStats(),
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
-	s.exprctx = newExpressionContextImpl(s)
+	s.exprctx = contextsession.NewSessionExprContext(s)
 	s.pctx = newPlanContextImpl(s)
 	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
 	s.mu.values = make(map[fmt.Stringer]any)
