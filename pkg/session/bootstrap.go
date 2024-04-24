@@ -604,7 +604,7 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
-		target_scope VARCHAR(256),
+		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		key(state),
       	UNIQUE KEY task_key(task_key)
