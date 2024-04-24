@@ -228,7 +228,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
 	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for i := 0; i < l; i++ {
-		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
+		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
 
 	sc := e.ctx.GetSessionVars().StmtCtx
@@ -562,7 +562,7 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 			NumColumns: int32(len(indexInfo.Columns)),
 			TopNSize:   &topnSize,
 			Version:    statsVersion,
-			SketchSize: maxSketchSize,
+			SketchSize: statistics.MaxSketchSize,
 		}
 		if idxExec.isCommonHandle && indexInfo.Primary {
 			idxExec.analyzePB.Tp = tipb.AnalyzeType_TypeCommonHandle
@@ -621,7 +621,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	})
 	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for i := 0; i < l; i++ {
-		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
+		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
 	for {
 		data, ok := <-taskCh
