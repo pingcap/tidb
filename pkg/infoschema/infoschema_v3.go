@@ -15,6 +15,7 @@
 package infoschema
 
 import (
+	"cmp"
 	"encoding/json"
 	"slices"
 	"strings"
@@ -485,6 +486,12 @@ func (is *infoschemaV3) AllPlacementBundles() []*placement.Bundle {
 	if len(b1) != len(b2) {
 		panic("inconsistent infoschema")
 	}
+	slices.SortFunc(b1, func(a, b *placement.Bundle) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+	slices.SortFunc(b2, func(a, b *placement.Bundle) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 	for i := range b1 {
 		if !bundleEqual(b1[i], b2[i]) {
 			panic("inconsistent infoschema")
@@ -499,6 +506,12 @@ func (is *infoschemaV3) AllPlacementPolicies() []*model.PolicyInfo {
 	if len(p1) != len(p2) {
 		panic("inconsistent infoschema")
 	}
+	slices.SortFunc(p1, func(a, b *model.PolicyInfo) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+	slices.SortFunc(p2, func(a, b *model.PolicyInfo) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 	for i := range p1 {
 		if !policyEqual(p1[i], p2[i]) {
 			panic("inconsistent infoschema")
@@ -513,6 +526,12 @@ func (is *infoschemaV3) AllResourceGroups() []*model.ResourceGroupInfo {
 	if len(r1) != len(r2) {
 		panic("inconsistent infoschema")
 	}
+	slices.SortFunc(r1, func(a, b *model.ResourceGroupInfo) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+	slices.SortFunc(r2, func(a, b *model.ResourceGroupInfo) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
 	for i := range r1 {
 		if !resourceGroupEqual(r1[i], r2[i]) {
 			panic("inconsistent infoschema")
