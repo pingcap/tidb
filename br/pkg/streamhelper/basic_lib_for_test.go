@@ -272,7 +272,7 @@ func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, erro
 	return at, nil
 }
 
-func (f *fakeCluster) RemoveGCSafepoint(ctx context.Context) error {
+func (f *fakeCluster) UnblockGC(ctx context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.serviceGCSafePointDeleted = true

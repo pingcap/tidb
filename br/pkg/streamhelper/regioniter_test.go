@@ -83,7 +83,7 @@ func (c constantRegions) BlockGCUntil(ctx context.Context, at uint64) (uint64, e
 	return 0, status.Error(codes.Unimplemented, "Unsupported operation")
 }
 
-func (c constantRegions) RemoveGCSafepoint(ctx context.Context) error {
+func (c constantRegions) UnblockGC(ctx context.Context) error {
 	return status.Error(codes.Unimplemented, "Unsupported operation")
 }
 
