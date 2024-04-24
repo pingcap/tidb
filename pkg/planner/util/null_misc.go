@@ -22,7 +22,8 @@ import (
 
 // IsNullRejected check whether a condition is null-rejected
 // A condition would be null-rejected in one of following cases:
-// If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
+// If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE
+// when one of its arguments is NULL.
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
 func IsNullRejected(ctx context.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
