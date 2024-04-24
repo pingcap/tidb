@@ -38,6 +38,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
+<<<<<<< HEAD:sessionctx/stmtctx/stmtctx.go
 	"go.uber.org/zap"
 )
 
@@ -48,6 +49,10 @@ const (
 	WarnLevelWarning = "Warning"
 	// WarnLevelNote represents level "Note" for 'SHOW WARNINGS' syntax.
 	WarnLevelNote = "Note"
+=======
+	"golang.org/x/exp/maps"
+	"golang.org/x/sync/singleflight"
+>>>>>>> cd90f818809 (statistics: support global singleflight for sync load (#52796)):pkg/sessionctx/stmtctx/stmtctx.go
 )
 
 var taskIDAlloc uint64
@@ -333,7 +338,7 @@ type StatementContext struct {
 		// NeededItems stores the columns/indices whose stats are needed for planner.
 		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
-		ResultCh chan StatsLoadResult
+		ResultCh []<-chan singleflight.Result
 		// LoadStartTime is to record the load start time to calculate latency
 		LoadStartTime time.Time
 	}
