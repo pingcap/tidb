@@ -44,6 +44,7 @@ import (
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
+<<<<<<< HEAD:sessionctx/stmtctx/stmtctx.go
 	"golang.org/x/exp/slices"
 )
 
@@ -54,6 +55,9 @@ const (
 	WarnLevelWarning = "Warning"
 	// WarnLevelNote represents level "Note" for 'SHOW WARNINGS' syntax.
 	WarnLevelNote = "Note"
+=======
+	"golang.org/x/sync/singleflight"
+>>>>>>> cd90f818809 (statistics: support global singleflight for sync load (#52796)):pkg/sessionctx/stmtctx/stmtctx.go
 )
 
 var taskIDAlloc uint64
@@ -347,7 +351,7 @@ type StatementContext struct {
 		// NeededItems stores the columns/indices whose stats are needed for planner.
 		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
-		ResultCh chan StatsLoadResult
+		ResultCh []<-chan singleflight.Result
 		// LoadStartTime is to record the load start time to calculate latency
 		LoadStartTime time.Time
 	}
