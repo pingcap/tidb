@@ -17,10 +17,10 @@ package importer
 import (
 	"context"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"go.uber.org/zap"
 )
 
@@ -104,12 +104,12 @@ func ProcessChunkWithWriter(
 			}
 		}()
 		cp = NewFileChunkProcessor(
-			parser, encoder, tableImporter.GetCodec(), chunk, logger,
+			parser, encoder, tableImporter.GetKeySpace(), chunk, logger,
 			tableImporter.diskQuotaLock, dataWriter, indexWriter, groupChecksum,
 		)
 	case DataSourceTypeQuery:
 		cp = newQueryChunkProcessor(
-			tableImporter.rowCh, encoder, tableImporter.GetCodec(), logger,
+			tableImporter.rowCh, encoder, tableImporter.GetKeySpace(), logger,
 			tableImporter.diskQuotaLock, dataWriter, indexWriter, groupChecksum,
 		)
 	}

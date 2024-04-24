@@ -53,6 +53,7 @@ import (
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -120,9 +121,8 @@ type Server struct {
 	socket            net.Listener
 	concurrentLimiter *TokenLimiter
 
-	rwlock                 sync.RWMutex
-	clients                map[uint64]*clientConn
-	ConnNumByResourceGroup map[string]int
+	rwlock  sync.RWMutex
+	clients map[uint64]*clientConn
 
 	capability uint32
 	dom        *domain.Domain
@@ -240,15 +240,14 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
-		cfg:                    cfg,
-		driver:                 driver,
-		concurrentLimiter:      NewTokenLimiter(cfg.TokenLimit),
-		clients:                make(map[uint64]*clientConn),
-		ConnNumByResourceGroup: make(map[string]int),
-		internalSessions:       make(map[any]struct{}, 100),
-		health:                 uatomic.NewBool(false),
-		inShutdownMode:         uatomic.NewBool(false),
-		printMDLLogTime:        time.Now(),
+		cfg:               cfg,
+		driver:            driver,
+		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
+		clients:           make(map[uint64]*clientConn),
+		internalSessions:  make(map[any]struct{}, 100),
+		health:            uatomic.NewBool(false),
+		inShutdownMode:    uatomic.NewBool(false),
+		printMDLLogTime:   time.Now(),
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -438,6 +437,7 @@ func (s *Server) Run(dom *domain.Domain) error {
 			log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
 			return err
 		}
+		mppcoordmanager.InstanceMPPCoordinatorManager.InitServerAddr(s.GetStatusServerAddr())
 	}
 	if config.GetGlobalConfig().Performance.ForceInitStats && dom != nil {
 		<-dom.StatsHandle().InitStatsDone
@@ -634,27 +634,15 @@ func (s *Server) Close() {
 func (s *Server) registerConn(conn *clientConn) bool {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
-	connections := make(map[string]int, 0)
-	for _, conn := range s.clients {
-		resourceGroup := conn.getCtx().GetSessionVars().ResourceGroupName
-		connections[resourceGroup]++
-	}
 
 	logger := logutil.BgLogger()
 	if s.inShutdownMode.Load() {
 		logger.Info("close connection directly when shutting down")
-		for resourceGroupName, count := range s.ConnNumByResourceGroup {
-			metrics.ConnGauge.WithLabelValues(resourceGroupName).Set(float64(count))
-		}
-		terror.Log(closeConn(conn, "", 0))
+		terror.Log(closeConn(conn))
 		return false
 	}
 	s.clients[conn.connectionID] = conn
-	s.ConnNumByResourceGroup[conn.getCtx().GetSessionVars().ResourceGroupName]++
-
-	for name, count := range s.ConnNumByResourceGroup {
-		metrics.ConnGauge.WithLabelValues(name).Set(float64(count))
-	}
+	metrics.ConnGauge.WithLabelValues(conn.getCtx().GetSessionVars().ResourceGroupName).Inc()
 	return true
 }
 

@@ -21,18 +21,20 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
 
 type buildKeySolver struct{}
 
-func (*buildKeySolver) optimize(_ context.Context, p LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
+func (*buildKeySolver) optimize(_ context.Context, p base.LogicalPlan, _ *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	buildKeyInfo(p)
 	return p, planChanged, nil
 }
 
-// buildKeyInfo recursively calls LogicalPlan's BuildKeyInfo method.
-func buildKeyInfo(lp LogicalPlan) {
+// buildKeyInfo recursively calls base.LogicalPlan's BuildKeyInfo method.
+func buildKeyInfo(lp base.LogicalPlan) {
 	for _, child := range lp.Children() {
 		buildKeyInfo(child)
 	}
@@ -43,7 +45,7 @@ func buildKeyInfo(lp LogicalPlan) {
 	lp.BuildKeyInfo(lp.Schema(), childSchema)
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	if la.IsPartialModeAgg() {
 		return
@@ -95,7 +97,7 @@ func (*LogicalSelection) checkMaxOneRowCond(eqColIDs map[int64]struct{}, childSc
 	return false
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	if p.maxOneRow {
@@ -119,7 +121,7 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 	p.maxOneRow = p.checkMaxOneRowCond(eqCols, childSchema[0])
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	if p.Count == 1 {
@@ -127,7 +129,7 @@ func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema [
 	}
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (lt *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	lt.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	if lt.Count == 1 {
@@ -135,7 +137,7 @@ func (lt *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema [
 	}
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalTableDual) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	if p.RowCount == 1 {
@@ -161,7 +163,7 @@ func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *e
 	return schema
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	// `LogicalProjection` use schema from `Exprs` to build key info. See `buildSchemaByExprs`.
 	// So call `baseLogicalPlan.BuildKeyInfo` here to avoid duplicated building key info.
@@ -181,7 +183,7 @@ func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSch
 	}
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	switch p.JoinType {
@@ -198,18 +200,18 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		// If one sides (a, b) is a unique key, then the unique key information is remained.
 		// But we don't consider this situation currently.
 		// Only key made by one column is considered now.
-		exprCtx := p.SCtx().GetExprCtx()
+		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 		for _, expr := range p.EqualConditions {
 			ln := expr.GetArgs()[0].(*expression.Column)
 			rn := expr.GetArgs()[1].(*expression.Column)
 			for _, key := range childSchema[0].Keys {
-				if len(key) == 1 && key[0].Equal(exprCtx, ln) {
+				if len(key) == 1 && key[0].Equal(evalCtx, ln) {
 					lOk = true
 					break
 				}
 			}
 			for _, key := range childSchema[1].Keys {
-				if len(key) == 1 && key[0].Equal(exprCtx, rn) {
+				if len(key) == 1 && key[0].Equal(evalCtx, rn) {
 					rOk = true
 					break
 				}
@@ -267,7 +269,7 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 	return nil, nil
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	selfSchema.Keys = nil
 	var latestIndexes map[int64]*model.IndexInfo
@@ -307,12 +309,12 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 	}
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (ts *LogicalTableScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	ts.Source.BuildKeyInfo(selfSchema, childSchema)
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	selfSchema.Keys = nil
 	for _, path := range is.Source.possibleAccessPaths {
@@ -331,7 +333,7 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*exp
 	}
 }
 
-// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+// BuildKeyInfo implements base.LogicalPlan BuildKeyInfo interface.
 func (*TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = childSchema[0].Keys
 }

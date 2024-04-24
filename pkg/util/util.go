@@ -177,6 +177,7 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	}
 	logFields = append(logFields, zap.String("sql", sql))
 	logFields = append(logFields, zap.String("session_alias", info.SessionAlias))
+	logFields = append(logFields, zap.Uint64("affected rows", info.StmtCtx.AffectedRows()))
 	return logFields
 }
 

@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "task",
+    srcs = [
+        "task.go",
+        "task_scheduler.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/task",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "task_test",
+    timeout = "short",
+    srcs = [
+        "task_scheduler_test.go",
+        "task_test.go",
+    ],
+    embed = [":task"],
+    flaky = True,
+    shard_count = 3,
+    deps = ["@com_github_stretchr_testify//require"],
+)

@@ -150,6 +150,9 @@ type StmtRecord struct {
 	// request units(RU)
 	ResourceGroupName string `json:"resource_group_name"`
 	stmtsummary.StmtRUSummary
+
+	PlanCacheUnqualifiedCount int64  `json:"plan_cache_unqualified_count"`
+	LastPlanCacheUnqualified  string `json:"last_plan_cache_unqualified"` // the reason why this query is unqualified for the plan cache
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -368,6 +371,10 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	} else {
 		r.PlanInCache = false
 	}
+	if info.PlanCacheUnqualified != "" {
+		r.PlanCacheUnqualifiedCount++
+		r.LastPlanCacheUnqualified = info.PlanCacheUnqualified
+	}
 	// SPM
 	if info.PlanInBinding {
 		r.PlanInBinding = true
@@ -542,6 +549,10 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	}
 	// Plan cache
 	r.PlanCacheHits += other.PlanCacheHits
+	r.PlanCacheUnqualifiedCount += other.PlanCacheUnqualifiedCount
+	if other.LastPlanCacheUnqualified != "" {
+		r.LastPlanCacheUnqualified = other.LastPlanCacheUnqualified
+	}
 	// Other
 	r.SumAffectedRows += other.SumAffectedRows
 	r.SumMem += other.SumMem

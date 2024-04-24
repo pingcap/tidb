@@ -501,7 +501,7 @@ alter table t modify bny date;
 alter table t modify vbny date;
 alter table t modify bb date;
 alter table t modify txt date;
-Error 1292 (22007): Incorrect datetime value: '08-26 19:35:41'
+Error 1292 (22007): Incorrect date value: '08-26 19:35:41'
 alter table t modify e date;
 Error 8200 (HY000): Unsupported modify column: [ddl:8200]Unsupported modify column: change from original type enum('123','2020-07-15 18:32:17.888','str','{"k1": "value"}') to date is currently unsupported yet
 alter table t modify s date;
@@ -663,9 +663,9 @@ Error 1292 (22007): Truncated incorrect DOUBLE value: 'abc     '
 alter table t modify vbny datetime;
 Error 1292 (22007): Incorrect datetime value: 'datetime'
 alter table t modify bb timestamp;
-Error 1292 (22007): Incorrect datetime value: 'timestamp'
+Error 1292 (22007): Incorrect timestamp value: 'timestamp'
 alter table t modify txt date;
-Error 1292 (22007): Incorrect datetime value: 'date'
+Error 1292 (22007): Incorrect date value: 'date'
 drop table if exists t;
 create table t (
 c char(8),
@@ -1963,15 +1963,15 @@ nul json
 );
 insert into t values ('{"obj": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '20200826173501', '20201123', '20200826173501.123456', '"2020-08-26 17:35:01.123456"', null);
 alter table t modify obj date;
-Error 1292 (22007): Incorrect datetime value: '{"obj": 100}'
+Error 1292 (22007): Incorrect date value: '{"obj": 100}'
 alter table t modify arr date;
-Error 1292 (22007): Incorrect datetime value: '[-1, 0, 1]'
+Error 1292 (22007): Incorrect date value: '[-1, 0, 1]'
 alter table t modify nil date;
-Error 1292 (22007): Incorrect datetime value: 'null'
+Error 1292 (22007): Incorrect date value: 'null'
 alter table t modify t date;
-Error 1292 (22007): Incorrect datetime value: 'true'
+Error 1292 (22007): Incorrect date value: 'true'
 alter table t modify f date;
-Error 1292 (22007): Incorrect datetime value: 'false'
+Error 1292 (22007): Incorrect date value: 'false'
 alter table t modify i date;
 alter table t modify ui date;
 alter table t modify f64 date;
@@ -1995,15 +1995,15 @@ nul json
 );
 insert into t values ('{"obj": 100}', '[-1, 0, 1]', 'null', 'true', 'false', '20200826173501', '20201123', '20200826173501.123456', '"2020-08-26 17:35:01.123456"', null);
 alter table t modify obj timestamp;
-Error 1292 (22007): Incorrect datetime value: '{"obj": 100}'
+Error 1292 (22007): Incorrect timestamp value: '{"obj": 100}'
 alter table t modify arr timestamp;
-Error 1292 (22007): Incorrect datetime value: '[-1, 0, 1]'
+Error 1292 (22007): Incorrect timestamp value: '[-1, 0, 1]'
 alter table t modify nil timestamp;
-Error 1292 (22007): Incorrect datetime value: 'null'
+Error 1292 (22007): Incorrect timestamp value: 'null'
 alter table t modify t timestamp;
-Error 1292 (22007): Incorrect datetime value: 'true'
+Error 1292 (22007): Incorrect timestamp value: 'true'
 alter table t modify f timestamp;
-Error 1292 (22007): Incorrect datetime value: 'false'
+Error 1292 (22007): Incorrect timestamp value: 'false'
 alter table t modify i timestamp;
 alter table t modify ui timestamp;
 alter table t modify f64 timestamp;
@@ -2066,7 +2066,7 @@ orders	CREATE TABLE `orders` (
   `doc` json DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `fk_user_id` (`user_id`),
-  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id`) REFERENCES `ddl__column_type_change`.`users` (`id`)
+  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists users, orders;
 CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);
@@ -2080,7 +2080,7 @@ orders	CREATE TABLE `orders` (
   `doc` json DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `fk_user_id` (`user_id2`),
-  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id2`) REFERENCES `ddl__column_type_change`.`users` (`id`)
+  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id2`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists users, orders;
 CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);
@@ -2094,7 +2094,7 @@ orders	CREATE TABLE `orders` (
   `doc` json DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
   KEY `fk_user_id` (`user_id`),
-  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id`) REFERENCES `ddl__column_type_change`.`users` (`id`)
+  CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists users, orders;
 CREATE TABLE users (id INT NOT NULL PRIMARY KEY AUTO_INCREMENT, doc JSON);
@@ -2117,20 +2117,20 @@ drop table if exists t;
 create table t (a int(10) unsigned default null, b bigint unsigned, c tinyint unsigned);
 insert into t values (1, 1, 1);
 alter table t modify column a datetime;
-Error 1292 (22007): Incorrect time value: '1'
+Error 1292 (22007): Incorrect datetime value: '1'
 alter table t modify column b datetime;
-Error 1292 (22007): Incorrect time value: '1'
+Error 1292 (22007): Incorrect datetime value: '1'
 alter table t modify column c datetime;
-Error 1292 (22007): Incorrect time value: '1'
+Error 1292 (22007): Incorrect datetime value: '1'
 drop table if exists t;
 create table t (a int(10) unsigned default null, b bigint unsigned, c tinyint unsigned);
 insert into t values (4294967295, 18446744073709551615, 255);
 alter table t modify column a datetime;
-Error 1292 (22007): Incorrect time value: '4294967295'
+Error 1292 (22007): Incorrect datetime value: '4294967295'
 alter table t modify column b datetime;
-Error 1292 (22007): Incorrect time value: '18446744073709551615'
+Error 1292 (22007): Incorrect datetime value: '18446744073709551615'
 alter table t modify column c datetime;
-Error 1292 (22007): Incorrect time value: '255'
+Error 1292 (22007): Incorrect datetime value: '255'
 drop table if exists t;
 CREATE TABLE `t` (  `a` int(11) DEFAULT NULL,  `b` varchar(10) DEFAULT NULL,  `c` decimal(10,2) DEFAULT NULL,  KEY `idx1` (`a`),  UNIQUE KEY `idx2` (`a`),  KEY `idx3` (`a`,`b`),  KEY `idx4` (`a`,`b`,`c`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 insert into t values(19,1,1),(17,2,2);
@@ -2261,7 +2261,7 @@ drop table if exists t;
 CREATE TABLE `t` (  `a` date DEFAULT '1764-06-11 02:46:14') ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3';
 insert into `t` values();
 alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24';
-Error 1292 (22007): Incorrect timestamp value: '1764-06-11 00:00:00'
+Error 1292 (22007): Incorrect timestamp value: '1764-06-11'
 drop table if exists t;
 select timestamp(cast('1000-11-11 12-3-1' as date));
 timestamp(cast('1000-11-11 12-3-1' as date))
@@ -2277,11 +2277,11 @@ select time(0);
 time(0)
 00:00:00
 alter table t modify column a date;
-Error 1292 (22007): Truncated incorrect date value: '0'
+Error 1292 (22007): Incorrect date value: '0'
 alter table t modify column a datetime;
-Error 1292 (22007): Truncated incorrect datetime value: '0'
+Error 1292 (22007): Incorrect datetime value: '0'
 alter table t modify column a timestamp;
-Error 1292 (22007): Truncated incorrect timestamp value: '0'
+Error 1292 (22007): Incorrect timestamp value: '0'
 drop table if exists t;
 create table t (a int);
 insert into t values (0);
@@ -2293,11 +2293,11 @@ select time(0);
 time(0)
 00:00:00
 alter table t modify column a date;
-Error 1292 (22007): Truncated incorrect date value: '0'
+Error 1292 (22007): Incorrect date value: '0'
 alter table t modify column a datetime;
-Error 1292 (22007): Truncated incorrect datetime value: '0'
+Error 1292 (22007): Incorrect datetime value: '0'
 alter table t modify column a timestamp;
-Error 1292 (22007): Truncated incorrect timestamp value: '0'
+Error 1292 (22007): Incorrect timestamp value: '0'
 drop table if exists t;
 create table t (a int);
 insert into t values (0);
@@ -2590,3 +2590,27 @@ show warnings;
 Level	Code	Message
 Warning	1690	2 warnings with this error code, first warning: constant 128 overflows tinyint
 set @@sql_mode=default;
+drop table if exists t;
+create table t (a date);
+insert into t values('9999-01-01');
+set @@sql_mode='ALLOW_INVALID_DATES';
+alter table t modify a timestamp;
+select * from t;
+a
+0000-00-00 00:00:00
+drop table if exists t;
+create table t (a date);
+insert into t values('9999-01-01');
+set @@sql_mode='ALLOW_INVALID_DATES,STRICT_TRANS_TABLES';
+alter table t modify a timestamp;
+Error 1292 (22007): Incorrect timestamp value: '9999-01-01'
+select * from t;
+a
+9999-01-01
+drop table t;
+CREATE TABLE t (a date, b timestamp AS (a));
+set @@sql_mode='';
+insert into t (a) values('9999-01-01');
+select * from t;
+a	b
+9999-01-01	0000-00-00 00:00:00

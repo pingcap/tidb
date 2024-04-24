@@ -24,21 +24,22 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -157,12 +158,13 @@ func TestVerifyChecksum(t *testing.T) {
 
 func TestGetTargetNodeCpuCnt(t *testing.T) {
 	_, tm, ctx := testutil.InitTableTest(t)
-	require.False(t, variable.EnableDistTask.Load())
+	old := variable.EnableDistTask.Load()
 
+	variable.EnableDistTask.Store(false)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)"))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-		variable.EnableDistTask.Store(false)
+		variable.EnableDistTask.Store(old)
 	})
 	require.NoError(t, tm.InitMeta(ctx, "tidb1", ""))
 
@@ -260,7 +262,7 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	require.True(t, ok)
 	table, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
 	require.NoError(t, err)
-	var selectPlan plannercore.PhysicalPlan
+	var selectPlan base.PhysicalPlan
 	if path == "" {
 		selectPlan = &plannercore.PhysicalSelection{}
 	}
@@ -276,7 +278,7 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	if path != "" {
 		require.NoError(t, controller.InitDataStore(ctx))
 	}
-	ti, err := importer.NewTableImporterForTest(ctx, controller, "11", store, &storeHelper{kvStore: store})
+	ti, err := importer.NewTableImporterForTest(ctx, controller, "11", &storeHelper{kvStore: store})
 	require.NoError(t, err)
 	return ti
 }
@@ -296,6 +298,7 @@ func TestProcessChunkWith(t *testing.T) {
 	sourceData := []byte("1,2,3\n4,5,6\n7,8,9\n")
 	require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
 
+	keyspace := store.GetCodec().GetKeyspace()
 	t.Run("file chunk", func(t *testing.T) {
 		chunkInfo := &checkpoints.ChunkCheckpoint{
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
@@ -307,7 +310,7 @@ func TestProcessChunkWith(t *testing.T) {
 		kvWriter := mock.NewMockEngineWriter(ctrl)
 		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		progress := importer.NewProgress()
-		checksum := verify.NewKVGroupChecksumWithKeyspace(store.GetCodec())
+		checksum := verify.NewKVGroupChecksumWithKeyspace(keyspace)
 		err := importer.ProcessChunkWithWriter(ctx, chunkInfo, ti, kvWriter, kvWriter, progress, zap.NewExample(), checksum)
 		require.NoError(t, err)
 		require.Len(t, progress.GetColSize(), 3)
@@ -339,7 +342,7 @@ func TestProcessChunkWith(t *testing.T) {
 		kvWriter := mock.NewMockEngineWriter(ctrl)
 		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		progress := importer.NewProgress()
-		checksum := verify.NewKVGroupChecksumWithKeyspace(store.GetCodec())
+		checksum := verify.NewKVGroupChecksumWithKeyspace(keyspace)
 		err := importer.ProcessChunkWithWriter(ctx, chunkInfo, ti, kvWriter, kvWriter, progress, zap.NewExample(), checksum)
 		require.NoError(t, err)
 		require.Len(t, progress.GetColSize(), 3)

@@ -137,6 +137,7 @@ character_maximum_length	character_octet_length
 4	16
 drop table t;
 set global tidb_ddl_enable_fast_reorg = false;
+set global tidb_enable_dist_task = false;
 drop database if exists test_ddl_jobs;
 create database test_ddl_jobs;
 select db_name, job_type from information_schema.DDL_JOBS limit 1;
@@ -174,6 +175,7 @@ test_ddl_jobs	tt	add index /* subjob */ /* txn */
 drop database test_ddl_jobs;
 use executor__infoschema_reader;
 set global tidb_ddl_enable_fast_reorg = default;
+set global tidb_enable_dist_task = default;
 select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
 def	mysql	tbl	def	mysql	stats_meta	table_id	1	NULL	NULL	NULL	NULL
@@ -318,3 +320,13 @@ tidb_mem_oom_action
 tidb_pessimistic_txn_fair_locking
 tidb_row_format_version
 tidb_txn_assertion_level
+drop table if exists t;
+CREATE TABLE t (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));
+insert into t(a, b, c) values(1, 2, 'c'), (7, 3, 'd'), (12, 4, 'e');
+analyze table t;
+select sleep(1);
+sleep(1)
+0
+select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t' AND TABLE_SCHEMA='executor__infoschema_reader';
+table_rows	avg_row_length	data_length	index_length
+3	18	54	6

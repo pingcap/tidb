@@ -46,6 +46,13 @@ func newRunningJobs() *runningJobs {
 	}
 }
 
+func (j *runningJobs) clear() {
+	j.Lock()
+	defer j.Unlock()
+	j.unfinishedIDs = make(map[int64]struct{})
+	j.unfinishedSchema = make(map[string]map[string]struct{})
+}
+
 func (j *runningJobs) add(job *model.Job) {
 	j.Lock()
 	defer j.Unlock()

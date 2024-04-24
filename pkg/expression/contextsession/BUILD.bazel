@@ -1,0 +1,53 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "contextsession",
+    srcs = ["sessionctx.go"],
+    importpath = "github.com/pingcap/tidb/pkg/expression/contextsession",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/errctx",
+        "//pkg/expression/context",
+        "//pkg/expression/contextopt",
+        "//pkg/infoschema/context",
+        "//pkg/parser/auth",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/privilege",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/context",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "//pkg/util/mathutil",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "contextsession_test",
+    timeout = "short",
+    srcs = ["sessionctx_test.go"],
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        ":contextsession",
+        "//pkg/errctx",
+        "//pkg/expression/context",
+        "//pkg/expression/contextopt",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/privilege",
+        "//pkg/types",
+        "//pkg/util/context",
+        "//pkg/util/mathutil",
+        "//pkg/util/mock",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//mock",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
+    ],
+)
