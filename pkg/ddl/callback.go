@@ -49,6 +49,7 @@ type Callback interface {
 	// OnChanged is called after a ddl statement is finished.
 	OnChanged(err error) error
 	// OnSchemaStateChanged is called after a schema state is changed.
+	// only called inside tests.
 	OnSchemaStateChanged(schemaVer int64)
 	// OnJobRunBefore is called before running job.
 	OnJobRunBefore(job *model.Job)

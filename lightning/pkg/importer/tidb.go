@@ -31,8 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -129,47 +127,6 @@ func NewTiDBManagerWithDB(db *sql.DB, sqlMode mysql.SQLMode) *TiDBManager {
 // Close closes the underlying database connection.
 func (timgr *TiDBManager) Close() {
 	timgr.db.Close()
-}
-
-func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
-	stmts, _, err := p.ParseSQL(createTable)
-	if err != nil {
-		return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
-	}
-
-	var res strings.Builder
-	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment|format.RestoreWithTTLEnableOff, &res)
-
-	retStmts := make([]string, 0, len(stmts))
-	for _, stmt := range stmts {
-		switch node := stmt.(type) {
-		case *ast.CreateDatabaseStmt:
-			node.Name = model.NewCIStr(dbName)
-			node.IfNotExists = true
-		case *ast.DropDatabaseStmt:
-			node.Name = model.NewCIStr(dbName)
-			node.IfExists = true
-		case *ast.CreateTableStmt:
-			node.Table.Schema = model.NewCIStr(dbName)
-			node.Table.Name = model.NewCIStr(tblName)
-			node.IfNotExists = true
-		case *ast.CreateViewStmt:
-			node.ViewName.Schema = model.NewCIStr(dbName)
-			node.ViewName.Name = model.NewCIStr(tblName)
-		case *ast.DropTableStmt:
-			node.Tables[0].Schema = model.NewCIStr(dbName)
-			node.Tables[0].Name = model.NewCIStr(tblName)
-			node.IfExists = true
-		}
-		if err := stmt.Restore(ctx); err != nil {
-			return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
-		}
-		ctx.WritePlain(";")
-		retStmts = append(retStmts, res.String())
-		res.Reset()
-	}
-
-	return retStmts, nil
 }
 
 // DropTable drops a table.

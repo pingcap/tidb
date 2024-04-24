@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
 
@@ -132,6 +133,7 @@ func allConstants(expr expression.Expression) bool {
 // isNullFiltered(A OR B) = isNullFiltered(A) AND isNullFiltered(B)
 // isNullFiltered(A AND B) = isNullFiltered(A) OR isNullFiltered(B)
 func isNullFiltered(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression, outerSchema *expression.Schema) bool {
+
 	// The expression should reference at least one field in innerSchema or all constants.
 	if !expression.ExprReferenceSchema(predicate, innerSchema) && !allConstants(predicate) {
 		return false
@@ -150,40 +152,9 @@ func isNullFiltered(ctx base.PlanContext, innerSchema *expression.Schema, predic
 			}
 			return isNullFiltered(ctx, innerSchema, expr.GetArgs()[1], outerSchema)
 		} else {
-			return isNullFilteredOneExpr(ctx, innerSchema, expr)
+			return util.IsNullRejected(ctx, innerSchema, expr)
 		}
 	default:
-		return isNullFilteredOneExpr(ctx, innerSchema, predicate)
+		return util.IsNullRejected(ctx, innerSchema, predicate)
 	}
-}
-
-// isNullFilteredOneExpr check whether a a single condition is null-filtered. A condition is null-filtered
-// boolean expression evaluates to FALSE or UNKNOWN if all the arguments are null.
-// The code goes over all the conditions and returns true if at least one is null filtering. For this module,
-// We just need to check one simple condition but the routine is also used as a general utility for checking if
-// any list of condition (in CNF form) is null-filtered.
-func isNullFilteredOneExpr(ctx base.PlanContext, schema *expression.Schema, expr expression.Expression) bool {
-	exprCtx := ctx.GetExprCtx()
-	expr = expression.PushDownNot(exprCtx, expr)
-	if expression.ContainOuterNot(expr) {
-		return false
-	}
-	sc := ctx.GetSessionVars().StmtCtx
-	if !exprCtx.IsInNullRejectCheck() {
-		exprCtx.SetInNullRejectCheck(true)
-		defer exprCtx.SetInNullRejectCheck(false)
-	}
-	for _, cond := range expression.SplitCNFItems(expr) {
-		result := expression.EvaluateExprWithNull(exprCtx, schema, cond)
-		x, ok := result.(*expression.Constant)
-		if !ok {
-			continue
-		}
-		if x.Value.IsNull() {
-			return true
-		} else if isTrue, err := x.Value.ToBool(sc.TypeCtxOrDefault()); err == nil && isTrue == 0 {
-			return true
-		}
-	}
-	return false
 }

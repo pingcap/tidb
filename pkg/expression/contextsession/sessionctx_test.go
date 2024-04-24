@@ -315,17 +315,6 @@ func TestSessionBuildContext(t *testing.T) {
 
 	// InNullRejectCheck
 	require.False(t, impl.IsInNullRejectCheck())
-	impl.SetInNullRejectCheck(true)
-	require.True(t, impl.IsInNullRejectCheck())
-	impl.SetInNullRejectCheck(false)
-	require.False(t, impl.IsInNullRejectCheck())
-
-	// InUnionCast
-	require.False(t, impl.IsInUnionCast())
-	impl.SetInUnionCast(true)
-	require.True(t, impl.IsInUnionCast())
-	impl.SetInUnionCast(false)
-	require.False(t, impl.IsInUnionCast())
 
 	// ConnID
 	vars.ConnectionID = 123

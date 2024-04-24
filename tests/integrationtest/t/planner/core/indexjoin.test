@@ -42,8 +42,8 @@ create table t3 (a int, b float, index idx (b));
 create table t4 (a int, b double);
 insert into t3 values (1, 1.0), (1, 2.0), (2, 3.0);
 insert into t4 values (1, 1.11111111);
-explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select b from t group by b) tmp, t1 where tmp.b=t1.b;
-select /*+ INL_JOIN(tmp) */ tmp.b, t1.b from (select b from t group by b) tmp, t1 where tmp.b=t1.b order by tmp.b, t1.b;
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select b from t3 group by b) tmp, t4 where tmp.b=t4.b;
+select /*+ INL_JOIN(tmp) */ tmp.b, t4.b from (select b from t3 group by b) tmp, t4 where tmp.b=t4.b order by tmp.b, t4.b;
 
 # Test the selection, projection inside of "zippedChildren"
 explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, b from t where a>=1 group by a, b) tmp, t1 where tmp.a=t1.a;

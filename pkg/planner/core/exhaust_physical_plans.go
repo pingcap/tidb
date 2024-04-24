@@ -1416,102 +1416,103 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 //
 // Step2: build other inner plan node to task
 func (p *LogicalJoin) constructIndexJoinInnerSideTask(dsCopTask *CopTask, ds *DataSource, path *util.AccessPath, wrapper *indexJoinInnerChildWrapper) base.Task {
-	if len(wrapper.zippedChildren) == 0 {
-		t := dsCopTask.ConvertToRootTask(ds.SCtx())
-		return t
+	var la *LogicalAggregation
+	var canPushAggToCop bool
+	if len(wrapper.zippedChildren) > 0 {
+		la, canPushAggToCop = wrapper.zippedChildren[len(wrapper.zippedChildren)-1].(*LogicalAggregation)
+		if la != nil && la.HasDistinct() {
+			// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
+			// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
+			if !la.SCtx().GetSessionVars().AllowDistinctAggPushDown {
+				canPushAggToCop = false
+			}
+		}
 	}
-	la, canPushAggToCop := wrapper.zippedChildren[len(wrapper.zippedChildren)-1].(*LogicalAggregation)
-	if la != nil && la.HasDistinct() {
-		// TODO: remove AllowDistinctAggPushDown after the cost estimation of distinct pushdown is implemented.
-		// If AllowDistinctAggPushDown is set to true, we should not consider RootTask.
-		if !la.SCtx().GetSessionVars().AllowDistinctAggPushDown {
-			canPushAggToCop = false
-		}
-	}
 
-	if canPushAggToCop {
-		// Try stream aggregation first.
-		// We will choose the stream aggregation if the following conditions are met:
-		// 1. Force hint stream agg by /*+ stream_agg() */
-		// 2. Other conditions copy from getStreamAggs() in exhaust_physical_plans.go
-		_, preferStream := la.ResetHintIfConflicted()
-		for _, aggFunc := range la.AggFuncs {
-			if aggFunc.Mode == aggregation.FinalMode {
-				preferStream = false
-				break
-			}
-		}
-		// group by a + b is not interested in any order.
-		groupByCols := la.GetGroupByCols()
-		if len(groupByCols) != len(la.GroupByItems) {
-			preferStream = false
-		}
-		if la.HasDistinct() && !la.distinctArgsMeetsProperty() {
-			preferStream = false
-		}
-		// sort items must be the super set of group by items
-		if path != nil && path.Index != nil && !path.Index.MVIndex &&
-			ds.tableInfo.GetPartitionInfo() == nil {
-			if len(path.IdxCols) < len(groupByCols) {
-				preferStream = false
-			}
-			sctx := p.SCtx()
-			for i, groupbyCol := range groupByCols {
-				if path.IdxColLens[i] != types.UnspecifiedLength ||
-					!groupbyCol.EqualByExprAndID(sctx.GetExprCtx().GetEvalCtx(), path.IdxCols[i]) {
-					preferStream = false
-				}
-			}
-		} else {
-			preferStream = false
-		}
-
-		// build physical agg and attach to task
-		var aggTask base.Task
-		// build stream agg and change ds keep order to true
-		if preferStream {
-			newGbyItems := make([]expression.Expression, len(la.GroupByItems))
-			copy(newGbyItems, la.GroupByItems)
-			newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
-			copy(newAggFuncs, la.AggFuncs)
-			streamAgg := basePhysicalAgg{
-				GroupByItems: newGbyItems,
-				AggFuncs:     newAggFuncs,
-			}.initForStream(la.SCtx(), la.StatsInfo(), la.QueryBlockOffset(), nil)
-			streamAgg.SetSchema(la.schema.Clone())
-			// change to keep order for index scan and dsCopTask
-			if dsCopTask.indexPlan != nil {
-				// get the index scan from dsCopTask.indexPlan
-				physicalIndexScan, _ := dsCopTask.indexPlan.(*PhysicalIndexScan)
-				if physicalIndexScan == nil && len(dsCopTask.indexPlan.Children()) == 1 {
-					physicalIndexScan, _ = dsCopTask.indexPlan.Children()[0].(*PhysicalIndexScan)
-				}
-				if physicalIndexScan != nil {
-					physicalIndexScan.KeepOrder = true
-					dsCopTask.keepOrder = true
-					aggTask = streamAgg.Attach2Task(dsCopTask)
-				}
-			}
-		}
-
-		// build hash agg, when the stream agg is illegal such as the order by prop is not matched
-		if aggTask == nil {
-			physicalHashAgg := NewPhysicalHashAgg(la, la.StatsInfo(), nil)
-			physicalHashAgg.SetSchema(la.schema.Clone())
-			aggTask = physicalHashAgg.Attach2Task(dsCopTask)
-		}
-
-		// build other inner plan node to task
-		result, ok := aggTask.(*RootTask)
-		if !ok {
-			return nil
-		}
-		result.p = p.constructInnerByZippedChildren(wrapper.zippedChildren[0:len(wrapper.zippedChildren)-1], result.p)
+	// If the bottom plan is not aggregation or the aggregation can't be pushed to coprocessor, we will construct a root task directly.
+	if !canPushAggToCop {
+		result := dsCopTask.ConvertToRootTask(ds.SCtx()).(*RootTask)
+		result.SetPlan(p.constructInnerByZippedChildren(wrapper.zippedChildren, result.GetPlan()))
 		return result
 	}
 
-	result := dsCopTask.ConvertToRootTask(ds.SCtx()).(*RootTask)
-	result.SetPlan(p.constructInnerByZippedChildren(wrapper.zippedChildren, result.GetPlan()))
+	// Try stream aggregation first.
+	// We will choose the stream aggregation if the following conditions are met:
+	// 1. Force hint stream agg by /*+ stream_agg() */
+	// 2. Other conditions copy from getStreamAggs() in exhaust_physical_plans.go
+	_, preferStream := la.ResetHintIfConflicted()
+	for _, aggFunc := range la.AggFuncs {
+		if aggFunc.Mode == aggregation.FinalMode {
+			preferStream = false
+			break
+		}
+	}
+	// group by a + b is not interested in any order.
+	groupByCols := la.GetGroupByCols()
+	if len(groupByCols) != len(la.GroupByItems) {
+		preferStream = false
+	}
+	if la.HasDistinct() && !la.distinctArgsMeetsProperty() {
+		preferStream = false
+	}
+	// sort items must be the super set of group by items
+	if path != nil && path.Index != nil && !path.Index.MVIndex &&
+		ds.tableInfo.GetPartitionInfo() == nil {
+		if len(path.IdxCols) < len(groupByCols) {
+			preferStream = false
+		}
+		sctx := p.SCtx()
+		for i, groupbyCol := range groupByCols {
+			if path.IdxColLens[i] != types.UnspecifiedLength ||
+				!groupbyCol.EqualByExprAndID(sctx.GetExprCtx().GetEvalCtx(), path.IdxCols[i]) {
+				preferStream = false
+			}
+		}
+	} else {
+		preferStream = false
+	}
+
+	// build physical agg and attach to task
+	var aggTask base.Task
+	// build stream agg and change ds keep order to true
+	if preferStream {
+		newGbyItems := make([]expression.Expression, len(la.GroupByItems))
+		copy(newGbyItems, la.GroupByItems)
+		newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))
+		copy(newAggFuncs, la.AggFuncs)
+		streamAgg := basePhysicalAgg{
+			GroupByItems: newGbyItems,
+			AggFuncs:     newAggFuncs,
+		}.initForStream(la.SCtx(), la.StatsInfo(), la.QueryBlockOffset(), nil)
+		streamAgg.SetSchema(la.schema.Clone())
+		// change to keep order for index scan and dsCopTask
+		if dsCopTask.indexPlan != nil {
+			// get the index scan from dsCopTask.indexPlan
+			physicalIndexScan, _ := dsCopTask.indexPlan.(*PhysicalIndexScan)
+			if physicalIndexScan == nil && len(dsCopTask.indexPlan.Children()) == 1 {
+				physicalIndexScan, _ = dsCopTask.indexPlan.Children()[0].(*PhysicalIndexScan)
+			}
+			if physicalIndexScan != nil {
+				physicalIndexScan.KeepOrder = true
+				dsCopTask.keepOrder = true
+				aggTask = streamAgg.Attach2Task(dsCopTask)
+			}
+		}
+	}
+
+	// build hash agg, when the stream agg is illegal such as the order by prop is not matched
+	if aggTask == nil {
+		physicalHashAgg := NewPhysicalHashAgg(la, la.StatsInfo(), nil)
+		physicalHashAgg.SetSchema(la.schema.Clone())
+		aggTask = physicalHashAgg.Attach2Task(dsCopTask)
+	}
+
+	// build other inner plan node to task
+	result, ok := aggTask.(*RootTask)
+	if !ok {
+		return nil
+	}
+	result.SetPlan(p.constructInnerByZippedChildren(wrapper.zippedChildren[0:len(wrapper.zippedChildren)-1], result.p))
 	return result
 }
 

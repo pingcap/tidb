@@ -81,18 +81,6 @@
         ]
       },
       {
-        "SQL": "select * from t2 left outer join t1 on a1=a2 where b2+b1 > 2; -- expression evaluates to UNKNOWN/FALSE even though we have fields from outer table",
-        "Plan": [
-          "HashJoin 12487.50 root  inner join, equal:[eq(test.t2.a2, test.t1.a1)], other cond:gt(plus(test.t2.b2, test.t1.b1), 2)",
-          "├─TableReader(Build) 9990.00 root  data:Selection",
-          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 9990.00 root  data:Selection",
-          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ]
-      },
-      {
         "SQL": "select * from t2 left outer join t1 on a1=a2 where coalesce(b1,2)  > 2; -- false condition for b1=NULL",
         "Plan": [
           "Projection 9990.00 root  test.t2.a2, test.t2.b2, test.t2.c2, test.t1.a1, test.t1.b1, test.t1.c1",

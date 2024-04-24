@@ -8,7 +8,6 @@
       "select * from t1 left outer join t2 on a1=a2 where c2 = 5 OR b2 < 55 -- case with A OR B (Both A  and B are null filtering)",
       "select * from t1 left outer join t2 on a1=a2 where c2 = 5 AND b2 is null -- case with A AND B (A is null filtering and B is not)",
       "select * from t2 left outer join t1 on a1=a2 where b1+b1 > 2; -- expression evaluates to UNKNOWN/FALSE",
-      "select * from t2 left outer join t1 on a1=a2 where b2+b1 > 2; -- expression evaluates to UNKNOWN/FALSE even though we have fields from outer table",
       "select * from t2 left outer join t1 on a1=a2 where coalesce(b1,2)  > 2; -- false condition for b1=NULL",
       "select * from t2 left outer join t1 on a1=a2 where true and b1 = 5; -- AND with one branch is null filtering",
       "select * from t2 left outer join t1 on a1=a2 where false OR b1 = 5; -- OR with both branches are null filtering",
