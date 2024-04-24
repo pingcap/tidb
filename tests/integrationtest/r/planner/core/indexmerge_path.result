@@ -985,3 +985,42 @@ Selection	31.95	root		or(json_contains(planner__core__indexmerge_path.t1.col_45,
   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:idx_17(cast(`col_45` as double array))	range:[0.5226516826882698,0.5226516826882698], keep order:false, stats:pseudo
   └─Selection(Probe)	26.59	cop[tikv]		or(lt(planner__core__indexmerge_path.t1.col_44, 1980-03-18 00:00:00.000000), gt(planner__core__indexmerge_path.t1.col_44, 2011-10-24 00:00:00.000000))
     └─TableRowIDScan	39.94	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t;
+create table t(pk varbinary(255) primary key, a int, b varchar(50), c int, d varchar(45), index ia(a), index ib(b), index ic(c), index id(d));
+EXPLAIN format = brief SELECT /*+ use_index_merge(t) */ * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
+id	estRows	task	access object	operator info
+IndexMerge	0.03	root		type: union
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:["2","2"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ic(c)	range:[3,3], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:id(d)	range:["4","4"], keep order:false, stats:pseudo
+└─Selection(Probe)	0.03	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1)
+  └─TableRowIDScan	29.97	cop[tikv]	table:t	keep order:false, stats:pseudo
+EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
+id	estRows	task	access object	operator info
+IndexLookUp	0.03	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ia(a)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	0.03	cop[tikv]		or(eq(planner__core__indexmerge_path.t.b, "2"), or(eq(planner__core__indexmerge_path.t.c, 3), eq(planner__core__indexmerge_path.t.d, "4")))
+  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR d = '4');
+id	estRows	task	access object	operator info
+TableReader	9.99	root		data:Selection
+└─Selection	9.99	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1), or(eq(planner__core__indexmerge_path.t.b, "2"), or(eq(planner__core__indexmerge_path.t.c, 3), eq(planner__core__indexmerge_path.t.d, "4")))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+SET @@tidb_opt_fix_control = '52869:on';
+EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
+id	estRows	task	access object	operator info
+IndexMerge	0.03	root		type: union
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:["2","2"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ic(c)	range:[3,3], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:id(d)	range:["4","4"], keep order:false, stats:pseudo
+└─Selection(Probe)	0.03	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1)
+  └─TableRowIDScan	29.97	cop[tikv]	table:t	keep order:false, stats:pseudo
+EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR d = '4');
+id	estRows	task	access object	operator info
+IndexMerge	9.99	root		type: union
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:["2","2"], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ic(c)	range:[3,3], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:id(d)	range:["4","4"], keep order:false, stats:pseudo
+└─Selection(Probe)	9.99	cop[tikv]		gt(planner__core__indexmerge_path.t.a, 1)
+  └─TableRowIDScan	29.97	cop[tikv]	table:t	keep order:false, stats:pseudo
+SET @@tidb_opt_fix_control = default;

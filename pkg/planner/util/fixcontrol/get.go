@@ -47,6 +47,8 @@ const (
 	// Fix49736 controls whether to force the optimizer to use plan cache even if there is risky optimization.
 	// This fix-control is test-only.
 	Fix49736 uint64 = 49736
+	// Fix52869 controls whether to disable the limitation that index merge path won't be generated automatically when
+	// there exist other single-index access paths that do range scan.
 	Fix52869 uint64 = 52869
 )
 
