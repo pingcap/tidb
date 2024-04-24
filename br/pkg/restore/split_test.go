@@ -252,7 +252,8 @@ func initTestClient(isRawKv bool) *TestClient {
 		}
 		regions[i] = &split.RegionInfo{
 			Leader: &metapb.Peer{
-				Id: i,
+				Id:      i,
+				StoreId: 1,
 			},
 			Region: &metapb.Region{
 				Id:       i,
