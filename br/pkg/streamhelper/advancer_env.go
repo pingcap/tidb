@@ -48,12 +48,13 @@ type PDRegionScanner struct {
 // Returns the minimal service GC safe point across all services.
 // If the arguments is `0`, this would remove the service safe point.
 func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
-	minimalSafePoint, err := c.UpdateServiceGCSafePoint(ctx, logBackupServiceID, int64(logBackupSafePointTTL.Seconds()), at)
+	minimalSafePoint, err := c.UpdateServiceGCSafePoint(
+		ctx, logBackupServiceID, int64(logBackupSafePointTTL.Seconds()), at)
 	if err != nil {
 		return 0, errors.Annotate(err, "failed to block gc until")
 	}
 	if minimalSafePoint > at {
-		return 0, errors.Errorf("failed to block gc until, minimal safe point %d is greater than the target %d", minimalSafePoint, at)
+		return 0, errors.Errorf("minimal safe point %d is greater than the target %d", minimalSafePoint, at)
 	}
 	return at, nil
 }
