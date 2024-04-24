@@ -54,8 +54,6 @@ while true; do
 
     retry_cnt=$((retry_cnt+1))
     if [ "$retry_cnt" -gt 50 ]; then
-        run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs';"
-        cat $res_file
         echo 'the wait lag is too large'
         exit 1
     fi
