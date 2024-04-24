@@ -433,6 +433,8 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	// After column prune, the output schema of A join B will be A.id only; while the task's hashCols will be B.id.
 	// To make matters worse, the hashCols may be used to check if extra cast projection needs to be added, then the newly
 	// added projection will expect B.id as input schema. So make sure hashCols are included in task.p's schema.
+	// TODO: planner should takes the hashCols attribute into consideration when perform column pruning; Or provide mechanism
+	// to constraint hashCols are always chosen inside Join's pruned schema
 	for _, hashCol := range task.hashCols {
 		hashColArray = append(hashColArray, hashCol.Col)
 	}
