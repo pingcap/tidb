@@ -3086,8 +3086,8 @@ func upgradeToVer196(s sessiontypes.Session, ver int64) {
 		return
 	}
 
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN target_scope VARCHAR(256) DEAFAULT '' AFTER `step`;")
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN target_scope VARCHAR(256) DEAFAULT '' AFTER `step`;")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;")
 }
 
 func writeOOMAction(s sessiontypes.Session) {
