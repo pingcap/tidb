@@ -15,6 +15,8 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -25,7 +27,6 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -296,7 +297,7 @@ type basePhysicalPlan struct {
 	// used by the new cost interface
 	planCostInit bool
 	planCost     float64
-	planCostVer2 coreusage.CostVer2
+	planCostVer2 costusage.CostVer2
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in op.PhysicalPlan for details.
@@ -521,7 +522,7 @@ func (*baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	if len(p.children) == 0 {
 		return p.self, nil
 	}
@@ -607,7 +608,7 @@ func (p *baseLogicalPlan) BuildPlanTrace() *tracing.PlanTrace {
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
-func (p *basePhysicalPlan) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+func (p *basePhysicalPlan) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	if len(p.Children()) < 1 {
 		return
 	}

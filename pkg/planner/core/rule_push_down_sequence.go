@@ -16,9 +16,9 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
 
 type pushDownSequenceSolver struct {
@@ -28,7 +28,7 @@ func (*pushDownSequenceSolver) name() string {
 	return "push_down_sequence"
 }
 
-func (pdss *pushDownSequenceSolver) optimize(_ context.Context, lp base.LogicalPlan, _ *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (pdss *pushDownSequenceSolver) optimize(_ context.Context, lp base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return pdss.recursiveOptimize(nil, lp), planChanged, nil
 }

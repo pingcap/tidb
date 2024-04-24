@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"slices"
 	"strings"
 
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -138,7 +138,7 @@ func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, nam
 }
 
 // inlineProjection prunes unneeded columns inline a executor.
-func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *coreusage.LogicalOptimizeOp) {
+func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) {
 	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(s.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, s.Schema())
 	for i := len(used) - 1; i >= 0; i-- {

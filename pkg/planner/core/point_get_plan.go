@@ -15,6 +15,8 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	math2 "math"
 	"strconv"
 	"strings"
@@ -36,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -97,7 +98,7 @@ type PointGetPlan struct {
 	// required by cost model
 	planCostInit bool
 	planCost     float64
-	planCostVer2 coreusage.CostVer2
+	planCostVer2 costusage.CostVer2
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
 
@@ -266,7 +267,7 @@ func (p *PointGetPlan) SetOutputNames(names types.NameSlice) {
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
-func (*PointGetPlan) AppendChildCandidate(_ *coreusage.PhysicalOptimizeOp) {}
+func (*PointGetPlan) AppendChildCandidate(_ *optimizetrace.PhysicalOptimizeOp) {}
 
 const emptyPointGetPlanSize = int64(unsafe.Sizeof(PointGetPlan{}))
 
@@ -440,7 +441,7 @@ type BatchPointGetPlan struct {
 	// required by cost model
 	planCostInit bool
 	planCost     float64
-	planCostVer2 coreusage.CostVer2
+	planCostVer2 costusage.CostVer2
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
 
@@ -582,7 +583,7 @@ func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
-func (*BatchPointGetPlan) AppendChildCandidate(_ *coreusage.PhysicalOptimizeOp) {}
+func (*BatchPointGetPlan) AppendChildCandidate(_ *optimizetrace.PhysicalOptimizeOp) {}
 
 const emptyBatchPointGetPlanSize = int64(unsafe.Sizeof(BatchPointGetPlan{}))
 

@@ -12,14 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package coreusage
+package optimizetrace
 
-import "github.com/pingcap/tidb/pkg/util/tracing"
+import (
+	"github.com/pingcap/tidb/pkg/util/tracing"
+)
 
-// optTracer define those basic element for logical optimizing trace and physical optimizing trace.
-// logicalOptRule inside the accommodated pkg `util` should only be depended on by logical `rule` pkg.
+// optimizetrace and costusage is isolated from util because core/base depended on them for
+// interface definition. Ideally, the dependency chain should be:
 //
-//  rule related -----> core/util
+// `base` <- `util`/`util.coreusage` <- `core`
+//    ^ +---------------^                  |
+//    +------------------------------------+
+//
+// since `base` depended on optimizetrace and costusage for definition, we should separate
+// them out of `util`/`util.coreusage` to avoid import cycle.
+//
+// util.optimizetrace/util.costusage  <- `base` <- `util`/`util.coreusage` <- `core`
+//   				^   		            ^                                    ||
+//   				|   		            +------------------------------------+|
+//                  +-------------------------------------------------------------+
+//
+// optTracer define those basic element for logical optimizing trace and physical optimizing trace.
+//
 //********************** below logical optimize trace related *************************
 
 // LogicalOptimizeOp  is logical optimizing option for tracing.
@@ -121,6 +136,8 @@ func (op *PlanCostOption) WithCostFlag(flag uint64) *PlanCostOption {
 	op.CostFlag = flag
 	return op
 }
+
+var CostFlagTrace uint64
 
 // WithOptimizeTracer set tracer
 func (op *PlanCostOption) WithOptimizeTracer(v *PhysicalOptimizeOp) *PlanCostOption {

@@ -16,13 +16,13 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +35,7 @@ func (ds mockDataSource) Init(ctx base.PlanContext) *mockDataSource {
 	return &ds
 }
 
-func (ds *mockDataSource) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *coreusage.PhysicalOptimizeOp) (base.Task, int64, error) {
+func (ds *mockDataSource) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	// It can satisfy any of the property!
 	// Just use a TableDual for convenience.
 	p := PhysicalTableDual{}.Init(ds.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
@@ -148,7 +148,7 @@ func TestCostOverflow(t *testing.T) {
 	mockPlan.SetChildren(mockDS)
 	// An empty property is enough for this test.
 	prop := property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false)
-	task, _, err := mockPlan.FindBestTask(prop, &PlanCounterDisabled, coreusage.DefaultPhysicalOptimizeOption())
+	task, _, err := mockPlan.FindBestTask(prop, &PlanCounterDisabled, optimizetrace.DefaultPhysicalOptimizeOption())
 	require.NoError(t, err)
 	// The cost should be overflowed, but the task shouldn't be invalid.
 	require.False(t, task.Invalid())
@@ -177,7 +177,7 @@ func TestEnforcedProperty(t *testing.T) {
 		CanAddEnforcer: false,
 	}
 	// should return invalid task because no physical plan can match this property.
-	task, _, err := mockPlan.FindBestTask(prop0, &PlanCounterDisabled, coreusage.DefaultPhysicalOptimizeOption())
+	task, _, err := mockPlan.FindBestTask(prop0, &PlanCounterDisabled, optimizetrace.DefaultPhysicalOptimizeOption())
 	require.NoError(t, err)
 	require.True(t, task.Invalid())
 
@@ -186,7 +186,7 @@ func TestEnforcedProperty(t *testing.T) {
 		CanAddEnforcer: true,
 	}
 	// should return the valid task when the property is enforced.
-	task, _, err = mockPlan.FindBestTask(prop1, &PlanCounterDisabled, coreusage.DefaultPhysicalOptimizeOption())
+	task, _, err = mockPlan.FindBestTask(prop1, &PlanCounterDisabled, optimizetrace.DefaultPhysicalOptimizeOption())
 	require.NoError(t, err)
 	require.False(t, task.Invalid())
 }
@@ -212,7 +212,7 @@ func TestHintCannotFitProperty(t *testing.T) {
 		SortItems:      items,
 		CanAddEnforcer: true,
 	}
-	task, _, err := mockPlan0.FindBestTask(prop0, &PlanCounterDisabled, coreusage.DefaultPhysicalOptimizeOption())
+	task, _, err := mockPlan0.FindBestTask(prop0, &PlanCounterDisabled, optimizetrace.DefaultPhysicalOptimizeOption())
 	require.NoError(t, err)
 	require.False(t, task.Invalid())
 	_, enforcedSort := task.Plan().(*PhysicalSort)
@@ -228,7 +228,7 @@ func TestHintCannotFitProperty(t *testing.T) {
 		SortItems:      items,
 		CanAddEnforcer: false,
 	}
-	task, _, err = mockPlan0.FindBestTask(prop1, &PlanCounterDisabled, coreusage.DefaultPhysicalOptimizeOption())
+	task, _, err = mockPlan0.FindBestTask(prop1, &PlanCounterDisabled, optimizetrace.DefaultPhysicalOptimizeOption())
 	require.NoError(t, err)
 	require.False(t, task.Invalid())
 	_, enforcedSort = task.Plan().(*PhysicalSort)
@@ -249,7 +249,7 @@ func TestHintCannotFitProperty(t *testing.T) {
 		canGeneratePlan2: false,
 	}.Init(ctx)
 	mockPlan1.SetChildren(mockDS)
-	task, _, err = mockPlan1.FindBestTask(prop2, &PlanCounterDisabled, coreusage.DefaultPhysicalOptimizeOption())
+	task, _, err = mockPlan1.FindBestTask(prop2, &PlanCounterDisabled, optimizetrace.DefaultPhysicalOptimizeOption())
 	require.NoError(t, err)
 	require.False(t, task.Invalid())
 	require.Equal(t, uint16(1), ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -265,7 +265,7 @@ func TestHintCannotFitProperty(t *testing.T) {
 		SortItems:      items,
 		CanAddEnforcer: true,
 	}
-	task, _, err = mockPlan1.FindBestTask(prop3, &PlanCounterDisabled, coreusage.DefaultPhysicalOptimizeOption())
+	task, _, err = mockPlan1.FindBestTask(prop3, &PlanCounterDisabled, optimizetrace.DefaultPhysicalOptimizeOption())
 	require.NoError(t, err)
 	require.False(t, task.Invalid())
 	require.Equal(t, uint16(1), ctx.GetSessionVars().StmtCtx.WarningCount())

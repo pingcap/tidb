@@ -16,11 +16,11 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
 
 // constantPropagationSolver can support constant propagated cross-query block.
@@ -52,7 +52,7 @@ type constantPropagationSolver struct {
 // which is mainly implemented in the interface "constantPropagation" of LogicalPlan.
 // Currently only the Logical Join implements this function. (Used for the subquery in FROM List)
 // In the future, the Logical Apply will implements this function. (Used for the subquery in WHERE or SELECT list)
-func (cp *constantPropagationSolver) optimize(_ context.Context, p base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (cp *constantPropagationSolver) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	// constant propagation root plan
 	newRoot := p.ConstantPropagation(nil, 0, opt)
@@ -69,7 +69,7 @@ func (cp *constantPropagationSolver) optimize(_ context.Context, p base.LogicalP
 }
 
 // execOptimize optimize constant propagation exclude root plan node
-func (cp *constantPropagationSolver) execOptimize(currentPlan base.LogicalPlan, parentPlan base.LogicalPlan, currentChildIdx int, opt *coreusage.LogicalOptimizeOp) {
+func (cp *constantPropagationSolver) execOptimize(currentPlan base.LogicalPlan, parentPlan base.LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) {
 	if parentPlan == nil {
 		// Attention: The function 'execOptimize' could not handle the root plan, so the parent plan could not be nil.
 		return
@@ -87,7 +87,7 @@ func (*constantPropagationSolver) name() string {
 }
 
 // ConstantPropagation implements the LogicalPlan interface.
-func (*baseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int, _ *coreusage.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
+func (*baseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int, _ *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
 	// Only LogicalJoin can apply constant propagation
 	// Other Logical plan do nothing
 	return nil
@@ -145,7 +145,7 @@ func (*baseLogicalPlan) ConstantPropagation(_ base.LogicalPlan, _ int, _ *coreus
 */
 // Return nil if the root of plan has not been changed
 // Return new root if the root of plan is changed to selection
-func (logicalJoin *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentChildIdx int, opt *coreusage.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
+func (logicalJoin *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
 	// step1: get constant predicate from left or right according to the JoinType
 	var getConstantPredicateFromLeft bool
 	var getConstantPredicateFromRight bool
@@ -273,7 +273,7 @@ func validCompareConstantPredicate(candidatePredicate expression.Expression) boo
 // If the currentPlan at the top of query plan, return new root plan (selection)
 // Else return nil
 func addCandidateSelection(currentPlan base.LogicalPlan, currentChildIdx int, parentPlan base.LogicalPlan,
-	candidatePredicates []expression.Expression, opt *coreusage.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
+	candidatePredicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
 	// generate a new selection for candidatePredicates
 	selection := LogicalSelection{Conditions: candidatePredicates}.Init(currentPlan.SCtx(), currentPlan.QueryBlockOffset())
 	// add selection above of p

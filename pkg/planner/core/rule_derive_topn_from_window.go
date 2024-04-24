@@ -17,20 +17,20 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 )
 
 // deriveTopNFromWindow pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.
 type deriveTopNFromWindow struct {
 }
 
-func appendDerivedTopNTrace(topN base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) {
+func appendDerivedTopNTrace(topN base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) {
 	child := topN.Children()[0]
 	action := func() string {
 		return fmt.Sprintf("%v_%v top N added below  %v_%v ", topN.TP(), topN.ID(), child.TP(), child.ID())
@@ -118,13 +118,13 @@ func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 	return false, 0
 }
 
-func (*deriveTopNFromWindow) optimize(_ context.Context, p base.LogicalPlan, opt *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*deriveTopNFromWindow) optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return p.DeriveTopN(opt), planChanged, nil
 }
 
 // DeriveTopN implements the LogicalPlan interface.
-func (s *baseLogicalPlan) DeriveTopN(opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
+func (s *baseLogicalPlan) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	p := s.self
 	if p.SCtx().GetSessionVars().AllowDeriveTopN {
 		for i, child := range p.Children() {
@@ -136,7 +136,7 @@ func (s *baseLogicalPlan) DeriveTopN(opt *coreusage.LogicalOptimizeOp) base.Logi
 }
 
 // DeriveTopN implements the LogicalPlan interface.
-func (s *LogicalSelection) DeriveTopN(opt *coreusage.LogicalOptimizeOp) base.LogicalPlan {
+func (s *LogicalSelection) DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	p := s.self.(*LogicalSelection)
 	windowIsTopN, limitValue := windowIsTopN(p)
 	if windowIsTopN {

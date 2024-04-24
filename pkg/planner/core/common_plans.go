@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"strconv"
 	"strings"
 
@@ -29,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -860,12 +861,12 @@ func (e *Explain) RenderResult() error {
 		pp, ok := e.TargetPlan.(base.PhysicalPlan)
 		if ok {
 			if _, err := getPlanCost(pp, property.RootTaskType,
-				coreusage.NewDefaultPlanCostOption().WithCostFlag(coreusage.CostFlagRecalculate|coreusage.CostFlagUseTrueCardinality|coreusage.CostFlagTrace)); err != nil {
+				optimizetrace.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate|costusage.CostFlagUseTrueCardinality|costusage.CostFlagTrace)); err != nil {
 				return err
 			}
 			if pp.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 				// output cost formula and factor costs through warning under model ver2 and true_card_cost mode for cost calibration.
-				cost, _ := pp.GetPlanCostVer2(property.RootTaskType, coreusage.NewDefaultPlanCostOption())
+				cost, _ := pp.GetPlanCostVer2(property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 				if cost.GetTrace() != nil {
 					trace := cost.GetTrace()
 					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("cost formula: %v", trace.GetFormula()))
@@ -899,7 +900,7 @@ func (e *Explain) RenderResult() error {
 		if pp, ok := e.TargetPlan.(base.PhysicalPlan); ok {
 			// trigger getPlanCost again with CostFlagTrace to record all cost formulas
 			if _, err := getPlanCost(pp, property.RootTaskType,
-				coreusage.NewDefaultPlanCostOption().WithCostFlag(coreusage.CostFlagRecalculate|coreusage.CostFlagTrace)); err != nil {
+				optimizetrace.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate|costusage.CostFlagTrace)); err != nil {
 				return err
 			}
 		}
@@ -1146,13 +1147,13 @@ func (e *Explain) getOperatorInfo(p base.Plan, id string) (estRows, estCost, cos
 	if isPhysicalPlan {
 		estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
 		if e.SCtx() != nil && e.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
-			costVer2, _ := pp.GetPlanCostVer2(property.RootTaskType, coreusage.NewDefaultPlanCostOption())
+			costVer2, _ := pp.GetPlanCostVer2(property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(costVer2.GetCost(), 'f', 2, 64)
 			if costVer2.GetTrace() != nil {
 				costFormula = costVer2.GetTrace().GetFormula()
 			}
 		} else {
-			planCost, _ := getPlanCost(pp, property.RootTaskType, coreusage.NewDefaultPlanCostOption())
+			planCost, _ := getPlanCost(pp, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
 		}
 	} else if si := p.StatsInfo(); si != nil {
@@ -1256,7 +1257,7 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 
 	if fop.IsPhysicalPlan {
 		p := fop.Origin.(base.PhysicalPlan)
-		out.Cost, _ = getPlanCost(p, property.RootTaskType, coreusage.NewDefaultPlanCostOption())
+		out.Cost, _ = getPlanCost(p, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 		out.EstRows = p.GetEstRowCountForDisplay()
 	} else if statsInfo := fop.Origin.StatsInfo(); statsInfo != nil {
 		out.EstRows = statsInfo.RowCount
