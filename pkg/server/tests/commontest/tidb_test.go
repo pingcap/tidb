@@ -3083,12 +3083,7 @@ func TestConnectionCount(t *testing.T) {
 	ts.RunTestConnectionCount(t)
 }
 
-func TestTypeOfSendLongData(t *testing.T) {
+func TestTypeAndCharsetOfSendLongData(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
-	ts.RunTestTypeOfSendLongData(t)
-}
-
-func TestCharsetOfSendLongData(t *testing.T) {
-	ts := servertestkit.CreateTidbTestSuite(t)
-	ts.RunTestCharsetOfSendLongData(t)
+	ts.RunTestTypeAndCharsetOfSendLongData(t)
 }
