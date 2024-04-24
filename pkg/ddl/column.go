@@ -40,13 +40,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
@@ -1339,7 +1339,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	// Since every updateColumnWorker handle their own work individually, we can cache warning in statement context when casting datum.
 	oldWarn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
 	if oldWarn == nil {
-		oldWarn = []stmtctx.SQLWarn{}
+		oldWarn = []contextutil.SQLWarn{}
 	} else {
 		oldWarn = oldWarn[:0]
 	}
@@ -1948,7 +1948,9 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (any, error) {
 	var err error
 	odValue := col.GetDefaultValue()
-	if odValue == nil && mysql.HasNotNullFlag(col.GetFlag()) {
+	if odValue == nil && mysql.HasNotNullFlag(col.GetFlag()) ||
+		// It's for drop column and modify column.
+		(col.DefaultIsExpr && odValue != strings.ToUpper(ast.CurrentTimestamp) && ctx == nil) {
 		switch col.GetType() {
 		// Just use enum field's first element for OriginDefaultValue.
 		case mysql.TypeEnum:
@@ -1978,6 +1980,29 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 			odValue = types.NewTime(types.FromGoTime(t.UTC()), col.GetType(), col.GetDecimal()).String()
 		} else if col.GetType() == mysql.TypeDatetime {
 			odValue = types.NewTime(types.FromGoTime(t), col.GetType(), col.GetDecimal()).String()
+		}
+		return odValue, nil
+	}
+
+	if col.DefaultIsExpr && ctx != nil {
+		valStr, ok := odValue.(string)
+		if !ok {
+			return nil, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String())
+		}
+		oldValue := strings.ToLower(valStr)
+		// It's checked in getFuncCallDefaultValue.
+		if !strings.Contains(oldValue, fmt.Sprintf("%s(%s(),", ast.DateFormat, ast.Now)) &&
+			!strings.Contains(oldValue, ast.StrToDate) {
+			return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction)
+		}
+
+		defVal, err := table.GetColDefaultValue(ctx.GetExprCtx(), col)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		odValue, err = defVal.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	return odValue, nil

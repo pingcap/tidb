@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package contextimpl
+package contextsession
 
 import (
 	"context"
@@ -29,10 +29,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -52,8 +52,7 @@ var _ exprctx.ExprContext = struct {
 type ExprCtxExtendedImpl struct {
 	sctx sessionctx.Context
 	*SessionEvalContext
-	inNullRejectCheck atomic.Bool
-	inUnionCast       atomic.Bool
+	inUnionCast atomic.Bool
 }
 
 // NewExprExtendedImpl creates a new ExprCtxExtendedImpl.
@@ -104,11 +103,11 @@ func (ctx *ExprCtxExtendedImpl) Rng() *mathutil.MysqlRng {
 // IsUseCache indicates whether to cache the build expression in plan cache.
 // If SetSkipPlanCache is invoked, it should return false.
 func (ctx *ExprCtxExtendedImpl) IsUseCache() bool {
-	return ctx.sctx.GetSessionVars().StmtCtx.UseCache
+	return ctx.sctx.GetSessionVars().StmtCtx.UseCache()
 }
 
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
-func (ctx *ExprCtxExtendedImpl) SetSkipPlanCache(reason error) {
+func (ctx *ExprCtxExtendedImpl) SetSkipPlanCache(reason string) {
 	ctx.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
 }
 
@@ -117,14 +116,9 @@ func (ctx *ExprCtxExtendedImpl) AllocPlanColumnID() int64 {
 	return ctx.sctx.GetSessionVars().AllocPlanColumnID()
 }
 
-// SetInNullRejectCheck sets whether the expression is in null reject check.
-func (ctx *ExprCtxExtendedImpl) SetInNullRejectCheck(in bool) {
-	ctx.inNullRejectCheck.Store(in)
-}
-
 // IsInNullRejectCheck returns whether the expression is in null reject check.
 func (ctx *ExprCtxExtendedImpl) IsInNullRejectCheck() bool {
-	return ctx.inNullRejectCheck.Load()
+	return false
 }
 
 // SetInUnionCast sets the flag to indicate whether the expression is in union cast.
@@ -146,12 +140,6 @@ func (ctx *ExprCtxExtendedImpl) GetWindowingUseHighPrecision() bool {
 // GetGroupConcatMaxLen returns the value of the 'group_concat_max_len' system variable.
 func (ctx *ExprCtxExtendedImpl) GetGroupConcatMaxLen() uint64 {
 	return ctx.sctx.GetSessionVars().GroupConcatMaxLen
-}
-
-// InInsertOrUpdate returns whether when are building an expression for insert or update statement.
-func (ctx *ExprCtxExtendedImpl) InInsertOrUpdate() bool {
-	sc := ctx.sctx.GetSessionVars().StmtCtx
-	return sc.InInsertStmt || sc.InUpdateStmt
 }
 
 // ConnectionID indicates the connection ID of the current session.
@@ -236,8 +224,13 @@ func (ctx *SessionEvalContext) WarningCount() int {
 }
 
 // TruncateWarnings truncates warnings begin from start and returns the truncated warnings.
-func (ctx *SessionEvalContext) TruncateWarnings(start int) []stmtctx.SQLWarn {
+func (ctx *SessionEvalContext) TruncateWarnings(start int) []contextutil.SQLWarn {
 	return ctx.sctx.GetSessionVars().StmtCtx.TruncateWarnings(start)
+}
+
+// CopyWarnings copies the warnings to dst
+func (ctx *SessionEvalContext) CopyWarnings(dst []contextutil.SQLWarn) []contextutil.SQLWarn {
+	return ctx.sctx.GetSessionVars().StmtCtx.CopyWarnings(dst)
 }
 
 // CurrentDB returns the current database name

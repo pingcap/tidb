@@ -15,7 +15,7 @@
 package session
 
 import (
-	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextimpl"
+	exprctximpl "github.com/pingcap/tidb/pkg/expression/contextsession"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	planctximpl "github.com/pingcap/tidb/pkg/planner/contextimpl"
 )

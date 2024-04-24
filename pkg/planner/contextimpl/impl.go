@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var _ context.PlanContext = struct {
@@ -28,13 +29,25 @@ var _ context.PlanContext = struct {
 
 // PlanCtxExtendedImpl provides extended method for session context to implement `PlanContext`
 type PlanCtxExtendedImpl struct {
-	sctx    sessionctx.Context
-	exprCtx exprctx.BuildContext
+	sctx                   sessionctx.Context
+	nullRejectCheckExprCtx *exprctx.NullRejectCheckExprContext
 }
 
 // NewPlanCtxExtendedImpl creates a new PlanCtxExtendedImpl.
 func NewPlanCtxExtendedImpl(sctx sessionctx.Context) *PlanCtxExtendedImpl {
-	return &PlanCtxExtendedImpl{sctx: sctx}
+	return &PlanCtxExtendedImpl{
+		sctx:                   sctx,
+		nullRejectCheckExprCtx: exprctx.WithNullRejectCheck(sctx.GetExprCtx()),
+	}
+}
+
+// GetNullRejectCheckExprCtx returns a context with null rejected check
+func (ctx *PlanCtxExtendedImpl) GetNullRejectCheckExprCtx() exprctx.ExprContext {
+	intest.AssertFunc(func() bool {
+		// assert `sctx.GetExprCtx()` should keep the same to avoid some unexpected behavior.
+		return ctx.nullRejectCheckExprCtx.ExprContext == ctx.sctx.GetExprCtx()
+	})
+	return ctx.nullRejectCheckExprCtx
 }
 
 // AdviseTxnWarmup advises the txn to warm up.
