@@ -50,6 +50,47 @@ func assertRegions(t *testing.T, regions []*split.RegionInfo, keys ...string) {
 	}
 }
 
+<<<<<<< HEAD
+=======
+// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+func initTestClient(isRawKv bool) *TestClient {
+	peers := make([]*metapb.Peer, 1)
+	peers[0] = &metapb.Peer{
+		Id:      1,
+		StoreId: 1,
+	}
+	keys := [6]string{"", "aay", "bba", "bbh", "cca", ""}
+	regions := make(map[uint64]*split.RegionInfo)
+	for i := uint64(1); i < 6; i++ {
+		startKey := []byte(keys[i-1])
+		if len(startKey) != 0 {
+			startKey = codec.EncodeBytesExt([]byte{}, startKey, isRawKv)
+		}
+		endKey := []byte(keys[i])
+		if len(endKey) != 0 {
+			endKey = codec.EncodeBytesExt([]byte{}, endKey, isRawKv)
+		}
+		regions[i] = &split.RegionInfo{
+			Leader: &metapb.Peer{
+				Id:      i,
+				StoreId: 1,
+			},
+			Region: &metapb.Region{
+				Id:       i,
+				Peers:    peers,
+				StartKey: startKey,
+				EndKey:   endKey,
+			},
+		}
+	}
+	stores := make(map[uint64]*metapb.Store)
+	stores[1] = &metapb.Store{
+		Id: 1,
+	}
+	return NewTestClient(stores, regions, 6)
+}
+
+>>>>>>> 0805e850d41 (br: handle region leader miss (#52822))
 func TestScanSuccess(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
@@ -244,7 +285,7 @@ func TestEpochNotMatch(t *testing.T) {
 				{Id: 43},
 			},
 		},
-		Leader: &metapb.Peer{Id: 43},
+		Leader: &metapb.Peer{Id: 43, StoreId: 1},
 	}
 	newRegion := pdtypes.NewRegionInfo(info.Region, info.Leader)
 	mergeRegion := func() {
@@ -303,7 +344,8 @@ func TestRegionSplit(t *testing.T) {
 				EndKey:   codec.EncodeBytes(nil, []byte("aayy")),
 			},
 			Leader: &metapb.Peer{
-				Id: 43,
+				Id:      43,
+				StoreId: 1,
 			},
 		},
 		{
@@ -313,7 +355,8 @@ func TestRegionSplit(t *testing.T) {
 				EndKey:   target.Region.EndKey,
 			},
 			Leader: &metapb.Peer{
-				Id: 45,
+				Id:      45,
+				StoreId: 1,
 			},
 		},
 	}

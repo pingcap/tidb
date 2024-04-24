@@ -23,6 +23,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/checksum",
+        "//br/pkg/errors",
         "//br/pkg/logutil",
         "//br/pkg/membuf",
         "//br/pkg/pdutil",
