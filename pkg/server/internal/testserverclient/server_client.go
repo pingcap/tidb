@@ -2728,7 +2728,7 @@ func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
 	})
 }
 
-func (cli *TestServerClient) RunTestTypeOfSendLongData(t *testing.T) {
+func (cli *TestServerClient) RunTestTypeAndCharsetOfSendLongData(t *testing.T) {
 	cli.RunTests(t, func(config *mysql.Config) {
 		config.MaxAllowedPacket = 1024
 	}, func(dbt *testkit.DBTestKit) {
@@ -2753,9 +2753,7 @@ func (cli *TestServerClient) RunTestTypeOfSendLongData(t *testing.T) {
 			require.Equal(t, str, j)
 		}
 	})
-}
 
-func (cli *TestServerClient) RunTestCharsetOfSendLongData(t *testing.T) {
 	str := strings.Repeat("你好", 1024)
 	enc := simplifiedchinese.GBK.NewEncoder()
 	gbkStr, err := enc.String(str)
@@ -2768,6 +2766,8 @@ func (cli *TestServerClient) RunTestCharsetOfSendLongData(t *testing.T) {
 		ctx := context.Background()
 
 		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "drop table t")
 		require.NoError(t, err)
 		_, err = conn.ExecContext(ctx, "CREATE TABLE t (t TEXT);")
 		require.NoError(t, err)
