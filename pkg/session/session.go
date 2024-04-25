@@ -846,7 +846,11 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 	}
 	originErr := errors.Cause(oldErr)
 	inErr, _ := originErr.(*errors.Error)
-	args := inErr.Args()
+	oldArgs := inErr.Args()
+	args := make([]any, len(oldArgs))
+	for i, arg := range oldArgs {
+		args[i] = arg
+	}
 	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 	if is == nil {
 		return nil
@@ -2274,6 +2278,17 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	rs, err = s.Exec(ctx)
+
+	// Pipelined-DML can return assertion error and write conflict here, handle them like we handle
+	// errors returned from commit.
+	if err != nil {
+		err = se.handleAssertionFailure(ctx, err)
+	}
+	newErr := se.tryReplaceWriteConflictError(err)
+	if newErr != nil {
+		err = newErr
+	}
+
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
