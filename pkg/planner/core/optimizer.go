@@ -41,8 +41,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -133,13 +133,13 @@ var optInteractionRuleList = map[logicalOptRule]logicalOptRule{}
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
 type logicalOptRule interface {
 	/* Return Parameters:
-	1. LogicalPlan: The optimized LogicalPlan after rule is applied
+	1. base.LogicalPlan: The optimized base.LogicalPlan after rule is applied
 	2. bool: Used to judge whether the plan is changed or not by logical rule.
 		 If the plan is changed, it will return true.
 		 The default value is false. It means that no interaction rule will be triggered.
 	3. error: If there is error during the rule optimizer, it will be thrown
 	*/
-	optimize(context.Context, LogicalPlan, *coreusage.LogicalOptimizeOp) (LogicalPlan, bool, error)
+	optimize(context.Context, base.LogicalPlan, *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error)
 	name() string
 }
 
@@ -152,7 +152,7 @@ func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node 
 	if err != nil {
 		return nil, err
 	}
-	if logic, ok := p.(LogicalPlan); ok {
+	if logic, ok := p.(base.LogicalPlan); ok {
 		RecheckCTE(logic)
 	}
 	return p, err
@@ -281,8 +281,8 @@ func doOptimize(
 	ctx context.Context,
 	sctx base.PlanContext,
 	flag uint64,
-	logic LogicalPlan,
-) (LogicalPlan, base.PhysicalPlan, float64, error) {
+	logic base.LogicalPlan,
+) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	flag = adjustOptimizationFlags(flag, logic)
 	logic, err := logicalOptimize(ctx, flag, logic)
@@ -293,7 +293,7 @@ func doOptimize(
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
-	planCounter := PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
+	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
 	if planCounter == 0 {
 		planCounter = -1
 	}
@@ -312,7 +312,7 @@ func doOptimize(
 	return logic, finalPlan, cost, nil
 }
 
-func adjustOptimizationFlags(flag uint64, logic LogicalPlan) uint64 {
+func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 	// If there is something after flagPrunColumns, do flagPrunColumnsAgain.
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
 		flag |= flagPrunColumnsAgain
@@ -337,7 +337,7 @@ func DoOptimize(
 	ctx context.Context,
 	sctx base.PlanContext,
 	flag uint64,
-	logic LogicalPlan,
+	logic base.LogicalPlan,
 ) (base.PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
@@ -969,16 +969,16 @@ func enableParallelApply(sctx base.PlanContext, plan base.PhysicalPlan) base.Phy
 }
 
 // LogicalOptimizeTest is just exported for test.
-func LogicalOptimizeTest(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
+func LogicalOptimizeTest(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
 	return logicalOptimize(ctx, flag, logic)
 }
 
-func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (LogicalPlan, error) {
+func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	opt := coreusage.DefaultLogicalOptimizeOption()
+	opt := optimizetrace.DefaultLogicalOptimizeOption()
 	vars := logic.SCtx().GetSessionVars()
 	if vars.StmtCtx.EnableOptimizeTrace {
 		vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
@@ -1030,12 +1030,12 @@ func isLogicalRuleDisabled(r logicalOptRule) bool {
 	return disabled
 }
 
-func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
+func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	if _, err := logic.recursiveDeriveStats(nil); err != nil {
+	if _, err := logic.RecursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}
 
@@ -1046,7 +1046,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan base.
 		ExpectedCnt: math.MaxFloat64,
 	}
 
-	opt := coreusage.DefaultPhysicalOptimizeOption()
+	opt := optimizetrace.DefaultPhysicalOptimizeOption()
 	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
 	if stmtCtx.EnableOptimizeTrace {
 		tracer := &tracing.PhysicalOptimizeTracer{
@@ -1067,7 +1067,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan base.
 	}
 
 	logic.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS = 0
-	t, _, err := logic.findBestTask(prop, planCounter, opt)
+	t, _, err := logic.FindBestTask(prop, planCounter, opt)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1085,7 +1085,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan base.
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
-	cost, err = getPlanCost(t.Plan(), property.RootTaskType, coreusage.NewDefaultPlanCostOption())
+	cost, err = getPlanCost(t.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 	return t.Plan(), cost, err
 }
 
@@ -1157,7 +1157,7 @@ func transformPhysicalPlan(p base.PhysicalPlan, f func(p base.PhysicalPlan) base
 	return f(p)
 }
 
-func existsCartesianProduct(p LogicalPlan) bool {
+func existsCartesianProduct(p base.LogicalPlan) bool {
 	if join, ok := p.(*LogicalJoin); ok && len(join.EqualConditions) == 0 {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 	}

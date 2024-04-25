@@ -56,3 +56,19 @@ func ParseMergeRegionSizeFromConfig(resp []byte) (uint64, uint64, error) {
 	urs := uint64(rs)
 	return urs, c.Cop.RegionSplitKeys, nil
 }
+
+func ParseLogBackupEnableFromConfig(resp []byte) (bool, error) {
+	type logbackup struct {
+		Enable bool `json:"enable"`
+	}
+
+	type config struct {
+		LogBackup logbackup `json:"log-backup"`
+	}
+	var c config
+	e := json.Unmarshal(resp, &c)
+	if e != nil {
+		return false, e
+	}
+	return c.LogBackup.Enable, nil
+}

@@ -27,9 +27,9 @@ go_library(
         "//pkg/util/resourcegrouptag",
         "//pkg/util/topsql/stmtstats",
         "//pkg/util/tracing",
-        "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@org_golang_x_exp//maps",
+        "@org_golang_x_sync//singleflight",
         "@org_uber_go_atomic//:atomic",
     ],
 )
@@ -51,6 +51,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",
+        "//pkg/util/context",
         "//pkg/util/execdetails",
         "//pkg/util/hint",
         "@com_github_pingcap_errors//:errors",

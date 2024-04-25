@@ -2599,8 +2599,8 @@ func (s *session) GetRangerCtx() *rangerctx.RangerContext {
 			OptPrefixIndexSingleScan: s.GetSessionVars().OptPrefixIndexSingleScan,
 			OptimizerFixControl:      s.GetSessionVars().OptimizerFixControl,
 
-			// TODO: avoid using the whole `StmtCtx` here.
-			RangeFallbackHandler: s.GetSessionVars().StmtCtx,
+			PlanCacheTracker:     &s.GetSessionVars().StmtCtx.PlanCacheTracker,
+			RangeFallbackHandler: &s.GetSessionVars().StmtCtx.RangeFallbackHandler,
 		}
 	})
 
@@ -3125,7 +3125,11 @@ var (
 		{ddl.BackgroundSubtaskTableSQL, ddl.BackgroundSubtaskTableID},
 		{ddl.BackgroundSubtaskHistoryTableSQL, ddl.BackgroundSubtaskHistoryTableID},
 	}
-	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT NOT NULL PRIMARY KEY, version BIGINT NOT NULL, table_ids text(65535));"
+	mdlTable = `create table mysql.tidb_mdl_info(
+		job_id BIGINT NOT NULL PRIMARY KEY,
+		version BIGINT NOT NULL,
+		table_ids text(65535)
+	);`
 )
 
 func splitAndScatterTable(store kv.Storage, tableIDs []int64) {

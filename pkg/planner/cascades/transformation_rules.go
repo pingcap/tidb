@@ -24,9 +24,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -858,7 +860,7 @@ func (*pushDownJoin) predicatePushDown(
 	leftCond []expression.Expression,
 	rightCond []expression.Expression,
 	remainCond []expression.Expression,
-	dual plannercore.LogicalPlan,
+	dual base.LogicalPlan,
 ) {
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond []expression.Expression
@@ -2454,7 +2456,7 @@ func (r *TransformApplyToJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo
 
 func (r *TransformApplyToJoin) extractCorColumnsBySchema(innerGroup *memo.Group, outerSchema *expression.Schema) []*expression.CorrelatedColumn {
 	corCols := r.extractCorColumnsFromGroup(innerGroup)
-	return plannercore.ExtractCorColumnsBySchema(corCols, outerSchema, false)
+	return coreusage.ExtractCorColumnsBySchema(corCols, outerSchema, false)
 }
 
 func (r *TransformApplyToJoin) extractCorColumnsFromGroup(g *memo.Group) []*expression.CorrelatedColumn {

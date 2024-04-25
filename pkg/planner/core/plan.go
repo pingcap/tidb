@@ -19,14 +19,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -212,104 +212,6 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx base.PlanContext) *P
 	return shuffle
 }
 
-// LogicalPlan is a tree of logical operators.
-// We can do a lot of logical optimizations to it, like predicate pushdown and column pruning.
-type LogicalPlan interface {
-	base.Plan
-
-	// HashCode encodes a LogicalPlan to fast compare whether a LogicalPlan equals to another.
-	// We use a strict encode method here which ensures there is no conflict.
-	HashCode() []byte
-
-	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
-	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
-	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression, *coreusage.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan)
-
-	// PruneColumns prunes the unused columns, and return the new logical plan if changed, otherwise it's same.
-	PruneColumns([]*expression.Column, *coreusage.LogicalOptimizeOp) (LogicalPlan, error)
-
-	// findBestTask converts the logical plan to the physical plan. It's a new interface.
-	// It is called recursively from the parent to the children to create the result physical plan.
-	// Some logical plans will convert the children to the physical plans in different ways, and return the one
-	// With the lowest cost and how many plans are found in this function.
-	// planCounter is a counter for planner to force a plan.
-	// If planCounter > 0, the clock_th plan generated in this function will be returned.
-	// If planCounter = 0, the plan generated in this function will not be considered.
-	// If planCounter = -1, then we will not force plan.
-	findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *coreusage.PhysicalOptimizeOp) (base.Task, int64, error)
-
-	// BuildKeyInfo will collect the information of unique keys into schema.
-	// Because this method is also used in cascades planner, we cannot use
-	// things like `p.schema` or `p.children` inside it. We should use the `selfSchema`
-	// and `childSchema` instead.
-	BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema)
-
-	// pushDownTopN will push down the topN or limit operator during logical optimization.
-	pushDownTopN(topN *LogicalTopN, opt *coreusage.LogicalOptimizeOp) LogicalPlan
-
-	// deriveTopN derives an implicit TopN from a filter on row_number window function..
-	deriveTopN(opt *coreusage.LogicalOptimizeOp) LogicalPlan
-
-	// predicateSimplification consolidates different predcicates on a column and its equivalence classes.
-	predicateSimplification(opt *coreusage.LogicalOptimizeOp) LogicalPlan
-
-	// constantPropagation generate new constant predicate according to column equivalence relation
-	constantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *coreusage.LogicalOptimizeOp) (newRoot LogicalPlan)
-
-	// pullUpConstantPredicates recursive find constant predicate, used for the constant propagation rule
-	pullUpConstantPredicates() []expression.Expression
-
-	// recursiveDeriveStats derives statistic info between plans.
-	recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)
-
-	// DeriveStats derives statistic info for current plan node given child stats.
-	// We need selfSchema, childSchema here because it makes this method can be used in
-	// cascades planner, where LogicalPlan might not record its children or schema.
-	DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error)
-
-	// ExtractColGroups extracts column groups from child operator whose DNVs are required by the current operator.
-	// For example, if current operator is LogicalAggregation of `Group By a, b`, we indicate the child operators to maintain
-	// and propagate the NDV info of column group (a, b), to improve the row count estimation of current LogicalAggregation.
-	// The parameter colGroups are column groups required by upper operators, besides from the column groups derived from
-	// current operator, we should pass down parent colGroups to child operator as many as possible.
-	ExtractColGroups(colGroups [][]*expression.Column) [][]*expression.Column
-
-	// PreparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
-	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
-	PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column
-
-	// exhaustPhysicalPlans generates all possible plans that can match the required property.
-	// It will return:
-	// 1. All possible plans that can match the required property.
-	// 2. Whether the SQL hint can work. Return true if there is no hint.
-	exhaustPhysicalPlans(*property.PhysicalProperty) (physicalPlans []base.PhysicalPlan, hintCanWork bool, err error)
-
-	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
-	ExtractCorrelatedCols() []*expression.CorrelatedColumn
-
-	// MaxOneRow means whether this operator only returns max one row.
-	MaxOneRow() bool
-
-	// Get all the children.
-	Children() []LogicalPlan
-
-	// SetChildren sets the children for the plan.
-	SetChildren(...LogicalPlan)
-
-	// SetChild sets the ith child for the plan.
-	SetChild(i int, child LogicalPlan)
-
-	// rollBackTaskMap roll back all taskMap's logs after TimeStamp TS.
-	rollBackTaskMap(TS uint64)
-
-	// canPushToCop check if we might push this plan to a specific store.
-	canPushToCop(store kv.StoreType) bool
-
-	// ExtractFD derive the FDSet from the tree bottom up.
-	ExtractFD() *fd.FDSet
-}
-
 type baseLogicalPlan struct {
 	baseimpl.Plan
 
@@ -318,9 +220,9 @@ type baseLogicalPlan struct {
 	taskMapBak []string
 	// taskMapBakTS stores the timestamps of logs.
 	taskMapBakTS []uint64
-	self         LogicalPlan
+	self         base.LogicalPlan
 	maxOneRow    bool
-	children     []LogicalPlan
+	children     []base.LogicalPlan
 	// fdSet is a set of functional dependencies(FDs) which powers many optimizations,
 	// including eliminating unnecessary DISTINCT operators, simplifying ORDER BY columns,
 	// removing Max1Row operators, and mapping semi-joins to inner-joins.
@@ -395,7 +297,7 @@ type basePhysicalPlan struct {
 	// used by the new cost interface
 	planCostInit bool
 	planCost     float64
-	planCostVer2 coreusage.CostVer2
+	planCostVer2 costusage.CostVer2
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in op.PhysicalPlan for details.
@@ -497,7 +399,8 @@ func (p *baseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
 	return p.SCtx().GetSessionVars().StmtCtx.TaskMapBakTS
 }
 
-func (p *baseLogicalPlan) rollBackTaskMap(ts uint64) {
+// RollBackTaskMap implements LogicalPlan interface.
+func (p *baseLogicalPlan) RollBackTaskMap(ts uint64) {
 	if !p.SCtx().GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		return
 	}
@@ -521,7 +424,7 @@ func (p *baseLogicalPlan) rollBackTaskMap(ts uint64) {
 		}
 	}
 	for _, child := range p.children {
-		child.rollBackTaskMap(ts)
+		child.RollBackTaskMap(ts)
 	}
 }
 
@@ -542,7 +445,7 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task base.T
 }
 
 // HasMaxOneRow returns if the LogicalPlan will output at most one row.
-func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {
+func HasMaxOneRow(p base.LogicalPlan, childMaxOneRow []bool) bool {
 	if len(childMaxOneRow) == 0 {
 		// The reason why we use this check is that, this function
 		// is used both in planner/core and planner/cascades.
@@ -597,7 +500,7 @@ func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 	}
 }
 
-func newBaseLogicalPlan(ctx base.PlanContext, tp string, self LogicalPlan, qbOffset int) baseLogicalPlan {
+func newBaseLogicalPlan(ctx base.PlanContext, tp string, self base.LogicalPlan, qbOffset int) baseLogicalPlan {
 	return baseLogicalPlan{
 		taskMap:      make(map[string]base.Task),
 		taskMapBak:   make([]string, 0, 10),
@@ -619,7 +522,7 @@ func (*baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *coreusage.LogicalOptimizeOp) (LogicalPlan, error) {
+func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	if len(p.children) == 0 {
 		return p.self, nil
 	}
@@ -650,7 +553,7 @@ func (p *basePhysicalPlan) Schema() *expression.Schema {
 }
 
 // Children implements LogicalPlan Children interface.
-func (p *baseLogicalPlan) Children() []LogicalPlan {
+func (p *baseLogicalPlan) Children() []base.LogicalPlan {
 	return p.children
 }
 
@@ -660,7 +563,7 @@ func (p *basePhysicalPlan) Children() []base.PhysicalPlan {
 }
 
 // SetChildren implements LogicalPlan SetChildren interface.
-func (p *baseLogicalPlan) SetChildren(children ...LogicalPlan) {
+func (p *baseLogicalPlan) SetChildren(children ...base.LogicalPlan) {
 	p.children = children
 }
 
@@ -670,7 +573,7 @@ func (p *basePhysicalPlan) SetChildren(children ...base.PhysicalPlan) {
 }
 
 // SetChild implements LogicalPlan SetChild interface.
-func (p *baseLogicalPlan) SetChild(i int, child LogicalPlan) {
+func (p *baseLogicalPlan) SetChild(i int, child base.LogicalPlan) {
 	p.children[i] = child
 }
 
@@ -705,7 +608,7 @@ func (p *baseLogicalPlan) BuildPlanTrace() *tracing.PlanTrace {
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
-func (p *basePhysicalPlan) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+func (p *basePhysicalPlan) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	if len(p.Children()) < 1 {
 		return
 	}

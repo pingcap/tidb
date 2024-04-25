@@ -170,7 +170,10 @@ func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
 		return h.cache[i].infoschema.SchemaMetaVersion() <= version
 	})
 
-	// `GetByVersion` is allowed to load the latest schema that is less than argument `version`.
+	// `GetByVersion` is allowed to load the latest schema that is less than argument
+	// `version` when the argument `version` <= the latest schema version.
+	// if `version` > the latest schema version, always return nil, loadInfoSchema
+	// will use this behavior to decide whether to load schema diffs or full reload.
 	// Consider cache has values [10, 9, _, _, 6, 5, 4, 3, 2, 1], version 8 and 7 is empty because of the diff is empty.
 	// If we want to get version 8, we can return version 6 because v7 and v8 do not change anything, they are totally the same,
 	// in this case the `i` will not be 0.

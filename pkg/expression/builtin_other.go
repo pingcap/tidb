@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -165,7 +166,7 @@ func (c *inFunctionClass) verifyArgs(ctx BuildContext, args []Expression) ([]Exp
 			case columnType.GetType() == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
 				if constant.Value.GetInt64() < 0 {
 					if MaybeOverOptimized4PlanCache(ctx, args) {
-						ctx.SetSkipPlanCache(errors.NewNoStackErrorf("Bit Column in (%v)", constant.Value.GetInt64()))
+						ctx.SetSkipPlanCache(fmt.Sprintf("Bit Column in (%v)", constant.Value.GetInt64()))
 					}
 					continue
 				}
