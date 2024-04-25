@@ -64,6 +64,7 @@ func collectUnityInfo(p base.LogicalPlan, result map[string]*UnityTableInfo) {
 				Columns: map[string]*UnityColumnInfo{},
 				Indexes: map[string]*UnityIndexInfo{},
 				stats:   x.statisticTable,
+				col2id:  map[string]int64{},
 			}
 			for _, col := range x.tableInfo.Columns {
 				colName := tableName + "." + col.Name.L

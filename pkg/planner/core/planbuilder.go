@@ -4958,9 +4958,14 @@ func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, expl
 		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
 	}
 
+	lp, ok := b.ctx.GetSessionVars().StmtCtx.LogicalPlan.(base.LogicalPlan)
+	if !ok {
+		lp = nil
+	}
+
 	p := &Explain{
 		TargetPlan:       targetPlan,
-		LogicalPlan:      b.ctx.GetSessionVars().StmtCtx.LogicalPlan.(base.LogicalPlan),
+		LogicalPlan:      lp,
 		Format:           format,
 		Analyze:          analyze,
 		ExecStmt:         execStmt,
