@@ -15,11 +15,13 @@ func col2tbl(fullColName string) string {
 }
 
 type UnityColumnInfo struct {
-	NDV int
+	NDV   int
+	Nulls int
 }
 
 type UnityIndexInfo struct {
-	NDV int
+	NDV   int
+	Nulls int
 }
 
 type UnityTableInfo struct {
@@ -31,6 +33,7 @@ type UnityTableInfo struct {
 
 	stats  *statistics.Table `json:"-"`
 	col2id map[string]int64  `json:"-"`
+	idx2id map[string]int64  `json:"-"`
 }
 
 func collectColumn(c *expression.Column, result map[string]*UnityTableInfo) {
@@ -65,21 +68,24 @@ func collectUnityInfo(p base.LogicalPlan, result map[string]*UnityTableInfo) {
 				Indexes: map[string]*UnityIndexInfo{},
 				stats:   x.statisticTable,
 				col2id:  map[string]int64{},
+				idx2id:  map[string]int64{},
 			}
 			for _, col := range x.tableInfo.Columns {
 				colName := tableName + "." + col.Name.L
 				result[tableName].col2id[colName] = col.ID
 			}
+			for _, idx := range x.tableInfo.Indices {
+				idxName := tableName + "." + idx.Name.L
+				result[tableName].Indexes[idxName] = &UnityIndexInfo{}
+				result[tableName].idx2id[idxName] = idx.ID
+			}
+			//if x.tableInfo.PKIsHandle || x.tableInfo.IsCommonHandle {
+			//	idxName := tableName+".primary"
+			//	result[tableName].Indexes[idxName] = &UnityIndexInfo{}
+			//}
 		}
 		for _, expr := range x.allConds {
 			collectColumnFromExpr(expr, result)
-		}
-		for _, idx := range x.tableInfo.Indices {
-			idxName := tableName + "." + idx.Name.L
-			result[tableName].Indexes[idxName] = &UnityIndexInfo{}
-		}
-		if x.tableInfo.PKIsHandle || x.tableInfo.IsCommonHandle {
-			result[tableName].Indexes[tableName+".primary"] = &UnityIndexInfo{}
 		}
 	case *LogicalSelection:
 		for _, expr := range x.Conditions {
@@ -119,7 +125,14 @@ func fillUpStats(result map[string]*UnityTableInfo) {
 		tblInfo.ModifiedRows = tblStats.ModifyCount
 		tblInfo.RealtimeRows = tblStats.RealtimeCount
 		for colName, col := range tblInfo.Columns {
-			col.NDV = int(tblStats.Columns[tblInfo.col2id[colName]].NDV)
+			colStats := tblStats.Columns[tblInfo.col2id[colName]]
+			col.NDV = int(colStats.NDV)
+			col.Nulls = int(colStats.NullCount)
+		}
+		for idxName, idx := range tblInfo.Indexes {
+			idxStats := tblStats.Indices[tblInfo.idx2id[idxName]]
+			idx.NDV = int(idxStats.NDV)
+			idx.Nulls = int(idxStats.NullCount)
 		}
 	}
 }
