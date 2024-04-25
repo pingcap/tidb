@@ -14,9 +14,11 @@ func col2tbl(fullColName string) string {
 }
 
 type UnityTableInfo struct {
-	AsName  string
-	Columns map[string]bool // db.table.col
-	Indexes map[string]bool // db.table.index
+	AsName       string
+	Columns      map[string]bool // db.table.col
+	Indexes      map[string]bool // db.table.index
+	RealtimeRows int64
+	ModifiedRows int64
 }
 
 func collectColumn(c *expression.Column, result map[string]UnityTableInfo) {
@@ -46,9 +48,11 @@ func prepareUnityInfo(p base.LogicalPlan, result map[string]UnityTableInfo) {
 		tableName := x.DBName.L + "." + x.tableInfo.Name.L
 		if _, ok := result[tableName]; !ok {
 			result[tableName] = UnityTableInfo{
-				AsName:  x.TableAsName.L,
-				Columns: map[string]bool{},
-				Indexes: map[string]bool{},
+				AsName:       x.TableAsName.L,
+				Columns:      map[string]bool{},
+				Indexes:      map[string]bool{},
+				RealtimeRows: x.statisticTable.RealtimeCount,
+				ModifiedRows: x.statisticTable.ModifyCount,
 			}
 		}
 		for _, expr := range x.allConds {
