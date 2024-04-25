@@ -296,7 +296,7 @@ type streamMgr struct {
 
 func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool) (*streamMgr, error) {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, true, conn.StreamVersionChecker)
+		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -372,6 +372,24 @@ func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+// checkImportTaskRunning checks whether there is any import task running.
+func (s *streamMgr) checkImportTaskRunning(ctx context.Context, etcdCLI *clientv3.Client) error {
+	list, err := utils.GetImportTasksFrom(ctx, etcdCLI)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !list.Empty() {
+		return errors.Errorf("There are some lightning/restore tasks running: %s"+
+			"please stop or wait finishing at first. "+
+			"If the lightning/restore task is forced to terminate by system, "+
+			"please wait for ttl to decrease to 0.", list.MessageToUser())
+	}
+	return nil
+}
+
+>>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))
 // setGCSafePoint sets the server safe point to PD.
 func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.BRServiceSafePoint) error {
 	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), sp.BackupTS)
@@ -389,7 +407,7 @@ func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.BRServiceSafePo
 	return nil
 }
 
-func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, error) {
+func (s *streamMgr) buildObserveRanges() ([]kv.KeyRange, error) {
 	dRanges, err := stream.BuildObserveDataRanges(
 		s.mgr.GetStorage(),
 		s.cfg.FilterStr,
@@ -409,13 +427,13 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 	return rs, nil
 }
 
-func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
+func (s *streamMgr) backupFullSchemas(ctx context.Context) error {
 	clusterVersion, err := s.mgr.GetClusterVersion(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	metaWriter := metautil.NewMetaWriter(s.bc.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, nil)
+	metaWriter := metautil.NewMetaWriter(s.bc.GetStorage(), metautil.MetaFileSize, true, metautil.MetaFile, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		// save log startTS to backupmeta file
 		m.StartVersion = s.cfg.StartTS
@@ -441,6 +459,7 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 	return nil
 }
 
+<<<<<<< HEAD
 func (s *streamMgr) checkStreamStartEnable(g glue.Glue) error {
 	se, err := g.CreateSession(s.mgr.GetStorage())
 	if err != nil {
@@ -448,6 +467,10 @@ func (s *streamMgr) checkStreamStartEnable(g glue.Glue) error {
 	}
 	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
 	supportStream, err := utils.IsLogBackupEnabled(execCtx)
+=======
+func (s *streamMgr) checkStreamStartEnable(ctx context.Context) error {
+	supportStream, err := s.mgr.IsLogBackupEnabled(ctx, s.httpCli)
+>>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -546,14 +569,30 @@ func RunStreamStart(
 	}
 	defer streamMgr.close()
 
-	if err = streamMgr.checkStreamStartEnable(g); err != nil {
+	if err = streamMgr.checkStreamStartEnable(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	if err = streamMgr.adjustAndCheckStartTS(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+=======
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cli := streamhelper.NewMetaDataClient(etcdCLI)
+	defer func() {
+		if closeErr := cli.Close(); closeErr != nil {
+			log.Warn("failed to close etcd client", zap.Error(closeErr))
+		}
+	}()
+	if err = streamMgr.checkImportTaskRunning(ctx, cli.Client); err != nil {
+		return errors.Trace(err)
+	}
+>>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))
 	// It supports single stream log task currently.
 	if count, err := cli.GetTaskCount(ctx); err != nil {
 		return errors.Trace(err)
@@ -602,12 +641,12 @@ func RunStreamStart(
 		if err = streamMgr.setLock(ctx); err != nil {
 			return errors.Trace(err)
 		}
-		if err = streamMgr.backupFullSchemas(ctx, g); err != nil {
+		if err = streamMgr.backupFullSchemas(ctx); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	ranges, err := streamMgr.buildObserveRanges(ctx)
+	ranges, err := streamMgr.buildObserveRanges()
 	if err != nil {
 		return errors.Trace(err)
 	} else if len(ranges) == 0 {
@@ -695,7 +734,16 @@ func RunStreamStop(
 	}
 	defer streamMgr.close()
 
-	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cli := streamhelper.NewMetaDataClient(etcdCLI)
+	defer func() {
+		if closeErr := cli.Close(); closeErr != nil {
+			log.Warn("failed to close etcd client", zap.Error(closeErr))
+		}
+	}()
 	// to add backoff
 	ti, err := cli.GetTask(ctx, cfg.TaskName)
 	if err != nil {
@@ -745,7 +793,16 @@ func RunStreamPause(
 	}
 	defer streamMgr.close()
 
-	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cli := streamhelper.NewMetaDataClient(etcdCLI)
+	defer func() {
+		if closeErr := cli.Close(); closeErr != nil {
+			log.Warn("failed to close etcd client", zap.Error(closeErr))
+		}
+	}()
 	// to add backoff
 	ti, isPaused, err := cli.GetTaskWithPauseStatus(ctx, cfg.TaskName)
 	if err != nil {
@@ -803,7 +860,16 @@ func RunStreamResume(
 	}
 	defer streamMgr.close()
 
-	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cli := streamhelper.NewMetaDataClient(etcdCLI)
+	defer func() {
+		if closeErr := cli.Close(); closeErr != nil {
+			log.Warn("failed to close etcd client", zap.Error(closeErr))
+		}
+	}()
 	// to add backoff
 	ti, isPaused, err := cli.GetTaskWithPauseStatus(ctx, cfg.TaskName)
 	if err != nil {
@@ -931,6 +997,11 @@ func RunStreamStatus(
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if closeErr := ctl.Close(); closeErr != nil {
+			log.Warn("failed to close etcd client", zap.Error(closeErr))
+		}
+	}()
 	return ctl.PrintStatusOfTask(ctx, cfg.TaskName)
 }
 
@@ -1103,8 +1174,16 @@ func RunStreamRestore(
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+<<<<<<< HEAD
 
 	logInfo, err := getLogRange(ctx, &cfg.Config)
+=======
+	_, s, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logInfo, err := getLogRangeWithStorage(ctx, s)
+>>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1156,7 +1235,11 @@ func RunStreamRestore(
 	}
 	// restore log.
 	cfg.adjustRestoreConfigForStreamRestore()
+<<<<<<< HEAD
 	if err := restoreStream(ctx, g, cfg, logInfo.logMinTS, logInfo.logMaxTS); err != nil {
+=======
+	if err := restoreStream(ctx, g, cfg, curTaskInfo); err != nil {
+>>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))
 		return errors.Trace(err)
 	}
 	return nil
@@ -1167,7 +1250,11 @@ func restoreStream(
 	c context.Context,
 	g glue.Glue,
 	cfg *RestoreConfig,
+<<<<<<< HEAD
 	logMinTS, logMaxTS uint64,
+=======
+	taskInfo *checkpoint.CheckpointTaskInfoForLogRestore,
+>>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))
 ) (err error) {
 	var (
 		totalKVCount uint64
@@ -1247,8 +1334,13 @@ func restoreStream(
 		return err
 	}
 
+<<<<<<< HEAD
 	// get full backup meta to generate rewrite rules.
 	fullBackupTables, err := initFullBackupTables(ctx, cfg)
+=======
+	// get full backup meta storage to generate rewrite rules.
+	fullBackupStorage, err := parseFullBackupTablesStorage(cfg)
+>>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1408,15 +1500,6 @@ func withProgress(p glue.Progress, cc func(p glue.Progress) error) error {
 	return cc(p)
 }
 
-// nolint: unused, deadcode
-func countIndices(ts map[int64]*metautil.Table) int64 {
-	result := int64(0)
-	for _, t := range ts {
-		result += int64(len(t.Info.Indices))
-	}
-	return result
-}
-
 type backupLogInfo struct {
 	logMaxTS  uint64
 	logMinTS  uint64
@@ -1432,7 +1515,17 @@ func getLogRange(
 	if err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
+<<<<<<< HEAD
 
+=======
+	return getLogRangeWithStorage(ctx, s)
+}
+
+func getLogRangeWithStorage(
+	ctx context.Context,
+	s storage.ExternalStorage,
+) (backupLogInfo, error) {
+>>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
@@ -1513,8 +1606,12 @@ func getFullBackupTS(
 	return backupmeta.GetEndVersion(), backupmeta.GetClusterId(), nil
 }
 
+<<<<<<< HEAD
 func initFullBackupTables(
 	ctx context.Context,
+=======
+func parseFullBackupTablesStorage(
+>>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))
 	cfg *RestoreConfig,
 ) (map[int64]*metautil.Table, error) {
 	var storage string
@@ -1653,6 +1750,7 @@ func buildPauseSafePointName(taskName string) string {
 	return fmt.Sprintf("%s_pause_safepoint", taskName)
 }
 
+<<<<<<< HEAD
 func checkPiTRRequirements(ctx context.Context, g glue.Glue, cfg *RestoreConfig) error {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, true, conn.StreamVersionChecker)
@@ -1661,6 +1759,9 @@ func checkPiTRRequirements(ctx context.Context, g glue.Glue, cfg *RestoreConfig)
 	}
 	defer mgr.Close()
 
+=======
+func checkPiTRRequirements(mgr *conn.Mgr) error {
+>>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))
 	userDBs := restore.GetExistedUserDBs(mgr.GetDomain())
 	if len(userDBs) > 0 {
 		userDBNames := make([]string, 0, len(userDBs))
@@ -1674,3 +1775,98 @@ func checkPiTRRequirements(ctx context.Context, g glue.Glue, cfg *RestoreConfig)
 
 	return nil
 }
+<<<<<<< HEAD
+=======
+
+func checkPiTRTaskInfo(
+	ctx context.Context,
+	g glue.Glue,
+	s storage.ExternalStorage,
+	cfg *RestoreConfig,
+) (*checkpoint.CheckpointTaskInfoForLogRestore, bool, error) {
+	var (
+		doFullRestore = (len(cfg.FullBackupStorage) > 0)
+
+		curTaskInfo *checkpoint.CheckpointTaskInfoForLogRestore
+
+		errTaskMsg string
+	)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+		cfg.CheckRequirements, true, conn.StreamVersionChecker)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	defer mgr.Close()
+
+	clusterID := mgr.GetPDClient().GetClusterID(ctx)
+	if cfg.UseCheckpoint {
+		exists, err := checkpoint.ExistsCheckpointTaskInfo(ctx, s, clusterID)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		if exists {
+			curTaskInfo, err = checkpoint.LoadCheckpointTaskInfoForLogRestore(ctx, s, clusterID)
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			// TODO: check whether user has manually modified the cluster(ddl). If so, regard the behavior
+			//       as restore from scratch. (update `curTaskInfo.RewriteTs` to 0 as an uninitial value)
+
+			// The task info is written to external storage without status `InSnapshotRestore` only when
+			// id-maps is persist into external storage, so there is no need to do snapshot restore again.
+			if curTaskInfo.StartTS == cfg.StartTS && curTaskInfo.RestoreTS == cfg.RestoreTS {
+				// the same task, check whether skip snapshot restore
+				doFullRestore = doFullRestore && (curTaskInfo.Progress == checkpoint.InSnapshotRestore)
+				// update the snapshot restore task name to clean up in final
+				if !doFullRestore && (len(cfg.FullBackupStorage) > 0) {
+					_ = cfg.generateSnapshotRestoreTaskName(clusterID)
+				}
+				log.Info("the same task", zap.Bool("skip-snapshot-restore", !doFullRestore))
+			} else {
+				// not the same task, so overwrite the taskInfo with a new task
+				log.Info("not the same task, start to restore from scratch")
+				errTaskMsg = fmt.Sprintf(
+					"a new task [start-ts=%d] [restored-ts=%d] while the last task info: [start-ts=%d] [restored-ts=%d] [skip-snapshot-restore=%t]",
+					cfg.StartTS, cfg.RestoreTS, curTaskInfo.StartTS, curTaskInfo.RestoreTS, curTaskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersist)
+
+				curTaskInfo = nil
+			}
+		}
+	}
+
+	// restore full snapshot precheck.
+	if doFullRestore {
+		if !(cfg.UseCheckpoint && curTaskInfo != nil) {
+			// Only when use checkpoint and not the first execution,
+			// skip checking requirements.
+			log.Info("check pitr requirements for the first execution")
+			if err := checkPiTRRequirements(mgr); err != nil {
+				if len(errTaskMsg) > 0 {
+					err = errors.Annotatef(err, "The current restore task is regarded as %s. "+
+						"If you ensure that no changes have been made to the cluster since the last execution, "+
+						"you can adjust the `start-ts` or `restored-ts` to continue with the previous execution. "+
+						"Otherwise, if you want to restore from scratch, please clean the cluster at first", errTaskMsg)
+				}
+				return nil, false, errors.Trace(err)
+			}
+		}
+	}
+
+	// persist the new task info
+	if cfg.UseCheckpoint && curTaskInfo == nil {
+		log.Info("save checkpoint task info with `InSnapshotRestore` status")
+		if err := checkpoint.SaveCheckpointTaskInfoForLogRestore(ctx, s, &checkpoint.CheckpointTaskInfoForLogRestore{
+			Progress:  checkpoint.InSnapshotRestore,
+			StartTS:   cfg.StartTS,
+			RestoreTS: cfg.RestoreTS,
+			// updated in the stage of `InLogRestoreAndIdMapPersist`
+			RewriteTS:    0,
+			TiFlashItems: nil,
+		}, clusterID); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+	}
+
+	return curTaskInfo, doFullRestore, nil
+}
+>>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))

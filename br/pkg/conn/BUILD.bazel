@@ -44,6 +44,10 @@ go_test(
     ],
     embed = [":conn"],
     flaky = True,
+<<<<<<< HEAD
+=======
+    shard_count = 8,
+>>>>>>> 8973dddc9ed (br: no domain to run log command (#52127))
     deps = [
         "//br/pkg/conn/util",
         "//br/pkg/pdutil",
