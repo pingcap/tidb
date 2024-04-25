@@ -281,7 +281,6 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 }
 
 func getUsedStores(cache *RegionCache, usedTiFlashStoresMap map[uint64]struct{}) []*tikv.Store {
-	logutil.BgLogger().Info("detecting available mpp stores")
 	// decide the available stores
 	stores := cache.RegionCache.GetTiFlashStores()
 	usedStores := make([]*tikv.Store, 0)
@@ -336,7 +335,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, usedTiFlashStore
 		}
 	} else {
 		usedStores := getUsedStores(cache, usedTiFlashStoresMap)
-
+		logutil.BgLogger().Info("detecting available mpp stores")
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		wg.Add(len(usedStores))
@@ -889,8 +888,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 		Priority:       priorityToPB(b.req.Priority),
 		NotFillCache:   b.req.NotFillCache,
 		RecordTimeStat: true,
-		RecordScanStat: true,
-		TaskId:         b.req.TaskID,
+		RecordScanStat: true, TaskId: b.req.TaskID,
 	})
 	if b.req.ResourceGroupTagger != nil {
 		b.req.ResourceGroupTagger(req)
