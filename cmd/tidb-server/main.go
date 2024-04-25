@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
@@ -877,6 +879,11 @@ func setupLog() {
 
 	// trigger internal http(s) client init.
 	util.InternalHTTPClient()
+
+	// initialize package-level loggers
+	ingest.LitLogger = logutil.BgLogger().With(zap.String(logutil.LogFieldCategory, "ddl-ingest"))
+	ddl.Logger = logutil.BgLogger().With(zap.String(logutil.LogFieldCategory, "ddl"))
+	syncer.Logger = logutil.BgLogger().With(zap.String(logutil.LogFieldCategory, "ddl"))
 }
 
 func setupExtensions() *extension.Extensions {

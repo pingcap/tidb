@@ -194,8 +194,11 @@ func (dc *ddlCtx) asyncNotifyByEtcd(etcdPath string, jobID int64, jobType string
 	timeStart := time.Now()
 	err := util.PutKVToEtcd(dc.ctx, dc.etcdCli, 1, etcdPath, jobIDStr)
 	if err != nil {
-		logutil.BgLogger().Info("notify handling DDL job failed", zap.String("category", "ddl"),
-			zap.String("etcdPath", etcdPath), zap.Int64("jobID", jobID), zap.String("type", jobType), zap.Error(err))
+		Logger.Info("notify handling DDL job failed",
+			zap.String("etcdPath", etcdPath),
+			zap.Int64("jobID", jobID),
+			zap.String("type", jobType),
+			zap.Error(err))
 	}
 	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerNotifyDDLJob, jobType, metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 }
@@ -250,9 +253,12 @@ func (d *ddl) addBatchDDLJobsV1(tasks []*limitJobTask) {
 			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}
 	if err != nil {
-		logutil.BgLogger().Warn("add DDL jobs failed", zap.String("category", "ddl"), zap.String("jobs", jobs), zap.Error(err))
+		Logger.Warn("add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("add DDL jobs", zap.String("category", "ddl"), zap.Int("batch count", len(tasks)), zap.String("jobs", jobs), zap.Bool("table", toTable))
+		Logger.Info("add DDL jobs",
+			zap.Int("batch count", len(tasks)),
+			zap.String("jobs", jobs),
+			zap.Bool("table", toTable))
 	}
 }
 
@@ -263,9 +269,11 @@ func (d *ddl) addBatchLocalDDLJobs(tasks []*limitJobTask) {
 		for _, task := range tasks {
 			task.NotifyError(err)
 		}
-		logutil.BgLogger().Error("add DDL jobs failed", zap.String("category", "ddl"), zap.Bool("local_mode", true), zap.Error(err))
+		Logger.Error("add DDL jobs failed", zap.Bool("local_mode", true), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("add DDL jobs", zap.String("category", "ddl"), zap.Bool("local_mode", true), zap.Int("batch count", len(tasks)))
+		Logger.Info("add DDL jobs",
+			zap.Bool("local_mode", true),
+			zap.Int("batch count", len(tasks)))
 	}
 }
 
@@ -292,7 +300,9 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 			return errors.Trace(err)
 		}
 		if isDependent {
-			logutil.BgLogger().Info("current DDL job depends on other job", zap.String("category", "ddl"), zap.String("currentJob", curJob.String()), zap.String("dependentJob", job.String()))
+			Logger.Info("current DDL job depends on other job",
+				zap.Stringer("currentJob", curJob),
+				zap.Stringer("dependentJob", job))
 			curJob.DependencyID = job.ID
 			break
 		}
@@ -518,7 +528,7 @@ func (d *ddl) combineBatchCreateTableJobs(tasks []*limitJobTask) ([]*limitJobTas
 	if err != nil {
 		return tasks, err
 	}
-	logutil.BgLogger().Info("combine jobs to batch create table job", zap.String("category", "ddl"), zap.Int("len", len(tasks)))
+	Logger.Info("combine jobs to batch create table job", zap.Int("len", len(tasks)))
 
 	jobTask := &limitJobTask{job, []chan error{}, nil}
 	// combine the error chans.
@@ -612,14 +622,14 @@ func cleanMDLInfo(pool *sess.Pool, jobID int64, ec *clientv3.Client, cleanETCD b
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := se.Execute(context.Background(), sql, "delete-mdl-info")
 	if err != nil {
-		logutil.BgLogger().Warn("unexpected error when clean mdl info", zap.Int64("job ID", jobID), zap.Error(err))
+		Logger.Warn("unexpected error when clean mdl info", zap.Int64("job ID", jobID), zap.Error(err))
 		return
 	}
 	if cleanETCD && ec != nil {
 		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, jobID)
 		_, err = ec.Delete(context.Background(), path, clientv3.WithPrefix())
 		if err != nil {
-			logutil.BgLogger().Warn("delete versions failed", zap.String("category", "ddl"), zap.Int64("job ID", jobID), zap.Error(err))
+			Logger.Warn("delete versions failed", zap.Int64("job ID", jobID), zap.Error(err))
 		}
 	}
 }

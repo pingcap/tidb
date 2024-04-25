@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -132,7 +131,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	}
 	if columnInfo == nil {
 		columnInfo = InitAndAddColumnToTable(tblInfo, colFromArgs)
-		logutil.BgLogger().Info("run add column job", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo))
+		Logger.Info("run add column job", zap.Stringer("job", job), zap.Reflect("columnInfo", *columnInfo))
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -497,12 +496,12 @@ func GetOriginDefaultValueForModifyColumn(sessCtx sessionctx.Context, changingCo
 	if originDefVal != nil {
 		odv, err := table.CastValue(sessCtx, types.NewDatum(originDefVal), changingCol, false, false)
 		if err != nil {
-			logutil.BgLogger().Info("cast origin default value failed", zap.String("category", "ddl"), zap.Error(err))
+			Logger.Info("cast origin default value failed", zap.Error(err))
 		}
 		if !odv.IsNull() {
 			if originDefVal, err = odv.ToString(); err != nil {
 				originDefVal = nil
-				logutil.BgLogger().Info("convert default value to string failed", zap.String("category", "ddl"), zap.Error(err))
+				Logger.Info("convert default value to string failed", zap.Error(err))
 			}
 		}
 	}
@@ -612,7 +611,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	} else {
 		changingCol = model.FindColumnInfoByID(tblInfo.Columns, modifyInfo.changingCol.ID)
 		if changingCol == nil {
-			logutil.BgLogger().Error("the changing column has been removed", zap.String("category", "ddl"), zap.Error(err))
+			Logger.Error("the changing column has been removed", zap.Error(err))
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
 		}
@@ -872,10 +871,10 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 			return false, ver, errors.Trace(err)
 		}
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
-			logutil.BgLogger().Warn("run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback", zap.String("category", "ddl"),
+			Logger.Warn("run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err1))
 		}
-		logutil.BgLogger().Warn("run modify column job failed, convert job to rollback", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Error(err))
+		Logger.Warn("run modify column job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
 		job.State = model.JobStateRollingback
 		return false, ver, errors.Trace(err)
 	}
@@ -1073,7 +1072,7 @@ func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInf
 }
 
 func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) error {
-	logutil.BgLogger().Info("start to update table row", zap.String("category", "ddl"), zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
+	Logger.Info("start to update table row", zap.Stringer("job", reorgInfo.Job), zap.Stringer("reorgInfo", reorgInfo))
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		done := false
 		for !done {
@@ -1178,7 +1177,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		reorgInfo.currElement = reorgInfo.elements[i+1]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
 		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
-		logutil.BgLogger().Info("update column and indexes", zap.String("category", "ddl"),
+		Logger.Info("update column and indexes",
 			zap.Int64("job ID", reorgInfo.Job.ID),
 			zap.Stringer("element", reorgInfo.currElement),
 			zap.String("start key", hex.EncodeToString(reorgInfo.StartKey)),
@@ -1211,8 +1210,8 @@ type updateColumnWorker struct {
 
 func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		logutil.BgLogger().Error("Element type for updateColumnWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
-			zap.String("reorgInfo", reorgInfo.String()))
+		Logger.Error("Element type for updateColumnWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
+			zap.Stringer("reorgInfo", reorgInfo))
 		return nil
 	}
 	var oldCol, newCol *model.ColumnInfo
@@ -1238,8 +1237,8 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 			for i, col := range t.DeletableCols() {
 				cols[i] = col.ToInfo()
 			}
-			logutil.BgLogger().Warn("skip checksum in update-column backfill since the number of non-public columns is greater than 1",
-				zap.String("jobQuery", reorgInfo.Query), zap.String("reorgInfo", reorgInfo.String()), zap.Any("cols", cols))
+			Logger.Warn("skip checksum in update-column backfill since the number of non-public columns is greater than 1",
+				zap.String("jobQuery", reorgInfo.Query), zap.Stringer("reorgInfo", reorgInfo), zap.Any("cols", cols))
 		} else {
 			checksumNeeded = true
 		}
@@ -1318,7 +1317,10 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 		taskDone = true
 	}
 
-	logutil.BgLogger().Debug("txn fetches handle info", zap.String("category", "ddl"), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
+	Logger.Debug("txn fetches handle info",
+		zap.Uint64("txnStartTS", txn.StartTS()),
+		zap.String("taskRange", taskRange.String()),
+		zap.Duration("takeTime", time.Since(startTime)))
 	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
 
@@ -1419,7 +1421,7 @@ func (w *updateColumnWorker) calcChecksums() []uint32 {
 		}
 		checksum, err := w.checksumBuffer.Checksum(w.sessCtx.GetSessionVars().StmtCtx.TimeZone())
 		if err != nil {
-			logutil.BgLogger().Warn("skip checksum in update-column backfill due to encode error", zap.Error(err))
+			Logger.Warn("skip checksum in update-column backfill due to encode error", zap.Error(err))
 			return nil
 		}
 		checksums[i] = checksum

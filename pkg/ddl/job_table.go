@@ -129,10 +129,10 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 		}
 		if b {
 			if err = d.markJobProcessing(se, &job); err != nil {
-				logutil.BgLogger().Warn(
+				Logger.Warn(
 					"[ddl] handle ddl job failed: mark job is processing meet error",
 					zap.Error(err),
-					zap.String("job", job.String()))
+					zap.Stringer("job", job))
 				return nil, errors.Trace(err)
 			}
 			return &job, nil
@@ -285,7 +285,7 @@ func (d *ddl) startDispatchLoop() {
 			if ingest.ResignOwnerForTest.Load() {
 				err2 := d.ownerManager.ResignOwner(context.Background())
 				if err2 != nil {
-					logutil.BgLogger().Info("resign meet error", zap.Error(err2))
+					Logger.Info("resign meet error", zap.Error(err2))
 				}
 				ingest.ResignOwnerForTest.Store(false)
 			}
@@ -295,7 +295,7 @@ func (d *ddl) startDispatchLoop() {
 		case <-ticker.C:
 		case _, ok := <-notifyDDLJobByEtcdCh:
 			if !ok {
-				logutil.BgLogger().Warn("start worker watch channel closed", zap.String("category", "ddl"), zap.String("watch key", addingDDLJobConcurrent))
+				Logger.Warn("start worker watch channel closed", zap.String("watch key", addingDDLJobConcurrent))
 				notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
 				time.Sleep(time.Second)
 				continue
@@ -327,10 +327,10 @@ func (d *ddl) checkAndUpdateClusterState(needUpdate bool) error {
 	oldState := d.stateSyncer.IsUpgradingState()
 	stateInfo, err := d.stateSyncer.GetGlobalState(d.ctx)
 	if err != nil {
-		logutil.BgLogger().Warn("get global state failed", zap.String("category", "ddl"), zap.Error(err))
+		Logger.Warn("get global state failed", zap.Error(err))
 		return errors.Trace(err)
 	}
-	logutil.BgLogger().Info("get global state and global state change", zap.String("category", "ddl"),
+	Logger.Info("get global state and global state change",
 		zap.Bool("oldState", oldState), zap.Bool("currState", d.stateSyncer.IsUpgradingState()))
 	if !d.isOwner() {
 		return nil
@@ -342,17 +342,17 @@ func (d *ddl) checkAndUpdateClusterState(needUpdate bool) error {
 	}
 	err = d.ownerManager.SetOwnerOpValue(d.ctx, ownerOp)
 	if err != nil {
-		logutil.BgLogger().Warn("the owner sets global state to owner operator value failed", zap.String("category", "ddl"), zap.Error(err))
+		Logger.Warn("the owner sets global state to owner operator value failed", zap.Error(err))
 		return errors.Trace(err)
 	}
-	logutil.BgLogger().Info("the owner sets owner operator value", zap.String("category", "ddl"), zap.Stringer("ownerOp", ownerOp))
+	Logger.Info("the owner sets owner operator value", zap.Stringer("ownerOp", ownerOp))
 	return nil
 }
 
 func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*sess.Session) (*model.Job, error)) {
 	wk, err := pool.get()
 	if err != nil || wk == nil {
-		logutil.BgLogger().Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))
+		Logger.Debug(fmt.Sprintf("[ddl] no %v worker available now", pool.tp()), zap.Error(err))
 		return
 	}
 
@@ -407,7 +407,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 		err := wk.HandleLocalDDLJob(d.ddlCtx, job)
 		pool.put(wk)
 		if err != nil {
-			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
+			Logger.Info("handle ddl job failed", zap.Error(err), zap.Stringer("job", job))
 		}
 		task.NotifyError(err)
 	})
@@ -553,7 +553,7 @@ func insertDDLJobs2Table(se *sess.Session, updateRawArgs bool, jobs ...*model.Jo
 	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	_, err := se.Execute(ctx, sql.String(), "insert_job")
-	logutil.BgLogger().Debug("add job to mysql.tidb_ddl_job table", zap.String("category", "ddl"), zap.String("sql", sql.String()))
+	Logger.Debug("add job to mysql.tidb_ddl_job table", zap.String("sql", sql.String()))
 	return errors.Trace(err)
 }
 
@@ -701,7 +701,7 @@ func initDDLReorgHandle(s *sess.Session, jobID int64, startKey kv.Key, endKey kv
 	return s.RunInTxn(func(se *sess.Session) error {
 		_, err := se.Execute(context.Background(), del, "init_handle")
 		if err != nil {
-			logutil.BgLogger().Info("initDDLReorgHandle failed to delete", zap.Int64("jobID", jobID), zap.Error(err))
+			Logger.Info("initDDLReorgHandle failed to delete", zap.Int64("jobID", jobID), zap.Error(err))
 		}
 		_, err = se.Execute(context.Background(), ins, "init_handle")
 		return err
