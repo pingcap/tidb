@@ -6,6 +6,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/statistics"
 )
 
 func col2tbl(fullColName string) string {
@@ -13,17 +14,29 @@ func col2tbl(fullColName string) string {
 	return tmp[0] + "." + tmp[1]
 }
 
+type UnityColumnInfo struct {
+	id  int `json:"-"`
+	NDV int
+}
+
+type UnityIndexInfo struct {
+	id  int `json:"-"`
+	NDV int
+}
+
 type UnityTableInfo struct {
 	AsName       string
-	Columns      map[string]bool // db.table.col
-	Indexes      map[string]bool // db.table.index
+	Columns      map[string]UnityColumnInfo // db.table.col
+	Indexes      map[string]UnityIndexInfo  // db.table.index
 	RealtimeRows int64
 	ModifiedRows int64
+
+	stats *statistics.Table `json:"-"`
 }
 
 func collectColumn(c *expression.Column, result map[string]UnityTableInfo) {
 	colName := strings.ToLower(c.OrigName)
-	result[col2tbl(colName)].Columns[colName] = true
+	result[col2tbl(colName)].Columns[colName] = UnityColumnInfo{}
 }
 
 func collectColumnFromExpr(expr expression.Expression, result map[string]UnityTableInfo) {
@@ -39,20 +52,19 @@ func collectColumnFromExpr(expr expression.Expression, result map[string]UnityTa
 	}
 }
 
-func prepareUnityInfo(p base.LogicalPlan, result map[string]UnityTableInfo) {
+func collectUnityInfo(p base.LogicalPlan, result map[string]UnityTableInfo) {
 	for _, child := range p.Children() {
-		prepareUnityInfo(child, result)
+		collectUnityInfo(child, result)
 	}
 	switch x := p.(type) {
 	case *DataSource:
 		tableName := x.DBName.L + "." + x.tableInfo.Name.L
 		if _, ok := result[tableName]; !ok {
 			result[tableName] = UnityTableInfo{
-				AsName:       x.TableAsName.L,
-				Columns:      map[string]bool{},
-				Indexes:      map[string]bool{},
-				RealtimeRows: x.statisticTable.RealtimeCount,
-				ModifiedRows: x.statisticTable.ModifyCount,
+				AsName:  x.TableAsName.L,
+				Columns: map[string]UnityColumnInfo{},
+				Indexes: map[string]UnityIndexInfo{},
+				stats:   x.statisticTable,
 			}
 		}
 		for _, expr := range x.allConds {
@@ -60,10 +72,10 @@ func prepareUnityInfo(p base.LogicalPlan, result map[string]UnityTableInfo) {
 		}
 		for _, idx := range x.tableInfo.Indices {
 			idxName := tableName + "." + idx.Name.L
-			result[tableName].Indexes[idxName] = true
+			result[tableName].Indexes[idxName] = UnityIndexInfo{}
 		}
 		if x.tableInfo.PKIsHandle || x.tableInfo.IsCommonHandle {
-			result[tableName].Indexes[tableName+".primary"] = true
+			result[tableName].Indexes[tableName+".primary"] = UnityIndexInfo{}
 		}
 	case *LogicalSelection:
 		for _, expr := range x.Conditions {
@@ -99,7 +111,7 @@ func prepareUnityInfo(p base.LogicalPlan, result map[string]UnityTableInfo) {
 
 func prepareForUnity(p base.LogicalPlan) string {
 	result := make(map[string]UnityTableInfo)
-	prepareUnityInfo(p, result)
+	collectUnityInfo(p, result)
 
 	v, err := json.Marshal(result)
 	must(err)
