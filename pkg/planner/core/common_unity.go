@@ -15,7 +15,8 @@ func col2tbl(fullColName string) string {
 
 type UnityTableInfo struct {
 	AsName  string
-	Columns map[string]bool
+	Columns map[string]bool // db.table.col
+	Indexes map[string]bool // db.table.index
 }
 
 func collectColumn(c *expression.Column, result map[string]UnityTableInfo) {
@@ -48,6 +49,13 @@ func prepareUnityInfo(p base.LogicalPlan, result map[string]UnityTableInfo) {
 		}
 		for _, expr := range x.allConds {
 			collectColumnFromExpr(expr, result)
+		}
+		for _, idx := range x.tableInfo.Indices {
+			idxName := tableName + "." + idx.Name.L
+			result[tableName].Indexes[idxName] = true
+		}
+		if x.tableInfo.PKIsHandle || x.tableInfo.IsCommonHandle {
+			result[tableName].Indexes[tableName+".primary"] = true
 		}
 	case *LogicalSelection:
 		for _, expr := range x.Conditions {
