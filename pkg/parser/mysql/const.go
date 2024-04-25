@@ -59,6 +59,7 @@ const (
 	ServerStatusMetadataChanged    uint16 = 0x0400
 	ServerStatusWasSlow            uint16 = 0x0800
 	ServerPSOutParams              uint16 = 0x1000
+	ServerStatusWaitQueryFinished  uint16 = 0x2000
 )
 
 // HasCursorExistsFlag return true if cursor exists indicated by server status.
