@@ -2,39 +2,35 @@ package core
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
-type UnityTableName struct {
-	SchemaName string `json:"schemaName"`
-	TableName  string `json:"tableName"`
-}
-
-type UnityColumnName struct {
-	UnityTableName
-	ColumnName string `json:"columnName"`
-}
-
-type UnityColumnInfo struct {
+func col2tbl(fullColName string) string {
+	tmp := strings.Split(strings.ToLower(fullColName), ".")
+	return tmp[0] + "." + tmp[1]
 }
 
 type UnityTableInfo struct {
-	AsName  string                              `json:"asName"`
-	Columns map[UnityColumnName]UnityColumnInfo `json:"columns"`
+	AsName  string
+	Columns map[string]bool
 }
 
-func prepareUnityInfo(p base.PhysicalPlan, result map[UnityTableName]UnityTableInfo) {
-	switch x := p.(type) {
-	case *PhysicalTableScan:
-		tableName := UnityTableName{SchemaName: x.DBName.O, TableName: x.Table.Name.O}
-		tableInfo := UnityTableInfo{
-			AsName: x.TableAsName.O,
+func extractColumnFromExpr(expr expression.Expression, result map[string]UnityTableInfo) {
+	switch x := expr.(type) {
+	case *expression.Column:
+		colName := strings.ToLower(x.OrigName)
+		result[col2tbl(colName)].Columns[colName] = true
+	case *expression.ScalarFunction:
+		for _, arg := range x.GetArgs() {
+			extractColumnFromExpr(arg, result)
 		}
-		result[tableName] = tableInfo
-	default:
 	}
+}
 
+func prepareUnityInfo(p base.PhysicalPlan, result map[string]UnityTableInfo) {
 	switch x := p.(type) {
 	case *PhysicalTableReader:
 		prepareUnityInfo(x.tablePlan, result)
@@ -49,13 +45,38 @@ func prepareUnityInfo(p base.PhysicalPlan, result map[UnityTableName]UnityTableI
 			prepareUnityInfo(indexPlan, result)
 		}
 	}
+
 	for _, child := range p.Children() {
 		prepareUnityInfo(child, result)
+	}
+	switch x := p.(type) {
+	case *PhysicalTableScan:
+		tableName := x.DBName.L + "." + x.Table.Name.L
+		if _, ok := result[tableName]; !ok {
+			result[tableName] = UnityTableInfo{AsName: x.TableAsName.L}
+		}
+
+		for _, expr := range x.filterCondition {
+			extractColumnFromExpr(expr, result)
+		}
+		for _, expr := range x.AccessCondition {
+			extractColumnFromExpr(expr, result)
+		}
+	case *PhysicalIndexScan:
+		tableName := x.DBName.L + "." + x.Table.Name.L
+		if _, ok := result[tableName]; !ok {
+			result[tableName] = UnityTableInfo{AsName: x.TableAsName.L}
+		}
+
+		for _, expr := range x.AccessCondition {
+			extractColumnFromExpr(expr, result)
+		}
+	default:
 	}
 }
 
 func prepareForUnity(p base.PhysicalPlan) string {
-	result := make(map[UnityTableName]UnityTableInfo)
+	result := make(map[string]UnityTableInfo)
 	prepareUnityInfo(p, result)
 	return fmt.Sprintf("%v", result)
 }
