@@ -45,7 +45,11 @@ func prepareUnityInfo(p base.LogicalPlan, result map[string]UnityTableInfo) {
 	case *DataSource:
 		tableName := x.DBName.L + "." + x.tableInfo.Name.L
 		if _, ok := result[tableName]; !ok {
-			result[tableName] = UnityTableInfo{AsName: x.TableAsName.L, Columns: map[string]bool{}}
+			result[tableName] = UnityTableInfo{
+				AsName:  x.TableAsName.L,
+				Columns: map[string]bool{},
+				Indexes: map[string]bool{},
+			}
 		}
 		for _, expr := range x.allConds {
 			collectColumnFromExpr(expr, result)
