@@ -81,8 +81,7 @@ type reorgFnResult struct {
 	err     error
 }
 
-// newContext gets a context. It is only used for adding column in reorganization state.
-func newContext(store kv.Storage) sessionctx.Context {
+func newReorgSessCtx(store kv.Storage) sessionctx.Context {
 	c := mock.NewContext()
 	c.Store = store
 	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
@@ -540,7 +539,7 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 // buildDescTableScan builds a desc table scan upon tblInfo.
 func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.PhysicalTable,
 	handleCols []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
-	sctx := newContext(dc.store)
+	sctx := newReorgSessCtx(dc.store)
 	dagPB, err := buildDescTableScanDAG(sctx, tbl, handleCols, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -619,7 +618,7 @@ func (dc *ddlCtx) GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.P
 		// empty table
 		return nil, true, nil
 	}
-	sessCtx := newContext(dc.store)
+	sessCtx := newReorgSessCtx(dc.store)
 	row := chk.GetRow(0)
 	if tblInfo.IsCommonHandle {
 		maxHandle, err = buildCommonHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, tblInfo, pkIdx, handleCols, row)

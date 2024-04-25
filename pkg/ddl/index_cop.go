@@ -107,11 +107,17 @@ func (c *copReqSender) run() {
 	}
 	se := sess.NewSession(sessCtx)
 	defer p.sessPool.Put(sessCtx)
+	var (
+		task *reorgBackfillTask
+		ok   bool
+	)
+
 	for {
-		if util.HasCancelled(c.ctx) {
+		select {
+		case <-c.ctx.Done():
 			return
+		case task, ok = <-p.tasksCh:
 		}
-		task, ok := <-p.tasksCh
 		if !ok {
 			return
 		}
@@ -131,7 +137,7 @@ func (c *copReqSender) run() {
 
 func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
 	logutil.Logger(p.ctx).Info("start a cop-request task",
-		zap.Int("id", task.id), zap.String("task", task.String()))
+		zap.Int("id", task.id), zap.Stringer("task", task))
 
 	return wrapInBeginRollback(se, func(startTS uint64) error {
 		rs, err := buildTableScan(p.ctx, p.copCtx.GetBase(), startTS, task.startKey, task.endKey)

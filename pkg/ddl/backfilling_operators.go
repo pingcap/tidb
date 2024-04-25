@@ -234,7 +234,7 @@ type TableScanTask struct {
 }
 
 // String implement fmt.Stringer interface.
-func (t *TableScanTask) String() string {
+func (t TableScanTask) String() string {
 	return fmt.Sprintf("TableScanTask: id=%d, startKey=%s, endKey=%s",
 		t.ID, hex.EncodeToString(t.Start), hex.EncodeToString(t.End))
 }
@@ -296,6 +296,7 @@ func (src *TableScanTaskSource) generateTasks() error {
 	endKey := src.endKey
 	for {
 		kvRanges, err := splitTableRanges(
+			src.ctx,
 			src.tbl,
 			src.store,
 			startKey,
@@ -433,7 +434,7 @@ var OperatorCallBackForTest func()
 
 func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) {
 	logutil.Logger(w.ctx).Info("start a table scan task",
-		zap.Int("id", task.ID), zap.String("task", task.String()))
+		zap.Int("id", task.ID), zap.Stringer("task", task))
 
 	var idxResult IndexRecordChunk
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
