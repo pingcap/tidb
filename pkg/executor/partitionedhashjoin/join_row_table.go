@@ -166,6 +166,7 @@ func (meta *JoinTableMeta) isColumnNull(rowStart uintptr, columnIndex int) bool 
 
 func (meta *JoinTableMeta) setUsedFlag(rowStart uintptr) {
 	addr := (*uint32)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr))
+	// todo according to https://github.com/golang/go/issues/23345, atomic load/store should be alignment?
 	value := atomic.LoadUint32(addr)
 	value |= meta.usedFlagMask
 	atomic.StoreUint32(addr, value)
