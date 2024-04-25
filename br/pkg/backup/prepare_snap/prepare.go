@@ -455,7 +455,7 @@ func (p *Preparer) pushWaitApply(reqs pendingRequests, region Region) {
 // This will pause the admin commands for each store.
 func (p *Preparer) PrepareConnections(ctx context.Context) error {
 	failpoint.Inject("PrepareConnectionsErr", func() {
-		failpoint.Return(errors.New("meow meow meow"))
+		failpoint.Return(errors.New("mock PrepareConnectionsErr"))
 	})
 	log.Info("Preparing connections to stores.")
 	stores, err := p.env.GetAllLiveStores(ctx)
