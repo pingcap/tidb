@@ -18,14 +18,20 @@ type UnityTableInfo struct {
 	Columns map[string]bool
 }
 
-func extractColumnFromExpr(expr expression.Expression, result map[string]UnityTableInfo) {
+func collectColumn(c *expression.Column, result map[string]UnityTableInfo) {
+	colName := strings.ToLower(c.OrigName)
+	result[col2tbl(colName)].Columns[colName] = true
+}
+
+func collectColumnFromExpr(expr expression.Expression, result map[string]UnityTableInfo) {
 	switch x := expr.(type) {
 	case *expression.Column:
-		colName := strings.ToLower(x.OrigName)
-		result[col2tbl(colName)].Columns[colName] = true
+		collectColumn(x, result)
+	case *expression.CorrelatedColumn:
+		collectColumn(&x.Column, result)
 	case *expression.ScalarFunction:
 		for _, arg := range x.GetArgs() {
-			extractColumnFromExpr(arg, result)
+			collectColumnFromExpr(arg, result)
 		}
 	}
 }
@@ -57,10 +63,10 @@ func prepareUnityInfo(p base.PhysicalPlan, result map[string]UnityTableInfo) {
 		}
 
 		for _, expr := range x.filterCondition {
-			extractColumnFromExpr(expr, result)
+			collectColumnFromExpr(expr, result)
 		}
 		for _, expr := range x.AccessCondition {
-			extractColumnFromExpr(expr, result)
+			collectColumnFromExpr(expr, result)
 		}
 	case *PhysicalIndexScan:
 		tableName := x.DBName.L + "." + x.Table.Name.L
@@ -69,8 +75,18 @@ func prepareUnityInfo(p base.PhysicalPlan, result map[string]UnityTableInfo) {
 		}
 
 		for _, expr := range x.AccessCondition {
-			extractColumnFromExpr(expr, result)
+			collectColumnFromExpr(expr, result)
 		}
+	case *PhysicalSelection:
+		for _, expr := range x.Conditions {
+			collectColumnFromExpr(expr, result)
+		}
+	case *PhysicalHashJoin:
+		for _, expr := range x.EqualConditions {
+			collectColumnFromExpr(expr, result)
+		}
+	case *PhysicalMergeJoin:
+	case *PhysicalIndexJoin:
 	default:
 	}
 }
