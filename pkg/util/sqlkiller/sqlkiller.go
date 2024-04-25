@@ -50,6 +50,7 @@ func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 }
 
 // FinishResultSet is used to finish the result set.
+// If the cancel signal is received and SQL is waiting for network IO, resource released can be performed first.
 func (killer *SQLKiller) FinishResultSet() {
 	if killer.Finish != nil {
 		killer.Finish()
