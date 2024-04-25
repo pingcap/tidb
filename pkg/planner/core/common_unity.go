@@ -1,7 +1,7 @@
 package core
 
 import (
-	"fmt"
+	"encoding/json"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -53,7 +53,7 @@ func prepareUnityInfo(p base.PhysicalPlan, result map[string]UnityTableInfo) {
 	case *PhysicalTableScan:
 		tableName := x.DBName.L + "." + x.Table.Name.L
 		if _, ok := result[tableName]; !ok {
-			result[tableName] = UnityTableInfo{AsName: x.TableAsName.L}
+			result[tableName] = UnityTableInfo{AsName: x.TableAsName.L, Columns: map[string]bool{}}
 		}
 
 		for _, expr := range x.filterCondition {
@@ -65,7 +65,7 @@ func prepareUnityInfo(p base.PhysicalPlan, result map[string]UnityTableInfo) {
 	case *PhysicalIndexScan:
 		tableName := x.DBName.L + "." + x.Table.Name.L
 		if _, ok := result[tableName]; !ok {
-			result[tableName] = UnityTableInfo{AsName: x.TableAsName.L}
+			result[tableName] = UnityTableInfo{AsName: x.TableAsName.L, Columns: map[string]bool{}}
 		}
 
 		for _, expr := range x.AccessCondition {
@@ -78,7 +78,10 @@ func prepareUnityInfo(p base.PhysicalPlan, result map[string]UnityTableInfo) {
 func prepareForUnity(p base.PhysicalPlan) string {
 	result := make(map[string]UnityTableInfo)
 	prepareUnityInfo(p, result)
-	return fmt.Sprintf("%v", result)
+
+	v, err := json.Marshal(result)
+	must(err)
+	return string(v)
 }
 
 func must(err error) {
