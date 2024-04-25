@@ -257,7 +257,6 @@ func NewInfoSchemaV2(r autoid.Requirement, infoData *Data) infoschemaV2 {
 				policyMap:             map[string]*model.PolicyInfo{},
 				resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
 				ruleBundleMap:         map[int64]*placement.Bundle{},
-				policyRefMap:          map[int64]*model.PolicyRefInfo{},
 				referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
 			},
 			schemaMap:           map[string]*schemaTables{},
