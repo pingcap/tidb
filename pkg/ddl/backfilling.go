@@ -347,7 +347,7 @@ func (w *backfillWorker) sendResult(result *backfillResult) {
 }
 
 func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
-	logger := ddlLogger.With(zap.Stringer("worker", w))
+	logger := ddlLogger.With(zap.Stringer("worker", w), zap.Int64("jobID", job.ID))
 	var (
 		curTaskID int
 		task      *reorgBackfillTask
@@ -372,7 +372,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		curTaskID = task.id
 		d.setDDLLabelForTopSQL(job.ID, job.Query)
 
-		logger.Debug("backfill worker got task", zap.Int("workerID", w.GetCtx().id), zap.String("task", task.String()))
+		logger.Debug("backfill worker got task", zap.Int("workerID", w.GetCtx().id), zap.Stringer("task", task))
 		failpoint.Inject("mockBackfillRunErr", func() {
 			if w.GetCtx().id == 0 {
 				result := &backfillResult{taskID: task.id, addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
