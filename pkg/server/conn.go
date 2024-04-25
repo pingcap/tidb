@@ -2049,7 +2049,12 @@ func (cc *clientConn) handleStmt(
 		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
 		}
-		cc.ctx.GetSessionVars().SQLKiller.Finish = rs.Finish
+		cc.ctx.GetSessionVars().SQLKiller.Finish = func() {
+			rs.Finish()
+			cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusWaitQueryFinished, true)
+			cc.ctx.UpdateProcessInfo()
+		}
+		defer cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusWaitQueryFinished, false)
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
 			return retryable, err
 		}

@@ -41,7 +41,7 @@ const (
 type SQLKiller struct {
 	Signal killSignal
 	ConnID uint64
-	Finish func() error
+	Finish func()
 }
 
 // SendKillSignal sends a kill signal to the query.

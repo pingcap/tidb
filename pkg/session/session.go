@@ -1474,7 +1474,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 // UpdateProcessInfo updates the session's process info for the running statement.
 func (s *session) UpdateProcessInfo() {
 	pi := s.ShowProcess()
-	if pi == nil || pi.CurTxnStartTS != 0 {
+	if pi == nil {
 		return
 	}
 	// do not modify this two fields in place, see issue: issues/50607
@@ -1482,6 +1482,7 @@ func (s *session) UpdateProcessInfo() {
 	// Update the current transaction start timestamp.
 	shallowCP.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
 	shallowCP.CurTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
+	shallowCP.State = s.Status()
 	s.processInfo.Store(shallowCP)
 }
 
