@@ -66,6 +66,19 @@ func createImpossibleFilter(t *testing.T) expression.CNFExprs {
 	return buildFilter
 }
 
+func checkRowLocationAlignment(t *testing.T, rowTables []*rowTable) {
+	for _, rt := range rowTables {
+		if rt == nil {
+			continue
+		}
+		for _, seg := range rt.segments {
+			for _, rowLocation := range seg.rowLocations {
+				require.Equal(t, uint64(0), uint64(rowLocation)%8, "row location must be 8 byte aligned")
+			}
+		}
+	}
+}
+
 func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, buildKeyIndex []int, buildTypes []*types.FieldType, buildKeyTypes []*types.FieldType, probeKeyTypes []*types.FieldType, keepFilteredRows bool) {
 	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, nil, []int{1}, false)
 	buildSchema := &expression.Schema{}
@@ -104,6 +117,7 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 	builder.appendRemainingRowLocations(rowTables)
 	require.NoError(t, err, "processOneChunk returns error")
 	require.Equal(t, chk.NumRows(), len(builder.usedRows))
+	checkRowLocationAlignment(t, rowTables)
 	// all the selected rows should be converted to row format, even for the rows that contains null key
 	if keepFilteredRows {
 		require.Equal(t, uint64(len(builder.usedRows)), rowTables[0].rowCount())
@@ -310,6 +324,7 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 	builder.appendRemainingRowLocations(rowTables)
 	require.NoError(t, err, "processOneChunk returns error")
 	require.Equal(t, chk.NumRows(), len(builder.usedRows))
+	checkRowLocationAlignment(t, rowTables)
 	mockJoinProber := newMockJoinProbe(hashJoinCtx)
 	resultChunk := chunk.NewEmptyChunk(resultTypes)
 	resultChunk.SetInCompleteChunk(true)
