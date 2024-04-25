@@ -3389,7 +3389,10 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 		taskDone = true
 	}
 
-	Logger.Debug("txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()), zap.Stringer("taskRange", taskRange), zap.Duration("takeTime", time.Since(startTime)))
+	Logger.Debug("txn fetches handle info",
+		zap.Uint64("txnStartTS", txn.StartTS()),
+		zap.Stringer("taskRange", &taskRange),
+		zap.Duration("takeTime", time.Since(startTime)))
 	return w.rowRecords, getNextHandleKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
 

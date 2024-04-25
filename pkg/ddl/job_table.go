@@ -132,7 +132,7 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 				Logger.Warn(
 					"[ddl] handle ddl job failed: mark job is processing meet error",
 					zap.Error(err),
-					zap.Stringer("job", job))
+					zap.Stringer("job", &job))
 				return nil, errors.Trace(err)
 			}
 			return &job, nil
