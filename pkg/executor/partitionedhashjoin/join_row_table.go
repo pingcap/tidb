@@ -52,9 +52,9 @@ type rowTableSegment struct {
 	                       join key with one integer) and has fixed length, this field is not needed.
 	   row_data: the data for all the columns of current row
 	   The columns in row_data is variable length. For elements that has fixed length(e.g. int64), it will be saved directly, for elements has a
-	   variable length(e.g. string related elements), it will first save the size followed by the raw data. Since the row_data is variable length,
-	   it is designed to access the column data in order. In order to avoid random access of the column data in row_data, the column order in the
-	   row_data will be adjusted to fit the usage order, more specifically the column order will be
+	   variable length(e.g. string related elements), it will first save the size followed by the raw data(todo check if address of the size need to be 8 byte aligned).
+	   Since the row_data is variable length, it is designed to access the column data in order. In order to avoid random access of the column data in row_data,
+	   the column order in the row_data will be adjusted to fit the usage order, more specifically the column order will be
 	   * join key is inlined + have other conditions: join keys, column used in other condition, rest columns that will be used as join output
 	   * join key is inlined + no other conditions: join keys, rest columns that will be used as join output
 	   * join key is not inlined + have other conditions: columns used in other condition, rest columns that will be used as join output
@@ -166,7 +166,6 @@ func (meta *JoinTableMeta) isColumnNull(rowStart uintptr, columnIndex int) bool 
 
 func (meta *JoinTableMeta) setUsedFlag(rowStart uintptr) {
 	addr := (*uint32)(unsafe.Add(unsafe.Pointer(rowStart), SizeOfNextPtr))
-	// todo according to https://github.com/golang/go/issues/23345, atomic load/store should be alignment?
 	value := atomic.LoadUint32(addr)
 	value |= meta.usedFlagMask
 	atomic.StoreUint32(addr, value)
@@ -630,8 +629,10 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*
 		}
 		seg.hashValues = append(seg.hashValues, builder.hashValue[logicalRowIndex])
 		builder.startPosInRawData[partIdx] = append(builder.startPosInRawData[partIdx], uint64(len(seg.rawData)))
+		rowLength := 0
 		// next_row_ptr
 		seg.rawData = append(seg.rawData, fakeAddrByte...)
+		rowLength += 8
 		// null_map
 		if nullMapLength := rowTableMeta.nullMapLength; nullMapLength > 0 {
 			bitmap := make([]byte, nullMapLength)
@@ -642,6 +643,7 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*
 				}
 			}
 			seg.rawData = append(seg.rawData, bitmap...)
+			rowLength += nullMapLength
 		}
 		length := uint64(0)
 		// if join_key is not fixed length: `key_length` need to be written in rawData
@@ -655,15 +657,18 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*
 				length = 0
 			}
 			seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), SizeOfLengthField)...)
+			rowLength += SizeOfLengthField
 		}
 		if !rowTableMeta.isJoinKeysInlined {
 			// if join_key is not inlined: `serialized_key` need to be written in rawData
 			if hasValidKey {
 				seg.rawData = append(seg.rawData, builder.serializedKeyVectorBuffer[logicalRowIndex]...)
+				rowLength += len(builder.serializedKeyVectorBuffer[logicalRowIndex])
 			} else {
 				// if there is no valid key, and the key is fixed length, then write a fake key
 				if rowTableMeta.isJoinKeysFixedLength {
 					seg.rawData = append(seg.rawData, fakeKeyByte...)
+					rowLength += len(fakeKeyByte)
 				}
 				// otherwise don't need to write since length is 0
 			}
@@ -673,13 +678,20 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*
 			if rowTableMeta.columnsSize[index] > 0 {
 				// fixed size
 				seg.rawData = append(seg.rawData, row.GetRaw(colIdx)...)
+				rowLength += rowTableMeta.columnsSize[index]
 			} else {
 				// length, raw_data
 				raw := row.GetRaw(colIdx)
 				length = uint64(len(raw))
 				seg.rawData = append(seg.rawData, unsafe.Slice((*byte)(unsafe.Pointer(&length)), SizeOfLengthField)...)
+				rowLength += SizeOfLengthField
 				seg.rawData = append(seg.rawData, raw...)
+				rowLength += int(length)
 			}
+		}
+		if rowLength%8 != 0 {
+			// need to make sure rowLength is 8 bit alignment
+			seg.rawData = append(seg.rawData, fakeAddrByte[:8-rowLength%8]...)
 		}
 		builder.crrntSizeOfRowTable[partIdx]++
 	}
