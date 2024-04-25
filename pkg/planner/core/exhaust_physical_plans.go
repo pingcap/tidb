@@ -1406,6 +1406,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	}
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
 	if err := is.addPushedDownSelection(cop, ds, tmpPath, finalStats); err != nil {
+		logutil.BgLogger().Warn("unexpected error happened during addPushedDownSelection function", zap.Error(err))
 		return nil
 	}
 	return p.constructIndexJoinInnerSideTask(cop, ds, path, wrapper)
