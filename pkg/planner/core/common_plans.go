@@ -950,7 +950,7 @@ func (e *Explain) RenderResult() error {
 		}
 		e.Rows = append(e.Rows, []string{str})
 	case types.ExplainFormatUnity:
-		e.Rows = append(e.Rows, []string{prepareForUnity(e.ExecStmt)})
+		e.Rows = append(e.Rows, []string{prepareForUnity(e.TargetPlan.(base.PhysicalPlan))})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}

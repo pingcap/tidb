@@ -1,82 +1,63 @@
 package core
 
 import (
-	"encoding/json"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"fmt"
+
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
-type TableName struct {
-	Schema string
-	Table  string
+type UnityTableName struct {
+	SchemaName string `json:"schemaName"`
+	TableName  string `json:"tableName"`
 }
 
-type ColumnName struct {
-	TableName
-	Column string
+type UnityColumnName struct {
+	UnityTableName
+	ColumnName string `json:"columnName"`
 }
 
-type visitor struct {
-	TableNames  map[TableName]bool
-	TableAlias  map[TableName]string
-	ColumnNames map[ColumnName]bool
+type UnityColumnInfo struct {
 }
 
-func (v *visitor) Enter(in ast.Node) (ast.Node, bool) {
-	if v.TableNames == nil {
-		v.TableNames = make(map[TableName]bool)
-	}
-	if v.TableAlias == nil {
-		v.TableAlias = make(map[TableName]string)
-	}
-	if v.ColumnNames == nil {
-		v.ColumnNames = make(map[ColumnName]bool)
-	}
+type UnityTableInfo struct {
+	AsName  string                              `json:"asName"`
+	Columns map[UnityColumnName]UnityColumnInfo `json:"columns"`
+}
 
-	switch x := in.(type) {
-	case *ast.TableName:
-		v.TableNames[TableName{x.Schema.O, x.Name.O}] = true
-	case *ast.TableSource:
-		if x.AsName.L != "" {
-			tbl, ok := x.Source.(*ast.TableName)
-			if ok {
-				v.TableAlias[TableName{tbl.Schema.O, tbl.Name.O}] = x.AsName.O
-			} else {
-				panic("TODO")
-			}
+func prepareUnityInfo(p base.PhysicalPlan, result map[UnityTableName]UnityTableInfo) {
+	switch x := p.(type) {
+	case *PhysicalTableScan:
+		tableName := UnityTableName{SchemaName: x.DBName.O, TableName: x.Table.Name.O}
+		tableInfo := UnityTableInfo{
+			AsName: x.TableAsName.O,
 		}
-	case *ast.ColumnName:
-		v.ColumnNames[ColumnName{TableName{x.Table.O, x.Name.O}, x.Name.O}] = true
+		result[tableName] = tableInfo
+	default:
 	}
-	return in, false
-}
 
-func (v *visitor) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
-}
-
-type JSONOutput struct {
-	TableNames []string `json:"table_names"`
-	ColumnName []string `json:"column_names"`
-}
-
-func prepareForUnity(stmt ast.StmtNode) string {
-	v := &visitor{}
-	stmt.Accept(v)
-
-	var j = JSONOutput{TableNames: []string{}, ColumnName: []string{}}
-	for t := range v.TableNames {
-		if alias, ok := v.TableAlias[t]; ok {
-			t.Table = alias
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		prepareUnityInfo(x.tablePlan, result)
+	case *PhysicalIndexReader:
+		prepareUnityInfo(x.indexPlan, result)
+	case *PhysicalIndexLookUpReader:
+		prepareUnityInfo(x.tablePlan, result)
+		prepareUnityInfo(x.indexPlan, result)
+	case *PhysicalIndexMergeReader:
+		prepareUnityInfo(x.tablePlan, result)
+		for _, indexPlan := range x.partialPlans {
+			prepareUnityInfo(indexPlan, result)
 		}
-		j.TableNames = append(j.TableNames, t.Table)
 	}
-	for c := range v.ColumnNames {
-		j.ColumnName = append(j.ColumnName, c.Column)
+	for _, child := range p.Children() {
+		prepareUnityInfo(child, result)
 	}
+}
 
-	jsonData, err := json.Marshal(j)
-	must(err)
-	return string(jsonData)
+func prepareForUnity(p base.PhysicalPlan) string {
+	result := make(map[UnityTableName]UnityTableInfo)
+	prepareUnityInfo(p, result)
+	return fmt.Sprintf("%v", result)
 }
 
 func must(err error) {
