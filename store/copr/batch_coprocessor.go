@@ -289,7 +289,6 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 }
 
 func getUsedStores(cache *RegionCache, usedTiFlashStoresMap map[uint64]struct{}) []*tikv.Store {
-	logutil.BgLogger().Info("detecting available mpp stores")
 	// decide the available stores
 	stores := cache.RegionCache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 	usedStores := make([]*tikv.Store, 0)
@@ -344,6 +343,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, usedTiFlashStore
 		}
 	} else {
 		usedStores := getUsedStores(cache, usedTiFlashStoresMap)
+		logutil.BgLogger().Info("detecting available mpp stores")
 		aliveStores := filterAliveStores(ctx, usedStores, ttl, kvStore)
 		for _, s := range aliveStores {
 			storeTaskMap[s.StoreID()] = &batchCopTask{
