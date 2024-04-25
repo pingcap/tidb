@@ -1345,6 +1345,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			data = data[:len(data)-1]
 			dataStr = string(hack.String(data))
 		}
+		ts := time.Now()
+		defer func() {
+			logutil.BgLogger().Info("command dispatched", zap.String("sql", dataStr), zap.Duration("total cost time", time.Since(ts)))
+		}()
 		return cc.handleQuery(ctx, dataStr)
 	case mysql.ComFieldList:
 		return cc.handleFieldList(ctx, dataStr)

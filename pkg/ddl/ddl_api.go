@@ -2671,6 +2671,11 @@ func (d *ddl) assignPartitionIDs(defs []model.PartitionDefinition) error {
 }
 
 func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("CreateTable cost", zap.Duration("total cost time", time.Since(st)))
+	}()
+	st2 := time.Now()
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -2713,7 +2718,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if s.IfNotExists {
 		onExist = OnExistIgnore
 	}
-
+	logutil.DDLLogger().Info("CreateTable CHECK cost", zap.Duration("total cost time", time.Since(st2)))
 	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist)
 }
 
@@ -2744,6 +2749,10 @@ func (d *ddl) createTableWithInfoJob(
 	onExist OnExist,
 	retainID bool,
 ) (job *model.Job, err error) {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("createTableWithInfoJob cost", zap.Duration("total cost time", time.Since(st)))
+	}()
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(dbName)
 	if !ok {
@@ -2825,6 +2834,10 @@ func (d *ddl) createTableWithInfoPost(
 	tbInfo *model.TableInfo,
 	schemaID int64,
 ) error {
+	st := time.Now()
+	defer func() {
+		logutil.DDLLogger().Info("createTableWithInfoPost cost", zap.Duration("total cost time", time.Since(st)))
+	}()
 	var err error
 	var partitions []model.PartitionDefinition
 	if pi := tbInfo.GetPartitionInfo(); pi != nil {
