@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -76,7 +77,7 @@ func getStatsLoadItem(t *testing.T, is infoschema.InfoSchema, item model.StatsLo
 	return str
 }
 
-func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, lp LogicalPlan, expected []string, comment string) {
+func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
 	var tblColIDs []model.TableItemID
 	tblColIDs, _, _ = CollectColumnStatsUsage(lp, true, false)
 	cols := make([]string, 0, len(tblColIDs))
@@ -88,7 +89,7 @@ func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, 
 	require.Equal(t, expected, cols, comment)
 }
 
-func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, lp LogicalPlan, expected []string, comment string) {
+func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
 	var loadItems []model.StatsLoadItem
 	_, loadItems, _ = CollectColumnStatsUsage(lp, false, true)
 	cols := make([]string, 0, len(loadItems))
@@ -280,7 +281,7 @@ func TestCollectPredicateColumns(t *testing.T) {
 		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err, comment)
-		lp, ok := p.(LogicalPlan)
+		lp, ok := p.(base.LogicalPlan)
 		require.True(t, ok, comment)
 		// We check predicate columns twice, before and after logical optimization. Some logical plan patterns may occur before
 		// logical optimization while others may occur after logical optimization.
@@ -365,7 +366,7 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err, comment)
-		lp, ok := p.(LogicalPlan)
+		lp, ok := p.(base.LogicalPlan)
 		require.True(t, ok, comment)
 		flags := builder.GetOptFlag()
 		// JoinReOrder may need columns stats so collecting hist-needed columns must happen before JoinReOrder.

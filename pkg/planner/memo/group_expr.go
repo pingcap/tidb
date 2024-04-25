@@ -19,7 +19,7 @@ import (
 	"reflect"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
 // GroupExpr is used to store all the logically equivalent expressions which
@@ -28,7 +28,7 @@ import (
 // Another property of Group expression is that the child Group references will
 // never be changed once the Group expression is created.
 type GroupExpr struct {
-	ExprNode plannercore.LogicalPlan
+	ExprNode base.LogicalPlan
 	Children []*Group
 	Group    *Group
 
@@ -44,7 +44,7 @@ type GroupExpr struct {
 }
 
 // NewGroupExpr creates a GroupExpr based on a logical plan node.
-func NewGroupExpr(node plannercore.LogicalPlan) *GroupExpr {
+func NewGroupExpr(node base.LogicalPlan) *GroupExpr {
 	return &GroupExpr{
 		ExprNode:       node,
 		Children:       nil,

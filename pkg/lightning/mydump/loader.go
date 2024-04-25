@@ -130,7 +130,7 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 			zap.String("Path", m.SchemaFile.FileMeta.Path),
 			log.ShortError(err),
 		)
-		return "", err
+		return "", errors.Trace(err)
 	}
 	return string(schema), nil
 }
