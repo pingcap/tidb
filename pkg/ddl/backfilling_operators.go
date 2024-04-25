@@ -249,7 +249,7 @@ type TableScanTask struct {
 }
 
 // String implement fmt.Stringer interface.
-func (t *TableScanTask) String() string {
+func (t TableScanTask) String() string {
 	return fmt.Sprintf("TableScanTask: id=%d, startKey=%s, endKey=%s",
 		t.ID, hex.EncodeToString(t.Start), hex.EncodeToString(t.End))
 }
