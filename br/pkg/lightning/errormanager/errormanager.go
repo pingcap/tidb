@@ -157,6 +157,14 @@ const (
 		ORDER BY raw_key;
 	`
 
+<<<<<<< HEAD:br/pkg/lightning/errormanager/errormanager.go
+=======
+	deleteNullDataRow = `
+		DELETE FROM %s.` + ConflictErrorTableName + `
+		WHERE key_data = '' and row_data = '';
+	`
+
+>>>>>>> 54ba0ed6840 (lightning: fix delete additionally inserted rows for conflict detection 'replace' mode failed (#52888)):pkg/lightning/errormanager/errormanager.go
 	insertIntoDupRecord = `
 		INSERT INTO %s.` + DupRecordTable + `
 		(task_id, table_name, path, offset, error, row_id, row_data)
