@@ -164,7 +164,7 @@ const (
 
 	deleteNullDataRow = `
 		DELETE FROM %s.` + ConflictErrorTableName + `
-		WHERE key_data = "" and row_data = "";
+		WHERE key_data = '' and row_data = '';
 	`
 
 	insertIntoDupRecord = `
