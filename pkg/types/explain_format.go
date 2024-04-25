@@ -40,6 +40,8 @@ var (
 	// ExplainFormatPlanCache prints the reason why can't use non-prepared plan cache by warning
 	ExplainFormatPlanCache = "plan_cache"
 
+	ExplainFormatUnity = "unity"
+
 	// ExplainFormats stores the valid formats for explain statement, used by validator.
 	ExplainFormats = []string{
 		ExplainFormatBrief,
@@ -54,5 +56,6 @@ var (
 		ExplainFormatTiDBJSON,
 		ExplainFormatCostTrace,
 		ExplainFormatPlanCache,
+		ExplainFormatUnity,
 	}
 )
