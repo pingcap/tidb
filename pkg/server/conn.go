@@ -2050,6 +2050,7 @@ func (cc *clientConn) handleStmt(
 			return false, exeerrors.ErrQueryInterrupted
 		}
 		cc.ctx.GetSessionVars().SQLKiller.Finish = func() {
+			//nolint: errcheck
 			rs.Finish()
 			cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusWaitQueryFinished, true)
 			cc.ctx.UpdateProcessInfo()
