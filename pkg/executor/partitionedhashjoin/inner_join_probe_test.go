@@ -330,6 +330,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		require.NoError(t, err)
 	}
 	builder.appendRemainingRowLocations(rowTables)
+	checkRowLocationAlignment(t, rowTables)
 	// make sure there is no nil rowTable
 	for index := range rowTables {
 		if rowTables[index] == nil {
