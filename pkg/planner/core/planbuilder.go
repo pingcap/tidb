@@ -4960,6 +4960,7 @@ func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, expl
 
 	p := &Explain{
 		TargetPlan:       targetPlan,
+		LogicalPlan:      b.ctx.GetSessionVars().StmtCtx.LogicalPlan.(base.LogicalPlan),
 		Format:           format,
 		Analyze:          analyze,
 		ExecStmt:         execStmt,

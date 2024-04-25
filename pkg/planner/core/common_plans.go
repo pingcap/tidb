@@ -765,6 +765,7 @@ type Explain struct {
 	baseSchemaProducer
 
 	TargetPlan       base.Plan
+	LogicalPlan      base.LogicalPlan
 	Format           string
 	Analyze          bool
 	ExecStmt         ast.StmtNode
@@ -950,7 +951,7 @@ func (e *Explain) RenderResult() error {
 		}
 		e.Rows = append(e.Rows, []string{str})
 	case types.ExplainFormatUnity:
-		e.Rows = append(e.Rows, []string{prepareForUnity(e.TargetPlan.(base.PhysicalPlan))})
+		e.Rows = append(e.Rows, []string{prepareForUnity(e.LogicalPlan)})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
