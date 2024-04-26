@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -2455,7 +2456,7 @@ func (r *TransformApplyToJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo
 
 func (r *TransformApplyToJoin) extractCorColumnsBySchema(innerGroup *memo.Group, outerSchema *expression.Schema) []*expression.CorrelatedColumn {
 	corCols := r.extractCorColumnsFromGroup(innerGroup)
-	return plannercore.ExtractCorColumnsBySchema(corCols, outerSchema, false)
+	return coreusage.ExtractCorColumnsBySchema(corCols, outerSchema, false)
 }
 
 func (r *TransformApplyToJoin) extractCorColumnsFromGroup(g *memo.Group) []*expression.CorrelatedColumn {

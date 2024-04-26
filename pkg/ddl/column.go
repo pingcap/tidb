@@ -580,7 +580,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		changingCol.Name = newColName
 		changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
 
-		originDefVal, err := GetOriginDefaultValueForModifyColumn(newContext(d.store), changingCol, oldCol)
+		originDefVal, err := GetOriginDefaultValueForModifyColumn(newReorgSessCtx(d.store), changingCol, oldCol)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1800,7 +1800,7 @@ func updateColumnDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job, newCol *m
 		return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(newCol.Name, tblInfo.Name)
 	}
 
-	if hasDefaultValue, _, err := checkColumnDefaultValue(newContext(d.store), table.ToColumn(oldCol.Clone()), newCol.DefaultValue); err != nil {
+	if hasDefaultValue, _, err := checkColumnDefaultValue(newReorgSessCtx(d.store), table.ToColumn(oldCol.Clone()), newCol.DefaultValue); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	} else if !hasDefaultValue {
@@ -1816,7 +1816,7 @@ func updateColumnDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job, newCol *m
 		oldCol.AddFlag(mysql.NoDefaultValueFlag)
 	} else {
 		oldCol.DelFlag(mysql.NoDefaultValueFlag)
-		sctx := newContext(d.store)
+		sctx := newReorgSessCtx(d.store)
 		err = checkDefaultValue(sctx, table.ToColumn(oldCol), true)
 		if err != nil {
 			job.State = model.JobStateCancelled

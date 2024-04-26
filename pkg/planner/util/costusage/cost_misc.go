@@ -12,12 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package coreusage
+package costusage
 
 import (
 	"fmt"
 	"strconv"
+
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
+
+// optimizetrace and costusage is isolated from `util` because `core/base` depended on them
+// for interface definition. Ideally, the dependency chain should be:
+//
+// `base` <- `util`/`util.coreusage` <- `core`
+//    ^ +---------------^                  |
+//    +------------------------------------+
+//
+// since `base` depended on optimizetrace and costusage for definition, we should separate
+// them out of `util`/`util.coreusage` to avoid import cycle.
+//
+// util.optimizetrace/util.costusage  <- `base` <- `util`/`util.coreusage` <- `core`
+//   				^			            ^                                    ||
+//   				|			            +------------------------------------+|
+//                  +-------------------------------------------------------------+
 
 const (
 	// CostFlagRecalculate indicates the optimizer to ignore cached cost and recalculate it again.
@@ -29,6 +46,10 @@ const (
 	// CostFlagTrace indicates whether to trace the cost calculation.
 	CostFlagTrace
 )
+
+func init() {
+	optimizetrace.CostFlagTrace = CostFlagTrace
+}
 
 // CostVer2 is a structure  of cost basic of version2
 type CostVer2 struct {
@@ -75,7 +96,7 @@ func hasCostFlag(costFlag, flag uint64) bool {
 }
 
 // TraceCost indicates whether to trace cost.
-func TraceCost(option *PlanCostOption) bool {
+func TraceCost(option *optimizetrace.PlanCostOption) bool {
 	if option != nil && hasCostFlag(option.CostFlag, CostFlagTrace) {
 		return true
 	}
@@ -83,7 +104,7 @@ func TraceCost(option *PlanCostOption) bool {
 }
 
 // NewCostVer2 is the constructor of CostVer2.
-func NewCostVer2(option *PlanCostOption, factor CostVer2Factor, cost float64,
+func NewCostVer2(option *optimizetrace.PlanCostOption, factor CostVer2Factor, cost float64,
 	lazyFormula func() string) (ret CostVer2) {
 	ret.cost = cost
 	if TraceCost(option) {
