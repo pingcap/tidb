@@ -59,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -69,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -1870,7 +1870,7 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 		return nil
 	}
 	for _, w := range stmtCtx.GetWarnings() {
-		if errOnly && w.Level != stmtctx.WarnLevelError {
+		if errOnly && w.Level != contextutil.WarnLevelError {
 			continue
 		}
 		warn := errors.Cause(w.Err)

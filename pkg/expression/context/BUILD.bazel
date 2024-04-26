@@ -11,9 +11,9 @@ go_library(
     deps = [
         "//pkg/errctx",
         "//pkg/parser/mysql",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
+        "//pkg/util/context",
         "//pkg/util/intest",
         "//pkg/util/mathutil",
     ],

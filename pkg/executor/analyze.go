@@ -76,10 +76,6 @@ var (
 	MaxRegionSampleSize = int64(1000)
 )
 
-const (
-	maxSketchSize = 10000
-)
-
 type taskType int
 
 const (

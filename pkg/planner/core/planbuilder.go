@@ -162,9 +162,9 @@ type cteInfo struct {
 	// isDistinct indicates if the union between seed part and recursive part is distinct or not.
 	isDistinct bool
 	// seedLP is the seed part's logical plan.
-	seedLP LogicalPlan
+	seedLP base.LogicalPlan
 	// recurLP is the recursive part's logical plan.
-	recurLP LogicalPlan
+	recurLP base.LogicalPlan
 	// storageID for this CTE.
 	storageID int
 	// optFlag is the optFlag for the whole CTE.
@@ -172,7 +172,7 @@ type cteInfo struct {
 	// enterSubquery and recursiveRef are used to check "recursive table must be referenced only once, and not in any subquery".
 	enterSubquery bool
 	recursiveRef  bool
-	limitLP       LogicalPlan
+	limitLP       base.LogicalPlan
 	// seedStat is shared between logicalCTE and logicalCTETable.
 	seedStat *property.StatsInfo
 	// The LogicalCTEs that reference the same table should share the same CteClass.
@@ -616,7 +616,7 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (bas
 }
 
 func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, error) {
-	var p LogicalPlan
+	var p base.LogicalPlan
 	dual := LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 	dual.SetSchema(expression.NewSchema())
 	p = dual
@@ -699,7 +699,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 			// See the following IF branch.
 			mockTablePlan := LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 			var err error
-			var possiblePlan LogicalPlan
+			var possiblePlan base.LogicalPlan
 			assign.Expr, possiblePlan, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
 			if err != nil {
 				return nil, err
@@ -1306,7 +1306,7 @@ func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
 	return paths[:i]
 }
 
-func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
+func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
 	var tblID2PhysTblIDCol map[int64]*expression.Column
 	if len(b.partitionedTable) > 0 {
 		tblID2PhysTblIDCol = make(map[int64]*expression.Column)
@@ -1329,7 +1329,7 @@ func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo)
 	return selectLock, nil
 }
 
-func setExtraPhysTblIDColsOnDataSource(p LogicalPlan, tblID2PhysTblIDCol map[int64]*expression.Column) {
+func setExtraPhysTblIDColsOnDataSource(p base.LogicalPlan, tblID2PhysTblIDCol map[int64]*expression.Column) {
 	switch ds := p.(type) {
 	case *DataSource:
 		if ds.tableInfo.GetPartitionInfo() == nil {
@@ -3238,7 +3238,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
 	var err error
-	var np LogicalPlan
+	var np base.LogicalPlan
 	np = p
 	// If we have ShowPredicateExtractor, we do not buildSelection with Pattern
 	if show.Pattern != nil && buildPattern {
@@ -3571,7 +3571,7 @@ func (b *PlanBuilder) getDefaultValueForInsert(col *table.Column) (*expression.C
 
 // resolveGeneratedColumns resolves generated columns with their generation
 // expressions respectively. onDups indicates which columns are in on-duplicate list.
-func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan LogicalPlan) (igc InsertGeneratedColumns, err error) {
+func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan base.LogicalPlan) (igc InsertGeneratedColumns, err error) {
 	for _, column := range columns {
 		if !column.IsGenerated() {
 			continue
@@ -3864,7 +3864,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 		if _, ok := expr.(*ast.SubqueryExpr); ok {
 			usingPlan = LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 		}
-		var np LogicalPlan
+		var np base.LogicalPlan
 		outExpr, np, err = b.rewriteWithPreprocess(ctx, expr, usingPlan, nil, nil, true, checkRefColumn)
 		if np != nil {
 			if _, ok := np.(*LogicalTableDual); !ok {
@@ -4040,7 +4040,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	}
 
 	names := selectPlan.OutputNames()
-	insertPlan.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(LogicalPlan))
+	insertPlan.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(base.LogicalPlan))
 	if err != nil {
 		return err
 	}
@@ -4250,7 +4250,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			(len(ld.ColumnsAndUserVars) == 0 && len(selectPlan.Schema().Columns) != len(tableInPlan.VisibleCols())) {
 			return nil, plannererrors.ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 		}
-		p.SelectPlan, _, err2 = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(LogicalPlan))
+		p.SelectPlan, _, err2 = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(base.LogicalPlan))
 		if err2 != nil {
 			return nil, err2
 		}
@@ -4399,7 +4399,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (base.Pla
 	return p, nil
 }
 
-func (b *PlanBuilder) convertValue2ColumnType(valuesItem []ast.ExprNode, mockTablePlan LogicalPlan, indexInfo *model.IndexInfo, tblInfo *model.TableInfo) ([]types.Datum, error) {
+func (b *PlanBuilder) convertValue2ColumnType(valuesItem []ast.ExprNode, mockTablePlan base.LogicalPlan, indexInfo *model.IndexInfo, tblInfo *model.TableInfo) ([]types.Datum, error) {
 	values := make([]types.Datum, 0, len(valuesItem))
 	for j, valueItem := range valuesItem {
 		colOffset := indexInfo.Columns[j].Offset
@@ -4412,7 +4412,7 @@ func (b *PlanBuilder) convertValue2ColumnType(valuesItem []ast.ExprNode, mockTab
 	return values, nil
 }
 
-func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan LogicalPlan, col *model.ColumnInfo) (d types.Datum, err error) {
+func (b *PlanBuilder) convertValue(valueItem ast.ExprNode, mockTablePlan base.LogicalPlan, col *model.ColumnInfo) (d types.Datum, err error) {
 	var expr expression.Expression
 	switch x := valueItem.(type) {
 	case *driver.ValueExpr:
@@ -4716,7 +4716,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		schema := plan.Schema()
 		names := plan.OutputNames()
 		if v.Cols == nil {
-			adjustOverlongViewColname(plan.(LogicalPlan))
+			adjustOverlongViewColname(plan.(base.LogicalPlan))
 			v.Cols = make([]model.CIStr, len(schema.Columns))
 			for i, name := range names {
 				v.Cols[i] = name.ColName
@@ -5380,7 +5380,7 @@ func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {
 // adjustOverlongViewColname adjusts the overlong outputNames of a view to
 // `new_exp_$off` where `$off` is the offset of the output column, $off starts from 1.
 // There is still some MySQL compatible problems.
-func adjustOverlongViewColname(plan LogicalPlan) {
+func adjustOverlongViewColname(plan base.LogicalPlan) {
 	outputNames := plan.OutputNames()
 	for i := range outputNames {
 		if outputName := outputNames[i].ColName.L; len(outputName) > mysql.MaxColumnNameLength {

@@ -70,7 +70,8 @@ func initTestClient(isRawKv bool) *TestClient {
 		}
 		regions[i] = &split.RegionInfo{
 			Leader: &metapb.Peer{
-				Id: i,
+				Id:      i,
+				StoreId: 1,
 			},
 			Region: &metapb.Region{
 				Id:       i,
@@ -281,7 +282,7 @@ func TestEpochNotMatch(t *testing.T) {
 				{Id: 43},
 			},
 		},
-		Leader: &metapb.Peer{Id: 43},
+		Leader: &metapb.Peer{Id: 43, StoreId: 1},
 	}
 	newRegion := pdtypes.NewRegionInfo(info.Region, info.Leader)
 	mergeRegion := func() {
@@ -340,7 +341,8 @@ func TestRegionSplit(t *testing.T) {
 				EndKey:   codec.EncodeBytes(nil, []byte("aayy")),
 			},
 			Leader: &metapb.Peer{
-				Id: 43,
+				Id:      43,
+				StoreId: 1,
 			},
 		},
 		{
@@ -350,7 +352,8 @@ func TestRegionSplit(t *testing.T) {
 				EndKey:   target.Region.EndKey,
 			},
 			Leader: &metapb.Peer{
-				Id: 45,
+				Id:      45,
+				StoreId: 1,
 			},
 		},
 	}

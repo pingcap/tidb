@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "contextimpl",
+    name = "contextsession",
     srcs = ["sessionctx.go"],
-    importpath = "github.com/pingcap/tidb/pkg/expression/contextimpl",
+    importpath = "github.com/pingcap/tidb/pkg/expression/contextsession",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/errctx",
@@ -15,10 +15,10 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/privilege",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/context",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
@@ -28,21 +28,21 @@ go_library(
 )
 
 go_test(
-    name = "contextimpl_test",
+    name = "contextsession_test",
     timeout = "short",
     srcs = ["sessionctx_test.go"],
     flaky = True,
     shard_count = 5,
     deps = [
-        ":contextimpl",
+        ":contextsession",
         "//pkg/errctx",
         "//pkg/expression/context",
         "//pkg/expression/contextopt",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/privilege",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/types",
+        "//pkg/util/context",
         "//pkg/util/mathutil",
         "//pkg/util/mock",
         "@com_github_pingcap_errors//:errors",

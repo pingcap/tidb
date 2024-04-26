@@ -39,7 +39,7 @@ type LevelMap [errGroupCount]Level
 // Context defines how to handle an error
 type Context struct {
 	levelMap    LevelMap
-	warnHandler contextutil.WarnHandler
+	warnHandler contextutil.WarnAppender
 }
 
 // LevelMap returns the `levelMap` of the context.
@@ -156,12 +156,12 @@ func (ctx *Context) HandleErrorWithAlias(internalErr error, err error, warnErr e
 }
 
 // NewContext creates an error context to handle the errors and warnings
-func NewContext(handler contextutil.WarnHandler) Context {
+func NewContext(handler contextutil.WarnAppender) Context {
 	return NewContextWithLevels(LevelMap{}, handler)
 }
 
 // NewContextWithLevels creates an error context to handle the errors and warnings
-func NewContextWithLevels(levels LevelMap, handler contextutil.WarnHandler) Context {
+func NewContextWithLevels(levels LevelMap, handler contextutil.WarnAppender) Context {
 	intest.Assert(handler != nil)
 	return Context{
 		warnHandler: handler,

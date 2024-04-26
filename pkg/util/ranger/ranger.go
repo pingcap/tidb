@@ -16,6 +16,7 @@ package ranger
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"regexp"
 	"slices"
@@ -164,7 +165,7 @@ func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.Fiel
 	if err != nil {
 		if sctx.InPreparedPlanBuilding {
 			// skip plan cache in this case for safety.
-			sctx.SetSkipPlanCache(errors.Errorf("%s when converting %v", err.Error(), point.value))
+			sctx.SetSkipPlanCache(fmt.Sprintf("%s when converting %v", err.Error(), point.value))
 		}
 		//revive:disable:empty-block
 		if newTp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
