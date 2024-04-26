@@ -160,6 +160,7 @@ func (e *TopNExec) greaterRow(rowI, rowJ chunk.Row) bool {
 //
 // The following picture shows the procedure of topn when spill is triggered.
 /*
+Spill Stage:
                         ┌─────────┐
                         │  Child  │
                         └────▲────┘
@@ -178,7 +179,7 @@ func (e *TopNExec) greaterRow(rowI, rowJ chunk.Row) bool {
                      Spill Not Triggered                             │
                              │                                       │
                              ▼                                       │
-                           Push◄─────────────────────────────────────┘
+                         Push Chunk◄─────────────────────────────────┘
                              │
                              ▼
         ┌────────────────►Channel◄───────────────────┐
@@ -197,6 +198,20 @@ func (e *TopNExec) greaterRow(rowI, rowJ chunk.Row) bool {
                              │
                              ▼
                           Output
+
+Restore Stage:
+   ┌────────┐            ┌────────┐              ┌────────┐
+   │  Heap  │            │  Heap  │   ......     │  Heap  │
+   └────┬───┘            └───┬────┘              └───┬────┘
+        │                    │                       │
+        │                    │                       │
+        │                    ▼                       │
+        └───────────► Multi-way Merge◄───────────────┘
+                             │
+                             │
+                             ▼
+                          Output
+
 */
 func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
@@ -441,7 +456,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) {
 }
 
 // Return true when spill is triggered
-func (e *TopNExec) generateTopNResultsWHenNoSpillTriggered() bool {
+func (e *TopNExec) generateTopNResultsWhenNoSpillTriggered() bool {
 	rowPtrNum := len(e.chkHeap.rowPtrs)
 	for ; e.chkHeap.idx < rowPtrNum; e.chkHeap.idx++ {
 		if e.chkHeap.idx%10 == 0 && e.spillHelper.isSpillNeeded() {
@@ -496,6 +511,7 @@ func (e *TopNExec) generateTopNResultsWhenSpillTriggered() error {
 	if inDiskNum == 1 {
 		inDisk := e.spillHelper.sortedRowsInDisk[0]
 		chunkNum := inDisk.NumChunks()
+		skippedRowNum := uint64(0)
 		offset := e.Limit.Offset
 		for i := 0; i < chunkNum; i++ {
 			chk, err := inDisk.GetChunk(i)
@@ -508,9 +524,20 @@ func (e *TopNExec) generateTopNResultsWhenSpillTriggered() error {
 			rowNum := chk.NumRows()
 			j := 0
 			if !e.inMemoryThenSpillFlag {
-				// When e.inMemoryThenSpillFlag == false, we need to set j = offset
-				// because rows that should be ignored before offset are also spilled into disk.
-				j = int(offset)
+				// When e.inMemoryThenSpillFlag == false, we need to manually set j
+				// because rows that should be ignored before offset have also been
+				// spilled to disk.
+				if skippedRowNum < offset {
+					rowNumNeedSkip := offset - skippedRowNum
+					if rowNum > int(rowNumNeedSkip) {
+						j += int(rowNumNeedSkip)
+						skippedRowNum += rowNumNeedSkip
+					} else {
+						// All rows in this chunk should be skipped
+						skippedRowNum += uint64(rowNum)
+						continue
+					}
+				}
 			}
 
 			for ; j < rowNum; j++ {
@@ -528,7 +555,7 @@ func (e *TopNExec) generateTopNResultsWhenSpillTriggered() error {
 
 func (e *TopNExec) generateTopNResults() {
 	if !e.spillHelper.isSpillTriggered() {
-		if !e.generateTopNResultsWHenNoSpillTriggered() {
+		if !e.generateTopNResultsWhenNoSpillTriggered() {
 			return
 		}
 

@@ -169,13 +169,6 @@ func (t *topNSpillHelper) spill() (err error) {
 				workerWaiter.Done()
 			}()
 
-			chkNum := t.workers[idx].chkHeap.rowChunks.NumChunks()
-			rowNum := 0
-			for i := 0; i < chkNum; i++ {
-				chk := t.workers[idx].chkHeap.rowChunks.GetChunk(i)
-				rowNum += chk.NumRows()
-			}
-
 			spillErr := t.spillHeap(t.workers[idx].chkHeap)
 			if spillErr != nil {
 				errChan <- spillErr
@@ -214,7 +207,6 @@ func (t *topNSpillHelper) spillHeap(chkHeap *topNChunkHeap) error {
 	inDisk := chunk.NewDataInDiskByChunks(t.fieldTypes)
 	inDisk.GetDiskTracker().AttachTo(t.diskTracker)
 
-	// startIdx := chkHeap.idx
 	rowPtrNum := chkHeap.Len()
 	for ; chkHeap.idx < rowPtrNum; chkHeap.idx++ {
 		if tmpSpillChunk.IsFull() {
