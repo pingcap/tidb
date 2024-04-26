@@ -2277,14 +2277,17 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 
 	rs, err = s.Exec(ctx)
 
-	// Pipelined-DML can return assertion error and write conflict here, handle them like we handle
-	// errors returned from commit.
-	if err != nil {
-		err = se.handleAssertionFailure(ctx, err)
-	}
-	newErr := se.tryReplaceWriteConflictError(err)
-	if newErr != nil {
-		err = newErr
+	// check if is pipelined dml
+	if se.txn.Valid() && se.txn.IsPipelined() {
+		// Pipelined-DML can return assertion error and write conflict here, handle them like we handle
+		// errors returned from commit.
+		if err != nil {
+			err = se.handleAssertionFailure(ctx, err)
+		}
+		newErr := se.tryReplaceWriteConflictError(err)
+		if newErr != nil {
+			err = newErr
+		}
 	}
 
 	sessVars.TxnCtx.StatementCount++
