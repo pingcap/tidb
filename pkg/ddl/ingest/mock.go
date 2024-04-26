@@ -58,6 +58,7 @@ func (m *MockBackendCtxMgr) Register(ctx context.Context, jobID int64, unique bo
 	mockCtx := &MockBackendCtx{
 		mu:      sync.Mutex{},
 		sessCtx: sessCtx,
+		unique:  unique,
 	}
 	m.runningJobs[jobID] = mockCtx
 	return mockCtx, nil
@@ -97,12 +98,18 @@ type MockBackendCtx struct {
 	sessCtx       sessionctx.Context
 	mu            sync.Mutex
 	checkpointMgr *CheckpointManager
+	unique        bool
 }
 
 // Register implements BackendCtx.Register interface.
 func (m *MockBackendCtx) Register(jobID, indexID int64, _, _ string) (Engine, error) {
 	logutil.BgLogger().Info("mock backend ctx register", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
-	return &MockEngineInfo{sessCtx: m.sessCtx, mu: &m.mu}, nil
+	return &MockEngineInfo{
+		sessCtx:     m.sessCtx,
+		mu:          &m.mu,
+		unique:      m.unique,
+		writtenKeys: make(map[string]struct{}),
+	}, nil
 }
 
 // Unregister implements BackendCtx.Unregister interface.
@@ -160,8 +167,10 @@ type MockWriteHook func(key, val []byte)
 
 // MockEngineInfo is a mock engine info.
 type MockEngineInfo struct {
-	sessCtx sessionctx.Context
-	mu      *sync.Mutex
+	sessCtx     sessionctx.Context
+	mu          *sync.Mutex
+	unique      bool
+	writtenKeys map[string]struct{}
 
 	onWrite MockWriteHook
 }
@@ -196,14 +205,22 @@ func (m *MockEngineInfo) SetHook(onWrite func(key, val []byte)) {
 // CreateWriter implements Engine.CreateWriter interface.
 func (m *MockEngineInfo) CreateWriter(id int) (Writer, error) {
 	logutil.BgLogger().Info("mock engine info create writer", zap.Int("id", id))
-	return &MockWriter{sessCtx: m.sessCtx, mu: m.mu, onWrite: m.onWrite}, nil
+	return &MockWriter{
+		sessCtx:     m.sessCtx,
+		mu:          m.mu,
+		onWrite:     m.onWrite,
+		writtenKeys: m.writtenKeys,
+		unique:      m.unique,
+	}, nil
 }
 
 // MockWriter is a mock writer.
 type MockWriter struct {
-	sessCtx sessionctx.Context
-	mu      *sync.Mutex
-	onWrite MockWriteHook
+	sessCtx     sessionctx.Context
+	mu          *sync.Mutex
+	unique      bool
+	writtenKeys map[string]struct{}
+	onWrite     MockWriteHook
 }
 
 // WriteRow implements Writer.WriteRow interface.
@@ -213,6 +230,15 @@ func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle
 		zap.String("idxVal", hex.EncodeToString(idxVal)))
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.unique {
+		keyStr := hex.EncodeToString(key)
+		if _, ok := m.writtenKeys[keyStr]; ok {
+			return kv.ErrKeyExists
+		}
+		m.writtenKeys[keyStr] = struct{}{}
+	}
+
 	if m.onWrite != nil {
 		m.onWrite(key, idxVal)
 		return nil
