@@ -709,7 +709,7 @@ func (e *PartitionedHashJoinExec) checkBalance(totalSegmentCnt int) bool {
 	return isBalanced
 }
 
-func (e *PartitionedHashJoinExec) createTasks(buildTaskCh chan<- *buildTask, totalSegmentCnt int) {
+func (e *PartitionedHashJoinExec) createTasks(buildTaskCh chan<- *buildTask, totalSegmentCnt int, doneCh chan struct{}) {
 	isBalanced := e.checkBalance(totalSegmentCnt)
 	segStep := mathutil.Max(1, totalSegmentCnt/int(e.Concurrency))
 	subTables := e.PartitionedHashJoinCtx.joinHashTable.tables
@@ -720,12 +720,20 @@ func (e *PartitionedHashJoinExec) createTasks(buildTaskCh chan<- *buildTask, tot
 	for partIdx, subTable := range subTables {
 		segmentsLen := len(subTable.rowData.segments)
 		if isBalanced {
-			buildTaskCh <- createBuildTask(partIdx, 0, segmentsLen)
+			select {
+			case <-doneCh:
+				return
+			case buildTaskCh <- createBuildTask(partIdx, 0, segmentsLen):
+			}
 			continue
 		}
 		for startIdx := 0; startIdx < segmentsLen; startIdx += segStep {
 			endIdx := mathutil.Min(startIdx+segStep, segmentsLen)
-			buildTaskCh <- createBuildTask(partIdx, startIdx, endIdx)
+			select {
+			case <-doneCh:
+				return
+			case buildTaskCh <- createBuildTask(partIdx, startIdx, endIdx):
+			}
 		}
 	}
 }
@@ -740,8 +748,10 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 
 	wg := new(sync.WaitGroup)
 	errCh := make(chan error, 1+e.Concurrency)
-	srcChkCh := e.fetchBuildSideRows(ctx, wg, errCh)
-	e.splitAndAppendToRowTable(srcChkCh, wg, errCh)
+	// doneCh is used by the consumer(splitAndAppendToRowTable) to info the producer(fetchBuildSideRows) that the consumer meet error and stop consume data
+	doneCh := make(chan struct{}, e.Concurrency)
+	srcChkCh := e.fetchBuildSideRows(ctx, wg, errCh, doneCh)
+	e.splitAndAppendToRowTable(srcChkCh, wg, errCh, doneCh)
 	wg.Wait()
 	close(errCh)
 	if err := <-errCh; err != nil {
@@ -753,8 +763,10 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 
 	wg = new(sync.WaitGroup)
 	errCh = make(chan error, 1+e.Concurrency)
-	buildTaskCh := e.createBuildTasks(totalSegmentCnt, wg, errCh)
-	e.buildHashTable(buildTaskCh, wg, errCh)
+	// doneCh is used by the consumer(buildHashTable) to info the producer(createBuildTasks) that the consumer meet error and stop consume data
+	doneCh = make(chan struct{}, e.Concurrency)
+	buildTaskCh := e.createBuildTasks(totalSegmentCnt, wg, errCh, doneCh)
+	e.buildHashTable(buildTaskCh, wg, errCh, doneCh)
 	wg.Wait()
 	close(errCh)
 	if err := <-errCh; err != nil {
@@ -762,9 +774,8 @@ func (e *PartitionedHashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	}
 }
 
-func (e *PartitionedHashJoinExec) fetchBuildSideRows(ctx context.Context, wg *sync.WaitGroup, errCh chan error) chan *chunk.Chunk {
+func (e *PartitionedHashJoinExec) fetchBuildSideRows(ctx context.Context, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) chan *chunk.Chunk {
 	srcChkCh := make(chan *chunk.Chunk, 1)
-	doneCh := make(chan struct{})
 	wg.Add(1)
 	e.workerWg.RunWithRecover(
 		func() {
@@ -781,7 +792,7 @@ func (e *PartitionedHashJoinExec) fetchBuildSideRows(ctx context.Context, wg *sy
 	return srcChkCh
 }
 
-func (e *PartitionedHashJoinExec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, wg *sync.WaitGroup, errCh chan error) {
+func (e *PartitionedHashJoinExec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
 	for i := uint(0); i < e.Concurrency; i++ {
 		wg.Add(1)
 		workIndex := i
@@ -790,11 +801,13 @@ func (e *PartitionedHashJoinExec) splitAndAppendToRowTable(srcChkCh chan *chunk.
 				err := e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), srcChkCh)
 				if err != nil {
 					errCh <- err
+					doneCh <- struct{}{}
 				}
 			},
 			func(r any) {
 				if r != nil {
 					errCh <- util.GetRecoverError(r)
+					doneCh <- struct{}{}
 				}
 				wg.Done()
 			},
@@ -802,11 +815,11 @@ func (e *PartitionedHashJoinExec) splitAndAppendToRowTable(srcChkCh chan *chunk.
 	}
 }
 
-func (e *PartitionedHashJoinExec) createBuildTasks(totalSegmentCnt int, wg *sync.WaitGroup, errCh chan error) chan *buildTask {
+func (e *PartitionedHashJoinExec) createBuildTasks(totalSegmentCnt int, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) chan *buildTask {
 	buildTaskCh := make(chan *buildTask, e.Concurrency)
 	wg.Add(1)
 	e.workerWg.RunWithRecover(
-		func() { e.createTasks(buildTaskCh, totalSegmentCnt) },
+		func() { e.createTasks(buildTaskCh, totalSegmentCnt, doneCh) },
 		func(r any) {
 			if r != nil {
 				errCh <- util.GetRecoverError(r)
@@ -818,7 +831,7 @@ func (e *PartitionedHashJoinExec) createBuildTasks(totalSegmentCnt int, wg *sync
 	return buildTaskCh
 }
 
-func (e *PartitionedHashJoinExec) buildHashTable(buildTaskCh chan *buildTask, wg *sync.WaitGroup, errCh chan error) {
+func (e *PartitionedHashJoinExec) buildHashTable(buildTaskCh chan *buildTask, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
 	for i := uint(0); i < e.Concurrency; i++ {
 		wg.Add(1)
 		workID := i
@@ -827,11 +840,13 @@ func (e *PartitionedHashJoinExec) buildHashTable(buildTaskCh chan *buildTask, wg
 				err := e.BuildWorkers[workID].buildHashTable(buildTaskCh)
 				if err != nil {
 					errCh <- err
+					doneCh <- struct{}{}
 				}
 			},
 			func(r any) {
 				if r != nil {
 					errCh <- util.GetRecoverError(r)
+					doneCh <- struct{}{}
 				}
 				wg.Done()
 			},
