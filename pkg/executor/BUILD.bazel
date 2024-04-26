@@ -156,6 +156,7 @@ go_library(
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/util",
+        "//pkg/planner/util/coreusage",
         "//pkg/planner/util/fixcontrol",
         "//pkg/plugin",
         "//pkg/privilege",

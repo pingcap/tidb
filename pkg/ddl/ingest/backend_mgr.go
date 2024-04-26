@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -96,7 +97,7 @@ func NewLitBackendCtxMgr(path string, memQuota uint64, getProcessingJobIDs Filte
 	litDiskRoot.UpdateUsage()
 	err := litDiskRoot.StartupCheck()
 	if err != nil {
-		litLogger.Warn("ingest backfill may not be available", zap.Error(err))
+		ddllogutil.DDLIngestLogger().Warn("ingest backfill may not be available", zap.Error(err))
 	}
 	return mgr
 }
@@ -105,7 +106,7 @@ func NewLitBackendCtxMgr(path string, memQuota uint64, getProcessingJobIDs Filte
 func (m *litBackendCtxMgr) CheckMoreTasksAvailable(ctx context.Context) (bool, error) {
 	m.cleanupSortPath(ctx)
 	if err := m.diskRoot.PreCheckUsage(); err != nil {
-		litLogger.Info("ingest backfill is not available", zap.Error(err))
+		ddllogutil.DDLIngestLogger().Info("ingest backfill is not available", zap.Error(err))
 		return false, err
 	}
 	return true, nil
@@ -244,7 +245,7 @@ func createLocalBackend(
 		return nil, err
 	}
 
-	litLogger.Info("create local backend for adding index",
+	ddllogutil.DDLIngestLogger().Info("create local backend for adding index",
 		zap.String("sortDir", cfg.lightning.TikvImporter.SortedKVDir),
 		zap.String("keyspaceName", cfg.keyspaceName))
 	// We disable the switch TiKV mode feature for now,

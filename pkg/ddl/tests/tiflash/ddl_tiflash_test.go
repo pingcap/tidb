@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -46,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -833,7 +833,7 @@ func execWithTimeout(t *testing.T, tk *testkit.TestKit, to time.Duration, sql st
 		return false, e
 	case <-ctx.Done():
 		// Exceed given timeout
-		logutil.BgLogger().Info("execWithTimeout meet timeout", zap.String("sql", sql))
+		logutil.DDLLogger().Info("execWithTimeout meet timeout", zap.String("sql", sql))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/BatchAddTiFlashSendDone", "return(true)"))
 	}
 
@@ -911,7 +911,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		tk.Session().Close()
-		logutil.BgLogger().Info("session closed")
+		logutil.DDLLogger().Info("session closed")
 	})
 	mu.Lock()
 	timeOut, err = execWithTimeout(t, tk, time.Second*2, "alter database tiflash_ddl_limit set tiflash replica 1")
@@ -1398,7 +1398,7 @@ type TestDDLCallback struct {
 
 // OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
-	logutil.BgLogger().Info("on job run before", zap.String("job", job.String()))
+	logutil.DDLLogger().Info("on job run before", zap.String("job", job.String()))
 	if tc.OnJobRunBeforeExported != nil {
 		tc.OnJobRunBeforeExported(job)
 		return
