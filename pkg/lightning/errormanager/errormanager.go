@@ -166,7 +166,7 @@ const (
 
 	deleteNullDataRow = `
 		DELETE FROM %s.` + ConflictErrorTableName + `
-		WHERE key_data = ""
+		WHERE key_data = ''
 		LIMIT ?;
 	`
 

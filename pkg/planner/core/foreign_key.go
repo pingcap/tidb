@@ -72,7 +72,7 @@ const (
 )
 
 // AccessObject implements dataAccesser interface.
-func (f *FKCheck) AccessObject() AccessObject {
+func (f *FKCheck) AccessObject() base.AccessObject {
 	if f.Idx == nil {
 		return OtherAccessObject(fmt.Sprintf("table:%s", f.Tbl.Meta().Name))
 	}
@@ -109,7 +109,7 @@ func (f *FKCheck) MemoryUsage() (sum int64) {
 }
 
 // AccessObject implements dataAccesser interface.
-func (f *FKCascade) AccessObject() AccessObject {
+func (f *FKCascade) AccessObject() base.AccessObject {
 	if f.FKIdx == nil {
 		return OtherAccessObject(fmt.Sprintf("table:%s", f.ChildTable.Meta().Name))
 	}
