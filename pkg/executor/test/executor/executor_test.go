@@ -2369,7 +2369,7 @@ func TestAdmin(t *testing.T) {
 	serverInfo, err := infosync.GetServerInfoByID(ctx, row.GetString(1))
 	require.NoError(t, err)
 	require.Equal(t, serverInfo.IP+":"+strconv.FormatUint(uint64(serverInfo.Port), 10), row.GetString(2))
-	require.Equal(t, "", row.GetString(3))
+	require.Equal(t, "[]", row.GetString(3))
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
 	require.NoError(t, err)

@@ -782,6 +782,56 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 	return nil
 }
 
+// InfoJSON is works like MarshalJSON, but is made to have human friendly output, similar to String()
+//
+// - A string for things like Type, State and SchemaState instead of a number
+// - A selection of fields
+func (job *Job) InfoJSON() ([]byte, error) {
+	jobInfo := struct {
+		ID                int64         `json:"id"`
+		Type              string        `json:"job_type"`
+		State             string        `json:"state"`
+		SchemaState       string        `json:"schema_state"`
+		SchemaID          int64         `json:"schema_id"`
+		TableID           int64         `json:"table_id"`
+		RowCount          int64         `json:"row_count"`
+		Arglen            int           `json:"arg_len"`
+		StartTime         time.Time     `json:"start_time`
+		Error             *terror.Error `json:"err"`
+		ErrorCount        int64         `json:"err_count"`
+		SnapshotVer       uint64        `json:"snapshot_ver"`
+		LocalMode         bool          `json:"local_mode"`
+		UniqueWarnings    int           `json:"unique_warnings"`
+		MultiSchemaChange bool          `json:"multi_schema_change"`
+		Revertible        bool          `json:"revertible"`
+	}{
+		ID:          job.ID,
+		Type:        job.Type.String(),
+		State:       job.State.String(),
+		SchemaState: job.SchemaState.String(),
+		SchemaID:    job.SchemaID,
+		TableID:     job.TableID,
+		RowCount:    job.GetRowCount(),
+		Arglen:      len(job.Args),
+		StartTime:   TSConvert2Time(job.StartTS),
+		Error:       job.Error,
+		ErrorCount:  job.ErrorCount,
+		SnapshotVer: job.SnapshotVer,
+		LocalMode:   job.LocalMode,
+	}
+
+	if job.ReorgMeta != nil {
+		warnings, _ := job.GetWarnings()
+		jobInfo.UniqueWarnings = len(warnings)
+	}
+	if job.Type == ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		jobInfo.MultiSchemaChange = true
+		jobInfo.Revertible = job.MultiSchemaInfo.Revertible
+	}
+
+	return json.Marshal(jobInfo)
+}
+
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
@@ -791,7 +841,7 @@ func (job *Job) String() string {
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
 	}
-	if job.Type != ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+	if job.Type == ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 		ret += fmt.Sprintf(", Multi-Schema Change:true, Revertible:%v", job.MultiSchemaInfo.Revertible)
 	}
 	return ret

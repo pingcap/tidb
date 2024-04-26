@@ -358,17 +358,22 @@ func (e *ShowDDLExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
-	ddlJobs := ""
+	ddlJobs := "["
 	query := ""
 	l := len(e.ddlInfo.Jobs)
 	for i, job := range e.ddlInfo.Jobs {
-		ddlJobs += job.String()
 		query += job.Query
+		info, err := job.InfoJSON()
+		if err != nil {
+			return err
+		}
+		ddlJobs += string(info)
 		if i != l-1 {
 			ddlJobs += "\n"
 			query += "\n"
 		}
 	}
+	ddlJobs += "]"
 
 	serverInfo, err := infosync.GetServerInfoByID(ctx, e.ddlOwnerID)
 	if err != nil {
@@ -378,12 +383,12 @@ func (e *ShowDDLExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	serverAddress := serverInfo.IP + ":" +
 		strconv.FormatUint(uint64(serverInfo.Port), 10)
 
-	req.AppendInt64(0, e.ddlInfo.SchemaVer)
-	req.AppendString(1, e.ddlOwnerID)
-	req.AppendString(2, serverAddress)
-	req.AppendString(3, ddlJobs)
-	req.AppendString(4, e.selfID)
-	req.AppendString(5, query)
+	req.AppendInt64(0, e.ddlInfo.SchemaVer) // SCHEMA_VER
+	req.AppendString(1, e.ddlOwnerID)       // OWNER_ID
+	req.AppendString(2, serverAddress)      // OWNER_ADDRESS
+	req.AppendString(3, ddlJobs)            // RUNNING_JOBS
+	req.AppendString(4, e.selfID)           // SELF_ID
+	req.AppendString(5, query)              // QUERY
 
 	e.done = true
 	return nil
