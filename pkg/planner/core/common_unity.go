@@ -129,7 +129,7 @@ func collectUnityInfo(p base.LogicalPlan, result map[string]*UnityTableInfo) {
 	}
 }
 
-func fillUpStats(ctx context.PlanContext, result map[string]*UnityTableInfo) {
+func fillUpStats(result map[string]*UnityTableInfo) {
 	for _, tblInfo := range result {
 		tblStats := tblInfo.stats
 		tblInfo.ModifiedRows = tblStats.ModifyCount
@@ -172,7 +172,7 @@ func fillUpStats(ctx context.PlanContext, result map[string]*UnityTableInfo) {
 func prepareForUnity(ctx context.PlanContext, p base.LogicalPlan) string {
 	result := make(map[string]*UnityTableInfo)
 	collectUnityInfo(p, result)
-	fillUpStats(ctx, result)
+	fillUpStats(result)
 
 	v, err := json.Marshal(result)
 	must(err)
