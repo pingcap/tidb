@@ -139,6 +139,7 @@ func fillUpStats(ctx context.PlanContext, result map[string]*UnityTableInfo) {
 
 			hist := colStats.Histogram
 			buckets := make([]UnityHistBucket, 0)
+			lastCount := int64(0)
 			for i := 0; i < colStats.Histogram.Len(); i++ {
 				lower, err := hist.GetLower(i).ToString()
 				must(err)
@@ -148,8 +149,9 @@ func fillUpStats(ctx context.PlanContext, result map[string]*UnityTableInfo) {
 				buckets = append(buckets, UnityHistBucket{
 					Lower: lower,
 					Upper: upper,
-					Count: count,
+					Count: count - lastCount,
 				})
+				lastCount = count
 			}
 			col.Histogram = buckets
 		}
