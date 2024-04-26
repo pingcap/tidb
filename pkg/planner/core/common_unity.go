@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"strings"
 
@@ -10,8 +11,13 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 )
 
-func col2tbl(fullColName string) string {
-	tmp := strings.Split(strings.ToLower(fullColName), ".")
+func dbName(fullName string) string {
+	tmp := strings.Split(strings.ToLower(fullName), ".")
+	return tmp[0]
+}
+
+func tblName(fullName string) string {
+	tmp := strings.Split(strings.ToLower(fullName), ".")
 	return tmp[0] + "." + tmp[1]
 }
 
@@ -40,6 +46,7 @@ type UnityTableInfo struct {
 	Indexes      map[string]*UnityIndexInfo  // db.table.index
 	RealtimeRows int64
 	ModifiedRows int64
+	Hints        []string
 
 	stats  *statistics.Table `json:"-"`
 	col2id map[string]int64  `json:"-"`
@@ -48,7 +55,7 @@ type UnityTableInfo struct {
 
 func collectColumn(c *expression.Column, result map[string]*UnityTableInfo) {
 	colName := strings.ToLower(c.OrigName)
-	result[col2tbl(colName)].Columns[colName] = &UnityColumnInfo{}
+	result[tblName(colName)].Columns[colName] = &UnityColumnInfo{}
 }
 
 func collectColumnFromExpr(expr expression.Expression, result map[string]*UnityTableInfo) {
@@ -167,6 +174,38 @@ func fillUpStats(result map[string]*UnityTableInfo) {
 			idx.Nulls = int(idxStats.NullCount)
 		}
 	}
+}
+
+func fillUpHints(result map[string]*UnityTableInfo) {
+	possibleHints := make(map[string]bool)
+	var hintTableNames []string
+	for tableName, tblInfo := range result {
+		hintTableName := tableName
+		if tblInfo.AsName != "" {
+			hintTableName = dbName(tableName) + "." + tblInfo.AsName
+		}
+		hintTableNames = append(hintTableNames, hintTableName)
+		// use_index hint
+		for idxName := range tblInfo.Indexes {
+			possibleHints[fmt.Sprintf("use_index(%v, %v)", hintTableName, idxName)] = true
+		}
+	}
+	if len(hintTableNames) > 2 {
+		// join hint
+		// TODO
+
+		// leading hint
+		for _, t1 := range hintTableNames {
+			for _, t2 := range hintTableNames {
+				if t1 == t2 {
+					continue
+				}
+				possibleHints[fmt.Sprintf("leading(%v, %v)", t1, t2)] = true
+			}
+		}
+	}
+
+	// TODO: verify
 }
 
 func prepareForUnity(ctx context.PlanContext, p base.LogicalPlan) string {
