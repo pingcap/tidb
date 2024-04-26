@@ -1,9 +1,11 @@
 package core
 
 import (
+	context2 "context"
 	"encoding/json"
 	"fmt"
 	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -176,7 +178,7 @@ func fillUpStats(result map[string]*UnityTableInfo) {
 	}
 }
 
-func possibleHints(result map[string]*UnityTableInfo) []string {
+func possibleHints(ctx context.PlanContext, result map[string]*UnityTableInfo) []string {
 	possibleHints := make(map[string]bool)
 	var hintTableNames []string
 	for tableName, tblInfo := range result {
@@ -210,6 +212,10 @@ func possibleHints(result map[string]*UnityTableInfo) []string {
 	}
 
 	// TODO: verify
+	sctx, err := AsSctx(ctx)
+	must(err)
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	OptimizeAstNode(context2.Background(), sctx, nil, is)
 
 	hints := make([]string, 0, len(possibleHints))
 	for h := range possibleHints {
@@ -222,7 +228,7 @@ func prepareForUnity(ctx context.PlanContext, p base.LogicalPlan) string {
 	result := make(map[string]*UnityTableInfo)
 	collectUnityInfo(p, result)
 	fillUpStats(result)
-	hints := possibleHints(result)
+	hints := possibleHints(ctx, result)
 
 	v, err := json.Marshal(struct {
 		Tables map[string]*UnityTableInfo
