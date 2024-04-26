@@ -18,6 +18,8 @@ func col2tbl(fullColName string) string {
 type UnityColumnInfo struct {
 	NDV       int
 	Nulls     int
+	Min       string
+	Max       string
 	Histogram []UnityHistBucket
 }
 
@@ -154,6 +156,10 @@ func fillUpStats(ctx context.PlanContext, result map[string]*UnityTableInfo) {
 				lastCount = count
 			}
 			col.Histogram = buckets
+			if len(buckets) > 0 {
+				col.Min = buckets[0].Lower
+				col.Max = buckets[len(buckets)-1].Upper
+			}
 		}
 		for idxName, idx := range tblInfo.Indexes {
 			idxStats := tblStats.Indices[tblInfo.idx2id[idxName]]
