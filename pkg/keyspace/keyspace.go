@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -28,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	tikvconfig "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -41,9 +39,10 @@ const (
 
 	// KeyspaceMetaConfigGCManagementType is gc management type in keyspace meta config.
 	KeyspaceMetaConfigGCManagementType = "gc_management_type"
-	// KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC is a type of GC management in keyspace meta config, it means this keyspace will calculate GC safe point by its own.
+	// KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC is a type of GC management in keyspace meta config,
+	// it means this keyspace will calculate GC safe point by its own.
 	KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC = "keyspace_level_gc"
-	// KeyspaceMetaConfigGCManagementTypeGlobalGC is a type of GC management in keyspace meta config, it means this keyspace will use GC safe point by global GC.
+	// KeyspaceMetaConfigGCManagementTypeGlobalGC is a type of GC management in keyspace meta config, it means this keyspace will use GC safe point by global GC(default).
 	KeyspaceMetaConfigGCManagementTypeGlobalGC = "global_gc"
 
 	// maxKeyspaceID is the maximum keyspace id that can be created, no keyspace can be created greater than this value.
@@ -153,28 +152,8 @@ func GetKeyspaceTxnRange(keyspaceID uint32) ([]byte, []byte) {
 }
 
 // InitGlobalKeyspaceMeta is used to get the keyspace meta from PD during TiDB startup and set global keyspace meta.
-func InitGlobalKeyspaceMeta() error {
-	cfg := config.GetGlobalConfig()
-	if IsKeyspaceNameEmpty(GetKeyspaceNameBySettings()) {
-		return nil
-	}
-	pdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
-	if err != nil {
-		return err
-	}
-	timeoutSec := time.Duration(cfg.PDClient.PDServerTimeout) * time.Second
-	pdCli, err := pd.NewClient(pdAddrs, pd.SecurityOption{
-		CAPath:   cfg.Security.ClusterSSLCA,
-		CertPath: cfg.Security.ClusterSSLCert,
-		KeyPath:  cfg.Security.ClusterSSLKey,
-	}, pd.WithCustomTimeoutOption(timeoutSec))
-	if err != nil {
-		return err
-	}
-	defer pdCli.Close()
-
-	keyspaceMeta, err := GetKeyspaceMeta(pdCli, cfg.KeyspaceName)
-
+func InitGlobalKeyspaceMeta(pdClient *tikv.CodecPDClient, keyspaceName string) error {
+	keyspaceMeta, err := GetKeyspaceMeta(pdClient, keyspaceName)
 	setCurrentKeyspaceMeta(keyspaceMeta)
 	return err
 }

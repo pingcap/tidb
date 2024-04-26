@@ -1214,7 +1214,7 @@ func (w *GCWorker) resolveLocks(
 			return errors.Trace(err)
 		}
 	} else {
-		logutil.Logger(ctx).Info("[gc worker] start all keyspaces resolve locks when use global gc.")
+		logutil.Logger(ctx).Info("[gc worker] start resolve locks in null keyspace range and keyspace range which is use global gc.")
 		err = w.resolveLocksInGlobalGC(ctx, runner, safePoint)
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] resolve locks all keyspace failed", zap.String("category", "gc worker"),

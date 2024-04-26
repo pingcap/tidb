@@ -208,6 +208,10 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		err = keyspace.InitGlobalKeyspaceMeta(pdClient, keyspaceName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	codec := pdClient.GetCodec()
