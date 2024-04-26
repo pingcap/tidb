@@ -761,6 +761,14 @@ bazel_pipelineddmltest: failpoint-enable bazel_ci_simple_prepare
 		-- //tests/realtikvtest/pipelineddmltest/...
 	./build/jenkins_collect_coverage.sh
 
+# on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
+.PHONY: bazel_flashbacktest
+bazel_flashbacktest: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/flashbacktest/...
+	./build/jenkins_collect_coverage.sh
+
 .PHONY: bazel_lint
 bazel_lint: bazel_prepare
 	bazel build //... --//build:with_nogo_flag=true

@@ -393,6 +393,8 @@ func BenchmarkUnionScanIndexLookUpDescRead(b *testing.B) {
 func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		executor.BenchmarkReadLastLinesOfHugeLine,
+		executor.BenchmarkCompleteInsertErr,
+		executor.BenchmarkCompleteLoadErr,
 		BenchmarkUnionScanRead,
 		BenchmarkUnionScanIndexReadDescRead,
 		BenchmarkUnionScanTableReadDescRead,

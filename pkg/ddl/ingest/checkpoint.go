@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -112,7 +113,7 @@ func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
 		cm.updateCheckpointLoop()
 		cm.updaterWg.Done()
 	}()
-	litLogger.Info("create checkpoint manager",
+	logutil.DDLIngestLogger().Info("create checkpoint manager",
 		zap.Int64("jobID", jobID), zap.Int64s("indexIDs", indexIDs))
 	return cm, nil
 }
@@ -211,7 +212,7 @@ func (s *CheckpointManager) progressLocalSyncMinKey() {
 func (s *CheckpointManager) Close() {
 	s.updaterExitCh <- struct{}{}
 	s.updaterWg.Wait()
-	litLogger.Info("close checkpoint manager",
+	logutil.DDLIngestLogger().Info("close checkpoint manager",
 		zap.Int64("jobID", s.jobID), zap.Int64s("indexIDs", s.indexIDs))
 }
 
@@ -219,7 +220,7 @@ func (s *CheckpointManager) Close() {
 func (s *CheckpointManager) Sync() {
 	_, _, _, err := TryFlushAllIndexes(s.flushCtrl, FlushModeForceLocal, s.indexIDs)
 	if err != nil {
-		litLogger.Warn("flush local engine failed", zap.Error(err))
+		logutil.DDLIngestLogger().Warn("flush local engine failed", zap.Error(err))
 	}
 	s.mu.Lock()
 	s.progressLocalSyncMinKey()
@@ -234,7 +235,7 @@ func (s *CheckpointManager) Sync() {
 func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	litLogger.Info("reset checkpoint manager",
+	logutil.DDLIngestLogger().Info("reset checkpoint manager",
 		zap.Int64("newPhysicalID", newPhysicalID), zap.Int64("oldPhysicalID", s.pidLocal),
 		zap.Int64s("indexIDs", s.indexIDs), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
 	if s.pidLocal != newPhysicalID {
@@ -308,7 +309,7 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 				s.minKeySyncLocal = cp.LocalSyncKey
 				s.localCnt = cp.LocalKeyCount
 			}
-			litLogger.Info("resume checkpoint",
+			logutil.DDLIngestLogger().Info("resume checkpoint",
 				zap.Int64("job ID", s.jobID), zap.Int64s("index IDs", s.indexIDs),
 				zap.String("local checkpoint", hex.EncodeToString(s.minKeySyncLocal)),
 				zap.String("global checkpoint", hex.EncodeToString(s.minKeySyncGlobal)),
@@ -317,7 +318,7 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 				zap.String("current instance", s.instanceAddr))
 			return nil
 		}
-		litLogger.Info("checkpoint is empty",
+		logutil.DDLIngestLogger().Info("checkpoint is empty",
 			zap.Int64("job ID", s.jobID), zap.Int64s("index IDs", s.indexIDs))
 		return nil
 	})
@@ -374,7 +375,7 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		s.mu.Unlock()
 		return nil
 	})
-	litLogger.Info("update checkpoint",
+	logutil.DDLIngestLogger().Info("update checkpoint",
 		zap.Int64("job ID", s.jobID), zap.Int64s("index IDs", s.indexIDs),
 		zap.String("local checkpoint", hex.EncodeToString(currentLocalKey)),
 		zap.String("global checkpoint", hex.EncodeToString(currentGlobalKey)),
@@ -391,7 +392,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 		case wg := <-s.updaterCh:
 			err := s.updateCheckpoint()
 			if err != nil {
-				litLogger.Error("update checkpoint failed", zap.Error(err))
+				logutil.DDLIngestLogger().Error("update checkpoint failed", zap.Error(err))
 			}
 			wg.Done()
 		case <-ticker.C:
@@ -403,7 +404,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 			s.mu.Unlock()
 			err := s.updateCheckpoint()
 			if err != nil {
-				litLogger.Error("update checkpoint failed", zap.Error(err))
+				logutil.DDLIngestLogger().Error("update checkpoint failed", zap.Error(err))
 			}
 		case <-s.updaterExitCh:
 			return
