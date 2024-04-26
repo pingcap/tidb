@@ -1395,7 +1395,7 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 	if serverDiskImport || !variable.EnableDistTask.Load() {
 		return cpu.GetCPUCount(), nil
 	}
-	return handle.GetCPUCountOfManagedNode(ctx)
+	return handle.GetCPUCountOfNode(ctx)
 }
 
 // TestSyncCh is used in unit test to synchronize the execution.

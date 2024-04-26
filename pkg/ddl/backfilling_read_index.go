@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
@@ -33,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -87,14 +88,12 @@ func newReadIndexExecutor(
 }
 
 func (*readIndexExecutor) Init(_ context.Context) error {
-	logutil.BgLogger().Info("read index executor init subtask exec env",
-		zap.String("category", "ddl"))
+	logutil.DDLLogger().Info("read index executor init subtask exec env")
 	return nil
 }
 
 func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
-	logutil.BgLogger().Info("read index executor run subtask",
-		zap.String("category", "ddl"),
+	logutil.DDLLogger().Info("read index executor run subtask",
 		zap.Bool("use cloud", len(r.cloudStorageURI) > 0))
 
 	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{
@@ -149,8 +148,7 @@ func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
 }
 
 func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
-	logutil.Logger(ctx).Info("read index executor cleanup subtask exec env",
-		zap.String("category", "ddl"))
+	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
 	// cleanup backend context
 	ingest.LitBackCtxMgr.Unregister(r.job.ID)
 	return nil
@@ -182,7 +180,7 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 	}
 	sm.MetaGroups = s.metaGroups
 
-	logutil.Logger(ctx).Info("get key boundary on subtask finished",
+	tidblogutil.Logger(ctx).Info("get key boundary on subtask finished",
 		zap.String("start", hex.EncodeToString(all.StartKey)),
 		zap.String("end", hex.EncodeToString(all.EndKey)),
 		zap.Int("fileCount", len(all.MultipleFilesStats)),
@@ -205,8 +203,7 @@ func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 		pid := sm.PhysicalTableID
 		start, end, err = getTableRange(r.jc, r.d.ddlCtx, parTbl.GetPartition(pid), currentVer.Ver, r.job.Priority)
 		if err != nil {
-			logutil.BgLogger().Error("get table range error",
-				zap.String("category", "ddl"),
+			logutil.DDLLogger().Error("get table range error",
 				zap.Error(err))
 			return nil, nil, nil, err
 		}
@@ -233,7 +230,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	for _, index := range r.indexes {
 		ei, err := r.bc.Register(r.job.ID, index.ID, r.job.SchemaName, r.job.TableName)
 		if err != nil {
-			logutil.Logger(opCtx).Warn("cannot register new engine", zap.Error(err),
+			tidblogutil.Logger(opCtx).Warn("cannot register new engine", zap.Error(err),
 				zap.Int64("job ID", r.job.ID), zap.Int64("index ID", index.ID))
 			return nil, err
 		}

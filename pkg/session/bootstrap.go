@@ -583,6 +583,7 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
+		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		key(state),
       	UNIQUE KEY task_key(task_key)
@@ -603,6 +604,7 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
+		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		key(state),
       	UNIQUE KEY task_key(task_key)
@@ -1082,11 +1084,16 @@ const (
 	//   create `sys` schema
 	//   create `sys.schema_unused_indexes` table
 	version195 = 195
+
+	// version 196
+	//   add column `target_scope` for 'mysql.tidb_global_task` table
+	//   add column `target_scope` for 'mysql.tidb_global_task_history` table
+	version196 = 196
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version195
+var currentBootstrapVersion int64 = version196
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1247,6 +1254,7 @@ var (
 		upgradeToVer193,
 		upgradeToVer194,
 		upgradeToVer195,
+		upgradeToVer196,
 	}
 )
 
@@ -3071,6 +3079,15 @@ func upgradeToVer195(s sessiontypes.Session, ver int64) {
 	}
 
 	doReentrantDDL(s, DropMySQLIndexUsageTable)
+}
+
+func upgradeToVer196(s sessiontypes.Session, ver int64) {
+	if ver >= version196 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
