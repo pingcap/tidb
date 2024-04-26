@@ -848,9 +848,7 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 	inErr, _ := originErr.(*errors.Error)
 	oldArgs := inErr.Args()
 	args := make([]any, len(oldArgs))
-	for i, arg := range oldArgs {
-		args[i] = arg
-	}
+	copy(args, oldArgs)
 	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 	if is == nil {
 		return nil
