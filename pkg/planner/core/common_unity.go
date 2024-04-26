@@ -4,6 +4,8 @@ import (
 	context2 "context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"strings"
@@ -178,7 +180,7 @@ func fillUpStats(result map[string]*UnityTableInfo) {
 	}
 }
 
-func possibleHints(ctx context.PlanContext, result map[string]*UnityTableInfo) []string {
+func getPossibleHints(ctx context.PlanContext, result map[string]*UnityTableInfo) []string {
 	possibleHints := make(map[string]bool)
 	var hintTableNames []string
 	for tableName, tblInfo := range result {
@@ -212,10 +214,30 @@ func possibleHints(ctx context.PlanContext, result map[string]*UnityTableInfo) [
 	}
 
 	// TODO: verify
+	// explain format='unity' select * from t1 where a<1
 	sctx, err := AsSctx(ctx)
 	must(err)
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-	OptimizeAstNode(context2.Background(), sctx, nil, is)
+	selectIdx := -1
+	for _, str := range []string{"select", "SELECT", "Select"} {
+		selectIdx = strings.Index(sctx.GetSessionVars().StmtCtx.OriginalSQL, str)
+		if selectIdx != -1 {
+			break
+		}
+	}
+	if selectIdx != -1 { // verify
+		tmp := make(map[string]bool)
+		for h := range possibleHints {
+			q := fmt.Sprintf("select /*+ %v */ %v", h, sctx.GetSessionVars().StmtCtx.OriginalSQL[selectIdx+6:])
+			stmt := parseSQL(q)
+			sctx.GetSessionVars().StmtCtx.TruncateWarnings(0)
+			_, _, err = OptimizeAstNode(context2.Background(), sctx, stmt, is)
+			if sctx.GetSessionVars().StmtCtx.WarningCount() == 0 {
+				tmp[h] = true
+			}
+		}
+		possibleHints = tmp
+	}
 
 	hints := make([]string, 0, len(possibleHints))
 	for h := range possibleHints {
@@ -228,7 +250,7 @@ func prepareForUnity(ctx context.PlanContext, p base.LogicalPlan) string {
 	result := make(map[string]*UnityTableInfo)
 	collectUnityInfo(p, result)
 	fillUpStats(result)
-	hints := possibleHints(ctx, result)
+	hints := getPossibleHints(ctx, result)
 
 	v, err := json.Marshal(struct {
 		Tables map[string]*UnityTableInfo
@@ -239,6 +261,13 @@ func prepareForUnity(ctx context.PlanContext, p base.LogicalPlan) string {
 	})
 	must(err)
 	return string(v)
+}
+
+func parseSQL(q string) ast.StmtNode {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(q, "", "")
+	must(err)
+	return stmt
 }
 
 func must(err error) {
