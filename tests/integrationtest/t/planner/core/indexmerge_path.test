@@ -412,9 +412,16 @@ EXPLAIN format=brief SELECT /*+ use_index_merge(t1) */ col_44, col_45 FROM t1 WH
 drop table if exists t;
 create table t(pk varbinary(255) primary key, a int, b varchar(50), c int, d varchar(45), index ia(a), index ib(b), index ic(c), index id(d));
 EXPLAIN format = brief SELECT /*+ use_index_merge(t) */ * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
+EXPLAIN format = brief SELECT /*+ set_var(tidb_opt_fix_control='52869:on') */ * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
 EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
 EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR d = '4');
+EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5);
+EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5 OR b = '12' OR c = 13);
+EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (c = 13 OR c = 15 OR c = 5 OR b = '12' OR c = 13 OR b = '11');
 SET @@tidb_opt_fix_control = '52869:on';
 EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (b = '2' OR c = 3 OR d = '4');
 EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR d = '4');
+EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5);
+EXPLAIN format = brief SELECT * FROM t WHERE a > 1 AND (b = '2' OR c = 3 OR b = '4' OR c = 5 OR b = '12' OR c = 13);
+EXPLAIN format = brief SELECT * FROM t WHERE a = 1 AND (c = 13 OR c = 15 OR c = 5 OR b = '12' OR c = 13 OR b = '11');
 SET @@tidb_opt_fix_control = default;
