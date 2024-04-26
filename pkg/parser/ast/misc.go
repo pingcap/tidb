@@ -3592,8 +3592,9 @@ const (
 type ImportIntoActionStmt struct {
 	stmtNode
 
-	Tp    ImportIntoActionTp
-	JobID int64
+	Tp      ImportIntoActionTp
+	JobID   *int64
+	BatchID *string
 }
 
 func (n *ImportIntoActionStmt) Accept(v Visitor) (Node, bool) {
@@ -3606,7 +3607,12 @@ func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
 		return errors.Errorf("invalid IMPORT INTO action type: %s", n.Tp)
 	}
 	ctx.WriteKeyWord("CANCEL IMPORT JOB ")
-	ctx.WritePlainf("%d", n.JobID)
+	if n.JobID != nil {
+		ctx.WritePlainf("%d", *n.JobID)
+	} else if n.BatchID != nil {
+		ctx.WriteKeyWord("BATCH ")
+		ctx.WriteString(*n.BatchID)
+	}
 	return nil
 }
 

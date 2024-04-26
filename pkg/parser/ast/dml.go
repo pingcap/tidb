@@ -2128,6 +2128,7 @@ func (n *LinesClause) Restore(ctx *format.RestoreCtx) error {
 type ImportIntoStmt struct {
 	dmlNode
 
+	Batch              bool
 	Table              *TableName
 	ColumnsAndUserVars []*ColumnNameOrUserVar
 	ColumnAssignments  []*Assignment
@@ -2142,8 +2143,12 @@ var _ SensitiveStmtNode = &ImportIntoStmt{}
 // Restore implements Node interface.
 func (n *ImportIntoStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("IMPORT INTO ")
-	if err := n.Table.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.Table")
+	if n.Batch {
+		ctx.WriteKeyWord("*")
+	} else {
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ImportIntoStmt.Table")
+		}
 	}
 	if len(n.ColumnsAndUserVars) != 0 {
 		ctx.WritePlain(" (")
@@ -3099,7 +3104,8 @@ type ShowStmt struct {
 	ShowProfileArgs  *int64 // Used for `SHOW PROFILE` syntax
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
 
-	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
+	ImportJobID   *int64  // Used for `SHOW IMPORT JOB <ID>` syntax
+	ImportBatchID *string // Used for `SHOW IMPORT JOB BATCH <ID>` syntax
 }
 
 // Restore implements Node interface.
@@ -3314,6 +3320,9 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		if n.ImportJobID != nil {
 			ctx.WriteKeyWord("IMPORT JOB ")
 			ctx.WritePlainf("%d", *n.ImportJobID)
+		} else if n.ImportBatchID != nil {
+			ctx.WriteKeyWord("IMPORT JOB BATCH ")
+			ctx.WriteString(*n.ImportBatchID)
 		} else {
 			ctx.WriteKeyWord("IMPORT JOBS")
 			restoreShowLikeOrWhereOpt()

@@ -520,6 +520,10 @@ func TestImportActions(t *testing.T) {
 			expectSQL: "CANCEL IMPORT JOB 123",
 		},
 		{
+			sourceSQL: "cancel import job batch 'abc'",
+			expectSQL: "CANCEL IMPORT JOB BATCH 'abc'",
+		},
+		{
 			sourceSQL: "show import jobs",
 			expectSQL: "SHOW IMPORT JOBS",
 		},
@@ -530,6 +534,10 @@ func TestImportActions(t *testing.T) {
 		{
 			sourceSQL: "show import jobs where aa > 1",
 			expectSQL: "SHOW IMPORT JOBS WHERE `aa`>1",
+		},
+		{
+			sourceSQL: "show import job batch 'xxx'",
+			expectSQL: "SHOW IMPORT JOB BATCH 'xxx'",
 		},
 	}
 	extractNodeFunc := func(node Node) Node {
@@ -601,6 +609,10 @@ func TestImportIntoRestore(t *testing.T) {
 			// SubSelect
 			sourceSQL: "IMPORT INTO `t` from (select * from xx)",
 			expectSQL: "IMPORT INTO `t` FROM (SELECT * FROM `xx`)",
+		},
+		{
+			sourceSQL: "import into * from 's3://bucket/prefix' with table_filter=_UTF8MB4'test.*,test2.*'",
+			expectSQL: "IMPORT INTO * FROM 's3://bucket/prefix' WITH table_filter=_UTF8MB4'test.*,test2.*'",
 		},
 	}
 	extractNodeFunc := func(node Node) Node {

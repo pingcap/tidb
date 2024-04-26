@@ -5869,9 +5869,18 @@ OptionLevel:
 CancelImportStmt:
 	"CANCEL" "IMPORT" "JOB" Int64Num
 	{
+		v := $4.(int64)
 		$$ = &ast.ImportIntoActionStmt{
 			Tp:    ast.ImportIntoCancel,
-			JobID: $4.(int64),
+			JobID: &v,
+		}
+	}
+|	"CANCEL" "IMPORT" "JOB" "BATCH" stringLit
+	{
+		v := $5
+		$$ = &ast.ImportIntoActionStmt{
+			Tp:      ast.ImportIntoCancel,
+			BatchID: &v,
 		}
 	}
 
@@ -11416,6 +11425,14 @@ ShowStmt:
 			ImportJobID: &v,
 		}
 	}
+|	"SHOW" "IMPORT" "JOB" "BATCH" stringLit
+	{
+		v := $5
+		$$ = &ast.ShowStmt{
+			Tp:            ast.ShowImportJobs,
+			ImportBatchID: &v,
+		}
+	}
 |	"SHOW" "CREATE" "PROCEDURE" TableName
 	{
 		$$ = &ast.ShowStmt{
@@ -14649,6 +14666,15 @@ ImportIntoStmt:
 			return 1
 		}
 		$$ = st
+	}
+|	"IMPORT" "INTO" '*' "FROM" stringLit LoadDataOptionListOpt
+	/* statement to batch import multiple tables from files named in dumpling style */
+	{
+		$$ = &ast.ImportIntoStmt{
+			Batch:   true,
+			Path:    $5,
+			Options: $6.([]*ast.LoadDataOpt),
+		}
 	}
 
 ImportFromSelectStmt:
