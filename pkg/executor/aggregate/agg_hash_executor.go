@@ -236,7 +236,11 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	return e.OpenSelf()
+}
 
+// OpenSelf just opens the hash aggregation executor.
+func (e *HashAggExec) OpenSelf() error {
 	e.prepared.Store(false)
 
 	if e.memTracker != nil {

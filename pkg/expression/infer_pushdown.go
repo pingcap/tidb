@@ -421,7 +421,7 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 type PushDownContext struct {
 	evalCtx           EvalContext
 	client            kv.Client
-	warnHandler       contextutil.WarnHandler
+	warnHandler       contextutil.WarnAppender
 	groupConcatMaxLen uint64
 }
 
@@ -441,7 +441,7 @@ func (h *pushDownWarnHandler) AppendWarning(err error) {
 
 // NewPushDownContext returns a new PushDownContext
 func NewPushDownContext(evalCtx EvalContext, client kv.Client, inExplainStmt bool, appendWarning func(err error), appendExtraWarning func(err error), groupConcatMaxLen uint64) PushDownContext {
-	var warnHandler contextutil.WarnHandler
+	var warnHandler contextutil.WarnAppender
 	if appendWarning != nil && appendExtraWarning != nil {
 		warnHandler = &pushDownWarnHandler{
 			inExplainStmt:      inExplainStmt,

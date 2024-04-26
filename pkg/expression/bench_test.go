@@ -1436,11 +1436,11 @@ func genVecBuiltinFuncBenchCase(ctx BuildContext, funcName string, testCase vecE
 		tp := eType2FieldType(testCase.retEvalType)
 		switch testCase.retEvalType {
 		case types.ETInt:
-			fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETDecimal:
-			fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETReal:
-			fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+			fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
 		case types.ETDatetime, types.ETTimestamp:
 			fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 		case types.ETDuration:
