@@ -8,7 +8,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD:executor/autoidtest/BUILD.bazel
     shard_count = 30,
+=======
+    shard_count = 11,
+>>>>>>> 944fff519c9 (executor: Fix index join hash produces redundant rows for left outer anti semi join type (#52908)):pkg/executor/test/jointest/hashjoin/BUILD.bazel
     deps = [
         "//autoid_service",
         "//config",
