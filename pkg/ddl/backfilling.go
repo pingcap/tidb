@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -314,7 +315,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 
 		if num := result.scanCount - lastLogCount; num >= 90000 {
 			lastLogCount = result.scanCount
-			Logger.Info("backfill worker back fill index", zap.Stringer("worker", w),
+			logutil.DDLLogger().Info("backfill worker back fill index", zap.Stringer("worker", w),
 				zap.Int("addedCount", result.addedCount), zap.Int("scanCount", result.scanCount),
 				zap.String("next key", hex.EncodeToString(taskCtx.nextKey)),
 				zap.Float64("speed(rows/s)", float64(num)/time.Since(lastLogTime).Seconds()))
@@ -326,7 +327,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			break
 		}
 	}
-	Logger.Info("backfill worker finish task",
+	logutil.DDLLogger().Info("backfill worker finish task",
 		zap.Stringer("worker", w), zap.Stringer("task", task),
 		zap.Int("added count", result.addedCount),
 		zap.Int("scan count", result.scanCount),
@@ -346,7 +347,7 @@ func (w *backfillWorker) sendResult(result *backfillResult) {
 }
 
 func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
-	logger := Logger.With(zap.Stringer("worker", w), zap.Int64("jobID", job.ID))
+	logger := logutil.DDLLogger().With(zap.Stringer("worker", w), zap.Int64("jobID", job.ID))
 	var (
 		curTaskID int
 		task      *reorgBackfillTask
@@ -412,12 +413,12 @@ func splitTableRanges(
 	startKey, endKey kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
-	Logger.Info("split table range from PD",
+	logutil.DDLLogger().Info("split table range from PD",
 		zap.Int64("physicalTableID", t.GetPhysicalID()),
 		zap.String("start key", hex.EncodeToString(startKey)),
 		zap.String("end key", hex.EncodeToString(endKey)))
 	if len(startKey) == 0 && len(endKey) == 0 {
-		Logger.Info("split table range from PD, get noop table range",
+		logutil.DDLLogger().Info("split table range from PD, get noop table range",
 			zap.Int64("physicalTableID", t.GetPhysicalID()))
 		return []kv.KeyRange{}, nil
 	}
@@ -469,9 +470,9 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 		}
 		endK, err := GetRangeEndKey(jobCtx, reorgInfo.d.store, job.Priority, prefix, startKey, endKey)
 		if err != nil {
-			Logger.Info("get backfill range task, get reverse key failed", zap.Error(err))
+			logutil.DDLLogger().Info("get backfill range task, get reverse key failed", zap.Error(err))
 		} else {
-			Logger.Info("get backfill range task, change end key",
+			logutil.DDLLogger().Info("get backfill range task, change end key",
 				zap.Int("id", taskID), zap.Int64("pTbl", phyTbl.GetPhysicalID()),
 				zap.String("end key", hex.EncodeToString(endKey)), zap.String("current end key", hex.EncodeToString(endK)))
 			endKey = endK
@@ -628,7 +629,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				return egCtx.Err()
 			case result, ok := <-scheduler.resultChan():
 				if !ok {
-					Logger.Info("backfill workers successfully processed",
+					logutil.DDLLogger().Info("backfill workers successfully processed",
 						zap.Stringer("element", reorgInfo.currElement),
 						zap.Int64("total added count", totalAddedCount),
 						zap.String("start key", hex.EncodeToString(startKey)))
@@ -637,7 +638,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				cnt++
 
 				if result.err != nil {
-					Logger.Warn("backfill worker failed",
+					logutil.DDLLogger().Warn("backfill worker failed",
 						zap.Int64("job ID", reorgInfo.ID),
 						zap.Int64("total added count", totalAddedCount),
 						zap.String("start key", hex.EncodeToString(startKey)),
@@ -658,7 +659,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				if cnt%(scheduler.currentWorkerSize()*4) == 0 {
 					err2 := reorgInfo.UpdateReorgMeta(keeper.nextKey, sessPool)
 					if err2 != nil {
-						Logger.Warn("update reorg meta failed",
+						logutil.DDLLogger().Warn("update reorg meta failed",
 							zap.Int64("job ID", reorgInfo.ID),
 							zap.Error(err2))
 					}
@@ -666,7 +667,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 					// the overhead of loading the DDL related global variables.
 					err2 = scheduler.adjustWorkerSize()
 					if err2 != nil {
-						Logger.Warn("cannot adjust backfill worker size",
+						logutil.DDLLogger().Warn("cannot adjust backfill worker size",
 							zap.Int64("job ID", reorgInfo.ID),
 							zap.Error(err2))
 					}
@@ -688,7 +689,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 			if len(kvRanges) == 0 {
 				break
 			}
-			Logger.Info("start backfill workers to reorg record",
+			logutil.DDLLogger().Info("start backfill workers to reorg record",
 				zap.Stringer("type", bfWorkerType),
 				zap.Int("workerCnt", scheduler.currentWorkerSize()),
 				zap.Int("regionCnt", len(kvRanges)),
@@ -847,7 +848,7 @@ func logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) 
 	}
 
 	if elapsed >= time.Duration(threshold)*time.Millisecond {
-		Logger.Info("slow operations",
+		logutil.DDLLogger().Info("slow operations",
 			zap.Duration("takeTimes", elapsed),
 			zap.String("msg", slowMsg))
 	}

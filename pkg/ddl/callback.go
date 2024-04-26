@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -136,11 +137,11 @@ func (c *DefaultCallback) OnChanged(err error) error {
 	if err != nil {
 		return err
 	}
-	Logger.Info("performing DDL change, must reload")
+	logutil.DDLLogger().Info("performing DDL change, must reload")
 
 	err = c.do.Reload()
 	if err != nil {
-		Logger.Error("performing DDL change failed", zap.Error(err))
+		logutil.DDLLogger().Error("performing DDL change failed", zap.Error(err))
 	}
 
 	return nil
@@ -150,7 +151,7 @@ func (c *DefaultCallback) OnChanged(err error) error {
 func (c *DefaultCallback) OnSchemaStateChanged(_ int64) {
 	err := c.do.Reload()
 	if err != nil {
-		Logger.Error("domain callback failed on schema state changed", zap.Error(err))
+		logutil.DDLLogger().Error("domain callback failed on schema state changed", zap.Error(err))
 	}
 }
 
@@ -174,11 +175,11 @@ func (c *ctcCallback) OnChanged(err error) error {
 	if err != nil {
 		return err
 	}
-	Logger.Info("performing DDL change, must reload")
+	logutil.DDLLogger().Info("performing DDL change, must reload")
 
 	err = c.do.Reload()
 	if err != nil {
-		Logger.Error("performing DDL change failed", zap.Error(err))
+		logutil.DDLLogger().Error("performing DDL change failed", zap.Error(err))
 	}
 	return nil
 }
@@ -187,7 +188,7 @@ func (c *ctcCallback) OnChanged(err error) error {
 func (c *ctcCallback) OnSchemaStateChanged(_ int64) {
 	err := c.do.Reload()
 	if err != nil {
-		Logger.Error("domain callback failed on schema state changed", zap.Error(err))
+		logutil.DDLLogger().Error("domain callback failed on schema state changed", zap.Error(err))
 	}
 }
 
@@ -200,7 +201,7 @@ func (*ctcCallback) OnJobRunBefore(job *model.Job) {
 	}
 	switch job.SchemaState {
 	case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
-		Logger.Warn(fmt.Sprintf("[DDL_HOOK] Hang for 0.5 seconds on %s state triggered", job.SchemaState.String()))
+		logutil.DDLLogger().Warn(fmt.Sprintf("[DDL_HOOK] Hang for 0.5 seconds on %s state triggered", job.SchemaState.String()))
 		time.Sleep(500 * time.Millisecond)
 	}
 }
@@ -227,7 +228,7 @@ func GetCustomizedHook(s string) (func(do DomainReloader) Callback, error) {
 	s = strings.TrimSpace(s)
 	fact, ok := customizedCallBackRegisterMap[s]
 	if !ok {
-		Logger.Error("bad ddl hook " + s)
+		logutil.DDLLogger().Error("bad ddl hook " + s)
 		return nil, errors.Errorf("ddl hook `%s` is not found in hook registered map", s)
 	}
 	return fact, nil

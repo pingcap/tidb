@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -114,7 +115,7 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 		if tbInfo.TiFlashReplica != nil {
 			replicaInfo := tbInfo.TiFlashReplica
 			if pi := tbInfo.GetPartitionInfo(); pi != nil {
-				Logger.Info("Set TiFlash replica pd rule for partitioned table when creating", zap.Int64("tableID", tbInfo.ID))
+				logutil.DDLLogger().Info("Set TiFlash replica pd rule for partitioned table when creating", zap.Int64("tableID", tbInfo.ID))
 				if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.LocationLabels, tbInfo.ID); e != nil {
 					job.State = model.JobStateCancelled
 					return tbInfo, errors.Trace(e)
@@ -125,7 +126,7 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 					return tbInfo, errors.Trace(e)
 				}
 			} else {
-				Logger.Info("Set TiFlash replica pd rule when creating", zap.Int64("tableID", tbInfo.ID))
+				logutil.DDLLogger().Info("Set TiFlash replica pd rule when creating", zap.Int64("tableID", tbInfo.ID))
 				if e := infosync.ConfigureTiFlashPDForTable(tbInfo.ID, replicaInfo.Count, &replicaInfo.LocationLabels); e != nil {
 					job.State = model.JobStateCancelled
 					return tbInfo, errors.Trace(e)
@@ -401,7 +402,7 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		if tblInfo.TiFlashReplica != nil {
 			e := infosync.DeleteTiFlashTableSyncProgress(tblInfo)
 			if e != nil {
-				Logger.Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
+				logutil.DDLLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
 			}
 		}
 		// Placement rules cannot be removed immediately after drop table / truncate table, because the
@@ -758,7 +759,7 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 	if tblInfo.TiFlashReplica != nil {
 		e := infosync.DeleteTiFlashTableSyncProgress(tblInfo)
 		if e != nil {
-			Logger.Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
+			logutil.DDLLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(e))
 		}
 	}
 
@@ -804,13 +805,13 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 		// Set PD rules for TiFlash
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.Definitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); e != nil {
-				Logger.Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
+				logutil.DDLLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(e)
 			}
 		} else {
 			if e := infosync.ConfigureTiFlashPDForTable(newTableID, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
-				Logger.Error("ConfigureTiFlashPDForTable fails", zap.Error(err))
+				logutil.DDLLogger().Error("ConfigureTiFlashPDForTable fails", zap.Error(err))
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(e)
 			}
@@ -1376,7 +1377,7 @@ func (w *worker) onSetTableFlashReplica(d *ddlCtx, t *meta.Meta, job *model.Job)
 	}
 	// We should check this first, in order to avoid creating redundant DDL jobs.
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
-		Logger.Info("Set TiFlash replica pd rule for partitioned table", zap.Int64("tableID", tblInfo.ID))
+		logutil.DDLLogger().Info("Set TiFlash replica pd rule for partitioned table", zap.Int64("tableID", tblInfo.ID))
 		if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.Labels, tblInfo.ID); e != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(e)
@@ -1387,7 +1388,7 @@ func (w *worker) onSetTableFlashReplica(d *ddlCtx, t *meta.Meta, job *model.Job)
 			return ver, errors.Trace(e)
 		}
 	} else {
-		Logger.Info("Set TiFlash replica pd rule", zap.Int64("tableID", tblInfo.ID))
+		logutil.DDLLogger().Info("Set TiFlash replica pd rule", zap.Int64("tableID", tblInfo.ID))
 		if e := infosync.ConfigureTiFlashPDForTable(tblInfo.ID, replicaInfo.Count, &replicaInfo.Labels); e != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(e)
@@ -1408,7 +1409,7 @@ func (w *worker) onSetTableFlashReplica(d *ddlCtx, t *meta.Meta, job *model.Job)
 		if tblInfo.TiFlashReplica != nil {
 			err = infosync.DeleteTiFlashTableSyncProgress(tblInfo)
 			if err != nil {
-				Logger.Error("DeleteTiFlashTableSyncProgress fails", zap.Error(err))
+				logutil.DDLLogger().Error("DeleteTiFlashTableSyncProgress fails", zap.Error(err))
 			}
 		}
 		tblInfo.TiFlashReplica = nil
@@ -1471,7 +1472,7 @@ func onUpdateFlashReplicaStatus(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 					newIDs = append(newIDs, tblInfo.TiFlashReplica.AvailablePartitionIDs[i+1:]...)
 					tblInfo.TiFlashReplica.AvailablePartitionIDs = newIDs
 					tblInfo.TiFlashReplica.Available = false
-					Logger.Info("TiFlash replica become unavailable", zap.Int64("tableID", tblInfo.ID), zap.Int64("partitionID", id))
+					logutil.DDLLogger().Info("TiFlash replica become unavailable", zap.Int64("tableID", tblInfo.ID), zap.Int64("partitionID", id))
 					break
 				}
 			}
@@ -1482,7 +1483,7 @@ func onUpdateFlashReplicaStatus(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	}
 
 	if tblInfo.TiFlashReplica.Available {
-		Logger.Info("TiFlash replica available", zap.Int64("tableID", tblInfo.ID))
+		logutil.DDLLogger().Info("TiFlash replica available", zap.Int64("tableID", tblInfo.ID))
 	}
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 	if err != nil {
