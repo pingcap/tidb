@@ -493,19 +493,6 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		return nil
 	}
 
-	sessionOpts := encode.SessionOptions{
-		// TODO: need to find the correct value for SQLMode
-		SQLMode: mysql.ModeStrictAllTables,
-	}
-	encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
-		Table:          tbl,
-		SessionOptions: sessionOpts,
-		Logger:         em.logger,
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	exec := common.SQLWithRetry{
 		DB:           em.db,
 		Logger:       em.logger,
@@ -533,6 +520,19 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		start, end := t[0], t[1]
 		pool.ApplyOnErrorGroup(indexG, func() error {
 			defer indexTaskWg.Done()
+
+			sessionOpts := encode.SessionOptions{
+				// TODO: need to find the correct value for SQLMode
+				SQLMode: mysql.ModeStrictAllTables,
+			}
+			encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+				Table:          tbl,
+				SessionOptions: sessionOpts,
+				Logger:         em.logger,
+			})
+			if err != nil {
+				return errors.Trace(err)
+			}
 
 			var handleKeys [][]byte
 			var insertRows [][2][]byte
@@ -719,6 +719,19 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		start, end := t[0], t[1]
 		pool.ApplyOnErrorGroup(dataG, func() error {
 			defer dataTaskWg.Done()
+
+			sessionOpts := encode.SessionOptions{
+				// TODO: need to find the correct value for SQLMode
+				SQLMode: mysql.ModeStrictAllTables,
+			}
+			encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
+				Table:          tbl,
+				SessionOptions: sessionOpts,
+				Logger:         em.logger,
+			})
+			if err != nil {
+				return errors.Trace(err)
+			}
 
 			var handleKeys [][]byte
 			for start < end {
