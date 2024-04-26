@@ -156,7 +156,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Mana
 // Start the schedulerManager, start the scheduleTaskLoop to start multiple schedulers.
 func (sm *Manager) Start() {
 	// init cached managed nodes
-	sm.nodeMgr.refreshManagedNodes(sm.ctx, sm.taskMgr, sm.slotMgr)
+	sm.nodeMgr.refreshNodes(sm.ctx, sm.taskMgr, sm.slotMgr)
 
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
@@ -166,7 +166,7 @@ func (sm *Manager) Start() {
 		sm.nodeMgr.maintainLiveNodesLoop(sm.ctx, sm.taskMgr)
 	})
 	sm.wg.Run(func() {
-		sm.nodeMgr.refreshManagedNodesLoop(sm.ctx, sm.taskMgr, sm.slotMgr)
+		sm.nodeMgr.refreshNodesLoop(sm.ctx, sm.taskMgr, sm.slotMgr)
 	})
 	sm.wg.Run(func() {
 		sm.balancer.balanceLoop(sm.ctx, sm)
