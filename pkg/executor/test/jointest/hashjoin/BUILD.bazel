@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "hashjoin_test",
+    timeout = "short",
+    srcs = [
+        "hash_join_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 11,
+    deps = [
+        "//pkg/config",
+        "//pkg/meta/autoid",
+        "//pkg/session",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/util/dbterror/exeerrors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
