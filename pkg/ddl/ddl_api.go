@@ -96,7 +96,7 @@ const (
 	tiflashCheckPendingTablesRetry = 7
 )
 
-var errCheckConstraintIsOff = errors.NewNoStackError("tidb_enable_check_constraint is off")
+var errCheckConstraintIsOff = errors.NewNoStackError(variable.TiDBEnableCheckConstraint + " is off")
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
 	var placementPolicyRef *model.PolicyRefInfo
