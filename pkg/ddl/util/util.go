@@ -24,12 +24,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -283,11 +283,62 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 		if err == nil {
 			return nil
 		}
-		logutil.BgLogger().Warn("etcd-cli delete key failed", zap.String("category", "ddl"), zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
+		logutil.DDLLogger().Warn("etcd-cli delete key failed", zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
 	}
 	return errors.Trace(err)
 }
 
+<<<<<<< HEAD
+=======
+// PutKVToEtcdMono puts key value to etcd monotonously.
+// etcdCli is client of etcd.
+// retryCnt is retry time when an error occurs.
+// opts are configures of etcd Operations.
+func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
+	opts ...clientv3.OpOption) error {
+	var err error
+	for i := 0; i < retryCnt; i++ {
+		if err = ctx.Err(); err != nil {
+			return errors.Trace(err)
+		}
+
+		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
+		var resp *clientv3.GetResponse
+		resp, err = etcdCli.Get(childCtx, key)
+		if err != nil {
+			cancel()
+			logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
+			time.Sleep(KeyOpRetryInterval)
+			continue
+		}
+		prevRevision := int64(0)
+		if len(resp.Kvs) > 0 {
+			prevRevision = resp.Kvs[0].ModRevision
+		}
+
+		var txnResp *clientv3.TxnResponse
+		txnResp, err = etcdCli.Txn(childCtx).
+			If(clientv3.Compare(clientv3.ModRevision(key), "=", prevRevision)).
+			Then(clientv3.OpPut(key, val, opts...)).
+			Commit()
+
+		cancel()
+
+		if err == nil && txnResp.Succeeded {
+			return nil
+		}
+
+		if err == nil {
+			err = errors.New("performing compare-and-swap during PutKVToEtcd failed")
+		}
+
+		logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
+		time.Sleep(KeyOpRetryInterval)
+	}
+	return errors.Trace(err)
+}
+
+>>>>>>> 10971ea5b0d (ddl: use package-level logger which preset "category" field (#52885))
 // PutKVToEtcd puts key value to etcd.
 // etcdCli is client of etcd.
 // retryCnt is retry time when an error occurs.
@@ -306,7 +357,7 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 		if err == nil {
 			return nil
 		}
-		logutil.BgLogger().Warn("etcd-cli put kv failed", zap.String("category", "ddl"), zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
+		logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 		time.Sleep(KeyOpRetryInterval)
 	}
 	return errors.Trace(err)

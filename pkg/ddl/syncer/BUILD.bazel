@@ -9,12 +9,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ddl/syncer",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/ddl/logutil",
         "//pkg/ddl/util",
         "//pkg/domain/infosync",
         "//pkg/metrics",
         "//pkg/sessionctx/variable",
         "//pkg/util",
-        "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@io_etcd_go_etcd_api_v3//mvccpb",
