@@ -201,6 +201,9 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 
 	ds := make([]types.Datum, 0, len(m.outputOffset))
 	for i, offset := range m.outputOffset {
+		// The `value` slice doesn't contain the value of `physTblID`, it fills by `tablecodec.DecodeKeyHead` function.
+		// For example, the schema is `[a, b, physTblID, c]`, `value` is `[v_a, v_b, v_c]`, `outputOffset` is `[0, 1, 2, 3]`
+		// when we want the value of `c`, we should recalculate the offset of `c` by `offset - 1`.
 		if m.physTblIDIdx == i {
 			tid, _, _, _ := tablecodec.DecodeKeyHead(key)
 			ds = append(ds, types.NewIntDatum(tid))
