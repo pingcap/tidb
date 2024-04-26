@@ -176,7 +176,7 @@ func fillUpStats(result map[string]*UnityTableInfo) {
 	}
 }
 
-func fillUpHints(result map[string]*UnityTableInfo) {
+func possibleHints(result map[string]*UnityTableInfo) []string {
 	possibleHints := make(map[string]bool)
 	var hintTableNames []string
 	for tableName, tblInfo := range result {
@@ -192,7 +192,11 @@ func fillUpHints(result map[string]*UnityTableInfo) {
 	}
 	if len(hintTableNames) > 2 {
 		// join hint
-		// TODO
+		for _, t := range hintTableNames {
+			possibleHints[fmt.Sprintf("hash_join(%v)", t)] = true
+			possibleHints[fmt.Sprintf("merge_join(%v)", t)] = true
+			possibleHints[fmt.Sprintf("index_join(%v)", t)] = true
+		}
 
 		// leading hint
 		for _, t1 := range hintTableNames {
@@ -206,14 +210,27 @@ func fillUpHints(result map[string]*UnityTableInfo) {
 	}
 
 	// TODO: verify
+
+	hints := make([]string, 0, len(possibleHints))
+	for h := range possibleHints {
+		hints = append(hints, h)
+	}
+	return hints
 }
 
 func prepareForUnity(ctx context.PlanContext, p base.LogicalPlan) string {
 	result := make(map[string]*UnityTableInfo)
 	collectUnityInfo(p, result)
 	fillUpStats(result)
+	hints := possibleHints(result)
 
-	v, err := json.Marshal(result)
+	v, err := json.Marshal(struct {
+		Tables map[string]*UnityTableInfo
+		Hints  []string
+	}{
+		Tables: result,
+		Hints:  hints,
+	})
 	must(err)
 	return string(v)
 }
