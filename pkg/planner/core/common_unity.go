@@ -50,7 +50,6 @@ type UnityTableInfo struct {
 	Indexes      map[string]*UnityIndexInfo  // db.table.index
 	RealtimeRows int64
 	ModifiedRows int64
-	Hints        []string
 
 	stats  *statistics.Table `json:"-"`
 	col2id map[string]int64  `json:"-"`
@@ -194,7 +193,7 @@ func getPossibleHints(ctx context.PlanContext, result map[string]*UnityTableInfo
 			possibleHints[fmt.Sprintf("use_index(%v, %v)", hintTableName, idxName)] = true
 		}
 	}
-	if len(hintTableNames) > 2 {
+	if len(hintTableNames) >= 2 {
 		// join hint
 		for _, t := range hintTableNames {
 			possibleHints[fmt.Sprintf("hash_join(%v)", t)] = true
@@ -235,7 +234,7 @@ func getPossibleHints(ctx context.PlanContext, result map[string]*UnityTableInfo
 			if sctx.GetSessionVars().StmtCtx.WarningCount() == 0 {
 				tmp[h] = true
 			} else {
-				fmt.Println(">>>> ", sctx.GetSessionVars().StmtCtx.GetWarnings())
+				//fmt.Println(">>>> ", sctx.GetSessionVars().StmtCtx.GetWarnings(), q)
 			}
 		}
 		possibleHints = tmp
