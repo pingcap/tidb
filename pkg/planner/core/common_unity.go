@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -15,13 +16,20 @@ func col2tbl(fullColName string) string {
 }
 
 type UnityColumnInfo struct {
-	NDV   int
-	Nulls int
+	NDV       int
+	Nulls     int
+	Histogram []UnityHistBucket
 }
 
 type UnityIndexInfo struct {
 	NDV   int
 	Nulls int
+}
+
+type UnityHistBucket struct {
+	Lower string
+	Upper string
+	Count int64
 }
 
 type UnityTableInfo struct {
@@ -119,7 +127,7 @@ func collectUnityInfo(p base.LogicalPlan, result map[string]*UnityTableInfo) {
 	}
 }
 
-func fillUpStats(result map[string]*UnityTableInfo) {
+func fillUpStats(ctx context.PlanContext, result map[string]*UnityTableInfo) {
 	for _, tblInfo := range result {
 		tblStats := tblInfo.stats
 		tblInfo.ModifiedRows = tblStats.ModifyCount
@@ -128,6 +136,22 @@ func fillUpStats(result map[string]*UnityTableInfo) {
 			colStats := tblStats.Columns[tblInfo.col2id[colName]]
 			col.NDV = int(colStats.NDV)
 			col.Nulls = int(colStats.NullCount)
+
+			hist := colStats.Histogram
+			buckets := make([]UnityHistBucket, 0)
+			for i := 0; i < colStats.Histogram.Len(); i++ {
+				lower, err := hist.GetLower(i).ToString()
+				must(err)
+				upper, err := hist.GetUpper(i).ToString()
+				must(err)
+				count := hist.Buckets[i].Count + hist.Buckets[i].Repeat
+				buckets = append(buckets, UnityHistBucket{
+					Lower: lower,
+					Upper: upper,
+					Count: count,
+				})
+			}
+			col.Histogram = buckets
 		}
 		for idxName, idx := range tblInfo.Indexes {
 			idxStats := tblStats.Indices[tblInfo.idx2id[idxName]]
@@ -137,10 +161,10 @@ func fillUpStats(result map[string]*UnityTableInfo) {
 	}
 }
 
-func prepareForUnity(p base.LogicalPlan) string {
+func prepareForUnity(ctx context.PlanContext, p base.LogicalPlan) string {
 	result := make(map[string]*UnityTableInfo)
 	collectUnityInfo(p, result)
-	fillUpStats(result)
+	fillUpStats(ctx, result)
 
 	v, err := json.Marshal(result)
 	must(err)
