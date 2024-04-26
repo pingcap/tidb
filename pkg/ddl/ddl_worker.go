@@ -1097,9 +1097,8 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 	return t
 }
 
-// countForPanic records the error count for DDL job.
-func (w *worker) countForPanic(job *model.Job) {
-	// If run DDL job panic, just cancel the DDL jobs.
+// handlePanic records the error count for DDL job and cancel the DDL job.
+func (w *worker) handlePanic(job *model.Job) {
 	if job.State == model.JobStateRollingback {
 		job.State = model.JobStateCancelled
 	} else {
@@ -1108,7 +1107,6 @@ func (w *worker) countForPanic(job *model.Job) {
 	job.ErrorCount++
 
 	logger := w.jobLogger(job)
-	// Load global DDL variables.
 	if err1 := loadDDLVars(w); err1 != nil {
 		logger.Error("load DDL global variable failed", zap.Error(err1))
 	}
@@ -1122,8 +1120,9 @@ func (w *worker) countForPanic(job *model.Job) {
 	}
 }
 
-// countForError records the error count for DDL job.
-func (w *worker) countForError(err error, job *model.Job) error {
+// handleError records the error count for DDL job.
+// if error count reach limit, cancel the DDL job.
+func (w *worker) handleError(err error, job *model.Job) error {
 	job.Error = toTError(err)
 	job.ErrorCount++
 
@@ -1164,7 +1163,7 @@ func (w *worker) processJobPausingRequest(d *ddlCtx, job *model.Job) (isRunnable
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runDDLJob", w),
 		func() {
-			w.countForPanic(job)
+			w.handlePanic(job)
 		}, false)
 
 	// Mock for run ddl job panic.
@@ -1338,7 +1337,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 
 	// Save errors in job if any, so that others can know errors happened.
 	if err != nil {
-		err = w.countForError(err, job)
+		err = w.handleError(err, job)
 	}
 	return ver, err
 }
