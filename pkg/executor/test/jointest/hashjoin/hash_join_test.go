@@ -170,6 +170,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec("drop table orders")
 }
 
+<<<<<<< HEAD
 func TestIssue13449(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -193,6 +194,31 @@ func TestIssue13449(t *testing.T) {
 		"  └─Selection 12487.50 cop[tikv]  not(isnull(test.s.a))",
 		"    └─IndexRangeScan 12500.00 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo"))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows("1 1", "128 128"))
+=======
+func TestIssue52902(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// index hash join with semi join
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/MockOnlyEnableIndexHashJoin", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/MockOnlyEnableIndexHashJoin"))
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (x int, y int)")
+	tk.MustExec("create table t0 (a int, b int, key (`b`))")
+	tk.MustExec("insert into t1 values(103, 600)")
+	tk.MustExec("insert into t1 values(100, 200)")
+	tk.MustExec("insert into t0 values( 105, 400)")
+	tk.MustExec("insert into t0 values( 104, 300)")
+	tk.MustExec("insert into t0 values( 103, 300)")
+	tk.MustExec("insert into t0 values( 102, 200)")
+	tk.MustExec("insert into t0 values( 101, 200)")
+	tk.MustExec("insert into t0 values( 100, 200)")
+	tk.MustQuery("select * from t1 where 1 = 1 and case when t1.x < 1000 then 1 = 1 " +
+		"when t1.x < 2000 then not exists (select 1 from t0 where t0.b = t1.y) else 1 = 1 end").Check(testkit.Rows("100 200", "103 600"))
+>>>>>>> 944fff519c9 (executor: Fix index join hash produces redundant rows for left outer anti semi join type (#52908))
 }
 
 func TestHashJoin(t *testing.T) {
