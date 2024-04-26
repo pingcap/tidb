@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "base",
     srcs = [
+        "misc_base.go",
         "plan_base.go",
         "task_base.go",
     ],
@@ -12,8 +13,10 @@ go_library(
         "//pkg/expression",
         "//pkg/kv",
         "//pkg/planner/context",
+        "//pkg/planner/funcdep",
         "//pkg/planner/property",
-        "//pkg/planner/util/coreusage",
+        "//pkg/planner/util/costusage",
+        "//pkg/planner/util/optimizetrace",
         "//pkg/types",
         "//pkg/util/execdetails",
         "//pkg/util/tracing",

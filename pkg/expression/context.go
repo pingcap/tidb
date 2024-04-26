@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -66,7 +66,7 @@ func warningCount(ctx EvalContext) int {
 	return ctx.WarningCount()
 }
 
-func truncateWarnings(ctx EvalContext, start int) []stmtctx.SQLWarn {
+func truncateWarnings(ctx EvalContext, start int) []contextutil.SQLWarn {
 	return ctx.TruncateWarnings(start)
 }
 

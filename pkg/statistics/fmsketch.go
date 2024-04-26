@@ -42,10 +42,22 @@ var fmSketchPool = sync.Pool{
 	},
 }
 
-// FMSketch is used to count the number of distinct elements in a set.
+// MaxSketchSize is the maximum size of the hashset in the FM sketch.
+// TODO: add this attribute to PB and persist it instead of using a fixed number(executor.maxSketchSize)
+const MaxSketchSize = 10000
+
+// FMSketch (Flajolet–Martin Sketch) is a probabilistic data structure used for estimating the number of distinct elements in a stream.
+// It uses a hash function to map each element to a binary number and counts the number of trailing zeroes in each hashed value.
+// The maximum number of trailing zeroes observed gives an estimate of the logarithm of the number of distinct elements.
+// This approach allows the FM sketch to handle large streams of data in a memory-efficient way.
+//
+// See https://en.wikipedia.org/wiki/Flajolet%E2%80%93Martin_algorithm
 type FMSketch struct {
+	// A set to store unique hashed values.
 	hashset *swiss.Map[uint64, bool]
-	mask    uint64
+	// A binary mask used to track the maximum number of trailing zeroes in the hashed values.
+	mask uint64
+	// The maximum size of the hashset. If the size exceeds this value, the mask size will be doubled and some hashed values will be removed from the hashset.
 	maxSize int
 }
 
@@ -71,19 +83,30 @@ func (s *FMSketch) Copy() *FMSketch {
 	return result
 }
 
-// NDV returns the ndv of the sketch.
+// NDV returns the estimated number of distinct values (NDV) in the sketch.
 func (s *FMSketch) NDV() int64 {
 	if s == nil {
 		return 0
 	}
+	// The size of the mask (incremented by one) is 2^r, where r is the maximum number of trailing zeroes observed in the hashed values.
+	// The count of unique hashed values is the number of unique elements in the hashset.
+	// This estimation method is based on the Flajolet-Martin algorithm for estimating the number of distinct elements in a stream.
 	return int64(s.mask+1) * int64(s.hashset.Count())
 }
 
+// insertHashValue inserts a hashed value into the sketch.
 func (s *FMSketch) insertHashValue(hashVal uint64) {
+	// If the hashed value is already in the sketch (determined by bitwise AND with the mask), return without inserting.
+	// This is because the number of trailing zeroes in the hashed value is less than or equal to the mask value.
 	if (hashVal & s.mask) != 0 {
 		return
 	}
+	// Put the hashed value into the hashset.
 	s.hashset.Put(hashVal, true)
+	// If the count of unique hashed values exceeds the maximum size,
+	// double the mask size and remove any hashed values from the hashset that are now within the mask.
+	// This is to ensure that the mask value is always a power of two minus one (i.e., a binary number of the form 111...),
+	// which allows us to quickly check the number of trailing zeroes in a hashed value by performing a bitwise AND operation with the mask.
 	if s.hashset.Count() > s.maxSize {
 		s.mask = s.mask*2 + 1
 		s.hashset.Iter(func(k uint64, _ bool) (stop bool) {
@@ -204,7 +227,7 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 		return nil, errors.Trace(err)
 	}
 	fm := FMSketchFromProto(p)
-	fm.maxSize = 10000 // TODO: add this attribute to PB and persist it instead of using a fixed number(executor.maxSketchSize)
+	fm.maxSize = MaxSketchSize
 	return fm, nil
 }
 
