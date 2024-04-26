@@ -542,8 +542,8 @@ type TableInfo struct {
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
 
-	// ModReversion is per table schema's version, it will be increased when the schema changed.
-	ModReversion uint64 `json:"mod_reversion"`
+	// Revision is per table schema's version, it will be increased when the schema changed.
+	Revision uint64 `json:"mod_reversion"`
 
 	DBID int64 `json:"-"`
 }

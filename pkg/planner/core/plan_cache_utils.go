@@ -201,7 +201,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		}
 		dbName = append(dbName, db.Name)
 		tbls = append(tbls, tbl)
-		relateVersion[id] = tbl.Meta().ModReversion
+		relateVersion[id] = tbl.Meta().Revision
 	}
 
 	preparedObj := &PlanCacheStmt{

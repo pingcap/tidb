@@ -115,18 +115,18 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			}
 			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
 			stmt.tbls[i] = tblByName
-			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().ModReversion
+			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().Revision
 		}
 		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
 		if err != nil {
 			schemaNotMatch = true
 			continue
 		}
-		if stmt.tbls[i].Meta().ModReversion != newTbl.Meta().ModReversion {
+		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
 			schemaNotMatch = true
 		}
 		stmt.tbls[i] = newTbl
-		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().ModReversion
+		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
 	}
 
 	// step 4: check schema version
