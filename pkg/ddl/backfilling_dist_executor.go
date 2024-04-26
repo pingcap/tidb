@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -204,19 +203,8 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 	return true
 }
 
-func isRetryableError(err error) bool {
-	originErr := errors.Cause(err)
-	if tErr, ok := originErr.(*terror.Error); ok {
-		sqlErr := terror.ToSQLError(tErr)
-		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
-		return ok
-	}
-	// can't retry Unknown err.
-	return false
-}
-
 func (*backfillDistExecutor) IsRetryableError(err error) bool {
-	return common.IsRetryableError(err) || isRetryableError(err)
+	return common.IsRetryableError(err) || dbterror.IsReorgRetryableErr(err)
 }
 
 func (s *backfillDistExecutor) Close() {
