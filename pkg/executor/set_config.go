@@ -49,11 +49,14 @@ type SetConfigExec struct {
 func (s *SetConfigExec) Open(context.Context) error {
 	if s.p.Type != "" {
 		s.p.Type = strings.ToLower(s.p.Type)
-		if s.p.Type != "tikv" && s.p.Type != "tidb" && s.p.Type != "pd" && s.p.Type != "tiflash" {
+		if s.p.Type != "tikv" && s.p.Type != "tidb" && s.p.Type != "pd" && s.p.Type != "tiflash" && s.p.Type != "tso" && s.p.Type != "scheduling" {
 			return errors.Errorf("unknown type %v", s.p.Type)
 		}
 		if s.p.Type == "tidb" {
 			return errors.Errorf("TiDB doesn't support to change configs online, please use SQL variables")
+		}
+		if s.p.Type == "tso" || s.p.Type == "scheduling" {
+			return errors.Errorf("%s doesn't support to change configs online", s.p.Type)
 		}
 	}
 	if s.p.Instance != "" {
