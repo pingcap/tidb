@@ -234,6 +234,8 @@ func getPossibleHints(ctx context.PlanContext, result map[string]*UnityTableInfo
 			_, _, err = OptimizeAstNode(context2.Background(), sctx, stmt, is)
 			if sctx.GetSessionVars().StmtCtx.WarningCount() == 0 {
 				tmp[h] = true
+			} else {
+				fmt.Println(">>>> ", sctx.GetSessionVars().StmtCtx.GetWarnings())
 			}
 		}
 		possibleHints = tmp
