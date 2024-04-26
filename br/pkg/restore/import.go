@@ -504,11 +504,7 @@ func getKeyRangeByMode(mode KvMode) func(f *backuppb.File, rules *RewriteRules) 
 		}
 	default:
 		return func(f *backuppb.File, rules *RewriteRules) ([]byte, []byte, error) {
-			start, end, err := GetRewriteRawKeys(f, rules)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			return start, end, nil
+			return GetRewriteRawKeys(f, rules)
 		}
 	}
 }
