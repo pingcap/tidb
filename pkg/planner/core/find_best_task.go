@@ -2200,6 +2200,10 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *DataSource, 
 		}
 	}
 
+	if len(args) != 1 {
+		return nil, errors.Errorf("Can't find column %s in schema %s", model.ExtraPartitionIdName.O, is.schema)
+	}
+
 	// For SQL like 'select x from t partition(p0, p1) use index(idx)',
 	// we will add a `Selection` like `in(t._tidb_pid, p0, p1)` into the plan.
 	// For truncate/drop partitions, we should only return indexes where partitions still in public state.
@@ -2229,6 +2233,7 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *DataSource, 
 		// add an invalid pid as param for `IN` function
 		args = append(args, expression.NewInt64Const(-1))
 	} else {
+		// `PartitionPruning`` func does not return adding and dropping partitions
 		for _, idx := range idxArr {
 			args = append(args, expression.NewInt64Const(pInfo.Definitions[idx].ID))
 		}
