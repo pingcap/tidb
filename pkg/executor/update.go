@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"runtime/trace"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -338,7 +339,7 @@ func (*UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error {
 	}
 
 	if types.ErrDataTooLong.Equal(err) {
-		return resetErrDataTooLong(colName.O, rowIdx+1, err)
+		return errors.AddStack(resetErrDataTooLong(colName.O, rowIdx+1, err))
 	}
 
 	if types.ErrOverflow.Equal(err) {

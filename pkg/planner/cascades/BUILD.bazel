@@ -25,6 +25,7 @@ go_library(
         "//pkg/planner/pattern",
         "//pkg/planner/property",
         "//pkg/planner/util",
+        "//pkg/planner/util/coreusage",
         "//pkg/types",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/ranger",

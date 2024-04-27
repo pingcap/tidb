@@ -31,6 +31,12 @@ func TestOuter2Inner(t *testing.T) {
 	tk.MustExec("create table t2(a2 int, b2 int, c2 int)")
 	tk.MustExec("create table t3(a3 int, b3 int, c3 int)")
 	tk.MustExec("create table t4(a4 int, b4 int, c4 int)")
+	tk.MustExec("create table ti(i int)")
+	tk.MustExec("CREATE TABLE lineitem (L_PARTKEY INTEGER ,L_QUANTITY DECIMAL(15,2),L_EXTENDEDPRICE  DECIMAL(15,2))")
+	tk.MustExec("CREATE TABLE part(P_PARTKEY INTEGER,P_BRAND CHAR(10),P_CONTAINER CHAR(10))")
+	tk.MustExec("CREATE TABLE d (pk int, col_blob blob, col_blob_key blob, col_varchar_key varchar(1) , col_date date, col_int_key int)")
+	tk.MustExec("CREATE TABLE dd (pk int, col_blob blob, col_blob_key blob, col_date date, col_int_key int)")
+
 	var input Input
 	var output []struct {
 		SQL  string

@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -125,7 +125,7 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 			tblID, kv, _ := tablecodec.DecodeRecordKey(it.Key())
 			require.Equal(t, pid, tblID)
 			vals, _ := tablecodec.DecodeValuesBytesToStrings(it.Value())
-			logutil.BgLogger().Info("Record",
+			logutil.DDLLogger().Info("Record",
 				zap.Int64("pid", tblID),
 				zap.Stringer("key", kv),
 				zap.Strings("values", vals))

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression) []expression.Expression {
@@ -42,10 +42,14 @@ func mergeOnClausePredicates(p *LogicalJoin, predicates []expression.Expression)
 type convertOuterToInnerJoin struct {
 }
 
-func (*convertOuterToInnerJoin) optimize(_ context.Context, p base.LogicalPlan, _ *coreusage.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*convertOuterToInnerJoin) optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return p.ConvertOuterToInnerJoin(nil), planChanged, nil
 }
+
+// LogicalAggregation just works since schema = child + aggregate expressions. No need to map predicates.
+// Also, predicates involving aggregate expressions are not null filtering. IsNullReject always returns
+// false for those cases.
 
 // ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
 func (s *baseLogicalPlan) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
@@ -92,6 +96,9 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	} else if p.JoinType == InnerJoin || p.JoinType == SemiJoin {
 		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
 		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
+	} else if p.JoinType == AntiSemiJoin {
+		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
+		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
 	} else {
 		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
 		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
@@ -122,6 +129,16 @@ func (s *LogicalSelection) ConvertOuterToInnerJoin(predicates []expression.Expre
 	return p
 }
 
+// ConvertOuterToInnerJoin implements base.LogicalPlan ConvertOuterToInnerJoin interface.
+func (s *LogicalProjection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
+	p := s.self.(*LogicalProjection)
+	canBePushed, _ := BreakDownPredicates(p, predicates)
+	child := p.Children()[0]
+	child = child.ConvertOuterToInnerJoin(canBePushed)
+	p.SetChildren(child)
+	return p
+}
+
 // allConstants checks if only the expression has only constants.
 func allConstants(expr expression.Expression) bool {
 	switch v := expr.(type) {
@@ -142,7 +159,6 @@ func allConstants(expr expression.Expression) bool {
 // isNullFiltered(A OR B) = isNullFiltered(A) AND isNullFiltered(B)
 // isNullFiltered(A AND B) = isNullFiltered(A) OR isNullFiltered(B)
 func isNullFiltered(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression, outerSchema *expression.Schema) bool {
-
 	// The expression should reference at least one field in innerSchema or all constants.
 	if !expression.ExprReferenceSchema(predicate, innerSchema) && !allConstants(predicate) {
 		return false
