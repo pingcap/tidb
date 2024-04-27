@@ -153,7 +153,6 @@ func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression,
 
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *coreusage.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -383,39 +382,6 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	proj.SetChildren(child)
 	p.children[idx] = proj
 	return proj
-}
-
-// simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
-func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
-	if p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != InnerJoin {
-		return
-	}
-
-	innerTable := p.children[0]
-	outerTable := p.children[1]
-	if p.JoinType == LeftOuterJoin {
-		innerTable, outerTable = outerTable, innerTable
-	}
-
-	if p.JoinType == InnerJoin {
-		return
-	}
-	// then simplify embedding outer join.
-	canBeSimplified := false
-	for _, expr := range predicates {
-		// avoid the case where the expr only refers to the schema of outerTable
-		if expression.ExprFromSchema(expr, outerTable.Schema()) {
-			continue
-		}
-		isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr)
-		if isOk {
-			canBeSimplified = true
-			break
-		}
-	}
-	if canBeSimplified {
-		p.JoinType = InnerJoin
-	}
 }
 
 // PredicatePushDown implements base.LogicalPlan PredicatePushDown interface.

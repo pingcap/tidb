@@ -344,25 +344,25 @@ WHERE rn.id1 = '03'
 );
 id	estRows	task	access object	operator info
 Update_17	N/A	root		N/A
-└─Projection_28	8.00	root		executor__explain.t1.id1, executor__explain.t1.id2, executor__explain.t1.id3, executor__explain.t1.id4, executor__explain.t1.id5, executor__explain.t1.id6, executor__explain.t1.id7, executor__explain.t1._tidb_rowid
-  └─Selection_29	8.00	root		eq(minus(executor__explain.t1.id6, ifnull(executor__explain.t1.id7, 0)), ifnull(Column#22, 0))
-    └─HashJoin_32	10.00	root		left outer join, equal:[eq(executor__explain.t1.id2, executor__explain.t2.id2)]
-      ├─HashAgg_69(Build)	12.50	root		group by:executor__explain.t2.id2, funcs:count(1)->Column#22, funcs:firstrow(executor__explain.t2.id2)->executor__explain.t2.id2
-      │ └─IndexJoin_76	15.62	root		inner join, inner:IndexReader_75, outer key:executor__explain.t2.id10, inner key:executor__explain.t3.id20, equal cond:eq(executor__explain.t2.id10, executor__explain.t3.id20)
-      │   ├─IndexHashJoin_93(Build)	12.50	root		inner join, inner:IndexLookUp_90, outer key:executor__explain.t1.id2, inner key:executor__explain.t2.id2, equal cond:eq(executor__explain.t1.id2, executor__explain.t2.id2)
-      │   │ ├─Projection_103(Build)	10.00	root		executor__explain.t1.id2
-      │   │ │ └─IndexLookUp_109	10.00	root		
-      │   │ │   ├─IndexRangeScan_107(Build)	10.00	cop[tikv]	table:rn, index:ix_id1(id1)	range:["03","03"], keep order:false, stats:pseudo
-      │   │ │   └─TableRowIDScan_108(Probe)	10.00	cop[tikv]	table:rn	keep order:false, stats:pseudo
-      │   │ └─IndexLookUp_90(Probe)	12.50	root		
-      │   │   ├─IndexRangeScan_88(Build)	12.50	cop[tikv]	table:b, index:IX_id2(id2)	range: decided by [eq(executor__explain.t2.id2, executor__explain.t1.id2)], keep order:false, stats:pseudo
-      │   │   └─TableRowIDScan_89(Probe)	12.50	cop[tikv]	table:b	keep order:false, stats:pseudo
-      │   └─IndexReader_75(Probe)	12.50	root		index:Selection_74
-      │     └─Selection_74	12.50	cop[tikv]		not(isnull(executor__explain.t3.id20))
-      │       └─IndexRangeScan_73	12.50	cop[tikv]	table:c, index:IX_id20(id20)	range: decided by [eq(executor__explain.t3.id20, executor__explain.t2.id10)], keep order:false, stats:pseudo
-      └─IndexLookUp_68(Probe)	10.00	root		
-        ├─IndexRangeScan_66(Build)	10.00	cop[tikv]	table:a, index:ix_id1(id1)	range:["03","03"], keep order:false, stats:pseudo
-        └─TableRowIDScan_67(Probe)	10.00	cop[tikv]	table:a	keep order:false, stats:pseudo
+└─HashJoin_31	10.00	root		inner join, equal:[eq(executor__explain.t1.id2, executor__explain.t2.id2) eq(Column#23, Column#24)]
+  ├─Projection_40(Build)	12.50	root		executor__explain.t2.id2, ifnull(Column#22, 0)->Column#24
+  │ └─HashAgg_41	12.50	root		group by:executor__explain.t2.id2, funcs:count(1)->Column#22, funcs:firstrow(executor__explain.t2.id2)->executor__explain.t2.id2
+  │   └─IndexJoin_48	15.62	root		inner join, inner:IndexReader_47, outer key:executor__explain.t2.id10, inner key:executor__explain.t3.id20, equal cond:eq(executor__explain.t2.id10, executor__explain.t3.id20)
+  │     ├─IndexHashJoin_65(Build)	12.50	root		inner join, inner:IndexLookUp_62, outer key:executor__explain.t1.id2, inner key:executor__explain.t2.id2, equal cond:eq(executor__explain.t1.id2, executor__explain.t2.id2)
+  │     │ ├─Projection_86(Build)	10.00	root		executor__explain.t1.id2
+  │     │ │ └─IndexLookUp_92	10.00	root		
+  │     │ │   ├─IndexRangeScan_90(Build)	10.00	cop[tikv]	table:rn, index:ix_id1(id1)	range:["03","03"], keep order:false, stats:pseudo
+  │     │ │   └─TableRowIDScan_91(Probe)	10.00	cop[tikv]	table:rn	keep order:false, stats:pseudo
+  │     │ └─IndexLookUp_62(Probe)	12.50	root		
+  │     │   ├─IndexRangeScan_60(Build)	12.50	cop[tikv]	table:b, index:IX_id2(id2)	range: decided by [eq(executor__explain.t2.id2, executor__explain.t1.id2)], keep order:false, stats:pseudo
+  │     │   └─TableRowIDScan_61(Probe)	12.50	cop[tikv]	table:b	keep order:false, stats:pseudo
+  │     └─IndexReader_47(Probe)	12.50	root		index:Selection_46
+  │       └─Selection_46	12.50	cop[tikv]		not(isnull(executor__explain.t3.id20))
+  │         └─IndexRangeScan_45	12.50	cop[tikv]	table:c, index:IX_id20(id20)	range: decided by [eq(executor__explain.t3.id20, executor__explain.t2.id10)], keep order:false, stats:pseudo
+  └─Projection_33(Probe)	10.00	root		executor__explain.t1.id1, executor__explain.t1.id2, executor__explain.t1.id3, executor__explain.t1.id4, executor__explain.t1.id5, executor__explain.t1.id6, executor__explain.t1.id7, executor__explain.t1._tidb_rowid, minus(executor__explain.t1.id6, ifnull(executor__explain.t1.id7, 0))->Column#23
+    └─IndexLookUp_39	10.00	root		
+      ├─IndexRangeScan_37(Build)	10.00	cop[tikv]	table:a, index:ix_id1(id1)	range:["03","03"], keep order:false, stats:pseudo
+      └─TableRowIDScan_38(Probe)	10.00	cop[tikv]	table:a	keep order:false, stats:pseudo
 drop table if exists t;
 create table t (a int, b int, index (a));
 insert into t values (1, 1);
