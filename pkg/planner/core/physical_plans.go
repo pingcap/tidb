@@ -2472,7 +2472,7 @@ type PhysicalShow struct {
 
 	ShowContents
 
-	Extractor ShowPredicateExtractor
+	Extractor base.ShowPredicateExtractor
 }
 
 // MemoryUsage return the memory usage of PhysicalShow

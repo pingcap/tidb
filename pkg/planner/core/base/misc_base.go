@@ -14,7 +14,10 @@
 
 package base
 
-import "github.com/pingcap/tipb/go-tipb"
+import (
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tipb/go-tipb"
+)
 
 // AccessObject represents what is accessed by an operator.
 // It corresponds to the "access object" column in an EXPLAIN statement result.
@@ -23,4 +26,20 @@ type AccessObject interface {
 	NormalizedString() string
 	// SetIntoPB transform itself into a protobuf message and set into the binary plan.
 	SetIntoPB(*tipb.ExplainOperator)
+}
+
+// ShowPredicateExtractor is used to extract some predicates from `PatternLikeOrIlikeExpr` clause
+// and push the predicates down to the data retrieving on reading memory table stage when use ShowStmt.
+//
+// e.g:
+// SHOW COLUMNS FROM t LIKE '%abc%'
+// We must request all components from the memory table, and filter the result by the PatternLikeOrIlikeExpr predicate.
+//
+// it is a way to fix https://github.com/pingcap/tidb/issues/29910.
+type ShowPredicateExtractor interface {
+	// Extract predicates which can be pushed down and returns whether the extractor can extract predicates.
+	Extract() bool
+	ExplainInfo() string
+	Field() string
+	FieldPatternLike() collate.WildcardPattern
 }
