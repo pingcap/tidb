@@ -985,12 +985,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 						buf.WriteString(" DEFAULT NULL")
 					}
 				case "CURRENT_TIMESTAMP":
-<<<<<<< HEAD:executor/show.go
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
-=======
-					buf.WriteString(" DEFAULT ")
-					buf.WriteString(defaultValue.(string))
->>>>>>> 66ba419636c (*: modify the printing of column default expression in `SHOW CREATE TABLE` and `Restore` (#52940)):pkg/executor/show.go
 					if col.GetDecimal() > 0 {
 						buf.WriteString(fmt.Sprintf("(%d)", col.GetDecimal()))
 					}
@@ -1012,16 +1007,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 						defaultValStr = timeValue.GetMysqlTime().String()
 					}
 
-<<<<<<< HEAD:executor/show.go
 					if col.GetType() == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
 					} else if col.DefaultIsExpr {
-						fmt.Fprintf(buf, " DEFAULT %s", format.OutputFormat(defaultValStr))
-=======
-					if col.DefaultIsExpr {
-						fmt.Fprintf(buf, " DEFAULT (%s)", defaultValStr)
->>>>>>> 66ba419636c (*: modify the printing of column default expression in `SHOW CREATE TABLE` and `Restore` (#52940)):pkg/executor/show.go
+						fmt.Fprintf(buf, " DEFAULT (%s)", format.OutputFormat(defaultValStr))
 					} else {
 						fmt.Fprintf(buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
 					}

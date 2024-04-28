@@ -884,7 +884,7 @@ func TestShowCreateTable(t *testing.T) {
 	tk.MustQuery("show create table default_sequence").Check(testkit.RowsWithSep("|",
 		""+
 			"default_sequence CREATE TABLE `default_sequence` (\n"+
-			"  `a` int(11) DEFAULT nextval(`test`.`seq`)\n"+
+			"  `a` int(11) DEFAULT (nextval(`test`.`seq`))\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
