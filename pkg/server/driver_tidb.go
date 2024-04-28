@@ -201,7 +201,11 @@ func (ts *TiDBStatement) Close() error {
 			}
 			bindSQL, _ := core.GetBindSQL4PlanCache(ts.ctx, preparedObj)
 			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB,
+<<<<<<< HEAD
 				preparedObj.PreparedAst.SchemaVersion, 0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
+=======
+				preparedObj.SchemaVersion, 0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
+>>>>>>> 70a825397f3 (*: add metadata lock when using the plan cache (#51897))
 			if err != nil {
 				return err
 			}

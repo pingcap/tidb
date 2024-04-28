@@ -542,6 +542,20 @@ type TableInfo struct {
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
+<<<<<<< HEAD
+=======
+
+	// Revision is per table schema's version, it will be increased when the schema changed.
+	Revision uint64 `json:"revision"`
+
+	DBID int64 `json:"-"`
+}
+
+// TableNameInfo provides meta data describing a table name info.
+type TableNameInfo struct {
+	ID   int64 `json:"id"`
+	Name CIStr `json:"name"`
+>>>>>>> 70a825397f3 (*: add metadata lock when using the plan cache (#51897))
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
