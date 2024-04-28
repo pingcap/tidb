@@ -15,6 +15,7 @@
 package metricsutil
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -65,7 +66,7 @@ func RegisterMetrics() error {
 	}
 	defer pdCli.Close()
 
-	keyspaceMeta, err := keyspace.GetKeyspaceMeta(pdCli, cfg.KeyspaceName)
+	keyspaceMeta, err := getKeyspaceMeta(pdCli, cfg.KeyspaceName)
 	if err != nil {
 		return err
 	}
