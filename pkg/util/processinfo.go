@@ -130,12 +130,16 @@ func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
 func (pi *ProcessInfo) ToRow(tz *time.Location) []any {
 	bytesConsumed := int64(0)
 	diskConsumed := int64(0)
+	affectedRows := uint64(0)
 	if pi.StmtCtx != nil {
 		if pi.MemTracker != nil {
 			bytesConsumed = pi.MemTracker.BytesConsumed()
 		}
 		if pi.DiskTracker != nil {
 			diskConsumed = pi.DiskTracker.BytesConsumed()
+		}
+		if pi.StmtCtx != nil {
+			affectedRows = pi.StmtCtx.AffectedRows()
 		}
 	}
 	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias)
