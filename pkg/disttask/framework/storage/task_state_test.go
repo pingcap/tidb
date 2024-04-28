@@ -32,7 +32,7 @@ func TestTaskState(t *testing.T) {
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 
 	// 1. cancel task
-	id, err := gm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
+	id, err := gm.CreateTask(ctx, "key1", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
 	require.NoError(t, gm.CancelTask(ctx, id))
@@ -41,7 +41,7 @@ func TestTaskState(t *testing.T) {
 	checkTaskStateStep(t, task, proto.TaskStateCancelling, proto.StepInit)
 
 	// 2. cancel task by key session
-	id, err = gm.CreateTask(ctx, "key2", "test", 4, []byte("test"))
+	id, err = gm.CreateTask(ctx, "key2", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(2), id)
 	require.NoError(t, gm.WithNewTxn(ctx, func(se sessionctx.Context) error {
@@ -53,7 +53,7 @@ func TestTaskState(t *testing.T) {
 	checkTaskStateStep(t, task, proto.TaskStateCancelling, proto.StepInit)
 
 	// 3. fail task
-	id, err = gm.CreateTask(ctx, "key3", "test", 4, []byte("test"))
+	id, err = gm.CreateTask(ctx, "key3", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(3), id)
 	failedErr := errors.New("test err")
@@ -64,7 +64,7 @@ func TestTaskState(t *testing.T) {
 	require.ErrorContains(t, task.Error, "test err")
 
 	// 4. Reverted task
-	id, err = gm.CreateTask(ctx, "key4", "test", 4, []byte("test"))
+	id, err = gm.CreateTask(ctx, "key4", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(4), id)
 	task, err = gm.GetTaskByID(ctx, 4)
@@ -82,7 +82,7 @@ func TestTaskState(t *testing.T) {
 	checkTaskStateStep(t, task, proto.TaskStateReverted, proto.StepInit)
 
 	// 5. pause task
-	id, err = gm.CreateTask(ctx, "key5", "test", 4, []byte("test"))
+	id, err = gm.CreateTask(ctx, "key5", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(5), id)
 	found, err := gm.PauseTask(ctx, "key5")
@@ -111,7 +111,7 @@ func TestTaskState(t *testing.T) {
 	require.Equal(t, proto.TaskStateRunning, task.State)
 
 	// 8. succeed task
-	id, err = gm.CreateTask(ctx, "key6", "test", 4, []byte("test"))
+	id, err = gm.CreateTask(ctx, "key6", "test", 4, "", []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(6), id)
 	task, err = gm.GetTaskByID(ctx, 6)

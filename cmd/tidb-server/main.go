@@ -65,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	distroleutil "github.com/pingcap/tidb/pkg/util/distrole"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -74,6 +73,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/servicescope"
 	"github.com/pingcap/tidb/pkg/util/signal"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/sys/linux"
@@ -677,14 +677,9 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 
 	if actualFlags[nmTiDBServiceScope] {
-		scope, ok := distroleutil.ToTiDBServiceScope(*serviceScope)
-		if !ok {
-			err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
-				*serviceScope,
-				nmTiDBServiceScope, `"", background`)
-			terror.MustNil(err)
-		}
-		cfg.Instance.TiDBServiceScope = scope
+		err = servicescope.CheckServiceScope(*serviceScope)
+		terror.MustNil(err)
+		cfg.Instance.TiDBServiceScope = *serviceScope
 	}
 }
 
