@@ -1,0 +1,1134 @@
+drop table if exists auto_random_tbl1;
+create table auto_random_tbl1 (a bigint primary key auto_random(3), b varchar(255));
+show create table `auto_random_tbl1`;
+Table	Create Table
+auto_random_tbl1	CREATE TABLE `auto_random_tbl1` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(3) */,
+  `b` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists auto_random_tbl2;
+create table auto_random_tbl2 (a bigint auto_random primary key, b char);
+show create table auto_random_tbl2;
+Table	Create Table
+auto_random_tbl2	CREATE TABLE `auto_random_tbl2` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  `b` char(1) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists auto_random_tbl3;
+create table auto_random_tbl3 (a bigint /*T![auto_rand] auto_random */ primary key);
+show create table auto_random_tbl3;
+Table	Create Table
+auto_random_tbl3	CREATE TABLE `auto_random_tbl3` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists auto_random_tbl4;
+create table auto_random_tbl4 (a bigint primary key auto_random(5), b varchar(255)) auto_random_base = 100;
+show create table `auto_random_tbl4`;
+Table	Create Table
+auto_random_tbl4	CREATE TABLE `auto_random_tbl4` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  `b` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */
+drop table if exists auto_random_tbl5;
+create table auto_random_tbl5 (a bigint auto_random primary key, b char) auto_random_base 50;
+show create table auto_random_tbl5;
+Table	Create Table
+auto_random_tbl5	CREATE TABLE `auto_random_tbl5` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  `b` char(1) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=50 */
+drop table if exists auto_random_tbl6;
+create table auto_random_tbl6 (a bigint /*T![auto_rand] auto_random */ primary key) auto_random_base 200;
+show create table auto_random_tbl6;
+Table	Create Table
+auto_random_tbl6	CREATE TABLE `auto_random_tbl6` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=200 */
+drop table if exists auto_random_tbl7;
+create table auto_random_tbl7 (a bigint primary key auto_random(4, 32), b varchar(255));
+show create table auto_random_tbl7;
+Table	Create Table
+auto_random_tbl7	CREATE TABLE `auto_random_tbl7` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(4, 32) */,
+  `b` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table t(a int auto_increment key) auto_id_cache = 10;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=10 */
+drop table if exists t;
+create table t(a int auto_increment unique, b int key) auto_id_cache 100;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL AUTO_INCREMENT,
+  `b` int(11) NOT NULL,
+  PRIMARY KEY (`b`) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY `a` (`a`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */
+drop table if exists t;
+create table t(a int key) auto_id_cache 5;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=5 */
+drop table if exists t2;
+CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));
+SHOW INDEX IN t2;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
+t2	0	PRIMARY	1	a	A	0	NULL	NULL		BTREE			YES	NULL	YES
+t2	0	c	1	c	A	0	NULL	NULL		BTREE			YES	NULL	NO
+t2	0	b	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
+CREATE INDEX t2_b_c_index ON t2 (b, c);
+CREATE INDEX t2_c_b_index ON t2 (c, b);
+SHOW INDEX IN t2;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
+t2	0	PRIMARY	1	a	A	0	NULL	NULL		BTREE			YES	NULL	YES
+t2	0	c	1	c	A	0	NULL	NULL		BTREE			YES	NULL	NO
+t2	0	b	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
+t2	1	t2_b_c_index	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
+t2	1	t2_b_c_index	2	c	A	0	NULL	NULL		BTREE			YES	NULL	NO
+t2	1	t2_c_b_index	1	c	A	0	NULL	NULL		BTREE			YES	NULL	NO
+t2	1	t2_c_b_index	2	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
+drop table if exists test1;
+CREATE TABLE `test1` (`id` int(0) NOT NULL,`num` int(0) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+create or replace view test1_v as(select id,row_number() over (partition by num) from test1);
+desc test1_v;
+Field	Type	Null	Key	Default	Extra
+id	int(0)	NO		NULL	
+row_number() over (partition by num)	bigint(21)	YES		NULL	
+drop table if exists t;
+create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+drop table if exists t;
+create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR ttl_enable = 'OFF';
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+drop table if exists t;
+create table t (created_at datetime) TTL = created_at + INTERVAL 3.14159 HOUR_MINUTE;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3.14159 HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+drop table if exists t;
+create table t (created_at datetime) TTL = created_at + INTERVAL "15:20" HOUR_MINUTE;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL _utf8mb4'15:20' HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+drop table if exists t;
+create table t (created_at datetime) TTL = created_at + INTERVAL 100 YEAR TTL_JOB_INTERVAL = '1d';
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
+show histograms_in_flight;
+HistogramsInFlight
+0
+show open tables;
+Database	Table	In_use	Name_locked
+show open tables in executor__show;
+Database	Table	In_use	Name_locked
+create or replace view v1 as select 1;
+show create view v1;
+View	Create View	character_set_client	collation_connection
+v1	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1`	utf8mb4	utf8mb4_general_ci
+drop view v1;
+drop database if exists test1;
+drop database if exists test2;
+drop table if exists t, t1;
+create table t1(a int,b int);
+drop view if exists v1;
+create or replace definer=`root`@`127.0.0.1` view v1 as select * from t1;
+show create table v1;
+View	Create View	character_set_client	collation_connection
+v1	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `executor__show`.`t1`.`a` AS `a`,`executor__show`.`t1`.`b` AS `b` FROM `executor__show`.`t1`	utf8mb4	utf8mb4_general_ci
+show create view v1;
+View	Create View	character_set_client	collation_connection
+v1	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `executor__show`.`t1`.`a` AS `a`,`executor__show`.`t1`.`b` AS `b` FROM `executor__show`.`t1`	utf8mb4	utf8mb4_general_ci
+drop view v1;
+drop table t1;
+drop view if exists v;
+create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;
+show create view v;
+View	Create View	character_set_client	collation_connection
+v	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE(_UTF8MB4'{}', _UTF8MB4'{}') AS `col`	utf8mb4	utf8mb4_general_ci
+drop view if exists v;
+drop table if exists t1;
+create table t1(a int,b int);
+create or replace definer=`root`@`127.0.0.1` view v1 as select avg(a),t1.* from t1 group by a;
+show create view v1;
+View	Create View	character_set_client	collation_connection
+v1	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`avg(a)`, `a`, `b`) AS SELECT AVG(`a`) AS `avg(a)`,`executor__show`.`t1`.`a` AS `a`,`executor__show`.`t1`.`b` AS `b` FROM `executor__show`.`t1` GROUP BY `a`	utf8mb4	utf8mb4_general_ci
+drop view v1;
+create or replace definer=`root`@`127.0.0.1` view v1 as select a+b, t1.* , a as c from t1;
+show create view v1;
+View	Create View	character_set_client	collation_connection
+v1	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a+b`, `a`, `b`, `c`) AS SELECT `a`+`b` AS `a+b`,`executor__show`.`t1`.`a` AS `a`,`executor__show`.`t1`.`b` AS `b`,`a` AS `c` FROM `executor__show`.`t1`	utf8mb4	utf8mb4_general_ci
+drop table t1;
+drop view v1;
+create table t(c int, b int as (c + 1))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+show create table `t`;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `c` int(11) DEFAULT NULL,
+  `b` int(11) GENERATED ALWAYS AS (`c` + 1) VIRTUAL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+create table t(c int, b int as (c + 1) not null)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+show create table `t`;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `c` int(11) DEFAULT NULL,
+  `b` int(11) GENERATED ALWAYS AS (`c` + 1) VIRTUAL NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+create table t ( a char(10) charset utf8 collate utf8_bin, b char(10) as (rtrim(a)));
+show create table `t`;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` char(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,
+  `b` char(10) GENERATED ALWAYS AS (rtrim(`a`)) VIRTUAL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+drop table if exists different_charset;
+create table different_charset(ch1 varchar(10) charset utf8, ch2 varchar(10) charset binary);
+show create table different_charset;
+Table	Create Table
+different_charset	CREATE TABLE `different_charset` (
+  `ch1` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,
+  `ch2` varbinary(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table `t` (
+`a` timestamp not null default current_timestamp,
+`b` timestamp(3) default current_timestamp(3),
+`c` datetime default current_timestamp,
+`d` datetime(4) default current_timestamp(4),
+`e` varchar(20) default 'cUrrent_tImestamp',
+`f` datetime(2) default current_timestamp(2) on update current_timestamp(2),
+`g` timestamp(2) default current_timestamp(2) on update current_timestamp(2),
+`h` date default current_date );
+show create table `t`;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `b` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3),
+  `c` datetime DEFAULT CURRENT_TIMESTAMP,
+  `d` datetime(4) DEFAULT CURRENT_TIMESTAMP(4),
+  `e` varchar(20) DEFAULT 'cUrrent_tImestamp',
+  `f` datetime(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),
+  `g` timestamp(2) DEFAULT CURRENT_TIMESTAMP(2) ON UPDATE CURRENT_TIMESTAMP(2),
+  `h` date DEFAULT (CURRENT_DATE)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+create table t (a int, b int) shard_row_id_bits = 4 pre_split_regions=3;
+show create table `t`;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */
+drop table t;
+drop table if exists t1;
+create table t1(c int unsigned default 0);
+show create table `t1`;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `c` int(10) unsigned DEFAULT '0'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t1;
+CREATE TABLE `log` (`LOG_ID` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,`ROUND_ID` bigint(20) UNSIGNED NOT NULL,`USER_ID` int(10) UNSIGNED NOT NULL,`USER_IP` int(10) UNSIGNED DEFAULT NULL,`END_TIME` datetime NOT NULL,`USER_TYPE` int(11) DEFAULT NULL,`APP_ID` int(11) DEFAULT NULL,PRIMARY KEY (`LOG_ID`,`END_TIME`) NONCLUSTERED,KEY `IDX_EndTime` (`END_TIME`),KEY `IDX_RoundId` (`ROUND_ID`),KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488 PARTITION BY RANGE ( month(`end_time`) ) (PARTITION `p1` VALUES LESS THAN (2),PARTITION `p2` VALUES LESS THAN (3),PARTITION `p3` VALUES LESS THAN (4),PARTITION `p4` VALUES LESS THAN (5),PARTITION `p5` VALUES LESS THAN (6),PARTITION `p6` VALUES LESS THAN (7),PARTITION `p7` VALUES LESS THAN (8),PARTITION `p8` VALUES LESS THAN (9),PARTITION `p9` VALUES LESS THAN (10),PARTITION `p10` VALUES LESS THAN (11),PARTITION `p11` VALUES LESS THAN (12),PARTITION `p12` VALUES LESS THAN (MAXVALUE));
+show create table log;
+Table	Create Table
+log	CREATE TABLE `log` (
+  `LOG_ID` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `ROUND_ID` bigint(20) unsigned NOT NULL,
+  `USER_ID` int(10) unsigned NOT NULL,
+  `USER_IP` int(10) unsigned DEFAULT NULL,
+  `END_TIME` datetime NOT NULL,
+  `USER_TYPE` int(11) DEFAULT NULL,
+  `APP_ID` int(11) DEFAULT NULL,
+  PRIMARY KEY (`LOG_ID`,`END_TIME`) /*T![clustered_index] NONCLUSTERED */,
+  KEY `IDX_EndTime` (`END_TIME`),
+  KEY `IDX_RoundId` (`ROUND_ID`),
+  KEY `IDX_UserId_EndTime` (`USER_ID`,`END_TIME`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=505488
+PARTITION BY RANGE (MONTH(`end_time`))
+(PARTITION `p1` VALUES LESS THAN (2),
+ PARTITION `p2` VALUES LESS THAN (3),
+ PARTITION `p3` VALUES LESS THAN (4),
+ PARTITION `p4` VALUES LESS THAN (5),
+ PARTITION `p5` VALUES LESS THAN (6),
+ PARTITION `p6` VALUES LESS THAN (7),
+ PARTITION `p7` VALUES LESS THAN (8),
+ PARTITION `p8` VALUES LESS THAN (9),
+ PARTITION `p9` VALUES LESS THAN (10),
+ PARTITION `p10` VALUES LESS THAN (11),
+ PARTITION `p11` VALUES LESS THAN (12),
+ PARTITION `p12` VALUES LESS THAN (MAXVALUE))
+create table ttt4(a varchar(123) default null collate utf8mb4_unicode_ci)engine=innodb default charset=utf8mb4 collate=utf8mb4_unicode_ci;
+show create table `ttt4`;
+Table	Create Table
+ttt4	CREATE TABLE `ttt4` (
+  `a` varchar(123) COLLATE utf8mb4_unicode_ci DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+create table ttt5(a varchar(123) default null)engine=innodb default charset=utf8mb4 collate=utf8mb4_bin;
+show create table `ttt5`;
+Table	Create Table
+ttt5	CREATE TABLE `ttt5` (
+  `a` varchar(123) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table t(a int, b real);
+alter table t add index expr_idx((a*b+1));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+  `b` double DEFAULT NULL,
+  KEY `expr_idx` ((`a` * `b` + 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop sequence if exists seq;
+create sequence seq;
+show create table seq;
+Sequence	Create Sequence
+seq	CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB
+drop table if exists binary_collate;
+create table binary_collate(a varchar(10)) default collate=binary;
+show create table binary_collate;
+Table	Create Table
+binary_collate	CREATE TABLE `binary_collate` (
+  `a` varbinary(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=binary
+drop table if exists binary_collate;
+create table binary_collate(a varchar(10)) default charset=binary collate=binary;
+show create table binary_collate;
+Table	Create Table
+binary_collate	CREATE TABLE `binary_collate` (
+  `a` varbinary(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=binary
+drop table if exists binary_collate;
+create table binary_collate(a varchar(10)) default charset=utf8mb4 collate=utf8mb4_bin;
+show create table binary_collate;
+Table	Create Table
+binary_collate	CREATE TABLE `binary_collate` (
+  `a` varchar(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists default_num;
+create table default_num(a int default 11);
+show create table default_num;
+Table	Create Table
+default_num	CREATE TABLE `default_num` (
+  `a` int(11) DEFAULT '11'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists default_varchar;
+create table default_varchar(a varchar(10) default "haha");
+show create table default_varchar;
+Table	Create Table
+default_varchar	CREATE TABLE `default_varchar` (
+  `a` varchar(10) DEFAULT 'haha'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists default_sequence;
+create table default_sequence(a int default nextval(seq));
+show create table default_sequence;
+Table	Create Table
+default_sequence	CREATE TABLE `default_sequence` (
+  `a` int(11) DEFAULT (nextval(`executor__show`.`seq`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+set @@foreign_key_checks=0;
+DROP TABLE IF EXISTS parent, child;
+CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id));
+CREATE TABLE parent ( id INT NOT NULL PRIMARY KEY auto_increment );
+show create table child;
+Table	Create Table
+child	CREATE TABLE `child` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `parent_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `par_ind` (`parent_id`),
+  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+DROP TABLE child;
+CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE RESTRICT ON UPDATE CASCADE);
+show create table child;
+Table	Create Table
+child	CREATE TABLE `child` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `parent_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `par_ind` (`parent_id`),
+  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+create database test1;
+create database test2;
+create table test1.t1 (id int key, b int, index(b));
+create table test2.t2 (id int key, b int, foreign key fk(b) references test1.t1(id));
+show create table test2.t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `id` int(11) NOT NULL,
+  `b` int(11) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `fk` (`b`),
+  CONSTRAINT `fk` FOREIGN KEY (`b`) REFERENCES `test1`.`t1` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table t(a int, b char(10) as ('a'));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+  `b` char(10) GENERATED ALWAYS AS (_utf8mb4'a') VIRTUAL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table t(a int, b char(10) as (_utf8'a'));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+  `b` char(10) GENERATED ALWAYS AS (_utf8'a') VIRTUAL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+set @@session.tidb_enable_list_partition = ON;
+DROP TABLE IF EXISTS t;
+create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
+partition p0 values in (3,5,6,9,17),
+partition p1 values in (1,2,10,11,19,20),
+partition p2 values in (4,12,13,14,18),
+partition p3 values in (7,8,15,16,null)
+);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int(11) DEFAULT NULL,
+  `name` varchar(10) DEFAULT NULL,
+  UNIQUE KEY `idx` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST (`id`)
+(PARTITION `p0` VALUES IN (3,5,6,9,17),
+ PARTITION `p1` VALUES IN (1,2,10,11,19,20),
+ PARTITION `p2` VALUES IN (4,12,13,14,18),
+ PARTITION `p3` VALUES IN (7,8,15,16,NULL))
+DROP TABLE IF EXISTS t;
+create table t (id int, name varchar(10), unique index idx (id)) partition by list columns (id) (
+partition p0 values in (3,5,6,9,17),
+partition p1 values in (1,2,10,11,19,20),
+partition p2 values in (4,12,13,14,18),
+partition p3 values in (7,8,15,16,null)
+);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int(11) DEFAULT NULL,
+  `name` varchar(10) DEFAULT NULL,
+  UNIQUE KEY `idx` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(`id`)
+(PARTITION `p0` VALUES IN (3,5,6,9,17),
+ PARTITION `p1` VALUES IN (1,2,10,11,19,20),
+ PARTITION `p2` VALUES IN (4,12,13,14,18),
+ PARTITION `p3` VALUES IN (7,8,15,16,NULL))
+DROP TABLE IF EXISTS t;
+create table t (id int, name varchar(10), unique index idx (id, name)) partition by list columns (id, name) (
+partition p0 values in ((3, '1'), (5, '5')),
+partition p1 values in ((1, '1')));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int(11) DEFAULT NULL,
+  `name` varchar(10) DEFAULT NULL,
+  UNIQUE KEY `idx` (`id`,`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(`id`,`name`)
+(PARTITION `p0` VALUES IN ((3,'1'),(5,'5')),
+ PARTITION `p1` VALUES IN ((1,'1')))
+DROP TABLE IF EXISTS t;
+create table t (id int primary key, v varchar(255) not null, key idx_v (v) comment 'foo\'bar');
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int(11) NOT NULL,
+  `v` varchar(255) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `idx_v` (`v`) COMMENT 'foo''bar'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+CREATE TABLE `thash` (
+`id` bigint unsigned NOT NULL,
+`data` varchar(255) DEFAULT NULL,
+PRIMARY KEY (`id`)
+)
+PARTITION BY HASH (`id`)
+(PARTITION pEven COMMENT = "Even ids",
+PARTITION pOdd COMMENT = "Odd ids");
+show create table `thash`;
+Table	Create Table
+thash	CREATE TABLE `thash` (
+  `id` bigint(20) unsigned NOT NULL,
+  `data` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`id`)
+(PARTITION `pEven` COMMENT 'Even ids',
+ PARTITION `pOdd` COMMENT 'Odd ids')
+drop table if exists `thash`;
+CREATE TABLE `thash` (
+`id` bigint unsigned NOT NULL,
+`data` varchar(255) DEFAULT NULL,
+PRIMARY KEY (`id`)
+)
+PARTITION BY HASH (`id`);
+show create table `thash`;
+Table	Create Table
+thash	CREATE TABLE `thash` (
+  `id` bigint(20) unsigned NOT NULL,
+  `data` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`id`) PARTITIONS 1
+drop table if exists t;
+create table t(a int primary key, b varchar(20) default '\\');
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+  `b` varchar(20) DEFAULT '\\',
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table t(a set('a', 'b') charset binary,b enum('a', 'b') charset ascii);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` set('a','b') CHARACTER SET binary COLLATE binary DEFAULT NULL,
+  `b` enum('a','b') CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table t(a bit default (rand()));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` bit(1) DEFAULT (rand())
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table t (a varchar(255) character set ascii) partition by range columns (a) (partition p values less than (0xff));
+Error 1654 (HY000): Partition column values of incorrect type
+create table t (a varchar(255) character set ascii) partition by range columns (a) (partition p values less than (0x7f));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` varchar(255) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`a`)
+(PARTITION `p` VALUES LESS THAN (0x7f))
+set @@session.tidb_enable_list_partition = default;
+set @@foreign_key_checks=default;
+create table if not exists show_errors (a int);
+create table show_errors (a int);
+Error 1050 (42S01): Table 'executor__show.show_errors' already exists
+show errors;
+Level	Code	Message
+Error	1050	Table 'executor__show.show_errors' already exists
+select 1;
+1
+1
+create invalid;
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid;" 
+show errors;
+Level	Code	Message
+Error	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid;" 
+show tables;
+Error 1046 (3D000): No database selected
+show tables;
+Error 1046 (3D000): No database selected
+admin show slow recent 3;
+admin show slow top 3;
+admin show slow top internal 3;
+admin show slow top all 3;
+drop table if exists v1;
+drop view if exists v1;
+drop sequence if exists seq1;
+drop table if exists seq1;
+create view v1 as select 1;
+create temporary table v1 (a int);
+show create table v1;
+Table	Create Table
+v1	CREATE TEMPORARY TABLE `v1` (
+  `a` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop view v1;
+show create view v1;
+Error 1146 (42S02): Table 'executor__show.v1' doesn't exist
+drop view if exists seq1;
+create sequence seq1;
+create temporary table seq1 (a int);
+show create sequence seq1;
+Table	Create Table
+seq1	CREATE SEQUENCE `seq1` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB
+drop sequence seq1;
+show create sequence seq1;
+Error 1146 (42S02): Table 'executor__show.seq1' doesn't exist
+show builtins;
+Supported_builtin_functions
+abs
+acos
+adddate
+addtime
+aes_decrypt
+aes_encrypt
+and
+any_value
+ascii
+asin
+atan
+atan2
+benchmark
+bin
+bin_to_uuid
+bit_count
+bit_length
+bitand
+bitneg
+bitor
+bitxor
+case
+ceil
+ceiling
+char_func
+char_length
+character_length
+charset
+coalesce
+coercibility
+collation
+compress
+concat
+concat_ws
+connection_id
+conv
+convert
+convert_tz
+cos
+cot
+crc32
+curdate
+current_date
+current_resource_group
+current_role
+current_time
+current_timestamp
+current_user
+curtime
+database
+date
+date_add
+date_format
+date_sub
+datediff
+day
+dayname
+dayofmonth
+dayofweek
+dayofyear
+decode
+default_func
+degrees
+des_decrypt
+des_encrypt
+div
+elt
+encode
+encrypt
+eq
+exp
+export_set
+extract
+field
+find_in_set
+floor
+format
+format_bytes
+format_nano_time
+found_rows
+from_base64
+from_days
+from_unixtime
+ge
+get_format
+get_lock
+getparam
+greatest
+grouping
+gt
+hex
+hour
+if
+ifnull
+ilike
+in
+inet6_aton
+inet6_ntoa
+inet_aton
+inet_ntoa
+insert_func
+instr
+intdiv
+interval
+is_free_lock
+is_ipv4
+is_ipv4_compat
+is_ipv4_mapped
+is_ipv6
+is_used_lock
+is_uuid
+isfalse
+isnull
+istrue
+json_array
+json_array_append
+json_array_insert
+json_contains
+json_contains_path
+json_depth
+json_extract
+json_insert
+json_keys
+json_length
+json_memberof
+json_merge
+json_merge_patch
+json_merge_preserve
+json_object
+json_overlaps
+json_pretty
+json_quote
+json_remove
+json_replace
+json_search
+json_set
+json_storage_free
+json_storage_size
+json_type
+json_unquote
+json_valid
+last_day
+last_insert_id
+lastval
+lcase
+le
+least
+left
+leftshift
+length
+like
+ln
+load_file
+localtime
+localtimestamp
+locate
+log
+log10
+log2
+lower
+lpad
+lt
+ltrim
+make_set
+makedate
+maketime
+master_pos_wait
+md5
+microsecond
+mid
+minus
+minute
+mod
+month
+monthname
+mul
+name_const
+ne
+nextval
+not
+now
+nulleq
+oct
+octet_length
+old_password
+or
+ord
+password_func
+period_add
+period_diff
+pi
+plus
+position
+pow
+power
+quarter
+quote
+radians
+rand
+random_bytes
+regexp
+regexp_instr
+regexp_like
+regexp_replace
+regexp_substr
+release_all_locks
+release_lock
+repeat
+replace
+reverse
+right
+rightshift
+round
+row_count
+rpad
+rtrim
+schema
+sec_to_time
+second
+session_user
+setval
+setvar
+sha
+sha1
+sha2
+sign
+sin
+sleep
+sm3
+space
+sqrt
+str_to_date
+strcmp
+subdate
+substr
+substring
+substring_index
+subtime
+sysdate
+system_user
+tan
+tidb_bounded_staleness
+tidb_current_tso
+tidb_decode_binary_plan
+tidb_decode_key
+tidb_decode_plan
+tidb_decode_sql_digests
+tidb_encode_sql_digest
+tidb_is_ddl_owner
+tidb_parse_tso
+tidb_parse_tso_logical
+tidb_row_checksum
+tidb_shard
+tidb_version
+time
+time_format
+time_to_sec
+timediff
+timestamp
+timestampadd
+timestampdiff
+to_base64
+to_days
+to_seconds
+translate
+trim
+truncate
+ucase
+unaryminus
+uncompress
+uncompressed_length
+unhex
+unix_timestamp
+upper
+user
+utc_date
+utc_time
+utc_timestamp
+uuid
+uuid_short
+uuid_to_bin
+validate_password_strength
+version
+vitess_hash
+week
+weekday
+weekofyear
+weight_string
+xor
+year
+yearweek
+SHOW INDEX FROM performance_schema.events_statements_summary_by_digest;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
+events_statements_summary_by_digest	0	SCHEMA_NAME	1	SCHEMA_NAME	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
+events_statements_summary_by_digest	0	SCHEMA_NAME	2	DIGEST	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
+drop table if exists t1, t3, t4, t5, t6, t7;
+create global temporary table t1 (id int) on commit delete rows;
+create global temporary table t3 (i int primary key, j int) on commit delete rows;
+show create table t1;
+Table	Create Table
+t1	CREATE GLOBAL TEMPORARY TABLE `t1` (
+  `id` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS
+show create table t3;
+Table	Create Table
+t3	CREATE GLOBAL TEMPORARY TABLE `t3` (
+  `i` int(11) NOT NULL,
+  `j` int(11) DEFAULT NULL,
+  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS
+CREATE GLOBAL TEMPORARY TABLE `t4` (
+`i` int(11) NOT NULL,
+`j` int(11) DEFAULT NULL,
+PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS;
+CREATE GLOBAL TEMPORARY TABLE t5 (
+id int(11) NOT NULL AUTO_INCREMENT,
+b int(11) NOT NULL,
+pad varbinary(255) DEFAULT NULL,
+PRIMARY KEY (id),
+KEY b (b)) ON COMMIT DELETE ROWS;
+show create table t5;
+Table	Create Table
+t5	CREATE GLOBAL TEMPORARY TABLE `t5` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `b` int(11) NOT NULL,
+  `pad` varbinary(255) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `b` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS
+create temporary table t6 (i int primary key, j int);
+show create table t6;
+Table	Create Table
+t6	CREATE TEMPORARY TABLE `t6` (
+  `i` int(11) NOT NULL,
+  `j` int(11) DEFAULT NULL,
+  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+create temporary table t7 (i int primary key auto_increment, j int);
+begin;
+insert into t7 (j) values (14);
+insert into t7 (j) values (24);
+select * from t7;
+i	j
+1	14
+2	24
+show create table t7;
+Table	Create Table
+t7	CREATE TEMPORARY TABLE `t7` (
+  `i` int(11) NOT NULL AUTO_INCREMENT,
+  `j` int(11) DEFAULT NULL,
+  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=3
+commit;
+drop table if exists t1;
+create table t1 (id int);
+alter table t1 cache;
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `id` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /* CACHED ON */
+select create_options from information_schema.tables where table_schema = 'executor__show' and table_name = 't1';
+create_options
+cached=on
+alter table t1 nocache;
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `id` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select create_options from information_schema.tables where table_schema = 'executor__show' and table_name = 't1';
+create_options
+
+DROP DATABASE IF EXISTS `TEST_$1`;
+DROP DATABASE IF EXISTS `test_$2`;
+CREATE DATABASE `TEST_$1`;
+CREATE DATABASE `test_$2`;
+SHOW DATABASES LIKE 'TEST_$%';
+Database (TEST_$%)
+TEST_$1
+test_$2
+SHOW DATABASES LIKE 'test_$%';
+Database (test_$%)
+TEST_$1
+test_$2
+SHOW COLLATION LIKE 'UTF8MB4_BI%';
+Collation	Charset	Id	Default	Compiled	Sortlen
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+SHOW COLLATION LIKE 'utf8mb4_bi%';
+Collation	Charset	Id	Default	Compiled	Sortlen
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+drop user if exists 'show';
+drop database if exists AAAA;
+drop database if exists BBBB;
+create user 'show'@'%';
+show databases;
+Database
+INFORMATION_SCHEMA
+create database AAAA;
+create database BBBB;
+grant select on AAAA.* to 'show'@'%';
+grant select on BBBB.* to 'show'@'%';
+show databases;
+Database
+INFORMATION_SCHEMA
+AAAA
+BBBB
+drop user 'show'@'%';
+drop database AAAA;
+drop database BBBB;
+DROP table IF EXISTS `T1`;
+CREATE table `T1` (a int);
+SHOW table status LIKE 't1';
+Name	Engine	Version	Row_format	Rows	Avg_row_length	Data_length	Max_data_length	Index_length	Data_free	Auto_increment	Create_time	Update_time	Check_time	Collation	Checksum	Create_options	Comment
+T1	InnoDB	10	Compact	0	0	0	0	0	0	NULL	1	NULL	NULL	utf8mb4_bin			
+DROP table IF EXISTS `Li_1`;
+DROP table IF EXISTS `li_2`;
+CREATE table `Li_1` (a int);
+CREATE table `li_2` (a int);
+SHOW table status LIKE 'li%';
+Name	Engine	Version	Row_format	Rows	Avg_row_length	Data_length	Max_data_length	Index_length	Data_free	Auto_increment	Create_time	Update_time	Check_time	Collation	Checksum	Create_options	Comment
+Li_1	InnoDB	10	Compact	0	0	0	0	0	0	NULL	1	NULL	NULL	utf8mb4_bin			
+li_2	InnoDB	10	Compact	0	0	0	0	0	0	NULL	1	NULL	NULL	utf8mb4_bin			
+SET GLOBAL authentication_ldap_sasl_bind_root_pwd = '';
+show variables like 'authentication_ldap_sasl_bind_root_pwd';
+Variable_name	Value
+authentication_ldap_sasl_bind_root_pwd	
+SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_sasl_bind_root_pwd';
+current_value
+
+SET GLOBAL authentication_ldap_sasl_bind_root_pwd = password;
+show variables like 'authentication_ldap_sasl_bind_root_pwd';
+Variable_name	Value
+authentication_ldap_sasl_bind_root_pwd	******
+SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_sasl_bind_root_pwd';
+current_value
+******
+SET GLOBAL authentication_ldap_simple_bind_root_pwd = '';
+show variables like 'authentication_ldap_simple_bind_root_pwd';
+Variable_name	Value
+authentication_ldap_simple_bind_root_pwd	
+SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_simple_bind_root_pwd';
+current_value
+
+SET GLOBAL authentication_ldap_simple_bind_root_pwd = password;
+show variables like 'authentication_ldap_simple_bind_root_pwd';
+Variable_name	Value
+authentication_ldap_simple_bind_root_pwd	******
+SELECT current_value FROM information_schema.variables_info WHERE VARIABLE_NAME LIKE 'authentication_ldap_simple_bind_root_pwd';
+current_value
+******
+SET GLOBAL authentication_ldap_simple_bind_root_pwd = default;
+SET GLOBAL authentication_ldap_sasl_bind_root_pwd = default;
+show collation;
+Collation	Charset	Id	Default	Compiled	Sortlen
+ascii_bin	ascii	65	Yes	Yes	1
+binary	binary	63	Yes	Yes	1
+gbk_bin	gbk	87		Yes	1
+gbk_chinese_ci	gbk	28	Yes	Yes	1
+latin1_bin	latin1	47	Yes	Yes	1
+utf8_bin	utf8	83	Yes	Yes	1
+utf8_general_ci	utf8	33		Yes	1
+utf8_unicode_ci	utf8	192		Yes	1
+utf8mb4_0900_ai_ci	utf8mb4	255		Yes	1
+utf8mb4_0900_bin	utf8mb4	309		Yes	1
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+utf8mb4_general_ci	utf8mb4	45		Yes	1
+utf8mb4_unicode_ci	utf8mb4	224		Yes	1
+select * from information_schema.COLLATIONS;
+COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
+ascii_bin	ascii	65	Yes	Yes	1
+binary	binary	63	Yes	Yes	1
+gbk_bin	gbk	87		Yes	1
+gbk_chinese_ci	gbk	28	Yes	Yes	1
+latin1_bin	latin1	47	Yes	Yes	1
+utf8_bin	utf8	83	Yes	Yes	1
+utf8_general_ci	utf8	33		Yes	1
+utf8_unicode_ci	utf8	192		Yes	1
+utf8mb4_0900_ai_ci	utf8mb4	255		Yes	1
+utf8mb4_0900_bin	utf8mb4	309		Yes	1
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+utf8mb4_general_ci	utf8mb4	45		Yes	1
+utf8mb4_unicode_ci	utf8mb4	224		Yes	1
+show character set like '%utf8mb4%';
+Charset	Description	Default collation	Maxlen
+utf8mb4	UTF-8 Unicode	utf8mb4_bin	4
+select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
+COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+set @@session.default_collation_for_utf8mb4='utf8mb4_0900_ai_ci';
+show variables like 'default_collation_for_utf8mb4';
+Variable_name	Value
+default_collation_for_utf8mb4	utf8mb4_0900_ai_ci
+show collation;
+Collation	Charset	Id	Default	Compiled	Sortlen
+ascii_bin	ascii	65	Yes	Yes	1
+binary	binary	63	Yes	Yes	1
+gbk_bin	gbk	87		Yes	1
+gbk_chinese_ci	gbk	28	Yes	Yes	1
+latin1_bin	latin1	47	Yes	Yes	1
+utf8_bin	utf8	83	Yes	Yes	1
+utf8_general_ci	utf8	33		Yes	1
+utf8_unicode_ci	utf8	192		Yes	1
+utf8mb4_0900_ai_ci	utf8mb4	255	Yes	Yes	1
+utf8mb4_0900_bin	utf8mb4	309		Yes	1
+utf8mb4_bin	utf8mb4	46		Yes	1
+utf8mb4_general_ci	utf8mb4	45		Yes	1
+utf8mb4_unicode_ci	utf8mb4	224		Yes	1
+select * from information_schema.COLLATIONS;
+COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
+ascii_bin	ascii	65	Yes	Yes	1
+binary	binary	63	Yes	Yes	1
+gbk_bin	gbk	87		Yes	1
+gbk_chinese_ci	gbk	28	Yes	Yes	1
+latin1_bin	latin1	47	Yes	Yes	1
+utf8_bin	utf8	83	Yes	Yes	1
+utf8_general_ci	utf8	33		Yes	1
+utf8_unicode_ci	utf8	192		Yes	1
+utf8mb4_0900_ai_ci	utf8mb4	255		Yes	1
+utf8mb4_0900_bin	utf8mb4	309		Yes	1
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+utf8mb4_general_ci	utf8mb4	45		Yes	1
+utf8mb4_unicode_ci	utf8mb4	224		Yes	1
+show character set like '%utf8mb4%';
+Charset	Description	Default collation	Maxlen
+utf8mb4	UTF-8 Unicode	utf8mb4_0900_ai_ci	4
+select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
+COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
+utf8mb4_bin	utf8mb4	46	Yes	Yes	1
+set @@session.default_collation_for_utf8mb4=default;
+DROP TABLE IF EXISTS `t`;
+CREATE TABLE `t` (a BIGINT PRIMARY KEY AUTO_RANDOM(2), b INT) PRE_SPLIT_REGIONS=4;
+SHOW CREATE TABLE `t`;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(2) */,
+  `b` int(11) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! PRE_SPLIT_REGIONS=2 */

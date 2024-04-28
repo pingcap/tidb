@@ -858,6 +858,7 @@ import (
 	NowSymOptionFraction            "NowSym with optional fraction part"
 	NowSymOptionFractionParentheses "NowSym with optional fraction part within potential parentheses"
 	CharsetNameOrDefault            "Character set name or default"
+	NextValueForSequenceParentheses "Default nextval expression within potential parentheses"
 	NextValueForSequence            "Default nextval expression"
 	BuiltinFunction                 "Default builtin functions for columns"
 	FunctionNameSequence            "Function with sequence function call"
@@ -3571,7 +3572,7 @@ ReferOpt:
 DefaultValueExpr:
 	NowSymOptionFractionParentheses
 |	SignedLiteral
-|	NextValueForSequence
+|	NextValueForSequenceParentheses
 |	BuiltinFunction
 
 BuiltinFunction:
@@ -3613,6 +3614,13 @@ NowSymOptionFraction:
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP"), Args: []ast.ExprNode{ast.NewValueExpr($3, parser.charset, parser.collation)}}
 	}
+
+NextValueForSequenceParentheses:
+	'(' NextValueForSequenceParentheses ')'
+	{
+		$$ = $2.(*ast.FuncCallExpr)
+	}
+|	NextValueForSequence
 
 NextValueForSequence:
 	"NEXT" "VALUE" forKwd TableName
