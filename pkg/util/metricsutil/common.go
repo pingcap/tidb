@@ -30,7 +30,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
-	"github.com/pingcap/tidb/pkg/session/txninfo"
+	txninfo "github.com/pingcap/tidb/pkg/session/txninfo"
 	isolation_metrics "github.com/pingcap/tidb/pkg/sessiontxn/isolation/metrics"
 	statshandler_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	kvstore "github.com/pingcap/tidb/pkg/store"
