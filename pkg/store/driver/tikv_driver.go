@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	cli_config "github.com/tikv/client-go/v2/config"
+	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
@@ -66,43 +66,43 @@ func init() {
 type Option func(*TiKVDriver)
 
 // WithSecurity changes the config.Security used by tikv driver.
-func WithSecurity(s cli_config.Security) Option {
+func WithSecurity(s config.Security) Option {
 	return func(c *TiKVDriver) {
 		c.security = s
 	}
 }
 
 // WithTiKVClientConfig changes the config.TiKVClient used by tikv driver.
-func WithTiKVClientConfig(client cli_config.TiKVClient) Option {
+func WithTiKVClientConfig(client config.TiKVClient) Option {
 	return func(c *TiKVDriver) {
 		c.tikvConfig = client
 	}
 }
 
 // WithTxnLocalLatches changes the config.TxnLocalLatches used by tikv driver.
-func WithTxnLocalLatches(t cli_config.TxnLocalLatches) Option {
+func WithTxnLocalLatches(t config.TxnLocalLatches) Option {
 	return func(c *TiKVDriver) {
 		c.txnLocalLatches = t
 	}
 }
 
 // WithPDClientConfig changes the config.PDClient used by tikv driver.
-func WithPDClientConfig(client cli_config.PDClient) Option {
+func WithPDClientConfig(client config.PDClient) Option {
 	return func(c *TiKVDriver) {
 		c.pdConfig = client
 	}
 }
 
-func getKVStore(path string, tls cli_config.Security) (kv.Storage, error) {
+func getKVStore(path string, tls config.Security) (kv.Storage, error) {
 	return TiKVDriver{}.OpenWithOptions(path, WithSecurity(tls))
 }
 
 // TiKVDriver implements engine TiKV.
 type TiKVDriver struct {
-	pdConfig        cli_config.PDClient
-	security        cli_config.Security
-	tikvConfig      cli_config.TiKVClient
-	txnLocalLatches cli_config.TxnLocalLatches
+	pdConfig        config.PDClient
+	security        config.Security
+	tikvConfig      config.TiKVClient
+	txnLocalLatches config.TxnLocalLatches
 }
 
 // Open opens or creates an TiKV storage with given path using global config.
@@ -112,7 +112,7 @@ func (d TiKVDriver) Open(path string) (kv.Storage, error) {
 }
 
 func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
-	tidbCfg := cli_config.GetGlobalConfig()
+	tidbCfg := config.GetGlobalConfig()
 	d.pdConfig = tidbCfg.PDClient
 	d.security = tidbCfg.Security
 	d.tikvConfig = tidbCfg.TiKVClient
@@ -138,7 +138,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 	mc.Lock()
 	defer mc.Unlock()
 	d.setDefaultAndOptions(options...)
-	etcdAddrs, disableGC, keyspaceName, err := cli_config.ParsePath(path)
+	etcdAddrs, disableGC, keyspaceName, err := config.ParsePath(path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -176,7 +176,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 			}),
 		),
 		pd.WithCustomTimeoutOption(time.Duration(d.pdConfig.PDServerTimeout)*time.Second),
-		pd.WithForwardingOption(cli_config.GetGlobalConfig().EnableForwarding))
+		pd.WithForwardingOption(config.GetGlobalConfig().EnableForwarding))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -232,7 +232,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 	if d.txnLocalLatches.Enabled {
 		s.EnableTxnLocalLatches(d.txnLocalLatches.Capacity)
 	}
-	coprCacheConfig := &cli_config.GetGlobalConfig().TiKVClient.CoprCache
+	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
 	coprStore, err := copr.NewStore(s, coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -286,7 +286,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	if ldflagGetEtcdAddrsFromConfig == "1" {
 		// For automated test purpose.
 		// To manipulate connection to etcd by mandatorily setting path to a proxy.
-		cfg := cli_config.GetGlobalConfig()
+		cfg := config.GetGlobalConfig()
 		return strings.Split(cfg.Path, ","), nil
 	}
 
