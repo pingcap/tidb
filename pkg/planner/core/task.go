@@ -447,6 +447,7 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			proj.SetSchema(p.Schema().Clone())
 			for _, hashCol := range hashColArray {
 				if !proj.Schema().Contains(hashCol) {
+					proj.Exprs = append(proj.Exprs, hashCol)
 					proj.Schema().Append(hashCol)
 				}
 			}
