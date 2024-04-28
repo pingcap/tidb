@@ -86,7 +86,7 @@ func createHotRegionsHistoryTableSuite(t *testing.T) *hotRegionsHistoryTableSuit
 	return s
 }
 
-func writeResp(w http.ResponseWriter, resp interface{}) {
+func writeResp(w http.ResponseWriter, resp any) {
 	w.WriteHeader(http.StatusOK)
 	jsonResp, err := json.Marshal(resp)
 	if err != nil {
@@ -140,7 +140,7 @@ func (s *hotRegionsHistoryTableSuite) setUpMockPDHTTPServer() (*httptest.Server,
 	server := httptest.NewServer(router)
 	mockAddr := strings.TrimPrefix(server.URL, "http://")
 	// mock PD API
-	router.Handle(pd.Status, fn.Wrap(func() (interface{}, error) {
+	router.Handle(pd.Status, fn.Wrap(func() (any, error) {
 		return struct {
 			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`

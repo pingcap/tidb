@@ -1,0 +1,44 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "refresher",
+    srcs = ["refresher.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/sysproctrack",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/autoanalyze/exec",
+        "//pkg/statistics/handle/autoanalyze/priorityqueue",
+        "//pkg/statistics/handle/lockstats",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/util",
+        "//pkg/util",
+        "//pkg/util/timeutil",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "refresher_test",
+    timeout = "short",
+    srcs = ["refresher_test.go"],
+    flaky = True,
+    shard_count = 13,
+    deps = [
+        ":refresher",
+        "//pkg/parser/model",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/autoanalyze/exec",
+        "//pkg/statistics/handle/autoanalyze/priorityqueue",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
+    ],
+)

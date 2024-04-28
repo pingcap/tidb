@@ -143,9 +143,9 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("insert into t (id) values (%v)", j))
 		}
 	}
-	var expected [][]interface{}
+	var expected [][]any
 	for i := 1; i <= 20; i++ {
-		expected = append(expected, []interface{}{
+		expected = append(expected, []any{
 			strconv.FormatInt(int64(i), 10), "500",
 		})
 	}

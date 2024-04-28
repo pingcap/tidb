@@ -467,6 +467,8 @@ set tidb_partition_prune_mode='dynamic';
 drop table if exists t1, t2_part;
 create table t1 (a int, b int);
 create table t2_part (a int, b int, key(a)) partition by hash(a) partitions 4;
+set @@tidb_skip_missing_partition_stats = off;
+set @@tidb_opt_fix_control = "";
 --enable_warnings
 explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 --disable_warnings
@@ -474,6 +476,12 @@ set @@tidb_opt_fix_control = "44262:ON";
 --enable_warnings
 explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 --disable_warnings
+set @@tidb_opt_fix_control = "";
+set @@tidb_skip_missing_partition_stats = on;
+--enable_warnings
+explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+--disable_warnings
+set @@tidb_skip_missing_partition_stats = default;
 
 
 # TestPartitionPruningForInExpr
@@ -620,3 +628,104 @@ FROM (
     ORDER BY cnt DESC
 ) sub
 GROUP BY repo_id;
+
+# TestIssue42588
+drop database if exists testdb;
+create database testdb;
+use testdb;
+drop table if exists `t270`;
+CREATE TABLE `t270` (
+  `vkey` int(11) DEFAULT NULL,
+  `pkey` int(11) DEFAULT NULL,
+  `c1128` varchar(100) DEFAULT NULL,
+  `c1129` int(11) DEFAULT NULL,
+  `c1130` varchar(100) DEFAULT NULL,
+  `c1131` double DEFAULT NULL,
+  `c1132` varchar(100) DEFAULT NULL,
+  `c1133` double DEFAULT NULL,
+  `c1134` varchar(100) DEFAULT NULL,
+  `c1135` int(11) DEFAULT NULL
+);
+drop table if exists `t271`;
+CREATE TABLE `t271` (
+  `vkey` int(11) DEFAULT NULL,
+  `pkey` int(11) DEFAULT NULL,
+  `c1136` varchar(100) DEFAULT NULL,
+  `c1137` int(11) DEFAULT NULL,
+  `c1138` varchar(100) DEFAULT NULL,
+  `c1139` int(11) DEFAULT NULL,
+  `c1140` double DEFAULT NULL,
+  `c1141` int(11) DEFAULT NULL
+);
+drop table if exists `t272`;
+CREATE TABLE `t272` (
+  `vkey` int(11) DEFAULT NULL,
+  `pkey` int(11) DEFAULT NULL,
+  `c1142` int(11) DEFAULT NULL,
+  `c1143` varchar(100) DEFAULT NULL,
+  `c1144` int(11) DEFAULT NULL,
+  `c1145` int(11) DEFAULT NULL,
+  `c1146` varchar(100) DEFAULT NULL,
+  `c1147` double DEFAULT NULL,
+  `c1148` varchar(100) DEFAULT NULL,
+  `c1149` double DEFAULT NULL
+);
+CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `t273_test` (`c0`, `c1`, `c2`, `c3`, `c4`) AS SELECT AVG(37) OVER (PARTITION BY `ref_0`.`c1136` ORDER BY `ref_0`.`vkey` DESC,`ref_0`.`pkey` DESC,`ref_0`.`c1136` DESC,`ref_0`.`c1137`,`ref_0`.`c1138` DESC,`ref_0`.`c1139` DESC,`ref_0`.`c1140` DESC,`ref_0`.`c1141`) AS `c0`,COALESCE(`ref_0`.`c1137`, `ref_0`.`c1141`) AS `c1`,`ref_0`.`vkey` AS `c2`,`ref_0`.`pkey` AS `c3`,`ref_0`.`c1138` AS `c4` FROM `testdb`.`t271` AS `ref_0` WHERE EXISTS (SELECT `subq_0`.`c2` AS `c0`,`subq_0`.`c0` AS `c1`,`subq_0`.`c0` AS `c2`,`subq_0`.`c0` AS `c3`,CASE WHEN EXISTS (SELECT `ref_9`.`c1131` AS `c0`,`ref_9`.`c1131` AS `c1`,(FALSE) XOR (((-45)=(-69)) OR ((-0)>(-71))) AS `c2`,`ref_9`.`c1133` AS `c3`,`ref_9`.`c1128` AS `c4`,-0 AS `c5`,1 AS `c6`,`ref_9`.`c1132` AS `c7`,`ref_9`.`c1131` AS `c8`,`ref_9`.`c1130` AS `c9`,NULL AS `c10` FROM `testdb`.`t270` AS `ref_9` WHERE (-0)<(-8) UNION ALL SELECT `ref_0`.`c1140` AS `c0`,`ref_11`.`c1133` AS `c1`,(NULL)<(NULL) AS `c2`,`ref_0`.`c1140` AS `c3`,`ref_0`.`c1136` AS `c4`,95 AS `c5`,NOT (_UTF8MB4'mum#M' LIKE _UTF8MB4'%_U') AS `c6`,`ref_11`.`c1128` AS `c7`,`ref_11`.`c1131` AS `c8`,(SELECT `c1143` AS `c1143` FROM `testdb`.`t272` ORDER BY `c1143` LIMIT 3,1) AS `c9`,97 AS `c10` FROM `testdb`.`t270` AS `ref_11` WHERE NOT (TRUE)) THEN _UTF8MB4'xf' ELSE _UTF8MB4'>c' END LIKE _UTF8MB4'_^^' AS `c4`,`subq_0`.`c1` AS `c5`,`ref_0`.`vkey` AS `c6`,((`subq_0`.`c1`)=(SELECT `ref_12`.`c1132` AS `c0` FROM `testdb`.`t270` AS `ref_12` WHERE TRUE ORDER BY `c0` DESC LIMIT 1)) XOR ((`ref_0`.`pkey`)>=(SELECT (SELECT `vkey` AS `vkey` FROM `testdb`.`t271` ORDER BY `vkey` LIMIT 1,1) AS `c0` FROM `testdb`.`t271` AS `ref_13` WHERE (-24)<=((SELECT COUNT(`c1140`) AS `count(c1140)` FROM `testdb`.`t271`)) ORDER BY `c0` LIMIT 1)) AS `c7`,`ref_0`.`pkey` AS `c8`,`subq_0`.`c2` AS `c9`,`ref_0`.`vkey` AS `c10`,`ref_0`.`c1139` AS `c11`,TRUE AS `c12`,`subq_0`.`c0` AS `c13`,`subq_0`.`c2` AS `c14`,`subq_0`.`c2` AS `c15`,FALSE AS `c16`,CASE WHEN ((FALSE) OR ((((FALSE) XOR (((-73)<(-91)) OR (((-0) BETWEEN (-0) AND (-0)) AND ((NULL) OR ((0)>((SELECT COUNT(`c1131`) AS `count(c1131)` FROM `testdb`.`t270`))))))) AND ((-19)>(NULL))) OR (((77)<(73)) AND (NOT (((73) IN (SELECT 0 AS `c0` FROM `testdb`.`t271` AS `ref_14` WHERE (NULL) AND (NULL) EXCEPT SELECT NULL AS `c0` FROM `testdb`.`t270` AS `ref_15` WHERE (`ref_15`.`c1131`)!=(SELECT `ref_15`.`c1133` AS `c0` FROM `testdb`.`t270` AS `ref_16` WHERE _UTF8MB4'$@-X' LIKE _UTF8MB4'__%' ORDER BY `c0` DESC LIMIT 1))) IS TRUE))))) OR (NOT ((-24)<=(-43))) THEN `subq_0`.`c1` ELSE `subq_0`.`c2` END AS `c17`,`subq_0`.`c1` AS `c18`,`subq_0`.`c0` AS `c19`,`subq_0`.`c0` AS `c20`,`subq_0`.`c2` AS `c21`,`subq_0`.`c0` AS `c22`,`subq_0`.`c2` AS `c23`,`subq_0`.`c0` AS `c24`,`ref_0`.`c1141` AS `c25` FROM (SELECT DISTINCT TRUE AS `c0`,`ref_1`.`c1143` AS `c1`,`ref_1`.`c1146` AS `c2` FROM `testdb`.`t272` AS `ref_1` WHERE NOT (((`ref_0`.`c1136`)!=(SELECT `ref_2`.`c1146` AS `c0` FROM `testdb`.`t272` AS `ref_2` WHERE (62) BETWEEN ((SELECT COUNT(`c1147`) AS `count(c1147)` FROM `testdb`.`t272`)) AND (-0) ORDER BY `c0` LIMIT 1)) XOR ((-0) BETWEEN (0) AND (-0)))) AS `subq_0` WHERE (CHAR_LENGTH(CASE WHEN ((`subq_0`.`c0`) IS NOT NULL) OR ((`ref_0`.`c1138`)>(SELECT `ref_0`.`c1138` AS `c0` FROM `testdb`.`t272` AS `ref_3` WHERE FALSE ORDER BY `c0` DESC LIMIT 1)) THEN _UTF8MB4'' ELSE _UTF8MB4'tL' END)) BETWEEN (ABS(46%-11)) AND (CASE WHEN (((((`subq_0`.`c2`) IN (SELECT `ref_4`.`c1134` AS `c0` FROM `testdb`.`t270` AS `ref_4` WHERE (NULL LIKE _UTF8MB4'%Ny') OR (EXISTS (SELECT DISTINCT `ref_5`.`c1136` AS `c0`,`ref_5`.`c1140` AS `c1` FROM `testdb`.`t271` AS `ref_5` WHERE FALSE UNION ALL SELECT `ref_4`.`c1130` AS `c0`,`ref_4`.`c1131` AS `c1` FROM `testdb`.`t271` AS `ref_6` WHERE (-97) BETWEEN (73) AND (-10))) UNION ALL SELECT `ref_7`.`c1138` AS `c0` FROM `testdb`.`t271` AS `ref_7` WHERE FALSE)) IS TRUE) OR (NULL)) AND ((NULL)>=((SELECT COUNT(`c1140`) AS `count(c1140)` FROM `testdb`.`t271`)))) XOR (((`ref_0`.`vkey`) IN (SELECT `ref_8`.`c1145` AS `c0` FROM `testdb`.`t272` AS `ref_8` WHERE ((FALSE) AND (NULL)) OR ((`ref_8`.`c1144`) IS NULL))) IS TRUE) THEN 87 ELSE CASE WHEN ((`ref_0`.`c1138`) IS NULL) OR ((-22)!=(-0)) THEN 17 ELSE -67 END END)) ORDER BY `c0` DESC,`c1` DESC,`c2`,`c3`,`c4` DESC;
+select
+  (select
+      subq_1.c0 as c0
+    from
+      t273_test as ref_84
+    where exists (
+        select
+            (select
+                  ref_86.c1147 as c0
+                from
+                  t272 as ref_86
+                where (subq_1.c0) > (subq_1.c0)
+                window w0 as (partition by ref_86.c1147 order by ref_86.c1143 desc)
+                order by c0 limit 1
+            ) as c3,
+            (select
+                  subq_1.c0 as c0
+                from
+                  t273_test as ref_89
+                order by c0 limit 1) as c4
+          from
+            t271 as ref_85
+          )
+    order by c0 desc limit 1) as c1
+from
+  (select 1 as c0) as subq_1;
+select
+  (select
+      subq_1.c0 as c0
+    from
+      t271 as ref_84
+    where exists (
+        select
+            (select
+                  ref_86.c1147 as c0
+                from
+                  t272 as ref_86
+                where (subq_1.c0) > (subq_1.c0)
+                window w0 as (partition by ref_86.c1147 order by ref_86.c1143 desc)
+                order by c0 limit 1
+            ) as c3,
+            (select
+                  subq_1.c0 as c0
+                from
+                  t271 as ref_89
+                order by c0 limit 1) as c4
+          from
+            t271 as ref_85
+          )
+    order by c0 desc limit 1) as c1
+from
+  (select 1 as c0) as subq_1;
+
+# TestIssue50614
+use test;
+drop table if exists tt;
+create table tt(a bigint, b bigint, c bigint, d bigint, e bigint, primary key(c,d));
+explain format = brief update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));

@@ -111,7 +111,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	}
 	defer rawSess.Close()
 
-	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, time.Now())
+	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, rawSess.Now())
 	if err != nil {
 		return t.result(err)
 	}
@@ -127,7 +127,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	// because `ExecuteSQLWithCheck` only do checks when the table meta used by task is different with the latest one.
 	// In this case, some rows will be deleted unexpectedly.
 	if t.ExpireTime.After(safeExpire) {
-		return t.result(errors.Errorf("current expire time is after safe expire time. (%d > %d)", t.ExpireTime.UnixMilli(), safeExpire.UnixMilli()))
+		return t.result(errors.Errorf("current expire time is after safe expire time. (%d > %d)", t.ExpireTime.Unix(), safeExpire.Unix()))
 	}
 
 	origConcurrency := rawSess.GetSessionVars().DistSQLScanConcurrency()
@@ -239,11 +239,11 @@ type ttlScanWorker struct {
 	curTask       *ttlScanTask
 	curTaskResult *ttlScanTaskExecResult
 	delCh         chan<- *ttlDeleteTask
-	notifyStateCh chan<- interface{}
+	notifyStateCh chan<- any
 	sessionPool   sessionPool
 }
 
-func newScanWorker(delCh chan<- *ttlDeleteTask, notifyStateCh chan<- interface{}, sessPool sessionPool) *ttlScanWorker {
+func newScanWorker(delCh chan<- *ttlDeleteTask, notifyStateCh chan<- any, sessPool sessionPool) *ttlScanWorker {
 	w := &ttlScanWorker{
 		delCh:         delCh,
 		notifyStateCh: notifyStateCh,

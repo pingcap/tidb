@@ -151,8 +151,8 @@ func TestAnalyzeGlobalStatsWithOpts1(t *testing.T) {
 		{77, 219, false},
 		{-31, 222, true},
 		{10, -77, true},
-		{100000, 47, true},
-		{77, 47000, true},
+		{100001, 47, true},
+		{77, 100001, true},
 	}
 	for _, ca := range cases {
 		sql := fmt.Sprintf("analyze table test_gstats_opt with %v topn, %v buckets", ca.topn, ca.buckets)

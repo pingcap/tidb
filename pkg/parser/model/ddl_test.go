@@ -50,7 +50,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.ToProxyJob()
 `
 	job := model.Job{}
-	require.Equal(t, 336, int(unsafe.Sizeof(job)), msg)
+	require.Equal(t, 400, int(unsafe.Sizeof(job)), msg)
 }
 
 func TestBackfillMetaCodec(t *testing.T) {
@@ -103,4 +103,18 @@ func TestMayNeedReorg(t *testing.T) {
 		job.Type = jobType
 		require.False(t, job.MayNeedReorg())
 	}
+}
+
+func TestActionBDRMap(t *testing.T) {
+	require.Equal(t, len(model.ActionMap), len(model.ActionBDRMap))
+
+	totalActions := 0
+	for bdrType, actions := range model.BDRActionMap {
+		for _, action := range actions {
+			require.Equal(t, bdrType, model.ActionBDRMap[action], "action %s", action)
+		}
+		totalActions += len(actions)
+	}
+
+	require.Equal(t, totalActions, len(model.ActionBDRMap))
 }

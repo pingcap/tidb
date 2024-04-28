@@ -33,6 +33,7 @@ import (
 
 func TestMain(m *testing.M) {
 	server.RunInGoTest = true
+	server.RunInGoTestChan = make(chan struct{})
 	testsetup.SetupForCommonTest()
 	topsqlstate.EnableTopSQL()
 	unistore.CheckResourceTagForTopSQLInGoTest = true
@@ -56,6 +57,7 @@ func TestMain(m *testing.M) {
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("time.Sleep"),
 		goleak.IgnoreTopFunction("database/sql.(*Tx).awaitDone"),

@@ -51,7 +51,6 @@ package expression
 const newLine = "\n"
 
 const builtinStringImports = `import (
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 `
@@ -59,7 +58,7 @@ const builtinStringImports = `import (
 var builtinStringVecTpl = template.Must(template.New("").Parse(`
 // vecEvalInt evals FIELD(str,str1,str2,str3,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
-func (b *builtinField{{ .TypeName }}Sig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinField{{ .TypeName }}Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {

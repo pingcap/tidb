@@ -20,10 +20,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
@@ -142,7 +142,7 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 	}
 	for i := 0; i < len(en.columnAssignments); i++ {
 		// eval expression of `SET` clause
-		d, err := en.columnAssignments[i].Eval(en.SessionCtx, chunk.Row{})
+		d, err := en.columnAssignments[i].Eval(en.SessionCtx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return nil, err
 		}
@@ -202,7 +202,7 @@ func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 		newRowID := en.AutoIDFn(rowID)
 		value = types.NewIntDatum(newRowID)
 		record = append(record, value)
-		alloc := en.Table.Allocators(en.SessionCtx).Get(autoid.RowIDAllocType)
+		alloc := en.Table.Allocators(en.SessionCtx.GetTableCtx()).Get(autoid.RowIDAllocType)
 		if err := alloc.Rebase(context.Background(), rowValue, false); err != nil {
 			return nil, errors.Trace(err)
 		}

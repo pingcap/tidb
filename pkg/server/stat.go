@@ -43,8 +43,8 @@ func (*Server) GetScope(_ string) variable.ScopeFlag {
 }
 
 // Stats returns the server statistics.
-func (s *Server) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{}, len(defaultStatus))
+func (s *Server) Stats(_ *variable.SessionVars) (map[string]any, error) {
+	m := make(map[string]any, len(defaultStatus))
 
 	for name, v := range defaultStatus {
 		m[name] = v.Value

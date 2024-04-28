@@ -39,7 +39,7 @@ var Analyzer = &analysis.Analyzer{
 	Run:  run,
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
+func run(pass *analysis.Pass) (any, error) {
 	s := &Settings{
 		Simple:     true,
 		RangeLoops: true,

@@ -1,9 +1,32 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "internal",
-    srcs = ["testkit.go"],
+    srcs = [
+        "sizer.go",
+        "testkit.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/infoschema/internal",
     visibility = ["//pkg/infoschema:__subpackages__"],
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/meta/autoid",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/store/mockstore",
+        "//pkg/table",
+        "//pkg/table/tables",
+        "//pkg/types",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "internal_test",
+    timeout = "short",
+    srcs = ["sizer_test.go"],
+    embed = [":internal"],
+    flaky = True,
 )

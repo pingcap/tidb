@@ -723,13 +723,13 @@ func TestBinaryJSONOpaque(t *testing.T) {
 func TestHashValue(t *testing.T) {
 	// The following values should have different hash value
 	jsons := []BinaryJSON{
-		CreateBinaryJSON([]interface{}{}),
-		CreateBinaryJSON([]interface{}{CreateBinaryJSON([]interface{}{})}),
-		CreateBinaryJSON([]interface{}{CreateBinaryJSON([]interface{}{CreateBinaryJSON([]interface{}{})})}),
-		CreateBinaryJSON(map[string]interface{}{}),
-		CreateBinaryJSON([]interface{}{CreateBinaryJSON(false)}),
-		CreateBinaryJSON([]interface{}{CreateBinaryJSON(true)}),
-		CreateBinaryJSON([]interface{}{CreateBinaryJSON(nil)}),
+		CreateBinaryJSON([]any{}),
+		CreateBinaryJSON([]any{CreateBinaryJSON([]any{})}),
+		CreateBinaryJSON([]any{CreateBinaryJSON([]any{CreateBinaryJSON([]any{})})}),
+		CreateBinaryJSON(map[string]any{}),
+		CreateBinaryJSON([]any{CreateBinaryJSON(false)}),
+		CreateBinaryJSON([]any{CreateBinaryJSON(true)}),
+		CreateBinaryJSON([]any{CreateBinaryJSON(nil)}),
 	}
 
 	// TODO: use a better way to count distinct json value

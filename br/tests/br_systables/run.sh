@@ -79,14 +79,14 @@ check2() {
 modify_systables
 run_br backup full -s "local://$backup_dir"
 rollback_modify
-run_br restore full -f '*.*' -f '!mysql.bar' -s "local://$backup_dir" --with-sys-table
+run_br restore full -f '*.*' -f '!mysql.bar' -s "local://$backup_dir"
 check
 
-run_br restore full -f 'mysql.bar' -s "local://$backup_dir" --with-sys-table
+run_br restore full -f 'mysql.bar' -s "local://$backup_dir"
 run_sql "SELECT count(*) from mysql.bar;" | grep 11
 
 rollback_modify 
-run_br restore full -f "mysql*.*" -f '!mysql.bar' -s "local://$backup_dir" --with-sys-table
+run_br restore full -f "mysql*.*" -f '!mysql.bar' -s "local://$backup_dir"
 check
 
 add_user

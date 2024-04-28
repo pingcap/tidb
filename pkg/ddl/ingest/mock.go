@@ -19,11 +19,12 @@ import (
 	"encoding/hex"
 	"sync"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -42,23 +43,14 @@ func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBacken
 	}
 }
 
-// MarkJobProcessing implements BackendCtxMgr.MarkJobProcessing interface.
-func (*MockBackendCtxMgr) MarkJobProcessing(_ int64) bool {
-	return true
-}
-
-// MarkJobFinish implements BackendCtxMgr.MarkJobFinish interface.
-func (*MockBackendCtxMgr) MarkJobFinish() {
-}
-
-// CheckAvailable implements BackendCtxMgr.Available interface.
-func (m *MockBackendCtxMgr) CheckAvailable() (bool, error) {
+// CheckMoreTasksAvailable implements BackendCtxMgr.CheckMoreTaskAvailable interface.
+func (m *MockBackendCtxMgr) CheckMoreTasksAvailable(context.Context) (bool, error) {
 	return len(m.runningJobs) == 0, nil
 }
 
 // Register implements BackendCtxMgr.Register interface.
-func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client, _ string, _ string) (BackendCtx, error) {
-	logutil.BgLogger().Info("mock backend mgr register", zap.Int64("jobID", jobID))
+func (m *MockBackendCtxMgr) Register(ctx context.Context, jobID int64, unique bool, etcdClient *clientv3.Client, pdSvcDiscovery pd.ServiceDiscovery, resourceGroupName string) (BackendCtx, error) {
+	logutil.DDLIngestLogger().Info("mock backend mgr register", zap.Int64("jobID", jobID))
 	if mockCtx, ok := m.runningJobs[jobID]; ok {
 		return mockCtx, nil
 	}
@@ -76,7 +68,7 @@ func (m *MockBackendCtxMgr) Unregister(jobID int64) {
 	if mCtx, ok := m.runningJobs[jobID]; ok {
 		mCtx.sessCtx.StmtCommit(context.Background())
 		err := mCtx.sessCtx.CommitTxn(context.Background())
-		logutil.BgLogger().Info("mock backend mgr unregister", zap.Int64("jobID", jobID), zap.Error(err))
+		logutil.DDLIngestLogger().Info("mock backend mgr unregister", zap.Int64("jobID", jobID), zap.Error(err))
 		delete(m.runningJobs, jobID)
 		if mCtx.checkpointMgr != nil {
 			mCtx.checkpointMgr.Close()
@@ -86,7 +78,7 @@ func (m *MockBackendCtxMgr) Unregister(jobID int64) {
 
 // Load implements BackendCtxMgr.Load interface.
 func (m *MockBackendCtxMgr) Load(jobID int64) (BackendCtx, bool) {
-	logutil.BgLogger().Info("mock backend mgr load", zap.Int64("jobID", jobID))
+	logutil.DDLIngestLogger().Info("mock backend mgr load", zap.Int64("jobID", jobID))
 	if mockCtx, ok := m.runningJobs[jobID]; ok {
 		return mockCtx, true
 	}
@@ -109,24 +101,24 @@ type MockBackendCtx struct {
 
 // Register implements BackendCtx.Register interface.
 func (m *MockBackendCtx) Register(jobID, indexID int64, _, _ string) (Engine, error) {
-	logutil.BgLogger().Info("mock backend ctx register", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
+	logutil.DDLIngestLogger().Info("mock backend ctx register", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
 	return &MockEngineInfo{sessCtx: m.sessCtx, mu: &m.mu}, nil
 }
 
 // Unregister implements BackendCtx.Unregister interface.
 func (*MockBackendCtx) Unregister(jobID, indexID int64) {
-	logutil.BgLogger().Info("mock backend ctx unregister", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
+	logutil.DDLIngestLogger().Info("mock backend ctx unregister", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
 }
 
 // CollectRemoteDuplicateRows implements BackendCtx.CollectRemoteDuplicateRows interface.
 func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) error {
-	logutil.BgLogger().Info("mock backend ctx collect remote duplicate rows", zap.Int64("indexID", indexID))
+	logutil.DDLIngestLogger().Info("mock backend ctx collect remote duplicate rows", zap.Int64("indexID", indexID))
 	return nil
 }
 
 // FinishImport implements BackendCtx.FinishImport interface.
 func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error {
-	logutil.BgLogger().Info("mock backend ctx finish import", zap.Int64("indexID", indexID))
+	logutil.DDLIngestLogger().Info("mock backend ctx finish import", zap.Int64("indexID", indexID))
 	return nil
 }
 
@@ -203,7 +195,7 @@ func (m *MockEngineInfo) SetHook(onWrite func(key, val []byte)) {
 
 // CreateWriter implements Engine.CreateWriter interface.
 func (m *MockEngineInfo) CreateWriter(id int) (Writer, error) {
-	logutil.BgLogger().Info("mock engine info create writer", zap.Int("id", id))
+	logutil.DDLIngestLogger().Info("mock engine info create writer", zap.Int("id", id))
 	return &MockWriter{sessCtx: m.sessCtx, mu: m.mu, onWrite: m.onWrite}, nil
 }
 
@@ -216,7 +208,7 @@ type MockWriter struct {
 
 // WriteRow implements Writer.WriteRow interface.
 func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle) error {
-	logutil.BgLogger().Info("mock writer write row",
+	logutil.DDLIngestLogger().Info("mock writer write row",
 		zap.String("key", hex.EncodeToString(key)),
 		zap.String("idxVal", hex.EncodeToString(idxVal)))
 	m.mu.Lock()
@@ -229,7 +221,14 @@ func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle
 	if err != nil {
 		return err
 	}
-	return txn.Set(key, idxVal)
+	err = txn.Set(key, idxVal)
+	if err != nil {
+		return err
+	}
+	if MockExecAfterWriteRow != nil {
+		MockExecAfterWriteRow()
+	}
+	return nil
 }
 
 // LockForWrite implements Writer.LockForWrite interface.
@@ -241,3 +240,6 @@ func (*MockWriter) LockForWrite() func() {
 func (*MockWriter) Close(_ context.Context) error {
 	return nil
 }
+
+// MockExecAfterWriteRow is only used for test.
+var MockExecAfterWriteRow func()

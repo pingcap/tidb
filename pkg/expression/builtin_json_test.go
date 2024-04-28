@@ -31,8 +31,8 @@ func TestJSONType(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONType]
 	tbl := []struct {
-		Input    interface{}
-		Expected interface{}
+		Input    any
+		Expected any
 	}{
 		{nil, nil},
 		{`3`, `INTEGER`},
@@ -56,8 +56,8 @@ func TestJSONQuote(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONQuote]
 	tbl := []struct {
-		Input    interface{}
-		Expected interface{}
+		Input    any
+		Expected any
 	}{
 		{nil, nil},
 		{``, `""`},
@@ -126,13 +126,13 @@ func TestJSONExtract(t *testing.T) {
 	fc := funcs[ast.JSONExtract]
 	jstr := `{"a": [{"aa": [{"aaa": 1}]}], "aaa": 2}`
 	tbl := []struct {
-		Input    []interface{}
-		Expected interface{}
+		Input    []any
+		Expected any
 		Success  bool
 	}{
-		{[]interface{}{nil, nil}, nil, true},
-		{[]interface{}{jstr, `$.a[0].aa[0].aaa`, `$.aaa`}, `[1, 2]`, true},
-		{[]interface{}{jstr, `$.a[0].aa[0].aaa`, `$InvalidPath`}, nil, false},
+		{[]any{nil, nil}, nil, true},
+		{[]any{jstr, `$.a[0].aa[0].aaa`, `$.aaa`}, `[1, 2]`, true},
+		{[]any{jstr, `$.a[0].aa[0].aaa`, `$InvalidPath`}, nil, false},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.Input...)
@@ -163,19 +163,19 @@ func TestJSONSetInsertReplace(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
 		fc           functionClass
-		Input        []interface{}
-		Expected     interface{}
+		Input        []any
+		Expected     any
 		BuildSuccess bool
 		Success      bool
 	}{
-		{funcs[ast.JSONSet], []interface{}{nil, nil, nil}, nil, true, true},
-		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`, true, true},
-		{funcs[ast.JSONInsert], []interface{}{`{}`, `$.a`, 3}, `{"a": 3}`, true, true},
-		{funcs[ast.JSONReplace], []interface{}{`{}`, `$.a`, 3}, `{}`, true, true},
-		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3, `$.b`, "3"}, `{"a": 3, "b": "3"}`, true, true},
-		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, nil, `$.b`, "nil"}, `{"a": null, "b": "nil"}`, true, true},
-		{funcs[ast.JSONSet], []interface{}{`{}`, `$.a`, 3, `$.b`}, nil, false, false},
-		{funcs[ast.JSONSet], []interface{}{`{}`, `$InvalidPath`, 3}, nil, true, false},
+		{funcs[ast.JSONSet], []any{nil, nil, nil}, nil, true, true},
+		{funcs[ast.JSONSet], []any{`{}`, `$.a`, 3}, `{"a": 3}`, true, true},
+		{funcs[ast.JSONInsert], []any{`{}`, `$.a`, 3}, `{"a": 3}`, true, true},
+		{funcs[ast.JSONReplace], []any{`{}`, `$.a`, 3}, `{}`, true, true},
+		{funcs[ast.JSONSet], []any{`{}`, `$.a`, 3, `$.b`, "3"}, `{"a": 3, "b": "3"}`, true, true},
+		{funcs[ast.JSONSet], []any{`{}`, `$.a`, nil, `$.b`, "nil"}, `{"a": null, "b": "nil"}`, true, true},
+		{funcs[ast.JSONSet], []any{`{}`, `$.a`, 3, `$.b`}, nil, false, false},
+		{funcs[ast.JSONSet], []any{`{}`, `$InvalidPath`, 3}, nil, true, false},
 	}
 	var err error
 	var f builtinFunc
@@ -209,12 +209,12 @@ func TestJSONMerge(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONMerge]
 	tbl := []struct {
-		Input    []interface{}
-		Expected interface{}
+		Input    []any
+		Expected any
 	}{
-		{[]interface{}{nil, nil}, nil},
-		{[]interface{}{`{}`, `[]`}, `[{}]`},
-		{[]interface{}{`{}`, `[]`, `3`, `"4"`}, `[{}, 3, "4"]`},
+		{[]any{nil, nil}, nil},
+		{[]any{`{}`, `[]`}, `[{}]`},
+		{[]any{`{}`, `[]`, `3`, `"4"`}, `[{}, 3, "4"]`},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.Input...)
@@ -240,12 +240,12 @@ func TestJSONMergePreserve(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONMergePreserve]
 	tbl := []struct {
-		Input    []interface{}
-		Expected interface{}
+		Input    []any
+		Expected any
 	}{
-		{[]interface{}{nil, nil}, nil},
-		{[]interface{}{`{}`, `[]`}, `[{}]`},
-		{[]interface{}{`{}`, `[]`, `3`, `"4"`}, `[{}, 3, "4"]`},
+		{[]any{nil, nil}, nil},
+		{[]any{`{}`, `[]`}, `[{}]`},
+		{[]any{`{}`, `[]`, `3`, `"4"`}, `[{}, 3, "4"]`},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.Input...)
@@ -271,11 +271,11 @@ func TestJSONArray(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONArray]
 	tbl := []struct {
-		Input    []interface{}
+		Input    []any
 		Expected string
 	}{
-		{[]interface{}{1}, `[1]`},
-		{[]interface{}{nil, "a", 3, `{"a": "b"}`}, `[null, "a", 3, "{\"a\": \"b\"}"]`},
+		{[]any{1}, `[1]`},
+		{[]any{nil, "a", 3, `{"a": "b"}`}, `[null, "a", 3, "{\"a\": \"b\"}"]`},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.Input...)
@@ -296,17 +296,17 @@ func TestJSONObject(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONObject]
 	tbl := []struct {
-		Input        []interface{}
-		Expected     interface{}
+		Input        []any
+		Expected     any
 		BuildSuccess bool
 		Success      bool
 	}{
-		{[]interface{}{1, 2, 3}, nil, false, false},
-		{[]interface{}{1, 2, "hello", nil}, `{"1": 2, "hello": null}`, true, true},
-		{[]interface{}{nil, 2}, nil, true, false},
+		{[]any{1, 2, 3}, nil, false, false},
+		{[]any{1, 2, "hello", nil}, `{"1": 2, "hello": null}`, true, true},
+		{[]any{nil, 2}, nil, true, false},
 
 		// TiDB can only tell booleans from parser.
-		{[]interface{}{1, true}, `{"1": 1}`, true, true},
+		{[]any{1, true}, `{"1": 1}`, true, true},
 	}
 	var err error
 	var f builtinFunc
@@ -340,27 +340,27 @@ func TestJSONRemove(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONRemove]
 	tbl := []struct {
-		Input    []interface{}
-		Expected interface{}
+		Input    []any
+		Expected any
 		Success  bool
 	}{
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$"}, nil, false},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.*"}, nil, false},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$[*]"}, nil, false},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$**.a"}, nil, false},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$"}, nil, false},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.*"}, nil, false},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$[*]"}, nil, false},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$**.a"}, nil, false},
 
-		{[]interface{}{nil, "$.a"}, nil, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].aa"}, `{"a": [1, 2, {}]}`, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[1]"}, `{"a": [1, {"aa": "xx"}]}`, true},
+		{[]any{nil, "$.a"}, nil, true},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].aa"}, `{"a": [1, 2, {}]}`, true},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[1]"}, `{"a": [1, {"aa": "xx"}]}`, true},
 
 		// Tests multi path expressions.
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].aa", "$.a[1]"}, `{"a": [1, {}]}`, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[1]", "$.a[1].aa"}, `{"a": [1, {}]}`, true},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].aa", "$.a[1]"}, `{"a": [1, {}]}`, true},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[1]", "$.a[1].aa"}, `{"a": [1, {}]}`, true},
 
 		// Tests path expressions not exists.
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[3]"}, `{"a": [1, 2, {"aa": "xx"}]}`, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.b"}, `{"a": [1, 2, {"aa": "xx"}]}`, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[3]", "$.b"}, `{"a": [1, 2, {"aa": "xx"}]}`, true},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[3]"}, `{"a": [1, 2, {"aa": "xx"}]}`, true},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.b"}, `{"a": [1, 2, {"aa": "xx"}]}`, true},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[3]", "$.b"}, `{"a": [1, 2, {"aa": "xx"}]}`, true},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.Input...)
@@ -390,24 +390,24 @@ func TestJSONMemberOf(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONMemberOf]
 	tbl := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		err      error
 	}{
-		{[]interface{}{`1`, `a:1`}, 1, types.ErrInvalidJSONText},
+		{[]any{`1`, `a:1`}, 1, types.ErrInvalidJSONText},
 
-		{[]interface{}{1, `[1, 2]`}, 1, nil},
-		{[]interface{}{1, `[1]`}, 1, nil},
-		{[]interface{}{1, `[0]`}, 0, nil},
-		{[]interface{}{1, `[1]`}, 1, nil},
-		{[]interface{}{1, `[[1]]`}, 0, nil},
-		{[]interface{}{"1", `[1]`}, 0, nil},
-		{[]interface{}{"1", `["1"]`}, 1, nil},
-		{[]interface{}{`{"a":1}`, `{"a":1}`}, 0, nil},
-		{[]interface{}{`{"a":1}`, `[{"a":1}]`}, 0, nil},
-		{[]interface{}{`{"a":1}`, `[{"a":1}, 1]`}, 0, nil},
-		{[]interface{}{`{"a":1}`, `["{\"a\":1}"]`}, 1, nil},
-		{[]interface{}{`{"a":1}`, `["{\"a\":1}", 1]`}, 1, nil},
+		{[]any{1, `[1, 2]`}, 1, nil},
+		{[]any{1, `[1]`}, 1, nil},
+		{[]any{1, `[0]`}, 0, nil},
+		{[]any{1, `[1]`}, 1, nil},
+		{[]any{1, `[[1]]`}, 0, nil},
+		{[]any{"1", `[1]`}, 0, nil},
+		{[]any{"1", `["1"]`}, 1, nil},
+		{[]any{`{"a":1}`, `{"a":1}`}, 0, nil},
+		{[]any{`{"a":1}`, `[{"a":1}]`}, 0, nil},
+		{[]any{`{"a":1}`, `[{"a":1}, 1]`}, 0, nil},
+		{[]any{`{"a":1}`, `["{\"a\":1}"]`}, 1, nil},
+		{[]any{`{"a":1}`, `["{\"a\":1}", 1]`}, 1, nil},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
@@ -431,49 +431,49 @@ func TestJSONContains(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONContains]
 	tbl := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		err      error
 	}{
 		// Tests nil arguments
-		{[]interface{}{nil, `1`, "$.c"}, nil, nil},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, nil, "$.a[3]"}, nil, nil},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, nil}, nil, nil},
+		{[]any{nil, `1`, "$.c"}, nil, nil},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, nil, "$.a[3]"}, nil, nil},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, nil}, nil, nil},
 		// Tests with path expression
-		{[]interface{}{`[1,2,[1,[5,[3]]]]`, `[1,3]`, "$[2]"}, 1, nil},
-		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`, `[1,{"a":[3]}]`, "$[2]"}, 1, nil},
-		{[]interface{}{`[{"a":1}]`, `{"a":1}`, "$"}, 1, nil},
-		{[]interface{}{`[{"a":1,"b":2}]`, `{"a":1,"b":2}`, "$"}, 1, nil},
-		{[]interface{}{`[{"a":{"a":1},"b":2}]`, `{"a":1}`, "$.a"}, 0, nil},
+		{[]any{`[1,2,[1,[5,[3]]]]`, `[1,3]`, "$[2]"}, 1, nil},
+		{[]any{`[1,2,[1,[5,{"a":[2,3]}]]]`, `[1,{"a":[3]}]`, "$[2]"}, 1, nil},
+		{[]any{`[{"a":1}]`, `{"a":1}`, "$"}, 1, nil},
+		{[]any{`[{"a":1,"b":2}]`, `{"a":1,"b":2}`, "$"}, 1, nil},
+		{[]any{`[{"a":{"a":1},"b":2}]`, `{"a":1}`, "$.a"}, 0, nil},
 		// Tests without path expression
-		{[]interface{}{`{}`, `{}`}, 1, nil},
-		{[]interface{}{`{"a":1}`, `{}`}, 1, nil},
-		{[]interface{}{`{"a":1}`, `1`}, 0, nil},
-		{[]interface{}{`{"a":[1]}`, `[1]`}, 0, nil},
-		{[]interface{}{`{"b":2, "c":3}`, `{"c":3}`}, 1, nil},
-		{[]interface{}{`1`, `1`}, 1, nil},
-		{[]interface{}{`[1]`, `1`}, 1, nil},
-		{[]interface{}{`[1,2]`, `[1]`}, 1, nil},
-		{[]interface{}{`[1,2]`, `[1,3]`}, 0, nil},
-		{[]interface{}{`[1,2]`, `["1"]`}, 0, nil},
-		{[]interface{}{`[1,2,[1,3]]`, `[1,3]`}, 1, nil},
-		{[]interface{}{`[1,2,[1,3]]`, `[1,      3]`}, 1, nil},
-		{[]interface{}{`[1,2,[1,[5,[3]]]]`, `[1,3]`}, 1, nil},
-		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`, `[1,{"a":[3]}]`}, 1, nil},
-		{[]interface{}{`[{"a":1}]`, `{"a":1}`}, 1, nil},
-		{[]interface{}{`[{"a":1,"b":2}]`, `{"a":1}`}, 1, nil},
-		{[]interface{}{`[{"a":{"a":1},"b":2}]`, `{"a":1}`}, 0, nil},
+		{[]any{`{}`, `{}`}, 1, nil},
+		{[]any{`{"a":1}`, `{}`}, 1, nil},
+		{[]any{`{"a":1}`, `1`}, 0, nil},
+		{[]any{`{"a":[1]}`, `[1]`}, 0, nil},
+		{[]any{`{"b":2, "c":3}`, `{"c":3}`}, 1, nil},
+		{[]any{`1`, `1`}, 1, nil},
+		{[]any{`[1]`, `1`}, 1, nil},
+		{[]any{`[1,2]`, `[1]`}, 1, nil},
+		{[]any{`[1,2]`, `[1,3]`}, 0, nil},
+		{[]any{`[1,2]`, `["1"]`}, 0, nil},
+		{[]any{`[1,2,[1,3]]`, `[1,3]`}, 1, nil},
+		{[]any{`[1,2,[1,3]]`, `[1,      3]`}, 1, nil},
+		{[]any{`[1,2,[1,[5,[3]]]]`, `[1,3]`}, 1, nil},
+		{[]any{`[1,2,[1,[5,{"a":[2,3]}]]]`, `[1,{"a":[3]}]`}, 1, nil},
+		{[]any{`[{"a":1}]`, `{"a":1}`}, 1, nil},
+		{[]any{`[{"a":1,"b":2}]`, `{"a":1}`}, 1, nil},
+		{[]any{`[{"a":{"a":1},"b":2}]`, `{"a":1}`}, 0, nil},
 		// Tests path expression contains any asterisk
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.*"}, nil, types.ErrInvalidJSONPathMultipleSelection},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$[*]"}, nil, types.ErrInvalidJSONPathMultipleSelection},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$**.a"}, nil, types.ErrInvalidJSONPathMultipleSelection},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.*"}, nil, types.ErrInvalidJSONPathMultipleSelection},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$[*]"}, nil, types.ErrInvalidJSONPathMultipleSelection},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$**.a"}, nil, types.ErrInvalidJSONPathMultipleSelection},
 		// Tests path expression does not identify a section of the target document
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.c"}, nil, nil},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[3]"}, nil, nil},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[2].b"}, nil, nil},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.c"}, nil, nil},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[3]"}, nil, nil},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[2].b"}, nil, nil},
 		// For issue 9957: test 'argument 1 and 2 as valid json object'
-		{[]interface{}{`[1,2,[1,3]]`, `a:1`}, 1, types.ErrInvalidJSONText},
-		{[]interface{}{`a:1`, `1`}, 1, types.ErrInvalidJSONText},
+		{[]any{`[1,2,[1,3]]`, `a:1`}, 1, types.ErrInvalidJSONText},
+		{[]any{`a:1`, `1`}, 1, types.ErrInvalidJSONText},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
@@ -493,8 +493,8 @@ func TestJSONContains(t *testing.T) {
 	}
 	// For issue 9957: test 'argument 1 and 2 as valid json object'
 	cases := []struct {
-		arg1 interface{}
-		arg2 interface{}
+		arg1 any
+		arg2 any
 	}{
 		{1, ""},
 		{0.05, ""},
@@ -578,40 +578,40 @@ func TestJSONContainsPath(t *testing.T) {
 	jsonString := `{"a": 1, "b": 2, "c": {"d": 4}}`
 	invalidJSON := `{"a": 1`
 	tbl := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		success  bool
 	}{
 		// Tests nil arguments
-		{[]interface{}{nil, types.JSONContainsPathOne, "$.c"}, nil, true},
-		{[]interface{}{nil, types.JSONContainsPathAll, "$.c"}, nil, true},
-		{[]interface{}{jsonString, nil, "$.a[3]"}, nil, true},
-		{[]interface{}{jsonString, types.JSONContainsPathOne, nil}, nil, true},
-		{[]interface{}{jsonString, types.JSONContainsPathAll, nil}, nil, true},
+		{[]any{nil, types.JSONContainsPathOne, "$.c"}, nil, true},
+		{[]any{nil, types.JSONContainsPathAll, "$.c"}, nil, true},
+		{[]any{jsonString, nil, "$.a[3]"}, nil, true},
+		{[]any{jsonString, types.JSONContainsPathOne, nil}, nil, true},
+		{[]any{jsonString, types.JSONContainsPathAll, nil}, nil, true},
 		// Tests with one path expression
-		{[]interface{}{jsonString, types.JSONContainsPathOne, "$.c.d"}, 1, true},
-		{[]interface{}{jsonString, types.JSONContainsPathOne, "$.a.d"}, 0, true},
-		{[]interface{}{jsonString, types.JSONContainsPathAll, "$.c.d"}, 1, true},
-		{[]interface{}{jsonString, types.JSONContainsPathAll, "$.a.d"}, 0, true},
+		{[]any{jsonString, types.JSONContainsPathOne, "$.c.d"}, 1, true},
+		{[]any{jsonString, types.JSONContainsPathOne, "$.a.d"}, 0, true},
+		{[]any{jsonString, types.JSONContainsPathAll, "$.c.d"}, 1, true},
+		{[]any{jsonString, types.JSONContainsPathAll, "$.a.d"}, 0, true},
 		// Tests with multiple path expression
-		{[]interface{}{jsonString, types.JSONContainsPathOne, "$.a", "$.e"}, 1, true},
-		{[]interface{}{jsonString, types.JSONContainsPathOne, "$.a", "$.c"}, 1, true},
-		{[]interface{}{jsonString, types.JSONContainsPathAll, "$.a", "$.e"}, 0, true},
-		{[]interface{}{jsonString, types.JSONContainsPathAll, "$.a", "$.c"}, 1, true},
+		{[]any{jsonString, types.JSONContainsPathOne, "$.a", "$.e"}, 1, true},
+		{[]any{jsonString, types.JSONContainsPathOne, "$.a", "$.c"}, 1, true},
+		{[]any{jsonString, types.JSONContainsPathAll, "$.a", "$.e"}, 0, true},
+		{[]any{jsonString, types.JSONContainsPathAll, "$.a", "$.c"}, 1, true},
 		// Tests path expression contains any asterisk
-		{[]interface{}{jsonString, types.JSONContainsPathOne, "$.*"}, 1, true},
-		{[]interface{}{jsonString, types.JSONContainsPathOne, "$[*]"}, 0, true},
-		{[]interface{}{jsonString, types.JSONContainsPathAll, "$.*"}, 1, true},
-		{[]interface{}{jsonString, types.JSONContainsPathAll, "$[*]"}, 0, true},
+		{[]any{jsonString, types.JSONContainsPathOne, "$.*"}, 1, true},
+		{[]any{jsonString, types.JSONContainsPathOne, "$[*]"}, 0, true},
+		{[]any{jsonString, types.JSONContainsPathAll, "$.*"}, 1, true},
+		{[]any{jsonString, types.JSONContainsPathAll, "$[*]"}, 0, true},
 		// Tests invalid json document
-		{[]interface{}{invalidJSON, types.JSONContainsPathOne, "$.a"}, nil, false},
-		{[]interface{}{invalidJSON, types.JSONContainsPathAll, "$.a"}, nil, false},
+		{[]any{invalidJSON, types.JSONContainsPathOne, "$.a"}, nil, false},
+		{[]any{invalidJSON, types.JSONContainsPathAll, "$.a"}, nil, false},
 		// Tests compatible contains path
-		{[]interface{}{jsonString, "ONE", "$.c.d"}, 1, true},
-		{[]interface{}{jsonString, "ALL", "$.c.d"}, 1, true},
-		{[]interface{}{jsonString, "One", "$.a", "$.e"}, 1, true},
-		{[]interface{}{jsonString, "aLl", "$.a", "$.e"}, 0, true},
-		{[]interface{}{jsonString, "test", "$.a"}, nil, false},
+		{[]any{jsonString, "ONE", "$.c.d"}, 1, true},
+		{[]any{jsonString, "ALL", "$.c.d"}, 1, true},
+		{[]any{jsonString, "One", "$.a", "$.e"}, 1, true},
+		{[]any{jsonString, "aLl", "$.a", "$.e"}, 0, true},
+		{[]any{jsonString, "test", "$.a"}, nil, false},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
@@ -635,54 +635,54 @@ func TestJSONLength(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONLength]
 	tbl := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		success  bool
 	}{
 		// Tests scalar arguments
-		{[]interface{}{`null`}, 1, true},
-		{[]interface{}{`true`}, 1, true},
-		{[]interface{}{`false`}, 1, true},
-		{[]interface{}{`1`}, 1, true},
-		{[]interface{}{`-1`}, 1, true},
-		{[]interface{}{`1.1`}, 1, true},
-		{[]interface{}{`"1"`}, 1, true},
-		{[]interface{}{`"1"`, "$.a"}, 1, true},
-		{[]interface{}{`null`, "$.a"}, 1, true},
+		{[]any{`null`}, 1, true},
+		{[]any{`true`}, 1, true},
+		{[]any{`false`}, 1, true},
+		{[]any{`1`}, 1, true},
+		{[]any{`-1`}, 1, true},
+		{[]any{`1.1`}, 1, true},
+		{[]any{`"1"`}, 1, true},
+		{[]any{`"1"`, "$.a"}, nil, true},
+		{[]any{`null`, "$.a"}, nil, true},
 		// Tests nil arguments
-		{[]interface{}{nil}, nil, true},
-		{[]interface{}{nil, "a"}, nil, true},
-		{[]interface{}{`{"a": 1}`, nil}, nil, true},
-		{[]interface{}{nil, nil}, nil, true},
+		{[]any{nil}, nil, true},
+		{[]any{nil, "a"}, nil, true},
+		{[]any{`{"a": 1}`, nil}, nil, true},
+		{[]any{nil, nil}, nil, true},
 		// Tests with path expression
-		{[]interface{}{`[1,2,[1,[5,[3]]]]`, "$[2]"}, 2, true},
-		{[]interface{}{`[{"a":1}]`, "$"}, 1, true},
-		{[]interface{}{`[{"a":1,"b":2}]`, "$[0].a"}, 1, true},
-		{[]interface{}{`{"a":{"a":1},"b":2}`, "$"}, 2, true},
-		{[]interface{}{`{"a":{"a":1},"b":2}`, "$.a"}, 1, true},
-		{[]interface{}{`{"a":{"a":1},"b":2}`, "$.a.a"}, 1, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].aa"}, 1, true},
+		{[]any{`[1,2,[1,[5,[3]]]]`, "$[2]"}, 2, true},
+		{[]any{`[{"a":1}]`, "$"}, 1, true},
+		{[]any{`[{"a":1,"b":2}]`, "$[0].a"}, 1, true},
+		{[]any{`{"a":{"a":1},"b":2}`, "$"}, 2, true},
+		{[]any{`{"a":{"a":1},"b":2}`, "$.a"}, 1, true},
+		{[]any{`{"a":{"a":1},"b":2}`, "$.a.a"}, 1, true},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].aa"}, 1, true},
 		// Tests without path expression
-		{[]interface{}{`{}`}, 0, true},
-		{[]interface{}{`{"a":1}`}, 1, true},
-		{[]interface{}{`{"a":[1]}`}, 1, true},
-		{[]interface{}{`{"b":2, "c":3}`}, 2, true},
-		{[]interface{}{`[1]`}, 1, true},
-		{[]interface{}{`[1,2]`}, 2, true},
-		{[]interface{}{`[1,2,[1,3]]`}, 3, true},
-		{[]interface{}{`[1,2,[1,[5,[3]]]]`}, 3, true},
-		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`}, 3, true},
-		{[]interface{}{`[{"a":1}]`}, 1, true},
-		{[]interface{}{`[{"a":1,"b":2}]`}, 1, true},
-		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 1, true},
+		{[]any{`{}`}, 0, true},
+		{[]any{`{"a":1}`}, 1, true},
+		{[]any{`{"a":[1]}`}, 1, true},
+		{[]any{`{"b":2, "c":3}`}, 2, true},
+		{[]any{`[1]`}, 1, true},
+		{[]any{`[1,2]`}, 2, true},
+		{[]any{`[1,2,[1,3]]`}, 3, true},
+		{[]any{`[1,2,[1,[5,[3]]]]`}, 3, true},
+		{[]any{`[1,2,[1,[5,{"a":[2,3]}]]]`}, 3, true},
+		{[]any{`[{"a":1}]`}, 1, true},
+		{[]any{`[{"a":1,"b":2}]`}, 1, true},
+		{[]any{`[{"a":{"a":1},"b":2}]`}, 1, true},
 		// Tests path expression contains any asterisk
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.*"}, nil, false},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$[*]"}, nil, false},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$**.a"}, nil, false},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.*"}, nil, false},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$[*]"}, nil, false},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$**.a"}, nil, false},
 		// Tests path expression does not identify a section of the target document
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.c"}, nil, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[3]"}, nil, true},
-		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].b"}, nil, true},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.c"}, nil, true},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[3]"}, nil, true},
+		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].b"}, nil, true},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
@@ -707,47 +707,47 @@ func TestJSONKeys(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONKeys]
 	tbl := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		success  bool
 	}{
 
 		// Tests nil arguments
-		{[]interface{}{nil}, nil, true},
-		{[]interface{}{nil, "$.c"}, nil, true},
-		{[]interface{}{`{"a": 1}`, nil}, nil, true},
-		{[]interface{}{nil, nil}, nil, true},
+		{[]any{nil}, nil, true},
+		{[]any{nil, "$.c"}, nil, true},
+		{[]any{`{"a": 1}`, nil}, nil, true},
+		{[]any{nil, nil}, nil, true},
 
 		// Tests with other type
-		{[]interface{}{`1`}, nil, true},
-		{[]interface{}{`"str"`}, nil, true},
-		{[]interface{}{`true`}, nil, true},
-		{[]interface{}{`null`}, nil, true},
-		{[]interface{}{`[1, 2]`}, nil, true},
-		{[]interface{}{`["1", "2"]`}, nil, true},
+		{[]any{`1`}, nil, true},
+		{[]any{`"str"`}, nil, true},
+		{[]any{`true`}, nil, true},
+		{[]any{`null`}, nil, true},
+		{[]any{`[1, 2]`}, nil, true},
+		{[]any{`["1", "2"]`}, nil, true},
 
 		// Tests without path expression
-		{[]interface{}{`{}`}, `[]`, true},
-		{[]interface{}{`{"a": 1}`}, `["a"]`, true},
-		{[]interface{}{`{"a": 1, "b": 2}`}, `["a", "b"]`, true},
-		{[]interface{}{`{"a": {"c": 3}, "b": 2}`}, `["a", "b"]`, true},
+		{[]any{`{}`}, `[]`, true},
+		{[]any{`{"a": 1}`}, `["a"]`, true},
+		{[]any{`{"a": 1, "b": 2}`}, `["a", "b"]`, true},
+		{[]any{`{"a": {"c": 3}, "b": 2}`}, `["a", "b"]`, true},
 
 		// Tests with path expression
-		{[]interface{}{`{"a": 1}`, "$.a"}, nil, true},
-		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.a"}, `["c"]`, true},
-		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.a.c"}, nil, true},
-		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, nil}, nil, true},
+		{[]any{`{"a": 1}`, "$.a"}, nil, true},
+		{[]any{`{"a": {"c": 3}, "b": 2}`, "$.a"}, `["c"]`, true},
+		{[]any{`{"a": {"c": 3}, "b": 2}`, "$.a.c"}, nil, true},
+		{[]any{`{"a": {"c": 3}, "b": 2}`, nil}, nil, true},
 
 		// Tests path expression contains any asterisk
-		{[]interface{}{`{}`, "$.*"}, nil, false},
-		{[]interface{}{`{"a": 1}`, "$.*"}, nil, false},
-		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.*"}, nil, false},
-		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.a.*"}, nil, false},
+		{[]any{`{}`, "$.*"}, nil, false},
+		{[]any{`{"a": 1}`, "$.*"}, nil, false},
+		{[]any{`{"a": {"c": 3}, "b": 2}`, "$.*"}, nil, false},
+		{[]any{`{"a": {"c": 3}, "b": 2}`, "$.a.*"}, nil, false},
 
 		// Tests path expression does not identify a section of the target document
-		{[]interface{}{`{"a": 1}`, "$.b"}, nil, true},
-		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.c"}, nil, true},
-		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.a.d"}, nil, true},
+		{[]any{`{"a": 1}`, "$.b"}, nil, true},
+		{[]any{`{"a": {"c": 3}, "b": 2}`, "$.c"}, nil, true},
+		{[]any{`{"a": {"c": 3}, "b": 2}`, "$.a.d"}, nil, true},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
@@ -778,41 +778,41 @@ func TestJSONDepth(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONDepth]
 	tbl := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		success  bool
 	}{
 		// Tests scalar arguments
-		{[]interface{}{`null`}, 1, true},
-		{[]interface{}{`true`}, 1, true},
-		{[]interface{}{`false`}, 1, true},
-		{[]interface{}{`1`}, 1, true},
-		{[]interface{}{`-1`}, 1, true},
-		{[]interface{}{`1.1`}, 1, true},
-		{[]interface{}{`"1"`}, 1, true},
+		{[]any{`null`}, 1, true},
+		{[]any{`true`}, 1, true},
+		{[]any{`false`}, 1, true},
+		{[]any{`1`}, 1, true},
+		{[]any{`-1`}, 1, true},
+		{[]any{`1.1`}, 1, true},
+		{[]any{`"1"`}, 1, true},
 		// Tests nil arguments
-		{[]interface{}{nil}, nil, true},
+		{[]any{nil}, nil, true},
 		// Tests depth
-		{[]interface{}{`{}`}, 1, true},
-		{[]interface{}{`[]`}, 1, true},
-		{[]interface{}{`[10, 20]`}, 2, true},
-		{[]interface{}{`[[], {}]`}, 2, true},
-		{[]interface{}{`{"Name": "Homer"}`}, 2, true},
-		{[]interface{}{`[10, {"a": 20}]`}, 3, true},
-		{[]interface{}{`{"Person": {"Name": "Homer", "Age": 39, "Hobbies": ["Eating", "Sleeping"]} }`}, 4, true},
-		{[]interface{}{`{"a":1}`}, 2, true},
-		{[]interface{}{`{"a":[1]}`}, 3, true},
-		{[]interface{}{`{"b":2, "c":3}`}, 2, true},
-		{[]interface{}{`[1]`}, 2, true},
-		{[]interface{}{`[1,2]`}, 2, true},
-		{[]interface{}{`[1,2,[1,3]]`}, 3, true},
-		{[]interface{}{`[1,2,[1,[5,[3]]]]`}, 5, true},
-		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`}, 6, true},
-		{[]interface{}{`[{"a":1}]`}, 3, true},
-		{[]interface{}{`[{"a":1,"b":2}]`}, 3, true},
-		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 4, true},
+		{[]any{`{}`}, 1, true},
+		{[]any{`[]`}, 1, true},
+		{[]any{`[10, 20]`}, 2, true},
+		{[]any{`[[], {}]`}, 2, true},
+		{[]any{`{"Name": "Homer"}`}, 2, true},
+		{[]any{`[10, {"a": 20}]`}, 3, true},
+		{[]any{`{"Person": {"Name": "Homer", "Age": 39, "Hobbies": ["Eating", "Sleeping"]} }`}, 4, true},
+		{[]any{`{"a":1}`}, 2, true},
+		{[]any{`{"a":[1]}`}, 3, true},
+		{[]any{`{"b":2, "c":3}`}, 2, true},
+		{[]any{`[1]`}, 2, true},
+		{[]any{`[1,2]`}, 2, true},
+		{[]any{`[1,2,[1,3]]`}, 3, true},
+		{[]any{`[1,2,[1,[5,[3]]]]`}, 5, true},
+		{[]any{`[1,2,[1,[5,{"a":[2,3]}]]]`}, 6, true},
+		{[]any{`[{"a":1}]`}, 3, true},
+		{[]any{`[{"a":1,"b":2}]`}, 3, true},
+		{[]any{`[{"a":{"a":1},"b":2}]`}, 4, true},
 		// Tests non-json
-		{[]interface{}{`a`}, nil, false},
+		{[]any{`a`}, nil, false},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
@@ -839,42 +839,42 @@ func TestJSONArrayAppend(t *testing.T) {
 	require.NoError(t, err)
 	fc := funcs[ast.JSONArrayAppend]
 	tbl := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		err      *terror.Error
 	}{
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`, `z`}, `{"a": 1, "b": [2, 3], "c": 4}`, nil},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$`, `w`}, `[{"a": 1, "b": [2, 3], "c": 4}, "w"]`, nil},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$`, nil}, `[{"a": 1, "b": [2, 3], "c": 4}, null]`, nil},
-		{[]interface{}{`{"a": 1}`, `$`, `{"b": 2}`}, `[{"a": 1}, "{\"b\": 2}"]`, nil},
-		{[]interface{}{`{"a": 1}`, `$`, sampleJSON}, `[{"a": 1}, {"b": 2}]`, nil},
-		{[]interface{}{`{"a": 1}`, `$.a`, sampleJSON}, `{"a": [1, {"b": 2}]}`, nil},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`, `z`}, `{"a": 1, "b": [2, 3], "c": 4}`, nil},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$`, `w`}, `[{"a": 1, "b": [2, 3], "c": 4}, "w"]`, nil},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$`, nil}, `[{"a": 1, "b": [2, 3], "c": 4}, null]`, nil},
+		{[]any{`{"a": 1}`, `$`, `{"b": 2}`}, `[{"a": 1}, "{\"b\": 2}"]`, nil},
+		{[]any{`{"a": 1}`, `$`, sampleJSON}, `[{"a": 1}, {"b": 2}]`, nil},
+		{[]any{`{"a": 1}`, `$.a`, sampleJSON}, `{"a": [1, {"b": 2}]}`, nil},
 
-		{[]interface{}{`{"a": 1}`, `$.a`, sampleJSON, `$.a[1]`, sampleJSON}, `{"a": [1, [{"b": 2}, {"b": 2}]]}`, nil},
-		{[]interface{}{nil, `$`, nil}, nil, nil},
-		{[]interface{}{nil, `$`, `a`}, nil, nil},
-		{[]interface{}{`null`, `$`, nil}, `[null, null]`, nil},
-		{[]interface{}{`[]`, `$`, nil}, `[null]`, nil},
-		{[]interface{}{`{}`, `$`, nil}, `[{}, null]`, nil},
+		{[]any{`{"a": 1}`, `$.a`, sampleJSON, `$.a[1]`, sampleJSON}, `{"a": [1, [{"b": 2}, {"b": 2}]]}`, nil},
+		{[]any{nil, `$`, nil}, nil, nil},
+		{[]any{nil, `$`, `a`}, nil, nil},
+		{[]any{`null`, `$`, nil}, `[null, null]`, nil},
+		{[]any{`[]`, `$`, nil}, `[null]`, nil},
+		{[]any{`{}`, `$`, nil}, `[{}, null]`, nil},
 		// Bad arguments.
-		{[]interface{}{`asdf`, `$`, nil}, nil, types.ErrInvalidJSONText},
-		{[]interface{}{``, `$`, nil}, nil, types.ErrInvalidJSONText},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`}, nil, ErrIncorrectParameterCount},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`, `$.b`}, nil, ErrIncorrectParameterCount},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, nil},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, types.ErrInvalidJSONPath},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, types.ErrInvalidJSONPath},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, types.ErrInvalidJSONPathMultipleSelection},
+		{[]any{`asdf`, `$`, nil}, nil, types.ErrInvalidJSONText},
+		{[]any{``, `$`, nil}, nil, types.ErrInvalidJSONText},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`}, nil, ErrIncorrectParameterCount},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`, `$.b`}, nil, ErrIncorrectParameterCount},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, nil},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, types.ErrInvalidJSONPath},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, types.ErrInvalidJSONPath},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, types.ErrInvalidJSONPathMultipleSelection},
 		// Following tests come from MySQL doc.
-		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1]`, 1}, `["a", ["b", "c", 1], "d"]`, nil},
-		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[0]`, 2}, `[["a", 2], ["b", "c"], "d"]`, nil},
-		{[]interface{}{`["a", ["b", "c"], "d"]`, `$[1][0]`, 3}, `["a", [["b", 3], "c"], "d"]`, nil},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b`, `x`}, `{"a": 1, "b": [2, 3, "x"], "c": 4}`, nil},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`}, `{"a": 1, "b": [2, 3], "c": [4, "y"]}`, nil},
+		{[]any{`["a", ["b", "c"], "d"]`, `$[1]`, 1}, `["a", ["b", "c", 1], "d"]`, nil},
+		{[]any{`["a", ["b", "c"], "d"]`, `$[0]`, 2}, `[["a", 2], ["b", "c"], "d"]`, nil},
+		{[]any{`["a", ["b", "c"], "d"]`, `$[1][0]`, 3}, `["a", [["b", 3], "c"], "d"]`, nil},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b`, `x`}, `{"a": 1, "b": [2, 3, "x"], "c": 4}`, nil},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`}, `{"a": 1, "b": [2, 3], "c": [4, "y"]}`, nil},
 		// Following tests come from MySQL test.
-		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, nil},
-		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].a`, 3.14}, `[1, 2, 3, {"a": [4, 5, 6, 3.14]}, 7]`, nil},
-		{[]interface{}{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].b`, 8}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, nil},
+		{[]any{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, nil},
+		{[]any{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].a`, 3.14}, `[1, 2, 3, {"a": [4, 5, 6, 3.14]}, 7]`, nil},
+		{[]any{`[1,2,3, {"a":[4,5,6]}]`, `$`, 7, `$[3].b`, 8}, `[1, 2, 3, {"a": [4, 5, 6]}, 7]`, nil},
 	}
 
 	for i, tt := range tbl {
@@ -918,50 +918,50 @@ func TestJSONSearch(t *testing.T) {
 	jsonString := `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`
 	jsonString2 := `["abc", [{"k": "10"}, "def"], {"x":"ab%d"}, {"y":"abcd"}]`
 	tbl := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		success  bool
 	}{
 		// simple case
-		{[]interface{}{jsonString, `one`, `abc`}, `"$[0]"`, true},
-		{[]interface{}{jsonString, `all`, `abc`}, `["$[0]", "$[2].x"]`, true},
-		{[]interface{}{jsonString, `all`, `ghi`}, nil, true},
-		{[]interface{}{jsonString, `ALL`, `ghi`}, nil, true},
-		{[]interface{}{jsonString, `all`, `10`}, `"$[1][0].k"`, true},
-		{[]interface{}{jsonString, `all`, `10`, nil, `$`}, `"$[1][0].k"`, true},
-		{[]interface{}{jsonString, `all`, `10`, nil, `$[*]`}, `"$[1][0].k"`, true},
-		{[]interface{}{jsonString, `all`, `10`, nil, `$**.k`}, `"$[1][0].k"`, true},
-		{[]interface{}{jsonString, `all`, `10`, nil, `$[*][0].k`}, `"$[1][0].k"`, true},
-		{[]interface{}{jsonString, `all`, `10`, nil, `$[1]`}, `"$[1][0].k"`, true},
-		{[]interface{}{jsonString, `all`, `10`, nil, `$[1][0]`}, `"$[1][0].k"`, true},
-		{[]interface{}{jsonString, `all`, `abc`, nil, `$[2]`}, `"$[2].x"`, true},
-		{[]interface{}{jsonString, `all`, `abc`, nil, `$[2]`, `$[0]`}, `["$[2].x", "$[0]"]`, true},
-		{[]interface{}{jsonString, `all`, `abc`, nil, `$[2]`, `$[2]`}, `"$[2].x"`, true},
+		{[]any{jsonString, `one`, `abc`}, `"$[0]"`, true},
+		{[]any{jsonString, `all`, `abc`}, `["$[0]", "$[2].x"]`, true},
+		{[]any{jsonString, `all`, `ghi`}, nil, true},
+		{[]any{jsonString, `ALL`, `ghi`}, nil, true},
+		{[]any{jsonString, `all`, `10`}, `"$[1][0].k"`, true},
+		{[]any{jsonString, `all`, `10`, nil, `$`}, `"$[1][0].k"`, true},
+		{[]any{jsonString, `all`, `10`, nil, `$[*]`}, `"$[1][0].k"`, true},
+		{[]any{jsonString, `all`, `10`, nil, `$**.k`}, `"$[1][0].k"`, true},
+		{[]any{jsonString, `all`, `10`, nil, `$[*][0].k`}, `"$[1][0].k"`, true},
+		{[]any{jsonString, `all`, `10`, nil, `$[1]`}, `"$[1][0].k"`, true},
+		{[]any{jsonString, `all`, `10`, nil, `$[1][0]`}, `"$[1][0].k"`, true},
+		{[]any{jsonString, `all`, `abc`, nil, `$[2]`}, `"$[2].x"`, true},
+		{[]any{jsonString, `all`, `abc`, nil, `$[2]`, `$[0]`}, `["$[2].x", "$[0]"]`, true},
+		{[]any{jsonString, `all`, `abc`, nil, `$[2]`, `$[2]`}, `"$[2].x"`, true},
 
 		// search pattern
-		{[]interface{}{jsonString, `all`, `%a%`}, `["$[0]", "$[2].x"]`, true},
-		{[]interface{}{jsonString, `all`, `%b%`}, `["$[0]", "$[2].x", "$[3].y"]`, true},
-		{[]interface{}{jsonString, `all`, `%b%`, nil, `$[0]`}, `"$[0]"`, true},
-		{[]interface{}{jsonString, `all`, `%b%`, nil, `$[2]`}, `"$[2].x"`, true},
-		{[]interface{}{jsonString, `all`, `%b%`, nil, `$[1]`}, nil, true},
-		{[]interface{}{jsonString, `all`, `%b%`, ``, `$[1]`}, nil, true},
-		{[]interface{}{jsonString, `all`, `%b%`, nil, `$[3]`}, `"$[3].y"`, true},
-		{[]interface{}{jsonString2, `all`, `ab_d`}, `["$[2].x", "$[3].y"]`, true},
+		{[]any{jsonString, `all`, `%a%`}, `["$[0]", "$[2].x"]`, true},
+		{[]any{jsonString, `all`, `%b%`}, `["$[0]", "$[2].x", "$[3].y"]`, true},
+		{[]any{jsonString, `all`, `%b%`, nil, `$[0]`}, `"$[0]"`, true},
+		{[]any{jsonString, `all`, `%b%`, nil, `$[2]`}, `"$[2].x"`, true},
+		{[]any{jsonString, `all`, `%b%`, nil, `$[1]`}, nil, true},
+		{[]any{jsonString, `all`, `%b%`, ``, `$[1]`}, nil, true},
+		{[]any{jsonString, `all`, `%b%`, nil, `$[3]`}, `"$[3].y"`, true},
+		{[]any{jsonString2, `all`, `ab_d`}, `["$[2].x", "$[3].y"]`, true},
 
 		// escape char
-		{[]interface{}{jsonString2, `all`, `ab%d`}, `["$[2].x", "$[3].y"]`, true},
-		{[]interface{}{jsonString2, `all`, `ab\%d`}, `"$[2].x"`, true},
-		{[]interface{}{jsonString2, `all`, `ab|%d`, `|`}, `"$[2].x"`, true},
+		{[]any{jsonString2, `all`, `ab%d`}, `["$[2].x", "$[3].y"]`, true},
+		{[]any{jsonString2, `all`, `ab\%d`}, `"$[2].x"`, true},
+		{[]any{jsonString2, `all`, `ab|%d`, `|`}, `"$[2].x"`, true},
 
 		// error handle
-		{[]interface{}{nil, `all`, `abc`}, nil, true},                     // NULL json
-		{[]interface{}{`a`, `all`, `abc`}, nil, false},                    // non json
-		{[]interface{}{jsonString, `wrong`, `abc`}, nil, false},           // wrong one_or_all
-		{[]interface{}{jsonString, `all`, nil}, nil, true},                // NULL search_str
-		{[]interface{}{jsonString, `all`, `abc`, `??`}, nil, false},       // wrong escape_char
-		{[]interface{}{jsonString, `all`, `abc`, nil, nil}, nil, true},    // NULL path
-		{[]interface{}{jsonString, `all`, `abc`, nil, `$xx`}, nil, false}, // wrong path
-		{[]interface{}{jsonString, nil, `abc`}, nil, true},
+		{[]any{nil, `all`, `abc`}, nil, true},                     // NULL json
+		{[]any{`a`, `all`, `abc`}, nil, false},                    // non json
+		{[]any{jsonString, `wrong`, `abc`}, nil, false},           // wrong one_or_all
+		{[]any{jsonString, `all`, nil}, nil, true},                // NULL search_str
+		{[]any{jsonString, `all`, `abc`, `??`}, nil, false},       // wrong escape_char
+		{[]any{jsonString, `all`, `abc`, nil, nil}, nil, true},    // NULL path
+		{[]any{jsonString, `all`, `abc`, nil, `$xx`}, nil, false}, // wrong path
+		{[]any{jsonString, nil, `abc`}, nil, true},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
@@ -991,42 +991,42 @@ func TestJSONArrayInsert(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONArrayInsert]
 	tbl := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		success  bool
 		err      *terror.Error
 	}{
 		// Success
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b[1]`, `z`}, `{"a": 1, "b": [2, "z", 3], "c": 4}`, true, nil},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.a[1]`, `z`}, `{"a": 1, "b": [2, 3], "c": 4}`, true, nil},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d[1]`, `z`}, `{"a": 1, "b": [2, 3], "c": 4}`, true, nil},
-		{[]interface{}{`[{"a": 1, "b": [2, 3], "c": 4}]`, `$[1]`, `w`}, `[{"a": 1, "b": [2, 3], "c": 4}, "w"]`, true, nil},
-		{[]interface{}{`[{"a": 1, "b": [2, 3], "c": 4}]`, `$[0]`, nil}, `[null, {"a": 1, "b": [2, 3], "c": 4}]`, true, nil},
-		{[]interface{}{`[1, 2, 3]`, `$[100]`, `{"b": 2}`}, `[1, 2, 3, "{\"b\": 2}"]`, true, nil},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b[1]`, `z`}, `{"a": 1, "b": [2, "z", 3], "c": 4}`, true, nil},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.a[1]`, `z`}, `{"a": 1, "b": [2, 3], "c": 4}`, true, nil},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d[1]`, `z`}, `{"a": 1, "b": [2, 3], "c": 4}`, true, nil},
+		{[]any{`[{"a": 1, "b": [2, 3], "c": 4}]`, `$[1]`, `w`}, `[{"a": 1, "b": [2, 3], "c": 4}, "w"]`, true, nil},
+		{[]any{`[{"a": 1, "b": [2, 3], "c": 4}]`, `$[0]`, nil}, `[null, {"a": 1, "b": [2, 3], "c": 4}]`, true, nil},
+		{[]any{`[1, 2, 3]`, `$[100]`, `{"b": 2}`}, `[1, 2, 3, "{\"b\": 2}"]`, true, nil},
 		// About null
-		{[]interface{}{nil, `$`, nil}, nil, true, nil},
-		{[]interface{}{nil, `$`, `a`}, nil, true, nil},
-		{[]interface{}{`[]`, `$[0]`, nil}, `[null]`, true, nil},
-		{[]interface{}{`{}`, `$[0]`, nil}, `{}`, true, nil},
+		{[]any{nil, `$`, nil}, nil, true, nil},
+		{[]any{nil, `$`, `a`}, nil, true, nil},
+		{[]any{`[]`, `$[0]`, nil}, `[null]`, true, nil},
+		{[]any{`{}`, `$[0]`, nil}, `{}`, true, nil},
 		// Bad arguments
-		{[]interface{}{`asdf`, `$`, nil}, nil, false, types.ErrInvalidJSONText},
-		{[]interface{}{``, `$`, nil}, nil, false, types.ErrInvalidJSONText},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`}, nil, false, ErrIncorrectParameterCount},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`, `$.b`}, nil, false, ErrIncorrectParameterCount},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, true, nil},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, false, types.ErrInvalidJSONPath},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, false, types.ErrInvalidJSONPath},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, false, types.ErrInvalidJSONPathMultipleSelection},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b[0]`, nil, `$.a`, nil}, nil, false, types.ErrInvalidJSONPathArrayCell},
-		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.a`, nil}, nil, false, types.ErrInvalidJSONPathArrayCell},
+		{[]any{`asdf`, `$`, nil}, nil, false, types.ErrInvalidJSONText},
+		{[]any{``, `$`, nil}, nil, false, types.ErrInvalidJSONText},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`}, nil, false, ErrIncorrectParameterCount},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`, `$.b`}, nil, false, ErrIncorrectParameterCount},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, true, nil},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `asdf`, nil}, nil, false, types.ErrInvalidJSONPath},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, 42, nil}, nil, false, types.ErrInvalidJSONPath},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.*`, nil}, nil, false, types.ErrInvalidJSONPathMultipleSelection},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b[0]`, nil, `$.a`, nil}, nil, false, types.ErrInvalidJSONPathArrayCell},
+		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.a`, nil}, nil, false, types.ErrInvalidJSONPathArrayCell},
 		// Following tests come from MySQL doc.
-		{[]interface{}{`["a", {"b": [1, 2]}, [3, 4]]`, `$[1]`, `x`}, `["a", "x", {"b": [1, 2]}, [3, 4]]`, true, nil},
-		{[]interface{}{`["a", {"b": [1, 2]}, [3, 4]]`, `$[100]`, `x`}, `["a", {"b": [1, 2]}, [3, 4], "x"]`, true, nil},
-		{[]interface{}{`["a", {"b": [1, 2]}, [3, 4]]`, `$[1].b[0]`, `x`}, `["a", {"b": ["x", 1, 2]}, [3, 4]]`, true, nil},
-		{[]interface{}{`["a", {"b": [1, 2]}, [3, 4]]`, `$[2][1]`, `y`}, `["a", {"b": [1, 2]}, [3, "y", 4]]`, true, nil},
-		{[]interface{}{`["a", {"b": [1, 2]}, [3, 4]]`, `$[0]`, `x`, `$[2][1]`, `y`}, `["x", "a", {"b": [1, 2]}, [3, 4]]`, true, nil},
+		{[]any{`["a", {"b": [1, 2]}, [3, 4]]`, `$[1]`, `x`}, `["a", "x", {"b": [1, 2]}, [3, 4]]`, true, nil},
+		{[]any{`["a", {"b": [1, 2]}, [3, 4]]`, `$[100]`, `x`}, `["a", {"b": [1, 2]}, [3, 4], "x"]`, true, nil},
+		{[]any{`["a", {"b": [1, 2]}, [3, 4]]`, `$[1].b[0]`, `x`}, `["a", {"b": ["x", 1, 2]}, [3, 4]]`, true, nil},
+		{[]any{`["a", {"b": [1, 2]}, [3, 4]]`, `$[2][1]`, `y`}, `["a", {"b": [1, 2]}, [3, "y", 4]]`, true, nil},
+		{[]any{`["a", {"b": [1, 2]}, [3, 4]]`, `$[0]`, `x`, `$[2][1]`, `y`}, `["x", "a", {"b": [1, 2]}, [3, 4]]`, true, nil},
 		// More test cases
-		{[]interface{}{`["a", {"b": [1, 2]}, [3, 4]]`, `$[0]`, `x`, `$[0]`, `y`}, `["y", "x", "a", {"b": [1, 2]}, [3, 4]]`, true, nil},
+		{[]any{`["a", {"b": [1, 2]}, [3, 4]]`, `$[0]`, `x`, `$[0]`, `y`}, `["y", "x", "a", {"b": [1, 2]}, [3, 4]]`, true, nil},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
@@ -1064,8 +1064,8 @@ func TestJSONValid(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONValid]
 	tbl := []struct {
-		Input    interface{}
-		Expected interface{}
+		Input    any
+		Expected any
 	}{
 		{`{"a":1}`, 1},
 		{`hello`, 0},
@@ -1095,25 +1095,25 @@ func TestJSONStorageFree(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONStorageFree]
 	tbl := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		success  bool
 	}{
 		// Tests scalar arguments
-		{[]interface{}{`null`}, 0, true},
-		{[]interface{}{`true`}, 0, true},
-		{[]interface{}{`1`}, 0, true},
-		{[]interface{}{`"1"`}, 0, true},
+		{[]any{`null`}, 0, true},
+		{[]any{`true`}, 0, true},
+		{[]any{`1`}, 0, true},
+		{[]any{`"1"`}, 0, true},
 		// Tests nil arguments
-		{[]interface{}{nil}, nil, true},
+		{[]any{nil}, nil, true},
 		// Tests valid json documents
-		{[]interface{}{`{}`}, 0, true},
-		{[]interface{}{`{"a":1}`}, 0, true},
-		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 0, true},
-		{[]interface{}{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 0, true},
+		{[]any{`{}`}, 0, true},
+		{[]any{`{"a":1}`}, 0, true},
+		{[]any{`[{"a":{"a":1},"b":2}]`}, 0, true},
+		{[]any{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 0, true},
 		// Tests invalid json documents
-		{[]interface{}{`[{"a":1]`}, 0, false},
-		{[]interface{}{`[{a":1]`}, 0, false},
+		{[]any{`[{"a":1]`}, 0, false},
+		{[]any{`[{a":1]`}, 0, false},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
@@ -1138,25 +1138,25 @@ func TestJSONStorageSize(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONStorageSize]
 	tbl := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		success  bool
 	}{
 		// Tests scalar arguments
-		{[]interface{}{`null`}, 2, true},
-		{[]interface{}{`true`}, 2, true},
-		{[]interface{}{`1`}, 9, true},
-		{[]interface{}{`"1"`}, 3, true},
+		{[]any{`null`}, 2, true},
+		{[]any{`true`}, 2, true},
+		{[]any{`1`}, 9, true},
+		{[]any{`"1"`}, 3, true},
 		// Tests nil arguments
-		{[]interface{}{nil}, nil, true},
+		{[]any{nil}, nil, true},
 		// Tests valid json documents
-		{[]interface{}{`{}`}, 9, true},
-		{[]interface{}{`{"a":1}`}, 29, true},
-		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 82, true},
-		{[]interface{}{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 71, true},
+		{[]any{`{}`}, 9, true},
+		{[]any{`{"a":1}`}, 29, true},
+		{[]any{`[{"a":{"a":1},"b":2}]`}, 82, true},
+		{[]any{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 71, true},
 		// Tests invalid json documents
-		{[]interface{}{`[{"a":1]`}, 0, false},
-		{[]interface{}{`[{a":1]`}, 0, false},
+		{[]any{`[{"a":1]`}, 0, false},
+		{[]any{`[{a":1]`}, 0, false},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
@@ -1181,24 +1181,24 @@ func TestJSONPretty(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONPretty]
 	tbl := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		success  bool
 	}{
 		// Tests scalar arguments
-		{[]interface{}{nil}, nil, true},
-		{[]interface{}{`true`}, "true", true},
-		{[]interface{}{`false`}, "false", true},
-		{[]interface{}{`2223`}, "2223", true},
+		{[]any{nil}, nil, true},
+		{[]any{`true`}, "true", true},
+		{[]any{`false`}, "false", true},
+		{[]any{`2223`}, "2223", true},
 		// Tests simple json
-		{[]interface{}{`{"a":1}`}, `{
+		{[]any{`{"a":1}`}, `{
   "a": 1
 }`, true},
-		{[]interface{}{`[1]`}, `[
+		{[]any{`[1]`}, `[
   1
 ]`, true},
 		// Test complex json
-		{[]interface{}{`{"a":1,"b":[{"d":1},{"e":2},{"f":3}],"c":"eee"}`}, `{
+		{[]any{`{"a":1,"b":[{"d":1},{"e":2},{"f":3}],"c":"eee"}`}, `{
   "a": 1,
   "b": [
     {
@@ -1213,7 +1213,7 @@ func TestJSONPretty(t *testing.T) {
   ],
   "c": "eee"
 }`, true},
-		{[]interface{}{`{"a":1,"b":"qwe","c":[1,2,3,"123",null],"d":{"d1":1,"d2":2}}`}, `{
+		{[]any{`{"a":1,"b":"qwe","c":[1,2,3,"123",null],"d":{"d1":1,"d2":2}}`}, `{
   "a": 1,
   "b": "qwe",
   "c": [
@@ -1229,8 +1229,8 @@ func TestJSONPretty(t *testing.T) {
   }
 }`, true},
 		// Tests invalid json data
-		{[]interface{}{`{1}`}, nil, false},
-		{[]interface{}{`[1,3,4,5]]`}, nil, false},
+		{[]any{`{1}`}, nil, false},
+		{[]any{`[1,3,4,5]]`}, nil, false},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
@@ -1255,72 +1255,72 @@ func TestJSONMergePatch(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONMergePatch]
 	tbl := []struct {
-		input    []interface{}
-		expected interface{}
+		input    []any
+		expected any
 		success  bool
 	}{
 		// RFC 7396 document: https://datatracker.ietf.org/doc/html/rfc7396
 		// RFC 7396 Example Test Cases
-		{[]interface{}{`{"a":"b"}`, `{"a":"c"}`}, `{"a": "c"}`, true},
-		{[]interface{}{`{"a":"b"}`, `{"b":"c"}`}, `{"a": "b","b": "c"}`, true},
-		{[]interface{}{`{"a":"b"}`, `{"a":null}`}, `{}`, true},
-		{[]interface{}{`{"a":"b", "b":"c"}`, `{"a":null}`}, `{"b": "c"}`, true},
-		{[]interface{}{`{"a":["b"]}`, `{"a":"c"}`}, `{"a": "c"}`, true},
-		{[]interface{}{`{"a":"c"}`, `{"a":["b"]}`}, `{"a": ["b"]}`, true},
-		{[]interface{}{`{"a":{"b":"c"}}`, `{"a":{"b":"d","c":null}}`}, `{"a": {"b": "d"}}`, true},
-		{[]interface{}{`{"a":[{"b":"c"}]}`, `{"a": [1]}`}, `{"a": [1]}`, true},
-		{[]interface{}{`["a","b"]`, `["c","d"]`}, `["c", "d"]`, true},
-		{[]interface{}{`{"a":"b"}`, `["c"]`}, `["c"]`, true},
-		{[]interface{}{`{"a":"foo"}`, `null`}, `null`, true},
-		{[]interface{}{`{"a":"foo"}`, `"bar"`}, `"bar"`, true},
-		{[]interface{}{`{"e":null}`, `{"a":1}`}, `{"e": null,"a": 1}`, true},
-		{[]interface{}{`[1,2]`, `{"a":"b","c":null}`}, `{"a":"b"}`, true},
-		{[]interface{}{`{}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb": {}}}`, true},
+		{[]any{`{"a":"b"}`, `{"a":"c"}`}, `{"a": "c"}`, true},
+		{[]any{`{"a":"b"}`, `{"b":"c"}`}, `{"a": "b","b": "c"}`, true},
+		{[]any{`{"a":"b"}`, `{"a":null}`}, `{}`, true},
+		{[]any{`{"a":"b", "b":"c"}`, `{"a":null}`}, `{"b": "c"}`, true},
+		{[]any{`{"a":["b"]}`, `{"a":"c"}`}, `{"a": "c"}`, true},
+		{[]any{`{"a":"c"}`, `{"a":["b"]}`}, `{"a": ["b"]}`, true},
+		{[]any{`{"a":{"b":"c"}}`, `{"a":{"b":"d","c":null}}`}, `{"a": {"b": "d"}}`, true},
+		{[]any{`{"a":[{"b":"c"}]}`, `{"a": [1]}`}, `{"a": [1]}`, true},
+		{[]any{`["a","b"]`, `["c","d"]`}, `["c", "d"]`, true},
+		{[]any{`{"a":"b"}`, `["c"]`}, `["c"]`, true},
+		{[]any{`{"a":"foo"}`, `null`}, `null`, true},
+		{[]any{`{"a":"foo"}`, `"bar"`}, `"bar"`, true},
+		{[]any{`{"e":null}`, `{"a":1}`}, `{"e": null,"a": 1}`, true},
+		{[]any{`[1,2]`, `{"a":"b","c":null}`}, `{"a":"b"}`, true},
+		{[]any{`{}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb": {}}}`, true},
 		// RFC 7396 Example Document
-		{[]interface{}{`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`, `{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`}, `{"title":"Hello!","author":{"givenName":"John"},"tags":["example"],"content":"This will be unchanged","phoneNumber":"+01-123-456-7890"}`, true},
+		{[]any{`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`, `{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`}, `{"title":"Hello!","author":{"givenName":"John"},"tags":["example"],"content":"This will be unchanged","phoneNumber":"+01-123-456-7890"}`, true},
 
 		// From mysql Example Test Cases
-		{[]interface{}{nil, `null`, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true},
-		{[]interface{}{`null`, nil, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true},
-		{[]interface{}{`null`, `[1,2,3]`, nil, `{"a":1}`}, nil, true},
-		{[]interface{}{`null`, `[1,2,3]`, `{"a":1}`, nil}, nil, true},
+		{[]any{nil, `null`, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true},
+		{[]any{`null`, nil, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true},
+		{[]any{`null`, `[1,2,3]`, nil, `{"a":1}`}, nil, true},
+		{[]any{`null`, `[1,2,3]`, `{"a":1}`, nil}, nil, true},
 
-		{[]interface{}{nil, `null`, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true},
-		{[]interface{}{`null`, nil, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true},
-		{[]interface{}{`null`, `{"a":1}`, nil, `[1,2,3]`}, `[1,2,3]`, true},
-		{[]interface{}{`null`, `{"a":1}`, `[1,2,3]`, nil}, nil, true},
+		{[]any{nil, `null`, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true},
+		{[]any{`null`, nil, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true},
+		{[]any{`null`, `{"a":1}`, nil, `[1,2,3]`}, `[1,2,3]`, true},
+		{[]any{`null`, `{"a":1}`, `[1,2,3]`, nil}, nil, true},
 
-		{[]interface{}{nil, `null`, `{"a":1}`, `true`}, `true`, true},
-		{[]interface{}{`null`, nil, `{"a":1}`, `true`}, `true`, true},
-		{[]interface{}{`null`, `{"a":1}`, nil, `true`}, `true`, true},
-		{[]interface{}{`null`, `{"a":1}`, `true`, nil}, nil, true},
+		{[]any{nil, `null`, `{"a":1}`, `true`}, `true`, true},
+		{[]any{`null`, nil, `{"a":1}`, `true`}, `true`, true},
+		{[]any{`null`, `{"a":1}`, nil, `true`}, `true`, true},
+		{[]any{`null`, `{"a":1}`, `true`, nil}, nil, true},
 
 		// non-object last item
-		{[]interface{}{"true", "false", "[]", "{}", "null"}, "null", true},
-		{[]interface{}{"false", "[]", "{}", "null", "true"}, "true", true},
-		{[]interface{}{"true", "[]", "{}", "null", "false"}, "false", true},
-		{[]interface{}{"true", "false", "{}", "null", "[]"}, "[]", true},
-		{[]interface{}{"true", "false", "{}", "null", "1"}, "1", true},
-		{[]interface{}{"true", "false", "{}", "null", "1.8"}, "1.8", true},
-		{[]interface{}{"true", "false", "{}", "null", `"112"`}, `"112"`, true},
+		{[]any{"true", "false", "[]", "{}", "null"}, "null", true},
+		{[]any{"false", "[]", "{}", "null", "true"}, "true", true},
+		{[]any{"true", "[]", "{}", "null", "false"}, "false", true},
+		{[]any{"true", "false", "{}", "null", "[]"}, "[]", true},
+		{[]any{"true", "false", "{}", "null", "1"}, "1", true},
+		{[]any{"true", "false", "{}", "null", "1.8"}, "1.8", true},
+		{[]any{"true", "false", "{}", "null", `"112"`}, `"112"`, true},
 
-		{[]interface{}{`{"a":"foo"}`, nil}, nil, true},
-		{[]interface{}{nil, `{"a":"foo"}`}, nil, true},
-		{[]interface{}{`{"a":"foo"}`, `false`}, `false`, true},
-		{[]interface{}{`{"a":"foo"}`, `123`}, `123`, true},
-		{[]interface{}{`{"a":"foo"}`, `123.1`}, `123.1`, true},
-		{[]interface{}{`{"a":"foo"}`, `[1,2,3]`}, `[1,2,3]`, true},
-		{[]interface{}{`null`, `{"a":1}`}, `{"a":1}`, true},
-		{[]interface{}{`{"a":1}`, `null`}, `null`, true},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"b":"123"}`, `{"c":1}`}, `{"b":"123","c":1}`, true},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"c":1}`}, `{"c":1}`, true},
-		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `true`}, `true`, true},
-		{[]interface{}{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true},
+		{[]any{`{"a":"foo"}`, nil}, nil, true},
+		{[]any{nil, `{"a":"foo"}`}, nil, true},
+		{[]any{`{"a":"foo"}`, `false`}, `false`, true},
+		{[]any{`{"a":"foo"}`, `123`}, `123`, true},
+		{[]any{`{"a":"foo"}`, `123.1`}, `123.1`, true},
+		{[]any{`{"a":"foo"}`, `[1,2,3]`}, `[1,2,3]`, true},
+		{[]any{`null`, `{"a":1}`}, `{"a":1}`, true},
+		{[]any{`{"a":1}`, `null`}, `null`, true},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `{"b":"123"}`, `{"c":1}`}, `{"b":"123","c":1}`, true},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `{"c":1}`}, `{"c":1}`, true},
+		{[]any{`{"a":"foo"}`, `{"a":null}`, `true`}, `true`, true},
+		{[]any{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true},
 
 		// Invalid json text
-		{[]interface{}{`{"a":1}`, `[1]}`}, nil, false},
-		{[]interface{}{`{{"a":1}`, `[1]`, `null`}, nil, false},
-		{[]interface{}{`{"a":1}`, `jjj`, `null`}, nil, false},
+		{[]any{`{"a":1}`, `[1]}`}, nil, false},
+		{[]any{`{{"a":1}`, `[1]`, `null`}, nil, false},
+		{[]any{`{"a":1}`, `jjj`, `null`}, nil, false},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)

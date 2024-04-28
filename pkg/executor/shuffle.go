@@ -175,7 +175,7 @@ func (e *ShuffleExec) Close() error {
 			}
 		}
 		// close child executor of each worker
-		if err := w.childExec.Close(); err != nil && firstErr == nil {
+		if err := exec.Close(w.childExec); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -192,7 +192,7 @@ func (e *ShuffleExec) Close() error {
 
 	// close dataSources
 	for _, dataSource := range e.dataSources {
-		if err := dataSource.Close(); err != nil && firstErr == nil {
+		if err := exec.Close(dataSource); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -255,7 +255,7 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func recoveryShuffleExec(output chan *shuffleOutput, r interface{}) {
+func recoveryShuffleExec(output chan *shuffleOutput, r any) {
 	err := util.GetRecoverError(r)
 	output <- &shuffleOutput{err: util.GetRecoverError(r)}
 	logutil.BgLogger().Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
@@ -465,7 +465,7 @@ func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItem
 	return &partitionRangeSplitter{
 		byItems:      byItems,
 		numWorkers:   concurrency,
-		groupChecker: vecgroupchecker.NewVecGroupChecker(ctx, byItems),
+		groupChecker: vecgroupchecker.NewVecGroupChecker(ctx.GetExprCtx().GetEvalCtx(), ctx.GetSessionVars().EnableVectorizedExpression, byItems),
 		idx:          0,
 	}
 }

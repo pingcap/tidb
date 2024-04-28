@@ -336,29 +336,6 @@ disconnect conn1;
 execute s;
 set @@tidb_enable_plan_replayer_capture=default;
 
-# TestForUpdateRetry
-set session tidb_txn_mode='';
-drop table if exists t;
-create table t(pk int primary key, c int);
-insert into t values (1, 1), (2, 2);
-set @@tidb_disable_txn_auto_retry = 0;
-begin;
-select * from t where pk = 1 for update;
-
-connect (conn1, localhost, root, , executor__point_get);
-set session tidb_txn_mode='';
-update t set c = c + 1 where pk = 1;
-
-connection default;
-update t set c = c + 1 where pk = 2;
---replace_regex /\[[0-9]+\]/<ConnID>/
---error 8002
-commit;
-
-disconnect conn1;
-set session tidb_txn_mode=pessimistic;
-
-
 # TestPointGetWriteLock
 drop table if exists point;
 create table point (id int primary key, c int, d varchar(10), unique c_d (c, d));

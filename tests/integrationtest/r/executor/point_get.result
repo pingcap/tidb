@@ -88,13 +88,9 @@ PARTITION PMX VALUES LESS THAN (MAXVALUE)
 ) ;
 explain format='brief' select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
 id	estRows	task	access object	operator info
-PartitionUnion	6.00	root		
-├─IndexLookUp	3.00	root		
-│ ├─IndexRangeScan(Build)	3.00	cop[tikv]	table:UK_RP16939, partition:P3, index:UK_COL1(COL1)	range:[-30,-30], [48,48], [116,116], keep order:false, stats:pseudo
-│ └─TableRowIDScan(Probe)	3.00	cop[tikv]	table:UK_RP16939, partition:P3	keep order:false, stats:pseudo
-└─IndexLookUp	3.00	root		
-  ├─IndexRangeScan(Build)	3.00	cop[tikv]	table:UK_RP16939, partition:PMX, index:UK_COL1(COL1)	range:[-30,-30], [48,48], [116,116], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	3.00	cop[tikv]	table:UK_RP16939, partition:PMX	keep order:false, stats:pseudo
+IndexLookUp	3.00	root	partition:P3,PMX	
+├─IndexRangeScan(Build)	3.00	cop[tikv]	table:UK_RP16939, index:UK_COL1(COL1)	range:[-30,-30], [48,48], [116,116], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:UK_RP16939	keep order:false, stats:pseudo
 select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
 col1	col2
 drop table if exists UK_RP16939;
@@ -113,7 +109,9 @@ PARTITION P2 VALUES IN (75, 90)
 ) ;
 explain format='brief' select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+IndexLookUp	3.00	root	partition:dual	
+├─IndexRangeScan(Build)	3.00	cop[tikv]	table:UK_RP16939, index:UK_COL1(COL1)	range:[-30,-30], [48,48], [116,116], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:UK_RP16939	keep order:false, stats:pseudo
 select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);
 col1	col2
 drop table if exists UK_RP16939;
@@ -616,21 +614,6 @@ execute s;
 id	v
 1	11
 set @@tidb_enable_plan_replayer_capture=default;
-set session tidb_txn_mode='';
-drop table if exists t;
-create table t(pk int primary key, c int);
-insert into t values (1, 1), (2, 2);
-set @@tidb_disable_txn_auto_retry = 0;
-begin;
-select * from t where pk = 1 for update;
-pk	c
-1	1
-set session tidb_txn_mode='';
-update t set c = c + 1 where pk = 1;
-update t set c = c + 1 where pk = 2;
-commit;
-Error 8002 (HY000): <ConnID> can not retry select for update statement
-set session tidb_txn_mode=pessimistic;
 drop table if exists point;
 create table point (id int primary key, c int, d varchar(10), unique c_d (c, d));
 insert point values (1, 1, 'a');

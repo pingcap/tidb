@@ -23,23 +23,42 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	ast "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
 // ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
-func ExpressionsToPBList(ctx sessionctx.Context, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
+func ExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
 	pc := PbConverter{client: client, ctx: ctx}
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
-			return nil, ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
+			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
+		}
+		pbExpr = append(pbExpr, v)
+	}
+	return
+}
+
+// ProjectionExpressionsToPBList converts PhysicalProjection's expressions to tipb.Expr list for new plan.
+// It doesn't check type for top level column expression, since top level column expression doesn't imply any calculations
+func ProjectionExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
+	pc := PbConverter{client: client, ctx: ctx}
+	for _, expr := range exprs {
+		var v *tipb.Expr
+		if column, ok := expr.(*Column); ok {
+			v = pc.columnToPBExpr(column, false)
+		} else {
+			v = pc.ExprToPB(expr)
+		}
+		if v == nil {
+			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
 		}
 		pbExpr = append(pbExpr, v)
 	}
@@ -49,11 +68,11 @@ func ExpressionsToPBList(ctx sessionctx.Context, exprs []Expression, client kv.C
 // PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
-	ctx    sessionctx.Context
+	ctx    EvalContext
 }
 
 // NewPBConverter creates a PbConverter.
-func NewPBConverter(client kv.Client, ctx sessionctx.Context) PbConverter {
+func NewPBConverter(client kv.Client, ctx EvalContext) PbConverter {
 	return PbConverter{client: client, ctx: ctx}
 }
 
@@ -69,7 +88,7 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	case *CorrelatedColumn:
 		return pc.conOrCorColToPBExpr(expr)
 	case *Column:
-		return pc.columnToPBExpr(x)
+		return pc.columnToPBExpr(x, true)
 	case *ScalarFunction:
 		return pc.scalarFuncToPBExpr(x)
 	}
@@ -143,9 +162,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			sc := pc.ctx.GetSessionVars().StmtCtx
-			val, err := codec.EncodeMySQLTime(sc.TimeZone(), d.GetMysqlTime(), ft.GetType(), nil)
-			err = sc.HandleError(err)
+			tc, ec := typeCtx(pc.ctx), errCtx(pc.ctx)
+			val, err := codec.EncodeMySQLTime(tc.Location(), d.GetMysqlTime(), ft.GetType(), nil)
+			err = ec.HandleError(err)
 			if err != nil {
 				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
 				return tp, nil, false
@@ -190,20 +209,22 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 	return ft1
 }
 
-func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
+func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr {
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
-	switch column.GetType().GetType() {
-	case mysql.TypeBit:
-		if !IsPushDownEnabled(ast.TypeStr(column.GetType().GetType()), kv.TiKV) {
+	if checkType {
+		switch column.GetType().GetType() {
+		case mysql.TypeBit:
+			if !IsPushDownEnabled(ast.TypeStr(mysql.TypeBit), kv.TiKV) {
+				return nil
+			}
+		case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 			return nil
-		}
-	case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
-		return nil
-	case mysql.TypeEnum:
-		if !IsPushDownEnabled("enum", kv.UnSpecified) {
-			return nil
+		case mysql.TypeEnum:
+			if !IsPushDownEnabled("enum", kv.UnSpecified) {
+				return nil
+			}
 		}
 	}
 
@@ -278,7 +299,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 }
 
 // GroupByItemToPB converts group by items to pb.
-func GroupByItemToPB(ctx sessionctx.Context, client kv.Client, expr Expression) *tipb.ByItem {
+func GroupByItemToPB(ctx EvalContext, client kv.Client, expr Expression) *tipb.ByItem {
 	pc := PbConverter{client: client, ctx: ctx}
 	e := pc.ExprToPB(expr)
 	if e == nil {
@@ -288,7 +309,7 @@ func GroupByItemToPB(ctx sessionctx.Context, client kv.Client, expr Expression) 
 }
 
 // SortByItemToPB converts order by items to pb.
-func SortByItemToPB(ctx sessionctx.Context, client kv.Client, expr Expression, desc bool) *tipb.ByItem {
+func SortByItemToPB(ctx EvalContext, client kv.Client, expr Expression, desc bool) *tipb.ByItem {
 	pc := PbConverter{client: client, ctx: ctx}
 	e := pc.ExprToPB(expr)
 	if e == nil {

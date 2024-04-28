@@ -419,80 +419,50 @@ count(*)
 EXPLAIN format="brief" SELECT count(*) FROM tkey14 WHERE col3 IS NULL;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(Column#8)->Column#6
-└─TableReader	1.00	root		data:StreamAgg
+└─TableReader	1.00	root	partition:p1	data:StreamAgg
   └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#8
     └─Selection	10.00	cop[tikv]		isnull(table__partition.tkey14.col3)
-      └─TableFullScan	10000.00	cop[tikv]	table:tkey14, partition:p1	keep order:false, stats:pseudo
+      └─TableFullScan	10000.00	cop[tikv]	table:tkey14	keep order:false, stats:pseudo
 CREATE TABLE tkey15 (`col1` int, col2 DATE NOT NULL,col3 VARCHAR(12), col4 int)
 PARTITION BY KEY (col3) PARTITIONS 4;
 INSERT INTO tkey15 VALUES(1, '2023-02-22', 'linpin', 1), (2, '2023-02-22', NULL, 2), (3, '2023-02-22', 'anqila', 3), (4, '2023-02-22', NULL, 4);
 EXPLAIN format="brief" SELECT count(*) FROM tkey15 WHERE col3 IS NULL;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(Column#8)->Column#6
-└─TableReader	1.00	root		data:StreamAgg
+└─TableReader	1.00	root	partition:p1	data:StreamAgg
   └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#8
     └─Selection	10.00	cop[tikv]		isnull(table__partition.tkey15.col3)
-      └─TableFullScan	10000.00	cop[tikv]	table:tkey15, partition:p1	keep order:false, stats:pseudo
+      └─TableFullScan	10000.00	cop[tikv]	table:tkey15	keep order:false, stats:pseudo
 CREATE TABLE tkey12_2 (col1 INT, col2 INT ,col3 INT ,col4 INT , UNIQUE KEY(col2, col3)) PARTITION BY KEY(col2, col3) PARTITIONS 4;
 INSERT INTO tkey12_2 values(20,1,1,1),(1,2,NULL,2),(3,3,3,3),(3,3,NULL,3),(4,4,4,4),(5,5,5,5), (6,6,null,6),(7,7,7,7),(8,8,8,8),(9,9,9,9),(10,10,10,5),(11,11,11,6),(12,12,12,12),(13,13,13,13),(14,14,null,14);
 EXPLAIN format="brief" SELECT * FROM tkey12_2 WHERE col2 = 2 and col3 IS NULL;
 id	estRows	task	access object	operator info
-IndexLookUp	1.00	root		
-├─IndexRangeScan(Build)	1.00	cop[tikv]	table:tkey12_2, partition:p2, index:col2(col2, col3)	range:[2 NULL,2 NULL], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tkey12_2, partition:p2	keep order:false, stats:pseudo
+IndexLookUp	1.00	root	partition:p2	
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:tkey12_2, index:col2(col2, col3)	range:[2 NULL,2 NULL], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tkey12_2	keep order:false, stats:pseudo
 SELECT * FROM tkey12_2 WHERE col2 = 2 and col3 IS NULL;
 col1	col2	col3	col4
 1	2	NULL	2
 EXPLAIN format="brief" SELECT * FROM tkey12_2 WHERE col2 = 2;
 id	estRows	task	access object	operator info
-PartitionUnion	40.00	root		
-├─IndexLookUp	10.00	root		
-│ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, partition:p0, index:col2(col2, col3)	range:[2,2], keep order:false, stats:pseudo
-│ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2, partition:p0	keep order:false, stats:pseudo
-├─IndexLookUp	10.00	root		
-│ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, partition:p1, index:col2(col2, col3)	range:[2,2], keep order:false, stats:pseudo
-│ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2, partition:p1	keep order:false, stats:pseudo
-├─IndexLookUp	10.00	root		
-│ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, partition:p2, index:col2(col2, col3)	range:[2,2], keep order:false, stats:pseudo
-│ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2, partition:p2	keep order:false, stats:pseudo
-└─IndexLookUp	10.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, partition:p3, index:col2(col2, col3)	range:[2,2], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2, partition:p3	keep order:false, stats:pseudo
+IndexLookUp	10.00	root	partition:all	
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, index:col2(col2, col3)	range:[2,2], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2	keep order:false, stats:pseudo
 SELECT * FROM tkey12_2 WHERE col2 = 2;
 col1	col2	col3	col4
 1	2	NULL	2
 EXPLAIN format="brief" SELECT * FROM tkey12_2 WHERE col2 = 2;
 id	estRows	task	access object	operator info
-PartitionUnion	40.00	root		
-├─IndexLookUp	10.00	root		
-│ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, partition:p0, index:col2(col2, col3)	range:[2,2], keep order:false, stats:pseudo
-│ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2, partition:p0	keep order:false, stats:pseudo
-├─IndexLookUp	10.00	root		
-│ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, partition:p1, index:col2(col2, col3)	range:[2,2], keep order:false, stats:pseudo
-│ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2, partition:p1	keep order:false, stats:pseudo
-├─IndexLookUp	10.00	root		
-│ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, partition:p2, index:col2(col2, col3)	range:[2,2], keep order:false, stats:pseudo
-│ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2, partition:p2	keep order:false, stats:pseudo
-└─IndexLookUp	10.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, partition:p3, index:col2(col2, col3)	range:[2,2], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2, partition:p3	keep order:false, stats:pseudo
+IndexLookUp	10.00	root	partition:all	
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, index:col2(col2, col3)	range:[2,2], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2	keep order:false, stats:pseudo
 SELECT * FROM tkey12_2 WHERE col2 IS NULL;
 col1	col2	col3	col4
 EXPLAIN format="brief" SELECT * FROM tkey12_2 WHERE col2 IS NULL;
 id	estRows	task	access object	operator info
-PartitionUnion	40.00	root		
-├─IndexLookUp	10.00	root		
-│ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, partition:p0, index:col2(col2, col3)	range:[NULL,NULL], keep order:false, stats:pseudo
-│ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2, partition:p0	keep order:false, stats:pseudo
-├─IndexLookUp	10.00	root		
-│ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, partition:p1, index:col2(col2, col3)	range:[NULL,NULL], keep order:false, stats:pseudo
-│ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2, partition:p1	keep order:false, stats:pseudo
-├─IndexLookUp	10.00	root		
-│ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, partition:p2, index:col2(col2, col3)	range:[NULL,NULL], keep order:false, stats:pseudo
-│ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2, partition:p2	keep order:false, stats:pseudo
-└─IndexLookUp	10.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, partition:p3, index:col2(col2, col3)	range:[NULL,NULL], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2, partition:p3	keep order:false, stats:pseudo
+IndexLookUp	10.00	root	partition:all	
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tkey12_2, index:col2(col2, col3)	range:[NULL,NULL], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:tkey12_2	keep order:false, stats:pseudo
 select PARTITION_NAME,PARTITION_ORDINAL_POSITION,PARTITION_METHOD,PARTITION_EXPRESSION FROM information_schema.partitions where TABLE_NAME = 'tkey12_2';
 PARTITION_NAME	PARTITION_ORDINAL_POSITION	PARTITION_METHOD	PARTITION_EXPRESSION
 p0	1	KEY	`col2`,`col3`
@@ -581,8 +551,6 @@ Error 8200 (HY000): Unsupported reorganize partition
 ALTER TABLE tkey15 PARTITION BY KEY(col3) PARTITIONS 4;
 ALTER TABLE tkey16 REMOVE PARTITIONING;
 CREATE TABLE tkey17 (id INT NOT NULL PRIMARY KEY,name VARCHAR(20))PARTITION BY KEY()PARTITIONS 2;
-Level	Code	Message
-Warning	8200	Unsupported partition type KEY, treat as normal table
 drop tables if exists t_44966;
 create table t_44966 (a bigint unsigned) partition by range (a) (partition p0 values less than (10));
 insert into t_44966 values (0xffffffffffffffff);

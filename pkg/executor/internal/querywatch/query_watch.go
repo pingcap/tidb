@@ -24,14 +24,13 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
@@ -44,11 +43,11 @@ func setWatchOption(ctx context.Context,
 	switch op.Tp {
 	case ast.QueryWatchResourceGroup:
 		if op.ExprValue != nil {
-			expr, err := expression.RewriteAstExpr(sctx, op.ExprValue, nil, nil, false)
+			expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), op.ExprValue, nil, nil, false)
 			if err != nil {
 				return err
 			}
-			name, isNull, err := expr.EvalString(sctx, chunk.Row{})
+			name, isNull, err := expr.EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -62,11 +61,11 @@ func setWatchOption(ctx context.Context,
 	case ast.QueryWatchAction:
 		record.Action = rmpb.RunawayAction(op.IntValue)
 	case ast.QueryWatchType:
-		expr, err := expression.RewriteAstExpr(sctx, op.ExprValue, nil, nil, false)
+		expr, err := plannerutil.RewriteAstExprWithPlanCtx(sctx.GetPlanCtx(), op.ExprValue, nil, nil, false)
 		if err != nil {
 			return err
 		}
-		strval, isNull, err := expr.EvalString(sctx, chunk.Row{})
+		strval, isNull, err := expr.EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return err
 		}
@@ -93,7 +92,7 @@ func setWatchOption(ctx context.Context,
 				_, digest := parser.NormalizeDigest(sql)
 				record.WatchText = digest.String()
 			case model.WatchPlan:
-				sqlExecutor := newSctx.(sqlexec.SQLExecutor)
+				sqlExecutor := newSctx.GetSQLExecutor()
 				if _, err := sqlExecutor.ExecuteInternal(ctx, fmt.Sprintf("explain %s", stmts[0].Text())); err != nil {
 					return err
 				}

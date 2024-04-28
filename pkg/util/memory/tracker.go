@@ -204,8 +204,8 @@ func (t *Tracker) CheckExceed() bool {
 // SetActionOnExceed sets the action when memory usage exceeds bytesHardLimit.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
 	t.actionMuForHardLimit.actionOnExceed = a
-	t.actionMuForHardLimit.Unlock()
 }
 
 // FallbackOldAndSetNewAction sets the action when memory usage exceeds bytesHardLimit
@@ -469,6 +469,23 @@ func (t *Tracker) Consume(bs int64) {
 	}
 }
 
+// HandleKillSignal checks if a kill signal has been sent to the session root tracker.
+// If a kill signal is detected, it panics with the error returned by the signal handler.
+func (t *Tracker) HandleKillSignal() {
+	var sessionRootTracker *Tracker
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		if tracker.IsRootTrackerOfSess {
+			sessionRootTracker = tracker
+		}
+	}
+	if sessionRootTracker != nil {
+		err := sessionRootTracker.Killer.HandleSignal()
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
 // BufferedConsume is used to buffer memory usage and do late consume
 // not thread-safe, should be called in one goroutine
 func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
@@ -492,7 +509,7 @@ func (t *Tracker) Release(bytes int64) {
 			// use fake ref instead of obj ref, otherwise obj will be reachable again and gc in next cycle
 			newRef := &finalizerRef{}
 			finalizer := func(tracker *Tracker) func(ref *finalizerRef) {
-				return func(ref *finalizerRef) {
+				return func(*finalizerRef) {
 					tracker.release(bytes) // finalizer func is called async
 				}
 			}
@@ -841,6 +858,8 @@ const (
 	LabelForCursorFetch int = -29
 	// LabelForChunkDataInDiskByChunks represents the label of the chunk list in disk
 	LabelForChunkDataInDiskByChunks int = -30
+	// LabelForSortPartition represents the label of the sort partition
+	LabelForSortPartition = -31
 )
 
 // MetricsTypes is used to get label for metrics

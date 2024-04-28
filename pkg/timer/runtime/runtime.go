@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 var (
@@ -334,7 +334,7 @@ func (rt *TimerGroupRuntime) getNextTryTriggerDuration(lastTryTriggerTime time.T
 	}
 
 	duration := maxDuration
-	rt.cache.iterTryTriggerTimers(func(timer *api.TimerRecord, tryTriggerTime time.Time, _ *time.Time) bool {
+	rt.cache.iterTryTriggerTimers(func(_ *api.TimerRecord, tryTriggerTime time.Time, _ *time.Time) bool {
 		if interval := tryTriggerTime.Sub(now); interval < duration {
 			duration = interval
 		}
@@ -492,7 +492,7 @@ func withRecoverUntil(ctx context.Context, fn func(uint64)) {
 	for ctx.Err() == nil && !success {
 		util.WithRecovery(func() {
 			fn(i)
-		}, func(r interface{}) {
+		}, func(r any) {
 			if r == nil {
 				success = true
 			}

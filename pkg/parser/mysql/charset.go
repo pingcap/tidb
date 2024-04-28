@@ -531,7 +531,6 @@ var CollationNames = map[string]uint16{
 const (
 	UTF8Charset    = "utf8"
 	UTF8MB4Charset = "utf8mb4"
-	Latin1Charset  = "latin1"
 	DefaultCharset = UTF8MB4Charset
 	// DefaultCollationID is utf8mb4_bin(46)
 	DefaultCollationID        = 46
@@ -540,7 +539,6 @@ const (
 	UTF8DefaultCollationID    = 83
 	UTF8MB4DefaultCollationID = 46
 	BinaryDefaultCollationID  = 63
-	UTF8DefaultCollation      = "utf8_bin"
 	UTF8MB4DefaultCollation   = "utf8mb4_bin"
 	DefaultCollationName      = UTF8MB4DefaultCollation
 

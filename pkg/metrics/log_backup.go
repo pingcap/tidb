@@ -28,6 +28,9 @@ var (
 	RegionCheckpointRequest           *prometheus.CounterVec
 	RegionCheckpointFailure           *prometheus.CounterVec
 	RegionCheckpointSubscriptionEvent *prometheus.HistogramVec
+
+	LogBackupCurrentLastRegionID            prometheus.Gauge
+	LogBackupCurrentLastRegionLeaderStoreID prometheus.Gauge
 )
 
 // InitLogBackupMetrics initializes log backup metrics.
@@ -84,4 +87,17 @@ func InitLogBackupMetrics() {
 		Help:      "The region flush event size.",
 		Buckets:   prometheus.ExponentialBuckets(8, 2.0, 12),
 	}, []string{"store"})
+
+	LogBackupCurrentLastRegionID = NewGauge(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "log_backup",
+		Name:      "current_last_region_id",
+		Help:      "The id of the region have minimal checkpoint ts in the current running task.",
+	})
+	LogBackupCurrentLastRegionLeaderStoreID = NewGauge(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "log_backup",
+		Name:      "current_last_region_leader_store_id",
+		Help:      "The leader's store id of the region have minimal checkpoint ts in the current running task.",
+	})
 }

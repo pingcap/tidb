@@ -17,6 +17,7 @@ package applycache
 import (
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -76,4 +77,62 @@ func TestApplyCache(t *testing.T) {
 	result, err = applyCache.Get(key[1])
 	require.NoError(t, err)
 	require.Nil(t, result)
+}
+
+func TestApplyCacheConcurrent(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().MemQuotaApplyCache = 100
+	applyCache, err := NewApplyCache(ctx)
+	require.NoError(t, err)
+
+	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	value := make([]*chunk.List, 2)
+	key := make([][]byte, 2)
+	for i := 0; i < 2; i++ {
+		value[i] = chunk.NewList(fields, 1, 1)
+		srcChunk := chunk.NewChunkWithCapacity(fields, 1)
+		srcChunk.AppendInt64(0, int64(i))
+		srcRow := srcChunk.GetRow(0)
+		value[i].AppendRow(srcRow)
+		key[i] = []byte(strings.Repeat(strconv.Itoa(i), 100))
+
+		// TODO: *chunk.List.GetMemTracker().BytesConsumed() is not accurate, fix it later.
+		require.Equal(t, int64(100), applyCacheKVMem(key[i], value[i]))
+	}
+
+	applyCache.Set(key[0], value[0])
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var func1 = func() {
+		for i := 0; i < 100; i++ {
+			for {
+				result, err := applyCache.Get(key[0])
+				require.NoError(t, err)
+				if result != nil {
+					applyCache.Set(key[1], value[1])
+					break
+				}
+			}
+		}
+		wg.Done()
+	}
+	var func2 = func() {
+		for i := 0; i < 100; i++ {
+			for {
+				result, err := applyCache.Get(key[1])
+				require.NoError(t, err)
+				if result != nil {
+					applyCache.Set(key[0], value[0])
+					break
+				}
+			}
+		}
+		wg.Done()
+	}
+	go func1()
+	go func2()
+	wg.Wait()
+	result, err := applyCache.Get(key[0])
+	require.NoError(t, err)
+	require.NotNil(t, result)
 }

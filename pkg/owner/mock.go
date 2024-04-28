@@ -42,6 +42,7 @@ type mockManager struct {
 	wg           sync.WaitGroup
 	cancel       context.CancelFunc
 	beOwnerHook  func()
+	retireHook   func()
 	campaignDone chan struct{}
 	resignDone   chan struct{}
 }
@@ -168,6 +169,7 @@ func (*mockManager) RequireOwner(context.Context) error {
 	return nil
 }
 
+// SetBeOwnerHook implements Manager.SetBeOwnerHook interface.
 func (m *mockManager) SetBeOwnerHook(hook func()) {
 	m.beOwnerHook = hook
 }

@@ -26,15 +26,14 @@ import (
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/etcd"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -71,7 +70,7 @@ func TestCheckRequirements(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	ctx := util.WithInternalSourceType(context.Background(), kv.InternalImportInto)
-	conn := tk.Session().(sqlexec.SQLExecutor)
+	conn := tk.Session().GetSQLExecutor()
 
 	_, err := conn.Execute(ctx, "create table test.t(id int primary key)")
 	require.NoError(t, err)
@@ -81,14 +80,40 @@ func TestCheckRequirements(t *testing.T) {
 
 	c := &importer.LoadDataController{
 		Plan: &importer.Plan{
-			DBName: "test",
+			DBName:         "test",
+			DataSourceType: importer.DataSourceTypeFile,
+			TableInfo:      tableObj.Meta(),
 		},
 		Table: tableObj,
 	}
+
+	// create a dummy job
+	_, err = importer.CreateJob(ctx, conn, "test", "tttt", tableObj.Meta().ID, "root", &importer.ImportParameters{}, 0)
+	require.NoError(t, err)
+	// there is active job on the target table already
+	jobID, err := importer.CreateJob(ctx, conn, "test", "t", tableObj.Meta().ID, "root", &importer.ImportParameters{}, 0)
+	require.NoError(t, err)
+	err = c.CheckRequirements(ctx, conn)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "there is active job on the target table already")
+	// cancel the job
+	require.NoError(t, importer.CancelJob(ctx, conn, jobID))
+
+	// source data file size = 0
 	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataPreCheckFailed)
 
-	// now checkTotalFileSize pass, and try next pre-check item
+	// make checkTotalFileSize pass
 	c.TotalFileSize = 1
+	// global sort with thread count < 8
+	c.ThreadCnt = 7
+	c.CloudStorageURI = "s3://test"
+	err = c.CheckRequirements(ctx, conn)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "global sort requires at least 8 threads")
+
+	// reset fields, make global sort thread check pass
+	c.ThreadCnt = 1
+	c.CloudStorageURI = ""
 	// non-empty table
 	_, err = conn.Execute(ctx, "insert into test.t values(1)")
 	require.NoError(t, err)
@@ -132,12 +157,16 @@ func TestCheckRequirements(t *testing.T) {
 	err = c.CheckRequirements(ctx, conn)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
 	require.ErrorContains(t, err, "found PiTR log streaming")
+	// disable precheck, should pass
+	c.DisablePrecheck = true
+	require.NoError(t, c.CheckRequirements(ctx, conn))
+	c.DisablePrecheck = false // revert back
 
 	// remove PiTR task, and mock a CDC task
 	_, err = etcdCli.Delete(ctx, pitrKey)
 	require.NoError(t, err)
 	// example: /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
-	cdcKey := utils.CDCPrefix + "testcluster/test_ns/changefeed/info/test_cf"
+	cdcKey := cdcutil.CDCPrefix + "testcluster/test_ns/changefeed/info/test_cf"
 	_, err = etcdCli.Put(ctx, cdcKey, `{"state":"normal"}`)
 	require.NoError(t, err)
 	err = c.CheckRequirements(ctx, conn)
@@ -150,6 +179,7 @@ func TestCheckRequirements(t *testing.T) {
 	require.NoError(t, c.CheckRequirements(ctx, conn))
 
 	// with global sort
+	c.Plan.ThreadCnt = 8
 	c.Plan.CloudStorageURI = ":"
 	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataInvalidURI)
 	c.Plan.CloudStorageURI = "sdsdsdsd://sdsdsdsd"

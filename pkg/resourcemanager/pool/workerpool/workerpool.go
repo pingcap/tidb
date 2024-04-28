@@ -98,7 +98,7 @@ func (p *WorkerPool[T, R]) Start(ctx context.Context) {
 
 	if p.resChan == nil {
 		var zero R
-		var r interface{} = zero
+		var r any = zero
 		if _, ok := r.(None); !ok {
 			p.resChan = make(chan R)
 		}
@@ -158,7 +158,10 @@ func (p *WorkerPool[T, R]) runAWorker() {
 
 // AddTask adds a task to the pool.
 func (p *WorkerPool[T, R]) AddTask(task T) {
-	p.taskChan <- task
+	select {
+	case <-p.ctx.Done():
+	case p.taskChan <- task:
+	}
 }
 
 // GetResultChan gets the result channel from the pool.

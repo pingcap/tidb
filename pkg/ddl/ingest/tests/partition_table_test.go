@@ -32,6 +32,7 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 	defer ingesttestutil.InjectMockBackendMgr(t, tc.Store)()
 	tk := testkit.NewTestKit(t, tc.Store)
 	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_enable_dist_task = 0")
 	tk.MustExec("create table t (a int primary key, b int) partition by hash(a) partitions 8;")
 	tk.MustExec("insert into t values (2, 3), (3, 3), (5, 5);")
 
@@ -42,7 +43,7 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 			tc.SetOwner(1)
 			// TODO(tangenta): mock multiple backends in a better way.
 			//nolint: forcetypeassert
-			// TODO(tangenta): When owner changes, wait last ddl owner's DDL dispatching loop exits.
+			// TODO(tangenta): When owner changes, wait last ddl owner's DDL scheduling loop exits.
 			ingest.LitBackCtxMgr.(*ingest.MockBackendCtxMgr).ResetSessCtx()
 			bc, _ := ingest.LitBackCtxMgr.Load(job.ID)
 			bc.GetCheckpointManager().Close()

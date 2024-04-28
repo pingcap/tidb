@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
@@ -119,7 +119,7 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	promQLAPI := promv1.NewAPI(promClient)
 	ctx, cancel := context.WithTimeout(ctx, promReadTimeout)
 	defer cancel()
-	promQL := e.tblDef.GenPromQL(sctx, e.extractor.LabelConditions, quantile)
+	promQL := e.tblDef.GenPromQL(sctx.GetSessionVars().MetricSchemaRangeDuration, e.extractor.LabelConditions, quantile)
 
 	// Add retry to avoid network error.
 	for i := 0; i < 5; i++ {
@@ -194,7 +194,7 @@ type MetricsSummaryRetriever struct {
 
 func (e *MetricsSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
-		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
@@ -236,13 +236,13 @@ func (e *MetricsSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.
 				name, util.MetricSchemaName.L, condition)
 		}
 
-		exec := sctx.(sqlexec.RestrictedSQLExecutor)
+		exec := sctx.GetRestrictedSQLExecutor()
 		rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)
 		if err != nil {
 			return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
 		}
 		for _, row := range rows {
-			var quantile interface{}
+			var quantile any
 			if def.Quantile > 0 {
 				quantile = row.GetFloat64(row.Len() - 1)
 			}
@@ -271,7 +271,7 @@ type MetricsSummaryByLabelRetriever struct {
 
 func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
-		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	if e.retrieved || e.extractor.SkipRequest {
 		return nil, nil
@@ -318,7 +318,7 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 			sql = fmt.Sprintf("select sum(value),avg(value),min(value),max(value) from `%s`.`%s` %s",
 				util.MetricSchemaName.L, name, cond)
 		}
-		exec := sctx.(sqlexec.RestrictedSQLExecutor)
+		exec := sctx.GetRestrictedSQLExecutor()
 		rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql)
 		if err != nil {
 			return nil, errors.Errorf("execute '%s' failed: %v", sql, err)
@@ -343,7 +343,7 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 				}
 				labels = append(labels, val)
 			}
-			var quantile interface{}
+			var quantile any
 			if def.Quantile > 0 {
 				quantile = row.GetFloat64(row.Len() - 1) // quantile will be the last column
 			}

@@ -248,7 +248,18 @@ select
 		json_length('[]'),
 		json_length('{"a": 1}'),
 		json_length('{"a": 1, "b": 2}'),
-		json_length('[1, 2, 3]');
+		json_length('[1, 2, 3]'),
+		json_length('{}', '$'),
+		json_length('1', '$'),
+		json_length(null, '$'),
+		json_length(null, 'fdfd'),
+		json_length('{}', null),
+		json_length('1', '$.a'),
+		json_length('{}', '$.a');
+-- error 3143
+select json_length('{}', 'fsdfds');
+-- error 3143
+select json_length('1', 'fsdfds');
 # issue 16267
 select json_array(922337203685477580) =  json_array(922337203685477581);
 
@@ -343,7 +354,7 @@ select json_storage_free(NULL);
 select json_storage_free('{}');
 select json_storage_free('1');
 select json_storage_free('{"a": "b"}');
--- error 1064
+-- error 3140
 select json_storage_free('{"c":["a","b"]');
 
 # TestJSONExtractFromLast
@@ -369,3 +380,16 @@ insert into t values ('"18446744073709552000"');
 select a, cast(a as unsigned) from t;
 -- sorted_result
 select a, cast(a as signed) from t;
+
+# TestCastBinaryStringToJSON
+select cast(binary 'aa' as json);
+drop table if exists t;
+create table t (vb VARBINARY(10), b BINARY(10), vc VARCHAR(10), c CHAR(10));
+insert into t values ('1', '1', '1', '1');
+select cast(vb as json), cast(b as json), cast(vc as json), cast(c as json) from t;
+select 1 from t where cast(vb as json) = '1';
+select 1 from t where cast(b as json) = '1';
+select 1 from t where cast(vc as json) = '1';
+select 1 from t where cast(c as json) = '1';
+select 1 from t where cast(BINARY vc as json) = '1';
+select 1 from t where cast(BINARY c as json) = '1';

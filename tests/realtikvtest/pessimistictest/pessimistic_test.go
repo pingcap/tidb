@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -49,10 +48,12 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -2402,7 +2403,7 @@ func TestTransactionIsolationAndForeignKey(t *testing.T) {
 	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t2 values (1,1)")
-	tk.MustGetDBError("insert into t2 values (2,2)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 values (2,2)", plannererrors.ErrNoReferencedRow2)
 	tk2.MustExec("insert into t1 values (2)")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2"))
 	tk.MustExec("insert into t2 values (2,2)")
@@ -2433,7 +2434,7 @@ func TestIssue28011(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
 		lockQuery string
-		finalRows [][]interface{}
+		finalRows [][]any
 	}{
 		{"Update", "update t set b = 'x' where a = 'a'", testkit.Rows("a x", "b y", "c z")},
 		{"BatchUpdate", "update t set b = 'x' where a in ('a', 'b', 'c')", testkit.Rows("a x", "b y", "c x")},
@@ -3018,7 +3019,7 @@ func TestLazyUniquenessCheckWithSavepoint(t *testing.T) {
 	require.ErrorContains(t, err, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
 }
 
-func mustExecAsync(tk *testkit.TestKit, sql string, args ...interface{}) <-chan struct{} {
+func mustExecAsync(tk *testkit.TestKit, sql string, args ...any) <-chan struct{} {
 	ch := make(chan struct{})
 	go func() {
 		defer func() { ch <- struct{}{} }()
@@ -3027,7 +3028,7 @@ func mustExecAsync(tk *testkit.TestKit, sql string, args ...interface{}) <-chan 
 	return ch
 }
 
-func mustQueryAsync(tk *testkit.TestKit, sql string, args ...interface{}) <-chan *testkit.Result {
+func mustQueryAsync(tk *testkit.TestKit, sql string, args ...any) <-chan *testkit.Result {
 	ch := make(chan *testkit.Result)
 	go func() {
 		ch <- tk.MustQuery(sql, args...)
@@ -3035,7 +3036,7 @@ func mustQueryAsync(tk *testkit.TestKit, sql string, args ...interface{}) <-chan
 	return ch
 }
 
-func mustTimeout[T interface{}](t *testing.T, ch <-chan T, timeout time.Duration) {
+func mustTimeout[T any](t *testing.T, ch <-chan T, timeout time.Duration) {
 	select {
 	case res := <-ch:
 		require.FailNow(t, fmt.Sprintf("received signal when not expected: %v", res))
@@ -3043,7 +3044,7 @@ func mustTimeout[T interface{}](t *testing.T, ch <-chan T, timeout time.Duration
 	}
 }
 
-func mustRecv[T interface{}](t *testing.T, ch <-chan T) T {
+func mustRecv[T any](t *testing.T, ch <-chan T) T {
 	select {
 	case <-time.After(time.Second):
 	case res := <-ch:
@@ -3488,7 +3489,7 @@ func TestIssueBatchResolveLocks(t *testing.T) {
 	// Simulate a later GC that should resolve all stale lock produced in above steps.
 	currentTS, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
-	_, err = gcworker.RunResolveLocks(context.Background(), store.(tikv.Storage), domain.GetPDClient(), currentTS.Ver, "gc-worker-test-batch-resolve-locks", 1, false)
+	err = gcworker.RunResolveLocks(context.Background(), store.(tikv.Storage), domain.GetPDClient(), currentTS.Ver, "gc-worker-test-batch-resolve-locks", 1)
 	require.NoError(t, err)
 
 	// Check row 6 unlocked
@@ -3566,4 +3567,38 @@ func TestIssue42937(t *testing.T) {
 		"4 41",
 		"5 11",
 	))
+}
+
+func TestEndTxnOnLockExpire(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("prepare ps_commit from 'commit'")
+	tk.MustExec("prepare ps_rollback from 'rollback'")
+
+	defer setLockTTL(300).restore()
+	defer tikvcfg.UpdateGlobal(func(conf *tikvcfg.Config) {
+		conf.MaxTxnTTL = 500
+	})()
+
+	for _, tt := range []struct {
+		name      string
+		endTxnSQL string
+	}{
+		{"CommitTxt", "commit"},
+		{"CommitBin", "execute ps_commit"},
+		{"RollbackTxt", "rollback"},
+		{"RollbackBin", "execute ps_rollback"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tk.Exec("delete from t")
+			tk.Exec("insert into t values (1, 1)")
+			tk.Exec("begin pessimistic")
+			tk.Exec("update t set b = 10 where a = 1")
+			time.Sleep(time.Second)
+			tk.MustContainErrMsg("select * from t", "TTL manager has timed out")
+			tk.MustExec(tt.endTxnSQL)
+		})
+	}
 }

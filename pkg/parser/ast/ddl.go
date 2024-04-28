@@ -46,6 +46,7 @@ var (
 	_ DDLNode = &DropSequenceStmt{}
 	_ DDLNode = &DropPlacementPolicyStmt{}
 	_ DDLNode = &DropResourceGroupStmt{}
+	_ DDLNode = &OptimizeTableStmt{}
 	_ DDLNode = &RenameTableStmt{}
 	_ DDLNode = &TruncateTableStmt{}
 	_ DDLNode = &RepairTableStmt{}
@@ -578,8 +579,20 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("AUTO_INCREMENT")
 	case ColumnOptionDefaultValue:
 		ctx.WriteKeyWord("DEFAULT ")
+		printOuterParentheses := false
+		if funcCallExpr, ok := n.Expr.(*FuncCallExpr); ok {
+			if name := funcCallExpr.FnName.L; name != CurrentTimestamp {
+				printOuterParentheses = true
+			}
+		}
+		if printOuterParentheses {
+			ctx.WritePlain("(")
+		}
 		if err := n.Expr.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing ColumnOption DefaultValue Expr")
+		}
+		if printOuterParentheses {
+			ctx.WritePlain(")")
 		}
 	case ColumnOptionUniqKey:
 		ctx.WriteKeyWord("UNIQUE KEY")
@@ -1319,6 +1332,40 @@ func (n *DropResourceGroupStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropResourceGroupStmt)
+	return v.Leave(n)
+}
+
+type OptimizeTableStmt struct {
+	ddlNode
+
+	NoWriteToBinLog bool
+	Tables          []*TableName
+}
+
+func (n *OptimizeTableStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("OPTIMIZE ")
+	if n.NoWriteToBinLog {
+		ctx.WriteKeyWord("NO_WRITE_TO_BINLOG ")
+	}
+	ctx.WriteKeyWord("TABLE ")
+
+	for index, table := range n.Tables {
+		if index != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := table.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore OptimizeTableStmt.Tables[%d]", index)
+		}
+	}
+	return nil
+}
+
+func (n *OptimizeTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*OptimizeTableStmt)
 	return v.Leave(n)
 }
 

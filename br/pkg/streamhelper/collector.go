@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
@@ -17,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -38,7 +38,7 @@ type storeCollector struct {
 
 	input chan RegionWithLeader
 	// the oneshot error reporter.
-	err *atomic.Value
+	err *atomic.Error
 	// whether the recv and send loop has exited.
 	doneMessenger chan struct{}
 	onSuccess     onSuccessHook
@@ -58,26 +58,18 @@ func newStoreCollector(storeID uint64, srv LogBackupService) *storeCollector {
 		batchSize:     defaultBatchSize,
 		service:       srv,
 		input:         make(chan RegionWithLeader, defaultBatchSize),
-		err:           new(atomic.Value),
+		err:           new(atomic.Error),
 		doneMessenger: make(chan struct{}),
 		regionMap:     make(map[uint64]kv.KeyRange),
 	}
 }
 
 func (c *storeCollector) reportErr(err error) {
-	if oldErr := c.Err(); oldErr != nil {
+	if oldErr := c.err.Load(); oldErr != nil {
 		log.Warn("reporting error twice, ignoring", logutil.AShortError("old", err), logutil.AShortError("new", oldErr))
 		return
 	}
 	c.err.Store(err)
-}
-
-func (c *storeCollector) Err() error {
-	err, ok := c.err.Load().(error)
-	if !ok {
-		return nil
-	}
-	return err
 }
 
 func (c *storeCollector) setOnSuccessHook(hook onSuccessHook) {
@@ -166,7 +158,7 @@ func (c *storeCollector) spawn(ctx context.Context) func(context.Context) (Store
 			return StoreCheckpoints{}, cx.Err()
 		case <-c.doneMessenger:
 		}
-		if err := c.Err(); err != nil {
+		if err := c.err.Load(); err != nil {
 			return StoreCheckpoints{}, err
 		}
 		sc := StoreCheckpoints{
@@ -187,6 +179,8 @@ func (c *storeCollector) sendPendingRequests(ctx context.Context) error {
 	}
 	cps, err := cli.GetLastFlushTSOfRegion(ctx, &c.currentRequest)
 	if err != nil {
+		// try disable connection cache if met error
+		_ = c.service.ClearCache(ctx, c.storeID)
 		return err
 	}
 	metrics.GetCheckpointBatchSize.WithLabelValues("checkpoint").Observe(float64(len(c.currentRequest.GetRegions())))
@@ -302,7 +296,7 @@ func (c *clusterCollector) CollectRegion(r RegionWithLeader) error {
 	case sc.input <- r:
 		return nil
 	case <-sc.doneMessenger:
-		err := sc.Err()
+		err := sc.err.Load()
 		if err != nil {
 			c.cancel()
 		}

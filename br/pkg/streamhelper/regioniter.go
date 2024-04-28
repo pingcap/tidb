@@ -13,10 +13,10 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/redact"
 )
 
 const (
@@ -42,6 +42,11 @@ type TiKVClusterMeta interface {
 	// NOTE: once we support multi tasks, perhaps we need to allow the caller to provide a namespace.
 	// For now, all tasks (exactly one task in fact) use the same checkpoint.
 	BlockGCUntil(ctx context.Context, at uint64) (uint64, error)
+
+	// UnblockGC used to remove the service GC safe point in PD.
+	UnblockGC(ctx context.Context) error
+
+	FetchCurrentTS(ctx context.Context) (uint64, error)
 }
 
 type Store struct {
@@ -80,6 +85,19 @@ func IterateRegion(cli TiKVClusterMeta, startKey, endKey []byte) *RegionIter {
 		currentStartKey: startKey,
 		PageSize:        defaultPageSize,
 	}
+}
+
+// locateKeyOfRegion locates the place of the region in the key.
+func locateKeyOfRegion(ctx context.Context, cli TiKVClusterMeta, key []byte) (RegionWithLeader, error) {
+	regions, err := cli.RegionScan(ctx, key, kv.Key(key).Next(), 1)
+	if err != nil {
+		return RegionWithLeader{}, err
+	}
+	if len(regions) == 0 {
+		return RegionWithLeader{}, errors.Annotatef(berrors.ErrPDBatchScanRegion,
+			"scanning the key %s returns empty region", redact.Key(key))
+	}
+	return regions[0], nil
 }
 
 func CheckRegionConsistency(startKey, endKey []byte, regions []RegionWithLeader) error {

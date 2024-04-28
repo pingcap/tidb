@@ -53,6 +53,34 @@ func (t *TxStructure) EncodeStringDataKey(key []byte) kv.Key {
 	return codec.EncodeUint(ek, uint64(StringData))
 }
 
+func (t *TxStructure) decodeStringDataKey(ek kv.Key) ([]byte, error) {
+	var (
+		key []byte
+		err error
+		tp  uint64
+	)
+
+	if !bytes.HasPrefix(ek, t.prefix) {
+		return nil, errors.New("invalid encoded hash data key prefix")
+	}
+
+	ek = ek[len(t.prefix):]
+
+	ek, key, err = codec.DecodeBytes(ek, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ek, tp, err = codec.DecodeUint(ek)
+	if err != nil {
+		return nil, errors.Trace(err)
+	} else if TypeFlag(tp) != StringData {
+		return nil, ErrInvalidHashKeyFlag.GenWithStack("invalid encoded string data key flag %c", byte(tp))
+	}
+
+	return key, errors.Trace(err)
+}
+
 // nolint:unused
 func (t *TxStructure) encodeHashMetaKey(key []byte) kv.Key {
 	ek := make([]byte, 0, len(t.prefix)+codec.EncodedBytesLength(len(key))+8)

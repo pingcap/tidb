@@ -307,7 +307,7 @@ explain format = 'brief' select * from t where a is null;
 explain format = 'brief' select * from t where a = 3;
 # TODO: check ranges with 1,2 and 3 matching values, including 'holes' matching DEFAULT
 # DEFAULT partition will not be used in reorganize partition if not included in the source/destination
--- error 8112
+-- error 1526
 alter table t reorganize partition p0 into (partition p0 values in (0));
 drop table t;
 CREATE TABLE t (a VARCHAR(100),b INT) PARTITION BY LIST COLUMNS (a) (PARTITION p1 VALUES IN ('a', 'b', 'DEFAULT'),PARTITION pDef DEFAULT);
@@ -369,7 +369,7 @@ explain format = 'brief' select * from t where a >= "3" and a <= "4";
 --sorted_result
 select * from t where a >= "3" and a <= "4";
 # DEFAULT partition will not be used in reorganize partition if not included in the source/destination
--- error 8112
+-- error 1526
 alter table t reorganize partition p0 into (partition p0 values in (0));
 set @@tidb_partition_prune_mode = default;
 

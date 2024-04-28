@@ -10,9 +10,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/serialization",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/parser/mysql",
         "//pkg/types",
         "//pkg/util/chunk",
-        "//pkg/util/dbterror",
     ],
 )

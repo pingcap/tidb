@@ -6,9 +6,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/server/internal/testserverclient",
     visibility = ["//pkg/server:__subpackages__"],
     deps = [
-        "//pkg/config",
         "//pkg/errno",
         "//pkg/kv",
+        "//pkg/metrics",
         "//pkg/parser/mysql",
         "//pkg/server",
         "//pkg/testkit",
@@ -18,7 +18,9 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
+        "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
+        "@org_golang_x_text//encoding/simplifiedchinese",
         "@org_uber_go_zap//:zap",
     ],
 )

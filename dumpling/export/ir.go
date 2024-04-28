@@ -61,10 +61,10 @@ type Stringer interface {
 
 // RowReceiver is an interface which represents sql types that support bind address for *sql.Rows
 type RowReceiver interface {
-	BindAddress([]interface{})
+	BindAddress([]any)
 }
 
-func decodeFromRows(rows *sql.Rows, args []interface{}, row RowReceiver) error {
+func decodeFromRows(rows *sql.Rows, args []any, row RowReceiver) error {
 	row.BindAddress(args)
 	if err := rows.Scan(args...); err != nil {
 		rows.Close()

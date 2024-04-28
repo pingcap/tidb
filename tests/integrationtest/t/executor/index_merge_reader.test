@@ -287,3 +287,8 @@ select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 102
 set global tidb_mem_oom_action = DEFAULT;
 set @@tidb_mem_quota_query = default;
 
+# TestFix51188
+drop table if exists t;
+create table t(a int, b int, c int, index(b, a), index(c, a));
+## Will not OOM.
+select * from t use index(b, c) where b=2 or c=3 order by a limit 10000000000000000;

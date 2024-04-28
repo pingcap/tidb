@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -101,7 +100,7 @@ func (b *builtinJSONTypeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonTypeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonTypeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -109,7 +108,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(51) // flen of JSON_TYPE is length of UNSIGNED INTEGER.
@@ -119,7 +118,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	return sig, nil
 }
 
-func (b *builtinJSONTypeSig) evalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error) {
+func (b *builtinJSONTypeSig) evalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error) {
 	var j types.BinaryJSON
 	j, isNull, err = b.args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
@@ -152,7 +151,7 @@ func (c *jsonExtractFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
-func (c *jsonExtractFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonExtractFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -170,7 +169,7 @@ func (c *jsonExtractFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	return sig, nil
 }
 
-func (b *builtinJSONExtractSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONExtractSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return
@@ -219,7 +218,7 @@ func (c *jsonUnquoteFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
-func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonUnquoteFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -235,7 +234,7 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	return sig, nil
 }
 
-func (b *builtinJSONUnquoteSig) evalString(ctx sessionctx.Context, row chunk.Row) (str string, isNull bool, err error) {
+func (b *builtinJSONUnquoteSig) evalString(ctx EvalContext, row chunk.Row) (str string, isNull bool, err error) {
 	str, isNull, err = b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -264,7 +263,7 @@ func (b *builtinJSONSetSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonSetFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -288,7 +287,7 @@ func (c *jsonSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	return sig, nil
 }
 
-func (b *builtinJSONSetSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONSetSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = jsonModify(ctx, b.args, row, types.JSONModifySet)
 	return res, isNull, err
 }
@@ -307,7 +306,7 @@ func (b *builtinJSONInsertSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonInsertFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonInsertFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -331,7 +330,7 @@ func (c *jsonInsertFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	return sig, nil
 }
 
-func (b *builtinJSONInsertSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONInsertSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = jsonModify(ctx, b.args, row, types.JSONModifyInsert)
 	return res, isNull, err
 }
@@ -350,7 +349,7 @@ func (b *builtinJSONReplaceSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonReplaceFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -374,7 +373,7 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	return sig, nil
 }
 
-func (b *builtinJSONReplaceSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONReplaceSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = jsonModify(ctx, b.args, row, types.JSONModifyReplace)
 	return res, isNull, err
 }
@@ -393,7 +392,7 @@ func (b *builtinJSONRemoveSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonRemoveFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonRemoveFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -411,7 +410,7 @@ func (c *jsonRemoveFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	return sig, nil
 }
 
-func (b *builtinJSONRemoveSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONRemoveSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -463,7 +462,7 @@ func (b *builtinJSONMergeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonMergeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonMergeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -480,7 +479,7 @@ func (c *jsonMergeFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	return sig, nil
 }
 
-func (b *builtinJSONMergeSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONMergeSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	values := make([]types.BinaryJSON, 0, len(b.args))
 	for _, arg := range b.args {
 		var value types.BinaryJSON
@@ -494,7 +493,8 @@ func (b *builtinJSONMergeSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (r
 	// function "JSON_MERGE" is deprecated since MySQL 5.7.22. Synonym for function "JSON_MERGE_PRESERVE".
 	// See https://dev.mysql.com/doc/refman/5.7/en/json-modification-functions.html#function_json-merge
 	if b.pbCode == tipb.ScalarFuncSig_JsonMergeSig {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("JSON_MERGE"))
+		tc := typeCtx(ctx)
+		tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("JSON_MERGE"))
 	}
 	return res, false, nil
 }
@@ -513,7 +513,7 @@ func (b *builtinJSONObjectSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonObjectFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonObjectFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -539,12 +539,12 @@ func (c *jsonObjectFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	return sig, nil
 }
 
-func (b *builtinJSONObjectSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONObjectSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	if len(b.args)&1 == 1 {
 		err = ErrIncorrectParameterCount.GenWithStackByArgs(ast.JSONObject)
 		return res, true, err
 	}
-	jsons := make(map[string]interface{}, len(b.args)>>1)
+	jsons := make(map[string]any, len(b.args)>>1)
 	var key string
 	var value types.BinaryJSON
 	for i, arg := range b.args {
@@ -589,7 +589,7 @@ func (b *builtinJSONArraySig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonArrayFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -609,8 +609,8 @@ func (c *jsonArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	return sig, nil
 }
 
-func (b *builtinJSONArraySig) evalJSON(ctx sessionctx.Context, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
-	jsons := make([]interface{}, 0, len(b.args))
+func (b *builtinJSONArraySig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+	jsons := make([]any, 0, len(b.args))
 	for _, arg := range b.args {
 		j, isNull, err := arg.EvalJSON(ctx, row)
 		if err != nil {
@@ -652,7 +652,7 @@ func (c *jsonContainsPathFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
-func (c *jsonContainsPathFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonContainsPathFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -669,7 +669,7 @@ func (c *jsonContainsPathFunctionClass) getFunction(ctx sessionctx.Context, args
 	return sig, nil
 }
 
-func (b *builtinJSONContainsPathSig) evalInt(ctx sessionctx.Context, row chunk.Row) (res int64, isNull bool, err error) {
+func (b *builtinJSONContainsPathSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
 	obj, isNull, err := b.args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -705,7 +705,7 @@ func (b *builtinJSONContainsPathSig) evalInt(ctx sessionctx.Context, row chunk.R
 	return contains, false, nil
 }
 
-func jsonModify(ctx sessionctx.Context, args []Expression, row chunk.Row, mt types.JSONModifyType) (res types.BinaryJSON, isNull bool, err error) {
+func jsonModify(ctx EvalContext, args []Expression, row chunk.Row, mt types.JSONModifyType) (res types.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -768,7 +768,7 @@ func (c *jsonMemberOfFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
-func (c *jsonMemberOfFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonMemberOfFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -783,7 +783,7 @@ func (c *jsonMemberOfFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	return sig, nil
 }
 
-func (b *builtinJSONMemberOfSig) evalInt(ctx sessionctx.Context, row chunk.Row) (res int64, isNull bool, err error) {
+func (b *builtinJSONMemberOfSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
 	target, isNull, err := b.args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -834,7 +834,7 @@ func (c *jsonContainsFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
-func (c *jsonContainsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonContainsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -852,7 +852,7 @@ func (c *jsonContainsFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	return sig, nil
 }
 
-func (b *builtinJSONContainsSig) evalInt(ctx sessionctx.Context, row chunk.Row) (res int64, isNull bool, err error) {
+func (b *builtinJSONContainsSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
 	obj, isNull, err := b.args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -914,7 +914,7 @@ func (c *jsonOverlapsFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
-func (c *jsonOverlapsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonOverlapsFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -928,7 +928,7 @@ func (c *jsonOverlapsFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	return sig, nil
 }
 
-func (b *builtinJSONOverlapsSig) evalInt(ctx sessionctx.Context, row chunk.Row) (res int64, isNull bool, err error) {
+func (b *builtinJSONOverlapsSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
 	obj, isNull, err := b.args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -947,7 +947,7 @@ type jsonValidFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonValidFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -992,7 +992,7 @@ func (b *builtinJSONValidJSONSig) Clone() builtinFunc {
 
 // evalInt evals a builtinJSONValidJSONSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-valid
-func (b *builtinJSONValidJSONSig) evalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
+func (b *builtinJSONValidJSONSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
 	_, isNull, err = b.args[0].EvalJSON(ctx, row)
 	return 1, isNull, err
 }
@@ -1009,7 +1009,7 @@ func (b *builtinJSONValidStringSig) Clone() builtinFunc {
 
 // evalInt evals a builtinJSONValidStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-valid
-func (b *builtinJSONValidStringSig) evalInt(ctx sessionctx.Context, row chunk.Row) (res int64, isNull bool, err error) {
+func (b *builtinJSONValidStringSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return 0, isNull, err
@@ -1034,7 +1034,7 @@ func (b *builtinJSONValidOthersSig) Clone() builtinFunc {
 
 // evalInt evals a builtinJSONValidOthersSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-valid
-func (b *builtinJSONValidOthersSig) evalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
+func (b *builtinJSONValidOthersSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
 	return 0, false, nil
 }
 
@@ -1053,7 +1053,7 @@ func (c *jsonArrayAppendFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
-func (c *jsonArrayAppendFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonArrayAppendFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1080,7 +1080,7 @@ func (b *builtinJSONArrayAppendSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinJSONArrayAppendSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONArrayAppendSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalJSON(ctx, row)
 	if err != nil || isNull {
 		return res, true, err
@@ -1127,7 +1127,7 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res types.BinaryJSON, p stri
 		// res.Extract will return a json object instead of an array if there is an object at path pathExpr.
 		// JSON_ARRAY_APPEND({"a": "b"}, "$", {"b": "c"}) => [{"a": "b"}, {"b", "c"}]
 		// We should wrap them to a single array first.
-		obj, err = types.CreateBinaryJSONWithCheck([]interface{}{obj})
+		obj, err = types.CreateBinaryJSONWithCheck([]any{obj})
 		if err != nil {
 			return res, true, err
 		}
@@ -1146,7 +1146,7 @@ type builtinJSONArrayInsertSig struct {
 	baseBuiltinFunc
 }
 
-func (c *jsonArrayInsertFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonArrayInsertFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1177,7 +1177,7 @@ func (b *builtinJSONArrayInsertSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinJSONArrayInsertSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONArrayInsertSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalJSON(ctx, row)
 	if err != nil || isNull {
 		return res, true, err
@@ -1231,7 +1231,7 @@ func (c *jsonMergePatchFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
-func (c *jsonMergePatchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonMergePatchFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1258,7 +1258,7 @@ func (b *builtinJSONMergePatchSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinJSONMergePatchSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONMergePatchSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	values := make([]*types.BinaryJSON, 0, len(b.args))
 	for _, arg := range b.args {
 		var value types.BinaryJSON
@@ -1300,7 +1300,7 @@ func (c *jsonMergePreserveFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
-func (c *jsonMergePreserveFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonMergePreserveFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1331,7 +1331,7 @@ func (b *builtinJSONSPrettySig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonPrettyFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonPrettyFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1347,7 +1347,7 @@ func (c *jsonPrettyFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	return sig, nil
 }
 
-func (b *builtinJSONSPrettySig) evalString(ctx sessionctx.Context, row chunk.Row) (res string, isNull bool, err error) {
+func (b *builtinJSONSPrettySig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
 	obj, isNull, err := b.args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -1388,7 +1388,7 @@ func (c *jsonQuoteFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
-func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonQuoteFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1404,7 +1404,7 @@ func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	return sig, nil
 }
 
-func (b *builtinJSONQuoteSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (b *builtinJSONQuoteSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	str, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -1436,7 +1436,7 @@ func (c *jsonSearchFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
-func (c *jsonSearchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonSearchFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1455,7 +1455,7 @@ func (c *jsonSearchFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	return sig, nil
 }
 
-func (b *builtinJSONSearchSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONSearchSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	// json_doc
 	var obj types.BinaryJSON
 	obj, isNull, err = b.args[0].EvalJSON(ctx, row)
@@ -1529,7 +1529,7 @@ func (b *builtinJSONStorageFreeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonStorageFreeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonStorageFreeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1543,7 +1543,7 @@ func (c *jsonStorageFreeFunctionClass) getFunction(ctx sessionctx.Context, args 
 	return sig, nil
 }
 
-func (b *builtinJSONStorageFreeSig) evalInt(ctx sessionctx.Context, row chunk.Row) (res int64, isNull bool, err error) {
+func (b *builtinJSONStorageFreeSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
 	_, isNull, err = b.args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -1566,7 +1566,7 @@ func (b *builtinJSONStorageSizeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonStorageSizeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonStorageSizeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1580,7 +1580,7 @@ func (c *jsonStorageSizeFunctionClass) getFunction(ctx sessionctx.Context, args 
 	return sig, nil
 }
 
-func (b *builtinJSONStorageSizeSig) evalInt(ctx sessionctx.Context, row chunk.Row) (res int64, isNull bool, err error) {
+func (b *builtinJSONStorageSizeSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
 	obj, isNull, err := b.args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -1604,7 +1604,7 @@ func (b *builtinJSONDepthSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonDepthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonDepthFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1618,7 +1618,7 @@ func (c *jsonDepthFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	return sig, nil
 }
 
-func (b *builtinJSONDepthSig) evalInt(ctx sessionctx.Context, row chunk.Row) (res int64, isNull bool, err error) {
+func (b *builtinJSONDepthSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
 	// as TiDB doesn't support partial update json value, so only check the
 	// json format and whether it's NULL. For NULL return NULL, for invalid json, return
 	// an error, otherwise return 0
@@ -1645,7 +1645,7 @@ func (c *jsonKeysFunctionClass) verifyArgs(args []Expression) error {
 	return nil
 }
 
-func (c *jsonKeysFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonKeysFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1679,7 +1679,7 @@ func (b *builtinJSONKeysSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinJSONKeysSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONKeysSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -1700,7 +1700,7 @@ func (b *builtinJSONKeys2ArgsSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinJSONKeys2ArgsSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONKeys2ArgsSig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -1744,7 +1744,7 @@ func (b *builtinJSONLengthSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (c *jsonLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *jsonLengthFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1764,14 +1764,10 @@ func (c *jsonLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	return sig, nil
 }
 
-func (b *builtinJSONLengthSig) evalInt(ctx sessionctx.Context, row chunk.Row) (res int64, isNull bool, err error) {
+func (b *builtinJSONLengthSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
 	obj, isNull, err := b.args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
-	}
-
-	if obj.TypeCode != types.JSONTypeCodeObject && obj.TypeCode != types.JSONTypeCodeArray {
-		return 1, false, nil
 	}
 
 	if len(b.args) == 2 {
@@ -1793,9 +1789,10 @@ func (b *builtinJSONLengthSig) evalInt(ctx sessionctx.Context, row chunk.Row) (r
 		if !exists {
 			return res, true, nil
 		}
-		if obj.TypeCode != types.JSONTypeCodeObject && obj.TypeCode != types.JSONTypeCodeArray {
-			return 1, false, nil
-		}
+	}
+
+	if obj.TypeCode != types.JSONTypeCodeObject && obj.TypeCode != types.JSONTypeCodeArray {
+		return 1, false, nil
 	}
 	return int64(obj.GetElemCount()), false, nil
 }

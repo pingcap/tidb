@@ -43,7 +43,7 @@ func TestJoinExec(t *testing.T) {
 		opt1 := testutil.MockDataSourceParameters{
 			Rows: casTest.rows,
 			Ctx:  casTest.ctx,
-			GenDataFunc: func(row int, typ *types.FieldType) interface{} {
+			GenDataFunc: func(row int, typ *types.FieldType) any {
 				switch typ.GetType() {
 				case mysql.TypeLong, mysql.TypeLonglong:
 					return int64(row)
@@ -124,10 +124,10 @@ func TestHashJoinRuntimeStats(t *testing.T) {
 		concurrent:       4,
 		maxFetchAndProbe: int64(2 * time.Second),
 	}
-	require.Equal(t, "build_hash_table:{total:2s, fetch:1.9s, build:100ms}, probe:{concurrency:4, total:5s, max:2s, probe:4s, fetch:1s, probe_collision:1}", stats.String())
+	require.Equal(t, "build_hash_table:{total:2s, fetch:1.9s, build:100ms}, probe:{concurrency:4, total:5s, max:2s, probe:4s, fetch and wait:1s, probe_collision:1}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
-	require.Equal(t, "build_hash_table:{total:4s, fetch:3.8s, build:200ms}, probe:{concurrency:4, total:10s, max:2s, probe:8s, fetch:2s, probe_collision:2}", stats.String())
+	require.Equal(t, "build_hash_table:{total:4s, fetch:3.8s, build:200ms}, probe:{concurrency:4, total:10s, max:2s, probe:8s, fetch and wait:2s, probe_collision:2}", stats.String())
 }
 
 func TestIndexJoinRuntimeStats(t *testing.T) {

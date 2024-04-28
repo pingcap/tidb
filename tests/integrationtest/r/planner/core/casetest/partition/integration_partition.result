@@ -738,3 +738,15 @@ Projection	10.00	root		list_partition_pruning.thash.a
         └─Limit	10.00	cop[tikv]		offset:0, count:10
           └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.thash.a, 10)
             └─TableFullScan	30.00	cop[tikv]	table:thash, partition:p3	keep order:true, stats:pseudo
+drop table if exists t;
+create table t(col varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL) PARTITION BY KEY (`col`) PARTITIONS 7;
+explain format = brief select * from t where col = 'linpin';
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(list_partition_pruning.t.col, "linpin")
+  └─TableFullScan	10000.00	cop[tikv]	table:t, partition:p4	keep order:false, stats:pseudo
+explain format = brief select * from t where col = 'LINPIN';
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(list_partition_pruning.t.col, "LINPIN")
+  └─TableFullScan	10000.00	cop[tikv]	table:t, partition:p4	keep order:false, stats:pseudo

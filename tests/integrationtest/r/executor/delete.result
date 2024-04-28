@@ -107,3 +107,18 @@ id	data
 11	321
 22	322
 23	323
+drop table if exists t;
+create table t (id char(255));
+insert into t values ('18446744073709551616');
+delete from t where cast(id as unsigned) = 1;
+Error 1690 (22003): BIGINT value is out of range in '18446744073709551616'
+update t set id = '1' where cast(id as unsigned) = 1;
+Error 1690 (22003): BIGINT value is out of range in '18446744073709551616'
+set sql_mode=''
+delete from t where cast(id as unsigned) = 1;
+Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '18446744073709551616'
+update t set id = '1' where cast(id as unsigned) = 1;
+Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '18446744073709551616'
+set sql_mode=DEFAULT

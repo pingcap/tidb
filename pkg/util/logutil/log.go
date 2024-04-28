@@ -31,6 +31,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/net/http/httpproxy"
 )
 
 const (
@@ -81,10 +82,13 @@ type LogConfig struct {
 
 	// SlowQueryFile filename, default to File log config on empty.
 	SlowQueryFile string
+
+	// GeneralLogFile filenanme, default to File log config on empty.
+	GeneralLogFile string
 }
 
 // NewLogConfig creates a LogConfig.
-func NewLogConfig(level, format, slowQueryFile string, fileCfg FileLogConfig, disableTimestamp bool, opts ...func(*log.Config)) *LogConfig {
+func NewLogConfig(level, format, slowQueryFile string, generalLogFile string, fileCfg FileLogConfig, disableTimestamp bool, opts ...func(*log.Config)) *LogConfig {
 	c := &LogConfig{
 		Config: log.Config{
 			Level:            level,
@@ -92,7 +96,8 @@ func NewLogConfig(level, format, slowQueryFile string, fileCfg FileLogConfig, di
 			DisableTimestamp: disableTimestamp,
 			File:             fileCfg.FileLogConfig,
 		},
-		SlowQueryFile: slowQueryFile,
+		SlowQueryFile:  slowQueryFile,
+		GeneralLogFile: generalLogFile,
 	}
 	for _, opt := range opts {
 		opt(&c.Config)
@@ -113,6 +118,9 @@ const (
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
 var SlowQueryLogger = log.L()
 
+// GeneralLogger is used to log general log, InitLogger will modify it according to config file.
+var GeneralLogger = log.L()
+
 // InitLogger initializes a logger with cfg.
 func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 	opts = append(opts, zap.AddStacktrace(zapcore.FatalLevel))
@@ -124,6 +132,12 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 
 	// init dedicated logger for slow query log
 	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// init dedicated logger for general log
+	GeneralLogger, _, err = newGeneralLogger(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -174,6 +188,11 @@ func ReplaceLogger(cfg *LogConfig, opts ...zap.Option) error {
 		return errors.Trace(err)
 	}
 
+	GeneralLogger, _, err = newGeneralLogger(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	log.S().Infof("replaced global logger with config: %s", string(cfgJSON))
 
 	return nil
@@ -204,7 +223,9 @@ func Logger(ctx context.Context) *zap.Logger {
 	return log.L()
 }
 
-// BgLogger is alias of `logutil.BgLogger()`
+// BgLogger is alias of `logutil.BgLogger()`. It's initialized in tidb-server's
+// main function. Don't use it in `init` or equivalent functions otherwise it
+// will print to stdout.
 func BgLogger() *zap.Logger {
 	return log.L()
 }
@@ -338,15 +359,39 @@ func Event(ctx context.Context, event string) {
 }
 
 // Eventf records event in current tracing span with format support.
-func Eventf(ctx context.Context, format string, args ...interface{}) {
+func Eventf(ctx context.Context, format string, args ...any) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span.LogFields(tlog.String(TraceEventKey, fmt.Sprintf(format, args...)))
 	}
 }
 
 // SetTag sets tag kv-pair in current tracing span
-func SetTag(ctx context.Context, key string, value interface{}) {
+func SetTag(ctx context.Context, key string, value any) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span.SetTag(key, value)
 	}
+}
+
+// LogEnvVariables logs related environment variables.
+func LogEnvVariables() {
+	// log http proxy settings, it will be used in gRPC connection by default
+	fields := proxyFields()
+	if len(fields) > 0 {
+		log.Info("using proxy config", fields...)
+	}
+}
+
+func proxyFields() []zap.Field {
+	proxyCfg := httpproxy.FromEnvironment()
+	fields := make([]zap.Field, 0, 3)
+	if proxyCfg.HTTPProxy != "" {
+		fields = append(fields, zap.String("http_proxy", proxyCfg.HTTPProxy))
+	}
+	if proxyCfg.HTTPSProxy != "" {
+		fields = append(fields, zap.String("https_proxy", proxyCfg.HTTPSProxy))
+	}
+	if proxyCfg.NoProxy != "" {
+		fields = append(fields, zap.String("no_proxy", proxyCfg.NoProxy))
+	}
+	return fields
 }

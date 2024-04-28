@@ -2773,13 +2773,14 @@
           "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 12487.50 mpp[tiflash]  test.employee.deptid, test.employee.empid, test.employee.salary, test.employee.empid, test.employee.salary",
-          "    └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, test.employee.deptid)]",
-          "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:employee pushed down filter:empty, keep order:false, stats:pseudo",
-          "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "        └─TableFullScan 10000.00 mpp[tiflash] table:e1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "    └─Projection 12487.50 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, test.employee.empid, test.employee.salary",
+          "      └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, test.employee.deptid)]",
+          "        ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:employee pushed down filter:empty, keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:e1 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -3087,23 +3088,24 @@
           "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  Column#6, Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
-          "    └─HashJoin 8000.00 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#6)]",
-          "      ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#6, collate: binary]",
-          "      │   └─Projection 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#6, Column#5",
-          "      │     └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
-          "      │       └─Projection 8000.00 mpp[tiflash]  Column#5, test.employee.deptid",
-          "      │         └─HashAgg 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#5, funcs:firstrow(Column#15)->test.employee.deptid",
-          "      │           └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
-          "      │             └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]",
-          "      │               └─HashAgg 8000.00 mpp[tiflash]  group by:Column#29, funcs:count(Column#27)->Column#14, funcs:firstrow(Column#28)->Column#15",
-          "      │                 └─Projection 10000.00 mpp[tiflash]  test.employee.empid->Column#27, test.employee.deptid->Column#28, plus(test.employee.deptid, 1)->Column#29",
-          "      │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
-          "      └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
-          "        └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#26, collate: binary]",
-          "          └─Projection 9990.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, cast(test.employee.deptid, bigint(20))->Column#26",
-          "            └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:e2 pushed down filter:empty, keep order:false, stats:pseudo"
+          "    └─Projection 8000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#6, Column#5, Column#26",
+          "      └─HashJoin 8000.00 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#6)]",
+          "        ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#6, collate: binary]",
+          "        │   └─Projection 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#6, Column#5",
+          "        │     └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "        │       └─Projection 8000.00 mpp[tiflash]  Column#5, test.employee.deptid",
+          "        │         └─HashAgg 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#5, funcs:firstrow(Column#15)->test.employee.deptid",
+          "        │           └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "        │             └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]",
+          "        │               └─HashAgg 8000.00 mpp[tiflash]  group by:Column#29, funcs:count(Column#27)->Column#14, funcs:firstrow(Column#28)->Column#15",
+          "        │                 └─Projection 10000.00 mpp[tiflash]  test.employee.empid->Column#27, test.employee.deptid->Column#28, plus(test.employee.deptid, 1)->Column#29",
+          "        │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "        └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#26, collate: binary]",
+          "            └─Projection 9990.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, cast(test.employee.deptid, bigint(20))->Column#26",
+          "              └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:e2 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -3112,23 +3114,24 @@
           "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#10, Column#9",
-          "    └─HashJoin 8000.00 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#10)]",
-          "      ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#10, collate: binary]",
-          "      │   └─Projection 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#10, Column#9",
-          "      │     └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
-          "      │       └─Projection 8000.00 mpp[tiflash]  Column#9, test.employee.deptid",
-          "      │         └─HashAgg 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#9, funcs:firstrow(Column#15)->test.employee.deptid",
-          "      │           └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
-          "      │             └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]",
-          "      │               └─HashAgg 8000.00 mpp[tiflash]  group by:Column#29, funcs:count(Column#27)->Column#14, funcs:firstrow(Column#28)->Column#15",
-          "      │                 └─Projection 10000.00 mpp[tiflash]  test.employee.empid->Column#27, test.employee.deptid->Column#28, plus(test.employee.deptid, 1)->Column#29",
-          "      │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
-          "      └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
-          "        └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#26, collate: binary]",
-          "          └─Projection 9990.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, cast(test.employee.deptid, bigint(20))->Column#26",
-          "            └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:e1 pushed down filter:empty, keep order:false, stats:pseudo"
+          "    └─Projection 8000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#10, Column#9, Column#26",
+          "      └─HashJoin 8000.00 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#10)]",
+          "        ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#10, collate: binary]",
+          "        │   └─Projection 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#10, Column#9",
+          "        │     └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "        │       └─Projection 8000.00 mpp[tiflash]  Column#9, test.employee.deptid",
+          "        │         └─HashAgg 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#9, funcs:firstrow(Column#15)->test.employee.deptid",
+          "        │           └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "        │             └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]",
+          "        │               └─HashAgg 8000.00 mpp[tiflash]  group by:Column#29, funcs:count(Column#27)->Column#14, funcs:firstrow(Column#28)->Column#15",
+          "        │                 └─Projection 10000.00 mpp[tiflash]  test.employee.empid->Column#27, test.employee.deptid->Column#28, plus(test.employee.deptid, 1)->Column#29",
+          "        │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "        └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#26, collate: binary]",
+          "            └─Projection 9990.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, cast(test.employee.deptid, bigint(20))->Column#26",
+          "              └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:e1 pushed down filter:empty, keep order:false, stats:pseudo"
         ]
       },
       {
@@ -3458,15 +3461,16 @@
       {
         "SQL": "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#20)->Column#19",
+          "HashAgg 1.00 root  funcs:count(Column#22)->Column#19",
           "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#20",
-          "      └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.e)]",
-          "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-          "        └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#22",
+          "      └─Projection 12500.00 mpp[tiflash]  1->Column#21",
+          "        └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.e)]",
+          "          ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "          │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "          │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "          └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
@@ -3617,6 +3621,131 @@
           "            └─ExchangeSender 39.97 mpp[tiflash]  ExchangeType: PassThrough",
           "              └─Selection 39.97 mpp[tiflash]  or(eq(test.tbl_16.col_100, 10672141), in(test.tbl_16.col_104, \"yfEG1t!*b\", \"C1*bqx_qyO\", \"vQ^yUpKHr&j#~\"))",
           "                └─TableFullScan 10000.00 mpp[tiflash] table:tbl_16, partition:p1 pushed down filter:empty, keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestIssues49377Plan",
+    "Cases": [
+      {
+        "SQL": "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 );",
+        "Plan": [
+          "Union 21.00 root  ",
+          "├─Projection 1.00 root  1->Column#15, 1->Column#16, 1->Column#17",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection 20.00 root  cast(Column#12, bigint(11) BINARY)->Column#15, Column#13->Column#16, cast(Column#14, bigint(11) BINARY)->Column#17",
+          "  └─Sort 20.00 root  Column#12",
+          "    └─Union 20.00 root  ",
+          "      ├─TableReader 10.00 root  data:Selection",
+          "      │ └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "      └─Sort 10.00 root  test.employee.employee_id",
+          "        └─TableReader 10.00 root  data:Selection",
+          "          └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "            └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
+        "Plan": [
+          "Union 2.00 root  ",
+          "├─Projection 1.00 root  1->Column#15, 1->Column#16, 1->Column#17",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection 1.00 root  cast(Column#12, bigint(11) BINARY)->Column#15, Column#13->Column#16, cast(Column#14, bigint(11) BINARY)->Column#17",
+          "  └─TopN 1.00 root  Column#12, offset:0, count:1",
+          "    └─Union 2.00 root  ",
+          "      ├─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "      │ └─TableReader 1.00 root  data:TopN",
+          "      │   └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "      │     └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "      │       └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "      └─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "        └─TableReader 1.00 root  data:TopN",
+          "          └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "            └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "              └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) limit 1);",
+        "Plan": [
+          "Union 21.00 root  ",
+          "├─TableReader 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "├─Sort 10.00 root  test.employee.employee_id",
+          "│ └─TableReader 10.00 root  data:Selection",
+          "│   └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "└─Limit 1.00 root  offset:0, count:1",
+          "  └─Union 1.00 root  ",
+          "    ├─Limit 1.00 root  offset:0, count:1",
+          "    │ └─TableReader 1.00 root  data:Limit",
+          "    │   └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    │     └─Selection 1.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "    │       └─TableFullScan 1000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "    └─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "      └─TableReader 1.00 root  data:TopN",
+          "        └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "          └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "            └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
+        "Plan": [
+          "Union 21.00 root  ",
+          "├─TableReader 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "├─Sort 10.00 root  test.employee.employee_id",
+          "│ └─TableReader 10.00 root  data:Selection",
+          "│   └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "└─TopN 1.00 root  Column#17, offset:0, count:1",
+          "  └─Union 2.00 root  ",
+          "    ├─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "    │ └─TableReader 1.00 root  data:TopN",
+          "    │   └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "    │     └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "    │       └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "    └─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "      └─TableReader 1.00 root  data:TopN",
+          "        └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "          └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "            └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestPointgetIndexChoosen",
+    "Cases": [
+      {
+        "SQL": "select * from t where b=1 and c='1';",
+        "Plan": [
+          "Point_Get 1.00 root table:t, index:ubc(b, c) "
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where b=1 and c='1' and d='1';",
+        "Plan": [
+          "Selection 0.00 root  eq(test.t.d, \"1\")",
+          "└─Point_Get 1.00 root table:t, index:ubc(b, c) "
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t where b in (1,2,3) and c in ('1');",
+        "Plan": [
+          "Batch_Point_Get 3.00 root table:t, index:ubc(b, c) keep order:false, desc:false"
         ],
         "Warning": null
       }

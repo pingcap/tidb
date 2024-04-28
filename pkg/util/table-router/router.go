@@ -237,7 +237,7 @@ func (r *Table) Route(schema, table string) (targetSchema string, targetTable st
 }
 
 // ExtractVal match value via regexp
-func (*TableRule) extractVal(s string, ext interface{}) string {
+func (*TableRule) extractVal(s string, ext any) string {
 	var params []string
 	switch e := ext.(type) {
 	case *TableExtractor:

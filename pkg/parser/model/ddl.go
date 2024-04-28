@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 )
 
@@ -90,23 +91,25 @@ const (
 	ActionModifySchemaDefaultPlacement  ActionType = 55
 	ActionAlterTablePlacement           ActionType = 56
 	ActionAlterCacheTable               ActionType = 57
-	ActionAlterTableStatsOptions        ActionType = 58
-	ActionAlterNoCacheTable             ActionType = 59
-	ActionCreateTables                  ActionType = 60
-	ActionMultiSchemaChange             ActionType = 61
-	ActionFlashbackCluster              ActionType = 62
-	ActionRecoverSchema                 ActionType = 63
-	ActionReorganizePartition           ActionType = 64
-	ActionAlterTTLInfo                  ActionType = 65
-	ActionAlterTTLRemove                ActionType = 67
-	ActionCreateResourceGroup           ActionType = 68
-	ActionAlterResourceGroup            ActionType = 69
-	ActionDropResourceGroup             ActionType = 70
-	ActionAlterTablePartitioning        ActionType = 71
-	ActionRemovePartitioning            ActionType = 72
+	// not used
+	ActionAlterTableStatsOptions ActionType = 58
+	ActionAlterNoCacheTable      ActionType = 59
+	ActionCreateTables           ActionType = 60
+	ActionMultiSchemaChange      ActionType = 61
+	ActionFlashbackCluster       ActionType = 62
+	ActionRecoverSchema          ActionType = 63
+	ActionReorganizePartition    ActionType = 64
+	ActionAlterTTLInfo           ActionType = 65
+	ActionAlterTTLRemove         ActionType = 67
+	ActionCreateResourceGroup    ActionType = 68
+	ActionAlterResourceGroup     ActionType = 69
+	ActionDropResourceGroup      ActionType = 70
+	ActionAlterTablePartitioning ActionType = 71
+	ActionRemovePartitioning     ActionType = 72
 )
 
-var actionMap = map[ActionType]string{
+// ActionMap is the map of DDL ActionType to string.
+var ActionMap = map[ActionType]string{
 	ActionCreateSchema:                  "create schema",
 	ActionDropSchema:                    "drop schema",
 	ActionCreateTable:                   "create table",
@@ -180,9 +183,106 @@ var actionMap = map[ActionType]string{
 	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",
 }
 
+// DDLBDRType is the type for DDL when BDR enable.
+type DDLBDRType string
+
+const (
+	// UnsafeDDL means the DDL can't be executed by user when cluster is Primary/Secondary.
+	UnsafeDDL DDLBDRType = "unsafe DDL"
+	// SafeDDL means the DDL can be executed by user when cluster is Primary.
+	SafeDDL DDLBDRType = "safe DDL"
+	// UnmanagementDDL means the DDL can't be synced by CDC.
+	UnmanagementDDL DDLBDRType = "unmanagement DDL"
+	// UnknownDDL means the DDL is unknown.
+	UnknownDDL DDLBDRType = "unknown DDL"
+)
+
+// ActionBDRMap is the map of DDL ActionType to DDLBDRType.
+var ActionBDRMap = map[ActionType]DDLBDRType{}
+
+// BDRActionMap is the map of DDLBDRType to ActionType (reversed from ActionBDRMap).
+var BDRActionMap = map[DDLBDRType][]ActionType{
+	SafeDDL: {
+		ActionCreateSchema,
+		ActionCreateTable,
+		ActionAddColumn, // add a new column to table if it’s nullable or with default value.
+		ActionAddIndex,  //add non-unique index
+		ActionDropIndex,
+		ActionModifyColumn, // add or update comments for column, change default values of one particular column
+		ActionSetDefaultValue,
+		ActionModifyTableComment,
+		ActionRenameIndex,
+		ActionAddTablePartition,
+		ActionDropPrimaryKey,
+		ActionAlterIndexVisibility,
+		ActionCreateTables,
+		ActionAlterTTLInfo,
+		ActionAlterTTLRemove,
+		ActionCreateView,
+		ActionDropView,
+	},
+	UnsafeDDL: {
+		ActionDropSchema,
+		ActionDropTable,
+		ActionDropColumn,
+		ActionAddForeignKey,
+		ActionDropForeignKey,
+		ActionTruncateTable,
+		ActionRebaseAutoID,
+		ActionRenameTable,
+		ActionShardRowID,
+		ActionDropTablePartition,
+		ActionModifyTableCharsetAndCollate,
+		ActionTruncateTablePartition,
+		ActionRecoverTable,
+		ActionModifySchemaCharsetAndCollate,
+		ActionLockTable,
+		ActionUnlockTable,
+		ActionRepairTable,
+		ActionSetTiFlashReplica,
+		ActionUpdateTiFlashReplicaStatus,
+		ActionAddPrimaryKey,
+		ActionCreateSequence,
+		ActionAlterSequence,
+		ActionDropSequence,
+		ActionModifyTableAutoIdCache,
+		ActionRebaseAutoRandomBase,
+		ActionExchangeTablePartition,
+		ActionAddCheckConstraint,
+		ActionDropCheckConstraint,
+		ActionAlterCheckConstraint,
+		ActionRenameTables,
+		ActionAlterTableAttributes,
+		ActionAlterTablePartitionAttributes,
+		ActionAlterTablePartitionPlacement,
+		ActionModifySchemaDefaultPlacement,
+		ActionAlterTablePlacement,
+		ActionAlterCacheTable,
+		ActionAlterTableStatsOptions,
+		ActionAlterNoCacheTable,
+		ActionMultiSchemaChange,
+		ActionFlashbackCluster,
+		ActionRecoverSchema,
+		ActionReorganizePartition,
+		ActionAlterTablePartitioning,
+		ActionRemovePartitioning,
+	},
+	UnmanagementDDL: {
+		ActionCreatePlacementPolicy,
+		ActionAlterPlacementPolicy,
+		ActionDropPlacementPolicy,
+		ActionCreateResourceGroup,
+		ActionAlterResourceGroup,
+		ActionDropResourceGroup,
+	},
+	UnknownDDL: {
+		__DEPRECATED_ActionAlterTableAlterPartition,
+	},
+}
+
 // String return current ddl action in string
 func (action ActionType) String() string {
-	if v, ok := actionMap[action]; ok {
+	if v, ok := ActionMap[action]; ok {
 		return v
 	}
 	return "none"
@@ -355,6 +455,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
 		TraceInfo:       parentJob.TraceInfo,
+		LocalMode:       parentJob.LocalMode,
 	}
 }
 
@@ -387,9 +488,13 @@ type JobMeta struct {
 
 // Job is for a DDL operation.
 type Job struct {
-	ID         int64         `json:"id"`
-	Type       ActionType    `json:"type"`
-	SchemaID   int64         `json:"schema_id"`
+	ID   int64      `json:"id"`
+	Type ActionType `json:"type"`
+	// SchemaID means different for different job types:
+	// - ExchangeTablePartition: db id of non-partitioned table
+	SchemaID int64 `json:"schema_id"`
+	// TableID means different for different job types:
+	// - ExchangeTablePartition: non-partitioned table id
 	TableID    int64         `json:"table_id"`
 	SchemaName string        `json:"schema_name"`
 	TableName  string        `json:"table_name"`
@@ -403,8 +508,15 @@ type Job struct {
 	Mu       sync.Mutex `json:"-"`
 	// CtxVars are variables attached to the job. It is for internal usage.
 	// E.g. passing arguments between functions by one single *Job pointer.
+	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
 	CtxVars []interface{} `json:"-"`
-	Args    []interface{} `json:"-"`
+	// Note: it might change when state changes, such as when rollback on AddColumn.
+	// - CreateTable, it's [model.TableInfo, foreignKeyCheck]
+	// - AddIndex or AddPrimaryKey: [unique, ....
+	// - TruncateTable: [new-table-id, foreignKeyCheck, ...
+	// - RenameTable: [old-db-id, new-table-name, old-db-name]
+	// - ExchangeTablePartition: [partition-id, pt-db-id, pt-id, partition-name, with-validation]
+	Args []interface{} `json:"-"`
 	// RawArgs : We must use json raw message to delay parsing special args.
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
@@ -416,7 +528,7 @@ type Job struct {
 	// StartTS uses timestamp allocated by TSO.
 	// Now it's the TS when we put the job to TiKV queue.
 	StartTS uint64 `json:"start_ts"`
-	// DependencyID is the job's ID that the current job depends on.
+	// DependencyID is the largest job ID before current job and current job depends on.
 	DependencyID int64 `json:"dependency_id"`
 	// Query string of the ddl job.
 	Query      string       `json:"query"`
@@ -442,13 +554,46 @@ type Job struct {
 	// Collate is the collation the DDL Job is created.
 	Collate string `json:"collate"`
 
+	// InvolvingSchemaInfo indicates the schema info involved in the job.
+	// nil means fallback to use job.SchemaName/TableName.
+	// Keep unchanged after initialization.
+	InvolvingSchemaInfo []InvolvingSchemaInfo `json:"involving_schema_info,omitempty"`
+
 	// AdminOperator indicates where the Admin command comes, by the TiDB
 	// itself (AdminCommandBySystem) or by user (AdminCommandByEndUser).
 	AdminOperator AdminCommandOperator `json:"admin_operator"`
 
 	// TraceInfo indicates the information for SQL tracing
 	TraceInfo *TraceInfo `json:"trace_info"`
+
+	// BDRRole indicates the role of BDR cluster when executing this DDL.
+	BDRRole string `json:"bdr_role"`
+
+	// CDCWriteSource indicates the source of CDC write.
+	CDCWriteSource uint64 `json:"cdc_write_source"`
+
+	// LocalMode = true means the job is running on the local TiDB that the client
+	// connects to, else it's run on the DDL owner.
+	// Only happens when tidb_enable_fast_create_table = on
+	LocalMode bool `json:"local_mode"`
+
+	// SQLMode for executing DDL query.
+	SQLMode mysql.SQLMode `json:"sql_mode"`
 }
+
+// InvolvingSchemaInfo returns the schema info involved in the job.
+// The value should be stored in lower case.
+type InvolvingSchemaInfo struct {
+	Database string `json:"database"`
+	Table    string `json:"table"`
+}
+
+const (
+	// InvolvingAll means all schemas/tables are affected.
+	InvolvingAll = "*"
+	// InvolvingNone means no schema/table is affected.
+	InvolvingNone = ""
+)
 
 // FinishTableJob is called when a job is finished.
 // It updates the job's state information and adds tblInfo to the binlog.
@@ -608,8 +753,8 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, LocalMode: %t",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.LocalMode)
 	if job.ReorgMeta != nil {
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
@@ -866,6 +1011,16 @@ func (job *Job) IsRollbackable() bool {
 	return true
 }
 
+// GetInvolvingSchemaInfo returns the schema info involved in the job.
+func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
+	if len(job.InvolvingSchemaInfo) > 0 {
+		return job.InvolvingSchemaInfo
+	}
+	return []InvolvingSchemaInfo{
+		{Database: job.SchemaName, Table: job.TableName},
+	}
+}
+
 // JobState is for job state.
 type JobState int32
 
@@ -873,9 +1028,9 @@ type JobState int32
 const (
 	JobStateNone    JobState = 0
 	JobStateRunning JobState = 1
+	// JobStateRollingback is the state to do the rolling back job.
 	// When DDL encountered an unrecoverable error at reorganization state,
 	// some keys has been added already, we need to remove them.
-	// JobStateRollingback is the state to do the rolling back job.
 	JobStateRollingback  JobState = 2
 	JobStateRollbackDone JobState = 3
 	JobStateDone         JobState = 4
@@ -999,4 +1154,12 @@ type AffectedOption struct {
 	TableID     int64 `json:"table_id"`
 	OldTableID  int64 `json:"old_table_id"`
 	OldSchemaID int64 `json:"old_schema_id"`
+}
+
+func init() {
+	for bdrType, v := range BDRActionMap {
+		for _, action := range v {
+			ActionBDRMap[action] = bdrType
+		}
+	}
 }

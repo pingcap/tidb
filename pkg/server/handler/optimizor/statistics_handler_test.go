@@ -55,13 +55,13 @@ func TestDumpStatsAPI(t *testing.T) {
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
 	server.SetDomain(dom)
-
-	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-server2.RunInGoTestChan
+	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	client.WaitUntilServerOnline()
 
 	statsHandler := optimizor.NewStatsHandler(dom)
@@ -279,8 +279,8 @@ func checkData(t *testing.T, path string, client *testserverclient.TestServerCli
 	require.True(t, rows.Next(), "unexpected data")
 	var dbName, tableName string
 	var modifyCount, count int64
-	var other interface{}
-	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count)
+	var other any
+	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count, &other)
 	require.NoError(t, err)
 	require.Equal(t, "tidb", dbName)
 	require.Equal(t, "test", tableName)

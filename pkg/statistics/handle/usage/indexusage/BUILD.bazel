@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "indexusage",
+    srcs = ["collector.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/model",
+        "//pkg/statistics/handle/usage/collector",
+    ],
+)
+
+go_test(
+    name = "indexusage_test",
+    timeout = "short",
+    srcs = ["collector_test.go"],
+    embed = [":indexusage"],
+    flaky = True,
+    shard_count = 4,
+    deps = ["@com_github_stretchr_testify//require"],
+)

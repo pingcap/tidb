@@ -305,54 +305,6 @@ c2	c0
 0	0
 1	1
 0	1
-drop table if exists t;
-create table t(a int, b int, unique index i_a (a) invisible, unique index i_b(b));
-insert into t values (1,2);
-admin check table t;
-select a from t order by a;
-a
-1
-explain select a from t order by a;
-id	estRows	task	access object	operator info
-Sort_4	10000.00	root		planner__core__integration.t.a
-└─TableReader_8	10000.00	root		data:TableFullScan_7
-  └─TableFullScan_7	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-select a from t where a > 0;
-a
-1
-explain select a from t where a > 1;
-id	estRows	task	access object	operator info
-TableReader_7	3333.33	root		data:Selection_6
-└─Selection_6	3333.33	cop[tikv]		gt(planner__core__integration.t.a, 1)
-  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-select * from t use index(i_a);
-Error 1176 (42000): Key 'i_a' doesn't exist in table 't'
-select * from t force index(i_a);
-Error 1176 (42000): Key 'i_a' doesn't exist in table 't'
-select * from t ignore index(i_a);
-Error 1176 (42000): Key 'i_a' doesn't exist in table 't'
-select /*+ USE_INDEX(t, i_a) */ * from t;
-a	b
-1	2
-Level	Code	Message
-Warning	1176	Key 'i_a' doesn't exist in table 't'
-select /*+ IGNORE_INDEX(t, i_a), USE_INDEX(t, i_b) */ a from t order by a;
-a
-1
-Level	Code	Message
-Warning	1176	Key 'i_a' doesn't exist in table 't'
-select /*+ FORCE_INDEX(t, i_a), USE_INDEX(t, i_b) */ a from t order by a;
-a
-1
-Level	Code	Message
-Warning	1176	Key 'i_a' doesn't exist in table 't'
-select /*+ FORCE_INDEX(aaa) */ * from t;
-a	b
-1	2
-Level	Code	Message
-Warning	1815	force_index(planner__core__integration.aaa) is inapplicable, check whether the table(planner__core__integration.aaa) exists
-admin check table t;
-admin check index t i_a;
 select max(t.col) from (select 'a' as col union all select '' as col) as t;
 max(t.col)
 a
@@ -3647,7 +3599,8 @@ Projection_7	10000.00	root		Column#27->Column#28
 └─Shuffle_11	10000.00	root		execution info: concurrency:5, data sources:[MemTableScan_9]
   └─Window_8	10000.00	root		rank()->Column#27 over(partition by Column#3)
     └─Sort_10	10000.00	root		Column#3
-      └─MemTableScan_9	10000.00	root	table:TABLES	
+      └─ShuffleReceiver_12	10000.00	root		
+        └─MemTableScan_9	10000.00	root	table:TABLES	
 drop table if exists t;
 create table deci (a decimal(65,30),b decimal(65,0));
 insert into deci values (1234567890.123456789012345678901234567890,987654321098765432109876543210987654321098765432109876543210);
@@ -3688,11 +3641,8 @@ analyze table t2;
 set @@tidb_partition_prune_mode='dynamic';
 explain format='brief' select * from t;
 id	estRows	task	access object	operator info
-PartitionUnion	8.00	root		
-├─TableReader	4.00	root		data:TableFullScan
-│ └─TableFullScan	4.00	cop[tikv]	table:t, partition:p0	keep order:false
-└─TableReader	4.00	root		data:TableFullScan
-  └─TableFullScan	4.00	cop[tikv]	table:t, partition:p1	keep order:false
+TableReader	10000.00	root	partition:all	data:TableFullScan
+└─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 analyze table t;
 explain format='brief' select * from t;
 id	estRows	task	access object	operator info
@@ -3700,17 +3650,11 @@ TableReader	8.00	root	partition:all	data:TableFullScan
 └─TableFullScan	8.00	cop[tikv]	table:t	keep order:false
 explain format='brief' select  * from t union all select * from t2;
 id	estRows	task	access object	operator info
-Union	16.00	root		
-├─PartitionUnion	8.00	root		
-│ ├─TableReader	4.00	root		data:TableFullScan
-│ │ └─TableFullScan	4.00	cop[tikv]	table:t, partition:p0	keep order:false
-│ └─TableReader	4.00	root		data:TableFullScan
-│   └─TableFullScan	4.00	cop[tikv]	table:t, partition:p1	keep order:false
-└─PartitionUnion	8.00	root		
-  ├─TableReader	4.00	root		data:TableFullScan
-  │ └─TableFullScan	4.00	cop[tikv]	table:t2, partition:p0	keep order:false
-  └─TableReader	4.00	root		data:TableFullScan
-    └─TableFullScan	4.00	cop[tikv]	table:t2, partition:p1	keep order:false
+Union	10008.00	root		
+├─TableReader	8.00	root	partition:all	data:TableFullScan
+│ └─TableFullScan	8.00	cop[tikv]	table:t	keep order:false
+└─TableReader	10000.00	root	partition:all	data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 set @@tidb_partition_prune_mode=DEFAULT;
 drop table if exists t1, t2;
 create table t1 (a int primary key, b int);
@@ -4352,3 +4296,12 @@ StreamAgg	1.00	root		group by:planner__core__integration.sbtest.k, funcs:count(1
   └─TableReader	1.00	root		data:TableRangeScan
     └─TableRangeScan	1.00	cop[tikv]	table:sbtest	range:[0,1), keep order:false, stats:pseudo
 set @@tidb_opt_fix_control = default;
+create table sys.t (id int);
+insert into sys.t values (1),(2);
+set tidb_isolation_read_engines='tiflash';
+select * from sys.t;
+id
+1
+2
+drop table sys.t;
+set tidb_isolation_read_engines=DEFAULT;

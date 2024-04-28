@@ -33,9 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable/featuretag/disttask"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -45,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -183,8 +182,8 @@ func TestCreateDropDatabase(t *testing.T) {
 	tk.MustExec("create database drop_test;")
 	tk.MustExec("use drop_test;")
 	tk.MustExec("drop database drop_test;")
-	tk.MustGetDBError("drop table t;", plannercore.ErrNoDB)
-	tk.MustGetDBError("select * from t;", plannercore.ErrNoDB)
+	tk.MustGetDBError("drop table t;", plannererrors.ErrNoDB)
+	tk.MustGetDBError("select * from t;", plannererrors.ErrNoDB)
 
 	tk.MustExecToErr("drop database mysql")
 
@@ -580,7 +579,7 @@ func TestShardRowIDBits(t *testing.T) {
 	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	maxID := 1<<(64-15-1) - 1
-	alloc := tbl.Allocators(tk.Session()).Get(autoid.RowIDAllocType)
+	alloc := tbl.Allocators(tk.Session().GetTableCtx()).Get(autoid.RowIDAllocType)
 	err = alloc.Rebase(context.Background(), int64(maxID)-1, false)
 	require.NoError(t, err)
 	tk.MustExec("insert into t1 values(1)")
@@ -884,14 +883,14 @@ func TestLoadDDLDistributeVars(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.Equal(t, variable.DefTiDBEnableDistTask, disttask.TiDBEnableDistTask)
 
+	require.Equal(t, variable.DefTiDBEnableDistTask, variable.EnableDistTask.Load())
 	tk.MustGetDBError("set @@global.tidb_enable_dist_task = invalid_val", variable.ErrWrongValueForVar)
-	require.Equal(t, disttask.TiDBEnableDistTask, variable.EnableDistTask.Load())
+	require.Equal(t, variable.DefTiDBEnableDistTask, variable.EnableDistTask.Load())
 	tk.MustExec("set @@global.tidb_enable_dist_task = 'on'")
 	require.Equal(t, true, variable.EnableDistTask.Load())
-	tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_dist_task = %v", disttask.TiDBEnableDistTask))
-	require.Equal(t, disttask.TiDBEnableDistTask, variable.EnableDistTask.Load())
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_dist_task = %v", false))
+	require.Equal(t, false, variable.EnableDistTask.Load())
 }
 
 // this test will change the fail-point `mockAutoIDChange`, so we move it to the `testRecoverTable` suite
@@ -903,7 +902,6 @@ func TestRenameTable(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
-
 	tk.MustExec("drop database if exists rename1")
 	tk.MustExec("drop database if exists rename2")
 	tk.MustExec("drop database if exists rename3")
@@ -919,11 +917,11 @@ func TestRenameTable(t *testing.T) {
 	tk.MustExec("insert rename2.t values ()")
 	tk.MustExec("rename table rename2.t to rename3.t")
 	tk.MustExec("insert rename3.t values ()")
-	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001"))
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "2", "3"))
 	// Make sure the drop old database doesn't affect the rename3.t's operations.
 	tk.MustExec("drop database rename2")
 	tk.MustExec("insert rename3.t values ()")
-	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "5001", "10001", "10002"))
+	tk.MustQuery("select * from rename3.t").Check(testkit.Rows("1", "2", "3", "4"))
 	tk.MustExec("drop database rename3")
 
 	tk.MustExec("create database rename1")
@@ -942,7 +940,7 @@ func TestRenameTable(t *testing.T) {
 	tk.MustExec("rename table rename2.t1 to rename2.t2")
 	tk.MustExec("insert rename2.t2 values ()")
 	result = tk.MustQuery("select * from rename2.t2")
-	result.Check(testkit.Rows("1", "2", "5001"))
+	result.Check(testkit.Rows("1", "2", "3"))
 	tk.MustExec("drop database rename2")
 
 	tk.MustExec("create database rename1")
@@ -988,14 +986,14 @@ func TestRenameMultiTables(t *testing.T) {
 	tk.MustExec("insert rename2.t2 values ()")
 	tk.MustExec("drop database rename3")
 	tk.MustExec("insert rename4.t4 values ()")
-	tk.MustQuery("select * from rename2.t2").Check(testkit.Rows("1", "5001"))
-	tk.MustQuery("select * from rename4.t4").Check(testkit.Rows("1", "5001"))
+	tk.MustQuery("select * from rename2.t2").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select * from rename4.t4").Check(testkit.Rows("1", "2"))
 	// Rename a table to another table in the same database.
 	tk.MustExec("rename table rename2.t2 to rename2.t1, rename4.t4 to rename4.t3")
 	tk.MustExec("insert rename2.t1 values ()")
-	tk.MustQuery("select * from rename2.t1").Check(testkit.Rows("1", "5001", "10001"))
+	tk.MustQuery("select * from rename2.t1").Check(testkit.Rows("1", "2", "3"))
 	tk.MustExec("insert rename4.t3 values ()")
-	tk.MustQuery("select * from rename4.t3").Check(testkit.Rows("1", "5001", "10001"))
+	tk.MustQuery("select * from rename4.t3").Check(testkit.Rows("1", "2", "3"))
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename4")
 

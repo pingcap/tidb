@@ -31,7 +31,7 @@ import (
 )
 
 func TestSequenceAutoid(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -60,7 +60,7 @@ func TestSequenceAutoid(t *testing.T) {
 			Sequence: seq,
 		}
 		sequenceBase = seq.Start - 1
-		err = m.CreateSequenceAndSetSeqValue(1, seqTable, sequenceBase)
+		err = m.CreateSequenceAndSetSeqValue(1, "a", seqTable, sequenceBase)
 		require.NoError(t, err)
 		return nil
 	})
@@ -156,7 +156,7 @@ func TestSequenceAutoid(t *testing.T) {
 }
 
 func TestConcurrentAllocSequence(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -189,7 +189,7 @@ func TestConcurrentAllocSequence(t *testing.T) {
 		} else {
 			sequenceBase = seq.Start + 1
 		}
-		err1 = m.CreateSequenceAndSetSeqValue(2, seqTable, sequenceBase)
+		err1 = m.CreateSequenceAndSetSeqValue(2, "a", seqTable, sequenceBase)
 		require.NoError(t, err1)
 		return nil
 	})

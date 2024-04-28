@@ -511,3 +511,15 @@ insert into t values (json_array(cast("2022-02-02 11:00:00" as datetime)));
 insert into t values (json_array(cast('{"a":1}' as json)));
 
 set sql_mode=default;
+
+# TestMultiValuedIndexInCompoundIndex
+drop table if exists t;
+create table t (j json not null, str varchar(5),  KEY `idx` ((cast(`j` as unsigned array)),`str`));
+insert into t values ('1', 'abcde');
+drop table t;
+create table t (j json not null, str varchar(5) collate utf8mb4_unicode_ci,  KEY `idx` ((cast(`j` as unsigned array)),`str`));
+insert into t values ('1', 'abcde');
+drop table t;
+create table t (j json not null, str varchar(5) collate gbk_chinese_ci,  KEY `idx` ((cast(`j` as unsigned array)),`str`));
+insert into t values ('1', 'abcde');
+drop table t;

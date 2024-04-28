@@ -31,7 +31,6 @@ type tikvBatchGetter struct {
 }
 
 func (b tikvBatchGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
-	// toTiDBKeys
 	kvKeys := *(*[]kv.Key)(unsafe.Pointer(&keys))
 	vals, err := b.tidbBatchGetter.BatchGet(ctx, kvKeys)
 	return vals, err
@@ -45,9 +44,9 @@ type tikvBatchBufferGetter struct {
 	tidbBuffer      BatchBufferGetter
 }
 
-func (b tikvBatchBufferGetter) Get(k []byte) ([]byte, error) {
+func (b tikvBatchBufferGetter) Get(ctx context.Context, k []byte) ([]byte, error) {
 	// Get from buffer
-	val, err := b.tidbBuffer.Get(context.TODO(), k)
+	val, err := b.tidbBuffer.Get(ctx, k)
 	if err == nil || !kv.IsErrNotFound(err) || b.tidbMiddleCache == nil {
 		if kv.IsErrNotFound(err) {
 			err = tikverr.ErrNotExist
@@ -55,7 +54,7 @@ func (b tikvBatchBufferGetter) Get(k []byte) ([]byte, error) {
 		return val, err
 	}
 	// Get from middle cache
-	val, err = b.tidbMiddleCache.Get(context.TODO(), k)
+	val, err = b.tidbMiddleCache.Get(ctx, k)
 	if err == nil {
 		return val, err
 	}
@@ -66,6 +65,29 @@ func (b tikvBatchBufferGetter) Get(k []byte) ([]byte, error) {
 	return val, err
 }
 
+func (b tikvBatchBufferGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+	bufferValues, err := b.tidbBuffer.BatchGet(ctx, keys)
+	if err != nil {
+		return nil, err
+	}
+	if b.tidbMiddleCache == nil {
+		return bufferValues, nil
+	}
+	for _, key := range keys {
+		if _, ok := bufferValues[string(key)]; !ok {
+			val, err := b.tidbMiddleCache.Get(ctx, key)
+			if err != nil {
+				if kv.IsErrNotFound(err) {
+					continue
+				}
+				return nil, err
+			}
+			bufferValues[string(key)] = val
+		}
+	}
+	return bufferValues, nil
+}
+
 func (b tikvBatchBufferGetter) Len() int {
 	return b.tidbBuffer.Len()
 }
@@ -74,6 +96,8 @@ func (b tikvBatchBufferGetter) Len() int {
 type BatchBufferGetter interface {
 	Len() int
 	Getter
+	// BatchGet gets a batch of values, keys are in bytes slice format.
+	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
 }
 
 // BatchGetter is the interface for BatchGet.

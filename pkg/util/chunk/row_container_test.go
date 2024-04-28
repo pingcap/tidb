@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -504,6 +505,47 @@ func TestPanicDuringSortedRowContainerSpill(t *testing.T) {
 
 	_, err = rc.GetRow(RowPtr{})
 	require.EqualError(t, err, "sort meet error")
+}
+
+func TestInterruptedDuringSpilling(t *testing.T) {
+	rootTracker := memory.NewTracker(-1, -1)
+	rootTracker.IsRootTrackerOfSess = true
+	rootTracker.Killer = &sqlkiller.SQLKiller{ConnID: 1}
+	fields := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarString),
+		types.NewFieldType(mysql.TypeLonglong),
+	}
+	sz := 1024
+	rc := NewRowContainer(fields, sz)
+	rc.GetMemTracker().AttachTo(rootTracker)
+	defer rc.Close()
+	chk := NewChunkWithCapacity(fields, sz)
+	for i := 0; i < sz; i++ {
+		chk.AppendInt64(0, int64(i))
+		chk.AppendInt64(1, int64(i))
+		chk.AppendInt64(2, int64(i))
+		chk.AppendString(3, "testtesttest")
+		chk.AppendInt64(4, int64(i))
+	}
+	for i := 0; i < 102400; i++ {
+		rc.Add(chk)
+	}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	var cancelTime time.Time
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		rootTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
+		cancelTime = time.Now()
+		wg.Done()
+	}()
+	rc.spillToDisk(nil)
+	wg.Wait()
+	cancelDuration := time.Since(cancelTime)
+	require.Less(t, cancelDuration, 1*time.Second)
 }
 
 func BenchmarkRowContainerReaderInDiskWithRowSize512(b *testing.B) {

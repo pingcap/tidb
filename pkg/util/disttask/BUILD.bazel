@@ -14,5 +14,8 @@ go_test(
     srcs = ["idservice_test.go"],
     embed = [":disttask"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = [
+        "//pkg/domain/infosync",
+        "@com_github_stretchr_testify//require",
+    ],
 )

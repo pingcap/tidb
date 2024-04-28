@@ -47,14 +47,44 @@ or
 ```sh
 make integrationtest
 ```
+
 It will identify execute plan change.
 
 ### Generate New Result from Execute
 
-First, add new test query in `t/` folder.
+Add a new test file in `t/` folder, file name should ended with `.test`. Or add new test queries at the end of some files. Then run shell below, it will generate results based on last execution.
 
 ```sh
 cd tests/integrationtest
 ./run-tests.sh -r [casename]
-``
-It will generate result base on last execution, and then we can reuse them or open editor to do some modify.
+```
+
+## How to debug integration test
+
+### Visual Studio Code
+
+1. Add or create a configuration to `.vscode/launch.json`, an example is shown below. If you want to change some configurations, such as using `TiKV` to run integration tests or others, you can modify `pkg/config/config.toml.example`.
+
+```json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug TiDB With Default Config",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${fileWorkspaceFolder}/cmd/tidb-server",
+            "args": ["--config=${fileWorkspaceFolder}/pkg/config/config.toml.example"]
+        }
+    ]
+}
+```
+
+2. To run `TiDB-Server`, you could bring up **Run and Debug** view, select the **Run and Debug** icon in the **Activity Bar** on the side of VS Code. You can also use shortcut **F5**.
+
+3. Use any mysql client application you like to run SQLs in integration test, the default port is `4000` and default user is `root` without password. Taking `mysql` as an example, you can use `mysql --comments --host 127.0.0.1 --port 4000 -u root` command to do this.
+
+### Goland
+
+You could follow <https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html#run-or-debug> to run a `TiDB-Server` with or without `TiKV`. Then use any mysql client application you like to run SQLs.

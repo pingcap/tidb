@@ -21,11 +21,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
@@ -61,7 +61,7 @@ func TestToPhysicalPlan(t *testing.T) {
 		ChunkMap:          map[int32][]Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
 	}
 	planCtx := planner.PlanCtx{
-		NextTaskStep: StepImport,
+		NextTaskStep: proto.ImportStepImport,
 	}
 	physicalPlan, err := logicalPlan.ToPhysicalPlan(planCtx)
 	require.NoError(t, err)
@@ -81,13 +81,13 @@ func TestToPhysicalPlan(t *testing.T) {
 						},
 					},
 				},
-				Step: StepImport,
+				Step: proto.ImportStepImport,
 			},
 		},
 	}
 	require.Equal(t, plan, physicalPlan)
 
-	subtaskMetas1, err := physicalPlan.ToSubtaskMetas(planCtx, StepImport)
+	subtaskMetas1, err := physicalPlan.ToSubtaskMetas(planCtx, proto.ImportStepImport)
 	require.NoError(t, err)
 	subtaskMeta1 := ImportStepMeta{
 		ID:     chunkID,
@@ -97,22 +97,22 @@ func TestToPhysicalPlan(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]byte{bs}, subtaskMetas1)
 
-	subtaskMeta1.Checksum = Checksum{Size: 1, KVs: 2, Sum: 3}
+	subtaskMeta1.Checksum = map[int64]Checksum{-1: {Size: 1, KVs: 2, Sum: 3}}
 	bs, err = json.Marshal(subtaskMeta1)
 	require.NoError(t, err)
 	planCtx = planner.PlanCtx{
-		NextTaskStep: StepPostProcess,
+		NextTaskStep: proto.ImportStepPostProcess,
 	}
 	physicalPlan, err = logicalPlan.ToPhysicalPlan(planCtx)
 	require.NoError(t, err)
 	subtaskMetas2, err := physicalPlan.ToSubtaskMetas(planner.PlanCtx{
 		PreviousSubtaskMetas: map[proto.Step][][]byte{
-			StepImport: {bs},
+			proto.ImportStepImport: {bs},
 		},
-	}, StepPostProcess)
+	}, proto.ImportStepPostProcess)
 	require.NoError(t, err)
 	subtaskMeta2 := PostProcessStepMeta{
-		Checksum: Checksum{Size: 1, KVs: 2, Sum: 3},
+		Checksum: map[int64]Checksum{-1: {Size: 1, KVs: 2, Sum: 3}},
 		MaxIDs:   map[autoid.AllocatorType]int64{},
 	}
 	bs, err = json.Marshal(subtaskMeta2)
@@ -176,10 +176,10 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 		Ctx:    context.Background(),
 		TaskID: 1,
 		PreviousSubtaskMetas: map[proto.Step][][]byte{
-			StepEncodeAndSort: encodeStepMetaBytes,
+			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 		},
 	}
-	specs, err := generateMergeSortSpecs(planCtx)
+	specs, err := generateMergeSortSpecs(planCtx, &LogicalPlan{})
 	require.NoError(t, err)
 	require.Len(t, specs, 2)
 	require.Len(t, specs[0].(*MergeSortSpec).DataFiles, 2)
@@ -189,6 +189,33 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 	require.Equal(t, "data", specs[1].(*MergeSortSpec).KVGroup)
 	require.Len(t, specs[1].(*MergeSortSpec).DataFiles, 1)
 	require.Equal(t, "d_2_/1", specs[1].(*MergeSortSpec).DataFiles[0])
+
+	// force merge sort for all kv groups
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort"))
+	specs, err = generateMergeSortSpecs(planCtx, &LogicalPlan{Plan: importer.Plan{ForceMergeStep: true}})
+	require.NoError(t, err)
+	require.Len(t, specs, 4)
+	data0, data1 := specs[0].(*MergeSortSpec), specs[1].(*MergeSortSpec)
+	index0, index1 := specs[2].(*MergeSortSpec), specs[3].(*MergeSortSpec)
+	if data0.KVGroup != "data" {
+		// generateMergeSortSpecs uses map to store groups, the order might be different
+		// but specs of same group should be in order
+		data0, data1, index0, index1 = index0, index1, data0, data1
+	}
+	require.Len(t, data0.DataFiles, 2)
+	require.Equal(t, "data", data0.KVGroup)
+	require.Equal(t, "d_0_/1", data0.DataFiles[0])
+	require.Equal(t, "d_1_/1", data0.DataFiles[1])
+	require.Equal(t, "data", data1.KVGroup)
+	require.Len(t, data1.DataFiles, 1)
+	require.Equal(t, "d_2_/1", data1.DataFiles[0])
+	require.Len(t, index0.DataFiles, 2)
+	require.Equal(t, "1", index0.KVGroup)
+	require.Equal(t, "i1_0_/1", index0.DataFiles[0])
+	require.Equal(t, "i1_1_/1", index0.DataFiles[1])
+	require.Equal(t, "1", index1.KVGroup)
+	require.Len(t, index1.DataFiles, 1)
+	require.Equal(t, "i1_2_/1", index1.DataFiles[0])
 }
 
 func genMergeStepMetas(t *testing.T, cnt int) [][]byte {
@@ -244,10 +271,10 @@ func TestGetSortedKVMetas(t *testing.T) {
 	})
 	allKVMetas, err := getSortedKVMetasForIngest(planner.PlanCtx{
 		PreviousSubtaskMetas: map[proto.Step][][]byte{
-			StepEncodeAndSort: encodeStepMetaBytes,
-			StepMergeSort:     mergeStepMetas,
+			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
+			proto.ImportStepMergeSort:     mergeStepMetas,
 		},
-	})
+	}, &LogicalPlan{})
 	require.NoError(t, err)
 	require.Len(t, allKVMetas, 2)
 	require.Equal(t, []byte("x_0_a"), allKVMetas["data"].StartKey)

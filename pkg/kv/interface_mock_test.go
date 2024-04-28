@@ -26,7 +26,7 @@ import (
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
 type mockTxn struct {
-	opts  map[int]interface{}
+	opts  map[int]any
 	valid bool
 }
 
@@ -59,11 +59,11 @@ func (t *mockTxn) LockKeysFunc(_ context.Context, _ *LockCtx, fn func(), _ ...Ke
 	return nil
 }
 
-func (t *mockTxn) SetOption(opt int, val interface{}) {
+func (t *mockTxn) SetOption(opt int, val any) {
 	t.opts[opt] = val
 }
 
-func (t *mockTxn) GetOption(opt int) interface{} {
+func (t *mockTxn) GetOption(opt int) any {
 	return t.opts[opt]
 }
 
@@ -134,10 +134,10 @@ func (t *mockTxn) Reset() {
 	t.valid = false
 }
 
-func (t *mockTxn) SetVars(vars interface{}) {
+func (t *mockTxn) SetVars(vars any) {
 }
 
-func (t *mockTxn) GetVars() interface{} {
+func (t *mockTxn) GetVars() any {
 	return nil
 }
 
@@ -181,11 +181,13 @@ func (t *mockTxn) RetryFairLocking(_ context.Context) error  { return nil }
 func (t *mockTxn) CancelFairLocking(_ context.Context) error { return nil }
 func (t *mockTxn) DoneFairLocking(_ context.Context) error   { return nil }
 func (t *mockTxn) IsInFairLockingMode() bool                 { return false }
+func (t *mockTxn) IsPipelined() bool                         { return false }
+func (t *mockTxn) MayFlush() error                           { return nil }
 
 // newMockTxn new a mockTxn.
 func newMockTxn() Transaction {
 	return &mockTxn{
-		opts:  make(map[int]interface{}),
+		opts:  make(map[int]any),
 		valid: true,
 	}
 }
@@ -248,7 +250,7 @@ func (s *mockStorage) Describe() string {
 	return "KVMockStorage is a mock Store implementation, only for unittests in KV package"
 }
 
-func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+func (s *mockStorage) ShowStatus(ctx context.Context, key string) (any, error) {
 	return nil, nil
 }
 
@@ -303,7 +305,7 @@ func (s *mockSnapshot) IterReverse(k Key, lowerBound Key) (Iterator, error) {
 	return s.store.IterReverse(k, lowerBound)
 }
 
-func (s *mockSnapshot) SetOption(opt int, val interface{}) {}
+func (s *mockSnapshot) SetOption(opt int, val any) {}
 
 func (s *mockSnapshot) GetLockWaits() []deadlockpb.WaitForEntry {
 	return nil

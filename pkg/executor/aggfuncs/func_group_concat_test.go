@@ -129,7 +129,7 @@ func groupConcatOrderMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context, srcChk 
 		}
 		memDelta := int64(buffer.Cap() - oldMemSize)
 		for _, byItem := range byItems {
-			fdt, _ := byItem.Expr.Eval(ctx, row)
+			fdt, _ := byItem.Expr.Eval(ctx.GetExprCtx().GetEvalCtx(), row)
 			datumMem := aggfuncs.GetDatumMemSize(&fdt)
 			memDelta += datumMem
 		}
@@ -202,7 +202,7 @@ func groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens(ctx sessionctx.Context,
 		valSet.Insert(joinedVal)
 		memDelta := int64(len(joinedVal) + (valsBuf.Cap() + cap(encodeBytesBuffer) - oldMemSize))
 		for _, byItem := range byItems {
-			fdt, _ := byItem.Expr.Eval(ctx, row)
+			fdt, _ := byItem.Expr.Eval(ctx.GetExprCtx().GetEvalCtx(), row)
 			datumMem := aggfuncs.GetDatumMemSize(&fdt)
 			memDelta += datumMem
 		}

@@ -62,7 +62,7 @@ func TestRowDecoder(t *testing.T) {
 		}
 		decodeColsMap2[col.ID] = tpExpr
 		if col.GeneratedExprString != "" {
-			expr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, col.GeneratedExprString, tblInfo, &col.FieldType)
+			expr, err := expression.ParseSimpleExpr(ctx, col.GeneratedExprString, expression.WithTableInfo("", tblInfo), expression.WithCastExprTo(&col.FieldType))
 			require.NoError(t, err)
 			tpExpr.GenExpr = expr
 		}

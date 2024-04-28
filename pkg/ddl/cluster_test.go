@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,7 +75,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 
-	oldValue := map[string]interface{}{
+	oldValue := map[string]any{
 		"merge-schedule-limit": 1,
 	}
 	require.NoError(t, infosync.SetPDScheduleConfig(context.Background(), oldValue))
@@ -101,7 +102,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 
-	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)), errno.ErrCancelledDDLJob)
+	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)), errno.ErrCancelledDDLJob)
 	dom.DDL().SetHook(originHook)
 
 	finishValue, err := infosync.GetPDScheduleConfig(context.Background())
@@ -142,7 +143,7 @@ func TestAddDDLDuringFlashback(t *testing.T) {
 		}
 	}
 	dom.DDL().SetHook(hook)
-	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
 	dom.DDL().SetHook(originHook)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
@@ -193,7 +194,7 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	tk.MustExec("set global tidb_super_read_only = off")
 	tk.MustExec("set global tidb_ttl_job_enable = on")
 
-	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
 	rs, err := tk.Exec("show variables like 'tidb_super_read_only'")
 	require.NoError(t, err)
@@ -212,7 +213,7 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 
 	ts, err = tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
-	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 	rs, err = tk.Exec("show variables like 'tidb_super_read_only'")
 	require.NoError(t, err)
 	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.On)
@@ -252,7 +253,7 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	})
 	dom.DDL().SetHook(hook)
 	tk.MustExec("set global tidb_ttl_job_enable = on")
-	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)), errno.ErrCancelledDDLJob)
+	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)), errno.ErrCancelledDDLJob)
 	hook.MustCancelDone(t)
 
 	rs, err := tk.Exec("show variables like 'tidb_ttl_job_enable'")
@@ -264,7 +265,7 @@ func TestCancelFlashbackCluster(t *testing.T) {
 		return job.SchemaState == model.StateWriteReorganization
 	})
 	dom.DDL().SetHook(hook)
-	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 	hook.MustCancelFailed(t)
 
 	rs, err = tk.Exec("show variables like 'tidb_ttl_job_enable'")

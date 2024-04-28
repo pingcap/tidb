@@ -471,7 +471,7 @@ func resetAllTsoCounter(sctx sessionctx.Context) {
 	sctx.SetValue(sessiontxn.TsoWaitCount, 0)
 }
 
-func getAllTsoCounter(sctx sessionctx.Context) (interface{}, interface{}, interface{}) {
+func getAllTsoCounter(sctx sessionctx.Context) (any, any, any) {
 	countTsoRequest := sctx.Value(sessiontxn.TsoRequestCount)
 	countTsoUseConstant := sctx.Value(sessiontxn.TsoUseConstantCount)
 	countWaitTsoOracle := sctx.Value(sessiontxn.TsoWaitCount)

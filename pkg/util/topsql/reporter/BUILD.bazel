@@ -53,6 +53,7 @@ go_test(
         "//pkg/util/topsql/reporter/mock",
         "//pkg/util/topsql/state",
         "//pkg/util/topsql/stmtstats",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

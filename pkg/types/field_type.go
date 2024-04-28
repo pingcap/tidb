@@ -191,7 +191,7 @@ func InferParamTypeFromDatum(d *Datum, tp *FieldType) {
 }
 
 // InferParamTypeFromUnderlyingValue is used for plan cache to infer the type of a parameter from its underlying value.
-func InferParamTypeFromUnderlyingValue(value interface{}, tp *FieldType) {
+func InferParamTypeFromUnderlyingValue(value any, tp *FieldType) {
 	switch value.(type) {
 	case nil:
 		tp.SetType(mysql.TypeVarString)
@@ -218,7 +218,7 @@ func hasVariantFieldLength(tp *FieldType) bool {
 }
 
 // DefaultTypeForValue returns the default FieldType for the value.
-func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate string) {
+func DefaultTypeForValue(value any, tp *FieldType, char string, collate string) {
 	if value != nil {
 		tp.AddFlag(mysql.NotNullFlag)
 	}

@@ -303,7 +303,6 @@ create table t1 (id int key auto_increment);
 insert into t1 values ();
 rename table t1 to t11;
 insert into t11 values ();
-## TODO(tiancaiamao): fix bug and uncomment here, rename table should not discard the cached AUTO_ID.
 select * from t11;
 
 ## auto_id_cache 1 use another implementation and do not have such bug.
@@ -317,7 +316,6 @@ create table t3 (id int key auto_increment) auto_id_cache 100;
 insert into t3 values ();
 rename table t3 to t33;
 insert into t33 values ();
-## TODO(tiancaiamao): fix bug and uncomment here, rename table should not discard the cached AUTO_ID.
 select * from t33;
 
 # TestAutoIDConstraint
@@ -485,3 +483,27 @@ show variables like 'auto_increment%';
 
 set auto_increment_offset = default;
 set auto_increment_increment = default;
+
+## Test for issue 52465
+drop table if exists issue52465;
+create table issue52465 (id int primary key auto_increment, k int) AUTO_ID_CACHE=1;
+insert into issue52465 (k) values (1);
+insert into issue52465 values (3997, 2);
+select * from issue52465 t;
+insert into issue52465 (k) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+select * from issue52465;
+insert into issue52465 (k) values (11);
+select * from issue52465;
+drop table issue52465;
+
+
+drop table if exists issue52465;
+create table issue52465 (id int unsigned primary key auto_increment, k int) AUTO_ID_CACHE=1;
+insert into issue52465 (k) values (1);
+insert into issue52465 values (3997, 2);
+select * from issue52465 t;
+insert into issue52465 (k) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+select * from issue52465;
+insert into issue52465 (k) values (11);
+select * from issue52465;
+drop table issue52465;

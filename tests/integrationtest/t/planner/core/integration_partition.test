@@ -349,9 +349,9 @@ create database list_partition_temp_table;
 use list_partition_temp_table;
 drop table if exists tlist;
 set tidb_enable_list_partition = 1;
---error 1526
+--error 1562
 create global temporary table t(a int, b int) partition by list(a) (partition p0 values in (0)) on commit delete rows;
---error 1526
+--error 1562
 create global temporary table t(a int, b int) partition by list columns (a) (partition p0 values in (0)) on commit delete rows;
 
 
@@ -565,7 +565,7 @@ drop table t1;
 # TestRangeColumnsMultiColumn
 create database RangeColumnsMulti;
 use RangeColumnsMulti;
--- error 1064
+-- error 1566
 create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p0 values less than (NULL,NULL,NULL));
 -- error 1654
 create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)(partition p1 values less than (-2147483649,'0000-00-00',""));

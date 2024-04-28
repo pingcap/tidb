@@ -177,3 +177,292 @@ t	CREATE TABLE `t` (
   KEY `b` (`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY KEY (`a`) PARTITIONS 5
+drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
+CREATE TABLE test.issue50972_1 (id1 int) PARTITION BY HASH( test.issue50972_1.id1 ) PARTITIONS 4;
+CREATE TABLE test.issue50972_2 (id2 int) PARTITION BY RANGE (test.issue50972_2.id2) ( PARTITION p0 VALUES LESS THAN (6));
+CREATE TABLE test.issue50972_3 (id3 int) PARTITION BY LIST (test.issue50972_3.id3) ( PARTITION p0 VALUES IN (1, 2) );
+show create table test.issue50972_1;
+Table	Create Table
+issue50972_1	CREATE TABLE `issue50972_1` (
+  `id1` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`id1`) PARTITIONS 4
+show create table test.issue50972_2;
+Table	Create Table
+issue50972_2	CREATE TABLE `issue50972_2` (
+  `id2` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id2`)
+(PARTITION `p0` VALUES LESS THAN (6))
+show create table test.issue50972_3;
+Table	Create Table
+issue50972_3	CREATE TABLE `issue50972_3` (
+  `id3` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST (`id3`)
+(PARTITION `p0` VALUES IN (1,2))
+drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
+CREATE TABLE test.issue50972_1 (id1 int);
+CREATE TABLE test.issue50972_2 (id2 int);
+CREATE TABLE test.issue50972_3 (id3 int);
+ALTER TABLE test.issue50972_1 PARTITION BY HASH( test.issue50972_1.id1 ) PARTITIONS 4;
+ALTER TABLE test.issue50972_2 PARTITION BY RANGE (test.issue50972_2.id2) ( PARTITION p0 VALUES LESS THAN (6));
+ALTER TABLE test.issue50972_3 PARTITION BY LIST (test.issue50972_3.id3) ( PARTITION p0 VALUES IN (1, 2) );
+show create table test.issue50972_1;
+Table	Create Table
+issue50972_1	CREATE TABLE `issue50972_1` (
+  `id1` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`id1`) PARTITIONS 4
+show create table test.issue50972_2;
+Table	Create Table
+issue50972_2	CREATE TABLE `issue50972_2` (
+  `id2` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (`id2`)
+(PARTITION `p0` VALUES LESS THAN (6))
+show create table test.issue50972_3;
+Table	Create Table
+issue50972_3	CREATE TABLE `issue50972_3` (
+  `id3` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST (`id3`)
+(PARTITION `p0` VALUES IN (1,2))
+drop table if exists test.issue50972_1, test.issue50972_2, test.issue50972_3;
+drop table if exists k1, k2, k3, k4;
+CREATE TABLE k1 (
+id INT NOT NULL PRIMARY KEY,
+name VARCHAR(20))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k1;
+Table	Create Table
+k1	CREATE TABLE `k1` (
+  `id` int(11) NOT NULL,
+  `name` varchar(20) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY () PARTITIONS 2
+CREATE TABLE k2 (
+id INT NOT NULL,
+name VARCHAR(20),
+UNIQUE KEY (id))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k2;
+Table	Create Table
+k2	CREATE TABLE `k2` (
+  `id` int(11) NOT NULL,
+  `name` varchar(20) DEFAULT NULL,
+  UNIQUE KEY `id` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY () PARTITIONS 2
+CREATE TABLE k3 (
+id INT NOT NULL PRIMARY KEY NONCLUSTERED,
+name VARCHAR(20),
+UNIQUE KEY (id))
+PARTITION BY KEY()
+PARTITIONS 2;
+show create table k3;
+Table	Create Table
+k3	CREATE TABLE `k3` (
+  `id` int(11) NOT NULL,
+  `name` varchar(20) DEFAULT NULL,
+  UNIQUE KEY `id` (`id`),
+  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY () PARTITIONS 2
+CREATE TABLE k4(
+id INT NOT NULL,
+id1 int,
+name VARCHAR(20),
+UNIQUE KEY (id, id1))
+PARTITION BY KEY()
+PARTITIONS 2;
+Error 1105 (HY000): Table partition metadata not correct, neither partition expression or list of partition columns
+set character_set_connection=gbk;
+drop table if exists t;
+create table t (col1 varbinary(16) unique key) partition by list columns(col1)
+(partition p0 values in ('你好', '我好'), partition p1 values in ('大家好'), partition p2 DEFAULT);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varbinary(16) DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(`col1`)
+(PARTITION `p0` VALUES IN (_binary 0xc4e3bac3,_binary 0xced2bac3),
+ PARTITION `p1` VALUES IN (_binary 0xb4f3bcd2bac3),
+ PARTITION `p2` DEFAULT)
+insert into t values ("你好");
+select hex(col1) from t partition(p0);
+hex(col1)
+C4E3BAC3
+select hex(col1) from t partition(p1);
+hex(col1)
+select hex(col1) from t partition(p2);
+hex(col1)
+drop table t;
+create table t (col1 varbinary(16) unique key) partition by range columns(col1)
+(partition p0 values less than ('你好'), partition p1 values less than ('我好'), partition p2 values less than MAXVALUE);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varbinary(16) DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`col1`)
+(PARTITION `p0` VALUES LESS THAN (_binary 0xc4e3bac3),
+ PARTITION `p1` VALUES LESS THAN (_binary 0xced2bac3),
+ PARTITION `p2` VALUES LESS THAN (MAXVALUE))
+insert into t values ("你好");
+select hex(col1) from t partition(p0);
+hex(col1)
+select hex(col1) from t partition(p1);
+hex(col1)
+C4E3BAC3
+select hex(col1) from t partition(p2);
+hex(col1)
+drop table t;
+create table t (col1 varchar(16) collate gbk_chinese_ci unique key) partition by list columns(col1)
+(partition p0 values in ('你好', '我好'), partition p1 values in ('大家好'), partition p2 DEFAULT);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varchar(16) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(`col1`)
+(PARTITION `p0` VALUES IN ('你好','我好'),
+ PARTITION `p1` VALUES IN ('大家好'),
+ PARTITION `p2` DEFAULT)
+insert into t values ("你好");
+select hex(col1) from t partition(p0);
+hex(col1)
+C4E3BAC3
+select hex(col1) from t partition(p1);
+hex(col1)
+select hex(col1) from t partition(p2);
+hex(col1)
+drop table t;
+create table t (col1 varchar(16) collate gbk_chinese_ci unique key) partition by range columns(col1)
+(partition p0 values less than ('你好'), partition p1 values less than ('我好'), partition p2 values less than MAXVALUE);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varchar(16) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`col1`)
+(PARTITION `p0` VALUES LESS THAN ('你好'),
+ PARTITION `p1` VALUES LESS THAN ('我好'),
+ PARTITION `p2` VALUES LESS THAN (MAXVALUE))
+insert into t values ("你好");
+select hex(col1) from t partition(p0);
+hex(col1)
+select hex(col1) from t partition(p1);
+hex(col1)
+C4E3BAC3
+select hex(col1) from t partition(p2);
+hex(col1)
+drop table t;
+create table t (col1 varbinary(16), col2 varbinary(16), unique key (col1, col2)) partition by list columns(col1, col2)
+(partition p0 values in (('你好','你好'), ('我好','我好')), partition p1 values in (('大家好','大家好')), partition p2 DEFAULT);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varbinary(16) DEFAULT NULL,
+  `col2` varbinary(16) DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`,`col2`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(`col1`,`col2`)
+(PARTITION `p0` VALUES IN ((_binary 0xc4e3bac3,_binary 0xc4e3bac3),(_binary 0xced2bac3,_binary 0xced2bac3)),
+ PARTITION `p1` VALUES IN ((_binary 0xb4f3bcd2bac3,_binary 0xb4f3bcd2bac3)),
+ PARTITION `p2` DEFAULT)
+insert into t values ("你好","你好");
+select hex(col1),hex(col2) from t partition(p0);
+hex(col1)	hex(col2)
+C4E3BAC3	C4E3BAC3
+select hex(col1),hex(col2) from t partition(p1);
+hex(col1)	hex(col2)
+select hex(col1),hex(col2) from t partition(p2);
+hex(col1)	hex(col2)
+drop table t;
+create table t (col1 varbinary(16), col2 varbinary(16), unique key (col1, col2)) partition by range columns(col1, col2)
+(partition p0 values less than ('你好','你好'), partition p1 values less than ('我好','我好'), partition p2 values less than (MAXVALUE, MAXVALUE));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varbinary(16) DEFAULT NULL,
+  `col2` varbinary(16) DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`,`col2`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`col1`,`col2`)
+(PARTITION `p0` VALUES LESS THAN (_binary 0xc4e3bac3,_binary 0xc4e3bac3),
+ PARTITION `p1` VALUES LESS THAN (_binary 0xced2bac3,_binary 0xced2bac3),
+ PARTITION `p2` VALUES LESS THAN (MAXVALUE,MAXVALUE))
+insert into t values ("你好","你好");
+select hex(col1),hex(col2) from t partition(p0);
+hex(col1)	hex(col2)
+select hex(col1),hex(col2) from t partition(p1);
+hex(col1)	hex(col2)
+C4E3BAC3	C4E3BAC3
+select hex(col1),hex(col2) from t partition(p2);
+hex(col1)	hex(col2)
+drop table t;
+create table t (col1 varchar(16) collate gbk_chinese_ci, col2 varchar(16) collate gbk_chinese_ci, unique key (col1, col2)) partition by list columns(col1, col2)
+(partition p0 values in (('你好','你好'), ('我好','我好')), partition p1 values in (('大家好','大家好')), partition p2 DEFAULT);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varchar(16) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
+  `col2` varchar(16) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`,`col2`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(`col1`,`col2`)
+(PARTITION `p0` VALUES IN (('你好','你好'),('我好','我好')),
+ PARTITION `p1` VALUES IN (('大家好','大家好')),
+ PARTITION `p2` DEFAULT)
+insert into t values ("你好","你好");
+select hex(col1),hex(col2) from t partition(p0);
+hex(col1)	hex(col2)
+C4E3BAC3	C4E3BAC3
+select hex(col1),hex(col2) from t partition(p1);
+hex(col1)	hex(col2)
+select hex(col1),hex(col2) from t partition(p2);
+hex(col1)	hex(col2)
+drop table t;
+create table t (col1 varchar(16) collate gbk_chinese_ci, col2 varchar(16) collate gbk_chinese_ci, unique key (col1, col2)) partition by range columns(col1, col2)
+(partition p0 values less than ('你好','你好'), partition p1 values less than ('我好','我好'), partition p2 values less than (MAXVALUE, MAXVALUE) );
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `col1` varchar(16) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
+  `col2` varchar(16) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
+  UNIQUE KEY `col1` (`col1`,`col2`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(`col1`,`col2`)
+(PARTITION `p0` VALUES LESS THAN ('你好','你好'),
+ PARTITION `p1` VALUES LESS THAN ('我好','我好'),
+ PARTITION `p2` VALUES LESS THAN (MAXVALUE,MAXVALUE))
+insert into t values ("你好","你好");
+select hex(col1),hex(col2) from t partition(p0);
+hex(col1)	hex(col2)
+select hex(col1),hex(col2) from t partition(p1);
+hex(col1)	hex(col2)
+C4E3BAC3	C4E3BAC3
+select hex(col1),hex(col2) from t partition(p2);
+hex(col1)	hex(col2)
+drop table t;
+set character_set_connection=DEFAULT;
+create table a (col1 int, col2 int, unique key (col1, col2)) partition by range  columns (col1, col2) (partition p0 values less than (NULL, 1 ));
+Error 1566 (HY000): Not allowed to use NULL value in VALUES LESS THAN
+drop table if exists parent, child, child_with_partition;
+create table parent (id int unique);
+create table child (id int, parent_id int, foreign key (parent_id) references parent(id));
+create table child_with_partition(id int, parent_id int) partition by range(id) (partition p1 values less than (100));
+alter table child_with_partition exchange partition p1 with table child;
+Error 1740 (HY000): Table to exchange with partition has foreign key references: 'child'
+alter table child drop foreign key fk_1;
+alter table child drop key fk_1;
+alter table child_with_partition exchange partition p1 with table child;

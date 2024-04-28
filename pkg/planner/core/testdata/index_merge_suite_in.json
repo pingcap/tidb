@@ -39,5 +39,30 @@
       "select /*+ use_index_merge(t3, ia, ibc, id, ie) */ * from t3 where a > 10 and b = 20 and c < 35 and d < 45 and e = 100",
       "select /*+ use_index_merge(t4, ia, ibc, id, ie) */ * from t4 where a > 10 and b = 20 and c < 35 and d in (1,3,8,9) and e = 100"
     ]
+  },
+  {
+    "name": "TestIndexMergeWithOrderProperty",
+    "cases": [
+      "select * from t where a=1 or b=1 order by c; -- 1. auto pick the most suitable index ac and bc",
+      "select /*+ use_index_merge(t, ac, bc) */ * from t where a=1 or b=1 order by c; -- 2. hint instruction to pick the suitable index ac and bc",
+      "select * from t2 where a=1 or b=1 order by c; -- 3. if one of the index order path can't satisfied, back to normal choice",
+      "select /*+ use_index_merge(t, ac, b) */ * from t where a=1 or b=1 order by c; -- 4. hint to use ac strongly, but sort OP is still needed",
+
+      "select * from t where a=1 or a=2 order by c; -- 5. duplicated column a's conditions and lack of column b's conditions",
+      "select * from t use index(a) where a=1 or a=2 order by c; -- 6. duplicated column a's conditions and lack of column b's conditions",
+
+      "select * from t where a=1 or a=2 or b=3 order by c; -- 7. duplicate column a's conditions",
+      "select /*+ use_index_merge(t, ac, bc) */ * from t where a=1 or a=2 or b=3 order by c; -- 8. duplicate column a's conditions",
+
+      "select * from t where a=1 or b=1 or c=1 order by d; -- 9. more than 2 index related columns, here c condition is interference",
+      "select /*+ use_index_merge(t, a, b, c) */ * from t where a=1 or b=1 or c=1 order by d; -- 10. more than 2 index related columns, here c condition is interference",
+
+      "select * from t where a=1 or b=1 or c=1 or d=1 order by e; -- 11. more index definition about idx(a,e), idx(b,e)",
+      "select /*+ use_index_merge(t, ae, be, c) */ * from t where a=1 or b=1 or c=1 order by e; -- 12. more index definition about idx(a,e), idx(b,e)",
+
+      "select * from t where (a=1 and b=1) or c=1 order by d; -- 13. composite predicates and more index defined, idx(a, b, d), idx(c, d)",
+      "select * from t where (a=1 and b=1) or (c=1 and d=2) order by d; -- 14. composite predicates and more index defined, idx(a, b, d), idx(c, d)",
+      "select * from t where (a=1 and b=1) or (c=1 and d=1) order by e"
+    ]
   }
 ]

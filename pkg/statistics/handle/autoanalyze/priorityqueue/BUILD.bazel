@@ -1,0 +1,53 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "priorityqueue",
+    srcs = [
+        "calculator.go",
+        "dynamic_partitioned_table_analysis_job.go",
+        "interval.go",
+        "job.go",
+        "non_partitioned_table_analysis_job.go",
+        "queue.go",
+        "static_partitioned_table_analysis_job.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/sysproctrack",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/autoanalyze/exec",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/util",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "priorityqueue_test",
+    timeout = "short",
+    srcs = [
+        "calculator_test.go",
+        "dynamic_partitioned_table_analysis_job_test.go",
+        "interval_test.go",
+        "job_test.go",
+        "main_test.go",
+        "non_partitioned_table_analysis_job_test.go",
+        "queue_test.go",
+        "static_partitioned_table_analysis_job_test.go",
+    ],
+    flaky = True,
+    shard_count = 22,
+    deps = [
+        ":priorityqueue",
+        "//pkg/parser/model",
+        "//pkg/session",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

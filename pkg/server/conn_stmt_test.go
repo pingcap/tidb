@@ -18,13 +18,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
@@ -242,134 +239,6 @@ func TestMemoryTrackForPrepareBinaryProtocol(t *testing.T) {
 	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
 }
 
-func TestCursorFetchShouldSpill(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempStoragePath = t.TempDir()
-	})
-
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	srv := CreateMockServer(t, store)
-	srv.SetDomain(dom)
-	defer srv.Close()
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/testCursorFetchSpill", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/testCursorFetchSpill"))
-	}()
-
-	appendUint32 := binary.LittleEndian.AppendUint32
-	ctx := context.Background()
-	c := CreateMockConn(t, srv).(*mockConn)
-
-	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id_1 int, id_2 int)")
-	tk.MustExec("insert into t values (1, 1), (1, 2)")
-	tk.MustExec("set global tidb_enable_tmp_storage_on_oom = ON")
-	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
-	defer tk.MustExec("set global tidb_mem_oom_action= DEFAULT")
-	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
-
-	// execute a normal statement, it'll spill to disk
-	stmt, _, _, err := c.Context().Prepare("select * from t")
-	require.NoError(t, err)
-
-	tk.MustExec(fmt.Sprintf("set tidb_mem_quota_query=%d", 1))
-
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
-	)))
-}
-
-func TestCursorFetchErrorInFetch(t *testing.T) {
-	tmpStoragePath := t.TempDir()
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TempStoragePath = tmpStoragePath
-	})
-
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	srv := CreateMockServer(t, store)
-	srv.SetDomain(dom)
-	defer srv.Close()
-
-	appendUint32 := binary.LittleEndian.AppendUint32
-	ctx := context.Background()
-	c := CreateMockConn(t, srv).(*mockConn)
-
-	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int, payload BLOB)")
-	payload := make([]byte, 512)
-	for i := 0; i < 2048; i++ {
-		rand.Read(payload)
-		tk.MustExec("insert into t values (?, ?)", i, payload)
-	}
-
-	tk.MustExec("set global tidb_enable_tmp_storage_on_oom = ON")
-	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
-	defer tk.MustExec("set global tidb_mem_oom_action= DEFAULT")
-	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 1)
-
-	// execute a normal statement, it'll spill to disk
-	stmt, _, _, err := c.Context().Prepare("select * from t")
-	require.NoError(t, err)
-
-	tk.MustExec(fmt.Sprintf("set tidb_mem_quota_query=%d", 1))
-
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
-	)))
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/get-chunk-error", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/get-chunk-error"))
-	}()
-	require.ErrorContains(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1024)), "fail to get chunk for test")
-	// after getting a failed FETCH, the cursor should have been reseted
-	require.False(t, stmt.GetCursorActive())
-	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)
-	require.Len(t, tk.Session().GetSessionVars().DiskTracker.GetChildrenForTest(), 0)
-}
-
-func TestCursorFetchExecuteCheck(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	srv := CreateMockServer(t, store)
-	srv.SetDomain(dom)
-	defer srv.Close()
-
-	appendUint32 := binary.LittleEndian.AppendUint32
-	ctx := context.Background()
-	c := CreateMockConn(t, srv).(*mockConn)
-
-	stmt, _, _, err := c.Context().Prepare("select 1")
-	require.NoError(t, err)
-
-	// execute with wrong ID
-	require.Error(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID()+1)),
-		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
-	)))
-
-	// execute with wrong flag
-	require.Error(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
-		mysql.CursorTypeReadOnly|mysql.CursorTypeForUpdate, 0x1, 0x0, 0x0, 0x0,
-	)))
-
-	require.Error(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
-		mysql.CursorTypeReadOnly|mysql.CursorTypeScrollable, 0x1, 0x0, 0x0, 0x0,
-	)))
-}
-
 func getExpectOutput(t *testing.T, originalConn *mockConn, writeFn func(conn *clientConn)) []byte {
 	buf := bytes.NewBuffer([]byte{})
 	conn := &clientConn{
@@ -488,8 +357,8 @@ func TestCursorFetchReset(t *testing.T) {
 	require.NoError(t, c.flush(context.Background()))
 	require.Equal(t, expected, out.Bytes())
 	// reset the statement
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtReset}, uint32(stmt.ID())),
+	require.NoError(t, c.Dispatch(ctx, appendUint32(
+		[]byte{mysql.ComStmtReset}, uint32(stmt.ID()),
 	)))
 	// the following fetch will fail
 	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
@@ -577,9 +446,9 @@ func TestCursorFetchSendLongDataReset(t *testing.T) {
 	// send a parameter to the server
 	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, appendUint64([]byte{}, 1)))
 	// reset the statement
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtReset}, uint32(stmt.ID())),
-	)))
+	require.NoError(t, c.Dispatch(ctx, appendUint32(
+		[]byte{mysql.ComStmtReset}, uint32(stmt.ID())),
+	))
 	// execute directly will fail
 	require.Error(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),

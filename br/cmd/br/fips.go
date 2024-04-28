@@ -13,16 +13,7 @@
 // limitations under the License.
 
 //go:build boringcrypto
-// +build boringcrypto
 
 package main
 
-import (
-	_ "crypto/tls/fipsonly"
-
-	"github.com/pingcap/tidb/br/pkg/version/build"
-)
-
-func init() {
-	build.ReleaseVersion += "-fips"
-}
+import _ "crypto/tls/fipsonly"

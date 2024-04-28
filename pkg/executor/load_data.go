@@ -24,12 +24,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -42,16 +42,27 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
+// LoadDataVarKey is a variable key for load data.
+const LoadDataVarKey loadDataVarKeyType = 0
+
+// LoadDataReaderBuilderKey stores the reader channel that reads from the connection.
+const LoadDataReaderBuilderKey loadDataVarKeyType = 1
+
 var (
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
+)
+
+// LoadDataReaderBuilder is a function type that builds a reader from a file path.
+type LoadDataReaderBuilder func(filepath string) (
+	r io.ReadCloser, err error,
 )
 
 // LoadDataExec represents a load data executor.
@@ -60,6 +71,43 @@ type LoadDataExec struct {
 
 	FileLocRef     ast.FileLocRefTp
 	loadDataWorker *LoadDataWorker
+
+	// fields for loading local file
+	infileReader io.ReadCloser
+}
+
+// Open implements the Executor interface.
+func (e *LoadDataExec) Open(_ context.Context) error {
+	if rb, ok := e.Ctx().Value(LoadDataReaderBuilderKey).(LoadDataReaderBuilder); ok {
+		var err error
+		e.infileReader, err = rb(e.loadDataWorker.GetInfilePath())
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Close implements the Executor interface.
+func (e *LoadDataExec) Close() error {
+	return e.closeLocalReader(nil)
+}
+
+func (e *LoadDataExec) closeLocalReader(originalErr error) error {
+	err := originalErr
+	if e.infileReader != nil {
+		if err2 := e.infileReader.Close(); err2 != nil {
+			logutil.BgLogger().Error(
+				"close local reader failed", zap.Error(err2),
+				zap.NamedError("original error", originalErr),
+			)
+			if err == nil {
+				err = err2
+			}
+		}
+		e.infileReader = nil
+	}
+	return err
 }
 
 // Next implements the Executor Next interface.
@@ -68,14 +116,17 @@ func (e *LoadDataExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case ast.FileLocServerOrRemote:
 		return e.loadDataWorker.loadRemote(ctx)
 	case ast.FileLocClient:
-		// let caller use handleFileTransInConn to read data in this connection
+		// This is for legacy test only
+		// TODO: adjust tests to remove LoadDataVarKey
 		sctx := e.loadDataWorker.UserSctx
-		val := sctx.Value(LoadDataVarKey)
-		if val != nil {
-			sctx.SetValue(LoadDataVarKey, nil)
-			return errors.New("previous load data option wasn't closed normally")
-		}
 		sctx.SetValue(LoadDataVarKey, e.loadDataWorker)
+
+		err = e.loadDataWorker.LoadLocal(ctx, e.infileReader)
+		if err != nil {
+			logutil.Logger(ctx).Error("load local data failed", zap.Error(err))
+			err = e.closeLocalReader(err)
+			return err
+		}
 	}
 	return nil
 }
@@ -99,9 +150,10 @@ type LoadDataWorker struct {
 func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
 	// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
 	// meaning of this flag is not clear. I can only reuse it here.
-	stmtCtx.DupKeyAsWarning = true
-	stmtCtx.BadNullAsWarning = true
-
+	levels := stmtCtx.ErrLevels()
+	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
+	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	stmtCtx.SetErrLevels(levels)
 	stmtCtx.SetTypeFlags(stmtCtx.TypeFlags().WithTruncateAsWarning(true))
 }
 
@@ -147,6 +199,10 @@ func (e *LoadDataWorker) loadRemote(ctx context.Context) error {
 
 // LoadLocal reads from client connection and do load data job.
 func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
+	if r == nil {
+		return errors.New("load local data, reader is nil")
+	}
+
 	compressTp := mydump.ParseCompressionOnFileExtension(e.GetInfilePath())
 	compressTp2, err := mydump.ToStorageCompressType(compressTp)
 	if err != nil {
@@ -173,11 +229,6 @@ func (e *LoadDataWorker) load(ctx context.Context, readerInfos []importer.LoadDa
 	// processOneStream goroutines -> commitTaskCh -> commitWork goroutines
 	commitTaskCh := make(chan commitTask, taskQueueSize)
 	// commitWork goroutines -> done -> UpdateJobProgress goroutine
-
-	// TODO: support explicit transaction and non-autocommit
-	if err = sessiontxn.NewTxn(groupCtx, e.UserSctx); err != nil {
-		return err
-	}
 
 	// processOneStream goroutines.
 	group.Go(func() error {
@@ -207,7 +258,7 @@ sendReaderInfoLoop:
 	return err
 }
 
-func (e *LoadDataWorker) setResult(colAssignExprWarnings []stmtctx.SQLWarn) {
+func (e *LoadDataWorker) setResult(colAssignExprWarnings []contextutil.SQLWarn) {
 	stmtCtx := e.UserSctx.GetSessionVars().StmtCtx
 	numWarnings := uint64(stmtCtx.WarningCount())
 	numRecords := stmtCtx.RecordRows()
@@ -223,7 +274,7 @@ func (e *LoadDataWorker) setResult(colAssignExprWarnings []stmtctx.SQLWarn) {
 	}
 
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
-	warns := make([]stmtctx.SQLWarn, numWarnings)
+	warns := make([]contextutil.SQLWarn, numWarnings)
 	n := copy(warns, stmtCtx.GetWarnings())
 	for i := 0; i < int(numRecords) && n < len(warns); i++ {
 		n += copy(warns[n:], colAssignExprWarnings)
@@ -294,7 +345,7 @@ type encodeWorker struct {
 	colAssignExprs []expression.Expression
 	// sessionCtx generate warnings when rewrite AST node into expression.
 	// we should generate such warnings for each row encoded.
-	exprWarnings []stmtctx.SQLWarn
+	exprWarnings []contextutil.SQLWarn
 	killer       *sqlkiller.SQLKiller
 	rows         [][]types.Datum
 }
@@ -490,7 +541,7 @@ func (w *encodeWorker) parserData2TableData(
 	}
 	for i := 0; i < len(w.colAssignExprs); i++ {
 		// eval expression of `SET` clause
-		d, err := w.colAssignExprs[i].Eval(w.Ctx(), chunk.Row{})
+		d, err := w.colAssignExprs[i].Eval(w.Ctx().GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			if w.controller.Restrictive {
 				return nil, err
@@ -532,16 +583,6 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 				zap.Stack("stack"))
 			err = util.GetRecoverError(r)
 		}
-
-		if err != nil {
-			background := context.Background()
-			w.Ctx().StmtRollback(background, false)
-			w.Ctx().RollbackTxn(background)
-		} else {
-			if err = w.Ctx().CommitTxn(ctx); err != nil {
-				logutil.Logger(ctx).Error("commit error refresh", zap.Error(err))
-			}
-		}
 	}()
 
 	var (
@@ -580,7 +621,6 @@ func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error
 	failpoint.Inject("commitOneTaskErr", func() {
 		failpoint.Return(errors.New("mock commit one task error"))
 	})
-	w.Ctx().StmtCommit(ctx)
 	return nil
 }
 
@@ -735,35 +775,4 @@ type loadDataVarKeyType int
 // String defines a Stringer function for debugging and pretty printing.
 func (loadDataVarKeyType) String() string {
 	return "load_data_var"
-}
-
-// LoadDataVarKey is a variable key for load data.
-const LoadDataVarKey loadDataVarKeyType = 0
-
-var (
-	_ exec.Executor = (*LoadDataActionExec)(nil)
-)
-
-// LoadDataActionExec executes LoadDataActionStmt.
-type LoadDataActionExec struct {
-	exec.BaseExecutor
-
-	tp    ast.LoadDataActionTp
-	jobID int64
-}
-
-// Next implements the Executor Next interface.
-func (e *LoadDataActionExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	sqlExec := e.Ctx().(sqlexec.SQLExecutor)
-	user := e.Ctx().GetSessionVars().User.String()
-	job := asyncloaddata.NewJob(e.jobID, sqlExec, user)
-
-	switch e.tp {
-	case ast.LoadDataCancel:
-		return job.CancelJob(ctx)
-	case ast.LoadDataDrop:
-		return job.DropJob(ctx)
-	default:
-		return errors.Errorf("not implemented LOAD DATA action %v", e.tp)
-	}
 }

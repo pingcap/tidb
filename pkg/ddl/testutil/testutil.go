@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -93,7 +93,7 @@ func ExtractAllTableHandles(se sessiontypes.Session, dbName, tbName string) ([]i
 func FindIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.IndexInfo {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
 	if err != nil {
-		logutil.BgLogger().Warn("cannot find table", zap.String("dbName", dbName), zap.String("tbName", tbName))
+		logutil.DDLLogger().Warn("cannot find table", zap.String("dbName", dbName), zap.String("tbName", tbName))
 		return nil
 	}
 	return tbl.Meta().FindIndexByName(idxName)
@@ -103,7 +103,7 @@ func FindIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.Inde
 type SubStates = []model.SchemaState
 
 // TestMatchCancelState is used to test whether the cancel state matches.
-func TestMatchCancelState(t *testing.T, job *model.Job, cancelState interface{}, sql string) bool {
+func TestMatchCancelState(t *testing.T, job *model.Job, cancelState any, sql string) bool {
 	switch v := cancelState.(type) {
 	case model.SchemaState:
 		if job.Type == model.ActionMultiSchemaChange {

@@ -93,15 +93,15 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 			}
 			currJob = job
 			var (
-				newCol                *model.ColumnInfo
-				oldColName            *model.CIStr
-				modifyColumnTp        byte
-				updatedAutoRandomBits uint64
-				changingCol           *model.ColumnInfo
-				changingIdxs          []*model.IndexInfo
+				_newCol                *model.ColumnInfo
+				_oldColName            *model.CIStr
+				_pos                   = &ast.ColumnPosition{}
+				_modifyColumnTp        byte
+				_updatedAutoRandomBits uint64
+				changingCol            *model.ColumnInfo
+				changingIdxs           []*model.IndexInfo
 			)
-			pos := &ast.ColumnPosition{}
-			checkErr = job.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+			checkErr = job.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &changingCol, &changingIdxs)
 			elements = ddl.BuildElements(changingCol, changingIdxs)
 		}
 		if job.Type == model.ActionAddIndex {
@@ -162,16 +162,10 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	// Test encountering a "notOwnerErr" error which caused the processing backfill job to exit halfway.
 	// During the period, the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockGetIndexRecordErr", `return("addIdxNotOwnerErr")`))
-	// TODO: Remove this check after "err" isn't nil in runReorgJobAndHandleErr.
-	if variable.EnableDistTask.Load() {
-		err = tk.ExecToErr("alter table t1 add index idx2(c1)")
-		require.EqualError(t, err, "[ddl:8201]TiDB server is not a DDL owner")
-	} else {
-		tk.MustExec("alter table t1 add index idx2(c1)")
-		expectedElements = []*meta.Element{
-			{ID: 7, TypeKey: meta.IndexElementKey}}
-		checkReorgHandle(elements, expectedElements)
-	}
+	tk.MustExec("alter table t1 add index idx2(c1)")
+	expectedElements = []*meta.Element{
+		{ID: 7, TypeKey: meta.IndexElementKey}}
+	checkReorgHandle(elements, expectedElements)
 	tk.MustExec("admin check table t1")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockGetIndexRecordErr"))
 }

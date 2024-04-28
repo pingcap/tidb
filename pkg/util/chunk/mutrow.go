@@ -51,7 +51,7 @@ func (mr MutRow) Clone() MutRow {
 }
 
 // MutRowFromValues creates a MutRow from a interface slice.
-func MutRowFromValues(vals ...interface{}) MutRow {
+func MutRowFromValues(vals ...any) MutRow {
 	c := &Chunk{columns: make([]*Column, 0, len(vals))}
 	for _, val := range vals {
 		col := makeMutRowColumn(val)
@@ -80,7 +80,7 @@ func MutRowFromTypes(types []*types.FieldType) MutRow {
 	return MutRow{c: c, idx: 0}
 }
 
-func zeroValForType(tp *types.FieldType) interface{} {
+func zeroValForType(tp *types.FieldType) any {
 	switch tp.GetType() {
 	case mysql.TypeFloat:
 		return float32(0)
@@ -118,7 +118,7 @@ func zeroValForType(tp *types.FieldType) interface{} {
 	}
 }
 
-func makeMutRowColumn(in interface{}) *Column {
+func makeMutRowColumn(in any) *Column {
 	switch x := in.(type) {
 	case nil:
 		col := makeMutRowBytesColumn(nil)
@@ -236,14 +236,14 @@ func (mr MutRow) SetRow(row Row) {
 }
 
 // SetValues sets the MutRow with values.
-func (mr MutRow) SetValues(vals ...interface{}) {
+func (mr MutRow) SetValues(vals ...any) {
 	for i, v := range vals {
 		mr.SetValue(i, v)
 	}
 }
 
 // SetValue sets the MutRow with colIdx and value.
-func (mr MutRow) SetValue(colIdx int, val interface{}) {
+func (mr MutRow) SetValue(colIdx int, val any) {
 	col := mr.c.columns[colIdx]
 	cleanColOfMutRow(col)
 	if val == nil {

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -313,6 +315,11 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 		}
 	}
 	sctx := flagsAndTzToSessionContext(dagReq.Flags, tz)
+	if dagReq.DivPrecisionIncrement != nil {
+		sctx.GetSessionVars().DivPrecisionIncrement = int(*dagReq.DivPrecisionIncrement)
+	} else {
+		sctx.GetSessionVars().DivPrecisionIncrement = variable.DefDivPrecisionIncrement
+	}
 	ctx := &dagContext{
 		evalContext:   &evalContext{sctx: sctx},
 		dbReader:      reader,
@@ -331,7 +338,7 @@ func getAggInfo(ctx *dagContext, pbAgg *tipb.Aggregation) ([]aggregation.Aggrega
 	var err error
 	for _, expr := range pbAgg.AggFunc {
 		var aggExpr aggregation.Aggregation
-		aggExpr, err = aggregation.NewDistAggFunc(expr, ctx.fieldTps, ctx.sctx)
+		aggExpr, _, err = aggregation.NewDistAggFunc(expr, ctx.fieldTps, ctx.sctx.GetExprCtx())
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -433,6 +440,7 @@ func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Cont
 	sc.InitFromPBFlagAndTz(flags, tz)
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().StmtCtx = sc
+	sctx.GetSessionVars().TimeZone = tz
 	return sctx
 }
 
@@ -463,7 +471,7 @@ func (e *ErrLocked) Error() string {
 	return fmt.Sprintf("key is locked, key: %q, Type: %v, primary: %q, startTS: %v", e.Key, e.LockType, e.Primary, e.StartTS)
 }
 
-func genRespWithMPPExec(chunks []tipb.Chunk, lastRange *coprocessor.KeyRange, counts, ndvs []int64, exec mppExec, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
+func genRespWithMPPExec(chunks []tipb.Chunk, lastRange *coprocessor.KeyRange, counts, ndvs []int64, exec mppExec, dagReq *tipb.DAGRequest, err error, warnings []contextutil.SQLWarn, dur time.Duration) *coprocessor.Response {
 	resp := &coprocessor.Response{
 		Range: lastRange,
 	}

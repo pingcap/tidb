@@ -15,8 +15,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -161,6 +161,7 @@ func DefaultOutputTableChan() chan *CreatedTable {
 type TableWithRange struct {
 	CreatedTable
 
+	// Range has been rewrited by rewrite rules.
 	Range []rtree.Range
 }
 
@@ -168,6 +169,10 @@ type TableIDWithFiles struct {
 	TableID int64
 
 	Files []*backuppb.File
+	// RewriteRules is the rewrite rules for the specify table.
+	// because these rules belongs to the *one table*.
+	// we can hold them here.
+	RewriteRules *RewriteRules
 }
 
 // Exhaust drains all remaining errors in the channel, into a slice of errors.
@@ -203,13 +208,11 @@ type TiKVRestorer interface {
 	// After spliting, it also scatters the fresh regions.
 	SplitRanges(ctx context.Context,
 		ranges []rtree.Range,
-		rewriteRules *RewriteRules,
 		updateCh glue.Progress,
 		isRawKv bool) error
 	// RestoreSSTFiles import the files to the TiKV.
 	RestoreSSTFiles(ctx context.Context,
 		tableIDWithFiles []TableIDWithFiles,
-		rewriteRules *RewriteRules,
 		updateCh glue.Progress) error
 }
 
@@ -243,6 +246,7 @@ func NewTiKVSender(
 	cli TiKVRestorer,
 	updateCh glue.Progress,
 	splitConcurrency uint,
+	granularity string,
 ) (BatchSender, error) {
 	inCh := make(chan DrainResult, defaultChannelSize)
 	midCh := make(chan drainResultAndDone, defaultChannelSize)
@@ -257,7 +261,17 @@ func NewTiKVSender(
 
 	sender.wg.Add(2)
 	go sender.splitWorker(ctx, inCh, midCh, splitConcurrency)
-	go sender.restoreWorker(ctx, midCh)
+	if granularity == string(CoarseGrained) {
+		outCh := make(chan drainResultAndDone, defaultChannelSize)
+		// block on splitting and scattering regions.
+		// in coarse-grained mode, wait all regions are split and scattered is
+		// no longer a time-consuming operation, then we can batch download files
+		// as much as enough and reduce the time of blocking restore.
+		go sender.blockPipelineWorker(ctx, midCh, outCh)
+		go sender.restoreWorker(ctx, outCh)
+	} else {
+		go sender.restoreWorker(ctx, midCh)
+	}
 	return sender, nil
 }
 
@@ -270,6 +284,26 @@ func (b *tikvSender) Close() {
 type drainResultAndDone struct {
 	result DrainResult
 	done   func()
+}
+
+func (b *tikvSender) blockPipelineWorker(ctx context.Context,
+	inCh <-chan drainResultAndDone,
+	outCh chan<- drainResultAndDone,
+) {
+	defer close(outCh)
+	res := make([]drainResultAndDone, 0, defaultChannelSize)
+	for dr := range inCh {
+		res = append(res, dr)
+	}
+
+	for _, dr := range res {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			outCh <- dr
+		}
+	}
 }
 
 func (b *tikvSender) splitWorker(ctx context.Context,
@@ -294,7 +328,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 		summary.CollectDuration("split region", elapsed)
 	}()
 
-	pool := utils.NewWorkerPool(concurrency, "split")
+	pool := util.NewWorkerPool(concurrency, "split")
 	for {
 		select {
 		case <-ectx.Done():
@@ -320,7 +354,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 			// hence the checksum would fail.
 			done := b.registerTableIsRestoring(result.TablesToSend)
 			pool.ApplyOnErrorGroup(eg, func() error {
-				err := b.client.SplitRanges(ectx, result.Ranges, result.RewriteRules, b.updateCh, false)
+				err := b.client.SplitRanges(ectx, result.Ranges, b.updateCh, false)
 				if err != nil {
 					log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
 					return err
@@ -385,11 +419,12 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 			if !ok {
 				return
 			}
+
 			files := r.result.Files()
 			// There has been a worker in the `RestoreSSTFiles` procedure.
 			// Spawning a raw goroutine won't make too many requests to TiKV.
 			eg.Go(func() error {
-				e := b.client.RestoreSSTFiles(ectx, files, r.result.RewriteRules, b.updateCh)
+				e := b.client.RestoreSSTFiles(ectx, files, b.updateCh)
 				if e != nil {
 					log.Error("restore batch meet error", logutil.ShortError(e), zapTableIDWithFiles(files))
 					r.done()

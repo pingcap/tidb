@@ -13,7 +13,7 @@ go_test(
         "//pkg/config",
         "//pkg/executor",
         "//pkg/sessionctx/variable",
-        "//pkg/statistics/handle/autoanalyze",
+        "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/testkit",
         "//pkg/util",
         "@com_github_pingcap_failpoint//:failpoint",

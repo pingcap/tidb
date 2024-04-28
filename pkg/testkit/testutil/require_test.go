@@ -18,11 +18,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.uber.org/goleak"
 )
 
 func TestCompareUnorderedString(t *testing.T) {
-	defer goleak.VerifyNone(t)
 	require.True(t, CompareUnorderedStringSlice([]string{"1", "1", "2"}, []string{"1", "1", "2"}))
 	require.True(t, CompareUnorderedStringSlice([]string{"1", "1", "2"}, []string{"1", "2", "1"}))
 	require.False(t, CompareUnorderedStringSlice([]string{"1", "1"}, []string{"1", "2", "1"}))

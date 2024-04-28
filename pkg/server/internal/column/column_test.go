@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
 )
 
@@ -182,7 +183,7 @@ func TestDumpTextValue(t *testing.T) {
 
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), losAngelesTz, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), losAngelesTz, contextutil.IgnoreWarn)
 
 	time, err := types.ParseTime(typeCtx, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
 	require.NoError(t, err)

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -742,7 +743,8 @@ func TestOpenSeek(t *testing.T) {
 	ctx := aws.BackgroundContext()
 
 	someRandomBytes := make([]byte, 1000000)
-	rand.Read(someRandomBytes)
+	rnd := rand.New(rand.NewSource(0))
+	rnd.Read(someRandomBytes)
 	// ^ we just want some random bytes for testing, we don't care about its security.
 
 	s.expectedCalls(ctx, t, someRandomBytes, []int{0, 998000, 990100}, func(data []byte, offset int) io.ReadCloser {
@@ -860,7 +862,8 @@ func TestS3ReaderWithRetryEOF(t *testing.T) {
 	ctx := aws.BackgroundContext()
 
 	someRandomBytes := make([]byte, 100)
-	rand.Read(someRandomBytes) //nolint:gosec
+	rnd := rand.New(rand.NewSource(0))
+	rnd.Read(someRandomBytes) //nolint:gosec
 	// ^ we just want some random bytes for testing, we don't care about its security.
 
 	s.expectedCalls(ctx, t, someRandomBytes, []int{0, 20, 50, 75}, func(data []byte, offset int) io.ReadCloser {
@@ -900,18 +903,69 @@ func TestS3ReaderWithRetryEOF(t *testing.T) {
 	require.Equal(t, io.EOF, err)
 }
 
+type alwaysFailReader struct{}
+
+func (alwaysFailReader) Read([]byte) (n int, err error) {
+	return 0, errors.New("always fail read")
+}
+
 // TestS3ReaderWithRetryFailed check the Read with retry failed after maxRetryTimes.
 func TestS3ReaderWithRetryFailed(t *testing.T) {
 	s := createS3Suite(t)
 	ctx := aws.BackgroundContext()
 
 	someRandomBytes := make([]byte, 100)
-	rand.Read(someRandomBytes) //nolint:gosec
+	rnd := rand.New(rand.NewSource(0))
+	rnd.Read(someRandomBytes) //nolint:gosec
 	// ^ we just want some random bytes for testing, we don't care about its security.
 
-	s.expectedCalls(ctx, t, someRandomBytes, []int{0, 20, 40, 60}, func(data []byte, offset int) io.ReadCloser {
-		return io.NopCloser(&limitedBytesReader{Reader: bytes.NewReader(data[offset:]), limit: 30})
+	s.expectedCalls(ctx, t, someRandomBytes, []int{0, 0, 0, 0}, func(data []byte, offset int) io.ReadCloser {
+		return io.NopCloser(alwaysFailReader{})
 	})
+
+	reader, err := s.storage.Open(ctx, "random", nil)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, reader.Close())
+	}()
+
+	slice := make([]byte, 100)
+	// this Read will internally retry 3 times, and then return error
+	_, err = reader.Read(slice)
+	require.EqualError(t, err, "always fail read")
+	require.True(t, s.controller.Satisfied())
+}
+
+type failEvenReadReader struct {
+	r   io.Reader
+	cnt int
+}
+
+func (f *failEvenReadReader) Read(p []byte) (n int, err error) {
+	f.cnt++
+	if f.cnt%2 == 1 {
+		return 0, errors.New("mock read error")
+	}
+	return f.r.Read(p)
+}
+
+func TestS3ReaderResetRetry(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+
+	someRandomBytes := make([]byte, 100)
+	rnd := rand.New(rand.NewSource(0))
+	rnd.Read(someRandomBytes) //nolint:gosec
+	// ^ we just want some random bytes for testing, we don't care about its security.
+
+	mockReader := &failEvenReadReader{r: bytes.NewReader(someRandomBytes)}
+	s.expectedCalls(
+		ctx,
+		t,
+		someRandomBytes,
+		[]int{0, 0, 20, 40, 60, 80},
+		func([]byte, int) io.ReadCloser { return io.NopCloser(mockReader) },
+	)
 
 	reader, err := s.storage.Open(ctx, "random", nil)
 	require.NoError(t, err)
@@ -928,13 +982,11 @@ func TestS3ReaderWithRetryFailed(t *testing.T) {
 		require.Equal(t, someRandomBytes[offset:offset+cnt], slice[:cnt])
 	}
 
-	// we can retry 3 times, so read will succeed for 4 times
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 5; i++ {
 		readAndCheck(20, i*20)
 	}
 
-	_, err = reader.Read(slice)
-	require.EqualError(t, err, "read exceeded limit")
+	require.Equal(t, 10, mockReader.cnt)
 }
 
 // TestWalkDir checks WalkDir retrieves all directory content under a prefix.
@@ -1382,4 +1434,41 @@ func TestRetryError(t *testing.T) {
 	err = s.WriteFile(ctx, "reset", []byte(errString))
 	require.NoError(t, err)
 	require.Equal(t, count, int32(2))
+}
+
+func TestS3ReadFileRetryable(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+	errMsg := "just some unrelated error"
+	expectedErr := errors.New(errMsg)
+
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
+			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
+			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
+			return &s3.GetObjectOutput{
+				Body: io.NopCloser(bytes.NewReader([]byte("test"))),
+			}, nil
+		})
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
+			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
+			require.Equal(t, "prefix/file", aws.StringValue(input.Key))
+			return &s3.GetObjectOutput{
+				Body: io.NopCloser(bytes.NewReader([]byte("test"))),
+			}, nil
+		})
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		Return(nil, expectedErr)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/read-s3-body-failed", "2*return(true)"))
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/br/pkg/storage/read-s3-body-failed")
+	}()
+	_, err := s.storage.ReadFile(ctx, "file")
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), errMsg))
 }

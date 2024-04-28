@@ -1,0 +1,508 @@
+# TestDefaultColumnWithDateFormat
+# date_format
+use test;
+drop table if exists t0, t1, t2, t3, t4, t5, t6, t7;
+create table t0 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m')));
+create table t1 (c int(10), c1 datetime default (date_format(now(),'%Y-%m-%d')));
+create table t2 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H.%i.%s')));
+create table t3 (c int(10), c1 timestamp default (date_format(now(),'%Y-%m-%d %H.%i.%s')));
+create table t4 (c int(10), c1 date default (date_format(now(),'%Y-%m-%d %H:%i:%s')));
+create table t5 (c int(10), c1 date default (date_format(now(),_utf8mb4'%Y-%m-%d %H:%i:%s')));
+-- error 3770
+create table t6 (c int(10), c1 varchar(256) default (date_format(now(),'%b %d %Y %h:%i %p')));
+-- error 3770
+create table t7 (c int(10), c1 varchar(256) default (date_format(now(),'%Y-%m-%d %H:%i:%s %p')));
+# insert records
+SET @x := NOW();
+insert into t0(c) values (1);
+insert into t0 values (2, default);
+SELECT count(1) FROM t0 WHERE c1 = date_format(@x,'%Y-%m');
+insert into t1(c) values (1);
+insert into t1 values (2, default);
+SELECT count(1) FROM t1 WHERE c1 = date_format(@x,'%Y-%m-%d');
+SET @x := NOW();
+insert into t2(c) values (1);
+insert into t2 values (2, default);
+SELECT count(1) FROM t2 WHERE c1 = date_format(@x,'%Y-%m-%d %H.%i.%s') OR c1 = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H.%i.%s');
+SET @x := NOW();
+insert into t3(c) values (1);
+insert into t3 values (2, default);
+SELECT count(1) FROM t3 WHERE c1 = date_format(@x,'%Y-%m-%d %H.%i.%s') OR c1 = date_format(DATE_ADD(@x, INTERVAL 1 SECOND), '%Y-%m-%d %H.%i.%s');
+insert into t4(c) values (1);
+insert into t4 values (2, default);
+SELECT count(1) FROM t4 WHERE c1 = date_format(@x,'%Y-%m-%d');
+insert into t5(c) values (1);
+insert into t5 values (2, default);
+SELECT count(1) FROM t5 WHERE c1 = date_format(@x,'%Y-%m-%d');
+
+show create table t0;
+show create table t1;
+show create table t2;
+
+# test modify column, set default value, add index, add column
+-- replace_regex /Incorrect date value:.*/Incorrect date value:<time>/
+-- error 1292
+alter table t0 add column c2 date default (date_format(now(),'%Y-%m'));
+alter table t0 add index idx(c1);
+alter table t1 add index idx(c1);
+alter table t0 add column c2 date default (date_format(now(),'%Y-%m-%d'));
+-- error 1265
+alter table t0 add column c3 enum('y','n') default (date_format(now(),'%Y-%m-%d'));
+alter table t0 add column c4 blob default (date_format(now(),'%Y-%m-%d'));
+insert into t0 values (3, default, default, default);
+insert into t1 values (3, default);
+show create table t0;
+show create table t1;
+alter table t0 modify column c1 varchar(30) default 'xx';
+alter table t1 modify column c1 varchar(30) default 'xx';
+insert into t0 values (4, default, default, default);
+insert into t1 values (4, default);
+show create table t0;
+show create table t1;
+-- replace_regex /Incorrect datetime value:.*/Incorrect datetime value:<time>/
+-- error 1292
+alter table t0 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
+alter table t0 alter column c1 SET DEFAULT (date_format(now(), '%Y-%m-%d'));
+insert into t0 values (5, default, default, default);
+-- error 1292
+alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
+delete from t1 where c = 4;
+alter table t1 modify column c1 datetime DEFAULT (date_format(now(), '%Y-%m-%d'));
+insert into t1 values (5, default);
+alter table t0 drop index idx;
+alter table t1 drop index idx;
+show create table t0;
+show create table t1;
+SELECT count(1) FROM t0 WHERE c1 = date_format(@x,'%Y-%m') OR c1 = date_format(@x,'%Y-%m-%d') OR c1 = "xx";
+SELECT count(1) FROM t1 WHERE c1 = date_format(@x,'%Y-%m-%d');
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+show columns from test.t1 where field='c1';
+
+# TestDefaultColumnWithReplace
+# replace
+drop table if exists t, t1, t2;
+create table t (c int(10), c1 varchar(256) default (REPLACE(UPPER(UUID()), '-', '')), index idx(c1));
+create table t1 (c int(10), c1 int default (REPLACE(UPPER(UUID()), '-', '')), index idx(c1));
+create table t2 (c int(10), c1 varchar(256) default (REPLACE(CONVERT(UPPER(UUID()) USING UTF8MB4), '-', '')), index idx(c1));
+-- error 3770
+create table t1 (c int(10), c1 varchar(256) default (REPLACE('xdfj-jfj', '-', '')));
+-- error 3770
+create table t1 (c int(10), c1 varchar(256) default (UPPER(UUID())));
+-- error 3770
+create table t1 (c int(10), c1 varchar(256) default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', '')));
+
+# add column
+-- error 1674
+alter table t add column c2 varchar(32) default (REPLACE(UPPER(UUID()), '-', ''));
+-- error 1674
+alter table t add column c3 int default (UPPER(UUID()));
+# Alter support "REPLACE(UPPER('dfdkj-kjkl-d'), '-', '')", we need to support this DDL.
+-- error 1674
+alter table t add column c4 int default (REPLACE(UPPER('dfdkj-kjkl-d'), '-', ''));
+
+# insert records
+insert into t(c) values (1),(2),(3);
+insert into t values (4, default);
+# It consists of uppercase letters or numbers.
+SELECT count(1) FROM t WHERE c1 REGEXP '^[A-Z0-9]+$';
+
+# Some MySQL versions of "show create table" have different results. For example, MySQL 8.0.18 has the following results:
+# `c1` varchar(16) DEFAULT (replace(convert(upper(uuid()) using utf8mb4),_utf8mb4'-',_utf8mb4''))
+show create table t;
+show create table t1;
+show create table t2;
+
+# test modify column, set default value, add index
+alter table t alter column c1 set default 'xx';
+alter table t drop index idx;
+show create table t;
+insert into t values (5, default);
+show create table t;
+alter table t add unique index idx(c, c1);
+alter table t modify column c1 varchar(32) default (REPLACE(UPPER(UUID()), '-', ''));
+insert into t values (6, default);
+SELECT count(1) FROM t WHERE c1 REGEXP '^[A-Z0-9]+$';
+show create table t;
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t' AND COLUMN_NAME='c1';
+alter table t alter column c1 set default null;
+insert into t(c) values (7);
+alter table t alter column c1 drop default;
+-- error 1364
+insert into t(c) values (8);
+SELECT count(1) FROM t WHERE c1 REGEXP '^[A-Z0-9]+$';
+
+# TestDefaultColumnWithStrToDate
+# str_to_date
+drop table if exists t0, t1, t2, t3, t4, t5;
+# create table
+create table t0 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d')), c2 date default (str_to_date('9999-01-01','%Y-%m-%d')), index idx(c, c1));
+create table t1 (c int(10), c1 int default (str_to_date('1980-01-01','%Y-%m-%d')), c2 int default (str_to_date('9999-01-01','%Y-%m-%d')), unique key idx(c, c1));
+create table t3 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01','%m-%d')));
+create table t4 (c int(10), c1 varchar(32) default (str_to_date('01-01','%Y-%m-%d')));
+set @sqlMode := @@session.sql_mode;
+set @@sql_mode='';
+create table t2 (c int(10), c1 blob default (str_to_date('1980-01-01','%Y-%m-%d')), c2 blob default (str_to_date('9999-01-01','%m-%d')));
+create table t5 (c int(10), c1 json default (str_to_date('9999-01-01','%Y-%m-%d')), c2 timestamp default (str_to_date('1980-01-01','%Y-%m-%d')));
+set session sql_mode=@sqlMode;
+-- error 3770
+create table t6 (c int(10), c1 varchar(32) default (str_to_date(upper('1980-01-01'),'%Y-%m-%d')));
+-- error 3770
+create table t6 (c int(10), c1 varchar(32) default (str_to_date('1980-01-01',upper('%Y-%m-%d'))));
+alter table t0 add column c3 datetime default (str_to_date('1980-01-01','%Y-%m-%d'));
+alter table t0 add column c4 int default (str_to_date('1980-01-01','%Y-%m-%d'));
+
+# insert records
+insert into t0(c) values (1),(2),(3);
+insert into t1(c) values (1),(2),(3);
+insert into t0 values (4, default, default, default, default);
+insert into t1 values (4, default, default);
+-- error 1292
+insert into t3(c) values (1);
+-- error 1292
+insert into t4(c) values (1);
+# MySQL will return an error. Related issue: https://github.com/pingcap/tidb/issues/51275.
+insert into t5(c) values (1);
+set @@sql_mode='';
+insert into t2(c) values (1),(2),(3);
+insert into t2 values (4, default, default);
+set session sql_mode=@sqlMode;
+-- error 1292
+insert into t2(c) values (5);
+select * from t0;
+select * from t1;
+select * from t2;
+
+show create table t0;
+show create table t1;
+show create table t2;
+
+# test modify column, set default value, add index, drop column
+alter table t0 add index idx1(c1);
+alter table t1 add unique index idx1(c, c1);
+insert into t0 values (5, default, default, default, default);
+insert into t1 values (5, default, default);
+show create table t0;
+show create table t1;
+alter table t0 alter column c2 set default (current_date());
+alter table t1 modify column c1 varchar(30) default 'xx';
+insert into t0 values (6, default, default, default, default);
+insert into t1 values (6, default, default);
+show create table t0;
+show create table t1;
+alter table t0 alter column c1 drop default;
+alter table t1 modify column c1 varchar(32) default (str_to_date('1980-01-01','%Y-%m-%d'));
+-- error 1364
+insert into t0 values (7, default, default, default, default);
+insert into t1 values (7, default, default);
+select * from t0 where c < 6;
+select c, c1 from t0 where c = 6 and c2 = date_format(now(),'%Y-%m-%d');;
+select * from t1;
+select * from t2;
+-- error 8200
+alter table t0 drop column c1;
+alter table t0 drop column c2;
+show create table t0;
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+
+# TestDefaultColumnWithUpper
+# upper
+drop table if exists t, t1, t2;
+# create table
+create table t (c int(10), c1 varchar(256) default (upper(substring_index(user(),'@',1))), unique index idx(c, c1));
+create table t1 (c int(10), c1 int default (upper(substring_index(user(),_utf8mb4'@',1))));
+-- error 3770
+create table t2 (c int(10), c1 varchar(256) default (substring_index(user(),'@',1)));
+-- error 3770
+create table t2 (c int(10), c1 varchar(256) default (upper(substring_index('fjks@jkkl','@',1))));
+-- error 3770
+create table t2 (c int(10), c1 varchar(256) default (upper(substring_index(user(),'x',1))));
+-- error 1674
+alter table t add column c2 varchar(32) default (upper(substring_index(user(),'@',1)));
+# We don't support "upper(substring_index('fjks@jkkl','@',1))", so we return an error as (upper(substring_index(user(),'@',1))).
+-- error 1674
+alter table t add column c3 int default (upper(substring_index('fjks@jkkl','@',1)));
+-- error 1292
+insert into t1(c) values (1);
+show create table t;
+show create table t1;
+
+# test modify column, set default value, add index
+alter table t1 modify column c1 varchar(30) default 'xx';
+show create table t1;
+alter table t1 modify column c1 varchar(32) default (upper(substring_index(user(),'@',1)));
+alter table t1 add index idx1(c1);
+show create table t1;
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+
+# TestDefaultColumnWithDateFormatAndReplaceAndUpperAndStrToDate
+# Different data types for data_format.
+drop table if exists t0, t1, t2, t3;
+create table t0 (c int(10), c1 BLOB default (date_format(now(),'%Y-%m-%d')));
+create table t1 (c int(10), c1 JSON default (date_format(now(),'%Y-%m-%d')));
+create table t2 (c int(10), c1 ENUM('y','n') default (date_format(now(),'%Y-%m-%d')));
+create table t3 (c int(10), c1 SET('y','n') default (date_format(now(),'%Y-%m-%d')));
+INSERT INTO t0 values ();
+INSERT INTO t0 values (1, DEFAULT);
+select count(1) from t0 where c1 = date_format(now(), '%Y-%m-%d');
+-- error 3140
+INSERT INTO t1 values ();
+-- error 3140
+INSERT INTO t1 values (1, DEFAULT);
+SELECT * from t1;
+-- error 1265
+INSERT INTO t2 values ();
+-- error 1265
+INSERT INTO t2 values (1, DEFAULT);
+SELECT * from t2;
+-- error 1265
+INSERT INTO t3 values ();
+-- error 1265
+INSERT INTO t3 values (1, DEFAULT);
+SELECT * from t3;
+show create table t0;
+show create table t1;
+show create table t2;
+show create table t3;
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
+-- error 1101
+alter table t0 alter column c1 set default "xx";
+-- error 1101
+alter table t1 alter column c1 set default "xx";
+alter table t2 alter column c1 set default 'y';
+alter table t3 alter column c1 set default 'n';
+INSERT INTO t0 values (2, DEFAULT);
+INSERT INTO t2 values (2, DEFAULT);
+INSERT INTO t3 values (2, DEFAULT);
+alter table t0 modify column c1 BLOB default (date_format(now(),'%Y-%m-%d'));
+alter table t1 modify column c1 JSON default (date_format(now(),'%Y-%m-%d'));
+alter table t2 modify column c1 ENUM('y','n') default (date_format(now(),'%Y-%m-%d'));
+alter table t3 modify column c1 SET('y','n') default (date_format(now(),'%Y-%m-%d'));
+INSERT INTO t0 values (3, DEFAULT);
+show create table t0;
+show create table t1;
+show create table t2;
+show create table t3;
+alter table t0 alter column c1 drop default;
+alter table t1 alter column c1 drop default;
+alter table t2 alter column c1 drop default;
+alter table t3 alter column c1 drop default;
+show create table t0;
+show create table t1;
+show create table t2;
+show create table t3;
+select count(1) from t0 where c1 = date_format(now(), '%Y-%m-%d');
+select * from t2;
+select * from t3;
+drop table t0, t1, t2, t3;
+# Different data types for replace.
+create table t0 (c int(10), c1 BLOB default (REPLACE(UPPER(UUID()), '-', '')));
+create table t1 (c int(10), c1 JSON default (REPLACE(UPPER(UUID()), '-', '')));
+create table t2 (c int(10), c1 ENUM('y','n') default (REPLACE(UPPER(UUID()), '-', '')));
+create table t3 (c int(10), c1 SET('y','n') default (REPLACE(UPPER(UUID()), '-', '')));
+INSERT INTO t0 values ();
+INSERT INTO t0 values (1, DEFAULT);
+SELECT count(1) FROM t0 WHERE c1 REGEXP '^[A-Z0-9]+$';
+-- error 3140
+INSERT INTO t1 values ();
+-- error 3140
+INSERT INTO t1 values (1, DEFAULT);
+SELECT * from t1;
+-- error 1265
+INSERT INTO t2 values ();
+-- error 1265
+INSERT INTO t2 values (1, DEFAULT);
+SELECT * from t2;
+-- error 1265
+INSERT INTO t3 values ();
+-- error 1265
+INSERT INTO t3 values (1, DEFAULT);
+SELECT * from t3;
+show create table t0;
+show create table t1;
+show create table t2;
+show create table t3;
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
+drop table t0, t1, t2, t3;
+# Different data types for str_to_date.
+create table t0 (c int(10), c1 BLOB default (str_to_date('1980-01-01','%Y-%m-%d')));
+create table t1 (c int(10), c1 JSON default (str_to_date('1980-01-01','%Y-%m-%d')));
+create table t2 (c int(10), c1 ENUM('y','n') default (str_to_date('1980-01-01','%Y-%m-%d')));
+create table t3 (c int(10), c1 SET('y','n') default (str_to_date('1980-01-01','%Y-%m-%d')));
+INSERT INTO t0 values ();
+INSERT INTO t0 values (1, DEFAULT);
+SELECT * from t0;
+# MySQL will return an error. Related issue: https://github.com/pingcap/tidb/issues/51275.
+INSERT INTO t1 values ();
+INSERT INTO t1 values (1, DEFAULT);
+SELECT * from t1;
+-- error 1265
+INSERT INTO t2 values ();
+-- error 1265
+INSERT INTO t2 values (1, DEFAULT);
+SELECT * from t2;
+-- error 1265
+INSERT INTO t3 values ();
+-- error 1265
+INSERT INTO t3 values (1, DEFAULT);
+SELECT * from t3;
+show create table t0;
+show create table t1;
+show create table t2;
+show create table t3;
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
+drop table t0, t1, t2, t3;
+# Different data types for upper.
+create table t0 (c int(10), c1 BLOB default (upper(substring_index(user(),'@',1))));
+create table t1 (c int(10), c1 JSON default (upper(substring_index(user(),'@',1))));
+create table t2 (c int(10), c1 ENUM('y','n') default (upper(substring_index(user(),'@',1))));
+create table t3 (c int(10), c1 SET('y','n') default (upper(substring_index(user(),'@',1))));
+INSERT INTO t0 values ();
+INSERT INTO t0 values (1, DEFAULT);
+SELECT * from t0;
+-- error 3140
+INSERT INTO t1 values ();
+-- error 3140
+INSERT INTO t1 values (1, DEFAULT);
+SELECT * from t1;
+-- error 1265
+INSERT INTO t2 values ();
+-- error 1265
+INSERT INTO t2 values (1, DEFAULT);
+SELECT * from t2;
+-- error 1265
+INSERT INTO t3 values ();
+-- error 1265
+INSERT INTO t3 values (1, DEFAULT);
+SELECT * from t3;
+show create table t0;
+show create table t1;
+show create table t2;
+show create table t3;
+drop table t0, t1, t2, t3;
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t0' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t1' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t2' AND COLUMN_NAME='c1';
+SELECT column_default, extra FROM INFORMATION_SCHEMA.COLUMNS WHERE table_schema='test' AND TABLE_NAME='t3' AND COLUMN_NAME='c1';
+
+# test auto_increment
+-- error 1067
+create table t0 (c int(10), c1 int auto_increment default (str_to_date('1980-01-01','%Y-%m-%d')));
+CREATE TABLE t0 (id int, c int);
+insert into t0(id) values (1);
+-- error 1067
+alter table t0 modify column c int auto_increment default (str_to_date('1980-01-01','%Y-%m-%d'));
+-- error 8200
+ALTER TABLE t0 MODIFY COLUMN c INT PRIMARY KEY DEFAULT(str_to_date('1980-01-01','%Y-%m-%d'));
+ALTER TABLE t0 ALTER COLUMN c SET DEFAULT(str_to_date('1980-01-01','%Y-%m-%d'));
+insert into t0(id) values (2);
+drop table t0;
+
+# test generated column and expression index
+CREATE TABLE t1 (i INT, b int DEFAULT (str_to_date('1980-01-01','%Y-%m-%d')), c INT GENERATED ALWAYS AS (b+2), d INT GENERATED ALWAYS AS (b+10) STORED);
+INSERT INTO t1(i) VALUES (1);
+CREATE INDEX idx1 ON t1 ((b+1));
+CREATE INDEX idx2 ON t1 ((c+1));
+CREATE INDEX idx3 ON t1 ((d+1));
+SHOW COLUMNS FROM t1;
+show create table t1;
+INSERT INTO t1(i, b) VALUES (2, DEFAULT);
+INSERT INTO t1(i, b) VALUES (3, 123);
+INSERT INTO t1(i, b) VALUES (NULL, NULL);
+SELECT * FROM t1;
+drop table t1;
+
+# clustered index, multi-valued index and replace into
+create table t0 (c int(10), c1 int default (str_to_date('1980-01-01','%Y-%m-%d')), primary key(c, c1));
+REPLACE INTO t0 VALUES (1, DEFAULT);
+SELECT * FROM t0;
+show columns from test.t0 where field='c1';
+-- error 3152
+create table t1 (c int(10), c1 BLOB default (date_format(now(),'%Y-%m-%d')), c2 JSON default (str_to_date('1980-01-01','%Y-%m-%d')), primary key(c1(32), c2));
+create table t1 (c int(10), c1 BLOB default (date_format(now(),'%Y-%m-%d')), c2 JSON default (str_to_date('1980-01-01','%Y-%m-%d')), primary key(c1(32)));
+SET @x := NOW();
+REPLACE INTO t1 VALUES (1, DEFAULT, '[1,1,2]');
+CREATE INDEX idx ON t1 ((cast(c2 as signed array)));
+REPLACE INTO t1 VALUES (1, DEFAULT, '[3, 4]');
+SELECT count(1) FROM t1 WHERE c1 = date_format(@x,'%Y-%m-%d');
+show create table t1;
+drop table t0, t1;
+
+# partition table and global index
+CREATE TABLE t0(
+    id INT NOT NULL,
+    c date default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+    d datetime default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+    unique key idx(id, c),
+    key idx1(id, c, d)
+)
+PARTITION BY RANGE (YEAR(c)) (
+    PARTITION p0 VALUES LESS THAN (1991),
+    PARTITION p1 VALUES LESS THAN (1996),
+    PARTITION p2 VALUES LESS THAN (2001),
+    PARTITION p3 VALUES LESS THAN MAXVALUE
+);
+INSERT INTO t0 VALUES(1, default, '1998-05-04 10:10:10'), (2, '1990-05-04 10:10:10', default),(3, default, '1991-05-04 10:10:10'), (4, '2000-05-04 10:10:10', '1991-05-04 10:10:10'),(5, default, '2002-05-04 10:10:10');
+select id from t0 order by c, d;
+show create table t0;
+drop table t0;
+
+# temporary table
+CREATE TEMPORARY TABLE t0(
+    id BIGINT,
+    c date default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+    PRIMARY KEY(id, c)
+);
+show create table t0;
+SET @x := NOW();
+INSERT INTO t0 VALUES(1, default);
+SELECT count(1) FROM t0 WHERE c = date_format(@x,'%Y-%m-%d');
+show create table t0;
+drop table t0;
+
+# cache table
+CREATE TABLE t0(
+    id BIGINT,
+    c date default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+    PRIMARY KEY(id, c)
+);
+SET @x := NOW();
+INSERT INTO t0 VALUES(1, default);
+ALTER TABLE t0 CACHE;
+INSERT INTO t0 VALUES(2, default);
+SELECT count(1) FROM t0 WHERE c = date_format(@x,'%Y-%m-%d');
+show create table t0;
+ALTER TABLE t0 NOCACHE;
+drop table t0;
+
+# foreign key
+CREATE TABLE parent (
+    id INT,
+    c date default (date_format(now(),'%Y-%m-%d %H:%i:%s')),
+    primary key(c)
+);
+CREATE TABLE child (
+    id INT,
+    cc date default (date_format(now(),'%Y-%m-%d')),
+    INDEX idx (cc),
+    FOREIGN KEY (cc) REFERENCES parent(c) ON DELETE CASCADE
+);
+SET @x := NOW();
+INSERT INTO parent VALUES(1, default);
+INSERT INTO child VALUES(1, default);
+alter table child add foreign key fk_2(cc) references parent(c);
+-- error 0,1062
+INSERT INTO parent VALUES(2, default);
+alter table child drop foreign key fk_2;
+SELECT count(1) FROM parent WHERE c = date_format(@x,'%Y-%m-%d');
+SELECT count(1) FROM child WHERE cc = date_format(@x,'%Y-%m-%d');
+show create table child;
+drop table parent, child;

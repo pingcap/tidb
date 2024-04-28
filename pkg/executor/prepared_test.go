@@ -1040,7 +1040,8 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
+	for _, tbl := range is.SchemaTables(db.Name) {
+		tblInfo := tbl.Meta()
 		if tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
@@ -1086,7 +1087,6 @@ func TestPreparePC4Binding(t *testing.T) {
 
 	tk.MustExec("prepare stmt from \"select * from t\"")
 	require.Equal(t, 1, len(tk.Session().GetSessionVars().PreparedStmts))
-	require.Equal(t, "select * from `test` . `t`", tk.Session().GetSessionVars().PreparedStmts[1].(*plannercore.PlanCacheStmt).NormalizedSQL4PC)
 
 	tk.MustQuery("execute stmt")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))

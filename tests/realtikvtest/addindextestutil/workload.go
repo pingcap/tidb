@@ -29,14 +29,18 @@ import (
 )
 
 var (
-	skippedErrorCode = []string{"8028", "9007"}
-	wCtx             = workload{}
+	skippedErrorCode = []string{
+		"8028",     // ErrInfoSchemaChanged
+		"9007",     // ErrWriteConflict
+		"global:2", // execution result undetermined
+	}
+	wCtx = workload{}
 )
 
 func initWorkloadParams(ctx *SuiteContext) {
 	ctx.ctx, ctx.cancel = context.WithCancel(context.Background())
 	ctx.workload = &wCtx
-	ctx.tkPool = &sync.Pool{New: func() interface{} {
+	ctx.tkPool = &sync.Pool{New: func() any {
 		return testkit.NewTestKit(ctx.t, ctx.store)
 	}}
 }

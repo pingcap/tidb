@@ -74,12 +74,7 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.exhausted {
 		return nil
 	}
-	se, ok := e.Ctx().(sqlexec.SQLExecutor)
-	if !ok {
-		e.exhausted = true
-		return nil
-	}
-
+	se := e.Ctx().GetSQLExecutor()
 	// For audit log plugin to set the correct statement.
 	stmtCtx := e.Ctx().GetSessionVars().StmtCtx
 	defer func() {

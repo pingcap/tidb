@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
@@ -181,15 +182,49 @@ func testInitStatsMemTrace(t *testing.T) {
 		tStats := h.GetTableStats(tbl.Meta())
 		memCostTot += tStats.MemoryUsage().TotalMemUsage
 	}
+	tables := h.StatsCache.Values()
+	for _, tt := range tables {
+		tbl, ok := h.StatsCache.Get(tt.PhysicalID)
+		require.True(t, ok)
+		require.Equal(t, tbl.PhysicalID, tt.PhysicalID)
+	}
 
 	require.Equal(t, h.MemConsumed(), memCostTot)
 }
 
 func TestInitStatsMemTraceWithLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = false
+	})
 	testInitStatsMemTraceFunc(t, true)
 }
 
 func TestInitStatsMemTraceWithoutLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = false
+	})
+	testInitStatsMemTraceFunc(t, false)
+}
+
+func TestInitStatsMemTraceWithConcurrrencyLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = true
+	})
+	testInitStatsMemTraceFunc(t, true)
+}
+
+func TestInitStatsMemTraceWithoutConcurrrencyLite(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ConcurrentlyInitStats = true
+	})
 	testInitStatsMemTraceFunc(t, false)
 }
 
@@ -232,17 +267,76 @@ func TestInitStats(t *testing.T) {
 	require.Equal(t, uint8(0x38), cols[3].LastAnalyzePos.GetBytes()[0])
 	h.Clear()
 	require.NoError(t, h.Update(is))
-	table1 := h.GetTableStats(tbl.Meta())
-	internal.AssertTableEqual(t, table0, table1)
+	// Index and pk are loaded.
+	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
+column:1 ndv:6 totColSize:0
+num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
+num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
+num: 1 lower_bound: 3 upper_bound: 3 repeats: 1 ndv: 0
+num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0
+num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0
+num: 1 lower_bound: 6 upper_bound: 6 repeats: 1 ndv: 0
+column:2 ndv:6 totColSize:6
+column:3 ndv:6 totColSize:6
+index:1 ndv:6
+num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
+num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
+num: 1 lower_bound: 3 upper_bound: 3 repeats: 1 ndv: 0
+num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0
+num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0
+num: 1 lower_bound: 7 upper_bound: 7 repeats: 1 ndv: 0`, tbl.Meta().ID)
+	require.Equal(t, needed, table0.String())
 	h.SetLease(0)
 }
 
-func TestInitStatsVer2(t *testing.T) {
+func TestInitStats51358(t *testing.T) {
 	originValue := config.GetGlobalConfig().Performance.LiteInitStats
 	defer func() {
 		config.GetGlobalConfig().Performance.LiteInitStats = originValue
 	}()
 	config.GetGlobalConfig().Performance.LiteInitStats = false
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_analyze_version = 1")
+	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
+	testKit.MustExec("analyze table t")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
+	// `Lease` is not 0, so here we just change it.
+	h.SetLease(time.Millisecond)
+
+	h.Clear()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil", "return()"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil"))
+	}()
+	require.NoError(t, h.InitStats(is))
+}
+
+func TestInitStatsVer2(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		config.GetGlobalConfig().Performance.LiteInitStats = false
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
+	})
+	initStatsVer2(t)
+}
+
+func TestInitStatsVer2Concurrency(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		config.GetGlobalConfig().Performance.LiteInitStats = false
+		config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
+	})
+	initStatsVer2(t)
+}
+
+func initStatsVer2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

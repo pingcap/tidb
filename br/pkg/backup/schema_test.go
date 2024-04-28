@@ -122,7 +122,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 
 	// Empty database.
 	// Filter out system tables manually.
-	noFilter, err := filter.Parse([]string{"*.*", "!mysql.*"})
+	noFilter, err := filter.Parse([]string{"*.*", "!mysql.*", "!sys.*"})
 	require.NoError(t, err)
 	_, backupSchemas, _, err = backup.BuildBackupRangeAndInitSchema(
 		m.Storage, noFilter, math.MaxUint64, false, true)
@@ -243,7 +243,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, schemas, 1)
 	// the stats should be empty, but other than that everything should be backed up.
-	require.Nil(t, schemas[0].Stats)
+	require.Nil(t, schemas[0].StatsFileIndexes)
 	require.NotZerof(t, schemas[0].Crc64Xor, "%v", schemas[0])
 	require.NotZerof(t, schemas[0].TotalKvs, "%v", schemas[0])
 	require.NotZerof(t, schemas[0].TotalBytes, "%v", schemas[0])
@@ -270,7 +270,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	schemas2 := GetSchemasFromMeta(t, es2)
 	require.Len(t, schemas2, 1)
 	// the stats should now be filled, and other than that the result should be equivalent to the first backup.
-	require.NotNil(t, schemas2[0].Stats)
+	require.True(t, len(schemas2[0].StatsFileIndexes[0].InlineData) > 0 || len(schemas2[0].StatsFileIndexes[0].Name) > 0)
 	require.Equal(t, schemas[0].Crc64Xor, schemas2[0].Crc64Xor)
 	require.Equal(t, schemas[0].TotalKvs, schemas2[0].TotalKvs)
 	require.Equal(t, schemas[0].TotalBytes, schemas2[0].TotalBytes)

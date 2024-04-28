@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -40,7 +40,7 @@ type CheckpointManager struct {
 	flushCtrl FlushController
 	sessPool  *sess.Pool
 	jobID     int64
-	indexID   int64
+	indexIDs  []int64
 
 	// Derived and unchanged after the initialization.
 	instanceAddr     string
@@ -89,14 +89,14 @@ type FlushController interface {
 
 // NewCheckpointManager creates a new checkpoint manager.
 func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
-	sessPool *sess.Pool, jobID, indexID int64) (*CheckpointManager, error) {
+	sessPool *sess.Pool, jobID int64, indexIDs []int64) (*CheckpointManager, error) {
 	instanceAddr := InitInstanceAddr()
 	cm := &CheckpointManager{
 		ctx:           ctx,
 		flushCtrl:     flushCtrl,
 		sessPool:      sessPool,
 		jobID:         jobID,
-		indexID:       indexID,
+		indexIDs:      indexIDs,
 		checkpoints:   make(map[int]*TaskCheckpoint, 16),
 		mu:            sync.Mutex{},
 		instanceAddr:  instanceAddr,
@@ -113,8 +113,8 @@ func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
 		cm.updateCheckpointLoop()
 		cm.updaterWg.Done()
 	}()
-	logutil.BgLogger().Info("create checkpoint manager", zap.String("category", "ddl-ingest"),
-		zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
+	logutil.DDLIngestLogger().Info("create checkpoint manager",
+		zap.Int64("jobID", jobID), zap.Int64s("indexIDs", indexIDs))
 	return cm, nil
 }
 
@@ -174,7 +174,7 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 	cp.currentKeys += added
 	s.mu.Unlock()
 
-	flushed, imported, err := s.flushCtrl.Flush(s.indexID, FlushModeAuto)
+	flushed, imported, _, err := TryFlushAllIndexes(s.flushCtrl, FlushModeAuto, s.indexIDs)
 	if !flushed || err != nil {
 		return err
 	}
@@ -212,15 +212,15 @@ func (s *CheckpointManager) progressLocalSyncMinKey() {
 func (s *CheckpointManager) Close() {
 	s.updaterExitCh <- struct{}{}
 	s.updaterWg.Wait()
-	logutil.BgLogger().Info("close checkpoint manager", zap.String("category", "ddl-ingest"),
-		zap.Int64("jobID", s.jobID), zap.Int64("indexID", s.indexID))
+	logutil.DDLIngestLogger().Info("close checkpoint manager",
+		zap.Int64("jobID", s.jobID), zap.Int64s("indexIDs", s.indexIDs))
 }
 
 // Sync syncs the checkpoint.
 func (s *CheckpointManager) Sync() {
-	_, _, err := s.flushCtrl.Flush(s.indexID, FlushModeForceLocal)
+	_, _, _, err := TryFlushAllIndexes(s.flushCtrl, FlushModeForceLocal, s.indexIDs)
 	if err != nil {
-		logutil.BgLogger().Warn("flush local engine failed", zap.String("category", "ddl-ingest"), zap.Error(err))
+		logutil.DDLIngestLogger().Warn("flush local engine failed", zap.Error(err))
 	}
 	s.mu.Lock()
 	s.progressLocalSyncMinKey()
@@ -235,9 +235,9 @@ func (s *CheckpointManager) Sync() {
 func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	logutil.BgLogger().Info("reset checkpoint manager", zap.String("category", "ddl-ingest"),
+	logutil.DDLIngestLogger().Info("reset checkpoint manager",
 		zap.Int64("newPhysicalID", newPhysicalID), zap.Int64("oldPhysicalID", s.pidLocal),
-		zap.Int64("indexID", s.indexID), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
+		zap.Int64s("indexIDs", s.indexIDs), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
 	if s.pidLocal != newPhysicalID {
 		s.minKeySyncLocal = nil
 		s.minKeySyncGlobal = nil
@@ -282,8 +282,8 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 	defer s.sessPool.Put(sessCtx)
 	ddlSess := sess.NewSession(sessCtx)
 	return ddlSess.RunInTxn(func(se *sess.Session) error {
-		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_id = %d and ele_type = %s;"
-		sql := fmt.Sprintf(template, s.jobID, s.indexID, util.WrapKey2String(meta.IndexElementKey))
+		template := "select reorg_meta from mysql.tidb_ddl_reorg where job_id = %d and ele_type = %s;"
+		sql := fmt.Sprintf(template, s.jobID, util.WrapKey2String(meta.IndexElementKey))
 		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
 		rows, err := se.Execute(ctx, sql, "get_checkpoint")
 		if err != nil {
@@ -309,8 +309,8 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 				s.minKeySyncLocal = cp.LocalSyncKey
 				s.localCnt = cp.LocalKeyCount
 			}
-			logutil.BgLogger().Info("resume checkpoint", zap.String("category", "ddl-ingest"),
-				zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
+			logutil.DDLIngestLogger().Info("resume checkpoint",
+				zap.Int64("job ID", s.jobID), zap.Int64s("index IDs", s.indexIDs),
 				zap.String("local checkpoint", hex.EncodeToString(s.minKeySyncLocal)),
 				zap.String("global checkpoint", hex.EncodeToString(s.minKeySyncGlobal)),
 				zap.Int64("physical table ID", cp.PhysicalID),
@@ -318,8 +318,8 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 				zap.String("current instance", s.instanceAddr))
 			return nil
 		}
-		logutil.BgLogger().Info("checkpoint is empty", zap.String("category", "ddl-ingest"),
-			zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID))
+		logutil.DDLIngestLogger().Info("checkpoint is empty",
+			zap.Int64("job ID", s.jobID), zap.Int64s("index IDs", s.indexIDs))
 		return nil
 	})
 }
@@ -348,7 +348,7 @@ func (s *CheckpointManager) updateCheckpoint() error {
 	defer s.sessPool.Put(sessCtx)
 	ddlSess := sess.NewSession(sessCtx)
 	err = ddlSess.RunInTxn(func(se *sess.Session) error {
-		template := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d and ele_id = %d and ele_type = %s;"
+		template := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d and ele_type = %s;"
 		cp := &ReorgCheckpoint{
 			LocalSyncKey:   currentLocalKey,
 			GlobalSyncKey:  currentGlobalKey,
@@ -364,7 +364,7 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		sql := fmt.Sprintf(template, util.WrapKey2String(rawReorgMeta), s.jobID, s.indexID, util.WrapKey2String(meta.IndexElementKey))
+		sql := fmt.Sprintf(template, util.WrapKey2String(rawReorgMeta), s.jobID, util.WrapKey2String(meta.IndexElementKey))
 		ctx := kv.WithInternalSourceType(s.ctx, kv.InternalTxnBackfillDDLPrefix+"add_index")
 		_, err = se.Execute(ctx, sql, "update_checkpoint")
 		if err != nil {
@@ -375,8 +375,8 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		s.mu.Unlock()
 		return nil
 	})
-	logutil.BgLogger().Info("update checkpoint", zap.String("category", "ddl-ingest"),
-		zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
+	logutil.DDLIngestLogger().Info("update checkpoint",
+		zap.Int64("job ID", s.jobID), zap.Int64s("index IDs", s.indexIDs),
 		zap.String("local checkpoint", hex.EncodeToString(currentLocalKey)),
 		zap.String("global checkpoint", hex.EncodeToString(currentGlobalKey)),
 		zap.Int64("global physical ID", currentGlobalPID),
@@ -392,7 +392,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 		case wg := <-s.updaterCh:
 			err := s.updateCheckpoint()
 			if err != nil {
-				logutil.BgLogger().Error("update checkpoint failed", zap.String("category", "ddl-ingest"), zap.Error(err))
+				logutil.DDLIngestLogger().Error("update checkpoint failed", zap.Error(err))
 			}
 			wg.Done()
 		case <-ticker.C:
@@ -404,7 +404,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 			s.mu.Unlock()
 			err := s.updateCheckpoint()
 			if err != nil {
-				logutil.BgLogger().Error("update checkpoint failed", zap.String("category", "ddl-ingest"), zap.Error(err))
+				logutil.DDLIngestLogger().Error("update checkpoint failed", zap.Error(err))
 			}
 		case <-s.updaterExitCh:
 			return

@@ -93,7 +93,6 @@ func createDataSuite(t *testing.T) *testData {
 	ctx, cancel := context.WithCancel(context.Background())
 	mockMgr := &conn.Mgr{PdController: &pdutil.PdController{}}
 	mockMgr.SetPDClient(pdClient)
-	mockMgr.SetHTTP([]string{"test"}, nil)
 
 	fakeProgress := mockGlue.StartProgress(ctx, "Restore Data", int64(numOnlineStore*3), false)
 

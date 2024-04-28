@@ -35,7 +35,7 @@ import (
 type testCancelJob struct {
 	sql         string
 	ok          bool
-	cancelState interface{} // model.SchemaState | []model.SchemaState
+	cancelState any // model.SchemaState | []model.SchemaState
 	onJobBefore bool
 	onJobUpdate bool
 	prepareSQL  []string

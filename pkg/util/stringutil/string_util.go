@@ -138,21 +138,19 @@ const (
 	PatAny
 )
 
-// CompilePatternBytes is a adapter for `CompilePatternInner`, `pattern` can only be an ascii string.
-func CompilePatternBytes(pattern string, escape byte) (patChars, patTypes []byte) {
-	patWeights, patTypes := CompilePatternInner(pattern, escape)
-	patChars = []byte(string(patWeights))
-
-	return patChars, patTypes
+// CompilePatternBinary is used for binary strings.
+func CompilePatternBinary(pattern string, escape byte) (patChars, patTypes []byte) {
+	return CompilePatternInnerBinary(pattern, escape)
 }
 
-// CompilePattern is a adapter for `CompilePatternInner`, `pattern` can be any unicode string.
+// CompilePattern is an adapter for `CompilePatternInner`, `pattern` can be any unicode string.
 func CompilePattern(pattern string, escape byte) (patWeights []rune, patTypes []byte) {
 	return CompilePatternInner(pattern, escape)
 }
 
 // CompilePatternInner handles escapes and wild cards convert pattern characters and
 // pattern types.
+// Note: if anything changes in this method, please double-check CompilePatternInnerBytes
 func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTypes []byte) {
 	runes := []rune(pattern)
 	escapeRune := rune(escape)
@@ -197,6 +195,53 @@ func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTyp
 	return
 }
 
+// CompilePatternInnerBinary handles escapes and wild cards convert pattern characters and
+// pattern types in bytes.
+// The main algorithm is the same as CompilePatternInner. However, it's not easy to use interface/lambda to hide the different details here.
+// Note: if anything changes in this method, please double-check CompilePatternInner
+func CompilePatternInnerBinary(pattern string, escape byte) (patWeights, patTypes []byte) {
+	bytes := []byte(pattern)
+	lenBytes := len(bytes)
+	patWeights = make([]byte, lenBytes)
+	patTypes = make([]byte, lenBytes)
+	patLen := 0
+	for i := 0; i < lenBytes; i++ {
+		var tp byte
+		var b = bytes[i]
+		switch b {
+		case escape:
+			tp = PatMatch
+			if i < lenBytes-1 {
+				i++
+				b = bytes[i]
+			}
+		case '_':
+			// %_ => _%
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
+				tp = PatAny
+				b = '%'
+				patWeights[patLen-1], patTypes[patLen-1] = '_', PatOne
+			} else {
+				tp = PatOne
+			}
+		case '%':
+			// %% => %
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
+				continue
+			}
+			tp = PatAny
+		default:
+			tp = PatMatch
+		}
+		patWeights[patLen] = b
+		patTypes[patLen] = tp
+		patLen++
+	}
+	patWeights = patWeights[:patLen]
+	patTypes = patTypes[:patLen]
+	return
+}
+
 func matchRune(a, b rune) bool {
 	return a == b
 	// We may reuse below code block when like function go back to case insensitive.
@@ -228,37 +273,46 @@ func CompileLike2Regexp(str string) string {
 	return string(result)
 }
 
-// DoMatchBytes is a adapter for `DoMatchInner`, `str` can only be an ascii string.
-func DoMatchBytes(str string, patChars, patTypes []byte) bool {
-	return DoMatchInner(str, []rune(string(patChars)), patTypes, matchRune)
+// DoMatchBinary is an adapter for `DoMatchInner`, `str` is binary strings or ascii string.
+func DoMatchBinary(str string, patChars, patTypes []byte) bool {
+	bytes := []byte(str)
+	lenBytes := len(bytes)
+	lenPatWeights := len(patChars)
+	return doMatchInner(lenPatWeights, lenBytes, patTypes, func(a, b int) bool { return bytes[a] == patChars[b] })
 }
 
-// DoMatch is a adapter for `DoMatchInner`, `str` can be any unicode string.
+// DoMatch is an adapter for `DoMatchCustomized`, `str` can be any unicode string.
 func DoMatch(str string, patChars []rune, patTypes []byte) bool {
-	return DoMatchInner(str, patChars, patTypes, matchRune)
+	return DoMatchCustomized(str, patChars, patTypes, matchRune)
 }
 
-// DoMatchInner matches the string with patChars and patTypes.
-// The algorithm has linear time complexity.
-// https://research.swtch.com/glob
-func DoMatchInner(str string, patWeights []rune, patTypes []byte, matcher func(a, b rune) bool) bool {
+// DoMatchCustomized is an adapter for `DoMatchInner`, `str` can be any unicode string.
+func DoMatchCustomized(str string, patWeights []rune, patTypes []byte, matcher func(a, b rune) bool) bool {
 	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
 	runes := []rune(str)
 	lenRunes := len(runes)
-	var rIdx, pIdx, nextRIdx, nextPIdx int
-	for pIdx < len(patWeights) || rIdx < lenRunes {
-		if pIdx < len(patWeights) {
+	lenPatWeights := len(patWeights)
+	return doMatchInner(lenPatWeights, lenRunes, patTypes, func(a, b int) bool { return matcher(runes[a], patWeights[b]) })
+}
+
+// doMatchInner matches the string with patChars and patTypes.
+// The algorithm has linear time complexity.
+// https://research.swtch.com/glob
+func doMatchInner(lenPatWeights int, lenChars int, patTypes []byte, matcher func(a, b int) bool) bool {
+	var cIdx, pIdx, nextCIdx, nextPIdx int
+	for pIdx < lenPatWeights || cIdx < lenChars {
+		if pIdx < lenPatWeights {
 			switch patTypes[pIdx] {
 			case PatMatch:
-				if rIdx < lenRunes && matcher(runes[rIdx], patWeights[pIdx]) {
+				if cIdx < lenChars && matcher(cIdx, pIdx) {
 					pIdx++
-					rIdx++
+					cIdx++
 					continue
 				}
 			case PatOne:
-				if rIdx < lenRunes {
+				if cIdx < lenChars {
 					pIdx++
-					rIdx++
+					cIdx++
 					continue
 				}
 			case PatAny:
@@ -266,15 +320,15 @@ func DoMatchInner(str string, patWeights []rune, patTypes []byte, matcher func(a
 				// If that doesn't work out,
 				// restart at sIdx+1 next.
 				nextPIdx = pIdx
-				nextRIdx = rIdx + 1
+				nextCIdx = cIdx + 1
 				pIdx++
 				continue
 			}
 		}
 		// Mismatch. Maybe restart.
-		if 0 < nextRIdx && nextRIdx <= lenRunes {
+		if 0 < nextCIdx && nextCIdx <= lenChars {
 			pIdx = nextPIdx
-			rIdx = nextRIdx
+			cIdx = nextCIdx
 			continue
 		}
 		return false
@@ -492,13 +546,12 @@ func LowerOneStringExcludeEscapeChar(str []byte, escapeChar byte) byte {
 	return actualEscapeChar
 }
 
-// EscapeGlobExceptAsterisk escapes '?', '[', ']' for a glob path pattern.
-func EscapeGlobExceptAsterisk(s string) string {
+// EscapeGlobQuestionMark escapes '?' for a glob path pattern.
+func EscapeGlobQuestionMark(s string) string {
 	var buf strings.Builder
 	buf.Grow(len(s))
 	for _, c := range s {
-		switch c {
-		case '?', '[', ']':
+		if c == '?' {
 			buf.WriteByte('\\')
 		}
 		buf.WriteRune(c)

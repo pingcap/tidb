@@ -28,7 +28,7 @@ type IngestIndexInfo struct {
 	SchemaName model.CIStr
 	TableName  model.CIStr
 	ColumnList string
-	ColumnArgs []interface{}
+	ColumnArgs []any
 	IsPrimary  bool
 	IndexInfo  *model.IndexInfo
 	Updated    bool
@@ -83,8 +83,8 @@ func notSynced(job *model.Job, isSubJob bool) bool {
 	return (job.State != model.JobStateSynced) && !(isSubJob && job.State == model.JobStateDone)
 }
 
-// AddJob firstly filters the ingest index add operation job, and records it into IngestRecorder.
-func (i *IngestRecorder) AddJob(job *model.Job, isSubJob bool) error {
+// TryAddJob firstly filters the ingest index add operation job, and records it into IngestRecorder.
+func (i *IngestRecorder) TryAddJob(job *model.Job, isSubJob bool) error {
 	if job == nil || notIngestJob(job) || notAddIndexJob(job) || notSynced(job, isSubJob) {
 		return nil
 	}
@@ -149,7 +149,7 @@ func (i *IngestRecorder) UpdateIndexInfo(dbInfos []*model.DBInfo) {
 					continue
 				}
 				var columnListBuilder strings.Builder
-				var columnListArgs []interface{} = make([]interface{}, 0, len(indexInfo.Columns))
+				var columnListArgs []any = make([]any, 0, len(indexInfo.Columns))
 				var isFirst bool = true
 				for _, column := range indexInfo.Columns {
 					if !isFirst {

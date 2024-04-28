@@ -44,7 +44,7 @@ func (e *ReplaceExec) Close() error {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 	if e.SelectExec != nil {
-		return e.SelectExec.Close()
+		return exec.Close(e.SelectExec)
 	}
 	return nil
 }
@@ -188,7 +188,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 		}
 	}
 	e.memTracker.Consume(int64(txn.Size() - txnSize))
-	return nil
+	return txn.MayFlush()
 }
 
 // Next implements the Executor Next interface.

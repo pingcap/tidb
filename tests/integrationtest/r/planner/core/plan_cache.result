@@ -975,6 +975,7 @@ drop table if exists t;
 create table t (a int);
 create definer='root'@'localhost' view t_v as select * from t;
 create table t_p (a int) partition by hash(a) partitions 4;
+analyze table t_p;
 create temporary table t_t (a int);
 set tidb_enable_non_prepared_plan_cache=1;
 select * from t_v;
@@ -990,7 +991,7 @@ select * from t_p;
 a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 select * from t_t;
 a
 select * from t_t;

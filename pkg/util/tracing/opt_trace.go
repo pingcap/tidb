@@ -249,20 +249,20 @@ func (tracer *OptimizeTracer) RecordFinalPlan(final *PlanTrace) {
 
 // PhysicalPlanCostDetail indicates cost detail
 type PhysicalPlanCostDetail struct {
-	Params map[string]interface{} `json:"params"`
-	TP     string                 `json:"type"`
-	Desc   string                 `json:"desc"`
-	ID     int                    `json:"id"`
-	Cost   float64                `json:"cost"`
+	Params map[string]any `json:"params"`
+	TP     string         `json:"type"`
+	Desc   string         `json:"desc"`
+	ID     int            `json:"id"`
+	Cost   float64        `json:"cost"`
 }
 
 // PhysicalPlanCostParam indicates cost params
 type PhysicalPlanCostParam struct {
-	Params map[string]interface{} `json:"params"`
-	Name   string                 `json:"name"`
-	Desc   string                 `json:"desc"`
-	ID     int                    `json:"id"`
-	Cost   float64                `json:"cost"`
+	Params map[string]any `json:"params"`
+	Name   string         `json:"name"`
+	Desc   string         `json:"desc"`
+	ID     int            `json:"id"`
+	Cost   float64        `json:"cost"`
 }
 
 // NewPhysicalPlanCostDetail creates a cost detail
@@ -270,12 +270,12 @@ func NewPhysicalPlanCostDetail(id int, tp string) *PhysicalPlanCostDetail {
 	return &PhysicalPlanCostDetail{
 		ID:     id,
 		TP:     tp,
-		Params: make(map[string]interface{}),
+		Params: make(map[string]any),
 	}
 }
 
 // AddParam adds param
-func (d *PhysicalPlanCostDetail) AddParam(k string, v interface{}) *PhysicalPlanCostDetail {
+func (d *PhysicalPlanCostDetail) AddParam(k string, v any) *PhysicalPlanCostDetail {
 	// discard empty param value
 	if s, ok := v.(string); ok && len(s) < 1 {
 		return d

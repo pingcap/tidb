@@ -5,5 +5,5 @@ go_library(
     srcs = ["base.go"],
     importpath = "github.com/pingcap/tidb/pkg/planner/util/debugtrace",
     visibility = ["//visibility:public"],
-    deps = ["//pkg/sessionctx"],
+    deps = ["//pkg/planner/context"],
 )

@@ -167,7 +167,7 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 
 func TestConcurrentMapHashTableMemoryUsage(t *testing.T) {
 	m := newConcurrentMapHashTable()
-	const iterations = 1024 * hack.LoadFactorNum / hack.LoadFactorDen // 6656
+	var iterations = 1024 * hack.LoadFactorNum / hack.LoadFactorDen // 6656
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 	// Note: Now concurrentMapHashTable doesn't support inserting in parallel.

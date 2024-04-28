@@ -80,7 +80,7 @@ func TestMapToEvictedCountDatum(t *testing.T) {
 	sei1.SchemaName = "sorry, it's mine now. =)"
 	ssMap.AddStatement(sei1)
 
-	expectedEvictedCount := []interface{}{
+	expectedEvictedCount := []any{
 		types.NewTime(types.FromGoTime(time.Unix(n, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		types.NewTime(types.FromGoTime(time.Unix(n+interval, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		int64(1),
@@ -132,7 +132,7 @@ func TestMapToEvictedCountDatum(t *testing.T) {
 	require.Equal(t, 25, len(evictedCountDatums))
 	n = ssMap.beginTimeForCurInterval
 	newlyEvicted := evictedCountDatums[0]
-	expectedEvictedCount = []interface{}{
+	expectedEvictedCount = []any{
 		types.NewTime(types.FromGoTime(time.Unix(n, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		types.NewTime(types.FromGoTime(time.Unix(n+interval, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		int64(1),
@@ -282,7 +282,7 @@ func TestEvictedCountDetailed(t *testing.T) {
 	evictedCountDatums := ssMap.ToEvictedCountDatum()
 	n := ssMap.beginTimeForCurInterval
 	for _, evictedCountDatum := range evictedCountDatums {
-		expectedDatum := []interface{}{
+		expectedDatum := []any{
 			types.NewTime(types.FromGoTime(time.Unix(n, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 			types.NewTime(types.FromGoTime(time.Unix(n+60, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 			int64(1),
@@ -294,7 +294,7 @@ func TestEvictedCountDetailed(t *testing.T) {
 	// test more than one eviction in single interval
 	banditSei.SchemaName = "Yet another kicker"
 	n = ssMap.beginTimeForCurInterval
-	expectedDatum := []interface{}{
+	expectedDatum := []any{
 		types.NewTime(types.FromGoTime(time.Unix(n, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		types.NewTime(types.FromGoTime(time.Unix(n+60, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		int64(2),

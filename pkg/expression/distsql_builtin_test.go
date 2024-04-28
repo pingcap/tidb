@@ -897,6 +897,7 @@ func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 		expr.Val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal:
 		expr.Tp = tipb.ExprType_MysqlDecimal
+		expr.FieldType = toPBFieldType(types.NewFieldType(mysql.TypeNewDecimal))
 		var err error
 		expr.Val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		require.NoError(t, err)

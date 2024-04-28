@@ -33,7 +33,7 @@ type Obj struct {
 func TestPool(t *testing.T) {
 	numWorkers := runtime.GOMAXPROCS(0)
 	wg := new(util.WaitGroupWrapper)
-	pool := NewLocalPool(16, func() interface{} {
+	pool := NewLocalPool(16, func() any {
 		return new(Obj)
 	}, nil)
 	n := 1000

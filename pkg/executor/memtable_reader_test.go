@@ -126,9 +126,9 @@ func TestTiDBClusterConfig(t *testing.T) {
 
 	// We check the counter to valid how many times request has been sent
 	var requestCounter int32
-	var mockConfig = func() (map[string]interface{}, error) {
+	var mockConfig = func() (map[string]any, error) {
 		atomic.AddInt32(&requestCounter, 1)
-		configuration := map[string]interface{}{
+		configuration := map[string]any{
 			"key1": "value1",
 			"key2": map[string]string{
 				"nest1": "n-value1",
@@ -154,10 +154,14 @@ func TestTiDBClusterConfig(t *testing.T) {
 	router.Handle("/config", fn.Wrap(mockConfig))
 	// Tiproxy config
 	router.Handle("/api/admin/config", fn.Wrap(mockConfig))
+	// TSO config
+	router.Handle("/tso/api/v1/config", fn.Wrap(mockConfig))
+	// Scheduling config
+	router.Handle("/scheduling/api/v1/config", fn.Wrap(mockConfig))
 
 	// mock servers
 	var servers []string
-	for _, typ := range []string{"tidb", "tikv", "tiflash", "tiproxy", "pd"} {
+	for _, typ := range []string{"tidb", "tikv", "tiflash", "tiproxy", "pd", "tso", "scheduling"} {
 		for _, server := range testServers {
 			servers = append(servers, strings.Join([]string{typ, server.address, server.address}, ","))
 		}
@@ -215,10 +219,28 @@ func TestTiDBClusterConfig(t *testing.T) {
 		"pd key1 value1",
 		"pd key2.nest1 n-value1",
 		"pd key2.nest2 n-value2",
+		"tso key1 value1",
+		"tso key2.nest1 n-value1",
+		"tso key2.nest2 n-value2",
+		"tso key1 value1",
+		"tso key2.nest1 n-value1",
+		"tso key2.nest2 n-value2",
+		"tso key1 value1",
+		"tso key2.nest1 n-value1",
+		"tso key2.nest2 n-value2",
+		"scheduling key1 value1",
+		"scheduling key2.nest1 n-value1",
+		"scheduling key2.nest2 n-value2",
+		"scheduling key1 value1",
+		"scheduling key2.nest1 n-value1",
+		"scheduling key2.nest2 n-value2",
+		"scheduling key1 value1",
+		"scheduling key2.nest1 n-value1",
+		"scheduling key2.nest2 n-value2",
 	))
 	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warnings, 0, fmt.Sprintf("unexpected warnings: %+v", warnings))
-	require.Equal(t, int32(15), requestCounter)
+	require.Equal(t, int32(21), requestCounter)
 
 	// TODO: we need remove it when index usage is GA.
 	rs := tk.MustQuery("show config").Rows()
@@ -235,7 +257,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 
 	// type => server index => row
 	rows := map[string][][]string{}
-	for _, typ := range []string{"tidb", "tikv", "tiflash", "tiproxy", "pd"} {
+	for _, typ := range []string{"tidb", "tikv", "tiflash", "tiproxy", "pd", "tso", "scheduling"} {
 		for _, server := range testServers {
 			rows[typ] = append(rows[typ], []string{
 				fmt.Sprintf("%s %s key1 value1", typ, server.address),
@@ -258,7 +280,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 	}{
 		{
 			sql:      "select * from information_schema.cluster_config",
-			reqCount: 15,
+			reqCount: 21,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tidb"][1],
@@ -275,6 +297,12 @@ func TestTiDBClusterConfig(t *testing.T) {
 				rows["pd"][0],
 				rows["pd"][1],
 				rows["pd"][2],
+				rows["tso"][0],
+				rows["tso"][1],
+				rows["tso"][2],
+				rows["scheduling"][0],
+				rows["scheduling"][1],
+				rows["scheduling"][2],
 			),
 		},
 		{
@@ -291,7 +319,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 		},
 		{
 			sql:      "select * from information_schema.cluster_config where type='pd' or instance='" + testServers[0].address + "'",
-			reqCount: 15,
+			reqCount: 21,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tikv"][0],
@@ -300,6 +328,8 @@ func TestTiDBClusterConfig(t *testing.T) {
 				rows["pd"][0],
 				rows["pd"][1],
 				rows["pd"][2],
+				rows["tso"][0],
+				rows["scheduling"][0],
 			),
 		},
 		{
@@ -372,13 +402,15 @@ func TestTiDBClusterConfig(t *testing.T) {
 		{
 			sql: fmt.Sprintf(`select * from information_schema.cluster_config where instance='%s'`,
 				testServers[0].address),
-			reqCount: 5,
+			reqCount: 7,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tikv"][0],
 				rows["tiflash"][0],
 				rows["tiproxy"][0],
 				rows["pd"][0],
+				rows["tso"][0],
+				rows["scheduling"][0],
 			),
 		},
 		{
@@ -534,6 +566,22 @@ func TestTiDBClusterLog(t *testing.T) {
 		logtime(`2019/08/26 06:28:19.011`) + ` [critical] [test log message tiproxy 14, bar]`,
 	})
 
+	// TiCDC
+	writeTmpFile(t, testServers["ticdc"].tmpDir, "ticdc.log", []string{
+		logtime(`2019/08/26 06:19:13.011`) + ` [INFO] [test log message ticdc 1, foo]`,
+		logtime(`2019/08/26 06:20:14.011`) + ` [DEBUG] [test log message ticdc 2, foo]`,
+		logtime(`2019/08/26 06:21:15.011`) + ` [error] [test log message ticdc 3, foo]`,
+		logtime(`2019/08/26 06:22:16.011`) + ` [trace] [test log message ticdc 4, foo]`,
+		logtime(`2019/08/26 06:23:17.011`) + ` [CRITICAL] [test log message ticdc 5, foo]`,
+	})
+	writeTmpFile(t, testServers["ticdc"].tmpDir, "ticdc-1.log", []string{
+		logtime(`2019/08/26 06:24:15.011`) + ` [info] [test log message ticdc 10, bar]`,
+		logtime(`2019/08/26 06:25:16.011`) + ` [debug] [test log message ticdc 11, bar]`,
+		logtime(`2019/08/26 06:26:17.011`) + ` [ERROR] [test log message ticdc 12, bar]`,
+		logtime(`2019/08/26 06:27:18.011`) + ` [TRACE] [test log message ticdc 13, bar]`,
+		logtime(`2019/08/26 06:28:19.011`) + ` [critical] [test log message ticdc 14, bar]`,
+	})
+
 	// PD
 	writeTmpFile(t, testServers["pd"].tmpDir, "pd.log", []string{
 		logtime(`2019/08/26 06:18:13.011`) + ` [INFO] [test log message pd 1, foo]`,
@@ -552,6 +600,7 @@ func TestTiDBClusterLog(t *testing.T) {
 
 	fullLogs := [][]string{
 		{"2019/08/26 06:18:13.011", "pd", "INFO", "[test log message pd 1, foo]"},
+		{"2019/08/26 06:19:13.011", "ticdc", "INFO", "[test log message ticdc 1, foo]"},
 		{"2019/08/26 06:19:13.011", "tidb", "INFO", "[test log message tidb 1, foo]"},
 		{"2019/08/26 06:19:13.011", "tikv", "INFO", "[test log message tikv 1, foo]"},
 		{"2019/08/26 06:19:13.011", "tiproxy", "INFO", "[test log message tiproxy 1, foo]"},
@@ -560,35 +609,44 @@ func TestTiDBClusterLog(t *testing.T) {
 		{"2019/08/26 06:19:15.011", "tidb", "error", "[test log message tidb 3, foo]"},
 		{"2019/08/26 06:19:16.011", "tidb", "trace", "[test log message tidb 4, foo]"},
 		{"2019/08/26 06:19:17.011", "tidb", "CRITICAL", "[test log message tidb 5, foo]"},
+		{"2019/08/26 06:20:14.011", "ticdc", "DEBUG", "[test log message ticdc 2, foo]"},
 		{"2019/08/26 06:20:14.011", "tikv", "DEBUG", "[test log message tikv 2, foo]"},
 		{"2019/08/26 06:20:14.011", "tiproxy", "DEBUG", "[test log message tiproxy 2, foo]"},
 		{"2019/08/26 06:20:15.011", "pd", "error", "[test log message pd 3, foo]"},
+		{"2019/08/26 06:21:15.011", "ticdc", "error", "[test log message ticdc 3, foo]"},
 		{"2019/08/26 06:21:15.011", "tikv", "error", "[test log message tikv 3, foo]"},
 		{"2019/08/26 06:21:15.011", "tiproxy", "error", "[test log message tiproxy 3, foo]"},
 		{"2019/08/26 06:21:16.011", "pd", "trace", "[test log message pd 4, foo]"},
+		{"2019/08/26 06:22:16.011", "ticdc", "trace", "[test log message ticdc 4, foo]"},
 		{"2019/08/26 06:22:16.011", "tikv", "trace", "[test log message tikv 4, foo]"},
 		{"2019/08/26 06:22:16.011", "tiproxy", "trace", "[test log message tiproxy 4, foo]"},
 		{"2019/08/26 06:22:17.011", "pd", "CRITICAL", "[test log message pd 5, foo]"},
 		{"2019/08/26 06:23:13.011", "pd", "info", "[test log message pd 10, bar]"},
+		{"2019/08/26 06:23:17.011", "ticdc", "CRITICAL", "[test log message ticdc 5, foo]"},
 		{"2019/08/26 06:23:17.011", "tikv", "CRITICAL", "[test log message tikv 5, foo]"},
 		{"2019/08/26 06:23:17.011", "tiproxy", "CRITICAL", "[test log message tiproxy 5, foo]"},
 		{"2019/08/26 06:24:14.011", "pd", "debug", "[test log message pd 11, bar]"},
+		{"2019/08/26 06:24:15.011", "ticdc", "info", "[test log message ticdc 10, bar]"},
 		{"2019/08/26 06:24:15.011", "tikv", "info", "[test log message tikv 10, bar]"},
 		{"2019/08/26 06:24:15.011", "tiproxy", "info", "[test log message tiproxy 10, bar]"},
 		{"2019/08/26 06:25:13.011", "tidb", "info", "[test log message tidb 10, bar]"},
 		{"2019/08/26 06:25:14.011", "tidb", "debug", "[test log message tidb 11, bar]"},
 		{"2019/08/26 06:25:15.011", "pd", "ERROR", "[test log message pd 12, bar]"},
 		{"2019/08/26 06:25:15.011", "tidb", "ERROR", "[test log message tidb 12, bar]"},
+		{"2019/08/26 06:25:16.011", "ticdc", "debug", "[test log message ticdc 11, bar]"},
 		{"2019/08/26 06:25:16.011", "tidb", "TRACE", "[test log message tidb 13, bar]"},
 		{"2019/08/26 06:25:16.011", "tikv", "debug", "[test log message tikv 11, bar]"},
 		{"2019/08/26 06:25:16.011", "tiproxy", "debug", "[test log message tiproxy 11, bar]"},
 		{"2019/08/26 06:25:17.011", "tidb", "critical", "[test log message tidb 14, bar]"},
 		{"2019/08/26 06:26:16.011", "pd", "TRACE", "[test log message pd 13, bar]"},
+		{"2019/08/26 06:26:17.011", "ticdc", "ERROR", "[test log message ticdc 12, bar]"},
 		{"2019/08/26 06:26:17.011", "tikv", "ERROR", "[test log message tikv 12, bar]"},
 		{"2019/08/26 06:26:17.011", "tiproxy", "ERROR", "[test log message tiproxy 12, bar]"},
 		{"2019/08/26 06:27:17.011", "pd", "critical", "[test log message pd 14, bar]"},
+		{"2019/08/26 06:27:18.011", "ticdc", "TRACE", "[test log message ticdc 13, bar]"},
 		{"2019/08/26 06:27:18.011", "tikv", "TRACE", "[test log message tikv 13, bar]"},
 		{"2019/08/26 06:27:18.011", "tiproxy", "TRACE", "[test log message tiproxy 13, bar]"},
+		{"2019/08/26 06:28:19.011", "ticdc", "critical", "[test log message ticdc 14, bar]"},
 		{"2019/08/26 06:28:19.011", "tikv", "critical", "[test log message tikv 14, bar]"},
 		{"2019/08/26 06:28:19.011", "tiproxy", "critical", "[test log message tiproxy 14, bar]"},
 	}
@@ -612,6 +670,7 @@ func TestTiDBClusterLog(t *testing.T) {
 				"message like '%'",
 			},
 			expected: [][]string{
+				{"2019/08/26 06:19:13.011", "ticdc", "INFO", "[test log message ticdc 1, foo]"},
 				{"2019/08/26 06:19:13.011", "tidb", "INFO", "[test log message tidb 1, foo]"},
 				{"2019/08/26 06:19:13.011", "tikv", "INFO", "[test log message tikv 1, foo]"},
 				{"2019/08/26 06:19:13.011", "tiproxy", "INFO", "[test log message tiproxy 1, foo]"},
@@ -620,9 +679,11 @@ func TestTiDBClusterLog(t *testing.T) {
 				{"2019/08/26 06:19:15.011", "tidb", "error", "[test log message tidb 3, foo]"},
 				{"2019/08/26 06:19:16.011", "tidb", "trace", "[test log message tidb 4, foo]"},
 				{"2019/08/26 06:19:17.011", "tidb", "CRITICAL", "[test log message tidb 5, foo]"},
+				{"2019/08/26 06:20:14.011", "ticdc", "DEBUG", "[test log message ticdc 2, foo]"},
 				{"2019/08/26 06:20:14.011", "tikv", "DEBUG", "[test log message tikv 2, foo]"},
 				{"2019/08/26 06:20:14.011", "tiproxy", "DEBUG", "[test log message tiproxy 2, foo]"},
 				{"2019/08/26 06:20:15.011", "pd", "error", "[test log message pd 3, foo]"},
+				{"2019/08/26 06:21:15.011", "ticdc", "error", "[test log message ticdc 3, foo]"},
 				{"2019/08/26 06:21:15.011", "tikv", "error", "[test log message tikv 3, foo]"},
 				{"2019/08/26 06:21:15.011", "tiproxy", "error", "[test log message tiproxy 3, foo]"},
 			},
@@ -759,10 +820,12 @@ func TestTiDBClusterLog(t *testing.T) {
 			expected: [][]string{
 				{"2019/08/26 06:19:17.011", "tidb", "CRITICAL", "[test log message tidb 5, foo]"},
 				{"2019/08/26 06:22:17.011", "pd", "CRITICAL", "[test log message pd 5, foo]"},
+				{"2019/08/26 06:23:17.011", "ticdc", "CRITICAL", "[test log message ticdc 5, foo]"},
 				{"2019/08/26 06:23:17.011", "tikv", "CRITICAL", "[test log message tikv 5, foo]"},
 				{"2019/08/26 06:23:17.011", "tiproxy", "CRITICAL", "[test log message tiproxy 5, foo]"},
 				{"2019/08/26 06:25:17.011", "tidb", "critical", "[test log message tidb 14, bar]"},
 				{"2019/08/26 06:27:17.011", "pd", "critical", "[test log message pd 14, bar]"},
+				{"2019/08/26 06:28:19.011", "ticdc", "critical", "[test log message ticdc 14, bar]"},
 				{"2019/08/26 06:28:19.011", "tikv", "critical", "[test log message tikv 14, bar]"},
 				{"2019/08/26 06:28:19.011", "tiproxy", "critical", "[test log message tiproxy 14, bar]"},
 			},

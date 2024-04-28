@@ -20,7 +20,9 @@ import (
 	rand2 "math/rand"
 	"runtime"
 	"slices"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -45,7 +47,6 @@ func TestBufferPool(t *testing.T) {
 		WithBlockNum(2),
 		WithAllocator(allocator),
 		WithBlockSize(1024),
-		WithLargeAllocThreshold(512),
 	)
 	defer pool.Destroy()
 
@@ -59,8 +60,8 @@ func TestBufferPool(t *testing.T) {
 	bytesBuf.AllocBytes(767)
 	require.Equal(t, 2, allocator.allocs)
 
-	largeBytes := bytesBuf.AllocBytes(513)
-	require.Equal(t, 513, len(largeBytes))
+	largeBytes := bytesBuf.AllocBytes(1025)
+	require.Equal(t, 1025, len(largeBytes))
 	require.Equal(t, 2, allocator.allocs)
 
 	require.Equal(t, 0, allocator.frees)
@@ -74,6 +75,45 @@ func TestBufferPool(t *testing.T) {
 	bytesBuf.Destroy()
 	require.Equal(t, 3, allocator.allocs)
 	require.Equal(t, 1, allocator.frees)
+}
+
+func TestPoolMemLimit(t *testing.T) {
+	limiter := NewLimiter(2*1024*1024 + 2*smallObjOverheadBatch)
+	// only allow to allocate one block
+	pool := NewPool(
+		WithBlockSize(2*1024*1024),
+		WithPoolMemoryLimiter(limiter),
+	)
+	defer pool.Destroy()
+	buf := pool.NewBuffer()
+	buf.AllocBytes(1024 * 1024)
+	buf.AllocBytes(1024 * 1024)
+
+	buf2 := pool.NewBuffer()
+	done := make(chan struct{}, 1)
+	go func() {
+		buf2.AllocBytes(1024 * 1024)
+		buf2.Destroy()
+		done <- struct{}{}
+	}()
+
+	// sleep a while to make sure the goroutine is started
+	time.Sleep(50 * time.Millisecond)
+	require.Len(t, done, 0)
+	// reset will not release memory to pool
+	buf.Reset()
+	buf.AllocBytes(1024 * 1024)
+	buf.AllocBytes(1024 * 1024)
+	require.Len(t, done, 0)
+	// destroy will release memory to pool
+	buf.Destroy()
+	// wait buf2 to finish
+	require.Eventually(t, func() bool {
+		return len(done) > 0
+	}, time.Second, 10*time.Millisecond)
+	// after buf2 is finished, still can allocate memory from pool
+	buf.AllocBytes(2 * 1024 * 1024)
+	buf.Destroy()
 }
 
 func TestBufferIsolation(t *testing.T) {
@@ -99,7 +139,7 @@ func TestBufferMemLimit(t *testing.T) {
 	pool := NewPool(WithBlockSize(10))
 	defer pool.Destroy()
 	// the actual memory limit is 10 bytes.
-	bytesBuf := pool.NewBuffer(WithMemoryLimit(5))
+	bytesBuf := pool.NewBuffer(WithBufferMemoryLimit(5))
 
 	got, _ := bytesBuf.AllocBytesWithSliceLocation(9)
 	require.NotNil(t, got)
@@ -112,7 +152,7 @@ func TestBufferMemLimit(t *testing.T) {
 	require.NotNil(t, got)
 
 	// exactly 2 block
-	bytesBuf = pool.NewBuffer(WithMemoryLimit(20))
+	bytesBuf = pool.NewBuffer(WithBufferMemoryLimit(20))
 
 	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
 	require.NotNil(t, got)
@@ -261,5 +301,28 @@ func BenchmarkSortLocationWithGC(b *testing.B) {
 				return bytes.Compare(bytesBuf.GetSlice(a), bytesBuf.GetSlice(b))
 			})
 		}()
+	}
+}
+
+func BenchmarkConcurrentAcquire(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		limiter := NewLimiter(512 * 1024 * 1024)
+		pool := NewPool(WithPoolMemoryLimiter(limiter), WithBlockSize(4*1024))
+		// start 1000 clients, each client will acquire 100B for 1000 times.
+		wg := sync.WaitGroup{}
+		clientNum := 1000
+		wg.Add(clientNum)
+		for j := 0; j < clientNum; j++ {
+			go func() {
+				defer wg.Done()
+				buf := pool.NewBuffer()
+				for k := 0; k < 1000; k++ {
+					buf.AllocBytes(100)
+				}
+				buf.Destroy()
+			}()
+		}
+		wg.Wait()
+		pool.Destroy()
 	}
 }

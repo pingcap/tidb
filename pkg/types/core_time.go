@@ -280,14 +280,30 @@ func compareTime(a, b CoreTime) int {
 // Dig it and we found it's caused by golang api time.Date(year int, month Month, day, hour, min, sec, nsec int, loc *Location) Time ,
 // it says October 32 converts to November 1 ,it conflicts with mysql.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
-func AddDate(year, month, day int64, ot gotime.Time) (nt gotime.Time) {
+func AddDate(year, month, day int64, ot gotime.Time) (nt gotime.Time, _ error) {
+	// We must limit the range of year, month and day to avoid overflow.
+	// The datetime range is from '1000-01-01 00:00:00.000000' to '9999-12-31 23:59:59.499999',
+	// so it is safe to limit the added value from -10000*365 to 10000*365.
+	const maxAdd = 10000 * 365
+	const minAdd = -maxAdd
+	if year > maxAdd || year < minAdd ||
+		month > maxAdd || month < minAdd ||
+		day > maxAdd || day < minAdd {
+		return nt, ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime")
+	}
+
 	df := getFixDays(int(year), int(month), int(day), ot)
 	if df != 0 {
 		nt = ot.AddDate(int(year), int(month), df)
 	} else {
 		nt = ot.AddDate(int(year), int(month), int(day))
 	}
-	return nt
+
+	if nt.Year() < 0 || nt.Year() > 9999 {
+		return nt, ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime")
+	}
+
+	return nt, nil
 }
 
 func calcTimeFromSec(to *CoreTime, seconds, microseconds int) {

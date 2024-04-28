@@ -56,23 +56,17 @@ func (m *MockGlobalServerInfoManager) Delete(idx int) error {
 	return nil
 }
 
-// DeleteByID delete ServerInfo by host:port.
-func (m *MockGlobalServerInfoManager) DeleteByID(id string) error {
+// DeleteByExecID delete ServerInfo by execID.
+func (m *MockGlobalServerInfoManager) DeleteByExecID(execID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	idx := -1
 	for i := 0; i < len(m.infos); i++ {
 		name := fmt.Sprintf("%s:%d", m.infos[i].IP, m.infos[i].Port)
-		if name == id {
-			idx = i
+		if name == execID {
+			m.infos = append(m.infos[:i], m.infos[i+1:]...)
 			break
 		}
 	}
-	if idx == -1 {
-		return nil
-	}
-	m.infos = append(m.infos[:idx], m.infos[idx+1:]...)
-	return nil
 }
 
 // GetAllServerInfo return all serverInfo in a map.

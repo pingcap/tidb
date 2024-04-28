@@ -16,12 +16,11 @@ package expression
 
 import (
 	"testing"
-	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -62,7 +61,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
 
-	ctx.GetSessionVars().StmtCtx.UseCache = true
+	ctx.GetSessionVars().StmtCtx.EnablePlanCache()
 
 	// cases for parameters
 	ltWithoutParam, err := newFunctionForTest(ctx, ast.LT, col0, NewOne())
@@ -77,7 +76,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	res = EvaluateExprWithNull(ctx, schema, ltWithParam)
 	_, isConst := res.(*Constant)
 	require.True(t, isConst) // this expression is evaluated and skip-plan cache flag is set.
-	require.True(t, !ctx.GetSessionVars().StmtCtx.UseCache)
+	require.True(t, !ctx.GetSessionVars().StmtCtx.UseCache())
 }
 
 func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
@@ -106,9 +105,8 @@ func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
 
 func TestConstant(t *testing.T) {
 	ctx := createContext(t)
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	require.False(t, NewZero().IsCorrelated())
-	require.True(t, NewZero().ConstItem(sc))
+	require.Equal(t, ConstStrict, NewZero().ConstLevel())
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
 	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode())
 	require.False(t, NewZero().Equal(ctx, NewOne()))
@@ -133,16 +131,26 @@ func TestIsBinaryLiteral(t *testing.T) {
 	require.False(t, IsBinaryLiteral(col))
 }
 
-func TestConstItem(t *testing.T) {
-	ctx := createContext(t)
-	sf := newFunctionWithMockCtx(ast.Rand)
-	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
-	sf = newFunctionWithMockCtx(ast.UUID)
-	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
-	sf = newFunctionWithMockCtx(ast.GetParam, NewOne())
-	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
-	sf = newFunctionWithMockCtx(ast.Abs, NewOne())
-	require.True(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
+func TestConstLevel(t *testing.T) {
+	ctxConst := NewZero()
+	ctxConst.DeferredExpr = newFunctionWithMockCtx(ast.UnixTimestamp)
+	for _, c := range []struct {
+		exp   Expression
+		level ConstLevel
+	}{
+		{newFunctionWithMockCtx(ast.Rand), ConstNone},
+		{newFunctionWithMockCtx(ast.UUID), ConstNone},
+		{newFunctionWithMockCtx(ast.GetParam, NewOne()), ConstNone},
+		{newFunctionWithMockCtx(ast.Abs, NewOne()), ConstStrict},
+		{newFunctionWithMockCtx(ast.Abs, newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), NewOne()), ConstStrict},
+		{newFunctionWithMockCtx(ast.Plus, newColumn(1), NewOne()), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), ctxConst), ConstOnlyInContext},
+	} {
+		require.Equal(t, c.level, c.exp.ConstLevel(), c.exp.String())
+	}
 }
 
 func TestVectorizable(t *testing.T) {
@@ -261,11 +269,9 @@ func TestEvalExpr(t *testing.T) {
 		colBuf2 := chunk.NewColumn(ft, 1024)
 		var err error
 		require.True(t, colExpr.Vectorized())
-		ctx.GetSessionVars().EnableVectorizedExpression = false
-		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
+		err = EvalExpr(ctx, false, colExpr, colExpr.GetType().EvalType(), input, colBuf)
 		require.NoError(t, err)
-		ctx.GetSessionVars().EnableVectorizedExpression = true
-		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf2)
+		err = EvalExpr(ctx, true, colExpr, colExpr.GetType().EvalType(), input, colBuf2)
 		require.NoError(t, err)
 		for j := 0; j < 1024; j++ {
 			isNull := colBuf.IsNull(j)
@@ -289,4 +295,35 @@ func TestExpressionMemeoryUsage(t *testing.T) {
 	c3 := Constant{Value: types.NewIntDatum(1)}
 	c4 := Constant{Value: types.NewStringDatum("11")}
 	require.Greater(t, c4.MemoryUsage(), c3.MemoryUsage())
+}
+
+func TestIgnoreTruncateExprCtx(t *testing.T) {
+	ctx := createContext(t)
+	ctx.GetSessionVars().StmtCtx.SetTypeFlags(types.StrictFlags)
+	evalCtx := ctx.GetEvalCtx()
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+	require.True(t, !tc.Flags().IgnoreTruncateErr() && !tc.Flags().TruncateAsWarning())
+	require.Equal(t, errctx.LevelError, ec.LevelForGroup(errctx.ErrGroupTruncate))
+
+	// new ctx will ignore truncate error
+	newEvalCtx := ignoreTruncate(ctx).GetEvalCtx()
+	tc, ec = newEvalCtx.TypeCtx(), newEvalCtx.ErrCtx()
+	require.True(t, tc.Flags().IgnoreTruncateErr() && !tc.Flags().TruncateAsWarning())
+	require.Equal(t, errctx.LevelIgnore, ec.LevelForGroup(errctx.ErrGroupTruncate))
+
+	// old eval ctx will not change
+	tc, ec = evalCtx.TypeCtx(), evalCtx.ErrCtx()
+	require.True(t, !tc.Flags().IgnoreTruncateErr() && !tc.Flags().TruncateAsWarning())
+	require.Equal(t, errctx.LevelError, ec.LevelForGroup(errctx.ErrGroupTruncate))
+
+	// old build ctx will not change
+	evalCtx = ctx.GetEvalCtx()
+	tc, ec = evalCtx.TypeCtx(), evalCtx.ErrCtx()
+	require.True(t, !tc.Flags().IgnoreTruncateErr() && !tc.Flags().TruncateAsWarning())
+	require.Equal(t, errctx.LevelError, ec.LevelForGroup(errctx.ErrGroupTruncate))
+
+	// truncate ignored ctx will not create new ctx
+	ctx.GetSessionVars().StmtCtx.SetTypeFlags(types.StrictFlags.WithIgnoreTruncateErr(true))
+	newCtx := ignoreTruncate(ctx)
+	require.Same(t, ctx, newCtx)
 }

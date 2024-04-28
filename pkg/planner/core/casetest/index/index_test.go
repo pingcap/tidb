@@ -78,3 +78,20 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
 		"  └─StreamAgg_9 1.00 cop[tikv]  funcs:count(1)->Column#7",
 		"    └─IndexRangeScan_16 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
 }
+
+func TestInvisibleIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 ( a INT, KEY( a ) INVISIBLE );")
+	tk.MustExec("INSERT INTO t1 VALUES (1), (2), (3), (4), (5), (6), (7), (8), (9), (10);")
+	tk.MustQuery(`EXPLAIN SELECT a FROM t1;`).Check(
+		testkit.Rows(
+			`TableReader_5 10000.00 root  data:TableFullScan_4`,
+			`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+	tk.MustExec("set session tidb_opt_use_invisible_indexes=on;")
+	tk.MustQuery(`EXPLAIN SELECT a FROM t1;`).Check(
+		testkit.Rows(
+			`IndexReader_7 10000.00 root  index:IndexFullScan_6`,
+			`└─IndexFullScan_6 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo`))
+}

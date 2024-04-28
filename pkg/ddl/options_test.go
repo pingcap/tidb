@@ -35,7 +35,7 @@ func TestOptions(t *testing.T) {
 	callback := &ddl.BaseCallback{}
 	lease := time.Second * 3
 	store := &mock.Store{}
-	infoHandle := infoschema.NewCache(16)
+	infoHandle := infoschema.NewCache(nil, 16)
 
 	options := []ddl.Option{
 		ddl.WithEtcdClient(client),

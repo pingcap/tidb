@@ -349,8 +349,8 @@ a	b	c
 1	1	1
 explain format='brief' select * from t where a = 1 and ((b = 1) or (b = 2 and c = 3));
 id	estRows	task	access object	operator info
-IndexReader	1.71	root		index:IndexRangeScan
-└─IndexRangeScan	1.71	cop[tikv]	table:t, index:PRIMARY(a, b, c)	range:[1 1,1 1], [1 2 3,1 2 3], keep order:false
+IndexReader	2.00	root		index:IndexRangeScan
+└─IndexRangeScan	2.00	cop[tikv]	table:t, index:PRIMARY(a, b, c)	range:[1 1,1 1], [1 2 3,1 2 3], keep order:false
 select * from t where a = 1 and ((b = 1) or (b = 2 and c = 3));
 a	b	c
 1	1	1
@@ -368,30 +368,30 @@ a	b	c
 2	2	3
 explain format='brief' select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;
 id	estRows	task	access object	operator info
-IndexReader	0.68	root		index:Selection
-└─Selection	0.68	cop[tikv]		eq(util__ranger.t.c, 3), or(eq(util__ranger.t.a, 1), and(eq(util__ranger.t.a, 2), eq(util__ranger.t.b, 2)))
+IndexReader	0.75	root		index:Selection
+└─Selection	0.75	cop[tikv]		eq(util__ranger.t.c, 3), or(eq(util__ranger.t.a, 1), and(eq(util__ranger.t.a, 2), eq(util__ranger.t.b, 2)))
   └─IndexRangeScan	2.00	cop[tikv]	table:t, index:PRIMARY(a, b, c)	range:[1,1], [2,2], keep order:false
 select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;
 a	b	c
 2	2	3
 explain format='brief' select * from t where (a,b) in ((1,1),(2,2)) and c > 2 and (a,b,c) in ((1,1,1),(2,2,3));
 id	estRows	task	access object	operator info
-Selection	0.58	root		gt(util__ranger.t.c, 2), or(and(eq(util__ranger.t.a, 1), eq(util__ranger.t.b, 1)), and(eq(util__ranger.t.a, 2), eq(util__ranger.t.b, 2)))
+Selection	0.75	root		gt(util__ranger.t.c, 2), or(and(eq(util__ranger.t.a, 1), eq(util__ranger.t.b, 1)), and(eq(util__ranger.t.a, 2), eq(util__ranger.t.b, 2)))
 └─Batch_Point_Get	2.00	root	table:t, index:PRIMARY(a, b, c)	keep order:false, desc:false
 select * from t where (a,b) in ((1,1),(2,2)) and c > 2 and (a,b,c) in ((1,1,1),(2,2,3));
 a	b	c
 2	2	3
 explain format='brief' select * from t where (a,b) in ((1,1),(2,2)) and c > 2;
 id	estRows	task	access object	operator info
-IndexReader	1.19	root		index:IndexRangeScan
-└─IndexRangeScan	1.19	cop[tikv]	table:t, index:PRIMARY(a, b, c)	range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false
+IndexReader	2.00	root		index:IndexRangeScan
+└─IndexRangeScan	2.00	cop[tikv]	table:t, index:PRIMARY(a, b, c)	range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false
 select * from t where (a,b) in ((1,1),(2,2)) and c > 2;
 a	b	c
 2	2	3
 explain format='brief' select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;
 id	estRows	task	access object	operator info
-IndexReader	1.19	root		index:IndexRangeScan
-└─IndexRangeScan	1.19	cop[tikv]	table:t, index:PRIMARY(a, b, c)	range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false
+IndexReader	2.00	root		index:IndexRangeScan
+└─IndexRangeScan	2.00	cop[tikv]	table:t, index:PRIMARY(a, b, c)	range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false
 select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;
 a	b	c
 2	2	3

@@ -39,11 +39,11 @@ CREATE TABLE t ( a INT, c INT GENERATED ALWAYS AS (a+2), d INT GENERATED ALWAYS 
 SELECT t1.d FROM t as t1, t as t2 WHERE t2.d>t1.c GROUP BY t2.a;
 -- error 1055
 SELECT (SELECT t1.c FROM t as t1 GROUP BY -3) FROM t as t2;
--- error 1055
+-- error 3065
 SELECT DISTINCT t1.a FROM t as t1 ORDER BY t1.d LIMIT 1;
--- error 1055
+-- error 3065
 SELECT DISTINCT t1.a FROM t as t1 ORDER BY t1.d LIMIT 1;
--- error 1055
+-- error 3065
 SELECT (SELECT DISTINCT t1.a FROM t as t1 ORDER BY t1.d LIMIT 1) FROM t as t2;
 drop table if exists t;
 CREATE TABLE t(a INT NULL, b INT NOT NULL, c INT, UNIQUE(a,b));
@@ -128,7 +128,6 @@ create table t1(a int, b int);
 create table t2(c int, d int);
 -- error 1055
 select t4.d from t1 left join (t2 as t3 join t2 as t4 on t4.d=3) on t1.a=10 group by "";
--- error 1055
 select t4.d from t1 join (t2 as t3 left join t2 as t4 on t4.d=3) on t1.a=10 group by "";
 -- error 1055
 select t4.d from t1 join (t2 as t3 left join t2 as t4 on t4.d=3 and t4.c+t3.c=2) on t1.a=10 group by "";

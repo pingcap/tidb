@@ -15,6 +15,8 @@
 package chunk
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -288,4 +290,72 @@ func TestColumnAllocatorCheck(t *testing.T) {
 	require.Equal(t, num, 4)
 	num = alloc.columnAlloc.pool[getFixedLen(types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP())].Len()
 	require.Equal(t, num, 4)
+}
+
+func TestReuseHookAllocator(t *testing.T) {
+	fieldTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeTimestamp),
+		types.NewFieldType(mysql.TypeDatetime),
+	}
+
+	var reuse atomic.Int64
+
+	InitChunkAllocSize(0, 0)
+	alloc := NewReuseHookAllocator(NewAllocator(), func() {
+		reuse.Add(1)
+	})
+	// as we init MaxFreeChunks and MaxFreeColumns as 0, the reuse is still 0 after alloc
+	chk := alloc.Alloc(fieldTypes, 5, 100)
+	require.NotNil(t, chk)
+	require.Equal(t, int64(0), reuse.Load())
+
+	InitChunkAllocSize(10, 20)
+	alloc = NewReuseHookAllocator(NewAllocator(), func() {
+		reuse.Add(1)
+	})
+	chk = alloc.Alloc(fieldTypes, 5, 100)
+	require.NotNil(t, chk)
+	require.Equal(t, int64(1), reuse.Load())
+	// Another alloc will not touch it
+	chk = alloc.Alloc(fieldTypes, 5, 100)
+	require.NotNil(t, chk)
+	require.Equal(t, int64(1), reuse.Load())
+}
+
+func TestSyncAllocator(t *testing.T) {
+	fieldTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeTimestamp),
+		types.NewFieldType(mysql.TypeDatetime),
+	}
+
+	alloc := NewSyncAllocator(NewAllocator())
+
+	wg := &sync.WaitGroup{}
+	for i := 0; i < 1000; i++ {
+		wg.Add(1)
+		go func() {
+			for j := 0; j < 10; j++ {
+				for k := 0; k < 100; k++ {
+					chk := alloc.Alloc(fieldTypes, 5, 100)
+					require.NotNil(t, chk)
+				}
+				alloc.Reset()
+			}
+
+			wg.Done()
+		}()
+	}
+	wg.Wait()
 }

@@ -559,22 +559,41 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 
 // ReadFile reads the file from the storage and returns the contents.
 func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) {
-	input := &s3.GetObjectInput{
-		Bucket: aws.String(rs.options.Bucket),
-		Key:    aws.String(rs.options.Prefix + file),
+	var (
+		data    []byte
+		readErr error
+	)
+	for retryCnt := 0; retryCnt < maxErrorRetries; retryCnt += 1 {
+		input := &s3.GetObjectInput{
+			Bucket: aws.String(rs.options.Bucket),
+			Key:    aws.String(rs.options.Prefix + file),
+		}
+		result, err := rs.svc.GetObjectWithContext(ctx, input)
+		if err != nil {
+			return nil, errors.Annotatef(err,
+				"failed to read s3 file, file info: input.bucket='%s', input.key='%s'",
+				*input.Bucket, *input.Key)
+		}
+		data, readErr = io.ReadAll(result.Body)
+		// close the body of response since data has been already read out
+		result.Body.Close()
+		// for unit test
+		failpoint.Inject("read-s3-body-failed", func(_ failpoint.Value) {
+			log.Info("original error", zap.Error(readErr))
+			readErr = errors.Errorf("read: connection reset by peer")
+		})
+		if readErr != nil {
+			if isDeadlineExceedError(readErr) || isCancelError(readErr) {
+				return nil, errors.Annotatef(readErr, "failed to read body from get object result, file info: input.bucket='%s', input.key='%s', retryCnt='%d'",
+					*input.Bucket, *input.Key, retryCnt)
+			}
+			continue
+		}
+		return data, nil
 	}
-	result, err := rs.svc.GetObjectWithContext(ctx, input)
-	if err != nil {
-		return nil, errors.Annotatef(err,
-			"failed to read s3 file, file info: input.bucket='%s', input.key='%s'",
-			*input.Bucket, *input.Key)
-	}
-	defer result.Body.Close()
-	data, err := io.ReadAll(result.Body)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return data, nil
+	// retry too much, should be failed
+	return nil, errors.Annotatef(readErr, "failed to read body from get object result (retry too much), file info: input.bucket='%s', input.key='%s'",
+		rs.options.Bucket, rs.options.Prefix+file)
 }
 
 // DeleteFile delete the file in s3 storage
@@ -724,6 +743,7 @@ func (rs *S3Storage) URI() string {
 func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
 	start := int64(0)
 	end := int64(0)
+	prefetchSize := 0
 	if o != nil {
 		if o.StartOffset != nil {
 			start = *o.StartOffset
@@ -731,20 +751,22 @@ func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 		if o.EndOffset != nil {
 			end = *o.EndOffset
 		}
+		prefetchSize = o.PrefetchSize
 	}
 	reader, r, err := rs.open(ctx, path, start, end)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if o != nil && o.PrefetchSize > 0 {
+	if prefetchSize > 0 {
 		reader = prefetch.NewReader(reader, o.PrefetchSize)
 	}
 	return &s3ObjectReader{
-		storage:   rs,
-		name:      path,
-		reader:    reader,
-		ctx:       ctx,
-		rangeInfo: r,
+		storage:      rs,
+		name:         path,
+		reader:       reader,
+		ctx:          ctx,
+		rangeInfo:    r,
+		prefetchSize: prefetchSize,
 	}, nil
 }
 
@@ -868,23 +890,30 @@ type s3ObjectReader struct {
 	// reader context used for implement `io.Seek`
 	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
 	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
-	ctx      context.Context
-	retryCnt int
+	ctx          context.Context
+	prefetchSize int
 }
 
 // Read implement the io.Reader interface.
 func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
+	retryCnt := 0
 	maxCnt := r.rangeInfo.End + 1 - r.pos
-	if maxCnt > int64(len(p)) {
-		maxCnt = int64(len(p))
-	}
 	if maxCnt == 0 {
 		return 0, io.EOF
+	}
+	if maxCnt > int64(len(p)) {
+		maxCnt = int64(len(p))
 	}
 	n, err = r.reader.Read(p[:maxCnt])
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
-	if err != nil && errors.Cause(err) != io.EOF && r.retryCnt < maxErrorRetries { //nolint:errorlint
+	for err != nil && errors.Cause(err) != io.EOF && retryCnt < maxErrorRetries { //nolint:errorlint
+		log.L().Warn(
+			"read s3 object failed, will retry",
+			zap.String("file", r.name),
+			zap.Int("retryCnt", retryCnt),
+			zap.Error(err),
+		)
 		// if can retry, reopen a new reader and try read again
 		end := r.rangeInfo.End + 1
 		if end == r.rangeInfo.Size {
@@ -898,7 +927,10 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 			return
 		}
 		r.reader = newReader
-		r.retryCnt++
+		if r.prefetchSize > 0 {
+			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		}
+		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
 	}
 
@@ -967,6 +999,9 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 	r.reader = newReader
+	if r.prefetchSize > 0 {
+		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+	}
 	r.rangeInfo = info
 	r.pos = realOffset
 	return realOffset, nil
@@ -1086,9 +1121,16 @@ func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string
 	return nil
 }
 
+// Close implements ExternalStorage interface.
+func (*S3Storage) Close() {}
+
 // retryerWithLog wrappes the client.DefaultRetryer, and logging when retry triggered.
 type retryerWithLog struct {
 	client.DefaultRetryer
+}
+
+func isCancelError(err error) bool {
+	return strings.Contains(err.Error(), "context canceled")
 }
 
 func isDeadlineExceedError(err error) bool {

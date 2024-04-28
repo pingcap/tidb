@@ -73,6 +73,18 @@ func ChildSpanFromContxt(ctx context.Context, opName string) (opentracing.Span, 
 	return noopSpan(), ctx
 }
 
+// StartRegionWithNewRootSpan return Region together with the context.
+// It create and start a new span by globalTracer and store it into `ctx`.
+func StartRegionWithNewRootSpan(ctx context.Context, regionType string) (Region, context.Context) {
+	span := opentracing.GlobalTracer().StartSpan(regionType)
+	r := Region{
+		Region: trace.StartRegion(ctx, regionType),
+		Span:   span,
+	}
+	ctx = opentracing.ContextWithSpan(ctx, span)
+	return r, ctx
+}
+
 // StartRegion provides better API, integrating both opentracing and runtime.trace facilities into one.
 // Recommended usage is
 //

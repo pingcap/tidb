@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,9 +61,9 @@ func TestTimeEncoding(t *testing.T) {
 
 func TestDateTime(t *testing.T) {
 	var warnings []error
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.NewFuncWarnAppenderForTest(func(err error) {
 		warnings = append(warnings, err)
-	})
+	}))
 	table := []struct {
 		Input  string
 		Expect string
@@ -113,6 +114,8 @@ func TestDateTime(t *testing.T) {
 
 		// For issue 35291
 		{"2020-01-01 12:00:00.123456+05:00", "2020-01-01 07:00:00.123456"},
+		// For issue 49555
+		{"2020-01-01 12:00:00.123456-05:00", "2020-01-01 17:00:00.123456"},
 	}
 
 	for _, test := range table {
@@ -209,7 +212,7 @@ func TestTimestamp(t *testing.T) {
 }
 
 func TestDate(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 	table := []struct {
 		Input  string
 		Expect string
@@ -303,7 +306,7 @@ func TestDate(t *testing.T) {
 }
 
 func TestTime(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 	table := []struct {
 		Input  string
 		Expect string
@@ -449,7 +452,7 @@ func TestDurationAdd(t *testing.T) {
 }
 
 func TestDurationSub(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 	table := []struct {
 		Input    string
 		Fsp      int
@@ -472,7 +475,7 @@ func TestDurationSub(t *testing.T) {
 }
 
 func TestTimeFsp(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 	table := []struct {
 		Input  string
 		Fsp    int
@@ -701,7 +704,7 @@ func TestParseTimeFromNum(t *testing.T) {
 func TestToNumber(t *testing.T) {
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), losAngelesTz, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), losAngelesTz, contextutil.IgnoreWarn)
 	tblDateTime := []struct {
 		Input  string
 		Fsp    int
@@ -773,7 +776,7 @@ func TestToNumber(t *testing.T) {
 }
 
 func TestParseTimeFromFloatString(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 	table := []struct {
 		Input       string
 		Fsp         int
@@ -840,7 +843,7 @@ func TestParseFrac(t *testing.T) {
 }
 
 func TestRoundFrac(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 	tbl := []struct {
 		Input  string
 		Fsp    int
@@ -931,7 +934,7 @@ func TestRoundFrac(t *testing.T) {
 
 func TestConvert(t *testing.T) {
 	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), losAngelesTz, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), losAngelesTz, contextutil.IgnoreWarn)
 	tbl := []struct {
 		Input  string
 		Fsp    int
@@ -1774,7 +1777,7 @@ func TestIsDateFormat(t *testing.T) {
 }
 
 func TestParseTimeFromInt64(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 
 	input := int64(20190412140000)
 	output, err := types.ParseTimeFromInt64(typeCtx, input)
@@ -1791,7 +1794,7 @@ func TestParseTimeFromInt64(t *testing.T) {
 }
 
 func TestParseTimeFromFloat64(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 
 	cases := []struct {
 		f   float64
@@ -1834,7 +1837,7 @@ func TestParseTimeFromFloat64(t *testing.T) {
 }
 
 func TestParseTimeFromDecimal(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 
 	cases := []struct {
 		d   *types.MyDecimal
@@ -1901,6 +1904,8 @@ func TestGetFracIndex(t *testing.T) {
 		{"2019.01.01 00:00:00", -1},
 		{"2019.01.01 00:00:00.1", 19},
 		{"12345.6", 5},
+		{"2020-01-01 12:00:00.123456 +0600 PST", 19},
+		{"2020-01-01 12:00:00.123456 -0600 PST", 19},
 	}
 	for _, testCase := range testCases {
 		index := types.GetFracIndex(testCase.str)
@@ -1909,7 +1914,7 @@ func TestGetFracIndex(t *testing.T) {
 }
 
 func TestTimeOverflow(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 	table := []struct {
 		Input  string
 		Output bool
@@ -2001,7 +2006,7 @@ func TestCheckMonthDay(t *testing.T) {
 		{types.FromDate(3200, 2, 29, 0, 0, 0, 0), true},
 	}
 
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreInvalidDateErr(false), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreInvalidDateErr(false), time.UTC, contextutil.IgnoreWarn)
 
 	for _, tt := range dates {
 		v := types.NewTime(tt.date, mysql.TypeDate, types.DefaultFsp)
@@ -2088,7 +2093,7 @@ func TestGetTimezone(t *testing.T) {
 	}
 	for ith, ca := range cases {
 		idx, tzSign, tzHour, tzSep, tzMinute := types.GetTimezone(ca.input)
-		require.Equal(t, [5]interface{}{ca.idx, ca.tzSign, ca.tzHour, ca.tzSep, ca.tzMinute}, [5]interface{}{idx, tzSign, tzHour, tzSep, tzMinute}, "idx %d", ith)
+		require.Equal(t, [5]any{ca.idx, ca.tzSign, ca.tzHour, ca.tzSep, ca.tzMinute}, [5]any{idx, tzSign, tzHour, tzSep, tzMinute}, "idx %d", ith)
 	}
 }
 
@@ -2166,7 +2171,7 @@ func TestParseWithTimezone(t *testing.T) {
 		},
 	}
 	for ith, ca := range cases {
-		v, err := types.ParseTime(types.NewContext(types.StrictFlags, ca.sysTZ, func(err error) {}), ca.lit, mysql.TypeTimestamp, ca.fsp)
+		v, err := types.ParseTime(types.NewContext(types.StrictFlags, ca.sysTZ, contextutil.IgnoreWarn), ca.lit, mysql.TypeTimestamp, ca.fsp)
 		require.NoErrorf(t, err, "tidb time parse misbehaved on %d", ith)
 		if err != nil {
 			continue
@@ -2209,9 +2214,9 @@ func TestDurationConvertToYearFromNow(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		ctx := types.NewContext(types.StrictFlags.WithCastTimeToYearThroughConcat(c.throughStr), c.sysTZ, func(_ error) {
+		ctx := types.NewContext(types.StrictFlags.WithCastTimeToYearThroughConcat(c.throughStr), c.sysTZ, contextutil.NewFuncWarnAppenderForTest(func(_ error) {
 			require.Fail(t, "shouldn't append warninng")
-		})
+		}))
 		now, err := time.Parse(time.RFC3339, c.nowLit)
 		require.NoError(t, err)
 

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -167,21 +168,33 @@ func TestHandleMap(t *testing.T) {
 	m := NewHandleMap()
 	h := IntHandle(1)
 
+	assert.Equal(t, SizeofHandleMap, m.MemUsage())
+
 	m.Set(h, 1)
 	v, ok := m.Get(h)
 	assert.True(t, ok)
 	assert.Equal(t, 1, v)
+
+	assert.Equal(t, SizeofHandleMap+size.SizeOfInt64+size.SizeOfInterface, m.MemUsage())
 
 	m.Delete(h)
 	v, ok = m.Get(h)
 	assert.False(t, ok)
 	assert.Nil(t, v)
 
+	assert.Equal(t, SizeofHandleMap, m.MemUsage())
+
 	ch := testutil.MustNewCommonHandle(t, 100, "abc")
 	m.Set(ch, "a")
 	v, ok = m.Get(ch)
 	assert.True(t, ok)
 	assert.Equal(t, "a", v)
+
+	{
+		key := string(ch.Encoded())
+		sz := size.SizeOfString + int64(len(key)) + SizeofStrHandleVal
+		assert.Equal(t, SizeofHandleMap+sz, m.MemUsage())
+	}
 
 	m.Delete(ch)
 	v, ok = m.Get(ch)
@@ -196,7 +209,7 @@ func TestHandleMap(t *testing.T) {
 	assert.Equal(t, 3, m.Len())
 
 	cnt := 0
-	m.Range(func(h Handle, val interface{}) bool {
+	m.Range(func(h Handle, val any) bool {
 		cnt++
 		if h.Equal(ch) {
 			assert.Equal(t, "a", val)
@@ -324,6 +337,15 @@ func TestKeyRangeDefinition(t *testing.T) {
 	// And same default value.
 	require.Equal(t, (*coprocessor.KeyRange)(unsafe.Pointer(&r1)), &r2)
 	require.Equal(t, &r1, (*KeyRange)(unsafe.Pointer(&r2)))
+
+	s := []KeyRange{{
+		StartKey: []byte("s1"),
+		EndKey:   []byte("e1"),
+	}, {
+		StartKey: []byte("s2"),
+		EndKey:   []byte("e2"),
+	}}
+	require.Equal(t, int64(168), KeyRangeSliceMemUsage(s))
 }
 
 func BenchmarkIsPoint(b *testing.B) {

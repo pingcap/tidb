@@ -18,7 +18,43 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
+
+var (
+	globalChunkPoolMutex syncutil.RWMutex
+	// globalChunkPool is a chunk pool, the key is the init capacity.
+	globalChunkPool = make(map[int]*Pool)
+)
+
+// getChunkFromPool gets a Chunk from the Pool. In fact, initCap is the size of the bucket in the histogram.
+// so it will not have too many difference value.
+func getChunkFromPool(initCap int, fields []*types.FieldType) *Chunk {
+	globalChunkPoolMutex.RLock()
+	pool, ok := globalChunkPool[initCap]
+	globalChunkPoolMutex.RUnlock()
+	if ok {
+		return pool.GetChunk(fields)
+	}
+	globalChunkPoolMutex.Lock()
+	defer globalChunkPoolMutex.Unlock()
+	globalChunkPool[initCap] = NewPool(initCap)
+	return globalChunkPool[initCap].GetChunk(fields)
+}
+
+func putChunkFromPool(initCap int, fields []*types.FieldType, chk *Chunk) {
+	globalChunkPoolMutex.RLock()
+	pool, ok := globalChunkPool[initCap]
+	globalChunkPoolMutex.RUnlock()
+	if ok {
+		pool.PutChunk(fields, chk)
+		return
+	}
+	globalChunkPoolMutex.Lock()
+	defer globalChunkPoolMutex.Unlock()
+	globalChunkPool[initCap] = NewPool(initCap)
+	globalChunkPool[initCap].PutChunk(fields, chk)
+}
 
 // Pool is the Column pool.
 // NOTE: Pool is non-copyable.
@@ -36,11 +72,11 @@ type Pool struct {
 func NewPool(initCap int) *Pool {
 	return &Pool{
 		initCap:         initCap,
-		varLenColPool:   &sync.Pool{New: func() interface{} { return newVarLenColumn(initCap) }},
-		fixLenColPool4:  &sync.Pool{New: func() interface{} { return newFixedLenColumn(4, initCap) }},
-		fixLenColPool8:  &sync.Pool{New: func() interface{} { return newFixedLenColumn(8, initCap) }},
-		fixLenColPool16: &sync.Pool{New: func() interface{} { return newFixedLenColumn(16, initCap) }},
-		fixLenColPool40: &sync.Pool{New: func() interface{} { return newFixedLenColumn(40, initCap) }},
+		varLenColPool:   &sync.Pool{New: func() any { return newVarLenColumn(initCap) }},
+		fixLenColPool4:  &sync.Pool{New: func() any { return newFixedLenColumn(4, initCap) }},
+		fixLenColPool8:  &sync.Pool{New: func() any { return newFixedLenColumn(8, initCap) }},
+		fixLenColPool16: &sync.Pool{New: func() any { return newFixedLenColumn(16, initCap) }},
+		fixLenColPool40: &sync.Pool{New: func() any { return newFixedLenColumn(40, initCap) }},
 	}
 }
 
@@ -69,17 +105,19 @@ func (p *Pool) GetChunk(fields []*types.FieldType) *Chunk {
 // PutChunk puts a Chunk back to the Pool.
 func (p *Pool) PutChunk(fields []*types.FieldType, chk *Chunk) {
 	for i, f := range fields {
+		c := chk.columns[i]
+		c.reset()
 		switch elemLen := getFixedLen(f); elemLen {
 		case varElemLen:
-			p.varLenColPool.Put(chk.columns[i])
+			p.varLenColPool.Put(c)
 		case 4:
-			p.fixLenColPool4.Put(chk.columns[i])
+			p.fixLenColPool4.Put(c)
 		case 8:
-			p.fixLenColPool8.Put(chk.columns[i])
+			p.fixLenColPool8.Put(c)
 		case 16:
-			p.fixLenColPool16.Put(chk.columns[i])
+			p.fixLenColPool16.Put(c)
 		case 40:
-			p.fixLenColPool40.Put(chk.columns[i])
+			p.fixLenColPool40.Put(c)
 		}
 	}
 	chk.columns = nil // release the Column references.

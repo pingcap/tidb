@@ -218,7 +218,7 @@ func InitSessionMetrics() {
 			Subsystem: "session",
 			Name:      "resource_group_query_total",
 			Help:      "Counter of the total number of queries for the resource group",
-		}, []string{LblName})
+		}, []string{LblName, LblResourceGroup})
 
 	FairLockingUsageCount = NewCounterVec(
 		prometheus.CounterOpts{

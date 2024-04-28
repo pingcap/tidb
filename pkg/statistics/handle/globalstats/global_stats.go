@@ -51,7 +51,7 @@ func (sg *statsGlobalImpl) MergePartitionStats2GlobalStatsByTableID(sc sessionct
 	physicalID int64,
 	isIndex bool,
 	histIDs []int64,
-) (globalStats interface{}, err error) {
+) (globalStats any, err error) {
 	return MergePartitionStats2GlobalStatsByTableID(sc, sg.statsHandler, opts, is, physicalID, isIndex, histIDs)
 }
 

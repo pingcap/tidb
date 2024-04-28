@@ -66,15 +66,15 @@ func TestModifyColumnTypeArgs(t *testing.T) {
 	require.NotNil(t, historyJob)
 
 	var (
-		newCol                *model.ColumnInfo
-		oldColName            *model.CIStr
-		modifyColumnTp        byte
-		updatedAutoRandomBits uint64
-		changingCol           *model.ColumnInfo
-		changingIdxs          []*model.IndexInfo
+		_newCol                *model.ColumnInfo
+		_oldColName            *model.CIStr
+		_modifyColumnTp        byte
+		_updatedAutoRandomBits uint64
+		changingCol            *model.ColumnInfo
+		changingIdxs           []*model.IndexInfo
 	)
-	pos := &ast.ColumnPosition{}
-	err = historyJob.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+	_pos := &ast.ColumnPosition{}
+	err = historyJob.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &changingCol, &changingIdxs)
 	require.NoError(t, err)
 	require.Nil(t, changingCol)
 	require.Nil(t, changingIdxs)

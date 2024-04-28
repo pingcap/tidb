@@ -64,7 +64,7 @@ type AnalyzeColumnsExec struct {
 
 func analyzeColumnsPushDownEntry(gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
-		return e.toV2().analyzeColumnsPushDownWithRetryV2(gp)
+		return e.toV2().analyzeColumnsPushDownV2(gp)
 	}
 	return e.toV1().analyzeColumnsPushDownV1()
 }
@@ -106,7 +106,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges)
+	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetDistSQLCtx(), []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges)
 	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	startTS := uint64(math.MaxUint64)
 	isoLevel := kv.RC
@@ -122,14 +122,14 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		SetMemTracker(e.memTracker).
-		SetResourceGroupName(e.ctx.GetSessionVars().ResourceGroupName).
+		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
 		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).
 		Build()
 	if err != nil {
 		return nil, err
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		handleHist = &statistics.Histogram{}
 		handleCms = statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]))
 		handleTopn = statistics.NewTopN(int(e.opts[ast.AnalyzeOptNumTopN]))
-		handleFms = statistics.NewFMSketch(maxSketchSize)
+		handleFms = statistics.NewFMSketch(statistics.MaxSketchSize)
 		if e.analyzePB.IdxReq.Version != nil {
 			statsVer = int(*e.analyzePB.IdxReq.Version)
 		}
@@ -167,7 +167,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	for i := range collectors {
 		collectors[i] = &statistics.SampleCollector{
 			IsMerger:      true,
-			FMSketch:      statistics.NewFMSketch(maxSketchSize),
+			FMSketch:      statistics.NewFMSketch(statistics.MaxSketchSize),
 			MaxSampleSize: int64(e.opts[ast.AnalyzeOptNumSamples]),
 			CMSketch:      statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth])),
 		}
@@ -249,15 +249,15 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			topNs = append(topNs, collectors[i].TopN)
 		}
 		for j, s := range collectors[i].Samples {
-			collectors[i].Samples[j].Ordinal = j
-			collectors[i].Samples[j].Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
+			s.Ordinal = j
+			s.Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
 			}
 			// When collation is enabled, we store the Key representation of the sampling data. So we set it to kind `Bytes` here
 			// to avoid to convert it to its Key representation once more.
-			if collectors[i].Samples[j].Value.Kind() == types.KindString {
-				collectors[i].Samples[j].Value.SetBytes(collectors[i].Samples[j].Value.GetBytes())
+			if s.Value.Kind() == types.KindString {
+				s.Value.SetBytes(s.Value.GetBytes())
 			}
 		}
 		var hg *statistics.Histogram

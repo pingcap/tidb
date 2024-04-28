@@ -494,7 +494,7 @@ set @@sql_mode=default;
 
 drop view if exists v;
 create view v as select * from t;
--- error 1356
+-- error 1288
 update v set a = '2000-11-11';
 drop view v;
 

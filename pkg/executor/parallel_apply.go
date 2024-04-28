@@ -174,7 +174,7 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 	}
 	// Wait all workers to finish before Close() is called.
 	// Otherwise we may got data race.
-	err := e.outerExec.Close()
+	err := exec.Close(e.outerExec)
 
 	if e.RuntimeStats() != nil {
 		runtimeStats := newJoinRuntimeStats()
@@ -219,7 +219,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 		}
 		e.outerList.Add(chk)
 		outerIter := chunk.NewIterator4Chunk(chk)
-		selected, err = expression.VectorizedFilter(e.Ctx(), e.outerFilter, outerIter, selected)
+		selected, err = expression.VectorizedFilter(e.Ctx().GetExprCtx().GetEvalCtx(), e.Ctx().GetSessionVars().EnableVectorizedExpression, e.outerFilter, outerIter, selected)
 		if err != nil {
 			e.putResult(nil, err)
 			return
@@ -304,7 +304,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 
 	err = exec.Open(ctx, e.innerExecs[id])
-	defer terror.Call(e.innerExecs[id].Close)
+	defer func() { terror.Log(exec.Close(e.innerExecs[id])) }()
 	if err != nil {
 		return err
 	}
@@ -326,7 +326,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 			break
 		}
 
-		e.innerSelected[id], err = expression.VectorizedFilter(e.Ctx(), e.innerFilter[id], innerIter, e.innerSelected[id])
+		e.innerSelected[id], err = expression.VectorizedFilter(e.Ctx().GetExprCtx().GetEvalCtx(), e.Ctx().GetSessionVars().EnableVectorizedExpression, e.innerFilter[id], innerIter, e.innerSelected[id])
 		if err != nil {
 			return err
 		}

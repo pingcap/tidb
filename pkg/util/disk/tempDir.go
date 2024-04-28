@@ -40,7 +40,7 @@ const (
 // CheckAndInitTempDir check whether the temp directory is existed.
 // If not, initializes the temp directory.
 func CheckAndInitTempDir() (err error) {
-	_, err, _ = sf.Do("tempDir", func() (value interface{}, err error) {
+	_, err, _ = sf.Do("tempDir", func() (value any, err error) {
 		if !checkTempDirExist() {
 			log.Info("Tmp-storage-path not found. Try to initialize TempDir.")
 			err = InitializeTempDir()

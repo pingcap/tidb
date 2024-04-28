@@ -156,7 +156,7 @@ func handleValueSpec(pass *analysis.Pass, n *ast.ValueSpec, _ bool, stack []ast.
 	return assertInConstructor(pass, n, stack, ctors)
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
+func run(pass *analysis.Pass) (any, error) {
 	for _, file := range pass.Files {
 		i := inspector.New([]*ast.File{file})
 

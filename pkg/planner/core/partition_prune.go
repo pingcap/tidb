@@ -17,7 +17,7 @@ package core
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -25,7 +25,7 @@ import (
 // PartitionPruning finds all used partitions according to query conditions, it will
 // return nil if condition match none of partitions. The return value is a array of the
 // idx in the partition definitions array, use pi.Definitions[idx] to get the partition ID
-func PartitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
+func PartitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
 	columns []*expression.Column, names types.NameSlice) ([]int, error) {
 	s := partitionProcessor{}
 	pi := tbl.Meta().Partition

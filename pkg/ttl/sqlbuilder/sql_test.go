@@ -223,20 +223,20 @@ func TestFormatSQLDatum(t *testing.T) {
 
 	cases := []struct {
 		ft     string
-		values []interface{}
+		values []any
 		hex    bool
 	}{
 		{
 			ft:     "int",
-			values: []interface{}{1, 2, 3, -12},
+			values: []any{1, 2, 3, -12},
 		},
 		{
 			ft:     "decimal(5, 2)",
-			values: []interface{}{"0.3", "128.71", "-245.32"},
+			values: []any{"0.3", "128.71", "-245.32"},
 		},
 		{
 			ft: "varchar(32) CHARACTER SET latin1",
-			values: []interface{}{
+			values: []any{
 				"aa';delete from t where 1;",
 				string([]byte{0xf1, 0xf2}),
 				string([]byte{0xf1, 0xf2, 0xf3, 0xf4}),
@@ -244,7 +244,7 @@ func TestFormatSQLDatum(t *testing.T) {
 		},
 		{
 			ft: "char(32) CHARACTER SET utf8mb4",
-			values: []interface{}{
+			values: []any{
 				"demo",
 				"\n123",
 				"aa';delete from t where 1;",
@@ -253,7 +253,7 @@ func TestFormatSQLDatum(t *testing.T) {
 		},
 		{
 			ft: "varchar(32) CHARACTER SET utf8mb4",
-			values: []interface{}{
+			values: []any{
 				"demo",
 				"aa';delete from t where 1;",
 				"你好👋",
@@ -261,7 +261,7 @@ func TestFormatSQLDatum(t *testing.T) {
 		},
 		{
 			ft: "varchar(32) CHARACTER SET binary",
-			values: []interface{}{
+			values: []any{
 				string([]byte{0xf1, 0xf2, 0xf3, 0xf4}),
 				"你好👋",
 				"abcdef",
@@ -270,7 +270,7 @@ func TestFormatSQLDatum(t *testing.T) {
 		},
 		{
 			ft: "binary(8)",
-			values: []interface{}{
+			values: []any{
 				string([]byte{0xf1, 0xf2}),
 				string([]byte{0xf1, 0xf2, 0xf3, 0xf4}),
 			},
@@ -278,7 +278,7 @@ func TestFormatSQLDatum(t *testing.T) {
 		},
 		{
 			ft: "blob",
-			values: []interface{}{
+			values: []any{
 				string([]byte{0xf1, 0xf2}),
 				string([]byte{0xf1, 0xf2, 0xf3, 0xf4}),
 			},
@@ -286,40 +286,40 @@ func TestFormatSQLDatum(t *testing.T) {
 		},
 		{
 			ft:     "bit(1)",
-			values: []interface{}{0, 1},
+			values: []any{0, 1},
 			hex:    true,
 		},
 		{
 			ft:     "date",
-			values: []interface{}{"2022-01-02", "1900-12-31"},
+			values: []any{"2022-01-02", "1900-12-31"},
 		},
 		{
 			ft:     "time",
-			values: []interface{}{"00:00", "01:23", "13:51:22"},
+			values: []any{"00:00", "01:23", "13:51:22"},
 		},
 		{
 			ft:     "datetime",
-			values: []interface{}{"2022-01-02 12:11:11", "2022-01-02"},
+			values: []any{"2022-01-02 12:11:11", "2022-01-02"},
 		},
 		{
 			ft:     "datetime(6)",
-			values: []interface{}{"2022-01-02 12:11:11.123456"},
+			values: []any{"2022-01-02 12:11:11.123456"},
 		},
 		{
 			ft:     "timestamp",
-			values: []interface{}{"2022-01-02 12:11:11", "2022-01-02"},
+			values: []any{"2022-01-02 12:11:11", "2022-01-02"},
 		},
 		{
 			ft:     "timestamp(6)",
-			values: []interface{}{"2022-01-02 12:11:11.123456"},
+			values: []any{"2022-01-02 12:11:11.123456"},
 		},
 		{
 			ft:     "enum('e1', 'e2', \"e3'\", 'e4\"', ';你好👋')",
-			values: []interface{}{"e1", "e2", "e3'", "e4\"", ";你好👋"},
+			values: []any{"e1", "e2", "e3'", "e4\"", ";你好👋"},
 		},
 		{
 			ft:     "set('e1', 'e2', \"e3'\", 'e4\"', ';你好👋')",
-			values: []interface{}{"", "e1", "e2", "e3'", "e4\"", ";你好👋"},
+			values: []any{"", "e1", "e2", "e3'", "e4\"", ";你好👋"},
 		},
 	}
 
@@ -370,8 +370,7 @@ func TestFormatSQLDatum(t *testing.T) {
 		for j := range c.values {
 			rowID := fmt.Sprintf("%d-%d", i, j)
 			colName := fmt.Sprintf("col%d", i)
-			exec, ok := tk.Session().(sqlexec.SQLExecutor)
-			require.True(t, ok)
+			exec := tk.Session().GetSQLExecutor()
 			selectSQL := fmt.Sprintf("select %s from t where id='%s'", colName, rowID)
 			rs, err := exec.ExecuteInternal(ctx, selectSQL)
 			require.NoError(t, err, selectSQL)
@@ -620,12 +619,12 @@ func TestScanQueryGenerator(t *testing.T) {
 		expire     time.Time
 		rangeStart []types.Datum
 		rangeEnd   []types.Datum
-		path       [][]interface{}
+		path       [][]any
 	}{
 		{
 			tbl:    t1,
 			expire: time.UnixMilli(0).In(time.UTC),
-			path: [][]interface{}{
+			path: [][]any{
 				{
 					nil, 3,
 					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
@@ -638,7 +637,7 @@ func TestScanQueryGenerator(t *testing.T) {
 		{
 			tbl:    t1,
 			expire: time.UnixMilli(0).In(time.UTC),
-			path: [][]interface{}{
+			path: [][]any{
 				{
 					nil, 3,
 					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
@@ -653,7 +652,7 @@ func TestScanQueryGenerator(t *testing.T) {
 			expire:     time.UnixMilli(0).In(time.UTC),
 			rangeStart: d(1),
 			rangeEnd:   d(100),
-			path: [][]interface{}{
+			path: [][]any{
 				{
 					nil, 3,
 					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` >= 1 AND `id` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
@@ -671,7 +670,7 @@ func TestScanQueryGenerator(t *testing.T) {
 		{
 			tbl:    t1,
 			expire: time.UnixMilli(0).In(time.UTC),
-			path: [][]interface{}{
+			path: [][]any{
 				{
 					nil, 3,
 					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
@@ -692,7 +691,7 @@ func TestScanQueryGenerator(t *testing.T) {
 		{
 			tbl:    t2,
 			expire: time.UnixMilli(0).In(time.UTC),
-			path: [][]interface{}{
+			path: [][]any{
 				{
 					nil, 5,
 					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
@@ -705,7 +704,7 @@ func TestScanQueryGenerator(t *testing.T) {
 		{
 			tbl:    t2,
 			expire: time.UnixMilli(0).In(time.UTC),
-			path: [][]interface{}{
+			path: [][]any{
 				{
 					nil, 5,
 					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
@@ -718,7 +717,7 @@ func TestScanQueryGenerator(t *testing.T) {
 		{
 			tbl:    t2,
 			expire: time.UnixMilli(0).In(time.UTC),
-			path: [][]interface{}{
+			path: [][]any{
 				{
 					nil, 5,
 					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
@@ -731,7 +730,7 @@ func TestScanQueryGenerator(t *testing.T) {
 		{
 			tbl:    t2,
 			expire: time.UnixMilli(0).In(time.UTC),
-			path: [][]interface{}{
+			path: [][]any{
 				{
 					nil, 5,
 					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
@@ -746,7 +745,7 @@ func TestScanQueryGenerator(t *testing.T) {
 			expire:     time.UnixMilli(0).In(time.UTC),
 			rangeStart: d(1, "x", []byte{0xe}),
 			rangeEnd:   d(100, "z", []byte{0xff}),
-			path: [][]interface{}{
+			path: [][]any{
 				{
 					nil, 5,
 					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` >= x'0e' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
@@ -793,7 +792,7 @@ func TestScanQueryGenerator(t *testing.T) {
 			expire:     time.UnixMilli(0).In(time.UTC),
 			rangeStart: d(1),
 			rangeEnd:   d(100),
-			path: [][]interface{}{
+			path: [][]any{
 				{
 					nil, 5,
 					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` >= 1 AND `a` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
@@ -817,7 +816,7 @@ func TestScanQueryGenerator(t *testing.T) {
 			expire:     time.UnixMilli(0).In(time.UTC),
 			rangeStart: d(1, "x"),
 			rangeEnd:   d(100, "z"),
-			path: [][]interface{}{
+			path: [][]any{
 				{
 					nil, 5,
 					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` >= 'x' AND (`a`, `b`) < (100, 'z') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
@@ -931,7 +930,7 @@ func TestBuildDeleteSQL(t *testing.T) {
 	}
 }
 
-func d(vs ...interface{}) []types.Datum {
+func d(vs ...any) []types.Datum {
 	datums := make([]types.Datum, len(vs))
 	for i, v := range vs {
 		switch val := v.(type) {

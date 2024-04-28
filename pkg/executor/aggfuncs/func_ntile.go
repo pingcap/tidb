@@ -17,7 +17,6 @@ package aggfuncs
 import (
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -54,7 +53,7 @@ func (*ntile) ResetPartialResult(pr PartialResult) {
 	p.numRows = 0
 }
 
-func (n *ntile) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (n *ntile) UpdatePartialResult(_ AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Ntile)(pr)
 	p.numRows += uint64(len(rowsInGroup))
 	// Update the quotient and remainder.
@@ -65,7 +64,7 @@ func (n *ntile) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Ro
 	return 0, nil
 }
 
-func (n *ntile) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (n *ntile) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4Ntile)(pr)
 
 	// If the divisor is 0, the arg of NTILE would be NULL. So we just return NULL.

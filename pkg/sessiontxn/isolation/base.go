@@ -20,17 +20,25 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
+	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table/temptable"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/pingcap/tipb/go-binlog"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -299,39 +307,10 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	txn.SetVars(sessVars.KVVars)
 
-	readReplicaType := sessVars.GetReplicaRead()
-	if readReplicaType.IsFollowerRead() {
-		txn.SetOption(kv.ReplicaRead, readReplicaType)
-	}
-
-	if interceptor := temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema); interceptor != nil {
-		txn.SetOption(kv.SnapInterceptor, interceptor)
-	}
-
-	if sessVars.StmtCtx.WeakConsistency {
-		txn.SetOption(kv.IsolationLevel, kv.RC)
-	}
-
-	internal.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
-
-	if p.causalConsistencyOnly {
-		txn.SetOption(kv.GuaranteeLinearizability, false)
-	}
+	p.SetOptionsOnTxnActive(txn)
 
 	if p.onTxnActiveFunc != nil {
 		p.onTxnActiveFunc(txn, p.enterNewTxnType)
-	}
-
-	if p.sctx.GetSessionVars().InRestrictedSQL {
-		txn.SetOption(kv.RequestSourceInternal, true)
-	}
-
-	if tp := p.sctx.GetSessionVars().RequestSourceType; tp != "" {
-		txn.SetOption(kv.RequestSourceType, tp)
-	}
-
-	if sessVars.LoadBasedReplicaReadThreshold > 0 {
-		txn.SetOption(kv.LoadBasedReplicaReadThreshold, sessVars.LoadBasedReplicaReadThreshold)
 	}
 
 	p.txn = txn
@@ -414,7 +393,7 @@ func (p *baseTxnContextProvider) AdviseWarmup() error {
 }
 
 // AdviseOptimizeWithPlan providers optimization according to the plan
-func (p *baseTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
+func (p *baseTxnContextProvider) AdviseOptimizeWithPlan(_ any) error {
 	return nil
 }
 
@@ -466,6 +445,184 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	}
 
 	return snapshot, nil
+}
+
+func (p *baseTxnContextProvider) SetOptionsOnTxnActive(txn kv.Transaction) {
+	sessVars := p.sctx.GetSessionVars()
+
+	readReplicaType := sessVars.GetReplicaRead()
+	if readReplicaType.IsFollowerRead() {
+		txn.SetOption(kv.ReplicaRead, readReplicaType)
+	}
+
+	if interceptor := temptable.SessionSnapshotInterceptor(
+		p.sctx,
+		p.infoSchema,
+	); interceptor != nil {
+		txn.SetOption(kv.SnapInterceptor, interceptor)
+	}
+
+	if sessVars.StmtCtx.WeakConsistency {
+		txn.SetOption(kv.IsolationLevel, kv.RC)
+	}
+
+	internal.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
+
+	if p.sctx.GetSessionVars().InRestrictedSQL {
+		txn.SetOption(kv.RequestSourceInternal, true)
+	}
+
+	if txn.IsPipelined() {
+		txn.SetOption(kv.RequestSourceType, "p-dml")
+	} else if tp := p.sctx.GetSessionVars().RequestSourceType; tp != "" {
+		txn.SetOption(kv.RequestSourceType, tp)
+	}
+
+	if sessVars.LoadBasedReplicaReadThreshold > 0 {
+		txn.SetOption(kv.LoadBasedReplicaReadThreshold, sessVars.LoadBasedReplicaReadThreshold)
+	}
+
+	txn.SetOption(kv.CommitHook, func(info string, _ error) { sessVars.LastTxnInfo = info })
+	txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
+	txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
+	if sessVars.DiskFullOpt != kvrpcpb.DiskFullOpt_NotAllowedOnFull {
+		txn.SetDiskFullOpt(sessVars.DiskFullOpt)
+	}
+	txn.SetOption(kv.InfoSchema, sessVars.TxnCtx.InfoSchema)
+	if sessVars.StmtCtx.KvExecCounter != nil {
+		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+		txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
+	}
+	txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
+	txn.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
+
+	if p.causalConsistencyOnly || !sessVars.GuaranteeLinearizability {
+		// priority of the sysvar is lower than `start transaction with causal consistency only`
+		txn.SetOption(kv.GuaranteeLinearizability, false)
+	} else {
+		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
+		// because the property is naturally holds:
+		// We guarantee the commitTS of any transaction must not exceed the next timestamp from the TSO.
+		// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
+		// of any previously committed transactions.
+		// Additionally, it's required to guarantee linearizability for snapshot read-only transactions though
+		// it does take effects on read-only transactions now.
+		txn.SetOption(
+			kv.GuaranteeLinearizability,
+			!sessVars.IsAutocommit() ||
+				sessVars.SnapshotTS > 0 ||
+				p.enterNewTxnType == sessiontxn.EnterNewTxnDefault ||
+				p.enterNewTxnType == sessiontxn.EnterNewTxnWithBeginStmt,
+		)
+	}
+
+	txn.SetOption(kv.SessionID, p.sctx.GetSessionVars().ConnectionID)
+}
+
+func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
+	txn kv.Transaction, commitTSChecker func(uint64) bool,
+) error {
+	sessVars := p.sctx.GetSessionVars()
+	// Pipelined dml txn already flushed mutations into stores, so we don't need to set options for them.
+	// Instead, some invariants must be checked to avoid anomalies though are unreachable in designed usages.
+	if p.txn.IsPipelined() {
+		if p.txn.IsPipelined() && !sessVars.TxnCtx.EnableMDL {
+			return errors.New("cannot commit pipelined transaction without Metadata Lock: MDL is OFF")
+		}
+		if len(sessVars.TxnCtx.TemporaryTables) > 0 {
+			return errors.New("pipelined dml with temporary tables is not allowed")
+		}
+		if sessVars.BinlogClient != nil {
+			return errors.New("pipelined dml with binlog is not allowed")
+		}
+		if sessVars.CDCWriteSource != 0 {
+			return errors.New("pipelined dml with CDC source is not allowed")
+		}
+		if commitTSChecker != nil {
+			return errors.New("pipelined dml with commitTS checker is not allowed")
+		}
+		return nil
+	}
+
+	// set resource tagger again for internal tasks separated in different transactions
+	txn.SetOption(kv.ResourceGroupTagger, sessVars.StmtCtx.GetResourceGroupTagger())
+
+	// Get the related table or partition IDs.
+	relatedPhysicalTables := sessVars.TxnCtx.TableDeltaMap
+	// Get accessed temporary tables in the transaction.
+	temporaryTables := sessVars.TxnCtx.TemporaryTables
+	physicalTableIDs := make([]int64, 0, len(relatedPhysicalTables))
+	for id := range relatedPhysicalTables {
+		// Schema change on global temporary tables doesn't affect transactions.
+		if _, ok := temporaryTables[id]; ok {
+			continue
+		}
+		physicalTableIDs = append(physicalTableIDs, id)
+	}
+	needCheckSchema := true
+	// Set this option for 2 phase commit to validate schema lease.
+	if sessVars.TxnCtx != nil {
+		needCheckSchema = !sessVars.TxnCtx.EnableMDL
+	}
+
+	// TODO: refactor SetOption usage to avoid race risk, should detect it in test.
+	// The pipelined txn will may be flushed in background, not touch the options to avoid races.
+	// to avoid session set overlap the txn set.
+	txn.SetOption(
+		kv.SchemaChecker,
+		domain.NewSchemaChecker(
+			domain.GetDomain(p.sctx),
+			p.GetTxnInfoSchema().SchemaMetaVersion(),
+			physicalTableIDs,
+			needCheckSchema,
+		),
+	)
+
+	if sessVars.StmtCtx.KvExecCounter != nil {
+		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+		txn.SetOption(kv.RPCInterceptor, sessVars.StmtCtx.KvExecCounter.RPCInterceptor())
+	}
+
+	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
+		txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
+	}
+
+	if sessVars.BinlogClient != nil {
+		prewriteValue := binloginfo.GetPrewriteValue(p.sctx, false)
+		if prewriteValue != nil {
+			prewriteData, err := prewriteValue.Marshal()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			info := &binloginfo.BinlogInfo{
+				Data: &binlog.Binlog{
+					Tp:            binlog.BinlogType_Prewrite,
+					PrewriteValue: prewriteData,
+				},
+				Client: sessVars.BinlogClient,
+			}
+			txn.SetOption(kv.BinlogInfo, info)
+		}
+	}
+
+	var txnSource uint64
+	if val := txn.GetOption(kv.TxnSource); val != nil {
+		txnSource, _ = val.(uint64)
+	}
+	// If the transaction is started by CDC, we need to set the CDCWriteSource option.
+	if sessVars.CDCWriteSource != 0 {
+		err := kv.SetCDCWriteSource(&txnSource, sessVars.CDCWriteSource)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		txn.SetOption(kv.TxnSource, txnSource)
+	}
+
+	if commitTSChecker != nil {
+		txn.SetOption(kv.CommitTSUpperBoundCheck, commitTSChecker)
+	}
+	return nil
 }
 
 // canReuseTxnWhenExplicitBegin returns whether we should reuse the txn when starting a transaction explicitly
@@ -572,4 +729,19 @@ func (p *basePessimisticTxnContextProvider) cancelFairLockingIfNeeded(ctx contex
 		}
 	}
 	return nil
+}
+
+type temporaryTableKVFilter map[int64]tableutil.TempTable
+
+func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(
+	key, value []byte, flags tikvstore.KeyFlags,
+) (bool, error) {
+	tid := tablecodec.DecodeTableID(key)
+	if _, ok := m[tid]; ok {
+		return true, nil
+	}
+
+	// This is the default filter for all tables.
+	defaultFilter := txn.TiDBKVFilter{}
+	return defaultFilter.IsUnnecessaryKeyValue(key, value, flags)
 }

@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -59,11 +59,11 @@ func newFunctionWithMockCtx(funcName string, args ...Expression) Expression {
 	return newFunction(mock.NewContext(), funcName, args...)
 }
 
-func newFunction(ctx sessionctx.Context, funcName string, args ...Expression) Expression {
+func newFunction(ctx BuildContext, funcName string, args ...Expression) Expression {
 	return newFunctionWithType(ctx, funcName, types.NewFieldType(mysql.TypeLonglong), args...)
 }
 
-func newFunctionWithType(ctx sessionctx.Context, funcName string, tp *types.FieldType, args ...Expression) Expression {
+func newFunctionWithType(ctx BuildContext, funcName string, tp *types.FieldType, args ...Expression) Expression {
 	return NewFunctionInternal(ctx, funcName, tp, args...)
 }
 
@@ -195,57 +195,63 @@ func TestConstantPropagation(t *testing.T) {
 
 func TestConstantFolding(t *testing.T) {
 	tests := []struct {
-		condition func(ctx sessionctx.Context) Expression
-		result    string
+		condition       func(ctx BuildContext) Expression
+		result          string
+		nullRejectCheck bool
 	}{
 		{
-			condition: func(ctx sessionctx.Context) Expression {
+			condition: func(ctx BuildContext) Expression {
 				return newFunction(ctx, ast.LT, newColumn(0), newFunction(ctx, ast.Plus, newLonglong(1), newLonglong(2)))
 			},
 			result: "lt(Column#0, 3)",
 		},
 		{
-			condition: func(ctx sessionctx.Context) Expression {
+			condition: func(ctx BuildContext) Expression {
 				return newFunction(ctx, ast.LT, newColumn(0), newFunction(ctx, ast.Greatest, newLonglong(1), newLonglong(2)))
 			},
 			result: "lt(Column#0, 2)",
 		},
 		{
-			condition: func(ctx sessionctx.Context) Expression {
+			condition: func(ctx BuildContext) Expression {
 				return newFunction(ctx, ast.EQ, newColumn(0), newFunction(ctx, ast.Rand))
 			},
 			result: "eq(cast(Column#0, double BINARY), rand())",
 		},
 		{
-			condition: func(ctx sessionctx.Context) Expression {
+			condition: func(ctx BuildContext) Expression {
 				return newFunction(ctx, ast.IsNull, newLonglong(1))
 			},
 			result: "0",
 		},
 		{
-			condition: func(ctx sessionctx.Context) Expression {
+			condition: func(ctx BuildContext) Expression {
 				return newFunction(ctx, ast.EQ, newColumn(0), newFunction(ctx, ast.UnaryNot, newFunctionWithMockCtx(ast.Plus, newLonglong(1), newLonglong(1))))
 			},
 			result: "eq(Column#0, 0)",
 		},
 		{
-			condition: func(ctx sessionctx.Context) Expression {
+			condition: func(ctx BuildContext) Expression {
 				return newFunction(ctx, ast.LT, newColumn(0), newFunction(ctx, ast.Plus, newColumn(1), newFunctionWithMockCtx(ast.Plus, newLonglong(2), newLonglong(1))))
 			},
 			result: "lt(Column#0, plus(Column#1, 3))",
 		},
 		{
-			condition: func(ctx sessionctx.Context) Expression {
+			condition: func(ctx BuildContext) Expression {
 				expr := newFunction(ctx, ast.ConcatWS, newColumn(0), NewNull())
-				ctx.GetSessionVars().StmtCtx.InNullRejectCheck = true
 				return expr
 			},
-			result: "concat_ws(cast(Column#0, var_string(20)), <nil>)",
+			nullRejectCheck: true,
+			result:          "concat_ws(cast(Column#0, var_string(20)), <nil>)",
 		},
 	}
 	for _, tt := range tests {
-		ctx := mock.NewContext()
+		ctx := mock.NewContext().GetExprCtx()
+		require.False(t, ctx.IsInNullRejectCheck())
 		expr := tt.condition(ctx)
+		if tt.nullRejectCheck {
+			ctx = exprctx.WithNullRejectCheck(ctx)
+			require.True(t, ctx.IsInNullRejectCheck())
+		}
 		newConds := FoldConstant(ctx, expr)
 		require.Equalf(t, tt.result, newConds.String(), "different for expr %s", tt.condition)
 	}

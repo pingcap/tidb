@@ -69,13 +69,13 @@ type DeadlockRecord struct {
 }
 
 var columnValueGetterMap = map[string]func(rec *DeadlockRecord, waitChainIdx int) types.Datum{
-	ColDeadlockIDStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {
+	ColDeadlockIDStr: func(rec *DeadlockRecord, _ int) types.Datum {
 		return types.NewDatum(rec.ID)
 	},
-	ColOccurTimeStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {
+	ColOccurTimeStr: func(rec *DeadlockRecord, _ int) types.Datum {
 		return types.NewDatum(types.NewTime(types.FromGoTime(rec.OccurTime), mysql.TypeTimestamp, types.MaxFsp))
 	},
-	ColRetryableStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {
+	ColRetryableStr: func(rec *DeadlockRecord, _ int) types.Datum {
 		return types.NewDatum(rec.IsRetryable)
 	},
 	ColTryLockTrxIDStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {

@@ -16,10 +16,14 @@ package chunk
 
 import (
 	"strconv"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 )
+
+// RowSize is the size of `Row{}`
+const RowSize = int64(unsafe.Sizeof(Row{}))
 
 // Row represents a row of data, can be used to access values.
 type Row struct {

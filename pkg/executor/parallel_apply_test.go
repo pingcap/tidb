@@ -489,3 +489,19 @@ func TestApplyGoroutinePanic(t *testing.T) {
 		require.NoError(t, failpoint.Disable(panicPath))
 	}
 }
+
+func TestParallelApplyCorrectness(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c1 bigint, c2 int, c3 int, c4 int, primary key(c1, c2), index (c3));")
+	tk.MustExec("insert into t1 values(1, 1, 1, 1), (1, 2, 3, 3), (2, 1, 4, 4), (2, 2, 2, 2);")
+
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	sql := "select (select /*+ NO_DECORRELATE() */ sum(c4) from t1 where t1.c3 = alias.c3) from t1 alias where alias.c1 = 1;"
+	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "3"))
+
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "3"))
+}

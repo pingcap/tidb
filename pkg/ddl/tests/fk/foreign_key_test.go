@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -358,7 +358,7 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 		"  `b` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `fk` (`a`),\n" +
-		"  CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `test2`.`t2` (`id`)\n" +
+		"  CONSTRAINT `fk` FOREIGN KEY (`a`) REFERENCES `t2` (`id`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tblInfo := getTableInfo(t, dom, "test2", "t2")
 	tbReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
@@ -1053,8 +1053,8 @@ func TestRenameColumnWithForeignKeyMetaInfo(t *testing.T) {
 			"  `aa` int(11) DEFAULT NULL,\n" +
 			"  `bb` int(11) DEFAULT NULL,\n" +
 			"  KEY `fk_1` (`aa`),\n  KEY `fk_2` (`bb`),\n" +
-			"  CONSTRAINT `fk_1` FOREIGN KEY (`aa`) REFERENCES `test`.`t1` (`bb`),\n" +
-			"  CONSTRAINT `fk_2` FOREIGN KEY (`bb`) REFERENCES `test`.`t1` (`bb`)\n" +
+			"  CONSTRAINT `fk_1` FOREIGN KEY (`aa`) REFERENCES `t1` (`bb`),\n" +
+			"  CONSTRAINT `fk_2` FOREIGN KEY (`bb`) REFERENCES `t1` (`bb`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
@@ -1113,10 +1113,10 @@ func TestAddForeignKey(t *testing.T) {
 		require.Equal(t, names[i], fkInfo.Name.L)
 		require.Equal(t, model.StatePublic, fkInfo.State)
 	}
-	tk.MustGetDBError("insert into t2 (id, b) values (1,1)", plannercore.ErrNoReferencedRow2)
-	tk.MustGetDBError("insert into t2 (id, c) values (1,1)", plannercore.ErrNoReferencedRow2)
-	tk.MustGetDBError("insert into t2 (id, d) values (1,1)", plannercore.ErrNoReferencedRow2)
-	tk.MustGetDBError("insert into t2 (id, e) values (1,1)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, b) values (1,1)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, c) values (1,1)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, d) values (1,1)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, e) values (1,1)", plannererrors.ErrNoReferencedRow2)
 
 	// Test add multiple foreign key constraint in one statement but failed.
 	tk.MustExec("alter table t2 drop foreign key fk")

@@ -18,11 +18,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
@@ -165,25 +167,26 @@ type testCase struct {
 
 func checkCases(
 	tests []testCase,
-	ld *executor.LoadDataWorker,
+	loadSQL string,
 	t *testing.T,
 	tk *testkit.TestKit,
 	ctx sessionctx.Context,
 	selectSQL, deleteSQL string,
 ) {
 	for _, tt := range tests {
-		parser, err := mydump.NewCSVParser(
-			context.Background(),
-			ld.GetController().GenerateCSVConfig(),
-			mydump.NewStringReader(string(tt.data)),
-			1,
-			nil,
-			false,
-			nil)
-		require.NoError(t, err)
+		var reader io.ReadCloser = mydump.NewStringReader(string(tt.data))
+		var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (
+			r io.ReadCloser, err error,
+		) {
+			return reader, nil
+		}
 
-		err = ld.TestLoadLocal(parser)
-		require.NoError(t, err)
+		ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+		tk.MustExec(loadSQL)
+		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+		for _, w := range warnings {
+			fmt.Printf("warnnig: %#v\n", w.Err.Error())
+		}
 		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage(), tt.expected)
 		tk.MustQuery(selectSQL).Check(testkit.RowsWithSep("|", tt.expected...))
 		tk.MustExec(deleteSQL)
@@ -196,12 +199,8 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	tk.MustExec("use test")
 	createSQL := `create table load_data_missing (id int, t timestamp not null)`
 	tk.MustExec(createSQL)
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_missing")
+	loadSQL := "load data local infile '/tmp/nonexistence.csv' ignore into table load_data_missing"
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
 
 	deleteSQL := "delete from load_data_missing"
 	selectSQL := "select id, hour(t), minute(t) from load_data_missing;"
@@ -213,7 +212,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 		{[]byte(""), nil, "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 
 	tk.MustExec("alter table load_data_missing add column t2 timestamp null")
 	curTime = types.CurrentTime(mysql.TypeTimestamp)
@@ -223,7 +222,7 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	tests = []testCase{
 		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
 
 func TestIssue18681(t *testing.T) {
@@ -233,17 +232,14 @@ func TestIssue18681(t *testing.T) {
 	createSQL := `drop table if exists load_data_test;
 		create table load_data_test (a bit(1),b bit(1),c bit(1),d bit(1));`
 	tk.MustExec(createSQL)
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test")
+	loadSQL := "load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test"
 	ctx := tk.Session().(sessionctx.Context)
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
-	require.True(t, ok)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.NotNil(t, ld)
 
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select bin(a), bin(b), bin(c), bin(d) from load_data_test;"
-	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
-	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+	levels := ctx.GetSessionVars().StmtCtx.ErrLevels()
+	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
+	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
 
 	sc := ctx.GetSessionVars().StmtCtx
 	oldTypeFlags := sc.TypeFlags()
@@ -254,7 +250,7 @@ func TestIssue18681(t *testing.T) {
 	tests := []testCase{
 		{[]byte("true\tfalse\t0\t1\n"), []string{"1|0|0|1"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
-	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 	require.Equal(t, uint16(0), sc.WarningCount())
 }
 
@@ -268,13 +264,12 @@ func TestIssue34358(t *testing.T) {
 	tk.MustExec("drop table if exists load_data_test")
 	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
 
-	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test ( @v1, @v2 ) set a = @v1, b = @v2")
-	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
-	require.True(t, ok)
-	require.NotNil(t, ld)
+	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test ( @v1, " +
+		"@v2 ) set a = @v1, b = @v2"
 	checkCases([]testCase{
 		{[]byte("\\N\n"), []string{"<nil>|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-	}, ld, t, tk, ctx, "select * from load_data_test", "delete from load_data_test")
+	}, loadSQL, t, tk, ctx, "select * from load_data_test", "delete from load_data_test",
+	)
 }
 
 func TestLatch(t *testing.T) {
@@ -330,11 +325,6 @@ func TestLatch(t *testing.T) {
 	tk1.MustExec("update t set id = id + 1")
 	tk2.MustExec("update t set id = id + 1")
 	tk1.MustGetDBError("commit", kv.ErrWriteConflictInTiDB)
-
-	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk1.MustExec("update t set id = id + 1")
-	tk2.MustExec("update t set id = id + 1")
-	tk1.MustExec("commit")
 }
 
 func TestReplaceLog(t *testing.T) {
@@ -357,7 +347,7 @@ func TestReplaceLog(t *testing.T) {
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	_, err = indexOpr.Create(ctx, txn, types.MakeDatums(1), kv.IntHandle(1), nil)
+	_, err = indexOpr.Create(ctx.GetTableCtx(), txn, types.MakeDatums(1), kv.IntHandle(1), nil)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -385,7 +375,7 @@ func TestRebaseIfNeeded(t *testing.T) {
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
 	// which could simulate another TiDB adds a large auto ID.
-	_, err = tbl.AddRecord(ctx, types.MakeDatums(30001, 2))
+	_, err = tbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(30001, 2))
 	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)

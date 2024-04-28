@@ -39,7 +39,7 @@ go_test(
     ],
     embed = [":plugin"],
     flaky = True,
-    shard_count = 11,
+    shard_count = 12,
     deps = [
         "//pkg/kv",
         "//pkg/parser/mysql",
@@ -49,6 +49,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_client_v3//:client",
         "@org_uber_go_goleak//:goleak",
     ],
 )

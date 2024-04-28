@@ -91,22 +91,14 @@ alter table test_t1 add unique  p_a (a);
 insert into test_t1 values (1,1,1);
 explain format='brief' select * from test_t1 where a = 1;
 id	estRows	task	access object	operator info
-PartitionUnion	2.00	root		
-├─TableReader	1.00	root		data:Selection
-│ └─Selection	1.00	cop[tikv]		eq(executor__partition__global_index.test_t1.a, 1)
-│   └─TableFullScan	10000.00	cop[tikv]	table:test_t1, partition:p0	keep order:false, stats:pseudo
-└─TableReader	1.00	root		data:Selection
-  └─Selection	1.00	cop[tikv]		eq(executor__partition__global_index.test_t1.a, 1)
-    └─TableFullScan	10000.00	cop[tikv]	table:test_t1, partition:p1	keep order:false, stats:pseudo
+Point_Get	1.00	root	table:test_t1, index:p_a(a)	
 select * from test_t1 where a = 1;
 a	b	c
 1	1	1
 analyze table test_t1;
 explain format='brief' select * from test_t1 where a = 1;
 id	estRows	task	access object	operator info
-IndexLookUp	1.00	root	partition:all	
-├─IndexRangeScan(Build)	1.00	cop[tikv]	table:test_t1, index:p_a(a)	range:[1,1], keep order:false
-└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:test_t1	keep order:false
+Point_Get	1.00	root	table:test_t1, index:p_a(a)	
 select * from test_t1 where a = 1;
 a	b	c
 1	1	1

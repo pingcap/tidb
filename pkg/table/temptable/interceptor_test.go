@@ -296,7 +296,7 @@ func TestGetSessionTemporaryTableKey(t *testing.T) {
 		invokes := retriever.GetInvokes()
 		require.Equal(t, 1, len(invokes), i)
 		require.Equal(t, "Get", invokes[0].Method, i)
-		require.Equal(t, []interface{}{ctx, c.Key}, invokes[0].Args)
+		require.Equal(t, []any{ctx, c.Key}, invokes[0].Args)
 		retriever.ResetInvokes()
 
 		// test for nil session
@@ -441,7 +441,7 @@ func TestInterceptorOnGet(t *testing.T) {
 			invokes := snap.GetInvokes()
 			require.Equal(t, 1, len(invokes), i)
 			require.Equal(t, "Get", invokes[0].Method, i)
-			require.Equal(t, []interface{}{ctx, c.Key}, invokes[0].Args)
+			require.Equal(t, []any{ctx, c.Key}, invokes[0].Args)
 			snap.ResetInvokes()
 		}
 	}
@@ -483,7 +483,7 @@ func TestInterceptorOnGet(t *testing.T) {
 		invokes := retriever.GetInvokes()
 		require.Equal(t, 1, len(invokes), i)
 		require.Equal(t, "Get", invokes[0].Method, i)
-		require.Equal(t, []interface{}{ctx, c.Key}, invokes[0].Args)
+		require.Equal(t, []any{ctx, c.Key}, invokes[0].Args)
 		retriever.ResetInvokes()
 
 		val, err = emptyRetrieverInterceptor.OnGet(ctx, snap, c.Key)
@@ -1288,7 +1288,7 @@ func TestIterTable(t *testing.T) {
 			require.Equal(t, 0, len(retriever.GetInvokes()), i)
 			require.Equal(t, 1, len(snap.GetInvokes()), i)
 			require.Equal(t, "Iter", snap.GetInvokes()[0].Method)
-			require.Equal(t, []interface{}{c.args[0], c.args[1]}, snap.GetInvokes()[0].Args, i)
+			require.Equal(t, []any{c.args[0], c.args[1]}, snap.GetInvokes()[0].Args, i)
 		}
 
 		if ok && tbl.Meta().TempTableType == model.TempTableGlobal {
@@ -1303,7 +1303,7 @@ func TestIterTable(t *testing.T) {
 			} else {
 				require.Equal(t, 1, len(retriever.GetInvokes()), i)
 				require.Equal(t, "Iter", retriever.GetInvokes()[0].Method)
-				require.Equal(t, []interface{}{c.args[0], c.args[1]}, retriever.GetInvokes()[0].Args, i)
+				require.Equal(t, []any{c.args[0], c.args[1]}, retriever.GetInvokes()[0].Args, i)
 			}
 		}
 

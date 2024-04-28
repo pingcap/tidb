@@ -14,8 +14,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -40,7 +40,7 @@ func (abb AbbreviatedArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncode
 
 // AbbreviatedArray constructs a field that abbreviates an array of elements.
 func AbbreviatedArray(
-	key string, elements interface{}, marshalFunc func(interface{}) []string,
+	key string, elements any, marshalFunc func(any) []string,
 ) zap.Field {
 	return zap.Array(key, AbbreviatedArrayMarshaler(marshalFunc(elements)))
 }
@@ -59,6 +59,18 @@ func (file zapFileMarshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	enc.AddUint64("totalBytes", file.GetTotalBytes())
 	enc.AddUint64("CRC64Xor", file.GetCrc64Xor())
 	return nil
+}
+
+func AbbreviatedStringers[T fmt.Stringer](key string, stringers []T) zap.Field {
+	if len(stringers) < 4 {
+		return zap.Stringers(key, stringers)
+	}
+	return zap.Array(key, zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
+		ae.AppendString(stringers[0].String())
+		ae.AppendString(fmt.Sprintf("(skip %d)", len(stringers)-2))
+		ae.AppendString(stringers[len(stringers)-1].String())
+		return nil
+	}))
 }
 
 type zapFilesMarshaler []*backuppb.File
@@ -263,7 +275,7 @@ func WarnTerm(message string, fields ...zap.Field) {
 }
 
 // RedactAny constructs a redacted field that carries an interface{}.
-func RedactAny(fieldKey string, key interface{}) zap.Field {
+func RedactAny(fieldKey string, key any) zap.Field {
 	if redact.NeedRedact() {
 		return zap.String(fieldKey, "?")
 	}
@@ -276,6 +288,10 @@ func Redact(field zap.Field) zap.Field {
 		return zap.String(field.Key, "?")
 	}
 	return field
+}
+
+func StringifyRangeOf(start, end []byte) StringifyRange {
+	return StringifyRange{StartKey: start, EndKey: end}
 }
 
 // StringifyKeys wraps the key range into a stringer.
@@ -308,7 +324,7 @@ func (rng StringifyRange) String() string {
 	} else {
 		endKey = redact.Key(rng.EndKey)
 	}
-	sb.WriteString(redact.String(endKey))
+	sb.WriteString(redact.Value(endKey))
 	sb.WriteString(")")
 	return sb.String()
 }

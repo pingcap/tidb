@@ -28,7 +28,7 @@ func TestDefaultHttpClient(t *testing.T) {
 
 func TestNewMemStorage(t *testing.T) {
 	url := "memstore://"
-	s, err := storage.NewFromURL(context.Background(), url, nil)
+	s, err := storage.NewFromURL(context.Background(), url)
 	require.NoError(t, err)
 	require.IsType(t, (*storage.MemStorage)(nil), s)
 }

@@ -104,15 +104,15 @@ func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string) (accepte
 type ConfReloadFunc func(oldConf, newConf *Config)
 
 // FlattenConfigItems flatten this config, see more cases in the test.
-func FlattenConfigItems(nestedConfig map[string]interface{}) map[string]interface{} {
-	flatMap := make(map[string]interface{})
+func FlattenConfigItems(nestedConfig map[string]any) map[string]any {
+	flatMap := make(map[string]any)
 	flatten(flatMap, nestedConfig, "")
 	return flatMap
 }
 
-func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) {
+func flatten(flatMap map[string]any, nested any, prefix string) {
 	switch nested := nested.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		for k, v := range nested {
 			path := k
 			if prefix != "" {

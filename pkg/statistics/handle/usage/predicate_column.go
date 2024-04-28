@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -35,8 +36,8 @@ import (
 type statsUsageImpl struct {
 	statsHandle statstypes.StatsHandle
 
-	// idxUsageListHead contains all the index usage collectors required by session.
-	idxUsageListHead *SessionIndexUsageCollector
+	// idxUsageCollector contains all the index usage collectors required by session.
+	idxUsageCollector *indexusage.Collector
 
 	// SessionStatsList contains all the stats collector required by session.
 	*SessionStatsList
@@ -45,9 +46,9 @@ type statsUsageImpl struct {
 // NewStatsUsageImpl creates a statstypes.StatsUsage.
 func NewStatsUsageImpl(statsHandle statstypes.StatsHandle) statstypes.StatsUsage {
 	return &statsUsageImpl{
-		statsHandle:      statsHandle,
-		idxUsageListHead: newSessionIndexUsageCollector(nil),
-		SessionStatsList: NewSessionStatsList()}
+		statsHandle:       statsHandle,
+		idxUsageCollector: indexusage.NewCollector(),
+		SessionStatsList:  NewSessionStatsList()}
 }
 
 // LoadColumnStatsUsage returns all columns' usage information.

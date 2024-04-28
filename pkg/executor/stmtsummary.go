@@ -24,6 +24,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
@@ -383,7 +384,7 @@ func isEvictedTable(originalTableName string) bool {
 
 func checkPrivilege(sctx sessionctx.Context) error {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
-		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	return nil
 }

@@ -97,11 +97,11 @@ func RegisterPlan(normalizedPlan string, planDigest *parser.Digest) {
 
 // AttachAndRegisterSQLInfo attach the sql information into Top SQL and register the SQL meta information.
 func AttachAndRegisterSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) context.Context {
-	if sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
+	if sqlDigest == nil || len(sqlDigest.String()) == 0 {
 		return ctx
 	}
 	sqlDigestBytes := sqlDigest.Bytes()
-	ctx = collector.CtxWithSQLDigest(ctx, sqlDigestBytes)
+	ctx = collector.CtxWithSQLDigest(ctx, sqlDigest.String())
 	pprof.SetGoroutineLabels(ctx)
 
 	linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)
@@ -124,15 +124,15 @@ func AttachAndRegisterSQLInfo(ctx context.Context, normalizedSQL string, sqlDige
 
 // AttachSQLAndPlanInfo attach the sql and plan information into Top SQL
 func AttachSQLAndPlanInfo(ctx context.Context, sqlDigest *parser.Digest, planDigest *parser.Digest) context.Context {
-	if sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
+	if sqlDigest == nil || len(sqlDigest.String()) == 0 {
 		return ctx
 	}
-	var planDigestBytes []byte
-	sqlDigestBytes := sqlDigest.Bytes()
+	var planDigestStr string
+	sqlDigestStr := sqlDigest.String()
 	if planDigest != nil {
-		planDigestBytes = planDigest.Bytes()
+		planDigestStr = planDigest.String()
 	}
-	ctx = collector.CtxWithSQLAndPlanDigest(ctx, sqlDigestBytes, planDigestBytes)
+	ctx = collector.CtxWithSQLAndPlanDigest(ctx, sqlDigestStr, planDigestStr)
 	pprof.SetGoroutineLabels(ctx)
 
 	failpoint.Inject("mockHighLoadForEachPlan", func(val failpoint.Value) {

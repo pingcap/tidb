@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -51,6 +51,19 @@ type AccessPath struct {
 	// PartialIndexPaths store all index access paths.
 	// If there are extra filters, store them in TableFilters.
 	PartialIndexPaths []*AccessPath
+
+	// ************************************************** special field below *********************************************************
+	// For every dnf/cnf item, there maybe several matched partial index paths to be determined later in property detecting and cost model.
+	// when PartialAlternativeIndexPaths is not empty, it means a special state for index merge path, and it can't have PartialIndexPaths
+	// at same time. Normal single index or table path also doesn't use this field.
+	PartialAlternativeIndexPaths [][]*AccessPath
+	// KeepIndexMergeORSourceFilter and IndexMergeORSourceFilter are only used with PartialAlternativeIndexPaths, which means for
+	// the new state/type of access path. (undetermined index merge path)
+	KeepIndexMergeORSourceFilter bool
+	// IndexMergeORSourceFilter indicates that there are some expression inside this dnf that couldn't be pushed down, and we should keep the entire dnf above.
+	IndexMergeORSourceFilter expression.Expression
+	// ********************************************************************************************************************************
+
 	// IndexMergeIsIntersection means whether it's intersection type or union type IndexMerge path.
 	// It's only valid for a IndexMerge path.
 	// Intersection type is for expressions connected by `AND` and union type is for `OR`.
@@ -81,34 +94,45 @@ type AccessPath struct {
 // some fields like FieldType are not deep-copied.
 func (path *AccessPath) Clone() *AccessPath {
 	ret := &AccessPath{
-		Index:                    path.Index.Clone(),
-		FullIdxCols:              CloneCols(path.FullIdxCols),
-		FullIdxColLens:           slices.Clone(path.FullIdxColLens),
-		IdxCols:                  CloneCols(path.IdxCols),
-		IdxColLens:               slices.Clone(path.IdxColLens),
-		ConstCols:                slices.Clone(path.ConstCols),
-		Ranges:                   CloneRanges(path.Ranges),
-		CountAfterAccess:         path.CountAfterAccess,
-		CountAfterIndex:          path.CountAfterIndex,
-		AccessConds:              CloneExprs(path.AccessConds),
-		EqCondCount:              path.EqCondCount,
-		EqOrInCondCount:          path.EqOrInCondCount,
-		IndexFilters:             CloneExprs(path.IndexFilters),
-		TableFilters:             CloneExprs(path.TableFilters),
-		IndexMergeIsIntersection: path.IndexMergeIsIntersection,
-		PartialIndexPaths:        nil,
-		StoreType:                path.StoreType,
-		IsDNFCond:                path.IsDNFCond,
-		IsIntHandlePath:          path.IsIntHandlePath,
-		IsCommonHandlePath:       path.IsCommonHandlePath,
-		Forced:                   path.Forced,
-		ForceKeepOrder:           path.ForceKeepOrder,
-		ForceNoKeepOrder:         path.ForceNoKeepOrder,
-		IsSingleScan:             path.IsSingleScan,
-		IsUkShardIndexPath:       path.IsUkShardIndexPath,
+		Index:                        path.Index.Clone(),
+		FullIdxCols:                  CloneCols(path.FullIdxCols),
+		FullIdxColLens:               slices.Clone(path.FullIdxColLens),
+		IdxCols:                      CloneCols(path.IdxCols),
+		IdxColLens:                   slices.Clone(path.IdxColLens),
+		ConstCols:                    slices.Clone(path.ConstCols),
+		Ranges:                       CloneRanges(path.Ranges),
+		CountAfterAccess:             path.CountAfterAccess,
+		CountAfterIndex:              path.CountAfterIndex,
+		AccessConds:                  CloneExprs(path.AccessConds),
+		EqCondCount:                  path.EqCondCount,
+		EqOrInCondCount:              path.EqOrInCondCount,
+		IndexFilters:                 CloneExprs(path.IndexFilters),
+		TableFilters:                 CloneExprs(path.TableFilters),
+		IndexMergeIsIntersection:     path.IndexMergeIsIntersection,
+		PartialIndexPaths:            nil,
+		StoreType:                    path.StoreType,
+		IsDNFCond:                    path.IsDNFCond,
+		IsIntHandlePath:              path.IsIntHandlePath,
+		IsCommonHandlePath:           path.IsCommonHandlePath,
+		Forced:                       path.Forced,
+		ForceKeepOrder:               path.ForceKeepOrder,
+		ForceNoKeepOrder:             path.ForceNoKeepOrder,
+		IsSingleScan:                 path.IsSingleScan,
+		IsUkShardIndexPath:           path.IsUkShardIndexPath,
+		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
+	}
+	if path.IndexMergeORSourceFilter != nil {
+		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
 	}
 	for _, partialPath := range path.PartialIndexPaths {
 		ret.PartialIndexPaths = append(ret.PartialIndexPaths, partialPath.Clone())
+	}
+	for _, onePartialAlternative := range path.PartialAlternativeIndexPaths {
+		tmp := make([]*AccessPath, 0, len(onePartialAlternative))
+		for _, oneAlternative := range onePartialAlternative {
+			tmp = append(tmp, oneAlternative.Clone())
+		}
+		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, tmp)
 	}
 	return ret
 }
@@ -121,10 +145,10 @@ func (path *AccessPath) IsTablePath() bool {
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
-func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx sessionctx.Context, eqOrInCount int) (access, remained []expression.Expression) {
+func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx context.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
 	// The plan cache do not support subquery now. So we skip this function when
 	// 'MaybeOverOptimized4PlanCache' function return true .
-	if expression.MaybeOverOptimized4PlanCache(ctx, path.TableFilters) {
+	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
 		return nil, path.TableFilters
 	}
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
@@ -217,10 +241,10 @@ func isColEqExpr(expr expression.Expression, col *expression.Column, checkFn fun
 }
 
 // OnlyPointRange checks whether each range is a point(no interval range exists).
-func (path *AccessPath) OnlyPointRange(sctx sessionctx.Context) bool {
+func (path *AccessPath) OnlyPointRange(tc types.Context) bool {
 	if path.IsIntHandlePath {
 		for _, ran := range path.Ranges {
-			if !ran.IsPointNullable(sctx) {
+			if !ran.IsPointNullable(tc) {
 				return false
 			}
 		}
@@ -228,7 +252,7 @@ func (path *AccessPath) OnlyPointRange(sctx sessionctx.Context) bool {
 	}
 	for _, ran := range path.Ranges {
 		// Not point or the not full matched.
-		if !ran.IsPointNonNullable(sctx) || len(ran.HighVal) != len(path.Index.Columns) {
+		if !ran.IsPointNonNullable(tc) || len(ran.HighVal) != len(path.Index.Columns) {
 			return false
 		}
 	}
@@ -240,7 +264,7 @@ type Col2Len map[int64]int
 
 // ExtractCol2Len collects index/table columns with lengths from expressions. If idxCols and idxColLens are not nil, it collects index columns with lengths(maybe prefix lengths).
 // Otherwise it collects table columns with full lengths.
-func ExtractCol2Len(ctx sessionctx.Context, exprs []expression.Expression, idxCols []*expression.Column, idxColLens []int) Col2Len {
+func ExtractCol2Len(ctx expression.EvalContext, exprs []expression.Expression, idxCols []*expression.Column, idxColLens []int) Col2Len {
 	col2len := make(Col2Len, len(idxCols))
 	for _, expr := range exprs {
 		extractCol2LenFromExpr(ctx, expr, idxCols, idxColLens, col2len)
@@ -248,7 +272,7 @@ func ExtractCol2Len(ctx sessionctx.Context, exprs []expression.Expression, idxCo
 	return col2len
 }
 
-func extractCol2LenFromExpr(ctx sessionctx.Context, expr expression.Expression, idxCols []*expression.Column, idxColLens []int, col2Len Col2Len) {
+func extractCol2LenFromExpr(ctx expression.EvalContext, expr expression.Expression, idxCols []*expression.Column, idxColLens []int, col2Len Col2Len) {
 	switch v := expr.(type) {
 	case *expression.Column:
 		if idxCols == nil {
@@ -332,9 +356,9 @@ func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
 }
 
 // GetCol2LenFromAccessConds returns columns with lengths from path.AccessConds.
-func (path *AccessPath) GetCol2LenFromAccessConds(ctx sessionctx.Context) Col2Len {
+func (path *AccessPath) GetCol2LenFromAccessConds(ctx context.PlanContext) Col2Len {
 	if path.IsTablePath() {
-		return ExtractCol2Len(ctx, path.AccessConds, nil, nil)
+		return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	}
-	return ExtractCol2Len(ctx, path.AccessConds, path.IdxCols, path.IdxColLens)
+	return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 }

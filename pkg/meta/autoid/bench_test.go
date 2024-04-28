@@ -48,7 +48,7 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 		if err != nil {
 			return err
 		}
-		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
+		err = m.CreateTableOrView(dbID, "a", &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
 		if err != nil {
 			return err
 		}
@@ -103,7 +103,7 @@ func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
 			Sequence: seq,
 		}
 		sequenceBase = seq.Start - 1
-		err = m.CreateSequenceAndSetSeqValue(1, seqTable, sequenceBase)
+		err = m.CreateSequenceAndSetSeqValue(1, "a", seqTable, sequenceBase)
 		return err
 	})
 	if err != nil {

@@ -133,10 +133,10 @@ func TestVarsutil(t *testing.T) {
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), "sql_mode")
 	require.NoError(t, err)
 	require.Equal(t, "STRICT_TRANS_TABLES", val)
-	require.True(t, v.StrictSQLMode)
+	require.True(t, v.SQLMode.HasStrictMode())
 	err = v.SetSystemVar("sql_mode", "")
 	require.NoError(t, err)
-	require.False(t, v.StrictSQLMode)
+	require.False(t, v.SQLMode.HasStrictMode())
 
 	err = v.SetSystemVar("character_set_connection", "utf8")
 	require.NoError(t, err)
@@ -405,11 +405,24 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "leader-and-follower", val)
 	require.Equal(t, kv.ReplicaReadMixed, v.GetReplicaRead())
 
-	err = v.SetSystemVar(TiDBRedactLog, "ON")
-	require.NoError(t, err)
-	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBRedactLog)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
+	for _, c := range []struct {
+		a string
+		b string
+	}{
+		// test 0,1 for old true/false value
+		{"1", "ON"},
+		{"0", "OFF"},
+		{"oN", "ON"},
+		{"OfF", "OFF"},
+		{"marker", "MARKER"},
+		{"2", "MARKER"},
+	} {
+		err = v.SetSystemVar(TiDBRedactLog, c.a)
+		require.NoError(t, err)
+		val, err = v.GetSessionOrGlobalSystemVar(context.Background(), TiDBRedactLog)
+		require.NoError(t, err)
+		require.Equal(t, c.b, val)
+	}
 
 	err = v.SetSystemVar(TiDBFoundInPlanCache, "1")
 	require.Error(t, err)

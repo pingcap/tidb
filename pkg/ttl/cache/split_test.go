@@ -104,6 +104,10 @@ func (c *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Stor
 	}, nil
 }
 
+func (c *mockPDClient) GetClusterID(_ context.Context) uint64 {
+	return 1
+}
+
 type mockTiKVStore struct {
 	t *testing.T
 	helper.Storage
@@ -206,7 +210,11 @@ func (s *mockTiKVStore) GetRegionCache() *tikv.RegionCache {
 }
 
 func bytesHandle(t *testing.T, data []byte) kv.Handle {
-	encoded, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum(data))
+	return commonHandle(t, types.NewBytesDatum(data))
+}
+
+func commonHandle(t *testing.T, d ...types.Datum) kv.Handle {
+	encoded, err := codec.EncodeKey(time.UTC, nil, d...)
 	require.NoError(t, err)
 	h, err := kv.NewCommonHandle(encoded)
 	require.NoError(t, err)
@@ -271,7 +279,6 @@ func TestSplitTTLScanRangesWithSignedInt(t *testing.T) {
 		createTTLTable(t, tk, "t4", "int"),
 		createTTLTable(t, tk, "t5", "bigint"),
 		createTTLTable(t, tk, "t6", ""), // no clustered
-		create2PKTTLTable(t, tk, "t7", "tinyint"),
 	}
 
 	tikvStore := newMockTiKVStore(t)
@@ -333,7 +340,6 @@ func TestSplitTTLScanRangesWithUnsignedInt(t *testing.T) {
 		createTTLTable(t, tk, "t3", "mediumint unsigned"),
 		createTTLTable(t, tk, "t4", "int unsigned"),
 		createTTLTable(t, tk, "t5", "bigint unsigned"),
-		create2PKTTLTable(t, tk, "t6", "tinyint unsigned"),
 	}
 
 	tikvStore := newMockTiKVStore(t)
@@ -397,6 +403,106 @@ func TestSplitTTLScanRangesWithUnsignedInt(t *testing.T) {
 			types.NewUintDatum(50), types.NewUintDatum(150))
 		checkRange(t, ranges[5],
 			types.NewUintDatum(150), types.NewUintDatum(uint64(math.MaxInt64)+1))
+	}
+}
+
+func TestSplitTTLScanRangesCommonHandleSignedInt(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tbls := []*cache.PhysicalTable{
+		create2PKTTLTable(t, tk, "t1", "bigint"),
+		create2PKTTLTable(t, tk, "t2", "int"),
+	}
+
+	tikvStore := newMockTiKVStore(t)
+	for _, tbl := range tbls {
+		// test only one region
+		tikvStore.clearRegions()
+		ranges, err := tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(ranges))
+		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
+
+		// test share regions with other table
+		tikvStore.clearRegions()
+		tikvStore.addRegion(
+			tablecodec.GenTablePrefix(tbl.ID-1),
+			tablecodec.GenTablePrefix(tbl.ID+1),
+		)
+		ranges, err = tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(ranges))
+		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
+
+		// test one table has multiple regions
+		tikvStore.clearRegions()
+		tikvStore.addRegionBeginWithTablePrefix(tbl.ID, commonHandle(t, types.NewIntDatum(-21)))
+		tikvStore.addRegionWithTablePrefix(tbl.ID,
+			commonHandle(t, types.NewIntDatum(-21)),
+			commonHandle(t, types.NewIntDatum(-19), types.NewIntDatum(0)),
+		)
+		tikvStore.addRegionWithTablePrefix(tbl.ID,
+			commonHandle(t, types.NewIntDatum(-19), types.NewIntDatum(0)),
+			commonHandle(t, types.NewIntDatum(2)),
+		)
+		tikvStore.addRegionEndWithTablePrefix(commonHandle(t, types.NewIntDatum(2)), tbl.ID)
+		ranges, err = tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
+		require.NoError(t, err)
+		require.Equal(t, 4, len(ranges))
+		checkRange(t, ranges[0], types.Datum{}, types.NewIntDatum(-21))
+		checkRange(t, ranges[1], types.NewIntDatum(-21), types.NewIntDatum(-18))
+		checkRange(t, ranges[2], types.NewIntDatum(-18), types.NewIntDatum(2))
+		checkRange(t, ranges[3], types.NewIntDatum(2), types.Datum{})
+	}
+}
+
+func TestSplitTTLScanRangesCommonHandleUnsignedInt(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tbls := []*cache.PhysicalTable{
+		create2PKTTLTable(t, tk, "t1", "bigint unsigned"),
+		create2PKTTLTable(t, tk, "t2", "int unsigned"),
+	}
+
+	tikvStore := newMockTiKVStore(t)
+	for _, tbl := range tbls {
+		// test only one region
+		tikvStore.clearRegions()
+		ranges, err := tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(ranges))
+		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
+
+		// test share regions with other table
+		tikvStore.clearRegions()
+		tikvStore.addRegion(
+			tablecodec.GenTablePrefix(tbl.ID-1),
+			tablecodec.GenTablePrefix(tbl.ID+1),
+		)
+		ranges, err = tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(ranges))
+		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
+
+		// test one table has multiple regions
+		tikvStore.clearRegions()
+		tikvStore.addRegionBeginWithTablePrefix(tbl.ID, commonHandle(t, types.NewUintDatum(9)))
+		tikvStore.addRegionWithTablePrefix(tbl.ID,
+			commonHandle(t, types.NewUintDatum(9)),
+			commonHandle(t, types.NewUintDatum(23), types.NewUintDatum(0)),
+		)
+		tikvStore.addRegionWithTablePrefix(tbl.ID,
+			commonHandle(t, types.NewUintDatum(23), types.NewUintDatum(0)),
+			commonHandle(t, types.NewUintDatum(math.MaxInt64+9)),
+		)
+		tikvStore.addRegionEndWithTablePrefix(commonHandle(t, types.NewUintDatum(math.MaxInt64+9)), tbl.ID)
+		ranges, err = tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
+		require.NoError(t, err)
+		require.Equal(t, 4, len(ranges))
+		checkRange(t, ranges[0], types.Datum{}, types.NewUintDatum(9))
+		checkRange(t, ranges[1], types.NewUintDatum(9), types.NewUintDatum(24))
+		checkRange(t, ranges[2], types.NewUintDatum(24), types.NewUintDatum(math.MaxInt64+9))
+		checkRange(t, ranges[3], types.NewUintDatum(math.MaxInt64+9), types.Datum{})
 	}
 }
 
@@ -515,7 +621,7 @@ func TestGetNextBytesHandleDatum(t *testing.T) {
 
 	binaryDataStartPos := len(tablecodec.GenTableRecordPrefix(tblID)) + 1
 	cases := []struct {
-		key    interface{}
+		key    any
 		result []byte
 		isNull bool
 	}{
@@ -720,10 +826,11 @@ func TestGetNextBytesHandleDatum(t *testing.T) {
 		}
 	}
 }
+
 func TestGetNextIntHandle(t *testing.T) {
 	tblID := int64(7)
 	cases := []struct {
-		key    interface{}
+		key    any
 		result int64
 		isNull bool
 	}{
@@ -823,5 +930,206 @@ func TestGetNextIntHandle(t *testing.T) {
 			require.IsType(t, kv.IntHandle(0), v, i)
 			require.Equal(t, c.result, v.IntValue())
 		}
+	}
+}
+
+func TestGetNextIntDatumFromCommonHandle(t *testing.T) {
+	encode := func(tblID int64, d ...types.Datum) kv.Key {
+		encoded, err := codec.EncodeKey(time.UTC, nil, d...)
+		require.NoError(t, err)
+		h, err := kv.NewCommonHandle(encoded)
+		require.NoError(t, err)
+		return tablecodec.EncodeRowKey(tblID, h.Encoded())
+	}
+
+	var nullDatum types.Datum
+	nullDatum.SetNull()
+	tblID := int64(7)
+	fixedLen := len(encode(tblID, types.NewIntDatum(0)))
+
+	cases := []struct {
+		key      kv.Key
+		d        types.Datum
+		unsigned bool
+	}{
+		{
+			key: encode(tblID, types.NewIntDatum(0)),
+			d:   types.NewIntDatum(0),
+		},
+		{
+			key: encode(tblID, types.NewIntDatum(1)),
+			d:   types.NewIntDatum(1),
+		},
+		{
+			key: encode(tblID, types.NewIntDatum(1024)),
+			d:   types.NewIntDatum(1024),
+		},
+		{
+			key: encode(tblID, types.NewIntDatum(math.MaxInt64)),
+			d:   types.NewIntDatum(math.MaxInt64),
+		},
+		{
+			key: encode(tblID, types.NewIntDatum(math.MaxInt64/2)),
+			d:   types.NewIntDatum(math.MaxInt64 / 2),
+		},
+		{
+			key: encode(tblID, types.NewIntDatum(-1)),
+			d:   types.NewIntDatum(-1),
+		},
+		{
+			key: encode(tblID, types.NewIntDatum(-1024)),
+			d:   types.NewIntDatum(-1024),
+		},
+		{
+			key: encode(tblID, types.NewIntDatum(math.MinInt64)),
+			d:   types.NewIntDatum(math.MinInt64),
+		},
+		{
+			key: encode(tblID, types.NewIntDatum(math.MinInt64/2)),
+			d:   types.NewIntDatum(math.MinInt64 / 2),
+		},
+		{
+			key: encode(tblID, types.NewIntDatum(math.MaxInt64))[:fixedLen-1],
+			d:   types.NewIntDatum(math.MaxInt64 - 0xFF),
+		},
+		{
+			key: encode(tblID, types.NewIntDatum(math.MaxInt64), types.NewIntDatum(0)),
+			d:   nullDatum,
+		},
+		{
+			key: encode(tblID, types.NewIntDatum(math.MaxInt64-1), types.NewIntDatum(0)),
+			d:   types.NewIntDatum(math.MaxInt64),
+		},
+		{
+			key: encode(tblID, types.NewIntDatum(123), types.NewIntDatum(0)),
+			d:   types.NewIntDatum(124),
+		},
+		{
+			key: encode(tblID, types.NewIntDatum(-123), types.NewIntDatum(0)),
+			d:   types.NewIntDatum(-122),
+		},
+		{
+			key: encode(tblID, types.NewIntDatum(math.MinInt64), types.NewIntDatum(0)),
+			d:   types.NewIntDatum(math.MinInt64 + 1),
+		},
+		{
+			key:      encode(tblID, types.NewUintDatum(0)),
+			d:        types.NewUintDatum(0),
+			unsigned: true,
+		},
+		{
+			key:      encode(tblID, types.NewUintDatum(1)),
+			d:        types.NewUintDatum(1),
+			unsigned: true,
+		},
+		{
+			key:      encode(tblID, types.NewUintDatum(1024)),
+			d:        types.NewUintDatum(1024),
+			unsigned: true,
+		},
+		{
+			key:      encode(tblID, types.NewUintDatum(math.MaxInt64)),
+			d:        types.NewUintDatum(math.MaxInt64),
+			unsigned: true,
+		},
+		{
+			key:      encode(tblID, types.NewUintDatum(math.MaxInt64+1)),
+			d:        types.NewUintDatum(math.MaxInt64 + 1),
+			unsigned: true,
+		},
+		{
+			key:      encode(tblID, types.NewUintDatum(math.MaxUint64)),
+			d:        types.NewUintDatum(math.MaxUint64),
+			unsigned: true,
+		},
+		{
+			key:      encode(tblID, types.NewUintDatum(math.MaxUint64))[:fixedLen-1],
+			d:        types.NewUintDatum(math.MaxUint64 - 0xFF),
+			unsigned: true,
+		},
+
+		{
+			key: encode(tblID, types.NewUintDatum(math.MaxUint64), types.NewIntDatum(0)),
+			d:   nullDatum,
+		},
+		{
+			key:      encode(tblID, types.NewUintDatum(math.MaxUint64-1), types.NewIntDatum(0)),
+			d:        types.NewUintDatum(math.MaxUint64),
+			unsigned: true,
+		},
+		{
+			key:      encode(tblID, types.NewUintDatum(123), types.NewIntDatum(0)),
+			d:        types.NewUintDatum(124),
+			unsigned: true,
+		},
+		{
+			key:      encode(tblID, types.NewUintDatum(0), types.NewIntDatum(0)),
+			d:        types.NewUintDatum(1),
+			unsigned: true,
+		},
+		{
+			key: []byte{},
+			d:   types.NewIntDatum(math.MinInt64),
+		},
+		{
+			key:      []byte{},
+			d:        types.NewUintDatum(0),
+			unsigned: true,
+		},
+		{
+			key: tablecodec.GenTableRecordPrefix(tblID),
+			d:   types.NewIntDatum(math.MinInt64),
+		},
+		{
+			key:      tablecodec.GenTableRecordPrefix(tblID),
+			d:        types.NewUintDatum(0),
+			unsigned: true,
+		},
+		{
+			// 3 is encoded intFlag
+			key: append(tablecodec.GenTableRecordPrefix(tblID), []byte{3}...),
+			d:   types.NewIntDatum(math.MinInt64),
+		},
+		{
+			// 3 is encoded intFlag
+			key:      append(tablecodec.GenTableRecordPrefix(tblID), []byte{3}...),
+			d:        types.NewUintDatum(0),
+			unsigned: true,
+		},
+		{
+			// 4 is encoded uintFlag
+			key: append(tablecodec.GenTableRecordPrefix(tblID), []byte{4}...),
+			d:   nullDatum,
+		},
+		{
+			// 4 is encoded uintFlag
+			key:      append(tablecodec.GenTableRecordPrefix(tblID), []byte{4}...),
+			d:        types.NewUintDatum(0),
+			unsigned: true,
+		},
+		{
+			// 5
+			key: append(tablecodec.GenTableRecordPrefix(tblID), []byte{5}...),
+			d:   nullDatum,
+		},
+		{
+			// 5
+			key:      append(tablecodec.GenTableRecordPrefix(tblID), []byte{5}...),
+			d:        nullDatum,
+			unsigned: true,
+		},
+	}
+
+	for _, c := range cases {
+		if !c.d.IsNull() {
+			if c.unsigned {
+				require.Equal(t, types.KindUint64, c.d.Kind())
+			} else {
+				require.Equal(t, types.KindInt64, c.d.Kind())
+			}
+		}
+
+		d := cache.GetNextIntDatumFromCommonHandle(c.key, tablecodec.GenTableRecordPrefix(tblID), c.unsigned)
+		require.Equal(t, c.d, d)
 	}
 }

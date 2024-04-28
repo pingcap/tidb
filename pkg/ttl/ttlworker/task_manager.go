@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -40,8 +41,8 @@ const setTTLTaskOwnerTemplate = `UPDATE mysql.tidb_ttl_task
 		status_update_time = %?
 	WHERE job_id = %? AND scan_id = %?`
 
-func setTTLTaskOwnerSQL(jobID string, scanID int64, id string, now time.Time) (string, []interface{}) {
-	return setTTLTaskOwnerTemplate, []interface{}{id, now.Format(timeFormat), now.Format(timeFormat), jobID, scanID}
+func setTTLTaskOwnerSQL(jobID string, scanID int64, id string, now time.Time) (string, []any) {
+	return setTTLTaskOwnerTemplate, []any{id, now.Format(timeFormat), now.Format(timeFormat), jobID, scanID}
 }
 
 const setTTLTaskFinishedTemplate = `UPDATE mysql.tidb_ttl_task
@@ -50,12 +51,12 @@ const setTTLTaskFinishedTemplate = `UPDATE mysql.tidb_ttl_task
 		state = %?
 	WHERE job_id = %? AND scan_id = %?`
 
-func setTTLTaskFinishedSQL(jobID string, scanID int64, state *cache.TTLTaskState, now time.Time) (string, []interface{}, error) {
+func setTTLTaskFinishedSQL(jobID string, scanID int64, state *cache.TTLTaskState, now time.Time) (string, []any, error) {
 	stateStr, err := json.Marshal(state)
 	if err != nil {
 		return "", nil, err
 	}
-	return setTTLTaskFinishedTemplate, []interface{}{now.Format(timeFormat), string(stateStr), jobID, scanID}, nil
+	return setTTLTaskFinishedTemplate, []any{now.Format(timeFormat), string(stateStr), jobID, scanID}, nil
 }
 
 const updateTTLTaskHeartBeatTempalte = `UPDATE mysql.tidb_ttl_task
@@ -63,12 +64,12 @@ const updateTTLTaskHeartBeatTempalte = `UPDATE mysql.tidb_ttl_task
 		owner_hb_time = %?
     WHERE job_id = %? AND scan_id = %?`
 
-func updateTTLTaskHeartBeatSQL(jobID string, scanID int64, now time.Time, state *cache.TTLTaskState) (string, []interface{}, error) {
+func updateTTLTaskHeartBeatSQL(jobID string, scanID int64, now time.Time, state *cache.TTLTaskState) (string, []any, error) {
 	stateStr, err := json.Marshal(state)
 	if err != nil {
 		return "", nil, err
 	}
-	return updateTTLTaskHeartBeatTempalte, []interface{}{string(stateStr), now.Format(timeFormat), jobID, scanID}, nil
+	return updateTTLTaskHeartBeatTempalte, []any{string(stateStr), now.Format(timeFormat), jobID, scanID}, nil
 }
 
 const countRunningTasks = "SELECT count(1) FROM mysql.tidb_ttl_task WHERE status = 'running'"
@@ -92,7 +93,7 @@ type taskManager struct {
 	runningTasks    []*runningScanTask
 
 	delCh         chan *ttlDeleteTask
-	notifyStateCh chan interface{}
+	notifyStateCh chan any
 }
 
 func newTaskManager(ctx context.Context, sessPool sessionPool, infoSchemaCache *cache.InfoSchemaCache, id string, store kv.Storage) *taskManager {
@@ -111,7 +112,7 @@ func newTaskManager(ctx context.Context, sessPool sessionPool, infoSchemaCache *
 		runningTasks:    []*runningScanTask{},
 
 		delCh:         make(chan *ttlDeleteTask),
-		notifyStateCh: make(chan interface{}, 1),
+		notifyStateCh: make(chan any, 1),
 	}
 }
 
@@ -321,6 +322,7 @@ loop:
 }
 
 func (m *taskManager) peekWaitingScanTasks(se session.Session, now time.Time) ([]*cache.TTLTask, error) {
+	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 	sql, args := cache.PeekWaitingTTLTask(now.Add(-getTaskManagerHeartBeatExpireInterval()))
 	rows, err := se.ExecuteSQL(m.ctx, sql, args...)
 	if err != nil {
@@ -372,6 +374,7 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 			return errors.WithStack(errTooManyRunningTasks)
 		}
 
+		intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 		sql, args := setTTLTaskOwnerSQL(task.JobID, task.ScanID, m.id, now)
 		_, err = se.ExecuteSQL(ctx, sql, args...)
 		if err != nil {
@@ -440,6 +443,7 @@ func (m *taskManager) updateHeartBeat(ctx context.Context, se session.Session, n
 			state.ScanTaskErr = task.result.err.Error()
 		}
 
+		intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 		sql, args, err := updateTTLTaskHeartBeatSQL(task.JobID, task.ScanID, now, state)
 		if err != nil {
 			return err
@@ -482,6 +486,7 @@ func (m *taskManager) reportTaskFinished(se session.Session, now time.Time, task
 		state.ScanTaskErr = task.result.err.Error()
 	}
 
+	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 	sql, args, err := setTTLTaskFinishedSQL(task.JobID, task.ScanID, state, now)
 	if err != nil {
 		return err

@@ -18,16 +18,19 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
 )
@@ -318,6 +321,19 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 					return "ghi", false, nil
 				},
 			},
+			{
+				Name:   "custom_eval_int_func",
+				EvalTp: types.ETInt,
+				RequireDynamicPrivileges: func(sem bool) []string {
+					if sem {
+						return []string{"RESTRICTED_CUSTOM_DYN_PRIV_2"}
+					}
+					return []string{"CUSTOM_DYN_PRIV_1"}
+				},
+				EvalIntFunc: func(ctx extension.FunctionContext, row chunk.Row) (int64, bool, error) {
+					return 1, false, nil
+				},
+			},
 		}),
 		extension.WithCustomDynPrivs([]string{
 			"CUSTOM_DYN_PRIV_1",
@@ -349,6 +365,7 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
 	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
 	tk1.MustQuery("select custom_both_dyn_priv_func()").Check(testkit.Rows("ghi"))
+	tk1.MustQuery("select custom_eval_int_func()").Check(testkit.Rows("1"))
 
 	// u1 in non-sem
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
@@ -356,6 +373,11 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 	require.EqualError(t, tk1.ExecToErr("select custom_only_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
 	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
 	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
+	require.EqualError(t, tk1.ExecToErr("select custom_eval_int_func()"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
+
+	// prepare should check privilege
+	require.EqualError(t, tk1.ExecToErr("prepare stmt1 from 'select custom_only_dyn_priv_func()'"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
+	require.EqualError(t, tk1.ExecToErr("prepare stmt2 from 'select custom_eval_int_func()'"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
 
 	// u2 in non-sem
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
@@ -363,6 +385,7 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
 	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
 	tk1.MustQuery("select custom_both_dyn_priv_func()").Check(testkit.Rows("ghi"))
+	tk1.MustQuery("select custom_eval_int_func()").Check(testkit.Rows("1"))
 
 	// u3 in non-sem
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u3", Hostname: "localhost"}, nil, nil, nil))
@@ -370,6 +393,7 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 	require.EqualError(t, tk1.ExecToErr("select custom_only_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
 	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
 	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
+	require.EqualError(t, tk1.ExecToErr("select custom_eval_int_func()"), "[expression:1227]Access denied; you need (at least one of) the SUPER or CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
 
 	// u4 in non-sem
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil, nil))
@@ -377,6 +401,7 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
 	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
 	tk1.MustQuery("select custom_both_dyn_priv_func()").Check(testkit.Rows("ghi"))
+	tk1.MustQuery("select custom_eval_int_func()").Check(testkit.Rows("1"))
 
 	sem.Enable()
 
@@ -386,6 +411,7 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
 	require.EqualError(t, tk1.ExecToErr("select custom_only_sem_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
 	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
+	require.EqualError(t, tk1.ExecToErr("select custom_eval_int_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
 
 	// u1 in sem
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil, nil))
@@ -393,6 +419,7 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 	require.EqualError(t, tk1.ExecToErr("select custom_only_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
 	require.EqualError(t, tk1.ExecToErr("select custom_only_sem_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
 	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
+	require.EqualError(t, tk1.ExecToErr("select custom_eval_int_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
 
 	// u2 in sem
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
@@ -400,6 +427,7 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
 	require.EqualError(t, tk1.ExecToErr("select custom_only_sem_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
 	require.EqualError(t, tk1.ExecToErr("select custom_both_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
+	require.EqualError(t, tk1.ExecToErr("select custom_eval_int_func()"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
 
 	// u3 in sem
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u3", Hostname: "localhost"}, nil, nil, nil))
@@ -407,6 +435,7 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 	require.EqualError(t, tk1.ExecToErr("select custom_only_dyn_priv_func()"), "[expression:1227]Access denied; you need (at least one of) the CUSTOM_DYN_PRIV_1 privilege(s) for this operation")
 	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
 	tk1.MustQuery("select custom_both_dyn_priv_func()").Check(testkit.Rows("ghi"))
+	tk1.MustQuery("select custom_eval_int_func()").Check(testkit.Rows("1"))
 
 	// u4 in sem
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil, nil))
@@ -414,4 +443,83 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 	tk1.MustQuery("select custom_only_dyn_priv_func()").Check(testkit.Rows("abc"))
 	tk1.MustQuery("select custom_only_sem_dyn_priv_func()").Check(testkit.Rows("def"))
 	tk1.MustQuery("select custom_both_dyn_priv_func()").Check(testkit.Rows("ghi"))
+	tk1.MustQuery("select custom_eval_int_func()").Check(testkit.Rows("1"))
+
+	// Test the privilege should also be checked when evaluating especially for when privilege is revoked.
+	// We enable `fixcontrol.Fix49736` to force enable plan cache to make sure `Expression.EvalXXX` will be invoked.
+	tk1.Session().GetSessionVars().OptimizerFixControl[fixcontrol.Fix49736] = "ON"
+	tk1.MustExec("prepare s1 from 'select custom_both_dyn_priv_func()'")
+	tk1.MustExec("prepare s2 from 'select custom_eval_int_func()'")
+	tk1.MustQuery("execute s1").Check(testkit.Rows("ghi"))
+	tk1.MustQuery("execute s2").Check(testkit.Rows("1"))
+	tk.MustExec("REVOKE RESTRICTED_CUSTOM_DYN_PRIV_2 on *.* FROM u4@localhost")
+	require.EqualError(t, tk1.QueryToErr("execute s1"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
+	require.EqualError(t, tk1.QueryToErr("execute s2"), "[expression:1227]Access denied; you need (at least one of) the RESTRICTED_CUSTOM_DYN_PRIV_2 privilege(s) for this operation")
+	delete(tk1.Session().GetSessionVars().OptimizerFixControl, fixcontrol.Fix49736)
+}
+
+func TestShouldNotOptimizeExtensionFunc(t *testing.T) {
+	defer func() {
+		extension.Reset()
+		sem.Disable()
+	}()
+
+	extension.Reset()
+	var cnt atomic.Int64
+	require.NoError(t, extension.Register("test",
+		extension.WithCustomFunctions([]*extension.FunctionDef{
+			{
+				Name:   "my_func1",
+				EvalTp: types.ETInt,
+				EvalIntFunc: func(ctx extension.FunctionContext, row chunk.Row) (int64, bool, error) {
+					val := cnt.Add(1)
+					return val, false, nil
+				},
+			},
+			{
+				Name:   "my_func2",
+				EvalTp: types.ETString,
+				EvalStringFunc: func(ctx extension.FunctionContext, row chunk.Row) (string, bool, error) {
+					val := cnt.Add(1)
+					if val%2 == 0 {
+						return "abc", false, nil
+					}
+					return "def", false, nil
+				},
+			},
+		}),
+	))
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int primary key)")
+	tk.MustExec("insert into t1 values(1000), (2000)")
+
+	// Test extension function should not fold.
+	// if my_func1 is folded, the result will be "1000 1", "2000 1",
+	// because after fold the function will be called only once.
+	tk.MustQuery("select a, my_func1() from t1 order by a").Check(testkit.Rows("1000 1", "2000 2"))
+	require.Equal(t, int64(2), cnt.Load())
+
+	// Test extension function should not be seen as a constant, i.e., its `ConstantLevel()` should return `ConstNone`.
+	// my_func2 should be called twice to return different regexp string for the below query.
+	// If it is optimized by mistake, a wrong result "1000 0", "2000 0" will be produced.
+	cnt.Store(0)
+	tk.MustQuery("select a, 'abc' regexp my_func2() from t1 order by a").Check(testkit.Rows("1000 0", "2000 1"))
+
+	// Test flags after building expression
+	for _, exprStr := range []string{
+		"my_func1()",
+		"my_func2()",
+	} {
+		ctx := mock.NewContext()
+		ctx.GetSessionVars().StmtCtx.EnablePlanCache()
+		expr, err := expression.ParseSimpleExpr(ctx, exprStr)
+		require.NoError(t, err)
+		scalar, ok := expr.(*expression.ScalarFunction)
+		require.True(t, ok)
+		require.Equal(t, expression.ConstNone, scalar.ConstLevel())
+		require.False(t, ctx.GetSessionVars().StmtCtx.UseCache())
+	}
 }

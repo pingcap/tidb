@@ -29,11 +29,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TODO remove spill as it should be tested in sort_spill_test.go
+// TODO add some new fail points, as some fail point may be aborted after the refine
 func TestSortInDisk(t *testing.T) {
 	testSortInDisk(t, false)
 	testSortInDisk(t, true)
 }
 
+// TODO remove failpoint
 func testSortInDisk(t *testing.T, removeDir bool) {
 	restore := config.RestoreFunc()
 	defer restore()

@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -70,7 +69,7 @@ func (re *funcParam) getIntVal(id int) int64 {
 }
 
 // bool return value: return true when we get a const null parameter
-func buildStringParam(ctx sessionctx.Context, bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided bool) (*funcParam, bool, error) {
+func buildStringParam(ctx EvalContext, bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided bool) (*funcParam, bool, error) {
 	var pa funcParam
 	var err error
 
@@ -79,8 +78,9 @@ func buildStringParam(ctx sessionctx.Context, bf *baseBuiltinFunc, idx int, inpu
 		return &pa, false, nil
 	}
 
-	// Check if this is a const value
-	if bf.args[idx].ConstItem(ctx.GetSessionVars().StmtCtx) {
+	// Check if this is a const value.
+	// funcParam will not be shared between evaluations, so we just need it to be const in one ctx.
+	if bf.args[idx].ConstLevel() >= ConstOnlyInContext {
 		// Initialize the const
 		var isConstNull bool
 		pa.defaultStrVal, isConstNull, err = bf.args[idx].EvalString(ctx, chunk.Row{})
@@ -102,7 +102,7 @@ func buildStringParam(ctx sessionctx.Context, bf *baseBuiltinFunc, idx int, inpu
 }
 
 // bool return value: return true when we get a const null parameter
-func buildIntParam(ctx sessionctx.Context, bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided bool, defaultIntVal int64) (*funcParam, bool, error) {
+func buildIntParam(ctx EvalContext, bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided bool, defaultIntVal int64) (*funcParam, bool, error) {
 	var pa funcParam
 	var err error
 
@@ -112,7 +112,8 @@ func buildIntParam(ctx sessionctx.Context, bf *baseBuiltinFunc, idx int, input *
 	}
 
 	// Check if this is a const value
-	if bf.args[idx].ConstItem(ctx.GetSessionVars().StmtCtx) {
+	// funcParam will not be shared between evaluations, so we just need it to be const in one ctx.
+	if bf.args[idx].ConstLevel() >= ConstOnlyInContext {
 		// Initialize the const
 		var isConstNull bool
 		pa.defaultIntVal, isConstNull, err = bf.args[idx].EvalInt(ctx, chunk.Row{})

@@ -8,7 +8,7 @@ go_test(
         "partition_test.go",
     ],
     flaky = True,
-    shard_count = 17,
+    shard_count = 22,
     deps = [
         "//pkg/ddl",
         "//pkg/domain",

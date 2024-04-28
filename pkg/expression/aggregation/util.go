@@ -16,7 +16,7 @@ package aggregation
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	exprctx "github.com/pingcap/tidb/pkg/expression/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mvmap"
@@ -27,14 +27,14 @@ type distinctChecker struct {
 	existingKeys *mvmap.MVMap
 	key          []byte
 	vals         [][]byte
-	sc           *stmtctx.StatementContext
+	ctx          exprctx.EvalContext
 }
 
 // createDistinctChecker creates a new distinct checker.
-func createDistinctChecker(sc *stmtctx.StatementContext) *distinctChecker {
+func createDistinctChecker(ctx exprctx.EvalContext) *distinctChecker {
 	return &distinctChecker{
 		existingKeys: mvmap.NewMVMap(),
-		sc:           sc,
+		ctx:          ctx,
 	}
 }
 
@@ -42,8 +42,9 @@ func createDistinctChecker(sc *stmtctx.StatementContext) *distinctChecker {
 func (d *distinctChecker) Check(values []types.Datum) (bool, error) {
 	d.key = d.key[:0]
 	var err error
-	d.key, err = codec.EncodeValue(d.sc.TimeZone(), d.key, values...)
-	err = d.sc.HandleError(err)
+	d.key, err = codec.EncodeValue(d.ctx.Location(), d.key, values...)
+	ec := d.ctx.ErrCtx()
+	err = ec.HandleError(err)
 	if err != nil {
 		return false, err
 	}

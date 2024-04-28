@@ -194,15 +194,15 @@ func TestBuildStringFromLabels(t *testing.T) {
 	}
 }
 
-func TestEscapeGlobExceptAsterisk(t *testing.T) {
+func TestEscapeGlobQuestionMark(t *testing.T) {
 	cases := [][2]string{
 		{"123", "123"},
 		{"12*3", "12*3"},
 		{"12?", `12\?`},
-		{`[1-2]`, `\[1-2\]`},
+		{`[1-2]`, `[1-2]`},
 	}
 	for _, pair := range cases {
-		require.Equal(t, pair[1], EscapeGlobExceptAsterisk(pair[0]))
+		require.Equal(t, pair[1], EscapeGlobQuestionMark(pair[0]))
 	}
 }
 

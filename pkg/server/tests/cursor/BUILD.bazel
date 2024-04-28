@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "cursor_test",
+    timeout = "short",
+    srcs = [
+        "cursor_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/config",
+        "//pkg/metrics",
+        "//pkg/parser/mysql",
+        "//pkg/server",
+        "//pkg/session",
+        "//pkg/store/mockstore/unistore",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/topsql/state",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -111,9 +112,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	})
 
 	if preparedObj != nil {
-		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL)
+		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	} else {
-		CountStmtNode(stmtNode, sessVars.InRestrictedSQL)
+		CountStmtNode(stmtNode, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
 	}
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
@@ -129,7 +130,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
 		OutputNames:   names,
-		Ti:            &TelemetryInfo{},
 	}
 	// Use cached plan if possible.
 	if pointGetPlanShortPathOK {
@@ -141,7 +141,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 				stmt.PsStmt = preparedObj
 			} else {
 				// invalid the previous cached point plan
-				preparedObj.PreparedAst.CachedPlan = nil
+				preparedObj.PointGet.Plan = nil
 			}
 		}
 	}
@@ -159,9 +159,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 // If the estimated output row count of any operator in the physical plan tree
 // is greater than the specific threshold, we'll set it to lowPriority when
 // sending it to the coprocessor.
-func needLowerPriority(p plannercore.Plan) bool {
+func needLowerPriority(p base.Plan) bool {
 	switch x := p.(type) {
-	case plannercore.PhysicalPlan:
+	case base.PhysicalPlan:
 		return isPhysicalPlanNeedLowerPriority(x)
 	case *plannercore.Execute:
 		return needLowerPriority(x.Plan)
@@ -181,7 +181,7 @@ func needLowerPriority(p plannercore.Plan) bool {
 	return false
 }
 
-func isPhysicalPlanNeedLowerPriority(p plannercore.PhysicalPlan) bool {
+func isPhysicalPlanNeedLowerPriority(p base.PhysicalPlan) bool {
 	expensiveThreshold := int64(config.GetGlobalConfig().Log.ExpensiveThreshold)
 	if int64(p.StatsCount()) > expensiveThreshold {
 		return true
@@ -197,7 +197,7 @@ func isPhysicalPlanNeedLowerPriority(p plannercore.PhysicalPlan) bool {
 }
 
 // CountStmtNode records the number of statements with the same type.
-func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
+func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool, resourceGroup string) {
 	if inRestrictedSQL {
 		return
 	}
@@ -213,11 +213,11 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 			}
 		case config.GetGlobalConfig().Status.RecordDBLabel:
 			for dbLabel := range dbLabels {
-				metrics.StmtNodeCounter.WithLabelValues(typeLabel, dbLabel).Inc()
+				metrics.StmtNodeCounter.WithLabelValues(typeLabel, dbLabel, resourceGroup).Inc()
 			}
 		}
 	} else {
-		metrics.StmtNodeCounter.WithLabelValues(typeLabel, "").Inc()
+		metrics.StmtNodeCounter.WithLabelValues(typeLabel, "", resourceGroup).Inc()
 	}
 }
 

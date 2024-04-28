@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -47,7 +49,7 @@ var (
 )
 
 // GetMvccByKey gets the MVCC value by key, and returns a json string including decoded data
-func GetMvccByKey(tikvStore helper.Storage, key kv.Key, decodeMvccFn func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{})) string {
+func GetMvccByKey(tikvStore helper.Storage, key kv.Key, decodeMvccFn func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]any)) string {
 	if key == nil {
 		return ""
 	}
@@ -60,7 +62,7 @@ func GetMvccByKey(tikvStore helper.Storage, key kv.Key, decodeMvccFn func(kv.Key
 
 	decodeKey := strings.ToUpper(hex.EncodeToString(key))
 
-	resp := map[string]interface{}{
+	resp := map[string]any{
 		"key":      decodeKey,
 		"regionID": regionID,
 		"mvcc":     data,
@@ -101,8 +103,8 @@ type Reporter struct {
 }
 
 // DecodeRowMvccData creates a closure that captures the tableInfo to be used a decode function in GetMvccByKey.
-func DecodeRowMvccData(tableInfo *model.TableInfo) func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{}) {
-	return func(key kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]interface{}) {
+func DecodeRowMvccData(tableInfo *model.TableInfo) func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]any) {
+	return func(_ kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]any) {
 		colMap := make(map[int64]*types.FieldType, 3)
 		for _, col := range tableInfo.Columns {
 			var fieldType = col.FieldType
@@ -134,8 +136,8 @@ func DecodeRowMvccData(tableInfo *model.TableInfo) func(kv.Key, *kvrpcpb.MvccGet
 }
 
 // DecodeIndexMvccData creates a closure that captures the indexInfo to be used a decode function in GetMvccByKey.
-func DecodeIndexMvccData(indexInfo *model.IndexInfo) func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{}) {
-	return func(key kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]interface{}) {
+func DecodeIndexMvccData(indexInfo *model.IndexInfo) func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]any) {
+	return func(key kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]any) {
 		if respValue.Info != nil {
 			var (
 				hd    kv.Handle
@@ -185,69 +187,54 @@ func decodeMvccRecordValue(bs []byte, colMap map[int64]*types.FieldType, tb *mod
 
 // ReportLookupInconsistent reports inconsistent when index rows is more than record rows.
 func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt int, missHd, fullHd []kv.Handle, missRowIdx []RecordData) error {
-	if r.Sctx.GetSessionVars().EnableRedactLog {
-		logutil.Logger(ctx).Error("indexLookup found data inconsistency",
-			zap.String("table_name", r.Tbl.Name.O),
-			zap.String("index_name", r.Idx.Name.O),
-			zap.Int("index_cnt", idxCnt),
-			zap.Int("table_cnt", tblCnt),
-			zap.Stack("stack"))
-	} else {
-		const maxFullHandleCnt = 50
-		displayFullHdCnt := len(fullHd)
-		if displayFullHdCnt > maxFullHandleCnt {
-			displayFullHdCnt = maxFullHandleCnt
-		}
-		fs := []zap.Field{
-			zap.String("table_name", r.Tbl.Name.O),
-			zap.String("index_name", r.Idx.Name.O),
-			zap.Int("index_cnt", idxCnt), zap.Int("table_cnt", tblCnt),
-			zap.String("missing_handles", fmt.Sprint(missHd)),
-			zap.String("total_handles", fmt.Sprint(fullHd[:displayFullHdCnt])),
-		}
+	rmode := r.Sctx.GetSessionVars().EnableRedactLog
+
+	const maxFullHandleCnt = 50
+	displayFullHdCnt := min(len(fullHd), maxFullHandleCnt)
+	fs := []zap.Field{
+		zap.String("table_name", r.Tbl.Name.O),
+		zap.String("index_name", r.Idx.Name.O),
+		zap.Int("index_cnt", idxCnt), zap.Int("table_cnt", tblCnt),
+		zap.String("missing_handles", redact.String(rmode, fmt.Sprint(missHd))),
+		zap.String("total_handles", redact.String(rmode, fmt.Sprint(fullHd[:displayFullHdCnt]))),
+	}
+	if rmode != errors.RedactLogEnable {
 		store, ok := r.Sctx.GetStore().(helper.Storage)
 		if ok {
 			for i, hd := range missHd {
-				fs = append(fs, zap.String("row_mvcc_"+strconv.Itoa(i), GetMvccByKey(store, r.HandleEncode(hd), DecodeRowMvccData(r.Tbl))))
+				fs = append(fs, zap.String("row_mvcc_"+strconv.Itoa(i), redact.String(rmode, GetMvccByKey(store, r.HandleEncode(hd), DecodeRowMvccData(r.Tbl)))))
 			}
 			for i := range missRowIdx {
-				fs = append(fs, zap.String("index_mvcc_"+strconv.Itoa(i), GetMvccByKey(store, r.IndexEncode(&missRowIdx[i]), DecodeIndexMvccData(r.Idx))))
+				fs = append(fs, zap.String("index_mvcc_"+strconv.Itoa(i), redact.String(rmode, GetMvccByKey(store, r.IndexEncode(&missRowIdx[i]), DecodeIndexMvccData(r.Idx)))))
 			}
 		}
-
-		logutil.Logger(ctx).Error("indexLookup found data inconsistency", fs...)
 	}
+	fs = append(fs, zap.Stack("stack"))
+	logutil.Logger(ctx).Error("indexLookup found data inconsistency", fs...)
 	return ErrLookupInconsistent.GenWithStackByArgs(r.Tbl.Name.O, r.Idx.Name.O, idxCnt, tblCnt)
 }
 
 // ReportAdminCheckInconsistentWithColInfo reports inconsistent when the value of index row is different from record row.
 func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, handle kv.Handle, colName string, idxDat, tblDat fmt.Stringer, err error, idxRow *RecordData) error {
-	if r.Sctx.GetSessionVars().EnableRedactLog {
-		logutil.Logger(ctx).Error("admin check found data inconsistency",
-			zap.String("table_name", r.Tbl.Name.O),
-			zap.String("index", r.Idx.Name.O),
-			zap.String("col", colName),
-			zap.Error(err),
-			zap.Stack("stack"),
-		)
-	} else {
-		fs := []zap.Field{
-			zap.String("table_name", r.Tbl.Name.O),
-			zap.String("index_name", r.Idx.Name.O),
-			zap.String("col", colName),
-			zap.Stringer("row_id", handle),
-			zap.Stringer("idxDatum", idxDat),
-			zap.Stringer("rowDatum", tblDat),
-		}
+	rmode := r.Sctx.GetSessionVars().EnableRedactLog
+	fs := []zap.Field{
+		zap.String("table_name", r.Tbl.Name.O),
+		zap.String("index_name", r.Idx.Name.O),
+		zap.String("col", colName),
+		zap.Stringer("row_id", redact.Stringer(rmode, handle)),
+		zap.Stringer("idxDatum", redact.Stringer(rmode, idxDat)),
+		zap.Stringer("rowDatum", redact.Stringer(rmode, tblDat)),
+	}
+	if rmode != errors.RedactLogEnable {
 		store, ok := r.Sctx.GetStore().(helper.Storage)
 		if ok {
-			fs = append(fs, zap.String("row_mvcc", GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl))))
-			fs = append(fs, zap.String("index_mvcc", GetMvccByKey(store, r.IndexEncode(idxRow), DecodeIndexMvccData(r.Idx))))
+			fs = append(fs, zap.String("row_mvcc", redact.String(rmode, GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl)))))
+			fs = append(fs, zap.String("index_mvcc", redact.String(rmode, GetMvccByKey(store, r.IndexEncode(idxRow), DecodeIndexMvccData(r.Idx)))))
 		}
-		fs = append(fs, zap.Error(err))
-		fs = append(fs, zap.Stack("stack"))
-		logutil.Logger(ctx).Error("admin check found data inconsistency", fs...)
 	}
+	fs = append(fs, zap.Error(err))
+	fs = append(fs, zap.Stack("stack"))
+	logutil.Logger(ctx).Error("admin check found data inconsistency", fs...)
 	return ErrAdminCheckInconsistentWithColInfo.GenWithStackByArgs(r.Tbl.Name.O, r.Idx.Name.O, colName, fmt.Sprint(handle), fmt.Sprint(idxDat), fmt.Sprint(tblDat), err)
 }
 
@@ -266,29 +253,24 @@ func (r *RecordData) String() string {
 
 // ReportAdminCheckInconsistent reports inconsistent when single index row not found in record rows.
 func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.Handle, idxRow, tblRow *RecordData) error {
-	if r.Sctx.GetSessionVars().EnableRedactLog {
-		logutil.Logger(ctx).Error("admin check found data inconsistency",
-			zap.String("table_name", r.Tbl.Name.O),
-			zap.String("index", r.Idx.Name.O),
-			zap.Stack("stack"),
-		)
-	} else {
-		fs := []zap.Field{
-			zap.String("table_name", r.Tbl.Name.O),
-			zap.String("index_name", r.Idx.Name.O),
-			zap.Stringer("row_id", handle),
-			zap.Stringer("index", idxRow),
-			zap.Stringer("row", tblRow),
-		}
+	rmode := r.Sctx.GetSessionVars().EnableRedactLog
+	fs := []zap.Field{
+		zap.String("table_name", r.Tbl.Name.O),
+		zap.String("index_name", r.Idx.Name.O),
+		zap.Stringer("row_id", redact.Stringer(rmode, handle)),
+		zap.Stringer("index", redact.Stringer(rmode, idxRow)),
+		zap.Stringer("row", redact.Stringer(rmode, tblRow)),
+	}
+	if rmode != errors.RedactLogEnable {
 		store, ok := r.Sctx.GetStore().(helper.Storage)
 		if ok {
-			fs = append(fs, zap.String("row_mvcc", GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl))))
+			fs = append(fs, zap.String("row_mvcc", redact.String(rmode, GetMvccByKey(store, r.HandleEncode(handle), DecodeRowMvccData(r.Tbl)))))
 			if idxRow != nil {
-				fs = append(fs, zap.String("index_mvcc", GetMvccByKey(store, r.IndexEncode(idxRow), DecodeIndexMvccData(r.Idx))))
+				fs = append(fs, zap.String("index_mvcc", redact.String(rmode, GetMvccByKey(store, r.IndexEncode(idxRow), DecodeIndexMvccData(r.Idx)))))
 			}
 		}
-		fs = append(fs, zap.Stack("stack"))
-		logutil.Logger(ctx).Error("admin check found data inconsistency", fs...)
 	}
+	fs = append(fs, zap.Stack("stack"))
+	logutil.Logger(ctx).Error("admin check found data inconsistency", fs...)
 	return ErrAdminCheckInconsistent.GenWithStackByArgs(r.Tbl.Name.O, r.Idx.Name.O, fmt.Sprint(handle), fmt.Sprint(idxRow), fmt.Sprint(tblRow))
 }

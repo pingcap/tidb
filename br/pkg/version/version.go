@@ -16,9 +16,9 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -132,6 +132,9 @@ func CheckVersionForBackup(backupVersion *semver.Version) VerChecker {
 // CheckVersionForBRPiTR checks whether version of the cluster and BR-pitr itself is compatible.
 // Note: BR'version >= 6.1.0 at least in this function
 func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
+	if build.ReleaseVersion == build.ReleaseVersionForTest {
+		return nil
+	}
 	BRVersion, err := semver.NewVersion(removeVAndHash(build.ReleaseVersion))
 	if err != nil {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "%s: invalid version, please recompile using `git fetch origin --tags && make build`", err)
@@ -186,6 +189,9 @@ func CheckVersionForKeyspaceBR(_ *metapb.Store, tikvVersion *semver.Version) err
 
 // CheckVersionForBR checks whether version of the cluster and BR itself is compatible.
 func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
+	if build.ReleaseVersion == build.ReleaseVersionForTest {
+		return nil
+	}
 	BRVersion, err := semver.NewVersion(removeVAndHash(build.ReleaseVersion))
 	if err != nil {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "%s: invalid version, please recompile using `git fetch origin --tags && make build`", err)
@@ -316,7 +322,7 @@ func NormalizeBackupVersion(version string) *semver.Version {
 // NOTE: the executed query will be:
 // - `select tidb_version()` if target db is tidb
 // - `select version()` if target db is not tidb
-func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
+func FetchVersion(ctx context.Context, db dbutil.QueryExecutor) (string, error) {
 	var versionInfo string
 	const queryTiDB = "SELECT tidb_version();"
 	tidbRow := db.QueryRowContext(ctx, queryTiDB)

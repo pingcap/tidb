@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -161,7 +160,7 @@ func TestAnalyze(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	response, err := Analyze(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars, true, sctx.GetSessionVars().StmtCtx)
+	response, err := Analyze(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars, true, sctx.GetDistSQLCtx())
 	require.NoError(t, err)
 
 	result, ok := response.(*selectResult)
@@ -231,7 +230,7 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 	resp.count += numRows
 
 	var chunks []tipb.Chunk
-	if !canUseChunkRPC(resp.ctx) {
+	if !canUseChunkRPC(resp.ctx.GetDistSQLCtx()) {
 		datum := types.NewIntDatum(1)
 		bytes := make([]byte, 0, 100)
 		bytes, _ = codec.EncodeValue(time.UTC, bytes, datum, datum, datum, datum)
@@ -269,7 +268,7 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 		Chunks:       chunks,
 		OutputCounts: []int64{1},
 	}
-	if canUseChunkRPC(resp.ctx) {
+	if canUseChunkRPC(resp.ctx.GetDistSQLCtx()) {
 		respPB.EncodeType = tipb.EncodeType_TypeChunk
 	} else {
 		respPB.EncodeType = tipb.EncodeType_TypeDefault
@@ -320,7 +319,7 @@ func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Cont
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars(nil)).
+		SetFromSessionVars(DefaultDistSQLContext).
 		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 
@@ -336,7 +335,7 @@ func createSelectNormalByBenchmarkTest(batch, totalRows int, ctx sessionctx.Cont
 
 	// Test Next.
 	var response SelectResult
-	response, _ = Select(context.TODO(), ctx, request, colTypes)
+	response, _ = Select(context.TODO(), ctx.GetDistSQLCtx(), request, colTypes)
 
 	result, _ := response.(*selectResult)
 	resp, _ := result.resp.(*mockResponse)
@@ -389,7 +388,7 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars(nil)).
+		SetFromSessionVars(DefaultDistSQLContext).
 		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 	require.NoError(t, err)
@@ -411,9 +410,9 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 	// Test Next.
 	var response SelectResult
 	if planIDs == nil {
-		response, err = Select(context.TODO(), sctx, request, colTypes)
+		response, err = Select(context.TODO(), sctx.GetDistSQLCtx(), request, colTypes)
 	} else {
-		response, err = SelectWithRuntimeStats(context.TODO(), sctx, request, colTypes, planIDs, 1)
+		response, err = SelectWithRuntimeStats(context.TODO(), sctx.GetDistSQLCtx(), request, colTypes, planIDs, 1)
 	}
 
 	require.NoError(t, err)

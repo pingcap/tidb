@@ -129,14 +129,14 @@ CREATE TABLE t1 (id int, c varchar(128), primary key (id)) PARTITION BY HASH (id
 insert into t1 values (1, "a"), (11, "b"), (21, "c");
 explain format='brief' select * from t1 where id in (1, 1, 11);
 id	estRows	task	access object	operator info
-Batch_Point_Get	3.00	root	table:t1, partition:p1,p2	handle:[1 1 11], keep order:false, desc:false
+Batch_Point_Get	3.00	root	table:t1, partition:p1,p2	handle:[1 11], keep order:false, desc:false
 select * from t1 where id in (1, 1, 11);
 id	c
 1	a
 11	b
 explain format='brief' select * from t1 where id in (1, 11, 11, 21);
 id	estRows	task	access object	operator info
-Batch_Point_Get	4.00	root	table:t1, partition:p0,p1,p2	handle:[1 11 11 21], keep order:false, desc:false
+Batch_Point_Get	4.00	root	table:t1, partition:p0,p1,p2	handle:[1 11 21], keep order:false, desc:false
 select * from t1 where id in (1, 11, 11, 21);
 id	c
 1	a
@@ -150,16 +150,28 @@ partition p2 values less than (30));
 insert into t2 values (1, "a"), (11, "b"), (21, "c");
 explain format='brief' select * from t2 where id in (1, 1, 11);
 id	estRows	task	access object	operator info
-Batch_Point_Get	3.00	root	table:t2, partition:p0,p1	handle:[1 1 11], keep order:false, desc:false
+Batch_Point_Get	3.00	root	table:t2, partition:p0,p1	handle:[1 11], keep order:false, desc:false
 select * from t2 where id in (1, 1, 11);
 id	c
 1	a
 11	b
 explain format='brief' select * from t2 where id in (1, 1, 11);
 id	estRows	task	access object	operator info
-Batch_Point_Get	3.00	root	table:t2, partition:p0,p1	handle:[1 1 11], keep order:false, desc:false
+Batch_Point_Get	3.00	root	table:t2, partition:p0,p1	handle:[1 11], keep order:false, desc:false
 select * from t2 where id in (1, 11, 11, 21);
 id	c
 1	a
 11	b
 21	c
+drop table if exists tkey;
+create table tkey (col1 int not null, col2 varchar(32) not null, col3 int not null, unique(col1, col2)) partition by key(col2) partitions 4;
+insert into tkey values(1, 'a', 1), (2, 'b', 2);
+set session tidb_skip_missing_partition_stats=0;
+set session tidb_opt_fix_control = "";
+explain format='brief' select col1, col2, col3 from tkey where col1 = 1 and col2 = 'a' or col1 = 3 and col2 = 'c';
+id	estRows	task	access object	operator info
+Batch_Point_Get	2.00	root	table:tkey, partition:p3, index:col1(col1, col2)	keep order:false, desc:false
+select col1, col2, col3 from tkey where col1 = 1 and col2 = 'a' or col1 = 3 and col2 = 'c';
+col1	col2	col3
+1	a	1
+drop table tkey;

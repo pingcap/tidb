@@ -17,6 +17,7 @@ package cache
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"time"
@@ -33,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -182,28 +185,101 @@ func (t *PhysicalTable) ValidateKeyPrefix(key []types.Datum) error {
 	return nil
 }
 
-// EvalExpireTime returns the expired time
+var mockExpireTimeKey struct{}
+
+// SetMockExpireTime can only used in test
+func SetMockExpireTime(ctx context.Context, tm time.Time) context.Context {
+	return context.WithValue(ctx, mockExpireTimeKey, tm)
+}
+
+// EvalExpireTime returns the expired time.
+// It uses the global timezone to compute the expired time.
+// Then we'll reset the returned expired time to the same timezone as the input `now`.
 func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session,
 	now time.Time) (expire time.Time, err error) {
-	tz := se.GetSessionVars().Location()
+	if intest.InTest {
+		if tm, ok := ctx.Value(mockExpireTimeKey).(time.Time); ok {
+			return tm, err
+		}
+	}
 
 	expireExpr := t.TTLInfo.IntervalExprStr
 	unit := ast.TimeUnitType(t.TTLInfo.IntervalTimeUnit)
 
+	// Use the global time zone to compute expire time.
+	// Different timezones may have different results event with the same "now" time and TTL expression.
+	// Consider a TTL setting with the expiration `INTERVAL 1 MONTH`.
+	// If the current timezone is `Asia/Shanghai` and now is `2021-03-01 00:00:00 +0800`
+	// the expired time should be `2021-02-01 00:00:00 +0800`, corresponding to UTC time `2021-01-31 16:00:00 UTC`.
+	// But if we use the `UTC` time zone, the current time is `2021-02-28 16:00:00 UTC`,
+	// and the expired time should be `2021-01-28 16:00:00 UTC` that is not the same the previous one.
+	globalTz, err := se.GlobalTimeZone(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+
 	var rows []chunk.Row
+
+	// We should set the session time zone to UTC because the next SQLs should be executed in the UTC timezone.
+	// The session time zone should be reverted to the original one after the SQLs are executed.
+	rows, err = se.ExecuteSQL(ctx, "SELECT @@time_zone")
+	if err != nil {
+		return
+	}
+
+	originalTZ := rows[0].GetString(0)
+	if _, err = se.ExecuteSQL(ctx, "SET @@time_zone='UTC'"); err != nil {
+		return
+	}
+
+	defer func() {
+		_, restoreErr := se.ExecuteSQL(ctx, "SET @@time_zone=%?", originalTZ)
+		if err == nil {
+			err = restoreErr
+		}
+	}()
+
+	// Firstly, we should use the UTC time zone to compute the expired time to avoid time shift caused by DST.
+	// The start time should be a time with the same datetime string as `now` but it is in the UTC timezone.
+	// For example, if global timezone is `Asia/Shanghai` with a string format `2020-01-01 08:00:00 +0800`.
+	// The startTime should be in timezone `UTC` and have a string format `2020-01-01 08:00:00 +0000` which is not the
+	// same as the original one (`2020-01-01 00:00:00 +0000` in UTC actually).
+	nowInGlobalTZ := now.In(globalTz)
+	startTime := time.Date(
+		nowInGlobalTZ.Year(), nowInGlobalTZ.Month(), nowInGlobalTZ.Day(),
+		nowInGlobalTZ.Hour(), nowInGlobalTZ.Minute(), nowInGlobalTZ.Second(),
+		nowInGlobalTZ.Nanosecond(), time.UTC,
+	)
+
 	rows, err = se.ExecuteSQL(
 		ctx,
 		// FROM_UNIXTIME does not support negative value, so we use `FROM_UNIXTIME(0) + INTERVAL <current_ts>`
 		// to present current time
-		fmt.Sprintf("SELECT FROM_UNIXTIME(0) + INTERVAL %d SECOND - INTERVAL %s %s", now.Unix(), expireExpr, unit.String()),
+		fmt.Sprintf("SELECT FROM_UNIXTIME(0) + INTERVAL %d MICROSECOND - INTERVAL %s %s",
+			startTime.UnixMicro(),
+			expireExpr,
+			unit.String(),
+		),
 	)
 
 	if err != nil {
 		return
 	}
 
-	tm := rows[0].GetTime(0)
-	return tm.CoreTime().GoTime(tz)
+	tm, err := rows[0].GetTime(0).GoTime(time.UTC)
+	if err != nil {
+		return
+	}
+
+	// Then we should add the duration between the time get from the previous SQL and the start time to the now time.
+	expiredTime := nowInGlobalTZ.
+		In(now.Location()).
+		Add(tm.Sub(startTime)).
+		// Truncate to second to make sure the precision is always the same with the one stored in a table to avoid some
+		// comparing problems in testing.
+		Truncate(time.Second)
+
+	return expiredTime, nil
 }
 
 // SplitScanRanges split ranges for TTL scan
@@ -220,12 +296,15 @@ func (t *PhysicalTable) SplitScanRanges(ctx context.Context, store kv.Storage, s
 	ft := t.KeyColumns[0].FieldType
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeInt24:
+		if len(t.KeyColumns) > 1 {
+			return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, true, mysql.HasUnsignedFlag(ft.GetFlag()))
+		}
 		return t.splitIntRanges(ctx, tikvStore, splitCnt)
 	case mysql.TypeBit:
-		return t.splitBinaryRanges(ctx, tikvStore, splitCnt)
+		return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false)
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
 		if mysql.HasBinaryFlag(ft.GetFlag()) {
-			return t.splitBinaryRanges(ctx, tikvStore, splitCnt)
+			return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false)
 		}
 	}
 	return []ScanRange{newFullRange()}, nil
@@ -295,7 +374,9 @@ func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, 
 	return scanRanges, nil
 }
 
-func (t *PhysicalTable) splitBinaryRanges(ctx context.Context, store tikv.Storage, splitCnt int) ([]ScanRange, error) {
+func (t *PhysicalTable) splitCommonHandleRanges(
+	ctx context.Context, store tikv.Storage, splitCnt int, isInt bool, unsigned bool,
+) ([]ScanRange, error) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(t.ID)
 	startKey, endKey := recordPrefix, recordPrefix.PrefixNext()
 	keyRanges, err := t.splitRawKeyRanges(ctx, store, startKey, endKey, splitCnt)
@@ -316,11 +397,23 @@ func (t *PhysicalTable) splitBinaryRanges(ctx context.Context, store tikv.Storag
 
 		curScanEnd := nullDatum()
 		if i != len(keyRanges)-1 {
-			curScanEnd = GetNextBytesHandleDatum(keyRange.EndKey, recordPrefix)
+			if isInt {
+				curScanEnd = GetNextIntDatumFromCommonHandle(keyRange.EndKey, recordPrefix, unsigned)
+			} else {
+				curScanEnd = GetNextBytesHandleDatum(keyRange.EndKey, recordPrefix)
+			}
 		}
 
-		if !curScanStart.IsNull() && !curScanEnd.IsNull() && kv.Key(curScanStart.GetBytes()).Cmp(curScanEnd.GetBytes()) >= 0 {
-			continue
+		if !curScanStart.IsNull() && !curScanEnd.IsNull() {
+			cmp, err := curScanStart.Compare(types.StrictContext, &curScanEnd, collate.GetBinaryCollator())
+			intest.AssertNoError(err)
+			if err != nil {
+				return nil, err
+			}
+
+			if cmp >= 0 {
+				continue
+			}
 		}
 
 		scanRanges = append(scanRanges, newDatumRange(curScanStart, curScanEnd))
@@ -376,12 +469,24 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 	return ranges, nil
 }
 
-var emptyBytesHandleKey kv.Key
+var commonHandleBytesByte byte
+
+var commonHandleIntByte byte
+
+var commonHandleUintByte byte
 
 func init() {
 	key, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum(nil))
 	terror.MustNil(err)
-	emptyBytesHandleKey = key
+	commonHandleBytesByte = key[0]
+
+	key, err = codec.EncodeKey(time.UTC, nil, types.NewIntDatum(0))
+	terror.MustNil(err)
+	commonHandleIntByte = key[0]
+
+	key, err = codec.EncodeKey(time.UTC, nil, types.NewUintDatum(0))
+	terror.MustNil(err)
+	commonHandleUintByte = key[0]
 }
 
 // GetNextIntHandle is used for int handle tables.
@@ -421,6 +526,73 @@ func GetNextIntHandle(key kv.Key, recordPrefix []byte) kv.Handle {
 	return kv.IntHandle(u + 1)
 }
 
+// GetNextIntDatumFromCommonHandle is used for common handle tables with int value.
+// It returns the min handle whose encoded key is or after argument `key`
+// If it cannot find a valid value, a null datum will be returned.
+func GetNextIntDatumFromCommonHandle(key kv.Key, recordPrefix []byte, unsigned bool) (d types.Datum) {
+	if key.Cmp(recordPrefix) > 0 && !key.HasPrefix(recordPrefix) {
+		d.SetNull()
+		return d
+	}
+
+	typeByte := commonHandleIntByte
+	if unsigned {
+		typeByte = commonHandleUintByte
+	}
+
+	var minDatum types.Datum
+	if unsigned {
+		minDatum.SetUint64(0)
+	} else {
+		minDatum.SetInt64(math.MinInt64)
+	}
+
+	if key.Cmp(recordPrefix) <= 0 {
+		d = minDatum
+		return d
+	}
+
+	encodedVal := key[len(recordPrefix):]
+	if encodedVal[0] < typeByte {
+		d = minDatum
+		return d
+	}
+
+	if encodedVal[0] > typeByte {
+		d.SetNull()
+		return d
+	}
+
+	if len(encodedVal) < 9 {
+		newVal := make([]byte, 9)
+		copy(newVal, encodedVal)
+		encodedVal = newVal
+	}
+
+	_, v, err := codec.DecodeOne(encodedVal)
+	intest.AssertNoError(err)
+	if err != nil {
+		// should never happen
+		terror.Log(errors.Annotatef(err, "TTL decode common handle failed, key: %s", hex.EncodeToString(key)))
+		return nullDatum()
+	}
+
+	if len(encodedVal) > 9 {
+		if (unsigned && v.GetUint64() == math.MaxUint64) || (!unsigned && v.GetInt64() == math.MaxInt64) {
+			d.SetNull()
+			return d
+		}
+
+		if unsigned {
+			v.SetUint64(v.GetUint64() + 1)
+		} else {
+			v.SetInt64(v.GetInt64() + 1)
+		}
+	}
+
+	return v
+}
+
 // GetNextBytesHandleDatum is used for a table with one binary or string column common handle.
 // It returns the minValue whose encoded key is or after argument `key`
 // If it cannot find a valid value, a null datum will be returned.
@@ -436,12 +608,12 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 	}
 
 	encodedVal := key[len(recordPrefix):]
-	if encodedVal[0] < emptyBytesHandleKey[0] {
+	if encodedVal[0] < commonHandleBytesByte {
 		d.SetBytes([]byte{})
 		return d
 	}
 
-	if encodedVal[0] > emptyBytesHandleKey[0] {
+	if encodedVal[0] > commonHandleBytesByte {
 		d.SetNull()
 		return d
 	}

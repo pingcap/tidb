@@ -14,7 +14,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -22,6 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	tidbutils "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/spf13/cobra"
 )
 
@@ -36,6 +37,7 @@ var (
 		"*.*",
 		fmt.Sprintf("!%s.*", utils.TemporaryDBName("*")),
 		"!mysql.*",
+		"mysql.bind_info",
 		"mysql.user",
 		"mysql.db",
 		"mysql.tables_priv",
@@ -159,6 +161,7 @@ func Init(cmd *cobra.Command) (err error) {
 			return
 		}
 		log.ReplaceGlobals(lg, p)
+		memory.InitMemoryHook()
 
 		redactLog, e := cmd.Flags().GetBool(FlagRedactLog)
 		if e != nil {

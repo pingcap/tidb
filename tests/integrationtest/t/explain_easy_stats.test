@@ -15,6 +15,7 @@ set @@session.tidb_hashagg_partial_concurrency = 1;
 set @@session.tidb_hashagg_final_concurrency = 1;
 
 
+# t1 has no column stats for c2 and t2 has no column stats for c1;
 explain format = 'brief' select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 explain format = 'brief' select * from t1;
 explain format = 'brief' select * from t1 order by c2;

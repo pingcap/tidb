@@ -160,7 +160,7 @@ func TestLimitAndIndexScan(t *testing.T) {
 }
 
 // nolint: unused, deadcode
-func parseTimeCost(t *testing.T, line []interface{}) time.Duration {
+func parseTimeCost(t *testing.T, line []any) time.Duration {
 	lineStr := fmt.Sprintf("%v", line)
 	idx := strings.Index(lineStr, "time:")
 	require.NotEqual(t, -1, idx)

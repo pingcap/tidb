@@ -60,7 +60,7 @@ func (lm *PDLabelManager) GetAllLabelRules(ctx context.Context) ([]*label.Rule, 
 }
 
 // GetLabelRules implements GetLabelRules
-func (lm *PDLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rule, error) {
+func (lm *PDLabelManager) GetLabelRules(ctx context.Context, _ []string) (map[string]*label.Rule, error) {
 	labelRules, err := lm.pdHTTPCli.GetAllRegionLabelRules(ctx)
 	if err != nil {
 		return nil, err
@@ -78,7 +78,7 @@ type mockLabelManager struct {
 }
 
 // PutLabelRule implements PutLabelRule
-func (mm *mockLabelManager) PutLabelRule(ctx context.Context, rule *label.Rule) error {
+func (mm *mockLabelManager) PutLabelRule(_ context.Context, rule *label.Rule) error {
 	mm.Lock()
 	defer mm.Unlock()
 	if rule == nil {
@@ -93,7 +93,7 @@ func (mm *mockLabelManager) PutLabelRule(ctx context.Context, rule *label.Rule) 
 }
 
 // UpdateLabelRules implements UpdateLabelRules
-func (mm *mockLabelManager) UpdateLabelRules(ctx context.Context, patch *pd.LabelRulePatch) error {
+func (mm *mockLabelManager) UpdateLabelRules(_ context.Context, patch *pd.LabelRulePatch) error {
 	mm.Lock()
 	defer mm.Unlock()
 	if patch == nil {
@@ -116,7 +116,7 @@ func (mm *mockLabelManager) UpdateLabelRules(ctx context.Context, patch *pd.Labe
 }
 
 // mockLabelManager implements GetAllLabelRules
-func (mm *mockLabelManager) GetAllLabelRules(ctx context.Context) ([]*label.Rule, error) {
+func (mm *mockLabelManager) GetAllLabelRules(context.Context) ([]*label.Rule, error) {
 	mm.RLock()
 	defer mm.RUnlock()
 	r := make([]*label.Rule, 0, len(mm.labelRules))
@@ -135,7 +135,7 @@ func (mm *mockLabelManager) GetAllLabelRules(ctx context.Context) ([]*label.Rule
 }
 
 // mockLabelManager implements GetLabelRules
-func (mm *mockLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rule, error) {
+func (mm *mockLabelManager) GetLabelRules(_ context.Context, ruleIDs []string) (map[string]*label.Rule, error) {
 	mm.RLock()
 	defer mm.RUnlock()
 	r := make(map[string]*label.Rule, len(ruleIDs))

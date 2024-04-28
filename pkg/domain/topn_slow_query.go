@@ -32,11 +32,11 @@ func (h *slowQueryHeap) Len() int           { return len(h.data) }
 func (h *slowQueryHeap) Less(i, j int) bool { return h.data[i].Duration < h.data[j].Duration }
 func (h *slowQueryHeap) Swap(i, j int)      { h.data[i], h.data[j] = h.data[j], h.data[i] }
 
-func (h *slowQueryHeap) Push(x interface{}) {
+func (h *slowQueryHeap) Push(x any) {
 	h.data = append(h.data, x.(*SlowQueryInfo))
 }
 
-func (h *slowQueryHeap) Pop() interface{} {
+func (h *slowQueryHeap) Pop() any {
 	old := h.data
 	n := len(old)
 	x := old[n-1]

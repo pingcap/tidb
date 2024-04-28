@@ -222,7 +222,7 @@ func TestJobStartTime(t *testing.T) {
 		BinlogInfo: &HistoryInfo{},
 	}
 	require.Equal(t, TSConvert2Time(job.StartTS), time.Unix(0, 0))
-	require.Equal(t, fmt.Sprintf("ID:123, Type:none, State:none, SchemaState:none, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: %s, Err:<nil>, ErrCount:0, SnapshotVersion:0", time.Unix(0, 0)), job.String())
+	require.Equal(t, fmt.Sprintf("ID:123, Type:none, State:none, SchemaState:none, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: %s, Err:<nil>, ErrCount:0, SnapshotVersion:0, LocalMode: false", time.Unix(0, 0)), job.String())
 }
 
 func TestJobCodec(t *testing.T) {
@@ -817,4 +817,17 @@ func TestTTLJobInterval(t *testing.T) {
 	interval, err = ttlInfo.GetJobInterval()
 	require.NoError(t, err)
 	require.Equal(t, time.Hour*200, interval)
+}
+
+func TestClearReorgIntermediateInfo(t *testing.T) {
+	ptInfo := &PartitionInfo{}
+	ptInfo.DDLType = PartitionTypeHash
+	ptInfo.DDLExpr = "Test DDL Expr"
+	ptInfo.NewTableID = 1111
+
+	ptInfo.ClearReorgIntermediateInfo()
+	require.Equal(t, PartitionTypeNone, ptInfo.DDLType)
+	require.Equal(t, "", ptInfo.DDLExpr)
+	require.Equal(t, true, ptInfo.DDLColumns == nil)
+	require.Equal(t, int64(0), ptInfo.NewTableID)
 }

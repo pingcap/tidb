@@ -25,73 +25,74 @@ import (
 
 // memBuffer wraps tikv.MemDB as kv.MemBuffer.
 type memBuffer struct {
-	*tikv.MemDB
+	tikv.MemBuffer
+	isPipelinedDML bool
 }
 
-func newMemBuffer(m *tikv.MemDB) kv.MemBuffer {
+func newMemBuffer(m tikv.MemBuffer, isPipelinedDML bool) kv.MemBuffer {
 	if m == nil {
 		return nil
 	}
-	return &memBuffer{MemDB: m}
+	return &memBuffer{MemBuffer: m, isPipelinedDML: isPipelinedDML}
 }
 
 func (m *memBuffer) Size() int {
-	return m.MemDB.Size()
+	return m.MemBuffer.Size()
 }
 
 func (m *memBuffer) Delete(k kv.Key) error {
-	return m.MemDB.Delete(k)
+	return m.MemBuffer.Delete(k)
 }
 
 func (m *memBuffer) RemoveFromBuffer(k kv.Key) {
-	m.MemDB.RemoveFromBuffer(k)
+	m.MemBuffer.RemoveFromBuffer(k)
 }
 
 func (m *memBuffer) DeleteWithFlags(k kv.Key, ops ...kv.FlagsOp) error {
-	err := m.MemDB.DeleteWithFlags(k, getTiKVFlagsOps(ops)...)
+	err := m.MemBuffer.DeleteWithFlags(k, getTiKVFlagsOps(ops)...)
 	return derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) UpdateFlags(k kv.Key, ops ...kv.FlagsOp) {
-	m.MemDB.UpdateFlags(k, getTiKVFlagsOps(ops)...)
+	m.MemBuffer.UpdateFlags(k, getTiKVFlagsOps(ops)...)
 }
 
-func (m *memBuffer) Get(_ context.Context, key kv.Key) ([]byte, error) {
-	data, err := m.MemDB.Get(key)
+func (m *memBuffer) Get(ctx context.Context, key kv.Key) ([]byte, error) {
+	data, err := m.MemBuffer.Get(ctx, key)
 	return data, derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) GetFlags(key kv.Key) (kv.KeyFlags, error) {
-	data, err := m.MemDB.GetFlags(key)
+	data, err := m.MemBuffer.GetFlags(key)
 	return getTiDBKeyFlags(data), derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) Staging() kv.StagingHandle {
-	return kv.StagingHandle(m.MemDB.Staging())
+	return kv.StagingHandle(m.MemBuffer.Staging())
 }
 
 func (m *memBuffer) Cleanup(h kv.StagingHandle) {
-	m.MemDB.Cleanup(int(h))
+	m.MemBuffer.Cleanup(int(h))
 }
 
 func (m *memBuffer) Release(h kv.StagingHandle) {
-	m.MemDB.Release(int(h))
+	m.MemBuffer.Release(int(h))
 }
 
 func (m *memBuffer) InspectStage(handle kv.StagingHandle, f func(kv.Key, kv.KeyFlags, []byte)) {
 	tf := func(key []byte, flag tikvstore.KeyFlags, value []byte) {
-		f(kv.Key(key), getTiDBKeyFlags(flag), value)
+		f(key, getTiDBKeyFlags(flag), value)
 	}
-	m.MemDB.InspectStage(int(handle), tf)
+	m.MemBuffer.InspectStage(int(handle), tf)
 }
 
 func (m *memBuffer) Set(key kv.Key, value []byte) error {
-	err := m.MemDB.Set(key, value)
+	err := m.MemBuffer.Set(key, value)
 	return derr.ToTiDBErr(err)
 }
 
 func (m *memBuffer) SetWithFlags(key kv.Key, value []byte, ops ...kv.FlagsOp) error {
-	err := m.MemDB.SetWithFlags(key, value, getTiKVFlagsOps(ops)...)
+	err := m.MemBuffer.SetWithFlags(key, value, getTiKVFlagsOps(ops)...)
 	return derr.ToTiDBErr(err)
 }
 
@@ -100,7 +101,7 @@ func (m *memBuffer) SetWithFlags(key kv.Key, value []byte, ops ...kv.FlagsOp) er
 // It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
 // The Iterator must be Closed after use.
 func (m *memBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	it, err := m.MemDB.Iter(k, upperBound)
+	it, err := m.MemBuffer.Iter(k, upperBound)
 	return &tikvIterator{Iterator: it}, derr.ToTiDBErr(err)
 }
 
@@ -108,24 +109,44 @@ func (m *memBuffer) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 // The returned iterator will iterate from greater key to smaller key.
 // If k is nil, the returned iterator will be positioned at the last key.
 func (m *memBuffer) IterReverse(k, lowerBound kv.Key) (kv.Iterator, error) {
-	it, err := m.MemDB.IterReverse(k, lowerBound)
+	it, err := m.MemBuffer.IterReverse(k, lowerBound)
 	return &tikvIterator{Iterator: it}, derr.ToTiDBErr(err)
 }
 
-// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
+// SnapshotIter returns an Iterator for a snapshot of MemBuffer.
 func (m *memBuffer) SnapshotIter(k, upperbound kv.Key) kv.Iterator {
-	it := m.MemDB.SnapshotIter(k, upperbound)
+	if m.isPipelinedDML {
+		return &kv.EmptyIterator{}
+	}
+	it := m.MemBuffer.SnapshotIter(k, upperbound)
 	return &tikvIterator{Iterator: it}
 }
 
 func (m *memBuffer) SnapshotIterReverse(k, lowerBound kv.Key) kv.Iterator {
-	it := m.MemDB.SnapshotIterReverse(k, lowerBound)
+	if m.isPipelinedDML {
+		return &kv.EmptyIterator{}
+	}
+	it := m.MemBuffer.SnapshotIterReverse(k, lowerBound)
 	return &tikvIterator{Iterator: it}
 }
 
 // SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 func (m *memBuffer) SnapshotGetter() kv.Getter {
-	return newKVGetter(m.MemDB.SnapshotGetter())
+	if m.isPipelinedDML {
+		return &kv.EmptyRetriever{}
+	}
+	return newKVGetter(m.MemBuffer.SnapshotGetter())
+}
+
+// GetLocal implements kv.MemBuffer interface
+func (m *memBuffer) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
+	data, err := m.MemBuffer.GetLocal(ctx, key)
+	return data, derr.ToTiDBErr(err)
+}
+
+func (m *memBuffer) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
+	data, err := m.MemBuffer.BatchGet(ctx, keys)
+	return data, derr.ToTiDBErr(err)
 }
 
 type tikvGetter struct {
@@ -136,8 +157,8 @@ func newKVGetter(getter tikv.Getter) kv.Getter {
 	return &tikvGetter{Getter: getter}
 }
 
-func (g *tikvGetter) Get(_ context.Context, k kv.Key) ([]byte, error) {
-	data, err := g.Getter.Get(k)
+func (g *tikvGetter) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	data, err := g.Getter.Get(ctx, k)
 	return data, derr.ToTiDBErr(err)
 }
 

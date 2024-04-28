@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -30,6 +31,9 @@ type InfoCache struct {
 	mu sync.RWMutex
 	// cache is sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	cache []schemaAndTimestamp
+
+	r    autoid.Requirement
+	Data *Data
 }
 
 type schemaAndTimestamp struct {
@@ -38,9 +42,12 @@ type schemaAndTimestamp struct {
 }
 
 // NewCache creates a new InfoCache.
-func NewCache(capacity int) *InfoCache {
+func NewCache(r autoid.Requirement, capacity int) *InfoCache {
+	infoData := NewData()
 	return &InfoCache{
 		cache: make([]schemaAndTimestamp, 0, capacity),
+		r:     r,
+		Data:  infoData,
 	}
 }
 
@@ -136,7 +143,10 @@ func (h *InfoCache) getByVersionNoLock(version int64) InfoSchema {
 		return h.cache[i].infoschema.SchemaMetaVersion() <= version
 	})
 
-	// `GetByVersion` is allowed to load the latest schema that is less than argument `version`.
+	// `GetByVersion` is allowed to load the latest schema that is less than argument
+	// `version` when the argument `version` <= the latest schema version.
+	// if `version` > the latest schema version, always return nil, loadInfoSchema
+	// will use this behavior to decide whether to load schema diffs or full reload.
 	// Consider cache has values [10, 9, _, _, 6, 5, 4, 3, 2, 1], version 8 and 7 is empty because of the diff is empty.
 	// If we want to get version 8, we can return version 6 because v7 and v8 do not change anything, they are totally the same,
 	// in this case the `i` will not be 0.
@@ -193,7 +203,8 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 	})
 
 	// cached entry
-	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version {
+	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version &&
+		IsV2(h.cache[i].infoschema) == IsV2(is) {
 		// update timestamp if it is not 0 and cached one is 0
 		if schemaTS > 0 && h.cache[i].timestamp == 0 {
 			h.cache[i].timestamp = int64(schemaTS)

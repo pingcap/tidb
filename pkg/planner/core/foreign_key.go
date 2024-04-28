@@ -22,8 +22,9 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 // FKCheck indicates the foreign key constraint checker.
@@ -54,7 +55,7 @@ type FKCascade struct {
 	// CascadePlans contains the child cascade plan.
 	// CascadePlans will be filled during execution, so only `explain analyze` statement result contains the cascade plan,
 	// `explain` statement result doesn't contain the cascade plan.
-	CascadePlans []Plan
+	CascadePlans []base.Plan
 }
 
 // FKCascadeType indicates in which (delete/update) statements.
@@ -71,7 +72,7 @@ const (
 )
 
 // AccessObject implements dataAccesser interface.
-func (f *FKCheck) AccessObject() AccessObject {
+func (f *FKCheck) AccessObject() base.AccessObject {
 	if f.Idx == nil {
 		return OtherAccessObject(fmt.Sprintf("table:%s", f.Tbl.Meta().Name))
 	}
@@ -108,7 +109,7 @@ func (f *FKCheck) MemoryUsage() (sum int64) {
 }
 
 // AccessObject implements dataAccesser interface.
-func (f *FKCascade) AccessObject() AccessObject {
+func (f *FKCascade) AccessObject() base.AccessObject {
 	if f.FKIdx == nil {
 		return OtherAccessObject(fmt.Sprintf("table:%s", f.ChildTable.Meta().Name))
 	}
@@ -140,7 +141,7 @@ func (f *FKCascade) MemoryUsage() (sum int64) {
 	return
 }
 
-func (p *Insert) buildOnInsertFKTriggers(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string) error {
+func (p *Insert) buildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, dbName string) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
 	}
@@ -175,7 +176,7 @@ func (p *Insert) buildOnInsertFKTriggers(ctx sessionctx.Context, is infoschema.I
 		if fk.Version < 1 {
 			continue
 		}
-		failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
+		failedErr := plannererrors.ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
 		fkCheck, err := buildFKCheckOnModifyChildTable(ctx, is, fk, failedErr)
 		if err != nil {
 			return err
@@ -197,7 +198,7 @@ func (p *Insert) buildOnDuplicateUpdateColumns() map[string]struct{} {
 	return m
 }
 
-func (*Insert) buildOnReplaceReferredFKTriggers(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo) ([]*FKCheck, []*FKCascade, error) {
+func (*Insert) buildOnReplaceReferredFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo) ([]*FKCheck, []*FKCascade, error) {
 	referredFKs := is.GetTableReferredForeignKeys(dbName, tblInfo.Name.L)
 	fkChecks := make([]*FKCheck, 0, len(referredFKs))
 	fkCascades := make([]*FKCascade, 0, len(referredFKs))
@@ -216,7 +217,7 @@ func (*Insert) buildOnReplaceReferredFKTriggers(ctx sessionctx.Context, is infos
 	return fkChecks, fkCascades, nil
 }
 
-func (updt *Update) buildOnUpdateFKTriggers(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
+func (updt *Update) buildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
 	}
@@ -225,7 +226,7 @@ func (updt *Update) buildOnUpdateFKTriggers(ctx sessionctx.Context, is infoschem
 	fkCascades := make(map[int64][]*FKCascade)
 	for tid, tbl := range tblID2table {
 		tblInfo := tbl.Meta()
-		dbInfo, exist := is.SchemaByTable(tblInfo)
+		dbInfo, exist := infoschema.SchemaByTable(is, tblInfo)
 		if !exist {
 			// Normally, it should never happen. Just check here to avoid panic here.
 			return infoschema.ErrDatabaseNotExists
@@ -257,7 +258,7 @@ func (updt *Update) buildOnUpdateFKTriggers(ctx sessionctx.Context, is infoschem
 	return nil
 }
 
-func (del *Delete) buildOnDeleteFKTriggers(ctx sessionctx.Context, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
+func (del *Delete) buildOnDeleteFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, tblID2table map[int64]table.Table) error {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
 		return nil
 	}
@@ -265,7 +266,7 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx sessionctx.Context, is infoschema
 	fkCascades := make(map[int64][]*FKCascade)
 	for tid, tbl := range tblID2table {
 		tblInfo := tbl.Meta()
-		dbInfo, exist := is.SchemaByTable(tblInfo)
+		dbInfo, exist := infoschema.SchemaByTable(is, tblInfo)
 		if !exist {
 			return infoschema.ErrDatabaseNotExists
 		}
@@ -288,7 +289,7 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx sessionctx.Context, is infoschema
 	return nil
 }
 
-func buildOnUpdateReferredFKTriggers(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, []*FKCascade, error) {
+func buildOnUpdateReferredFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, []*FKCascade, error) {
 	referredFKs := is.GetTableReferredForeignKeys(dbName, tblInfo.Name.L)
 	fkChecks := make([]*FKCheck, 0, len(referredFKs))
 	fkCascades := make([]*FKCascade, 0, len(referredFKs))
@@ -310,7 +311,7 @@ func buildOnUpdateReferredFKTriggers(ctx sessionctx.Context, is infoschema.InfoS
 	return fkChecks, fkCascades, nil
 }
 
-func buildOnUpdateChildFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, error) {
+func buildOnUpdateChildFKChecks(ctx base.PlanContext, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, updateCols map[string]struct{}) ([]*FKCheck, error) {
 	fkChecks := make([]*FKCheck, 0, len(tblInfo.ForeignKeys))
 	for _, fk := range tblInfo.ForeignKeys {
 		if fk.Version < 1 {
@@ -319,7 +320,7 @@ func buildOnUpdateChildFKChecks(ctx sessionctx.Context, is infoschema.InfoSchema
 		if !isMapContainAnyCols(updateCols, fk.Cols...) {
 			continue
 		}
-		failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
+		failedErr := plannererrors.ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
 		fkCheck, err := buildFKCheckOnModifyChildTable(ctx, is, fk, failedErr)
 		if err != nil {
 			return nil, err
@@ -365,7 +366,7 @@ func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]struct{} {
 	return tblID2UpdateColumns
 }
 
-func buildOnDeleteOrUpdateFKTrigger(ctx sessionctx.Context, is infoschema.InfoSchema, referredFK *model.ReferredFKInfo, tp FKCascadeType) (*FKCheck, *FKCascade, error) {
+func buildOnDeleteOrUpdateFKTrigger(ctx base.PlanContext, is infoschema.InfoSchema, referredFK *model.ReferredFKInfo, tp FKCascadeType) (*FKCheck, *FKCascade, error) {
 	childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
 	if err != nil {
 		return nil, nil, nil
@@ -405,7 +406,7 @@ func isMapContainAnyCols(colsMap map[string]struct{}, cols ...model.CIStr) bool 
 	return false
 }
 
-func buildFKCheckOnModifyChildTable(ctx sessionctx.Context, is infoschema.InfoSchema, fk *model.FKInfo, failedErr error) (*FKCheck, error) {
+func buildFKCheckOnModifyChildTable(ctx base.PlanContext, is infoschema.InfoSchema, fk *model.FKInfo, failedErr error) (*FKCheck, error) {
 	referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
 	if err != nil {
 		return nil, nil
@@ -419,8 +420,8 @@ func buildFKCheckOnModifyChildTable(ctx sessionctx.Context, is infoschema.InfoSc
 	return fkCheck, nil
 }
 
-func buildFKCheckForReferredFK(ctx sessionctx.Context, childTable table.Table, fk *model.FKInfo, referredFK *model.ReferredFKInfo) (*FKCheck, error) {
-	failedErr := ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
+func buildFKCheckForReferredFK(ctx base.PlanContext, childTable table.Table, fk *model.FKInfo, referredFK *model.ReferredFKInfo) (*FKCheck, error) {
+	failedErr := plannererrors.ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
 	fkCheck, err := buildFKCheck(ctx, childTable, fk.Cols, failedErr)
 	if err != nil {
 		return nil, err
@@ -430,7 +431,7 @@ func buildFKCheckForReferredFK(ctx sessionctx.Context, childTable table.Table, f
 	return fkCheck, nil
 }
 
-func buildFKCheck(ctx sessionctx.Context, tbl table.Table, cols []model.CIStr, failedErr error) (*FKCheck, error) {
+func buildFKCheck(ctx base.PlanContext, tbl table.Table, cols []model.CIStr, failedErr error) (*FKCheck, error) {
 	tblInfo := tbl.Meta()
 	if tblInfo.PKIsHandle && len(cols) == 1 {
 		refColInfo := model.FindColumnInfo(tblInfo.Columns, cols[0].L)
@@ -467,7 +468,7 @@ func buildFKCheck(ctx sessionctx.Context, tbl table.Table, cols []model.CIStr, f
 	}.Init(ctx), nil
 }
 
-func buildFKCascade(ctx sessionctx.Context, tp FKCascadeType, referredFK *model.ReferredFKInfo, childTable table.Table, fk *model.FKInfo) (*FKCascade, error) {
+func buildFKCascade(ctx base.PlanContext, tp FKCascadeType, referredFK *model.ReferredFKInfo, childTable table.Table, fk *model.FKInfo) (*FKCascade, error) {
 	cols := make([]*model.ColumnInfo, len(fk.Cols))
 	childTableColumns := childTable.Meta().Columns
 	for i, c := range fk.Cols {
