@@ -1817,7 +1817,7 @@ func writeOneKVToLocal(
 			return errors.Trace(err)
 		}
 		failpoint.Inject("mockLocalWriterError", func() {
-			failpoint.Return(errors.New("mock engine error"))
+			failpoint.Return(errors.New("ErrMockRetryable"))
 		})
 		writeBufs.IndexKeyBuf = key
 		writeBufs.RowValBuf = idxVal

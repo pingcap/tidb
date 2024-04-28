@@ -525,9 +525,10 @@ var reorgRetryableErrCodes = map[uint16]struct{}{
 // reorgRetryableMessages record errors that do not have an error code.
 var reorgRetryableMessages = []string{
 	"ErrPDBatchScanRegion", // TiDB restarts during import may encounter this error.
+	"ErrMockRetryable",     // Only used for test.
 }
 
-// IsReorgRetryableErr check whether the error is retryable during DDL reorganization.
+// IsReorgRetryableErr checks whether the error is retryable during DDL reorganization.
 func IsReorgRetryableErr(err error) bool {
 	msg := err.Error()
 	for _, retryMsg := range reorgRetryableMessages {
