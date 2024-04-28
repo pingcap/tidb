@@ -228,7 +228,7 @@ type CommandDDLJobsExec struct {
 // just with different processes. And, it should not be called directly by the
 // Executor.
 func (e *CommandDDLJobsExec) Open(context.Context) error {
-	// We want to use a global transaction to execute the admin command, so we don't use e.Sctx() here.
+	// We want to use a global transaction to execute the admin command, so we don't use e.Ctx() here.
 	newSess, err := e.GetSysSession()
 	if err != nil {
 		return err

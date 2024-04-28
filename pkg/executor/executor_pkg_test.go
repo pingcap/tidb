@@ -16,7 +16,6 @@ package executor
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/executor/join"
 	"runtime"
 	"strconv"
 	"strings"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"

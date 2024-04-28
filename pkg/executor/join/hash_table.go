@@ -146,7 +146,7 @@ func (c *hashRowContainer) ShallowCopy() *hashRowContainer {
 
 // GetMatchedRows get matched rows from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
-// h and Buf.
+// h and buf.
 func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, hCtx *HashContext, matched []chunk.Row) ([]chunk.Row, error) {
 	matchedRows, _, err := c.GetMatchedRowsAndPtrs(probeKey, probeRow, hCtx, matched, nil, false)
 	return matchedRows, err
@@ -195,7 +195,7 @@ func (c *hashRowContainer) GetOneMatchedRow(probeKey uint64, probeRow chunk.Row,
 
 func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *HashContext, probeSideRow chunk.Row,
 	probeKeyNullBits *bitmap.ConcurrentBitmap, matched []chunk.Row, needCheckBuildColPos, needCheckProbeColPos []int, needCheckBuildTypes, needCheckProbeTypes []*types.FieldType) ([]chunk.Row, error) {
-	// for NAAJ probe Row with null, we should match them with all build rows.
+	// for NAAJ probe row with null, we should match them with all build rows.
 	var (
 		ok        bool
 		err       error
@@ -214,12 +214,12 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *HashContext, probeSideRo
 		return matched, nil
 	}
 	// all built bucket rows come from hash table, their bitmap are all nil (doesn't contain any null). so
-	// we could only use the probe null bits to Filter valid rows.
+	// we could only use the probe null bits to filter valid rows.
 	if probeKeyNullBits != nil && len(probeHCtx.NaKeyColIdx) > 1 {
 		// if len(probeHCtx.NaKeyColIdx)=1
 		//     that means the NA-Join probe key is directly a (null) <-> (fetch all buckets), nothing to do.
 		// else like
-		//	   (null, 1, 2), we should use the not-null probe bit to Filter rows. Only fetch rows like
+		//	   (null, 1, 2), we should use the not-null probe bit to filter rows. Only fetch rows like
 		//     (  ? , 1, 2), that exactly with value as 1 and 2 in the second and third join key column.
 		needCheckProbeColPos = needCheckProbeColPos[:0]
 		needCheckBuildColPos = needCheckBuildColPos[:0]
@@ -252,14 +252,14 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *HashContext, probeSideRo
 			if !ok {
 				continue
 			}
-			// once ok. just append the (maybe) valid build Row for latter other conditions check if any.
+			// once ok. just append the (maybe) valid build row for latter other conditions check if any.
 		}
 		matched = append(matched, mayMatchedRow)
 	}
 	return matched, nil
 }
 
-// signalCheckpointForJoinMask indicates the times of Row probe that a signal detection will be triggered.
+// signalCheckpointForJoinMask indicates the times of row probe that a signal detection will be triggered.
 const signalCheckpointForJoinMask int = 1<<17 - 1
 
 // rowSize is the size of Row.
@@ -270,7 +270,7 @@ const rowPtrSize = int64(unsafe.Sizeof(chunk.RowPtr{}))
 
 // GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
-// h and Buf.
+// h and buf.
 func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *HashContext, matched []chunk.Row, matchedPtrs []chunk.RowPtr, needPtr bool) ([]chunk.Row, []chunk.RowPtr, error) {
 	var err error
 	entry := c.hashTable.Get(probeKey)
@@ -350,8 +350,8 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *HashContext, probeSideRo
 		}
 		// since null bucket is a unified bucket. cases like below:
 		// case1: left side (probe side) has null
-		//    left side key <1,null>, actually we can fetch all bucket <1, ?> and Filter 1 at the first join key, once
-		//    got a valid right Row after other condition, then we can just return.
+		//    left side key <1,null>, actually we can fetch all bucket <1, ?> and filter 1 at the first join key, once
+		//    got a valid right row after other condition, then we can just return.
 		// case2: left side (probe side) don't have null
 		//    left side key <1, 2>, actually we should fetch <1,null>, <null, 2>, <null, null> from the null bucket because
 		//    case like <3,null> is obviously not matched with the probe key.
@@ -366,7 +366,7 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *HashContext, probeSideRo
 			// for values at the same index of the join key in which they are both not null, the values should be exactly the same.
 			//
 			// step: probeKeyNullBits & buildKeyNullBits, for those bits with 0, we should check if both values are the same.
-			// we can just use the UnsafeIsSet here, because insert action of the build side has all Finished.
+			// we can just use the UnsafeIsSet here, because insert action of the build side has all finished.
 			//
 			// 1 0 1 0 means left join key  : null ? null ?
 			// 1 0 0 0 means right join key : null ?   ?  ?
@@ -394,7 +394,7 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *HashContext, probeSideRo
 			// we still need to do the non-null (explicit) value check.
 			//
 			// eg: the probe key is <1,2>, we only get <2, null> in the null bucket, even we can take the null as a wildcard symbol,
-			// the first value of this two tuple is obviously not a match. So we need Filter it here.
+			// the first value of this two tuple is obviously not a match. So we need filter it here.
 			for i := 0; i < keyColLen; i++ {
 				if nullEntry.nullBitMap.UnsafeIsSet(i) {
 					continue
@@ -413,13 +413,13 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *HashContext, probeSideRo
 				continue
 			}
 		}
-		// once ok. just append the (maybe) valid build Row for latter other conditions check if any.
+		// once ok. just append the (maybe) valid build row for latter other conditions check if any.
 		matched = append(matched, mayMatchedRow)
 	}
 	return matched, err
 }
 
-// matchJoinKey checks if join Keys of buildRow and probeRow are logically equal.
+// matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
 func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx *HashContext) (ok bool, err error) {
 	if len(c.hCtx.NaKeyColIdx) > 0 {
 		return codec.EqualChunkRow(c.sc.TypeCtx(),
@@ -439,7 +439,7 @@ func (c *hashRowContainer) AlreadySpilledSafeForTest() bool {
 
 // PutChunk puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
-// value of hash table: RowPtr of the corresponded Row
+// value of hash table: RowPtr of the corresponded row
 func (c *hashRowContainer) PutChunk(chk *chunk.Chunk, ignoreNulls []bool) error {
 	return c.PutChunkSelected(chk, nil, ignoreNulls)
 }
@@ -461,7 +461,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 
 	hCtx := c.hCtx
 	// By now, the combination of 1 and 2 can't take a run at same time.
-	// 1: write the Row data of join key to HashVals. (normal EQ key should ignore the null values.) null-EQ for Except statement is an exception.
+	// 1: write the row data of join key to hashVals. (normal EQ key should ignore the null values.) null-EQ for Except statement is an exception.
 	for keyIdx, colIdx := range c.hCtx.KeyColIdx {
 		ignoreNull := len(ignoreNulls) > keyIdx && ignoreNulls[keyIdx]
 		err := codec.HashChunkSelected(c.sc.TypeCtx(), hCtx.HashVals, chk, hCtx.AllTypes[keyIdx], colIdx, hCtx.Buf, hCtx.HasNull, selected, ignoreNull)
@@ -469,7 +469,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 			return errors.Trace(err)
 		}
 	}
-	// 2: write the Row data of NA join key to HashVals. (NA EQ key should collect all rows including null value as one bucket.)
+	// 2: write the row data of NA join key to hashVals. (NA EQ key should collect all rows including null value as one bucket.)
 	isNAAJ := len(c.hCtx.NaKeyColIdx) > 0
 	hasNullMark := make([]bool, len(hCtx.HasNull))
 	for keyIdx, colIdx := range c.hCtx.NaKeyColIdx {
@@ -479,8 +479,8 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 			return errors.Trace(err)
 		}
 		// todo: we can collect the bitmap in codec.HashChunkSelected to avoid loop here, but the params modification is quite big.
-		// after fetch one NA column, collect the null value to null bitmap for every Row. (use HasNull flag to accelerate)
-		// eg: if a NA Join cols is (a, b, c), for every build Row here we maintained a 3-bit map to mark which column are null for them.
+		// after fetch one NA column, collect the null value to null bitmap for every row. (use hasNull flag to accelerate)
+		// eg: if a NA Join cols is (a, b, c), for every build row here we maintained a 3-bit map to mark which column are null for them.
 		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 			if hCtx.HasNull[rowIdx] {
 				hCtx.naColNullBitMap[rowIdx].UnsafeSet(keyIdx)
@@ -499,7 +499,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 			if hasNullMark[i] {
 				// collect the null rows to slice.
 				rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
-				// do not directly ref the null bits map here, because the bit map will be reset and reused in Next batch of chunk data.
+				// do not directly ref the null bits map here, because the bit map will be reset and reused in next batch of chunk data.
 				c.hashNANullBucket.entries = append(c.hashNANullBucket.entries, &naEntry{rowPtr, c.hCtx.naColNullBitMap[i].Clone()})
 			} else {
 				// insert the not-null rows to hash table.
@@ -666,7 +666,7 @@ func (ht *unsafeHashTable) Get(hashKey uint64) *entry {
 	return entryAddr
 }
 
-// Len returns the number of rowPtrs in the unsafeHashTable, the number of Keys may be less than Len
+// Len returns the number of rowPtrs in the unsafeHashTable, the number of keys may be less than Len
 // if the same key is put more than once.
 func (ht *unsafeHashTable) Len() uint64 { return ht.length }
 

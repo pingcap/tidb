@@ -64,7 +64,7 @@ func (m concurrentMap) Insert(key uint64, value *entry) (memDelta int64) {
 
 // UpsertCb : Callback to return new element to be inserted into the map
 // It is called while lock is held, therefore it MUST NOT
-// try to access other Keys in same map, as it can lead to deadlock since
+// try to access other keys in same map, as it can lead to deadlock since
 // Go sync.RWLock is not reentrant
 type UpsertCb func(exist bool, valueInMap, newValue *entry) *entry
 
