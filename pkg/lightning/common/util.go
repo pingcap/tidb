@@ -173,7 +173,7 @@ type SQLWithRetry struct {
 }
 
 func (t SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose string, action func() error) error {
-	return retryWithCount(purpose, parentLogger, action, s.RetryCount)
+	return retryWithCount(purpose, parentLogger, action, t.RetryCount)
 }
 
 // Retry is shared by SQLWithRetry.perform, implementation of GlueCheckpointsDB and TiDB's glue implementation
