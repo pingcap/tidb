@@ -9,11 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
     shard_count = 14,
-=======
-    shard_count = 11,
->>>>>>> 944fff519c9 (executor: Fix index join hash produces redundant rows for left outer anti semi join type (#52908))
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",
