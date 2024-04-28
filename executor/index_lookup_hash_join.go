@@ -26,7 +26,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD:executor/index_lookup_hash_join.go
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
@@ -35,27 +34,16 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-=======
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/channel"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/ranger"
->>>>>>> 944fff519c9 (executor: Fix index join hash produces redundant rows for left outer anti semi join type (#52908)):pkg/executor/index_lookup_hash_join.go
 )
 
 // numResChkHold indicates the number of resource chunks that an inner worker
 // holds at the same time.
 // It's used in 2 cases individually:
-// 1. IndexMergeJoin
-// 2. IndexNestedLoopHashJoin:
-//    It's used when IndexNestedLoopHashJoin.keepOuterOrder is true.
-//    Otherwise, there will be at most `concurrency` resource chunks throughout
-//    the execution of IndexNestedLoopHashJoin.
+//  1. IndexMergeJoin
+//  2. IndexNestedLoopHashJoin:
+//     It's used when IndexNestedLoopHashJoin.keepOuterOrder is true.
+//     Otherwise, there will be at most `concurrency` resource chunks throughout
+//     the execution of IndexNestedLoopHashJoin.
 const numResChkHold = 4
 
 // IndexNestedLoopHashJoin employs one outer worker and N inner workers to
@@ -65,10 +53,11 @@ const numResChkHold = 4
 // 1. The outer worker reads N outer rows, builds a task and sends it to the
 // inner worker channel.
 // 2. The inner worker receives the tasks and does 3 things for every task:
-//    1. builds hash table from the outer rows
-//    2. builds key ranges from outer rows and fetches inner rows
-//    3. probes the hash table and sends the join result to the main thread channel.
-//    Note: step 1 and step 2 runs concurrently.
+//  1. builds hash table from the outer rows
+//  2. builds key ranges from outer rows and fetches inner rows
+//  3. probes the hash table and sends the join result to the main thread channel.
+//     Note: step 1 and step 2 runs concurrently.
+//
 // 3. The main thread receives the join results.
 type IndexNestedLoopHashJoin struct {
 	IndexLookUpJoin
@@ -733,16 +722,10 @@ func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task
 		return nil, nil, nil
 	}
 	joinType := JoinerType(iw.joiner)
-<<<<<<< HEAD:executor/index_lookup_hash_join.go
-	isSemiJoin := joinType == plannercore.SemiJoin || joinType == plannercore.LeftOuterSemiJoin
+	isSemiJoin := joinType == plannercore.SemiJoin || joinType == plannercore.LeftOuterSemiJoin || joinType == plannercore.AntiSemiJoin || joinType == plannercore.AntiLeftOuterSemiJoin
 	matchedRows = make([]chunk.Row, 0, len(iw.matchedOuterPtrs))
 	matchedRowPtr = make([]chunk.RowPtr, 0, len(iw.matchedOuterPtrs))
 	for _, ptr := range iw.matchedOuterPtrs {
-=======
-	isSemiJoin := joinType.IsSemiJoin()
-	for ; matchedOuterEntry != nil; matchedOuterEntry = matchedOuterEntry.next {
-		ptr := matchedOuterEntry.ptr
->>>>>>> 944fff519c9 (executor: Fix index join hash produces redundant rows for left outer anti semi join type (#52908)):pkg/executor/index_lookup_hash_join.go
 		outerRow := task.outerResult.GetRow(ptr)
 		ok, err := codec.EqualChunkRow(iw.ctx.GetSessionVars().StmtCtx, innerRow, iw.hashTypes, iw.hashCols, outerRow, iw.outerCtx.hashTypes, iw.outerCtx.hashCols)
 		if err != nil {
@@ -813,11 +796,11 @@ func (iw *indexHashJoinInnerWorker) collectMatchedInnerPtrs4OuterRows(ctx contex
 }
 
 // doJoinInOrder follows the following steps:
-// 1. collect all the matched inner row ptrs for every outer row
-// 2. do the join work
-//   2.1 collect all the matched inner rows using the collected ptrs for every outer row
-//   2.2 call tryToMatchInners for every outer row
-//   2.3 call onMissMatch when no inner rows are matched
+//  1. collect all the matched inner row ptrs for every outer row
+//  2. do the join work
+//     2.1 collect all the matched inner rows using the collected ptrs for every outer row
+//     2.2 call tryToMatchInners for every outer row
+//     2.3 call onMissMatch when no inner rows are matched
 func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) (err error) {
 	defer func() {
 		if err == nil && joinResult.chk != nil {
