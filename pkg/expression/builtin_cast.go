@@ -111,7 +111,8 @@ var (
 type castAsIntFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp      *types.FieldType
+	inUnion bool
 }
 
 func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
@@ -122,7 +123,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.IsInUnionCast())
+	bf := newBaseBuiltinCastFunc(b, c.inUnion)
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
 		sig = &builtinCastIntAsIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
@@ -160,7 +161,8 @@ func (c *castAsIntFunctionClass) getFunction(ctx BuildContext, args []Expression
 type castAsRealFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp      *types.FieldType
+	inUnion bool
 }
 
 func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
@@ -171,7 +173,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.IsInUnionCast())
+	bf := newBaseBuiltinCastFunc(b, c.inUnion)
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastRealAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
@@ -215,7 +217,8 @@ func (c *castAsRealFunctionClass) getFunction(ctx BuildContext, args []Expressio
 type castAsDecimalFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp      *types.FieldType
+	inUnion bool
 }
 
 func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
@@ -226,7 +229,7 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx BuildContext, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinCastFunc(b, ctx.IsInUnionCast())
+	bf := newBaseBuiltinCastFunc(b, c.inUnion)
 	if IsBinaryLiteral(args[0]) {
 		sig = &builtinCastDecimalAsDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsDecimal)
@@ -2052,11 +2055,9 @@ func CanImplicitEvalReal(expr Expression) bool {
 // BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union
 // Expression.
 func BuildCastFunction4Union(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	if !ctx.IsInUnionCast() {
-		ctx.SetInUnionCast(true)
-		defer ctx.SetInUnionCast(false)
-	}
-	return BuildCastFunction(ctx, expr, tp)
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, true)
+	terror.Log(err)
+	return
 }
 
 // BuildCastCollationFunction builds a ScalarFunction which casts the collation.
@@ -2091,13 +2092,13 @@ func BuildCastCollationFunction(ctx BuildContext, expr Expression, ec *ExprColla
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	res, err := BuildCastFunctionWithCheck(ctx, expr, tp)
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false)
 	terror.Log(err)
 	return
 }
 
 // BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
-func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression, err error) {
+func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType, inUnion bool) (res Expression, err error) {
 	argType := expr.GetType()
 	// If source argument's nullable, then target type should be nullable
 	if !mysql.HasNotNullFlag(argType.GetFlag()) {
@@ -2107,11 +2108,11 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:
-		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, inUnion}
 	case types.ETDecimal:
-		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, inUnion}
 	case types.ETReal:
-		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, inUnion}
 	case types.ETDatetime, types.ETTimestamp:
 		fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	case types.ETDuration:

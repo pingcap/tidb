@@ -17,9 +17,11 @@ go_library(
         "//pkg/statistics/handle/types",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@org_golang_x_sync//singleflight",
         "@org_uber_go_zap//:zap",
     ],
 )

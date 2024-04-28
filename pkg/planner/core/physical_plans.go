@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -286,7 +287,7 @@ func (p *PhysicalTableReader) SetChildren(children ...base.PhysicalPlan) {
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
 }
@@ -301,7 +302,7 @@ func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalTableReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+func (p *PhysicalTableReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.basePhysicalPlan.AppendChildCandidate(op)
 	appendChildCandidate(p, p.tablePlan, op)
 }
@@ -363,7 +364,7 @@ func (p *PhysicalIndexReader) SetChildren(children ...base.PhysicalPlan) {
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.IndexPlans {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
 }
@@ -378,7 +379,7 @@ func (p *PhysicalIndexReader) BuildPlanTrace() *tracing.PlanTrace {
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+func (p *PhysicalIndexReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.basePhysicalPlan.AppendChildCandidate(op)
 	if p.indexPlan != nil {
 		appendChildCandidate(p, p.indexPlan, op)
@@ -499,10 +500,10 @@ func (p *PhysicalIndexLookUpReader) Clone() (base.PhysicalPlan, error) {
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	for _, child := range p.IndexPlans {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
 }
@@ -530,7 +531,7 @@ func (p *PhysicalIndexLookUpReader) BuildPlanTrace() *tracing.PlanTrace {
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexLookUpReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+func (p *PhysicalIndexLookUpReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.basePhysicalPlan.AppendChildCandidate(op)
 	if p.indexPlan != nil {
 		appendChildCandidate(p, p.indexPlan, op)
@@ -614,14 +615,14 @@ func (p *PhysicalIndexMergeReader) GetAvgTableRowSize() float64 {
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	for _, child := range p.partialPlans {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	for _, PartialPlan := range p.PartialPlans {
 		for _, child := range PartialPlan {
-			corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
+			corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 		}
 	}
 	return corCols
@@ -640,7 +641,7 @@ func (p *PhysicalIndexMergeReader) BuildPlanTrace() *tracing.PlanTrace {
 }
 
 // AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalIndexMergeReader) AppendChildCandidate(op *coreusage.PhysicalOptimizeOp) {
+func (p *PhysicalIndexMergeReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
 	p.basePhysicalPlan.AppendChildCandidate(op)
 	if p.tablePlan != nil {
 		appendChildCandidate(p, p.tablePlan, op)
@@ -2588,9 +2589,9 @@ type PhysicalCTETable struct {
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
 func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := ExtractCorrelatedCols4PhysicalPlan(p.SeedPlan)
+	corCols := coreusage.ExtractCorrelatedCols4PhysicalPlan(p.SeedPlan)
 	if p.RecurPlan != nil {
-		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(p.RecurPlan)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(p.RecurPlan)...)
 	}
 	return corCols
 }
@@ -2767,7 +2768,7 @@ func (p *PhysicalCTEStorage) Clone() (base.PhysicalPlan, error) {
 	return (*PhysicalCTEStorage)(cloned.(*PhysicalCTE)), nil
 }
 
-func appendChildCandidate(origin base.PhysicalPlan, pp base.PhysicalPlan, op *coreusage.PhysicalOptimizeOp) {
+func appendChildCandidate(origin base.PhysicalPlan, pp base.PhysicalPlan, op *optimizetrace.PhysicalOptimizeOp) {
 	candidate := &tracing.CandidatePlanTrace{
 		PlanTrace: &tracing.PlanTrace{
 			ID:          pp.ID(),

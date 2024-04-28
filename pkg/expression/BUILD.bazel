@@ -199,6 +199,7 @@ go_test(
         "//pkg/config",
         "//pkg/errctx",
         "//pkg/errno",
+        "//pkg/expression/context",
         "//pkg/kv",
         "//pkg/parser",
         "//pkg/parser/ast",

@@ -300,7 +300,7 @@ func TestSessionBuildContext(t *testing.T) {
 	// PlanCache
 	vars.StmtCtx.EnablePlanCache()
 	require.True(t, impl.IsUseCache())
-	impl.SetSkipPlanCache(errors.New("mockReason"))
+	impl.SetSkipPlanCache("mockReason")
 	require.False(t, impl.IsUseCache())
 
 	// Alloc column id
@@ -315,36 +315,6 @@ func TestSessionBuildContext(t *testing.T) {
 
 	// InNullRejectCheck
 	require.False(t, impl.IsInNullRejectCheck())
-	impl.SetInNullRejectCheck(true)
-	require.True(t, impl.IsInNullRejectCheck())
-	impl.SetInNullRejectCheck(false)
-	require.False(t, impl.IsInNullRejectCheck())
-
-	// InUnionCast
-	require.False(t, impl.IsInUnionCast())
-	impl.SetInUnionCast(true)
-	require.True(t, impl.IsInUnionCast())
-	impl.SetInUnionCast(false)
-	require.False(t, impl.IsInUnionCast())
-
-	// InInsertOrUpdate
-	vars.StmtCtx.InInsertStmt = false
-	vars.StmtCtx.InUpdateStmt = false
-	require.False(t, impl.InInsertOrUpdate())
-
-	vars.StmtCtx.InInsertStmt = true
-	require.True(t, impl.InInsertOrUpdate())
-
-	vars.StmtCtx.InInsertStmt = false
-	vars.StmtCtx.InUpdateStmt = true
-	require.True(t, impl.InInsertOrUpdate())
-
-	vars.StmtCtx.InInsertStmt = true
-	require.True(t, impl.InInsertOrUpdate())
-
-	vars.StmtCtx.InInsertStmt = false
-	vars.StmtCtx.InUpdateStmt = false
-	require.False(t, impl.InInsertOrUpdate())
 
 	// ConnID
 	vars.ConnectionID = 123

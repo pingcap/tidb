@@ -1456,7 +1456,7 @@ func init() {
 	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p base.PhysicalPlan, is infoschema.InfoSchema, pctx planctx.PlanContext) ([]types.Datum, error) {
 		defer func(begin time.Time) {
 			s := pctx.GetSessionVars()
-			s.StmtCtx.SetSkipPlanCache(errors.NewNoStackError("query has uncorrelated sub-queries is un-cacheable"))
+			s.StmtCtx.SetSkipPlanCache("query has uncorrelated sub-queries is un-cacheable")
 			s.RewritePhaseInfo.PreprocessSubQueries++
 			s.RewritePhaseInfo.DurationPreprocessSubQuery += time.Since(begin)
 		}(time.Now())
@@ -2020,6 +2020,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID = vars.ConnectionID
 	vars.StmtCtx.TableStats = make(map[int64]any)
+	sc.MDLRelatedTableIDs = make(map[int64]struct{})
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {

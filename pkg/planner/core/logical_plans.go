@@ -32,6 +32,7 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -875,7 +876,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 				// the dependent columns in scalar function should be also considered as output columns as well.
 				outputColsUniqueIDs.Insert(int(one.UniqueID))
 			}
-			notnull := isNullRejected(p.SCtx(), p.schema, x)
+			notnull := util.IsNullRejected(p.SCtx(), p.schema, x)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
@@ -1015,7 +1016,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 				determinants.Insert(int(one.UniqueID))
 				groupByColsOutputCols.Insert(int(one.UniqueID))
 			}
-			notnull := isNullRejected(la.SCtx(), la.schema, x)
+			notnull := util.IsNullRejected(la.SCtx(), la.schema, x)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
@@ -1182,7 +1183,7 @@ func extractNotNullFromConds(conditions []expression.Expression, p base.LogicalP
 	for _, condition := range conditions {
 		var cols []*expression.Column
 		cols = expression.ExtractColumnsFromExpressions(cols, []expression.Expression{condition}, nil)
-		if isNullRejected(p.SCtx(), p.Schema(), condition) {
+		if util.IsNullRejected(p.SCtx(), p.Schema(), condition) {
 			for _, col := range cols {
 				notnullColsUniqueIDs.Insert(int(col.UniqueID))
 			}
@@ -1334,7 +1335,7 @@ func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 func (la *LogicalApply) ExtractFD() *fd.FDSet {
 	innerPlan := la.children[1]
 	// build the join correlated equal condition for apply join, this equal condition is used for deriving the transitive FD between outer and inner side.
-	correlatedCols := ExtractCorrelatedCols4LogicalPlan(innerPlan)
+	correlatedCols := coreusage.ExtractCorrelatedCols4LogicalPlan(innerPlan)
 	deduplicateCorrelatedCols := make(map[int64]*expression.CorrelatedColumn)
 	for _, cc := range correlatedCols {
 		if _, ok := deduplicateCorrelatedCols[cc.UniqueID]; !ok {
@@ -2185,58 +2186,6 @@ func (p *LogicalWindow) GetWindowResultColumns() []*expression.Column {
 	return p.schema.Columns[p.schema.Len()-len(p.WindowFuncDescs):]
 }
 
-// ExtractCorColumnsBySchema only extracts the correlated columns that match the specified schema.
-// e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
-// only [t2.a] is returned.
-func ExtractCorColumnsBySchema(corCols []*expression.CorrelatedColumn, schema *expression.Schema, resolveIndex bool) []*expression.CorrelatedColumn {
-	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
-	for _, corCol := range corCols {
-		idx := schema.ColumnIndex(&corCol.Column)
-		if idx != -1 {
-			if resultCorCols[idx] == nil {
-				resultCorCols[idx] = &expression.CorrelatedColumn{
-					Column: *schema.Columns[idx],
-					Data:   new(types.Datum),
-				}
-			}
-			corCol.Data = resultCorCols[idx].Data
-		}
-	}
-	// Shrink slice. e.g. [col1, nil, col2, nil] will be changed to [col1, col2].
-	length := 0
-	for _, col := range resultCorCols {
-		if col != nil {
-			resultCorCols[length] = col
-			length++
-		}
-	}
-	resultCorCols = resultCorCols[:length]
-
-	if resolveIndex {
-		for _, corCol := range resultCorCols {
-			corCol.Index = schema.ColumnIndex(&corCol.Column)
-		}
-	}
-
-	return resultCorCols
-}
-
-// extractCorColumnsBySchema4LogicalPlan only extracts the correlated columns that match the specified schema.
-// e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
-// only [t2.a] is returned.
-func extractCorColumnsBySchema4LogicalPlan(p base.LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
-	corCols := ExtractCorrelatedCols4LogicalPlan(p)
-	return ExtractCorColumnsBySchema(corCols, schema, false)
-}
-
-// ExtractCorColumnsBySchema4PhysicalPlan only extracts the correlated columns that match the specified schema.
-// e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
-// only [t2.a] is returned.
-func ExtractCorColumnsBySchema4PhysicalPlan(p base.PhysicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
-	corCols := ExtractCorrelatedCols4PhysicalPlan(p)
-	return ExtractCorColumnsBySchema(corCols, schema, true)
-}
-
 // ShowContents stores the contents for the `SHOW` statement.
 type ShowContents struct {
 	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
@@ -2365,9 +2314,9 @@ type LogicalCTETable struct {
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := ExtractCorrelatedCols4LogicalPlan(p.cte.seedPartLogicalPlan)
+	corCols := coreusage.ExtractCorrelatedCols4LogicalPlan(p.cte.seedPartLogicalPlan)
 	if p.cte.recursivePartLogicalPlan != nil {
-		corCols = append(corCols, ExtractCorrelatedCols4LogicalPlan(p.cte.recursivePartLogicalPlan)...)
+		corCols = append(corCols, coreusage.ExtractCorrelatedCols4LogicalPlan(p.cte.recursivePartLogicalPlan)...)
 	}
 	return corCols
 }
