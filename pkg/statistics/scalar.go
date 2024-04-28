@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/context"
 )
 
 // calcFraction is used to calculate the fraction of the interval [lower, upper] that lies within the [lower, value]
@@ -42,6 +42,12 @@ func calcFraction(lower, upper, value float64) float64 {
 	}
 	return frac
 }
+
+// UTCWithAllowInvalidDateCtx is introduced for the following reason:
+//
+//	Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
+//	Hence, when reading statistics, we should skip invalid date check. See #39336.
+var UTCWithAllowInvalidDateCtx = types.NewContext(types.DefaultStmtFlags|types.FlagIgnoreInvalidDateErr|types.FlagIgnoreZeroInDateErr, time.UTC, context.IgnoreWarn)
 
 func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	switch value.Kind() {
@@ -72,8 +78,7 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		case mysql.TypeTimestamp:
 			minTime = types.MinTimestamp
 		}
-		sc := stmtctx.NewStmtCtxWithTimeZone(types.BoundTimezone)
-		return float64(valueTime.Sub(sc.TypeCtx(), &minTime).Duration)
+		return float64(valueTime.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration)
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()
 		if len(bytes) <= commonPfxLen {
