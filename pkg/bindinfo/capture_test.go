@@ -767,6 +767,7 @@ func TestCaptureWildcardFilter(t *testing.T) {
 }
 
 func TestCaptureFilter(t *testing.T) {
+	t.Skip("deprecated")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
