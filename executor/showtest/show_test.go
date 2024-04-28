@@ -314,7 +314,7 @@ func TestShowCreateTable(t *testing.T) {
 	tk.MustQuery("show create table default_sequence").Check(testkit.RowsWithSep("|",
 		""+
 			"default_sequence CREATE TABLE `default_sequence` (\n"+
-			"  `a` int(11) DEFAULT nextval(`test`.`seq`)\n"+
+			"  `a` int(11) DEFAULT (nextval(`test`.`seq`))\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
@@ -483,7 +483,7 @@ func TestShowCreateTable(t *testing.T) {
 	tk.MustExec(`create table t(a bit default (rand()))`)
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
-		"  `a` bit(1) DEFAULT rand()\n"+
+		"  `a` bit(1) DEFAULT (rand())\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	tk.MustExec(`drop table if exists t`)
