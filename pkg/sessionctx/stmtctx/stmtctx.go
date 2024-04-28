@@ -399,6 +399,9 @@ type StatementContext struct {
 		value *uint64
 		eval  func() (uint64, error)
 	}
+
+	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
+	MDLRelatedTableIDs map[int64]struct{}
 }
 
 var defaultErrLevels = func() (l errctx.LevelMap) {

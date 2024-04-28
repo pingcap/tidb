@@ -2020,6 +2020,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID = vars.ConnectionID
 	vars.StmtCtx.TableStats = make(map[int64]any)
+	sc.MDLRelatedTableIDs = make(map[int64]struct{})
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
