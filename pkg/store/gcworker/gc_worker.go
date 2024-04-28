@@ -80,7 +80,7 @@ func getTsFromPD(store kv.Storage, tikvStore tikv.Storage) (uint64, error) {
 	if keyspace.IsKeyspaceUseKeyspaceLevelGC(store.GetCodec().GetKeyspaceMeta()) {
 		return tikvStore.CurrentTimestamp(kv.GlobalTxnScope)
 	}
-	// For global gc.
+	// For global GC.
 	return store.CurrentAllTSOKeyspaceGroupMinTs()
 }
 
@@ -365,11 +365,11 @@ func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) 
 		return nil
 	}
 
-	keyspaceID := w.store.GetCodec().GetKeyspaceMeta().Id
+	keyspaceID := w.store.GetCodec().GetKeyspaceID()
 	logutil.Logger(ctx).Info("start keyspace delete range", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
 		zap.Int("concurrency", concurrency),
-		zap.Uint32("keyspace-id", keyspaceID),
+		zap.Uint32("keyspace-id", uint32(keyspaceID)),
 		zap.Uint64("gc-safe-point", safePoint))
 
 	// Do deleteRanges.
@@ -411,12 +411,17 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	/* If TIDB is configured with 'keyspace-name', and 'gc_management_type' is not 'keyspace_level_gc' in current keyspace meta config,
+	/* If TIDB is configured with 'keyspace-name',
+	   and there's no configuration for 'gc_management_type'
+	   or 'gc_management_type' = 'global_gc' in the current keyspace meta config,
 	   There will be several special places:
-		1. Each keyspace will have its own gc worker leader.
-	 	2. The gc worker leader of current keyspace will only do its own delete range and don't calculate gc safe point and resolve locks.
-	 	3. At least one TiDB without `keyspace-name` is required in the whole cluster
-			which will to calculate and update global gc safe point in the whole cluster.
+	    1. The GC management type of this keyspace is global GC.
+	       The keyspace which uses the global GC cannot be changed to use keyspace level GC now.
+	    2. The keyspace which uses the global GC will have its own GC worker leader.
+	       The GC worker leader of the current keyspace will not calculate the GC safe point
+	       and resolve locks and will only do 'deleteRanges' within the current keyspace range.
+	    3. The keyspace which uses the global GC needs at least one TiDB without `keyspace-name` in the whole cluster as a global GC worker.
+	       The global GC worker will calculate and update the global GC safe point and resolve locks in the Null Keyspace range and in keyspaces which is using the global GC range.
 	*/
 	if w.store.GetCodec().GetKeyspaceMeta() != nil && keyspace.IsKeyspaceUseGlobalGC(w.store.GetCodec().GetKeyspaceMeta()) {
 		// If we use global gc safe point, a tidb which has keyspace-name should only do delete range logic.
