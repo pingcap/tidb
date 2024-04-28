@@ -12,7 +12,7 @@ go_library(
         "//pkg/errno",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-        "@com_github_pkg_errors//:errors",
+        "@com_github_pingcap_errors//:errors",
     ],
 )
 

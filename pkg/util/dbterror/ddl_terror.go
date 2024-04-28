@@ -18,10 +18,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/errors"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	parser_mysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pkg/errors"
 )
 
 var (
