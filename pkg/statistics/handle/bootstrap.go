@@ -639,6 +639,10 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 		}
 	}()
 	sctx := se.(sessionctx.Context)
+	// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
+	// Hence, when reading statistics, we should skip invalid date check. See #39336.
+	sc := sctx.GetSessionVars().StmtCtx
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id >= %? and table_id < %? order by table_id, is_index, hist_id, bucket_id"
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
@@ -648,10 +652,6 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
-	// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
-	// Hence, when reading statistics, we should skip invalid date check. See #39336.
-	sc := sctx.GetSessionVars().StmtCtx
-	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 	for {
 		err := rc.Next(ctx, req)
 		if err != nil {
