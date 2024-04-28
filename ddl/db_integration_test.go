@@ -2133,7 +2133,7 @@ func TestDefaultColumnWithUUID(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
-			"  `c1` varchar(256) DEFAULT uuid()\n" +
+			"  `c1` varchar(256) DEFAULT (uuid())\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// test modify column

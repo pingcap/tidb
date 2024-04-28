@@ -1069,11 +1069,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 					}
 
 					if col.DefaultIsExpr {
-<<<<<<< HEAD:executor/show.go
-						fmt.Fprintf(buf, " DEFAULT %s", format.OutputFormat(defaultValStr))
-=======
-						fmt.Fprintf(buf, " DEFAULT (%s)", defaultValStr)
->>>>>>> 66ba419636c (*: modify the printing of column default expression in `SHOW CREATE TABLE` and `Restore` (#52940)):pkg/executor/show.go
+						fmt.Fprintf(buf, " DEFAULT (%s)", format.OutputFormat(defaultValStr))
 					} else {
 						if col.GetType() == mysql.TypeBit {
 							defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
