@@ -26,8 +26,10 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -318,6 +320,65 @@ func topNFailPointTest(t *testing.T, exe *sortexec.TopNExec, sortCase *testutil.
 	}
 	dataSource.PrepareChunks()
 	executeTopNInFailpoint(t, exe, hardLimit, tracker)
+}
+
+const spilledChunkMaxSize = 32
+
+func createAndInitDataInDiskByChunks(spilledRowNum uint64) *chunk.DataInDiskByChunks {
+	fieldType := types.FieldType{}
+	fieldType.SetType(mysql.TypeLonglong)
+	inDisk := chunk.NewDataInDiskByChunks([]*types.FieldType{&fieldType})
+	var spilledChunk *chunk.Chunk
+	for i := uint64(0); i < spilledRowNum; i++ {
+		if i%spilledChunkMaxSize == 0 {
+			if spilledChunk != nil {
+				inDisk.Add(spilledChunk)
+			}
+			spilledChunk = chunk.NewChunkWithCapacity([]*types.FieldType{&fieldType}, spilledChunkMaxSize)
+		}
+		spilledChunk.AppendInt64(0, int64(i))
+	}
+	inDisk.Add(spilledChunk)
+	return inDisk
+}
+
+func testImpl(t *testing.T, topnExec *sortexec.TopNExec, inDisk *chunk.DataInDiskByChunks, totalRowNumInDisk uint64, offset uint64) {
+	sortexec.InitTopNExecForTest(topnExec, offset, inDisk)
+	topnExec.GenerateTopNResultsWhenSpillOnlyOnce()
+	result := sortexec.GetResultForTest(topnExec)
+	require.Equal(t, int(totalRowNumInDisk-offset), len(result))
+	for i := range result {
+		require.Equal(t, int64(i+int(offset)), result[i])
+	}
+}
+
+func oneChunkInDiskCase(t *testing.T, topnExec *sortexec.TopNExec) {
+	rowNumInDisk := uint64(spilledChunkMaxSize)
+	inDisk := createAndInitDataInDiskByChunks(rowNumInDisk)
+
+	testImpl(t, topnExec, inDisk, rowNumInDisk, 0)
+	testImpl(t, topnExec, inDisk, rowNumInDisk, uint64(spilledChunkMaxSize-15))
+	testImpl(t, topnExec, inDisk, rowNumInDisk, rowNumInDisk-1)
+	testImpl(t, topnExec, inDisk, rowNumInDisk, rowNumInDisk)
+}
+
+func severalChunksInDiskCase(t *testing.T, topnExec *sortexec.TopNExec) {
+	rowNumInDisk := uint64(spilledChunkMaxSize*3 + 10)
+	inDisk := createAndInitDataInDiskByChunks(rowNumInDisk)
+
+	testImpl(t, topnExec, inDisk, rowNumInDisk, 0)
+	testImpl(t, topnExec, inDisk, rowNumInDisk, spilledChunkMaxSize-15)
+	testImpl(t, topnExec, inDisk, rowNumInDisk, spilledChunkMaxSize*2+10)
+	testImpl(t, topnExec, inDisk, rowNumInDisk, rowNumInDisk-1)
+	testImpl(t, topnExec, inDisk, rowNumInDisk, rowNumInDisk)
+}
+
+func TestGenerateTopNResultsWhenSpillOnlyOnce(t *testing.T) {
+	topnExec := &sortexec.TopNExec{}
+	topnExec.Limit = &plannercore.PhysicalLimit{}
+
+	oneChunkInDiskCase(t, topnExec)
+	severalChunksInDiskCase(t, topnExec)
 }
 
 func TestTopNSpillDisk(t *testing.T) {

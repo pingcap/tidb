@@ -502,6 +502,51 @@ func (e *TopNExec) generateResultWithMultiWayMerge(offset int64, limit int64) er
 	}
 }
 
+// Generate results with this function when we trigger spill only once.
+// It's a public function as we need to test it in ut.
+func (e *TopNExec) GenerateTopNResultsWhenSpillOnlyOnce() error {
+	inDisk := e.spillHelper.sortedRowsInDisk[0]
+	chunkNum := inDisk.NumChunks()
+	skippedRowNum := uint64(0)
+	offset := e.Limit.Offset
+	for i := 0; i < chunkNum; i++ {
+		chk, err := inDisk.GetChunk(i)
+		if err != nil {
+			return err
+		}
+
+		injectTopNRandomFail(10)
+
+		rowNum := chk.NumRows()
+		j := 0
+		if !e.inMemoryThenSpillFlag {
+			// When e.inMemoryThenSpillFlag == false, we need to manually set j
+			// because rows that should be ignored before offset have also been
+			// spilled to disk.
+			if skippedRowNum < offset {
+				rowNumNeedSkip := offset - skippedRowNum
+				if rowNum > int(rowNumNeedSkip) {
+					j += int(rowNumNeedSkip)
+					skippedRowNum += rowNumNeedSkip
+				} else {
+					// All rows in this chunk should be skipped
+					skippedRowNum += uint64(rowNum)
+					continue
+				}
+			}
+		}
+
+		for ; j < rowNum; j++ {
+			select {
+			case <-e.finishCh:
+				return nil
+			case e.resultChannel <- rowWithError{row: chk.GetRow(j)}:
+			}
+		}
+	}
+	return nil
+}
+
 func (e *TopNExec) generateTopNResultsWhenSpillTriggered() error {
 	inDiskNum := len(e.spillHelper.sortedRowsInDisk)
 	if inDiskNum == 0 {
@@ -509,46 +554,7 @@ func (e *TopNExec) generateTopNResultsWhenSpillTriggered() error {
 	}
 
 	if inDiskNum == 1 {
-		inDisk := e.spillHelper.sortedRowsInDisk[0]
-		chunkNum := inDisk.NumChunks()
-		skippedRowNum := uint64(0)
-		offset := e.Limit.Offset
-		for i := 0; i < chunkNum; i++ {
-			chk, err := inDisk.GetChunk(i)
-			if err != nil {
-				return err
-			}
-
-			injectTopNRandomFail(10)
-
-			rowNum := chk.NumRows()
-			j := 0
-			if !e.inMemoryThenSpillFlag {
-				// When e.inMemoryThenSpillFlag == false, we need to manually set j
-				// because rows that should be ignored before offset have also been
-				// spilled to disk.
-				if skippedRowNum < offset {
-					rowNumNeedSkip := offset - skippedRowNum
-					if rowNum > int(rowNumNeedSkip) {
-						j += int(rowNumNeedSkip)
-						skippedRowNum += rowNumNeedSkip
-					} else {
-						// All rows in this chunk should be skipped
-						skippedRowNum += uint64(rowNum)
-						continue
-					}
-				}
-			}
-
-			for ; j < rowNum; j++ {
-				select {
-				case <-e.finishCh:
-					return nil
-				case e.resultChannel <- rowWithError{row: chk.GetRow(j)}:
-				}
-			}
-		}
-		return nil
+		return e.GenerateTopNResultsWhenSpillOnlyOnce()
 	}
 	return e.generateResultWithMultiWayMerge(int64(e.Limit.Offset), int64(e.Limit.Offset+e.Limit.Count))
 }
@@ -595,4 +601,25 @@ func injectTopNRandomFail(triggerFactor int32) {
 			}
 		}
 	})
+}
+
+func InitTopNExecForTest(topnExec *TopNExec, offset uint64, sortedRowsInDisk *chunk.DataInDiskByChunks) {
+	topnExec.inMemoryThenSpillFlag = false
+	topnExec.finishCh = make(chan struct{}, 1)
+	topnExec.resultChannel = make(chan rowWithError, 10000)
+	topnExec.Limit.Offset = offset
+	topnExec.spillHelper = &topNSpillHelper{}
+	topnExec.spillHelper.sortedRowsInDisk = []*chunk.DataInDiskByChunks{sortedRowsInDisk}
+}
+
+func GetResultForTest(topnExec *TopNExec) []int64 {
+	close(topnExec.resultChannel)
+	result := make([]int64, 0, 100)
+	for {
+		row, ok := <-topnExec.resultChannel
+		if !ok {
+			return result
+		}
+		result = append(result, row.row.GetInt64(0))
+	}
 }
