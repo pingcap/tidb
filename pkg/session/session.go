@@ -846,6 +846,7 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 	}
 	originErr := errors.Cause(oldErr)
 	inErr, _ := originErr.(*errors.Error)
+	// we don't want to modify the oldErr, so copy the args list
 	oldArgs := inErr.Args()
 	args := make([]any, len(oldArgs))
 	copy(args, oldArgs)
@@ -2277,10 +2278,9 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 
 	rs, err = s.Exec(ctx)
 
-	// check if is pipelined dml
 	if se.txn.Valid() && se.txn.IsPipelined() {
-		// Pipelined-DML can return assertion error and write conflict here, handle them like we handle
-		// errors returned from commit.
+		// Pipelined-DMLs can return assertion errors and write conflicts here because they flush
+		// during execution, handle these errors as we would handle errors after a commit.
 		if err != nil {
 			err = se.handleAssertionFailure(ctx, err)
 		}
