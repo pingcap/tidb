@@ -20,17 +20,15 @@ import (
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
 var (
-	litLogger = logutil.BgLogger().With(zap.String(logutil.LogFieldCategory, "ddl-ingest"))
-
 	// LitBackCtxMgr is the entry for the lightning backfill process.
 	LitBackCtxMgr BackendCtxMgr
 	// LitMemRoot is used to track the memory usage of the lightning backfill process.
@@ -47,10 +45,10 @@ const defaultMemoryQuota = 2 * size.GB
 
 // InitGlobalLightningEnv initialize Lightning backfill environment.
 func InitGlobalLightningEnv(filterProcessingJobIDs FilterProcessingJobIDsFunc) {
-	log.SetAppLogger(litLogger)
+	log.SetAppLogger(logutil.DDLIngestLogger())
 	globalCfg := config.GetGlobalConfig()
 	if globalCfg.Store != "tikv" {
-		litLogger.Warn(LitWarnEnvInitFail,
+		logutil.DDLIngestLogger().Warn(LitWarnEnvInitFail,
 			zap.String("storage limitation", "only support TiKV storage"),
 			zap.String("current storage", globalCfg.Store),
 			zap.Bool("lightning is initialized", LitInitialized))
@@ -58,14 +56,14 @@ func InitGlobalLightningEnv(filterProcessingJobIDs FilterProcessingJobIDsFunc) {
 	}
 	sortPath, err := genLightningDataDir()
 	if err != nil {
-		litLogger.Warn(LitWarnEnvInitFail,
+		logutil.DDLIngestLogger().Warn(LitWarnEnvInitFail,
 			zap.Error(err),
 			zap.Bool("lightning is initialized", LitInitialized))
 		return
 	}
 	memTotal, err := memory.MemTotal()
 	if err != nil {
-		litLogger.Warn("get total memory fail", zap.Error(err))
+		logutil.DDLIngestLogger().Warn("get total memory fail", zap.Error(err))
 		memTotal = defaultMemoryQuota
 	} else {
 		memTotal = memTotal / 2
@@ -73,7 +71,7 @@ func InitGlobalLightningEnv(filterProcessingJobIDs FilterProcessingJobIDsFunc) {
 	LitBackCtxMgr = NewLitBackendCtxMgr(sortPath, memTotal, filterProcessingJobIDs)
 	litRLimit = util.GenRLimit("ddl-ingest")
 	LitInitialized = true
-	litLogger.Info(LitInfoEnvInitSucc,
+	logutil.DDLIngestLogger().Info(LitInfoEnvInitSucc,
 		zap.Uint64("memory limitation", memTotal),
 		zap.String("disk usage info", litDiskRoot.UsageInfo()),
 		zap.Uint64("max open file number", litRLimit),
@@ -89,18 +87,18 @@ func genLightningDataDir() (string, error) {
 
 	if _, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {
-			litLogger.Error(LitErrStatDirFail,
+			logutil.DDLIngestLogger().Error(LitErrStatDirFail,
 				zap.String("sort path", sortPath), zap.Error(err))
 			return "", err
 		}
 	}
 	err := os.MkdirAll(sortPath, 0o700)
 	if err != nil {
-		litLogger.Error(LitErrCreateDirFail,
+		logutil.DDLIngestLogger().Error(LitErrCreateDirFail,
 			zap.String("sort path", sortPath), zap.Error(err))
 		return "", err
 	}
-	litLogger.Info(LitInfoSortDir, zap.String("data path", sortPath))
+	logutil.DDLIngestLogger().Info(LitInfoSortDir, zap.String("data path", sortPath))
 	return sortPath, nil
 }
 
