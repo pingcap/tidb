@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -523,10 +522,7 @@ func (h *Handle) initStatsFMSketch(cache statstypes.StatsCache) error {
 	return nil
 }
 
-func (*Handle) initStatsBuckets4Chunk(sctx sessionctx.Context, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
-	// Hist buckets may have invalid datetime.
-	intest.Assert(sctx.GetSessionVars().StmtCtx.TypeFlags().IgnoreInvalidDateErr())
-	intest.Assert(sctx.GetSessionVars().StmtCtx.TypeFlags().IgnoreZeroDateErr())
+func (h *Handle) initStatsBuckets4Chunk(sctx sessionctx.Context, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
@@ -560,6 +556,8 @@ func (*Handle) initStatsBuckets4Chunk(sctx sessionctx.Context, cache statstypes.
 			}
 			hist = &column.Histogram
 			d := types.NewBytesDatum(row.GetBytes(5))
+			// Setting TimeZone to time.UTC aligns with HistogramFromStorage and can fix #41938. However, #41985 still exist.
+			// TODO: do the correct time zone conversion for timestamp-type columns' upper/lower bounds.
 			var err error
 			lower, err = d.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &column.Info.FieldType)
 			if err != nil {

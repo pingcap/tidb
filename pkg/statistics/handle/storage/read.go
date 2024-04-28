@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -83,9 +82,6 @@ func HistMetaFromStorage(sctx sessionctx.Context, item *model.TableItemID, possi
 
 // HistogramFromStorage reads histogram from storage.
 func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
-	// Hist buckets may have invalid datetime.
-	intest.Assert(sctx.GetSessionVars().StmtCtx.TypeFlags().IgnoreInvalidDateErr())
-	intest.Assert(sctx.GetSessionVars().StmtCtx.TypeFlags().IgnoreZeroDateErr())
 	rows, fields, err := util.ExecRows(sctx, "select count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
 	if err != nil {
 		return nil, errors.Trace(err)
