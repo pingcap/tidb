@@ -308,7 +308,7 @@ func (w *GCWorker) getGCSafePoint(ctx context.Context, pdClient pd.Client) (uint
 	// UpdateGCSafePoint returns the current GC safepoint without updating anything if 0 is passed.
 	var gcSafePoint uint64
 	var err error
-	if w.IsCurrentKeyspaceUseKeyspaceLevelGC() {
+	if w.isCurrentKeyspaceUseKeyspaceLevelGC() {
 		keyspaceID := w.store.GetCodec().GetKeyspaceMeta().GetId()
 		gcSafePoint, err = pdClient.UpdateGCSafePointV2(ctx, keyspaceID, 0)
 		if err != nil {
@@ -753,7 +753,7 @@ func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint ui
 	// Sets TTL to MAX to make it permanently valid.
 	ttl := int64(math.MaxInt64)
 
-	if w.IsCurrentKeyspaceUseKeyspaceLevelGC() {
+	if w.isCurrentKeyspaceUseKeyspaceLevelGC() {
 		keyspaceID := w.store.GetCodec().GetKeyspaceMeta().Id
 		minSafePoint, err = w.pdClient.UpdateServiceSafePointV2(ctx, keyspaceID, gcWorkerServiceSafePointID, ttl, safePoint)
 		logutil.Logger(ctx).Info("[gc worker] update keyspace gc worker service safe point ",
@@ -1201,7 +1201,7 @@ func (w *GCWorker) resolveLocks(
 	var txnLeftBound []byte
 	var txnRightBound []byte
 
-	if w.IsCurrentKeyspaceUseKeyspaceLevelGC() {
+	if w.isCurrentKeyspaceUseKeyspaceLevelGC() {
 		// When enable keyspace level gc, legacyResolveLocks only resolve specified keyspace locks.
 		keyspaceID := w.store.GetCodec().GetKeyspaceMeta().Id
 		// resolve locks in `keyspaceID` range.
@@ -1363,7 +1363,7 @@ func (w *GCWorker) resolveLocksByKeyspaceRange(ctx context.Context, txnLeftBound
 
 const gcOneRegionMaxBackoff = 20000
 
-func (w *GCWorker) IsCurrentKeyspaceUseKeyspaceLevelGC() bool {
+func (w *GCWorker) isCurrentKeyspaceUseKeyspaceLevelGC() bool {
 	return keyspace.IsKeyspaceUseKeyspaceLevelGC(w.store.GetCodec().GetKeyspaceMeta())
 }
 
@@ -1373,7 +1373,7 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 
 	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 	for {
-		if w.IsCurrentKeyspaceUseKeyspaceLevelGC() {
+		if w.isCurrentKeyspaceUseKeyspaceLevelGC() {
 			keyspaceID := w.store.GetCodec().GetKeyspaceMeta().Id
 			newSafePoint, err = w.pdClient.UpdateGCSafePointV2(ctx, keyspaceID, safePoint)
 			logutil.Logger(ctx).Info("[gc worker] update keyspace gc safe point",
