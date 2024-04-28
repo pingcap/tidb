@@ -1,6 +1,6 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package logrestore
 
 import (
 	"bytes"
@@ -18,6 +18,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
 )
 
@@ -43,19 +45,19 @@ type Meta = *backuppb.Metadata
 // Log is the metadata of one file recording KV sequences.
 type Log = *backuppb.DataFileInfo
 
-// logFileManager is the manager for log files of a certain restoration,
+// LogFileManager is the manager for log files of a certain restoration,
 // which supports read / filter from the log backup archive with static start TS / restore TS.
-type logFileManager struct {
+type LogFileManager struct {
 	// startTS and restoreTS are used for kv file restore.
 	// TiKV will filter the key space that don't belong to [startTS, restoreTS].
-	startTS   uint64
-	restoreTS uint64
+	StartTS   uint64
+	RestoreTS uint64
 
 	// If the commitTS of txn-entry belong to [startTS, restoreTS],
 	// the startTS of txn-entry may be smaller than startTS.
 	// We need maintain and restore more entries in default cf
 	// (the startTS in these entries belong to [shiftStartTS, startTS]).
-	shiftStartTS uint64
+	ShiftStartTS uint64
 
 	storage storage.ExternalStorage
 	helper  *stream.MetadataHelper
@@ -79,10 +81,10 @@ type DDLMetaGroup struct {
 
 // CreateLogFileManager creates a log file manager using the specified config.
 // Generally the config cannot be changed during its lifetime.
-func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*logFileManager, error) {
-	fm := &logFileManager{
-		startTS:   init.StartTS,
-		restoreTS: init.RestoreTS,
+func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFileManager, error) {
+	fm := &LogFileManager{
+		StartTS:   init.StartTS,
+		RestoreTS: init.RestoreTS,
 		storage:   init.Storage,
 		helper:    stream.NewMetadataHelper(),
 
@@ -95,11 +97,11 @@ func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*logFil
 	return fm, nil
 }
 
-func (rc *logFileManager) ShiftTS() uint64 {
-	return rc.shiftStartTS
+func (rc *LogFileManager) ShiftTS() uint64 {
+	return rc.ShiftStartTS
 }
 
-func (rc *logFileManager) loadShiftTS(ctx context.Context) error {
+func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 	shiftTS := struct {
 		sync.Mutex
 		value  uint64
@@ -113,7 +115,7 @@ func (rc *logFileManager) loadShiftTS(ctx context.Context) error {
 		log.Info("read meta from storage and parse", zap.String("path", path), zap.Uint64("min-ts", m.MinTs),
 			zap.Uint64("max-ts", m.MaxTs), zap.Int32("meta-version", int32(m.MetaVersion)))
 
-		ts, ok := UpdateShiftTS(m, rc.startTS, rc.restoreTS)
+		ts, ok := stream.UpdateShiftTS(m, rc.StartTS, rc.RestoreTS)
 		shiftTS.Lock()
 		if ok && (!shiftTS.exists || shiftTS.value > ts) {
 			shiftTS.value = ts
@@ -127,29 +129,29 @@ func (rc *logFileManager) loadShiftTS(ctx context.Context) error {
 		return err
 	}
 	if !shiftTS.exists {
-		rc.shiftStartTS = rc.startTS
+		rc.ShiftStartTS = rc.StartTS
 		return nil
 	}
-	rc.shiftStartTS = shiftTS.value
+	rc.ShiftStartTS = shiftTS.value
 	return nil
 }
 
-func (rc *logFileManager) streamingMeta(ctx context.Context) (MetaIter, error) {
-	return rc.streamingMetaByTS(ctx, rc.restoreTS)
+func (rc *LogFileManager) streamingMeta(ctx context.Context) (MetaIter, error) {
+	return rc.streamingMetaByTS(ctx, rc.RestoreTS)
 }
 
-func (rc *logFileManager) streamingMetaByTS(ctx context.Context, restoreTS uint64) (MetaIter, error) {
+func (rc *LogFileManager) streamingMetaByTS(ctx context.Context, restoreTS uint64) (MetaIter, error) {
 	it, err := rc.createMetaIterOver(ctx, rc.storage)
 	if err != nil {
 		return nil, err
 	}
 	filtered := iter.FilterOut(it, func(metadata *backuppb.Metadata) bool {
-		return restoreTS < metadata.MinTs || metadata.MaxTs < rc.shiftStartTS
+		return restoreTS < metadata.MinTs || metadata.MaxTs < rc.ShiftStartTS
 	})
 	return filtered, nil
 }
 
-func (rc *logFileManager) createMetaIterOver(ctx context.Context, s storage.ExternalStorage) (MetaIter, error) {
+func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.ExternalStorage) (MetaIter, error) {
 	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
 	names := []string{}
 	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
@@ -181,7 +183,7 @@ func (rc *logFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 	return reader, nil
 }
 
-func (rc *logFileManager) FilterDataFiles(ms MetaIter) LogIter {
+func (rc *LogFileManager) FilterDataFiles(ms MetaIter) LogIter {
 	return iter.FlatMap(ms, func(m *backuppb.Metadata) LogIter {
 		return iter.FlatMap(iter.Enumerate(iter.FromSlice(m.FileGroups)), func(gi iter.Indexed[*backuppb.DataFileGroup]) LogIter {
 			return iter.Map(
@@ -210,13 +212,13 @@ func (rc *logFileManager) FilterDataFiles(ms MetaIter) LogIter {
 }
 
 // ShouldFilterOut checks whether a file should be filtered out via the current client.
-func (rc *logFileManager) ShouldFilterOut(d *backuppb.DataFileInfo) bool {
-	return d.MinTs > rc.restoreTS ||
-		(d.Cf == stream.WriteCF && d.MaxTs < rc.startTS) ||
-		(d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS)
+func (rc *LogFileManager) ShouldFilterOut(d *backuppb.DataFileInfo) bool {
+	return d.MinTs > rc.RestoreTS ||
+		(d.Cf == stream.WriteCF && d.MaxTs < rc.StartTS) ||
+		(d.Cf == stream.DefaultCF && d.MaxTs < rc.ShiftStartTS)
 }
 
-func (rc *logFileManager) collectDDLFilesAndPrepareCache(
+func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
 	ctx context.Context,
 	files MetaGroupIter,
 ) ([]Log, error) {
@@ -237,7 +239,7 @@ func (rc *logFileManager) collectDDLFilesAndPrepareCache(
 // LoadDDLFilesAndCountDMLFiles loads all DDL files needs to be restored in the restoration.
 // At the same time, if the `counter` isn't nil, counting the DML file needs to be restored into `counter`.
 // This function returns all DDL files needing directly because we need sort all of them.
-func (rc *logFileManager) LoadDDLFilesAndCountDMLFiles(ctx context.Context, counter *int) ([]Log, error) {
+func (rc *LogFileManager) LoadDDLFilesAndCountDMLFiles(ctx context.Context, counter *int) ([]Log, error) {
 	m, err := rc.streamingMeta(ctx)
 	if err != nil {
 		return nil, err
@@ -260,7 +262,7 @@ func (rc *logFileManager) LoadDDLFilesAndCountDMLFiles(ctx context.Context, coun
 
 // LoadDMLFiles loads all DML files needs to be restored in the restoration.
 // This function returns a stream, because there are usually many DML files need to be restored.
-func (rc *logFileManager) LoadDMLFiles(ctx context.Context) (LogIter, error) {
+func (rc *LogFileManager) LoadDMLFiles(ctx context.Context) (LogIter, error) {
 	m, err := rc.streamingMeta(ctx)
 	if err != nil {
 		return nil, err
@@ -270,20 +272,7 @@ func (rc *logFileManager) LoadDMLFiles(ctx context.Context) (LogIter, error) {
 	return mg, nil
 }
 
-// readStreamMetaByTS is used for streaming task. collect all meta file by TS, it is for test usage.
-func (rc *logFileManager) readStreamMeta(ctx context.Context) ([]Meta, error) {
-	metas, err := rc.streamingMeta(ctx)
-	if err != nil {
-		return nil, err
-	}
-	r := iter.CollectAll(ctx, metas)
-	if r.Err != nil {
-		return nil, errors.Trace(r.Err)
-	}
-	return r.Item, nil
-}
-
-func (rc *logFileManager) FilterMetaFiles(ms MetaIter) MetaGroupIter {
+func (rc *LogFileManager) FilterMetaFiles(ms MetaIter) MetaGroupIter {
 	return iter.FlatMap(ms, func(m Meta) MetaGroupIter {
 		return iter.Map(iter.FromSlice(m.FileGroups), func(g *backuppb.DataFileGroup) DDLMetaGroup {
 			metas := iter.FilterOut(iter.FromSlice(g.DataFilesInfo), func(d Log) bool {
@@ -302,8 +291,24 @@ func (rc *logFileManager) FilterMetaFiles(ms MetaIter) MetaGroupIter {
 	})
 }
 
+// the kv entry with ts, the ts is decoded from entry.
+type KvEntryWithTS struct {
+	E  kv.Entry
+	Ts uint64
+}
+
+func getKeyTS(key []byte) (uint64, error) {
+	if len(key) < 8 {
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument,
+			"the length of key is smaller than 8, key:%s", redact.Key(key))
+	}
+
+	_, ts, err := codec.DecodeUintDesc(key[len(key)-8:])
+	return ts, err
+}
+
 // ReadAllEntries loads content of a log file, with filtering out no needed entries.
-func (rc *logFileManager) ReadAllEntries(
+func (rc *LogFileManager) ReadAllEntries(
 	ctx context.Context,
 	file Log,
 	filterTS uint64,
@@ -335,18 +340,18 @@ func (rc *logFileManager) ReadAllEntries(
 			continue
 		}
 
-		ts, err := GetKeyTS(txnEntry.Key)
+		ts, err := getKeyTS(txnEntry.Key)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 
 		// The commitTs in write CF need be limited on [startTs, restoreTs].
 		// We can restore more key-value in default CF.
-		if ts > rc.restoreTS {
+		if ts > rc.RestoreTS {
 			continue
-		} else if file.Cf == stream.WriteCF && ts < rc.startTS {
+		} else if file.Cf == stream.WriteCF && ts < rc.StartTS {
 			continue
-		} else if file.Cf == stream.DefaultCF && ts < rc.shiftStartTS {
+		} else if file.Cf == stream.DefaultCF && ts < rc.ShiftStartTS {
 			continue
 		}
 
@@ -360,9 +365,9 @@ func (rc *logFileManager) ReadAllEntries(
 		}
 
 		if ts < filterTS {
-			kvEntries = append(kvEntries, &KvEntryWithTS{e: txnEntry, ts: ts})
+			kvEntries = append(kvEntries, &KvEntryWithTS{E: txnEntry, Ts: ts})
 		} else {
-			nextKvEntries = append(nextKvEntries, &KvEntryWithTS{e: txnEntry, ts: ts})
+			nextKvEntries = append(nextKvEntries, &KvEntryWithTS{E: txnEntry, Ts: ts})
 		}
 	}
 

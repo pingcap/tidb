@@ -1,6 +1,6 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package main
 
 import (
 	"bytes"
@@ -21,6 +21,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+)
+
+const (
+	writeCFName   = "write"
+	defaultCFName = "default"
 )
 
 // Comparator is used for comparing the relationship of src and dst

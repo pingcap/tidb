@@ -1,6 +1,6 @@
 // Copyright 2021 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package stream
 
 import (
 	"context"
@@ -14,7 +14,6 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
@@ -33,7 +32,7 @@ type StreamMetadataSet struct {
 	MetadataDownloadBatchSize uint
 
 	// a parser of metadata
-	Helper *stream.MetadataHelper
+	Helper *MetadataHelper
 
 	// for test
 	BeforeDoWriteBack func(path string, replaced *backuppb.Metadata) (skip bool)
@@ -52,6 +51,10 @@ type MetadataInfo struct {
 	FileGroupInfos []*FileGroupInfo
 }
 
+func (ms *StreamMetadataSet) TEST_GetMetadataInfos() map[string]*MetadataInfo {
+	return ms.metadataInfos
+}
+
 // LoadUntilAndCalculateShiftTS loads the metadata until the specified timestamp and calculate the shift-until-ts by the way.
 // This would record all metadata files that *may* contain data from transaction committed before that TS.
 func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(ctx context.Context, s storage.ExternalStorage, until uint64) (uint64, error) {
@@ -63,7 +66,7 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(ctx context.Context, s
 	metadataMap.metas = make(map[string]*MetadataInfo)
 	// `shiftUntilTS` must be less than `until`
 	metadataMap.shiftUntilTS = until
-	err := stream.FastUnmarshalMetaData(ctx, s, ms.MetadataDownloadBatchSize, func(path string, raw []byte) error {
+	err := FastUnmarshalMetaData(ctx, s, ms.MetadataDownloadBatchSize, func(path string, raw []byte) error {
 		m, err := ms.Helper.ParseToMetadataHard(raw)
 		if err != nil {
 			return err
@@ -341,7 +344,7 @@ func UpdateShiftTS(m *backuppb.Metadata, startTS uint64, restoreTS uint64) (uint
 
 	for _, ds := range m.FileGroups {
 		for _, d := range ds.DataFilesInfo {
-			if d.Cf == stream.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
+			if d.Cf == DefaultCF || d.MinBeginTsInDefaultCf == 0 {
 				continue
 			}
 			if d.MinTs > restoreTS || d.MaxTs < startTS {

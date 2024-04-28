@@ -1,6 +1,6 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore_test
+package stream
 
 import (
 	"context"
@@ -16,9 +16,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -99,7 +97,7 @@ func fakeStreamBackup(s storage.ExternalStorage) error {
 		if err != nil {
 			panic("failed to marshal test meta")
 		}
-		name := fmt.Sprintf("%s/%04d.meta", stream.GetStreamBackupMetaPrefix(), i)
+		name := fmt.Sprintf("%s/%04d.meta", GetStreamBackupMetaPrefix(), i)
 		if err = s.WriteFile(ctx, name, bs); err != nil {
 			return errors.Trace(err)
 		}
@@ -127,7 +125,7 @@ func fakeStreamBackupV2(s storage.ExternalStorage) error {
 		if err != nil {
 			panic("failed to marshal test meta")
 		}
-		name := fmt.Sprintf("%s/%04d.meta", stream.GetStreamBackupMetaPrefix(), i)
+		name := fmt.Sprintf("%s/%04d.meta", GetStreamBackupMetaPrefix(), i)
 		if err = s.WriteFile(ctx, name, bs); err != nil {
 			return errors.Trace(err)
 		}
@@ -140,7 +138,7 @@ func fakeStreamBackupV2(s storage.ExternalStorage) error {
 func TestTruncateLog(t *testing.T) {
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	backupMetaDir := filepath.Join(tmpdir, stream.GetStreamBackupMetaPrefix())
+	backupMetaDir := filepath.Join(tmpdir, GetStreamBackupMetaPrefix())
 	_, err := storage.NewLocalStorage(backupMetaDir)
 	require.NoError(t, err)
 
@@ -149,14 +147,14 @@ func TestTruncateLog(t *testing.T) {
 
 	require.NoError(t, fakeStreamBackup(l))
 
-	s := restore.StreamMetadataSet{
-		Helper:                    stream.NewMetadataHelper(),
+	s := StreamMetadataSet{
+		Helper:                    NewMetadataHelper(),
 		MetadataDownloadBatchSize: 128,
 	}
 	require.NoError(t, s.LoadFrom(ctx, l))
 
-	fs := []*restore.FileGroupInfo{}
-	s.IterateFilesFullyBefore(17, func(d *restore.FileGroupInfo) (shouldBreak bool) {
+	fs := []*FileGroupInfo{}
+	s.IterateFilesFullyBefore(17, func(d *FileGroupInfo) (shouldBreak bool) {
 		fs = append(fs, d)
 		require.Less(t, d.MaxTS, uint64(17))
 		return false
@@ -196,13 +194,13 @@ func TestTruncateLog(t *testing.T) {
 	require.Equal(t, total, int64(15))
 
 	require.NoError(t, s.LoadFrom(ctx, l))
-	s.IterateFilesFullyBefore(17, func(d *restore.FileGroupInfo) (shouldBreak bool) {
+	s.IterateFilesFullyBefore(17, func(d *FileGroupInfo) (shouldBreak bool) {
 		t.Errorf("some of log files still not truncated, it is %#v", d)
 		return true
 	})
 
 	err = l.WalkDir(ctx, &storage.WalkOption{
-		SubDir: stream.GetStreamBackupMetaPrefix(),
+		SubDir: GetStreamBackupMetaPrefix(),
 	}, func(s string, i int64) error {
 		require.NotContains(t, removedMetaFiles, s)
 		return nil
@@ -213,7 +211,7 @@ func TestTruncateLog(t *testing.T) {
 func TestTruncateLogV2(t *testing.T) {
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	backupMetaDir := filepath.Join(tmpdir, stream.GetStreamBackupMetaPrefix())
+	backupMetaDir := filepath.Join(tmpdir, GetStreamBackupMetaPrefix())
 	_, err := storage.NewLocalStorage(backupMetaDir)
 	require.NoError(t, err)
 
@@ -222,14 +220,14 @@ func TestTruncateLogV2(t *testing.T) {
 
 	require.NoError(t, fakeStreamBackupV2(l))
 
-	s := restore.StreamMetadataSet{
-		Helper:                    stream.NewMetadataHelper(),
+	s := StreamMetadataSet{
+		Helper:                    NewMetadataHelper(),
 		MetadataDownloadBatchSize: 128,
 	}
 	require.NoError(t, s.LoadFrom(ctx, l))
 
-	fs := []*restore.FileGroupInfo{}
-	s.IterateFilesFullyBefore(17, func(d *restore.FileGroupInfo) (shouldBreak bool) {
+	fs := []*FileGroupInfo{}
+	s.IterateFilesFullyBefore(17, func(d *FileGroupInfo) (shouldBreak bool) {
 		fs = append(fs, d)
 		require.Less(t, d.MaxTS, uint64(17))
 		return false
@@ -269,13 +267,13 @@ func TestTruncateLogV2(t *testing.T) {
 	require.Equal(t, total, int64(15))
 
 	require.NoError(t, s.LoadFrom(ctx, l))
-	s.IterateFilesFullyBefore(17, func(d *restore.FileGroupInfo) (shouldBreak bool) {
+	s.IterateFilesFullyBefore(17, func(d *FileGroupInfo) (shouldBreak bool) {
 		t.Errorf("some of log files still not truncated, it is %#v", d)
 		return true
 	})
 
 	err = l.WalkDir(ctx, &storage.WalkOption{
-		SubDir: stream.GetStreamBackupMetaPrefix(),
+		SubDir: GetStreamBackupMetaPrefix(),
 	}, func(s string, i int64) error {
 		require.NotContains(t, removedMetaFiles, s)
 		return nil
@@ -288,15 +286,15 @@ func TestTruncateSafepoint(t *testing.T) {
 	l, err := storage.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 
-	ts, err := restore.GetTSFromFile(ctx, l, restore.TruncateSafePointFileName)
+	ts, err := GetTSFromFile(ctx, l, TruncateSafePointFileName)
 	require.NoError(t, err)
 	require.Equal(t, int(ts), 0)
 
 	for i := 0; i < 100; i++ {
 		n := rand.Uint64()
-		require.NoError(t, restore.SetTSToFile(ctx, l, n, restore.TruncateSafePointFileName))
+		require.NoError(t, SetTSToFile(ctx, l, n, TruncateSafePointFileName))
 
-		ts, err = restore.GetTSFromFile(ctx, l, restore.TruncateSafePointFileName)
+		ts, err = GetTSFromFile(ctx, l, TruncateSafePointFileName)
 		require.NoError(t, err)
 		require.Equal(t, ts, n, "failed at %d round: truncate safepoint mismatch", i)
 	}
@@ -329,21 +327,21 @@ func TestTruncateSafepointForGCS(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, err)
 
-	ts, err := restore.GetTSFromFile(ctx, l, restore.TruncateSafePointFileName)
+	ts, err := GetTSFromFile(ctx, l, TruncateSafePointFileName)
 	require.NoError(t, err)
 	require.Equal(t, int(ts), 0)
 
 	for i := 0; i < 100; i++ {
 		n := rand.Uint64()
-		require.NoError(t, restore.SetTSToFile(ctx, l, n, restore.TruncateSafePointFileName))
+		require.NoError(t, SetTSToFile(ctx, l, n, TruncateSafePointFileName))
 
-		ts, err = restore.GetTSFromFile(ctx, l, restore.TruncateSafePointFileName)
+		ts, err = GetTSFromFile(ctx, l, TruncateSafePointFileName)
 		require.NoError(t, err)
 		require.Equal(t, ts, n, "failed at %d round: truncate safepoint mismatch", i)
 	}
 }
 
-func fakeMetaDatas(t *testing.T, helper *stream.MetadataHelper, cf string) []*backuppb.Metadata {
+func fakeMetaDatas(t *testing.T, helper *MetadataHelper, cf string) []*backuppb.Metadata {
 	ms := []*backuppb.Metadata{
 		{
 			StoreId: 1,
@@ -397,7 +395,7 @@ func fakeMetaDatas(t *testing.T, helper *stream.MetadataHelper, cf string) []*ba
 	return m2s
 }
 
-func fakeMetaDataV2s(t *testing.T, helper *stream.MetadataHelper, cf string) []*backuppb.Metadata {
+func fakeMetaDataV2s(t *testing.T, helper *MetadataHelper, cf string) []*backuppb.Metadata {
 	ms := []*backuppb.Metadata{
 		{
 			StoreId: 1,
@@ -482,43 +480,43 @@ func fakeMetaDataV2s(t *testing.T, helper *stream.MetadataHelper, cf string) []*
 }
 
 func ff(minTS, maxTS uint64) *backuppb.DataFileGroup {
-	return f(0, minTS, maxTS, stream.DefaultCF, 0)
+	return f(0, minTS, maxTS, DefaultCF, 0)
 }
 
 func TestReplaceMetadataTs(t *testing.T) {
 	m := &backuppb.Metadata{}
-	restore.ReplaceMetadata(m, []*backuppb.DataFileGroup{
+	ReplaceMetadata(m, []*backuppb.DataFileGroup{
 		ff(1, 3),
 		ff(4, 5),
 	})
 	require.Equal(t, m.MinTs, uint64(1))
 	require.Equal(t, m.MaxTs, uint64(5))
 
-	restore.ReplaceMetadata(m, []*backuppb.DataFileGroup{
+	ReplaceMetadata(m, []*backuppb.DataFileGroup{
 		ff(1, 4),
 		ff(3, 5),
 	})
 	require.Equal(t, m.MinTs, uint64(1))
 	require.Equal(t, m.MaxTs, uint64(5))
 
-	restore.ReplaceMetadata(m, []*backuppb.DataFileGroup{
+	ReplaceMetadata(m, []*backuppb.DataFileGroup{
 		ff(1, 6),
 		ff(0, 5),
 	})
 	require.Equal(t, m.MinTs, uint64(0))
 	require.Equal(t, m.MaxTs, uint64(6))
 
-	restore.ReplaceMetadata(m, []*backuppb.DataFileGroup{
+	ReplaceMetadata(m, []*backuppb.DataFileGroup{
 		ff(1, 3),
 	})
 	require.Equal(t, m.MinTs, uint64(1))
 	require.Equal(t, m.MaxTs, uint64(3))
 
-	restore.ReplaceMetadata(m, []*backuppb.DataFileGroup{})
+	ReplaceMetadata(m, []*backuppb.DataFileGroup{})
 	require.Equal(t, m.MinTs, uint64(0))
 	require.Equal(t, m.MaxTs, uint64(0))
 
-	restore.ReplaceMetadata(m, []*backuppb.DataFileGroup{
+	ReplaceMetadata(m, []*backuppb.DataFileGroup{
 		ff(1, 3),
 		ff(2, 4),
 		ff(0, 2),
@@ -596,7 +594,7 @@ func cleanFiles(ctx context.Context, s storage.ExternalStorage) error {
 }
 
 func metaName(storeId int64) string {
-	return fmt.Sprintf("%s/%04d.meta", stream.GetStreamBackupMetaPrefix(), storeId)
+	return fmt.Sprintf("%s/%04d.meta", GetStreamBackupMetaPrefix(), storeId)
 }
 
 func logName(storeId int64, minTS, maxTS uint64) string {
@@ -608,7 +606,7 @@ func generateFiles(ctx context.Context, s storage.ExternalStorage, metas []*back
 	if err := cleanFiles(ctx, s); err != nil {
 		return err
 	}
-	fname := path.Join(tmpDir, stream.GetStreamBackupMetaPrefix())
+	fname := path.Join(tmpDir, GetStreamBackupMetaPrefix())
 	os.MkdirAll(fname, 0777)
 	for _, meta := range metas {
 		data, err := meta.Marshal()
@@ -692,28 +690,28 @@ func TestTruncate1(t *testing.T) {
 			//            ↓           ↓
 			// filegroup 10-----d-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 10, 20, stream.DefaultCF, 0),
+				m_1(1, 10, 20, DefaultCF, 0),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{5},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 20, stream.DefaultCF, 0),
+						m_1(1, 10, 20, DefaultCF, 0),
 					},
 				}, {
 					until:        []uint64{10},
 					shiftUntilTS: 10, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 20, stream.DefaultCF, 0),
+						m_1(1, 10, 20, DefaultCF, 0),
 					},
 				}, {
 					until:        []uint64{15},
 					shiftUntilTS: 15, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 20, stream.DefaultCF, 0),
+						m_1(1, 10, 20, DefaultCF, 0),
 					},
 				}, {
 					until:        []uint64{20},
 					shiftUntilTS: 20, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 20, stream.DefaultCF, 0),
+						m_1(1, 10, 20, DefaultCF, 0),
 					},
 				}, {
 					until:        []uint64{25},
@@ -727,18 +725,18 @@ func TestTruncate1(t *testing.T) {
 			//                 ↓           ↓
 			// filegroup 5-d--10-----w-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 10, 20, stream.WriteCF, 5),
+				m_1(1, 10, 20, WriteCF, 5),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 20, stream.WriteCF, 5),
+						m_1(1, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{5, 7, 10, 15, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 20, stream.WriteCF, 5),
+						m_1(1, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{25},
@@ -753,21 +751,21 @@ func TestTruncate1(t *testing.T) {
 			// filegroup       5--d-8  ↓           ↓
 			// filegroup       5--d---10-----w-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 5, 8, stream.DefaultCF, 0),
-				m_1(2, 10, 20, stream.WriteCF, 5),
+				m_1(1, 5, 8, DefaultCF, 0),
+				m_1(2, 10, 20, WriteCF, 5),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 8, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 5, 8, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{5, 8, 9, 10, 15, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 8, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 5, 8, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{25},
@@ -783,21 +781,21 @@ func TestTruncate1(t *testing.T) {
 			// filegroup       5--d---10           ↓
 			// filegroup       5--d---10-----w-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 5, 10, stream.DefaultCF, 0),
-				m_1(2, 10, 20, stream.WriteCF, 5),
+				m_1(1, 5, 10, DefaultCF, 0),
+				m_1(2, 10, 20, WriteCF, 5),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 10, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 5, 10, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{5, 8, 9, 10, 15, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 10, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 5, 10, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{25},
@@ -813,21 +811,21 @@ func TestTruncate1(t *testing.T) {
 			// filegroup       5--d----↓-12        ↓
 			// filegroup       5--d---10-----w-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 5, 12, stream.DefaultCF, 0),
-				m_1(2, 10, 20, stream.WriteCF, 5),
+				m_1(1, 5, 12, DefaultCF, 0),
+				m_1(2, 10, 20, WriteCF, 5),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 12, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 5, 12, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{5, 8, 9, 10, 15, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 12, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 5, 12, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{25},
@@ -843,21 +841,21 @@ func TestTruncate1(t *testing.T) {
 			// filegroup       5--d----↓-----------20
 			// filegroup       5--d---10-----w-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 5, 20, stream.DefaultCF, 0),
-				m_1(2, 10, 20, stream.WriteCF, 5),
+				m_1(1, 5, 20, DefaultCF, 0),
+				m_1(2, 10, 20, WriteCF, 5),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 20, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 5, 20, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{5, 8, 10, 15, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 20, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 5, 20, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{25},
@@ -873,31 +871,31 @@ func TestTruncate1(t *testing.T) {
 			// filegroup       5--d----↓-----------↓--22
 			// filegroup       5--d---10-----w-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 5, 22, stream.DefaultCF, 0),
-				m_1(2, 10, 20, stream.WriteCF, 5),
+				m_1(1, 5, 22, DefaultCF, 0),
+				m_1(2, 10, 20, WriteCF, 5),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 22, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 5, 22, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{5, 8, 10, 15, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 22, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 5, 22, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{21},
 					shiftUntilTS: 21, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 22, stream.DefaultCF, 0),
+						m_1(1, 5, 22, DefaultCF, 0),
 					},
 				}, {
 					until:        []uint64{22},
 					shiftUntilTS: 22, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 22, stream.DefaultCF, 0),
+						m_1(1, 5, 22, DefaultCF, 0),
 					},
 				}, {
 					until:        []uint64{25},
@@ -913,21 +911,21 @@ func TestTruncate1(t *testing.T) {
 			// filegroup              10-d-14       ↓
 			// filegroup       5--d---10-----w-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 10, 14, stream.DefaultCF, 0),
-				m_1(2, 10, 20, stream.WriteCF, 5),
+				m_1(1, 10, 14, DefaultCF, 0),
+				m_1(2, 10, 20, WriteCF, 5),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 14, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 10, 14, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{5, 8, 10, 12, 14, 18, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 14, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 10, 14, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{25},
@@ -943,21 +941,21 @@ func TestTruncate1(t *testing.T) {
 			// filegroup              10----d------20
 			// filegroup       5--d---10-----w-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 10, 20, stream.DefaultCF, 0),
-				m_1(2, 10, 20, stream.WriteCF, 5),
+				m_1(1, 10, 20, DefaultCF, 0),
+				m_1(2, 10, 20, WriteCF, 5),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 20, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 10, 20, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{5, 8, 10, 14, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 20, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 10, 20, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{25},
@@ -973,31 +971,31 @@ func TestTruncate1(t *testing.T) {
 			// filegroup              10----d-------↓--22
 			// filegroup       5--d---10-----w-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 10, 22, stream.DefaultCF, 0),
-				m_1(2, 10, 20, stream.WriteCF, 5),
+				m_1(1, 10, 22, DefaultCF, 0),
+				m_1(2, 10, 20, WriteCF, 5),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 22, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 10, 22, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{5, 8, 10, 14, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 22, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 10, 22, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{21},
 					shiftUntilTS: 21, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 22, stream.DefaultCF, 0),
+						m_1(1, 10, 22, DefaultCF, 0),
 					},
 				}, {
 					until:        []uint64{22},
 					shiftUntilTS: 22, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 22, stream.DefaultCF, 0),
+						m_1(1, 10, 22, DefaultCF, 0),
 					},
 				}, {
 					until:        []uint64{25},
@@ -1013,21 +1011,21 @@ func TestTruncate1(t *testing.T) {
 			// filegroup               ↓ 12--d--18  ↓
 			// filegroup       5--d---10-----w-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 12, 18, stream.DefaultCF, 0),
-				m_1(2, 10, 20, stream.WriteCF, 5),
+				m_1(1, 12, 18, DefaultCF, 0),
+				m_1(2, 10, 20, WriteCF, 5),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 12, 18, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 12, 18, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{5, 8, 10, 11, 12, 15, 18, 19, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 12, 18, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 12, 18, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{25},
@@ -1043,21 +1041,21 @@ func TestTruncate1(t *testing.T) {
 			// filegroup               ↓     14--d-20
 			// filegroup       5--d---10-----w-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 14, 20, stream.DefaultCF, 0),
-				m_1(2, 10, 20, stream.WriteCF, 5),
+				m_1(1, 14, 20, DefaultCF, 0),
+				m_1(2, 10, 20, WriteCF, 5),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 14, 20, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 14, 20, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{5, 8, 10, 14, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 14, 20, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 14, 20, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{25},
@@ -1073,31 +1071,31 @@ func TestTruncate1(t *testing.T) {
 			// filegroup               ↓      14-d--↓--22
 			// filegroup       5--d---10-----w-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 14, 22, stream.DefaultCF, 0),
-				m_1(2, 10, 20, stream.WriteCF, 5),
+				m_1(1, 14, 22, DefaultCF, 0),
+				m_1(2, 10, 20, WriteCF, 5),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 14, 22, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 14, 22, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{5, 8, 10, 14, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 14, 22, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 14, 22, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{21},
 					shiftUntilTS: 21, restMetadata: []*backuppb.Metadata{
-						m_1(1, 14, 22, stream.DefaultCF, 0),
+						m_1(1, 14, 22, DefaultCF, 0),
 					},
 				}, {
 					until:        []uint64{22},
 					shiftUntilTS: 22, restMetadata: []*backuppb.Metadata{
-						m_1(1, 14, 22, stream.DefaultCF, 0),
+						m_1(1, 14, 22, DefaultCF, 0),
 					},
 				}, {
 					until:        []uint64{25},
@@ -1113,31 +1111,31 @@ func TestTruncate1(t *testing.T) {
 			// filegroup               ↓           20--22
 			// filegroup       5--d---10-----w-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 20, 22, stream.DefaultCF, 0),
-				m_1(2, 10, 20, stream.WriteCF, 5),
+				m_1(1, 20, 22, DefaultCF, 0),
+				m_1(2, 10, 20, WriteCF, 5),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 20, 22, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 20, 22, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{5, 8, 10, 14, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 20, 22, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 20, 22, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{21},
 					shiftUntilTS: 21, restMetadata: []*backuppb.Metadata{
-						m_1(1, 20, 22, stream.DefaultCF, 0),
+						m_1(1, 20, 22, DefaultCF, 0),
 					},
 				}, {
 					until:        []uint64{22},
 					shiftUntilTS: 22, restMetadata: []*backuppb.Metadata{
-						m_1(1, 20, 22, stream.DefaultCF, 0),
+						m_1(1, 20, 22, DefaultCF, 0),
 					},
 				}, {
 					until:        []uint64{25},
@@ -1153,31 +1151,31 @@ func TestTruncate1(t *testing.T) {
 			// filegroup               ↓            ↓ 21-d-24
 			// filegroup       5--d---10-----w-----20
 			metas: []*backuppb.Metadata{
-				m_1(1, 21, 24, stream.DefaultCF, 0),
-				m_1(2, 10, 20, stream.WriteCF, 5),
+				m_1(1, 21, 24, DefaultCF, 0),
+				m_1(2, 10, 20, WriteCF, 5),
 			},
 			testParams: []*testParam{
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 21, 24, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 21, 24, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{5, 8, 10, 14, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 21, 24, stream.DefaultCF, 0),
-						m_1(2, 10, 20, stream.WriteCF, 5),
+						m_1(1, 21, 24, DefaultCF, 0),
+						m_1(2, 10, 20, WriteCF, 5),
 					},
 				}, {
 					until:        []uint64{21},
 					shiftUntilTS: 21, restMetadata: []*backuppb.Metadata{
-						m_1(1, 21, 24, stream.DefaultCF, 0),
+						m_1(1, 21, 24, DefaultCF, 0),
 					},
 				}, {
 					until:        []uint64{22},
 					shiftUntilTS: 22, restMetadata: []*backuppb.Metadata{
-						m_1(1, 21, 24, stream.DefaultCF, 0),
+						m_1(1, 21, 24, DefaultCF, 0),
 					},
 				}, {
 					until:        []uint64{25},
@@ -1191,8 +1189,8 @@ func TestTruncate1(t *testing.T) {
 		for j, ts := range cs.testParams {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
-				metas := restore.StreamMetadataSet{
-					Helper:                    stream.NewMetadataHelper(),
+				metas := StreamMetadataSet{
+					Helper:                    NewMetadataHelper(),
 					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)
@@ -1248,8 +1246,8 @@ func TestTruncate2(t *testing.T) {
 			// filegroup  8----d--15-w-20
 			metas: []*backuppb.Metadata{
 				m_2(1,
-					10, 13, stream.DefaultCF, 0,
-					15, 20, stream.WriteCF, 8,
+					10, 13, DefaultCF, 0,
+					15, 20, WriteCF, 8,
 				),
 			},
 			testParams: []*testParam2{
@@ -1257,16 +1255,16 @@ func TestTruncate2(t *testing.T) {
 					until:        []uint64{5},
 					shiftUntilTS: returnV(5), restMetadata: []*backuppb.Metadata{
 						m_2(1,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 8,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 8,
 						),
 					},
 				}, {
 					until:        []uint64{8, 9, 10, 12, 13, 14, 15, 18, 20},
 					shiftUntilTS: returnV(8), restMetadata: []*backuppb.Metadata{
 						m_2(1,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 8,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 8,
 						),
 					},
 				}, {
@@ -1282,29 +1280,29 @@ func TestTruncate2(t *testing.T) {
 			// filegroup  3   6  10-d-13 ↓    ↓
 			// filegroup 1-----------d--15-w-20
 			metas: []*backuppb.Metadata{
-				m_1(1, 3, 6, stream.DefaultCF, 0),
+				m_1(1, 3, 6, DefaultCF, 0),
 				m_2(2,
-					10, 13, stream.DefaultCF, 0,
-					15, 20, stream.WriteCF, 1,
+					10, 13, DefaultCF, 0,
+					15, 20, WriteCF, 1,
 				),
 			},
 			testParams: []*testParam2{
 				{
 					until:        []uint64{0},
 					shiftUntilTS: returnV(0), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, stream.DefaultCF, 0),
+						m_1(1, 3, 6, DefaultCF, 0),
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 8,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 8,
 						),
 					},
 				}, {
 					until:        []uint64{1, 2, 3, 4, 6, 9, 10, 12, 13, 14, 15, 18, 20},
 					shiftUntilTS: returnV(1), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, stream.DefaultCF, 0),
+						m_1(1, 3, 6, DefaultCF, 0),
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 8,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 8,
 						),
 					},
 				}, {
@@ -1320,29 +1318,29 @@ func TestTruncate2(t *testing.T) {
 			// filegroup  3   6  10-d-13 ↓    ↓
 			// filegroup  3----------d--15-w-20
 			metas: []*backuppb.Metadata{
-				m_1(1, 3, 6, stream.DefaultCF, 0),
+				m_1(1, 3, 6, DefaultCF, 0),
 				m_2(2,
-					10, 13, stream.DefaultCF, 0,
-					15, 20, stream.WriteCF, 3,
+					10, 13, DefaultCF, 0,
+					15, 20, WriteCF, 3,
 				),
 			},
 			testParams: []*testParam2{
 				{
 					until:        []uint64{2},
 					shiftUntilTS: returnV(2), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, stream.DefaultCF, 0),
+						m_1(1, 3, 6, DefaultCF, 0),
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 3,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 3,
 						),
 					},
 				}, {
 					until:        []uint64{3, 4, 6, 9, 10, 12, 13, 14, 15, 18, 20},
 					shiftUntilTS: returnV(3), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, stream.DefaultCF, 0),
+						m_1(1, 3, 6, DefaultCF, 0),
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 3,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 3,
 						),
 					},
 				}, {
@@ -1358,29 +1356,29 @@ func TestTruncate2(t *testing.T) {
 			// filegroup  3   7  10-d-13 ↓    ↓
 			// filegroup    5--------d--15-w-20
 			metas: []*backuppb.Metadata{
-				m_1(1, 3, 7, stream.DefaultCF, 0),
+				m_1(1, 3, 7, DefaultCF, 0),
 				m_2(2,
-					10, 13, stream.DefaultCF, 0,
-					15, 20, stream.WriteCF, 5,
+					10, 13, DefaultCF, 0,
+					15, 20, WriteCF, 5,
 				),
 			},
 			testParams: []*testParam2{
 				{
 					until:        []uint64{2, 3, 4},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 7, stream.DefaultCF, 0),
+						m_1(1, 3, 7, DefaultCF, 0),
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 5,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 5,
 						),
 					},
 				}, {
 					until:        []uint64{5, 6, 7, 9, 10, 12, 13, 14, 15, 18, 20},
 					shiftUntilTS: returnV(5), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 7, stream.DefaultCF, 0),
+						m_1(1, 3, 7, DefaultCF, 0),
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 5,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 5,
 						),
 					},
 				}, {
@@ -1396,29 +1394,29 @@ func TestTruncate2(t *testing.T) {
 			// filegroup  3   7  10-d-13 ↓    ↓
 			// filegroup      7------d--15-w-20
 			metas: []*backuppb.Metadata{
-				m_1(1, 3, 7, stream.DefaultCF, 0),
+				m_1(1, 3, 7, DefaultCF, 0),
 				m_2(2,
-					10, 13, stream.DefaultCF, 0,
-					15, 20, stream.WriteCF, 7,
+					10, 13, DefaultCF, 0,
+					15, 20, WriteCF, 7,
 				),
 			},
 			testParams: []*testParam2{
 				{
 					until:        []uint64{2, 3, 4, 6, 7},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 7, stream.DefaultCF, 0),
+						m_1(1, 3, 7, DefaultCF, 0),
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 7,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 7,
 						),
 					},
 				}, {
 					until:        []uint64{9, 10, 12, 13, 14, 15, 18, 20},
 					shiftUntilTS: returnV(7), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 7, stream.DefaultCF, 0),
+						m_1(1, 3, 7, DefaultCF, 0),
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 7,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 7,
 						),
 					},
 				}, {
@@ -1434,36 +1432,36 @@ func TestTruncate2(t *testing.T) {
 			// filegroup  3-d-6  10-d-13 ↓    ↓
 			// filegroup        8----d--15-w-20
 			metas: []*backuppb.Metadata{
-				m_1(1, 3, 6, stream.DefaultCF, 0),
+				m_1(1, 3, 6, DefaultCF, 0),
 				m_2(2,
-					10, 13, stream.DefaultCF, 0,
-					15, 20, stream.WriteCF, 8,
+					10, 13, DefaultCF, 0,
+					15, 20, WriteCF, 8,
 				),
 			},
 			testParams: []*testParam2{
 				{
 					until:        []uint64{2, 3, 4, 6},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, stream.DefaultCF, 0),
+						m_1(1, 3, 6, DefaultCF, 0),
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 8,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 8,
 						),
 					},
 				}, {
 					until:        []uint64{7},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 8,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 8,
 						),
 					},
 				}, {
 					until:        []uint64{8, 9, 10, 12, 13, 14, 15, 18, 20},
 					shiftUntilTS: returnV(8), restMetadata: []*backuppb.Metadata{
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 8,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 8,
 						),
 					},
 				}, {
@@ -1479,36 +1477,36 @@ func TestTruncate2(t *testing.T) {
 			// filegroup  3-d-6  10-d-13 ↓    ↓
 			// filegroup         10--d--15-w-20
 			metas: []*backuppb.Metadata{
-				m_1(1, 3, 6, stream.DefaultCF, 0),
+				m_1(1, 3, 6, DefaultCF, 0),
 				m_2(2,
-					10, 13, stream.DefaultCF, 0,
-					15, 20, stream.WriteCF, 10,
+					10, 13, DefaultCF, 0,
+					15, 20, WriteCF, 10,
 				),
 			},
 			testParams: []*testParam2{
 				{
 					until:        []uint64{2, 3, 4, 6},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, stream.DefaultCF, 0),
+						m_1(1, 3, 6, DefaultCF, 0),
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 10,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 10,
 						),
 					},
 				}, {
 					until:        []uint64{7, 8, 9},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 10,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 10,
 						),
 					},
 				}, {
 					until:        []uint64{10, 12, 13, 14, 15, 18, 20},
 					shiftUntilTS: returnV(10), restMetadata: []*backuppb.Metadata{
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 10,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 10,
 						),
 					},
 				}, {
@@ -1524,36 +1522,36 @@ func TestTruncate2(t *testing.T) {
 			// filegroup  3-d-6   9-d-13 ↓    ↓
 			// filegroup           11-d-15-w-20
 			metas: []*backuppb.Metadata{
-				m_1(1, 3, 6, stream.DefaultCF, 0),
+				m_1(1, 3, 6, DefaultCF, 0),
 				m_2(2,
-					9, 13, stream.DefaultCF, 0,
-					15, 20, stream.WriteCF, 11,
+					9, 13, DefaultCF, 0,
+					15, 20, WriteCF, 11,
 				),
 			},
 			testParams: []*testParam2{
 				{
 					until:        []uint64{2, 3, 4, 6},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, stream.DefaultCF, 0),
+						m_1(1, 3, 6, DefaultCF, 0),
 						m_2(2,
-							9, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 11,
+							9, 13, DefaultCF, 0,
+							15, 20, WriteCF, 11,
 						),
 					},
 				}, {
 					until:        []uint64{7, 8, 9, 10},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
 						m_2(2,
-							9, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 11,
+							9, 13, DefaultCF, 0,
+							15, 20, WriteCF, 11,
 						),
 					},
 				}, {
 					until:        []uint64{11, 12, 13, 14, 15, 18, 20},
 					shiftUntilTS: returnV(11), restMetadata: []*backuppb.Metadata{
 						m_2(2,
-							9, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 11,
+							9, 13, DefaultCF, 0,
+							15, 20, WriteCF, 11,
 						),
 					},
 				}, {
@@ -1569,36 +1567,36 @@ func TestTruncate2(t *testing.T) {
 			// filegroup  3-d-6  10-d-13 ↓    ↓
 			// filegroup              13d15-w-20
 			metas: []*backuppb.Metadata{
-				m_1(1, 3, 6, stream.DefaultCF, 0),
+				m_1(1, 3, 6, DefaultCF, 0),
 				m_2(2,
-					10, 13, stream.DefaultCF, 0,
-					15, 20, stream.WriteCF, 13,
+					10, 13, DefaultCF, 0,
+					15, 20, WriteCF, 13,
 				),
 			},
 			testParams: []*testParam2{
 				{
 					until:        []uint64{2, 3, 4, 6},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, stream.DefaultCF, 0),
+						m_1(1, 3, 6, DefaultCF, 0),
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 13,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 13,
 						),
 					},
 				}, {
 					until:        []uint64{7, 8, 9, 10, 12},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 13,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 13,
 						),
 					},
 				}, {
 					until:        []uint64{13, 14, 15, 18, 20},
 					shiftUntilTS: returnV(13), restMetadata: []*backuppb.Metadata{
 						m_2(2,
-							10, 13, stream.DefaultCF, 0,
-							15, 20, stream.WriteCF, 13,
+							10, 13, DefaultCF, 0,
+							15, 20, WriteCF, 13,
 						),
 					},
 				}, {
@@ -1614,39 +1612,39 @@ func TestTruncate2(t *testing.T) {
 			// filegroup  3-d-6  10-d-12  ↓   ↓
 			// filegroup              14d16-w-20
 			metas: []*backuppb.Metadata{
-				m_1(1, 3, 6, stream.DefaultCF, 0),
+				m_1(1, 3, 6, DefaultCF, 0),
 				m_2(2,
-					10, 12, stream.DefaultCF, 0,
-					16, 20, stream.WriteCF, 14,
+					10, 12, DefaultCF, 0,
+					16, 20, WriteCF, 14,
 				),
 			},
 			testParams: []*testParam2{
 				{
 					until:        []uint64{2, 3, 4, 6},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, stream.DefaultCF, 0),
+						m_1(1, 3, 6, DefaultCF, 0),
 						m_2(2,
-							10, 12, stream.DefaultCF, 0,
-							16, 20, stream.WriteCF, 14,
+							10, 12, DefaultCF, 0,
+							16, 20, WriteCF, 14,
 						),
 					},
 				}, {
 					until:        []uint64{7, 8, 9, 10, 11, 12},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
 						m_2(2,
-							10, 12, stream.DefaultCF, 0,
-							16, 20, stream.WriteCF, 14,
+							10, 12, DefaultCF, 0,
+							16, 20, WriteCF, 14,
 						),
 					},
 				}, {
 					until:        []uint64{13},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(2, 16, 20, stream.WriteCF, 14),
+						m_1(2, 16, 20, WriteCF, 14),
 					},
 				}, {
 					until:        []uint64{14, 15, 18, 20},
 					shiftUntilTS: returnV(14), restMetadata: []*backuppb.Metadata{
-						m_1(2, 16, 20, stream.WriteCF, 14),
+						m_1(2, 16, 20, WriteCF, 14),
 					},
 				}, {
 					until:        []uint64{25},
@@ -1661,39 +1659,39 @@ func TestTruncate2(t *testing.T) {
 			// filegroup  3-d-6  10-d-12  ↓   ↓
 			// filegroup              14d16-w-20
 			metas: []*backuppb.Metadata{
-				m_1(1, 3, 6, stream.DefaultCF, 0),
+				m_1(1, 3, 6, DefaultCF, 0),
 				m_2(2,
-					10, 12, stream.DefaultCF, 0,
-					16, 20, stream.WriteCF, 14,
+					10, 12, DefaultCF, 0,
+					16, 20, WriteCF, 14,
 				),
 			},
 			testParams: []*testParam2{
 				{
 					until:        []uint64{2, 3, 4, 6},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, stream.DefaultCF, 0),
+						m_1(1, 3, 6, DefaultCF, 0),
 						m_2(2,
-							10, 12, stream.DefaultCF, 0,
-							16, 20, stream.WriteCF, 14,
+							10, 12, DefaultCF, 0,
+							16, 20, WriteCF, 14,
 						),
 					},
 				}, {
 					until:        []uint64{7, 8, 9, 10, 11, 12},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
 						m_2(2,
-							10, 12, stream.DefaultCF, 0,
-							16, 20, stream.WriteCF, 14,
+							10, 12, DefaultCF, 0,
+							16, 20, WriteCF, 14,
 						),
 					},
 				}, {
 					until:        []uint64{13},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(2, 16, 20, stream.WriteCF, 14),
+						m_1(2, 16, 20, WriteCF, 14),
 					},
 				}, {
 					until:        []uint64{14, 15, 18, 20},
 					shiftUntilTS: returnV(14), restMetadata: []*backuppb.Metadata{
-						m_1(2, 16, 20, stream.WriteCF, 14),
+						m_1(2, 16, 20, WriteCF, 14),
 					},
 				}, {
 					until:        []uint64{25},
@@ -1707,8 +1705,8 @@ func TestTruncate2(t *testing.T) {
 		for j, ts := range cs.testParams {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
-				metas := restore.StreamMetadataSet{
-					Helper:                    stream.NewMetadataHelper(),
+				metas := StreamMetadataSet{
+					Helper:                    NewMetadataHelper(),
 					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)
@@ -1748,12 +1746,12 @@ func TestTruncate3(t *testing.T) {
 			// filegroup    5----d--------15--w--20
 			metas: []*backuppb.Metadata{
 				m_2(1,
-					3, 7, stream.DefaultCF, 0,
-					5, 10, stream.DefaultCF, 0,
+					3, 7, DefaultCF, 0,
+					5, 10, DefaultCF, 0,
 				),
 				m_2(2,
-					12, 18, stream.WriteCF, 3,
-					15, 20, stream.WriteCF, 5,
+					12, 18, WriteCF, 3,
+					15, 20, WriteCF, 5,
 				),
 			},
 			testParams: []*testParam2{
@@ -1761,36 +1759,36 @@ func TestTruncate3(t *testing.T) {
 					until:        []uint64{2},
 					shiftUntilTS: returnV(2), restMetadata: []*backuppb.Metadata{
 						m_2(1,
-							3, 7, stream.DefaultCF, 0,
-							5, 10, stream.DefaultCF, 0,
+							3, 7, DefaultCF, 0,
+							5, 10, DefaultCF, 0,
 						),
 						m_2(2,
-							12, 18, stream.WriteCF, 3,
-							15, 20, stream.WriteCF, 5,
+							12, 18, WriteCF, 3,
+							15, 20, WriteCF, 5,
 						),
 					},
 				}, {
 					until:        []uint64{3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 18},
 					shiftUntilTS: returnV(3), restMetadata: []*backuppb.Metadata{
 						m_2(1,
-							3, 7, stream.DefaultCF, 0,
-							5, 10, stream.DefaultCF, 0,
+							3, 7, DefaultCF, 0,
+							5, 10, DefaultCF, 0,
 						),
 						m_2(2,
-							12, 18, stream.WriteCF, 3,
-							15, 20, stream.WriteCF, 5,
+							12, 18, WriteCF, 3,
+							15, 20, WriteCF, 5,
 						),
 					},
 				}, {
 					until:        []uint64{19, 20},
 					shiftUntilTS: returnV(5), restMetadata: []*backuppb.Metadata{
 						m_2(1,
-							3, 7, stream.DefaultCF, 0,
-							5, 10, stream.DefaultCF, 0,
+							3, 7, DefaultCF, 0,
+							5, 10, DefaultCF, 0,
 						),
 						m_2(2,
-							12, 18, stream.WriteCF, 3,
-							15, 20, stream.WriteCF, 5,
+							12, 18, WriteCF, 3,
+							15, 20, WriteCF, 5,
 						),
 					},
 				}, {
@@ -1809,12 +1807,12 @@ func TestTruncate3(t *testing.T) {
 			// filegroup         8---d----15--w--20
 			metas: []*backuppb.Metadata{
 				m_2(1,
-					2, 6, stream.DefaultCF, 0,
-					4, 10, stream.DefaultCF, 0,
+					2, 6, DefaultCF, 0,
+					4, 10, DefaultCF, 0,
 				),
 				m_2(2,
-					12, 18, stream.WriteCF, 2,
-					15, 20, stream.WriteCF, 8,
+					12, 18, WriteCF, 2,
+					15, 20, WriteCF, 8,
 				),
 			},
 			testParams: []*testParam2{
@@ -1822,35 +1820,35 @@ func TestTruncate3(t *testing.T) {
 					until:        []uint64{1},
 					shiftUntilTS: returnV(1), restMetadata: []*backuppb.Metadata{
 						m_2(1,
-							2, 6, stream.DefaultCF, 0,
-							4, 10, stream.DefaultCF, 0,
+							2, 6, DefaultCF, 0,
+							4, 10, DefaultCF, 0,
 						),
 						m_2(2,
-							12, 18, stream.WriteCF, 2,
-							15, 20, stream.WriteCF, 8,
+							12, 18, WriteCF, 2,
+							15, 20, WriteCF, 8,
 						),
 					},
 				}, {
 					until:        []uint64{2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 18},
 					shiftUntilTS: returnV(2), restMetadata: []*backuppb.Metadata{
 						m_2(1,
-							2, 6, stream.DefaultCF, 0,
-							4, 10, stream.DefaultCF, 0,
+							2, 6, DefaultCF, 0,
+							4, 10, DefaultCF, 0,
 						),
 						m_2(2,
-							12, 18, stream.WriteCF, 2,
-							15, 20, stream.WriteCF, 8,
+							12, 18, WriteCF, 2,
+							15, 20, WriteCF, 8,
 						),
 					},
 				}, {
 					until:        []uint64{19, 20},
 					shiftUntilTS: returnV(8), restMetadata: []*backuppb.Metadata{
 						m_1(1,
-							4, 10, stream.DefaultCF, 0,
+							4, 10, DefaultCF, 0,
 						),
 						m_2(2,
-							12, 18, stream.WriteCF, 2,
-							15, 20, stream.WriteCF, 8,
+							12, 18, WriteCF, 2,
+							15, 20, WriteCF, 8,
 						),
 					},
 				}, {
@@ -1869,12 +1867,12 @@ func TestTruncate3(t *testing.T) {
 			// filegroup            12---d--16--w--20
 			metas: []*backuppb.Metadata{
 				m_2(1,
-					2, 6, stream.DefaultCF, 0,
-					4, 10, stream.DefaultCF, 0,
+					2, 6, DefaultCF, 0,
+					4, 10, DefaultCF, 0,
 				),
 				m_2(2,
-					14, 18, stream.WriteCF, 2,
-					16, 20, stream.WriteCF, 12,
+					14, 18, WriteCF, 2,
+					16, 20, WriteCF, 12,
 				),
 			},
 			testParams: []*testParam2{
@@ -1882,32 +1880,32 @@ func TestTruncate3(t *testing.T) {
 					until:        []uint64{1},
 					shiftUntilTS: returnV(1), restMetadata: []*backuppb.Metadata{
 						m_2(1,
-							2, 6, stream.DefaultCF, 0,
-							4, 10, stream.DefaultCF, 0,
+							2, 6, DefaultCF, 0,
+							4, 10, DefaultCF, 0,
 						),
 						m_2(2,
-							14, 18, stream.WriteCF, 2,
-							16, 20, stream.WriteCF, 12,
+							14, 18, WriteCF, 2,
+							16, 20, WriteCF, 12,
 						),
 					},
 				}, {
 					until:        []uint64{2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 18},
 					shiftUntilTS: returnV(2), restMetadata: []*backuppb.Metadata{
 						m_2(1,
-							2, 6, stream.DefaultCF, 0,
-							4, 10, stream.DefaultCF, 0,
+							2, 6, DefaultCF, 0,
+							4, 10, DefaultCF, 0,
 						),
 						m_2(2,
-							14, 18, stream.WriteCF, 2,
-							16, 20, stream.WriteCF, 12,
+							14, 18, WriteCF, 2,
+							16, 20, WriteCF, 12,
 						),
 					},
 				}, {
 					until:        []uint64{19, 20},
 					shiftUntilTS: returnV(12), restMetadata: []*backuppb.Metadata{
 						m_2(2,
-							14, 18, stream.WriteCF, 2,
-							16, 20, stream.WriteCF, 8,
+							14, 18, WriteCF, 2,
+							16, 20, WriteCF, 8,
 						),
 					},
 				}, {
@@ -1926,12 +1924,12 @@ func TestTruncate3(t *testing.T) {
 			// filegroup                14-d--16-w--20
 			metas: []*backuppb.Metadata{
 				m_2(1,
-					2, 6, stream.DefaultCF, 0,
-					8, 10, stream.WriteCF, 4,
+					2, 6, DefaultCF, 0,
+					8, 10, WriteCF, 4,
 				),
 				m_2(2,
-					14, 18, stream.DefaultCF, 0,
-					16, 20, stream.WriteCF, 14,
+					14, 18, DefaultCF, 0,
+					16, 20, WriteCF, 14,
 				),
 			},
 			testParams: []*testParam2{
@@ -1939,52 +1937,52 @@ func TestTruncate3(t *testing.T) {
 					until:        []uint64{1},
 					shiftUntilTS: returnV(1), restMetadata: []*backuppb.Metadata{
 						m_2(1,
-							2, 6, stream.DefaultCF, 0,
-							8, 10, stream.WriteCF, 4,
+							2, 6, DefaultCF, 0,
+							8, 10, WriteCF, 4,
 						),
 						m_2(2,
-							14, 18, stream.DefaultCF, 0,
-							16, 20, stream.WriteCF, 14,
+							14, 18, DefaultCF, 0,
+							16, 20, WriteCF, 14,
 						),
 					},
 				}, {
 					until:        []uint64{2, 3},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
 						m_2(1,
-							2, 6, stream.DefaultCF, 0,
-							8, 10, stream.WriteCF, 4,
+							2, 6, DefaultCF, 0,
+							8, 10, WriteCF, 4,
 						),
 						m_2(2,
-							14, 18, stream.DefaultCF, 0,
-							16, 20, stream.WriteCF, 14,
+							14, 18, DefaultCF, 0,
+							16, 20, WriteCF, 14,
 						),
 					},
 				}, {
 					until:        []uint64{4, 5, 6, 7, 8, 9, 10},
 					shiftUntilTS: returnV(4), restMetadata: []*backuppb.Metadata{
 						m_2(1,
-							2, 6, stream.DefaultCF, 0,
-							8, 10, stream.WriteCF, 4,
+							2, 6, DefaultCF, 0,
+							8, 10, WriteCF, 4,
 						),
 						m_2(2,
-							14, 18, stream.DefaultCF, 0,
-							16, 20, stream.WriteCF, 14,
+							14, 18, DefaultCF, 0,
+							16, 20, WriteCF, 14,
 						),
 					},
 				}, {
 					until:        []uint64{12},
 					shiftUntilTS: returnV(12), restMetadata: []*backuppb.Metadata{
 						m_2(2,
-							14, 18, stream.DefaultCF, 0,
-							16, 20, stream.WriteCF, 14,
+							14, 18, DefaultCF, 0,
+							16, 20, WriteCF, 14,
 						),
 					},
 				}, {
 					until:        []uint64{14, 15, 16, 17, 18, 19, 20},
 					shiftUntilTS: returnV(14), restMetadata: []*backuppb.Metadata{
 						m_2(2,
-							14, 18, stream.DefaultCF, 0,
-							16, 20, stream.WriteCF, 14,
+							14, 18, DefaultCF, 0,
+							16, 20, WriteCF, 14,
 						),
 					},
 				}, {
@@ -2004,15 +2002,15 @@ func TestTruncate3(t *testing.T) {
 			// filegroup                           20---d-24-w-26
 			metas: []*backuppb.Metadata{
 				m_2(1,
-					2, 6, stream.DefaultCF, 0,
-					8, 10, stream.DefaultCF, 0,
+					2, 6, DefaultCF, 0,
+					8, 10, DefaultCF, 0,
 				),
 				m_2(2,
-					14, 18, stream.WriteCF, 9,
-					16, 22, stream.DefaultCF, 0,
+					14, 18, WriteCF, 9,
+					16, 22, DefaultCF, 0,
 				),
 				m_1(3,
-					24, 26, stream.WriteCF, 20,
+					24, 26, WriteCF, 20,
 				),
 			},
 			testParams: []*testParam2{
@@ -2020,63 +2018,63 @@ func TestTruncate3(t *testing.T) {
 					until:        []uint64{1, 2, 3, 6},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
 						m_2(1,
-							2, 6, stream.DefaultCF, 0,
-							8, 10, stream.DefaultCF, 0,
+							2, 6, DefaultCF, 0,
+							8, 10, DefaultCF, 0,
 						),
 						m_2(2,
-							14, 18, stream.WriteCF, 9,
-							16, 22, stream.DefaultCF, 0,
+							14, 18, WriteCF, 9,
+							16, 22, DefaultCF, 0,
 						),
 						m_1(3,
-							24, 26, stream.WriteCF, 20,
+							24, 26, WriteCF, 20,
 						),
 					},
 				}, {
 					until:        []uint64{7, 8},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
 						m_1(1,
-							8, 10, stream.DefaultCF, 0,
+							8, 10, DefaultCF, 0,
 						),
 						m_2(2,
-							14, 18, stream.WriteCF, 9,
-							16, 22, stream.DefaultCF, 0,
+							14, 18, WriteCF, 9,
+							16, 22, DefaultCF, 0,
 						),
 						m_1(3,
-							24, 26, stream.WriteCF, 20,
+							24, 26, WriteCF, 20,
 						),
 					},
 				}, {
 					until:        []uint64{9, 10, 11, 14, 15, 16, 17, 18},
 					shiftUntilTS: returnV(9), restMetadata: []*backuppb.Metadata{
 						m_1(1,
-							8, 10, stream.DefaultCF, 0,
+							8, 10, DefaultCF, 0,
 						),
 						m_2(2,
-							14, 18, stream.WriteCF, 9,
-							16, 22, stream.DefaultCF, 0,
+							14, 18, WriteCF, 9,
+							16, 22, DefaultCF, 0,
 						),
 						m_1(3,
-							24, 26, stream.WriteCF, 20,
+							24, 26, WriteCF, 20,
 						),
 					},
 				}, {
 					until:        []uint64{19},
 					shiftUntilTS: returnV(19), restMetadata: []*backuppb.Metadata{
 						m_1(2,
-							16, 22, stream.DefaultCF, 0,
+							16, 22, DefaultCF, 0,
 						),
 						m_1(3,
-							24, 26, stream.WriteCF, 20,
+							24, 26, WriteCF, 20,
 						),
 					},
 				}, {
 					until:        []uint64{20, 21, 22, 23, 24, 25, 26},
 					shiftUntilTS: returnV(20), restMetadata: []*backuppb.Metadata{
 						m_1(2,
-							16, 22, stream.DefaultCF, 0,
+							16, 22, DefaultCF, 0,
 						),
 						m_1(3,
-							24, 26, stream.WriteCF, 20,
+							24, 26, WriteCF, 20,
 						),
 					},
 				}, {
@@ -2091,8 +2089,8 @@ func TestTruncate3(t *testing.T) {
 		for j, ts := range cs.testParams {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
-				metas := restore.StreamMetadataSet{
-					Helper:                    stream.NewMetadataHelper(),
+				metas := StreamMetadataSet{
+					Helper:                    NewMetadataHelper(),
 					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)
@@ -2162,7 +2160,7 @@ func mf(id int64, filess [][]*backuppb.DataFileInfo) *backuppb.Metadata {
 		StoreId:     id,
 		MetaVersion: backuppb.MetaVersion_V2,
 	}
-	restore.ReplaceMetadata(m, filegroups)
+	ReplaceMetadata(m, filegroups)
 	return m
 }
 
@@ -2187,9 +2185,9 @@ func TestCalculateShiftTS(t *testing.T) {
 			metas: []*backuppb.Metadata{
 				mf(1, [][]*backuppb.DataFileInfo{
 					{
-						fi(10, 20, stream.DefaultCF, 0),
-						fi(15, 30, stream.WriteCF, 8),
-						fi(25, 35, stream.WriteCF, 11),
+						fi(10, 20, DefaultCF, 0),
+						fi(15, 30, WriteCF, 8),
+						fi(25, 35, WriteCF, 11),
 					},
 				}),
 			},
@@ -2219,9 +2217,9 @@ func TestCalculateShiftTS(t *testing.T) {
 			metas: []*backuppb.Metadata{
 				mf(1, [][]*backuppb.DataFileInfo{
 					{
-						fi(65, 70, stream.WriteCF, 55),
-						fi(50, 60, stream.DefaultCF, 0),
-						fi(80, 85, stream.WriteCF, 72),
+						fi(65, 70, WriteCF, 55),
+						fi(50, 60, DefaultCF, 0),
+						fi(80, 85, WriteCF, 72),
 					},
 				}),
 			},
@@ -2254,16 +2252,16 @@ func TestCalculateShiftTS(t *testing.T) {
 			metas: []*backuppb.Metadata{
 				mf(1, [][]*backuppb.DataFileInfo{
 					{
-						fi(10, 20, stream.DefaultCF, 0),
-						fi(15, 30, stream.WriteCF, 8),
-						fi(25, 35, stream.WriteCF, 11),
+						fi(10, 20, DefaultCF, 0),
+						fi(15, 30, WriteCF, 8),
+						fi(25, 35, WriteCF, 11),
 					},
 				}),
 				mf(2, [][]*backuppb.DataFileInfo{
 					{
-						fi(65, 70, stream.WriteCF, 55),
-						fi(50, 60, stream.DefaultCF, 0),
-						fi(80, 85, stream.WriteCF, 72),
+						fi(65, 70, WriteCF, 55),
+						fi(50, 60, DefaultCF, 0),
+						fi(80, 85, WriteCF, 72),
 					},
 				}),
 			},
@@ -2304,8 +2302,8 @@ func TestCalculateShiftTS(t *testing.T) {
 		for j, ts := range cs.testParams {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
-				metas := restore.StreamMetadataSet{
-					Helper:                    stream.NewMetadataHelper(),
+				metas := StreamMetadataSet{
+					Helper:                    NewMetadataHelper(),
 					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)

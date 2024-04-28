@@ -1,12 +1,13 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package rawkv
 
 import (
 	"context"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/rawkv"
@@ -73,7 +74,7 @@ func (c *RawKVBatchClient) SetColumnFamily(columnFamily string) {
 
 // Put puts (key, value) into buffer justly, wait for batch write if the buffer is full.
 func (c *RawKVBatchClient) Put(ctx context.Context, key, value []byte, originTs uint64) error {
-	k := TruncateTS(key)
+	k := utils.TruncateTS(key)
 	sk := hack.String(k)
 	if v, ok := c.kvs[sk]; ok {
 		if v.ts < originTs {

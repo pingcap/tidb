@@ -1,5 +1,5 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
-package restore
+package data
 
 import (
 	"context"
@@ -26,6 +26,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 )
+
+const gRPCBackOffMaxDelay = 3 * time.Second
 
 type RecoveryStage int
 
