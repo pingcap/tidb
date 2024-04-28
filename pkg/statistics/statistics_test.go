@@ -217,7 +217,7 @@ func SubTestColumnRange() func(*testing.T) {
 			FMSketch:  sketch,
 		}
 		hg, err := BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeLonglong))
-		hg.PreCalculateScalar(ctx.TypeCtx())
+		hg.PreCalculateScalar()
 		require.NoError(t, err)
 		col := &Column{
 			Histogram:         *hg,
@@ -293,7 +293,7 @@ func SubTestIntColumnRanges() func(*testing.T) {
 
 		s.pk.(*recordSet).cursor = 0
 		rowCount, hg, err := buildPK(ctx, bucketCount, 0, s.pk)
-		hg.PreCalculateScalar(ctx.TypeCtx())
+		hg.PreCalculateScalar()
 		require.NoError(t, err)
 		require.Equal(t, int64(100000), rowCount)
 		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}, StatsLoadedStatus: NewStatsFullLoadStatus()}
@@ -388,7 +388,7 @@ func SubTestIndexRanges() func(*testing.T) {
 
 		s.rc.(*recordSet).cursor = 0
 		rowCount, hg, cms, err := buildIndex(ctx, bucketCount, 0, s.rc)
-		hg.PreCalculateScalar(ctx.TypeCtx())
+		hg.PreCalculateScalar()
 		require.NoError(t, err)
 		require.Equal(t, int64(100000), rowCount)
 		idxInfo := &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}}
@@ -516,7 +516,7 @@ func SubTestBuild() func(*testing.T) {
 		col, err := BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeLonglong))
 		require.NoError(t, err)
 		checkRepeats(t, col)
-		col.PreCalculateScalar(ctx.TypeCtx())
+		col.PreCalculateScalar()
 		require.Equal(t, 226, col.Len())
 		count, _ := col.EqualRowCount(nil, types.NewIntDatum(1000), false)
 		require.Equal(t, 0, int(count))
@@ -584,7 +584,7 @@ func SubTestBuild() func(*testing.T) {
 		tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, s.rc)
 		require.NoError(t, err)
 		checkRepeats(t, col)
-		col.PreCalculateScalar(ctx.TypeCtx())
+		col.PreCalculateScalar()
 		require.Equal(t, 100000, int(tblCount))
 		count, _ = col.EqualRowCount(nil, encodeKey(types.NewIntDatum(10000)), false)
 		require.Equal(t, 1, int(count))
@@ -601,7 +601,7 @@ func SubTestBuild() func(*testing.T) {
 		tblCount, col, err = buildPK(ctx, bucketCount, 4, s.pk)
 		require.NoError(t, err)
 		checkRepeats(t, col)
-		col.PreCalculateScalar(ctx.TypeCtx())
+		col.PreCalculateScalar()
 		require.Equal(t, 100000, int(tblCount))
 		count, _ = col.EqualRowCount(nil, types.NewIntDatum(10000), false)
 		require.Equal(t, 1, int(count))

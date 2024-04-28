@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/context"
 )
 
 // calcFraction is used to calculate the fraction of the interval [lower, upper] that lies within the [lower, value]
@@ -43,7 +43,7 @@ func calcFraction(lower, upper, value float64) float64 {
 	return frac
 }
 
-func convertDatumToScalar(tctx types.Context, value *types.Datum, commonPfxLen int) float64 {
+func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	switch value.Kind() {
 	case types.KindFloat32:
 		return float64(value.GetFloat32())
@@ -72,7 +72,8 @@ func convertDatumToScalar(tctx types.Context, value *types.Datum, commonPfxLen i
 		case mysql.TypeTimestamp:
 			minTime = types.MinTimestamp
 		}
-		return float64(valueTime.Sub(tctx, &minTime).Duration)
+		sc := stmtctx.NewStmtCtxWithTimeZone(types.BoundTimezone)
+		return float64(valueTime.Sub(sc.TypeCtx(), &minTime).Duration)
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()
 		if len(bytes) <= commonPfxLen {
@@ -93,7 +94,7 @@ func convertDatumToScalar(tctx types.Context, value *types.Datum, commonPfxLen i
 // calculate their common prefix length, because when a value falls between lower and upper, the common prefix
 // of lower and upper equals to the common prefix of the lower, upper and the value. For some simple types like `Int64`,
 // we do not convert it because we can directly infer the scalar value.
-func (hg *Histogram) PreCalculateScalar(tctx types.Context) {
+func (hg *Histogram) PreCalculateScalar() {
 	l := hg.Len()
 	if l == 0 {
 		return
@@ -106,8 +107,8 @@ func (hg *Histogram) PreCalculateScalar(tctx types.Context) {
 			// It's read-only, so we don't need to allocate new datum each time.
 			hg.LowerToDatum(i, &lower)
 			hg.UpperToDatum(i, &upper)
-			hg.Scalars[i].lower = convertDatumToScalar(tctx, &lower, 0)
-			hg.Scalars[i].upper = convertDatumToScalar(tctx, &upper, 0)
+			hg.Scalars[i].lower = convertDatumToScalar(&lower, 0)
+			hg.Scalars[i].upper = convertDatumToScalar(&upper, 0)
 		}
 	case types.KindBytes, types.KindString:
 		var lower, upper types.Datum
@@ -124,7 +125,7 @@ func (hg *Histogram) PreCalculateScalar(tctx types.Context) {
 	}
 }
 
-func (hg *Histogram) calcFraction(tctx types.Context, index int, value *types.Datum) float64 {
+func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 	lower, upper := hg.Bounds.GetRow(2*index), hg.Bounds.GetRow(2*index+1)
 	switch value.Kind() {
 	case types.KindFloat32:
@@ -138,9 +139,9 @@ func (hg *Histogram) calcFraction(tctx types.Context, index int, value *types.Da
 	case types.KindMysqlDuration:
 		return calcFraction(float64(lower.GetDuration(0, 0).Duration), float64(upper.GetDuration(0, 0).Duration), float64(value.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal, types.KindMysqlTime:
-		return calcFraction(hg.Scalars[index].lower, hg.Scalars[index].upper, convertDatumToScalar(tctx, value, 0))
+		return calcFraction(hg.Scalars[index].lower, hg.Scalars[index].upper, convertDatumToScalar(value, 0))
 	case types.KindBytes, types.KindString:
-		return calcFraction(hg.Scalars[index].lower, hg.Scalars[index].upper, convertDatumToScalar(tctx, value, hg.Scalars[index].commonPfxLen))
+		return calcFraction(hg.Scalars[index].lower, hg.Scalars[index].upper, convertDatumToScalar(value, hg.Scalars[index].commonPfxLen))
 	}
 	return 0.5
 }
@@ -173,7 +174,7 @@ func convertBytesToScalar(value []byte) float64 {
 	return float64(binary.BigEndian.Uint64(buf[:]))
 }
 
-func calcFraction4Datums(tctx types.Context, lower, upper, value *types.Datum) float64 {
+func calcFraction4Datums(lower, upper, value *types.Datum) float64 {
 	switch value.Kind() {
 	case types.KindFloat32:
 		return calcFraction(float64(lower.GetFloat32()), float64(upper.GetFloat32()), float64(value.GetFloat32()))
@@ -186,10 +187,10 @@ func calcFraction4Datums(tctx types.Context, lower, upper, value *types.Datum) f
 	case types.KindMysqlDuration:
 		return calcFraction(float64(lower.GetMysqlDuration().Duration), float64(upper.GetMysqlDuration().Duration), float64(value.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal, types.KindMysqlTime:
-		return calcFraction(convertDatumToScalar(tctx, lower, 0), convertDatumToScalar(tctx, upper, 0), convertDatumToScalar(tctx, value, 0))
+		return calcFraction(convertDatumToScalar(lower, 0), convertDatumToScalar(upper, 0), convertDatumToScalar(value, 0))
 	case types.KindBytes, types.KindString:
 		commonPfxLen := commonPrefixLength(lower.GetBytes(), upper.GetBytes())
-		return calcFraction(convertDatumToScalar(tctx, lower, commonPfxLen), convertDatumToScalar(tctx, upper, commonPfxLen), convertDatumToScalar(tctx, value, commonPfxLen))
+		return calcFraction(convertDatumToScalar(lower, commonPfxLen), convertDatumToScalar(upper, commonPfxLen), convertDatumToScalar(value, commonPfxLen))
 	}
 	return 0.5
 }
