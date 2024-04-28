@@ -123,7 +123,7 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 }
 
 // NewEtcdSafePointKVWithKeyspacePrefix is used to add etcd namespace with keyspace prefix,
-// if the current keyspace is configured with "gc_management_type" = "keyspace_level_gc".
+// if the current keyspace use keyspace level GC.
 func NewEtcdSafePointKVWithKeyspacePrefix(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
 	var etcdNameSpace string
 	if keyspace.IsKeyspaceUseKeyspaceLevelGC(codec.GetKeyspaceMeta()) {
@@ -387,7 +387,7 @@ func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 	return kv.NewVersion(ver), derr.ToTiDBErr(err)
 }
 
-// CurrentAllTSOKeyspaceGroupMinTs returns current minimum timestamp across all keyspace groups.
+// CurrentAllTSOKeyspaceGroupMinTs returns a minimum timestamp from all TSO keyspace groups.
 func (s *tikvStore) CurrentAllTSOKeyspaceGroupMinTs() (uint64, error) {
 	ts, err := s.KVStore.CurrentAllTSOKeyspaceGroupMinTs()
 	return ts, derr.ToTiDBErr(err)
