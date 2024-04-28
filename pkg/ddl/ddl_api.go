@@ -411,23 +411,14 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 
 		tbReplicaInfo := tbl.TiFlashReplica
 		if !shouldModifyTiFlashReplica(tbReplicaInfo, tiflashReplica) {
-<<<<<<< HEAD
-			logutil.BgLogger().Info("skip repeated processing table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
-=======
-			logutil.DDLLogger().Info("skip repeated processing table",
-				zap.Int64("tableID", tbl.ID),
-				zap.Int64("schemaID", dbInfo.ID),
-				zap.String("tableName", tbl.Name.String()),
-				zap.String("schemaName", dbInfo.Name.String()))
->>>>>>> 10971ea5b0d (ddl: use package-level logger which preset "category" field (#52885))
+			logutil.DDLLogger().Info("skip repeated processing table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
 			skip++
 			continue
 		}
 
-<<<<<<< HEAD
 		// Ban setting replica count for tables in system database.
 		if tbl.TempTableType != model.TempTableNone {
-			logutil.BgLogger().Info("skip processing temporary table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
+			logutil.DDLLogger().Info("skip processing temporary table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
 			skip++
 			continue
 		}
@@ -442,18 +433,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 			}
 		}
 		if !charsetOk {
-			logutil.BgLogger().Info("skip processing schema table, unsupported charset", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
-=======
-		// If table is not supported, add err to warnings.
-		err = isTableTiFlashSupported(dbName, tbl)
-		if err != nil {
-			logutil.DDLLogger().Info("skip processing table", zap.Int64("tableID", tbl.ID),
-				zap.Int64("schemaID", dbInfo.ID),
-				zap.String("tableName", tbl.Name.String()),
-				zap.String("schemaName", dbInfo.Name.String()),
-				zap.Error(err))
-			sctx.GetSessionVars().StmtCtx.AppendNote(err)
->>>>>>> 10971ea5b0d (ddl: use package-level logger which preset "category" field (#52885))
+			logutil.DDLLogger().Info("skip processing schema table, unsupported charset", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
 			skip++
 			continue
 		}
