@@ -316,6 +316,10 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	return util.CallWithSCtx(a.statsHandle.SPool(),
 		func(sctx sessionctx.Context) error {
+			// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
+			// Hence, when reading statistics, we should skip invalid date check. See #39336.
+			sc := sctx.GetSessionVars().StmtCtx
+			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 			err := a.prepare(sctx, isIndex)
 			if err != nil {
 				return err
@@ -509,7 +513,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			var allhg []*statistics.Histogram
 			wrapper := item.item
 			a.globalStats.TopN[item.idx], poppedTopN, allhg, err = mergeGlobalStatsTopN(a.statsHandle.GPool(), sctx, wrapper,
-				tz, analyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
+				tz, analyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex, a.globalStatsNDV[item.idx])
 			if err != nil {
 				return err
 			}
@@ -517,7 +521,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			// Merge histogram.
 			globalHg := &(a.globalStats.Hg[item.idx])
 			*globalHg, err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
-				int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
+				int64(opts[ast.AnalyzeOptNumBuckets]), isIndex, analyzeVersion)
 			if err != nil {
 				return err
 			}

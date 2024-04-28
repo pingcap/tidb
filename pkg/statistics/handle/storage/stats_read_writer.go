@@ -228,6 +228,10 @@ func (s *statsReadWriter) TableStatsFromStorage(tableInfo *model.TableInfo, phys
 		if !ok {
 			statsTbl = nil
 		}
+		// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
+		// Hence, when reading statistics, we should skip invalid date check. See #39336.
+		sc := sctx.GetSessionVars().StmtCtx
+		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 		statsTbl, err = TableStatsFromStorage(sctx, snapshot, tableInfo, physicalID, loadAll, s.statsHandler.Lease(), statsTbl)
 		return err
 	}, util.FlagWrapTxn)
@@ -332,6 +336,10 @@ func (s *statsReadWriter) LoadTablePartitionStats(tableInfo *model.TableInfo, pa
 // LoadNeededHistograms will load histograms for those needed columns/indices.
 func (s *statsReadWriter) LoadNeededHistograms() (err error) {
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
+		// Hence, when reading statistics, we should skip invalid date check. See #39336.
+		sc := sctx.GetSessionVars().StmtCtx
+		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 		loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 		return LoadNeededHistograms(sctx, s.statsHandler, loadFMSketch)
 	}, util.FlagWrapTxn)
@@ -561,6 +569,10 @@ func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.Table
 		if err != nil {
 			return err
 		}
+		// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
+		// Hence, when reading statistics, we should skip invalid date check. See #39336.
+		sc := sctx.GetSessionVars().StmtCtx
+		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 		jsonTbl, err = GenJSONTableFromStats(sctx, dbName, tableInfo, tbl)
 		return err
 	})

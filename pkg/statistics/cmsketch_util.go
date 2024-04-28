@@ -72,3 +72,20 @@ func topNMetaToDatum(val TopNMeta,
 	}
 	return dat, err
 }
+
+// TopNMetaValToDatum transforms the value of the TopN item to the datum.
+func TopNMetaValToDatum(val []byte, tp byte, isIndex bool, loc *time.Location) (d types.Datum, err error) {
+	if isIndex {
+		d.SetBytes(val)
+	} else {
+		if types.IsTypeTime(tp) {
+			// Handle date time values specially since they are encoded to int and we'll get int values if using DecodeOne.
+			_, d, err = codec.DecodeAsDateTime(val, tp, loc)
+		} else if types.IsTypeFloat(tp) {
+			_, d, err = codec.DecodeAsFloat32(val, tp)
+		} else {
+			_, d, err = codec.DecodeOne(val)
+		}
+	}
+	return d, err
+}

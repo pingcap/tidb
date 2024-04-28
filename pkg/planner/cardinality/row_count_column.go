@@ -329,7 +329,7 @@ func ColumnGreaterRowCount(sctx context.PlanContext, t *statistics.Table, value 
 	if statistics.ColumnStatsIsInvalid(c, sctx, &t.HistColl, colID) {
 		return float64(t.RealtimeCount) / pseudoLessRate
 	}
-	return c.GreaterRowCount(value) * c.GetIncreaseFactor(t.RealtimeCount)
+	return c.GreaterRowCount(sctx, value) * c.GetIncreaseFactor(t.RealtimeCount)
 }
 
 // columnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
