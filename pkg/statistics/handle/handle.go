@@ -122,6 +122,10 @@ func NewHandle(
 	handle.StatsGC = storage.NewStatsGC(handle)
 	handle.StatsReadWriter = storage.NewStatsReadWriter(handle)
 
+	// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
+	// Hence, when reading statistics, we should skip invalid date check. See #39336.
+	sc := initStatsCtx.GetSessionVars().StmtCtx
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreInvalidDateErr(true).WithIgnoreZeroInDate(true))
 	handle.initStatsCtx = initStatsCtx
 	statsCache, err := cache.NewStatsCacheImpl(handle)
 	if err != nil {
