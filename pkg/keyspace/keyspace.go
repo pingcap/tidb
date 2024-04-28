@@ -19,7 +19,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"strings"
-	"sync/atomic"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -54,9 +53,6 @@ const (
 
 // CodecV1 represents api v1 codec.
 var CodecV1 = tikv.NewCodecV1(tikv.ModeTxn)
-
-// globalKeyspaceMeta is the keyspace meta of the current TiDB, if TiDB without set "keyspace-name" then globalKeyspaceMeta.Load() == nil.
-var globalKeyspaceMeta atomic.Pointer[keyspacepb.KeyspaceMeta]
 
 // MakeKeyspaceEtcdNamespace return the keyspace prefix path for etcd namespace
 func MakeKeyspaceEtcdNamespace(c tikv.Codec) string {
@@ -96,11 +92,6 @@ func WrapZapcoreWithKeyspace() zap.Option {
 	})
 }
 
-// IsCurrentKeyspaceUseKeyspaceLevelGC return true if globalKeyspaceMeta not nil and globalKeyspaceMeta config has "gc_management_type" = "keyspace_level_gc".
-func IsCurrentKeyspaceUseKeyspaceLevelGC() bool {
-	return IsKeyspaceUseKeyspaceLevelGC(GetCurrentKeyspaceMeta())
-}
-
 // IsKeyspaceUseKeyspaceLevelGC return true if keyspace meta config has "gc_management_type" = "keyspace_level_gc".
 func IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	if keyspaceMeta == nil {
@@ -112,12 +103,12 @@ func IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	return false
 }
 
-// IsCurrentKeyspaceUseGlobalGC return true if TiDB set 'keyspace-name' and use global gc.
-func IsCurrentKeyspaceUseGlobalGC() bool {
-	if GetCurrentKeyspaceMeta() == nil {
+// IsKeyspaceUseGlobalGC return true if TiDB set 'keyspace-name' and use global gc.
+func IsKeyspaceUseGlobalGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
+	if keyspaceMeta == nil {
 		return true
 	}
-	if val, ok := GetCurrentKeyspaceMeta().Config[KeyspaceMetaConfigGCManagementType]; ok {
+	if val, ok := keyspaceMeta.Config[KeyspaceMetaConfigGCManagementType]; ok {
 		return val == KeyspaceMetaConfigGCManagementTypeGlobalGC
 	}
 	return true
@@ -149,13 +140,6 @@ func GetKeyspaceTxnRange(keyspaceID uint32) ([]byte, []byte) {
 	}
 
 	return txnLeftBound, txnRightBound
-}
-
-// InitGlobalKeyspaceMeta is used to get the keyspace meta from PD during TiDB startup and set global keyspace meta.
-func InitGlobalKeyspaceMeta(pdClient *tikv.CodecPDClient, keyspaceName string) error {
-	keyspaceMeta, err := GetKeyspaceMeta(pdClient, keyspaceName)
-	setCurrentKeyspaceMeta(keyspaceMeta)
-	return err
 }
 
 // GetKeyspaceMeta return keyspace meta of the given keyspace name.
@@ -193,17 +177,4 @@ func IsKeyspaceNotExistError(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), pdpb.ErrorType_ENTRY_NOT_FOUND.String())
-}
-
-// GetCurrentKeyspaceMeta return global keyspace meta if TiDB set "keyspace-name"
-func GetCurrentKeyspaceMeta() *keyspacepb.KeyspaceMeta {
-	v := globalKeyspaceMeta.Load()
-	if v == nil {
-		return nil
-	}
-	return v
-}
-
-func setCurrentKeyspaceMeta(ks *keyspacepb.KeyspaceMeta) {
-	globalKeyspaceMeta.Store(ks)
 }

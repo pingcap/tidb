@@ -126,7 +126,7 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 // if the current keyspace is configured with "gc_management_type" = "keyspace_level_gc".
 func NewEtcdSafePointKV(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
 	var etcdNameSpace string
-	if keyspace.IsCurrentKeyspaceUseKeyspaceLevelGC() {
+	if keyspace.IsKeyspaceUseKeyspaceLevelGC(codec.GetKeyspaceMeta()) {
 		etcdNameSpace = keyspace.MakeKeyspaceEtcdNamespace(codec)
 	}
 	return tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig, tikv.WithPrefix(etcdNameSpace))
@@ -205,10 +205,6 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 	} else {
 		logutil.BgLogger().Info("using API V2.", zap.String("keyspaceName", keyspaceName))
 		pdClient, err = tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, pdCli, keyspaceName)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		err = keyspace.InitGlobalKeyspaceMeta(pdClient, keyspaceName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

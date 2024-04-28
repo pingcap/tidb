@@ -17,6 +17,7 @@ package keyspace
 import (
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -64,4 +65,43 @@ func TestGetKeyspaceRange(t *testing.T) {
 	maxKeyspaceIDexpectRightBound := codec.EncodeBytes(nil, []byte{'y', 0, 0, 0})
 	require.Equal(t, expectMaxKeyspaceIDLeftBound, maxKeyspaceIDLeftBound)
 	require.Equal(t, maxKeyspaceIDexpectRightBound, maxKeyspaceIDRightBound)
+}
+
+func TestGetKeyspaceGCManagementType(t *testing.T) {
+
+	// Case 1: The keyspace use global GC by default.
+	keyspaceMeta := keyspacepb.KeyspaceMeta{
+		Id: 1,
+	}
+
+	require.Equal(t, false, IsKeyspaceUseKeyspaceLevelGC(&keyspaceMeta))
+	require.Equal(t, true, IsKeyspaceUseGlobalGC(&keyspaceMeta))
+
+	// Case 2: The keyspace use global GC by default by set global GC.
+	keyspaceConfig := map[string]string{
+		KeyspaceMetaConfigGCManagementType: KeyspaceMetaConfigGCManagementTypeGlobalGC,
+	}
+	keyspaceMeta = keyspacepb.KeyspaceMeta{
+		Id:     1,
+		Config: keyspaceConfig,
+	}
+
+	require.Equal(t, false, IsKeyspaceUseKeyspaceLevelGC(&keyspaceMeta))
+	require.Equal(t, true, IsKeyspaceUseGlobalGC(&keyspaceMeta))
+
+	// Case 3: The keyspace use keyspace level GC.
+	keyspaceConfig = map[string]string{
+		KeyspaceMetaConfigGCManagementType: KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC,
+	}
+	keyspaceMeta = keyspacepb.KeyspaceMeta{
+		Id:     1,
+		Config: keyspaceConfig,
+	}
+	require.Equal(t, true, IsKeyspaceUseKeyspaceLevelGC(&keyspaceMeta))
+	require.Equal(t, false, IsKeyspaceUseGlobalGC(&keyspaceMeta))
+
+	// Case 4: The keyspace meta is nil, it means use global GC.
+	require.Equal(t, false, IsKeyspaceUseKeyspaceLevelGC(nil))
+	require.Equal(t, true, IsKeyspaceUseGlobalGC(nil))
+
 }

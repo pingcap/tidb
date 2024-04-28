@@ -127,6 +127,7 @@ type InfoSyncer struct {
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
+	tikvCodec             tikv.Codec
 }
 
 // ServerInfo is server static information.
@@ -726,7 +727,7 @@ func (is *InfoSyncer) GetMinStartTS() uint64 {
 }
 
 func (is *InfoSyncer) getMinStartTsEtcdCli() *clientv3.Client {
-	if keyspace.IsCurrentKeyspaceUseKeyspaceLevelGC() {
+	if keyspace.IsKeyspaceUseKeyspaceLevelGC(is.tikvCodec.GetKeyspaceMeta()) {
 		// If keyspace use keyspace leve gc, we should use etcd client with keyspace prefix to access min start timestamp of the current keyspace.
 		return is.etcdCli
 	}
