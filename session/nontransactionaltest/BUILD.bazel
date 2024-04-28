@@ -8,12 +8,7 @@ go_test(
         "nontransactional_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD:session/nontransactionaltest/BUILD.bazel
     shard_count = 22,
-=======
-    race = "on",
-    shard_count = 11,
->>>>>>> 944fff519c9 (executor: Fix index join hash produces redundant rows for left outer anti semi join type (#52908)):pkg/executor/test/jointest/hashjoin/BUILD.bazel
     deps = [
         "//config",
         "//testkit",
