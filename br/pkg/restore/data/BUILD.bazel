@@ -40,7 +40,6 @@ go_test(
     srcs = [
         "data_test.go",
         "key_test.go",
-        "recover_test.go",
     ],
     flaky = True,
     shard_count = 6,

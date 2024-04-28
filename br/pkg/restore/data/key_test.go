@@ -35,7 +35,7 @@ func newPeerMeta(
 	tombstone bool,
 ) *data.RecoverRegion {
 	return &data.RecoverRegion{
-		&recover_data.RegionMeta{
+		RegionMeta: &recover_data.RegionMeta{
 			RegionId:    regionId,
 			PeerId:      peerId,
 			StartKey:    startKey,
@@ -46,7 +46,7 @@ func newPeerMeta(
 			Version:     version,
 			Tombstone:   tombstone,
 		},
-		storeId,
+		StoreId: storeId,
 	}
 }
 

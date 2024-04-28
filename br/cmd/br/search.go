@@ -68,7 +68,11 @@ type StreamBackupSearch struct {
 }
 
 // NewStreamBackupSearch creates an instance of StreamBackupSearch
-func NewStreamBackupSearch(storage storage.ExternalStorage, comparator Comparator, searchKey []byte) *StreamBackupSearch {
+func NewStreamBackupSearch(
+	storage storage.ExternalStorage,
+	comparator Comparator,
+	searchKey []byte,
+) *StreamBackupSearch {
 	bs := &StreamBackupSearch{
 		storage:    storage,
 		comparator: comparator,
@@ -123,7 +127,11 @@ func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backu
 	return eg.Wait()
 }
 
-func (s *StreamBackupSearch) resolveMetaData(ctx context.Context, metaData *backuppb.Metadata, ch chan<- *backuppb.DataFileInfo) {
+func (s *StreamBackupSearch) resolveMetaData(
+	ctx context.Context,
+	metaData *backuppb.Metadata,
+	ch chan<- *backuppb.DataFileInfo,
+) {
 	for _, file := range metaData.Files {
 		if file.IsMeta {
 			continue
@@ -202,7 +210,11 @@ func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error
 	return entries, nil
 }
 
-func (s *StreamBackupSearch) searchFromDataFile(ctx context.Context, dataFile *backuppb.DataFileInfo, ch chan<- *StreamKVInfo) error {
+func (s *StreamBackupSearch) searchFromDataFile(
+	ctx context.Context,
+	dataFile *backuppb.DataFileInfo,
+	ch chan<- *StreamKVInfo,
+) error {
 	buff, err := s.storage.ReadFile(ctx, dataFile.Path)
 	if err != nil {
 		return errors.Annotatef(err, "read data file error, file: %s", dataFile.Path)
@@ -283,7 +295,8 @@ func (s *StreamBackupSearch) mergeCFEntries(defaultCFEntries, writeCFEntries map
 
 		keyBytes, err := hex.DecodeString(entry.Key)
 		if err != nil {
-			log.Warn("hex decode key failed", zap.String("key", entry.Key), zap.String("encode-key", entry.EncodedKey), zap.Error(err))
+			log.Warn("hex decode key failed",
+				zap.String("key", entry.Key), zap.String("encode-key", entry.EncodedKey), zap.Error(err))
 			continue
 		}
 

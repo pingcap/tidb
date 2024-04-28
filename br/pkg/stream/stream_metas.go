@@ -55,9 +55,14 @@ func (ms *StreamMetadataSet) TEST_GetMetadataInfos() map[string]*MetadataInfo {
 	return ms.metadataInfos
 }
 
-// LoadUntilAndCalculateShiftTS loads the metadata until the specified timestamp and calculate the shift-until-ts by the way.
-// This would record all metadata files that *may* contain data from transaction committed before that TS.
-func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(ctx context.Context, s storage.ExternalStorage, until uint64) (uint64, error) {
+// LoadUntilAndCalculateShiftTS loads the metadata until the specified timestamp and calculate
+// the shift-until-ts by the way. This would record all metadata files that *may* contain data
+// from transaction committed before that TS.
+func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	until uint64,
+) (uint64, error) {
 	metadataMap := struct {
 		sync.Mutex
 		metas        map[string]*MetadataInfo
@@ -72,7 +77,8 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(ctx context.Context, s
 			return err
 		}
 		// If the meta file contains only files with ts grater than `until`, when the file is from
-		// `Default`: it should be kept, because its corresponding `write` must has commit ts grater than it, which should not be considered.
+		// `Default`: it should be kept, because its corresponding `write` must has commit ts grater
+		//            than it, which should not be considered.
 		// `Write`: it should trivially not be considered.
 		if m.MinTs <= until {
 			// record these meta-information for statistics and filtering
@@ -153,7 +159,12 @@ func (ms *StreamMetadataSet) IterateFilesFullyBefore(before uint64, f func(d *Fi
 // RemoveDataFilesAndUpdateMetadataInBatch concurrently remove datafilegroups and update metadata.
 // Only one metadata is processed in each thread, including deleting its datafilegroup and updating it.
 // Returns the not deleted datafilegroups.
-func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context.Context, from uint64, storage storage.ExternalStorage, updateFn func(num int64)) ([]string, error) {
+func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
+	ctx context.Context,
+	from uint64,
+	storage storage.ExternalStorage,
+	updateFn func(num int64),
+) ([]string, error) {
 	var notDeleted struct {
 		item []string
 		sync.Mutex
@@ -207,7 +218,13 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 }
 
 // removeDataFilesAndUpdateMetadata removes some datafilegroups of the metadata, if their max-ts is less than `from`
-func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(ctx context.Context, storage storage.ExternalStorage, from uint64, meta *backuppb.Metadata, metaPath string) (num int64, notDeleted []string, err error) {
+func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	from uint64,
+	meta *backuppb.Metadata,
+	metaPath string,
+) (num int64, notDeleted []string, err error) {
 	removed := make([]*backuppb.DataFileGroup, 0)
 	remainedDataFiles := make([]*backuppb.DataFileGroup, 0)
 	notDeleted = make([]string, 0)
@@ -265,7 +282,12 @@ func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(ctx context.Contex
 	return num, notDeleted, nil
 }
 
-func (ms *StreamMetadataSet) doWriteBackForFile(ctx context.Context, s storage.ExternalStorage, path string, meta *backuppb.Metadata) error {
+func (ms *StreamMetadataSet) doWriteBackForFile(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	path string,
+	meta *backuppb.Metadata,
+) error {
 	// If the metadata file contains no data file, remove it due to it is meanless.
 	if len(meta.FileGroups) == 0 {
 		if err := s.DeleteFile(ctx, path); err != nil {

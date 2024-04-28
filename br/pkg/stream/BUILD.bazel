@@ -49,7 +49,6 @@ go_test(
     timeout = "short",
     srcs = [
         "decode_kv_test.go",
-        "export_test.go",
         "meta_kv_test.go",
         "rewrite_meta_rawkv_test.go",
         "stream_metas_test.go",
