@@ -33,7 +33,6 @@ go_library(
         "//pkg/statistics/handle/util",
         "//pkg/types",
         "//pkg/util/chunk",
-        "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
