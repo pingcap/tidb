@@ -489,9 +489,9 @@ func (hg *Histogram) EqualRowCount(sctx context.PlanContext, value types.Datum, 
 
 // GreaterRowCount estimates the row count where the column greater than value.
 // It's deprecated. Only used for test.
-func (hg *Histogram) GreaterRowCount(sctx context.PlanContext, value types.Datum) float64 {
-	histRowCount, _ := hg.EqualRowCount(sctx, value, false)
-	gtCount := hg.NotNullCount() - hg.LessRowCount(sctx, value) - histRowCount
+func (hg *Histogram) GreaterRowCount(value types.Datum) float64 {
+	histRowCount, _ := hg.EqualRowCount(nil, value, false)
+	gtCount := hg.NotNullCount() - hg.LessRowCount(nil, value) - histRowCount
 	return math.Max(0, gtCount)
 }
 
