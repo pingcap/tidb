@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package join_test
 
 import (
 	"bytes"
@@ -64,7 +64,7 @@ func TestShuffleMergeJoinInDisk(t *testing.T) {
 	for i := 1; i <= 1024; i += 4 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values(%v,%v),(%v,%v),(%v,%v),(%v,%v)", i, i, i+1, i+1, i+2, i+2, i+3, i+3))
 	}
-	result := checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result := checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t1 left Outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 
 	var expect []string
 	expect = append(expect, "1 1 1 1")
@@ -109,7 +109,7 @@ func TestMergeJoinInDisk(t *testing.T) {
 	tk.MustExec("insert into t values(1,1)")
 	tk.MustExec("insert into t1 values(1,3),(4,4)")
 
-	result := checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t1 left outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	result := checkMergeAndRun(tk, t, "select /*+ TIDB_SMJ(t) */ * from t1 left Outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	result.Check(testkit.Rows("1 3 1 1"))
 	require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
 	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
@@ -168,7 +168,7 @@ func TestVectorizedMergeJoin(t *testing.T) {
 			`│ └─TableReader 3320.01 root  data:Selection`,
 			fmt.Sprintf(`│   └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`│     └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
-			fmt.Sprintf(`└─Sort(Probe) 3330.00 root  test.%s.a`, t1),
+			fmt.Sprintf(`└─Sort(probe) 3330.00 root  test.%s.a`, t1),
 			`  └─TableReader 3330.00 root  data:Selection`,
 			fmt.Sprintf(`    └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`      └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
@@ -180,7 +180,7 @@ func TestVectorizedMergeJoin(t *testing.T) {
 			`├─TableReader(Build) 3320.01 root  data:Selection`,
 			fmt.Sprintf(`│ └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`│   └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
-			`└─TableReader(Probe) 3330.00 root  data:Selection`,
+			`└─TableReader(probe) 3330.00 root  data:Selection`,
 			fmt.Sprintf(`  └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`    └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
 		))
@@ -290,7 +290,7 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 			`  │   └─TableReader 3320.01 root  data:Selection`,
 			fmt.Sprintf(`  │     └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`  │       └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
-			fmt.Sprintf(`  └─Sort(Probe) 3330.00 root  test.%s.a`, t1),
+			fmt.Sprintf(`  └─Sort(probe) 3330.00 root  test.%s.a`, t1),
 			`    └─ShuffleReceiver 3330.00 root  `,
 			`      └─TableReader 3330.00 root  data:Selection`,
 			fmt.Sprintf(`        └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
@@ -303,7 +303,7 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 			`├─TableReader(Build) 3320.01 root  data:Selection`,
 			fmt.Sprintf(`│ └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`│   └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
-			`└─TableReader(Probe) 3330.00 root  data:Selection`,
+			`└─TableReader(probe) 3330.00 root  data:Selection`,
 			fmt.Sprintf(`  └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`    └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
 		))
