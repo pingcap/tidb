@@ -1364,6 +1364,9 @@ func (w *GCWorker) resolveLocksByKeyspaceRange(ctx context.Context, txnLeftBound
 const gcOneRegionMaxBackoff = 20000
 
 func (w *GCWorker) isCurrentKeyspaceUseKeyspaceLevelGC() bool {
+	if w.store.GetCodec() == nil {
+		return false
+	}
 	return keyspace.IsKeyspaceUseKeyspaceLevelGC(w.store.GetCodec().GetKeyspaceMeta())
 }
 
