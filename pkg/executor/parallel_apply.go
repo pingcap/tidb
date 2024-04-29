@@ -188,7 +188,7 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 		} else {
 			runtimeStats.SetCacheInfo(false, 0)
 		}
-		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("concurrency", e.concurrency))
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", e.concurrency))
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), runtimeStats)
 	}
 	return err

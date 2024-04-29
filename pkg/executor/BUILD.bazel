@@ -121,7 +121,7 @@ go_library(
         "//pkg/executor/lockstats",
         "//pkg/executor/metrics",
         "//pkg/executor/sortexec",
-        "//pkg/executor/union",
+        "//pkg/executor/unionexec",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/expression/context",

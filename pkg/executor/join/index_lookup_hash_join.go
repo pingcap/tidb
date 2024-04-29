@@ -47,15 +47,15 @@ import (
 //     the execution of IndexNestedLoopHashJoin.
 const numResChkHold = 4
 
-// IndexNestedLoopHashJoin employs one Outer worker and N inner workers to
+// IndexNestedLoopHashJoin employs one outer worker and N inner workers to
 // execute concurrently. The output order is not promised.
 //
 // The execution flow is very similar to IndexLookUpReader:
-// 1. The Outer worker reads N Outer rows, builds a task and sends it to the
+// 1. The outer worker reads N outer rows, builds a task and sends it to the
 // inner worker channel.
 // 2. The inner worker receives the tasks and does 3 things for every task:
-//  1. builds hash table from the Outer rows
-//  2. builds key ranges from Outer rows and fetches inner rows
+//  1. builds hash table from the outer rows
+//  2. builds key ranges from outer rows and fetches inner rows
 //  3. probes the hash table and sends the join result to the main thread channel.
 //     Note: step 1 and step 2 runs concurrently.
 //
@@ -64,8 +64,8 @@ type IndexNestedLoopHashJoin struct {
 	IndexLookUpJoin
 	resultCh          chan *indexHashJoinResult
 	joinChkResourceCh []chan *chunk.Chunk
-	// We build individual Joiner for each inner worker when using chunk-based
-	// execution, to avoid the concurrency of Joiner.chk and Joiner.selected.
+	// We build individual joiner for each inner worker when using chunk-based
+	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	Joiners        []Joiner
 	KeepOuterOrder bool
 	curTask        *indexHashJoinTask
@@ -84,7 +84,7 @@ type indexHashJoinOuterWorker struct {
 	outerWorker
 	innerCh        chan *indexHashJoinTask
 	keepOuterOrder bool
-	// taskCh is only used when the Outer order needs to be promised.
+	// taskCh is only used when the outer order needs to be promised.
 	taskCh chan *indexHashJoinTask
 }
 
@@ -114,14 +114,14 @@ type indexHashJoinTask struct {
 	lookupMap      BaseHashTable
 	err            error
 	keepOuterOrder bool
-	// resultCh is only used when the Outer order needs to be promised.
+	// resultCh is only used when the outer order needs to be promised.
 	resultCh chan *indexHashJoinResult
-	// matchedInnerRowPtrs is only valid when the Outer order needs to be
+	// matchedInnerRowPtrs is only valid when the outer order needs to be
 	// promised. Otherwise, it will be nil.
 	// len(matchedInnerRowPtrs) equals to
 	// lookUpJoinTask.outerResult.NumChunks(), and the elements of every
-	// matchedInnerRowPtrs[chkIdx][rowIdx] indicates the matched inner Row ptrs
-	// of the corresponding Outer Row.
+	// matchedInnerRowPtrs[chkIdx][rowIdx] indicates the matched inner row ptrs
+	// of the corresponding outer row.
 	matchedInnerRowPtrs [][][]chunk.RowPtr
 }
 
@@ -513,14 +513,14 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		}
 		err := iw.handleTask(ctx, task, joinResult, h, resultCh)
 		if err != nil && !task.keepOuterOrder {
-			// Only need check non-keep-Outer-order case because the
-			// `JoinResult` had been sent to the `resultCh` when err != nil.
+			// Only need check non-keep-outer-order case because the
+			// `joinResult` had been sent to the `resultCh` when err != nil.
 			joinResult.err = err
 			break
 		}
 		if task.keepOuterOrder {
 			// We need to get a new result holder here because the old
-			// `JoinResult` hash been sent to the `resultCh` or to the
+			// `joinResult` hash been sent to the `resultCh` or to the
 			// `joinChkResourceCh`.
 			joinResult, ok = iw.getNewJoinResult(ctx)
 			if !ok {
@@ -533,7 +533,7 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		joinResult.err = errors.New("mockIndexHashJoinInnerWorkerErr")
 	})
 	// When task.KeepOuterOrder is TRUE (resultCh != iw.resultCh):
-	//   - the last JoinResult will be handled when the task has been processed,
+	//   - the last joinResult will be handled when the task has been processed,
 	//     thus we DO NOT need to check it here again.
 	//   - we DO NOT check the error here neither, because:
 	//     - if the error is from task.err, the main thread will check the error of each task
@@ -807,10 +807,10 @@ func (iw *indexHashJoinInnerWorker) collectMatchedInnerPtrs4OuterRows(innerRow c
 }
 
 // doJoinInOrder follows the following steps:
-//  1. collect all the matched inner Row ptrs for every Outer Row
+//  1. collect all the matched inner row ptrs for every outer row
 //  2. do the join work
-//     2.1 collect all the matched inner rows using the collected ptrs for every Outer Row
-//     2.2 call TryToMatchInners for every Outer Row
+//     2.1 collect all the matched inner rows using the collected ptrs for every outer row
+//     2.2 call TryToMatchInners for every outer row
 //     2.3 call OnMissMatch when no inner rows are matched
 func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) (err error) {
 	defer func() {

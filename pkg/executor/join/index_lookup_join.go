@@ -48,14 +48,14 @@ import (
 
 var _ exec.Executor = &IndexLookUpJoin{}
 
-// IndexLookUpJoin employs one Outer worker and N innerWorkers to execute concurrently.
-// It preserves the order of the Outer table and support batch lookup.
+// IndexLookUpJoin employs one outer worker and N innerWorkers to execute concurrently.
+// It preserves the order of the outer table and support batch lookup.
 //
 // The execution flow is very similar to IndexLookUpReader:
-// 1. outerWorker read N Outer rows, build a task and send it to result channel and inner worker channel.
-// 2. The innerWorker receives the task, builds key ranges from Outer rows and fetch inner rows, builds inner Row hash map.
+// 1. outerWorker read N outer rows, build a task and send it to result channel and inner worker channel.
+// 2. The innerWorker receives the task, builds key ranges from outer rows and fetch inner rows, builds inner row hash map.
 // 3. main thread receives the task, waits for inner worker finish handling the task.
-// 4. main thread join each Outer Row by look up the inner rows hash map in the task.
+// 4. main thread join each outer row by look up the inner rows hash map in the task.
 type IndexLookUpJoin struct {
 	exec.BaseExecutor
 
@@ -79,7 +79,7 @@ type IndexLookUpJoin struct {
 	KeyOff2IdxOff []int
 	innerPtrBytes [][]byte
 
-	// LastColHelper store the information for last col if there's complicated Filter like col > x_col and col < x_col + 100.
+	// LastColHelper store the information for last col if there's complicated filter like col > x_col and col < x_col + 100.
 	LastColHelper *plannercore.ColWithCmpFuncManager
 
 	memTracker *memory.Tracker // track memory usage.
@@ -89,6 +89,7 @@ type IndexLookUpJoin struct {
 	prepared bool
 }
 
+// OuterCtx is the outer ctx used in index lookup join
 type OuterCtx struct {
 	RowTypes  []*types.FieldType
 	KeyCols   []int
@@ -96,11 +97,15 @@ type OuterCtx struct {
 	HashCols  []int
 	Filter    expression.CNFExprs
 }
+
+// IndexJoinExecutorBuilder is the interface used by index lookup join to build the executor, this interface
+// is added to avoid cycle import
 type IndexJoinExecutorBuilder interface {
 	BuildExecutorForIndexJoin(ctx context.Context, lookUpContents []*IndexJoinLookUpContent,
 		indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (exec.Executor, error)
 }
 
+// InnerCtx is the inner side ctx used in index lookup join
 type InnerCtx struct {
 	ReaderBuilder IndexJoinExecutorBuilder
 	RowTypes      []*types.FieldType
@@ -525,6 +530,7 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
+// IndexJoinLookUpContent is the content used in index lookup join
 type IndexJoinLookUpContent struct {
 	Keys      []types.Datum
 	Row       chunk.Row

@@ -58,6 +58,7 @@ type MergeJoinExec struct {
 	diskTracker *disk.Tracker
 }
 
+// MergeJoinTable is used for merge join
 type MergeJoinTable struct {
 	inited     bool
 	IsInner    bool
@@ -75,7 +76,7 @@ type MergeJoinTable struct {
 	// for inner table, an unbroken group may refer many chunks
 	rowContainer *chunk.RowContainer
 
-	// for Outer table, save result of Filters
+	// for outer table, save result of filters
 	filtersSelected []bool
 
 	memTracker *memory.Tracker
@@ -188,13 +189,13 @@ fetchNext:
 	}
 
 	isEmpty := true
-	// For inner table, rows have null in join Keys should be skip by selectNextGroup.
+	// For inner table, rows have null in join keys should be skip by selectNextGroup.
 	for isEmpty && !t.groupChecker.IsExhausted() {
 		t.selectNextGroup()
 		isEmpty = len(t.groupRowsSelected) == 0
 	}
 
-	// For inner table, all the rows have the same join Keys should be put into one group.
+	// For inner table, all the rows have the same join keys should be put into one group.
 	for !t.executed && t.groupChecker.IsExhausted() {
 		if !isEmpty {
 			// Group is not empty, hand over the management of childChunk to t.RowContainer.
@@ -251,8 +252,8 @@ func (t *MergeJoinTable) fetchNextOuterGroup(ctx context.Context, exec *MergeJoi
 	}
 
 	if !t.executed && t.groupChecker.IsExhausted() {
-		// It's hard to calculate selectivity if there is any Filter or it's inner join,
-		// so we just push the requiredRows down when it's Outer join and has no Filter.
+		// It's hard to calculate selectivity if there is any filter or it's inner join,
+		// so we just push the requiredRows down when it's outer join and has no filter.
 		if exec.IsOuterJoin && len(t.Filters) == 0 {
 			t.childChunk.SetRequiredRows(requiredRows, exec.MaxChunkSize())
 		}
@@ -321,8 +322,8 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-// Note the inner group collects all identical Keys in a group across multiple chunks, but the Outer group just covers
-// the identical Keys within a chunk, so identical Keys may cover more than one chunk.
+// Note the inner group collects all identical keys in a group across multiple chunks, but the outer group just covers
+// the identical keys within a chunk, so identical keys may cover more than one chunk.
 func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.Reset()
 

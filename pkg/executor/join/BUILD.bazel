@@ -19,7 +19,7 @@ go_library(
         "//pkg/executor/internal/applycache",
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/vecgroupchecker",
-        "//pkg/executor/union",
+        "//pkg/executor/unionexec",
         "//pkg/expression",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",

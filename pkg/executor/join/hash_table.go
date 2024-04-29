@@ -48,6 +48,7 @@ type HashContext struct {
 	naColNullBitMap []*bitmap.ConcurrentBitmap
 }
 
+// InitHash init HashContext
 func (hc *HashContext) InitHash(rows int) {
 	if hc.Buf == nil {
 		hc.Buf = make([]byte, 1)
@@ -608,6 +609,7 @@ func (es *entryStore) GetStore() (e *entry, memDelta int64) {
 	return
 }
 
+// BaseHashTable is the interface of the hash table used in hash join
 type BaseHashTable interface {
 	Put(hashKey uint64, rowPtr chunk.RowPtr)
 	// e := Get(hashKey)

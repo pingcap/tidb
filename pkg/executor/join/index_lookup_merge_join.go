@@ -41,13 +41,13 @@ import (
 )
 
 // IndexLookUpMergeJoin realizes IndexLookUpJoin by merge join
-// It preserves the order of the Outer table and support batch lookup.
+// It preserves the order of the outer table and support batch lookup.
 //
 // The execution flow is very similar to IndexLookUpReader:
-// 1. outerWorker read N Outer rows, build a task and send it to result channel and inner worker channel.
-// 2. The innerWorker receives the task, builds key ranges from Outer rows and fetch inner rows, then do merge join.
+// 1. outerWorker read N outer rows, build a task and send it to result channel and inner worker channel.
+// 2. The innerWorker receives the task, builds key ranges from outer rows and fetch inner rows, then do merge join.
 // 3. main thread receives the task and fetch results from the channel in task one by one.
-// 4. If channel has been closed, main thread receives the Next task.
+// 4. If channel has been closed, main thread receives the next task.
 type IndexLookUpMergeJoin struct {
 	exec.BaseExecutor
 
@@ -69,13 +69,14 @@ type IndexLookUpMergeJoin struct {
 	IndexRanges   ranger.MutableRanges
 	KeyOff2IdxOff []int
 
-	// LastColHelper store the information for last col if there's complicated Filter like col > x_col and col < x_col + 100.
+	// LastColHelper store the information for last col if there's complicated filter like col > x_col and col < x_col + 100.
 	LastColHelper *plannercore.ColWithCmpFuncManager
 
 	memTracker *memory.Tracker // track memory usage
 	prepared   bool
 }
 
+// OuterMergeCtx is the outer side ctx of merge join
 type OuterMergeCtx struct {
 	RowTypes      []*types.FieldType
 	JoinKeys      []*expression.Column
@@ -85,6 +86,7 @@ type OuterMergeCtx struct {
 	CompareFuncs  []expression.CompareFunc
 }
 
+// InnerMergeCtx is the inner side ctx of merge join
 type InnerMergeCtx struct {
 	ReaderBuilder           IndexJoinExecutorBuilder
 	RowTypes                []*types.FieldType
@@ -172,7 +174,7 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	concurrency := e.Ctx().GetSessionVars().IndexLookupJoinConcurrency()
 	if e.RuntimeStats() != nil {
 		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
-		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("concurrency", concurrency))
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
 		e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), runtimeStats)
 	}
 
@@ -446,9 +448,9 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 			panic("OOM test index merge join doesn't hang here.")
 		}
 	})
-	// NeedOuterSort means the Outer side property items can't guarantee the order of join Keys.
-	// Because the necessary condition of merge join is both Outer and inner keep order of join Keys.
-	// In this case, we need sort the Outer side.
+	// NeedOuterSort means the outer side property items can't guarantee the order of join keys.
+	// Because the necessary condition of merge join is both outer and inner keep order of join keys.
+	// In this case, we need sort the outer side.
 	if imw.outerMergeCtx.NeedOuterSort {
 		exprCtx := imw.ctx.GetExprCtx()
 		slices.SortFunc(task.outerOrderIdx, func(idxI, idxJ chunk.RowPtr) int {
@@ -606,7 +608,7 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 	return nil
 }
 
-// fetchInnerRowsWithSameKey collects the inner rows having the same key with one Outer Row.
+// fetchInnerRowsWithSameKey collects the inner rows having the same key with one outer row.
 func (imw *innerMergeWorker) fetchInnerRowsWithSameKey(ctx context.Context, task *lookUpMergeJoinTask, key chunk.Row) (noneInnerRows bool, err error) {
 	task.sameKeyInnerRows = task.sameKeyInnerRows[:0]
 	curRow := task.innerIter.Current()
@@ -738,7 +740,7 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	e.joinChkResourceCh = nil
 	// joinChkResourceCh is to recycle result chunks, used by inner worker.
 	// resultCh is the main thread get the results, used by main thread and inner worker.
-	// cancelFunc control the Outer worker and Outer worker close the task channel.
+	// cancelFunc control the outer worker and outer worker close the task channel.
 	e.WorkerWg.Wait()
 	e.memTracker = nil
 	e.prepared = false

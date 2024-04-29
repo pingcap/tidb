@@ -51,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/lockstats"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
-	"github.com/pingcap/tidb/pkg/executor/union"
+	"github.com/pingcap/tidb/pkg/executor/unionexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -1255,7 +1255,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) e
 // Be careful to avoid data race.
 func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plannercore.PhysicalUnionScan) exec.Executor {
 	// If reader is union, it means a partition table and we should transfer as above.
-	if x, ok := reader.(*union.UnionExec); ok {
+	if x, ok := reader.(*unionexec.UnionExec); ok {
 		for i, child := range x.AllChildren() {
 			x.SetChildren(i, b.buildUnionScanFromReader(child, v))
 			if b.err != nil {
@@ -2286,7 +2286,7 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) exec.Ex
 			return nil
 		}
 	}
-	e := &union.UnionExec{
+	e := &unionexec.UnionExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExecs...),
 		Concurrency:  b.ctx.GetSessionVars().UnionConcurrency(),
 	}

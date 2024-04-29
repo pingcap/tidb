@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "union",
+    name = "unionexec",
     srcs = ["union.go"],
-    importpath = "github.com/pingcap/tidb/pkg/executor/union",
+    importpath = "github.com/pingcap/tidb/pkg/executor/unionexec",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/executor/internal/exec",
