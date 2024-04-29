@@ -517,16 +517,16 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan Log
 				_, isCol0 := newSf.GetArgs()[0].(*expression.Column)
 				_, isCol1 := newSf.GetArgs()[1].(*expression.Column)
 				if !isCol0 || !isCol1 {
-					col0Idx := leftPlan.Schema().ColumnIndex(rCol)
-					col1Idx := rightPlan.Schema().ColumnIndex(lCol)
 					if !isCol0 {
-						leftPlan = s.injectProj(leftPlan, col0Idx, newSf.GetArgs()[0])
+						leftPlan = s.injectProj(leftPlan, newSf.GetArgs()[0])
+						rCol = leftPlan.Schema().Columns[len(leftPlan.Schema().Columns)-1]
 					}
 					if !isCol1 {
-						rightPlan = s.injectProj(rightPlan, col1Idx, newSf.GetArgs()[1])
+						rightPlan = s.injectProj(rightPlan, newSf.GetArgs()[1])
+						lCol = rightPlan.Schema().Columns[len(rightPlan.Schema().Columns)-1]
 					}
 					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(),
-						leftPlan.Schema().Columns[col0Idx], rightPlan.Schema().Columns[col1Idx]).(*expression.ScalarFunction)
+						rCol, lCol).(*expression.ScalarFunction)
 				}
 				usedEdges = append(usedEdges, newSf)
 			}
@@ -535,15 +535,17 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan Log
 	return
 }
 
-func (s *baseSingleGroupJoinOrderSolver) injectProj(p base.LogicalPlan, colIdx int, expr expression.Expression) base.LogicalPlan {
-	proj := LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
-	proj.SetSchema(p.Schema().Clone())
+func (s *baseSingleGroupJoinOrderSolver) injectProj(p base.LogicalPlan, expr expression.Expression) base.LogicalPlan {
+	proj := LogicalProjection{}.Init(p.SCtx(), p.QueryBlockOffset())
 	proj.SetChildren(p)
-	proj.Exprs[colIdx] = expr
-	proj.schema.Columns[colIdx] = &expression.Column{
+	exprs := append(cols2Exprs(p.Schema().Columns), expr)
+	schema := p.Schema().Clone()
+	schema.Append(&expression.Column{
 		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  expr.GetType(),
-	}
+	})
+	proj.Exprs = exprs
+	proj.SetSchema(schema)
 	return proj
 }
 
