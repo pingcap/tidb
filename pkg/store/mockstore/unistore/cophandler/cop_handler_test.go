@@ -108,7 +108,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 		colInfos[i] = &tipb.ColumnInfo{
 			ColumnId:  colIds[i],
 			Tp:        int32(colTypes[i].GetType()),
-			Collation: -mysql.DefaultCollationID,
+			Collation: int32(mysql.DefaultCollationID),
 		}
 		colTypeMap[colIds[i]] = colTypes[i]
 	}
