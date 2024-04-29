@@ -1025,8 +1025,8 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 
 	var err error
 	hMap := kv.NewHandleMap()
-	// [partNum][rangeNum]
 	for i, reader := range m.memReaders {
+		// [partNum][rangeNum]
 		var readerKvRanges [][]kv.KeyRange
 		if m.partitionMode {
 			if r, ok := reader.(*memIndexReader); ok && r.index.Global {
