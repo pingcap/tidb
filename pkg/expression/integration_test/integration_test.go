@@ -2959,7 +2959,7 @@ func TestTiDBRowChecksumBuiltin(t *testing.T) {
 	// row without checksum
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = false
 	tk.MustExec("insert into t values (3, '30')")
-	checksum3 := "<nil>"
+	checksum3 := fmt.Sprintf("%d", checksum(3, "30"))
 
 	// fast point-get
 	tk.MustQuery("select tidb_row_checksum() from t where id = 1").Check(testkit.Rows(checksum1))

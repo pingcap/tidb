@@ -438,6 +438,13 @@ func fillRowChecksum(
 		}
 	}
 
+	tz := sctx.GetSessionVars().Location()
+	decoder := rowcodec.NewDatumMapDecoder(reqCols, tz)
+	datums, err := decoder.DecodeToDatumMap(val, nil)
+	if err != nil {
+		return err
+	}
+
 	var handleColIDs []int64
 	if tblInfo.PKIsHandle {
 		colInfo := tblInfo.GetPkColInfo()
@@ -454,13 +461,6 @@ func fillRowChecksum(
 	for idx := range tblInfo.Columns {
 		col := tblInfo.Columns[idx]
 		columnFt[col.ID] = &col.FieldType
-	}
-
-	tz := sctx.GetSessionVars().Location()
-	decoder := rowcodec.NewDatumMapDecoder(reqCols, tz)
-	datums, err := decoder.DecodeToDatumMap(val, nil)
-	if err != nil {
-		return err
 	}
 
 	datums, err = tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, columnFt, tz, datums)
