@@ -143,13 +143,13 @@ const (
 
 	gcLastRunTimeKey       = "tikv_gc_last_run_time"
 	gcRunIntervalKey       = "tikv_gc_run_interval"
-	gcDefaultRunInterval   = time.Minute * 10
+	gcDefaultRunInterval   = time.Minute * 1
 	gcWaitTime             = time.Minute * 1
 	gcRedoDeleteRangeDelay = 24 * time.Hour
 
 	gcLifeTimeKey        = "tikv_gc_life_time"
-	gcDefaultLifeTime    = time.Minute * 10
-	gcMinLifeTime        = time.Minute * 10
+	gcDefaultLifeTime    = time.Minute * 1
+	gcMinLifeTime        = time.Minute * 1
 	gcSafePointKey       = "tikv_gc_safe_point"
 	gcConcurrencyKey     = "tikv_gc_concurrency"
 	gcDefaultConcurrency = 2
@@ -1202,8 +1202,10 @@ func (w *GCWorker) resolveLocks(
 		// When enable keyspace level gc, legacyResolveLocks only resolve specified keyspace locks.
 		keyspaceID := w.store.GetCodec().GetKeyspaceMeta().Id
 		// resolve locks in `keyspaceID` range.
-		txnLeftBound, txnRightBound = keyspace.GetKeyspaceTxnRange(keyspaceID)
-		err = runner.RunOnRange(ctx, txnLeftBound, txnRightBound)
+
+		// If TiDB sets keyspace-name, the keyspace prefix of the 'startKey' and 'endKey' of the resolve locks
+		// is added in the encodeRange function in client-go before the request is sent
+		err = runner.RunOnRange(ctx, []byte(""), []byte(""))
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] resolve locks by keyspace range failed",
 				zap.String("category", "gc worker"),
@@ -1288,10 +1290,8 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 		return errors.Trace(err)
 	}
 
-	// step 2. resolve locks in [ keyspace txnLeftBound , keyspace txnRightBound ) for all keyspaces with keyspace level GC disabled
-	// maxRightBound is the max right bound of all keyspaces,
-	// is used to find the range right of the last range of keyspace.
-	var maxRightBound []byte
+	// step 2. resolve locks in [ keyspace txnLeftBound , keyspace txnRightBound ) for all keyspaces with keyspace level GC disabled.
+
 	// Start keyspaces resolve locks
 	for i := range keyspaces {
 		keyspaceMeta := keyspaces[i]
@@ -1303,10 +1303,7 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 
 		logutil.Logger(ctx).Info("[gc worker] start resolve locks in the keyspace range", zap.Uint32("KeyspaceID", keyspaceMeta.Id))
 		txnLeftBound, txnRightBound = keyspace.GetKeyspaceTxnRange(keyspaceMeta.Id)
-		// Update maxRightBound if needed.
-		if bytes.Compare(txnRightBound, maxRightBound) > 0 {
-			maxRightBound = txnRightBound
-		}
+
 		err = runner.RunOnRange(ctx, txnLeftBound, txnRightBound)
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] resolve locks by range failed",
@@ -1321,9 +1318,8 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 	}
 
 	// step 3. resolve locks in [ max keyspace txnRightBound , unbounded )
-	endKey := []byte("")
-	txnLeftBound = maxRightBound
-	txnRightBound = endKey
+	txnLeftBound = []byte{keyspace.MaxKeyspaceRightBoundaryPrefix}
+	txnRightBound = []byte("")
 	err = runner.RunOnRange(ctx, txnLeftBound, txnRightBound)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] resolve locks by range failed",

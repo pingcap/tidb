@@ -42,8 +42,13 @@ const (
 	// maxKeyspaceID is the maximum keyspace id that can be created, no keyspace can be created greater than this value.
 	maxKeyspaceID = 0xffffff
 
-	// keyspaceTxnModePrefix is txn data prefix of keyspace.
-	keyspaceTxnModePrefix byte = 'x'
+	// KeyspaceTxnModePrefix is txn data prefix of keyspace.
+	KeyspaceTxnModePrefix byte = 'x'
+
+	// MaxKeyspaceRightBoundaryPrefix is the max keyspace txn right boundary.
+	// Because the keyspace ranges are all under the 'x' prefix, so MaxKeyspaceRightBoundaryPrefix = 'y'
+	// See https://github.com/tikv/rfcs/blob/master/text/0069-api-v2.md for more details.
+	MaxKeyspaceRightBoundaryPrefix byte = 'y'
 )
 
 // CodecV1 represents api v1 codec.
@@ -115,7 +120,7 @@ func GetKeyspaceTxnLeftBound(keyspaceID uint32) []byte {
 	binary.BigEndian.PutUint32(keyspaceIDBytes, keyspaceID)
 
 	// The first byte is keyspaceTxnModePrefix, and the next three bytes are converted from uint32
-	txnLeftBound := codec.EncodeBytes(nil, append([]byte{keyspaceTxnModePrefix}, keyspaceIDBytes[1:]...))
+	txnLeftBound := codec.EncodeBytes(nil, append([]byte{KeyspaceTxnModePrefix}, keyspaceIDBytes[1:]...))
 	return txnLeftBound
 }
 
@@ -126,8 +131,8 @@ func GetKeyspaceTxnRange(keyspaceID uint32) ([]byte, []byte) {
 
 	var txnRightBound []byte
 	if keyspaceID == maxKeyspaceID {
-		// Directly set the right boundary of maxKeyspaceID to be {keyspaceTxnModePrefix + 1, 0, 0, 0}
-		maxKeyspaceIDTxnRightBound := [4]byte{keyspaceTxnModePrefix + 1, 0, 0, 0}
+		// Directly set the right boundary of maxKeyspaceID to be {MaxKeyspaceRightBoundaryPrefix}
+		maxKeyspaceIDTxnRightBound := [4]byte{MaxKeyspaceRightBoundaryPrefix, 0, 0, 0}
 		txnRightBound = codec.EncodeBytes(nil, maxKeyspaceIDTxnRightBound[:])
 	} else {
 		// The right boundary of the specified keyspace is the left boundary of keyspaceID + 1.
