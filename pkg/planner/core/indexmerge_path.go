@@ -446,7 +446,7 @@ func (*DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPat
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath.
-func (ds *DataSource) buildIndexMergeOrPath(
+func (*DataSource) buildIndexMergeOrPath(
 	filters []expression.Expression,
 	partialAlternativePaths [][]*util.AccessPath,
 	current int,

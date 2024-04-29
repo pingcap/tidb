@@ -1091,7 +1091,7 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 
 	var tblKVRanges []kv.KeyRange
 	if m.partitionMode {
-		// tid for partition handle is useless
+		// `tid` for partition handle is useless, so use 0 here.
 		tblKVRanges, _ = distsql.TableHandlesToKVRanges(0, handles)
 	} else {
 		tblKVRanges, _ = distsql.TableHandlesToKVRanges(getPhysicalTableID(m.table), handles)
