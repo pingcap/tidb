@@ -216,6 +216,7 @@ func GlobalInfoSyncerInit(
 		info:              getServerInfo(id, serverIDGetter),
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
+		tikvCodec:         codec,
 	}
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
