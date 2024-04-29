@@ -1015,6 +1015,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 					if col.GetDecimal() > 0 {
 						buf.WriteString(fmt.Sprintf("(%d)", col.GetDecimal()))
 					}
+				case "CURRENT_DATE":
+					buf.WriteString(" DEFAULT (")
+					buf.WriteString(defaultValue.(string))
+					if col.GetDecimal() > 0 {
+						fmt.Fprintf(buf, "(%d)", col.GetDecimal())
+					}
+					buf.WriteString(")")
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
@@ -1027,7 +1034,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 					}
 
 					if col.DefaultIsExpr {
-						fmt.Fprintf(buf, " DEFAULT %s", format.OutputFormat(defaultValStr))
+						fmt.Fprintf(buf, " DEFAULT (%s)", format.OutputFormat(defaultValStr))
 					} else {
 						if col.GetType() == mysql.TypeBit {
 							defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
