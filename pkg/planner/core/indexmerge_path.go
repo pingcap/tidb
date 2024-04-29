@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -743,10 +744,17 @@ func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, index
 	needConsiderIndexMerge := true
 	// if current index merge hint is nil, once there is a no-access-cond in one of possible access path.
 	if len(ds.indexMergeHints) == 0 {
-		for i := 1; i < len(ds.possibleAccessPaths); i++ {
-			if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
-				needConsiderIndexMerge = false
-				break
+		skipRangeScanCheck := fixcontrol.GetBoolWithDefault(
+			ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
+			fixcontrol.Fix52869,
+			false,
+		)
+		if !skipRangeScanCheck {
+			for i := 1; i < len(ds.possibleAccessPaths); i++ {
+				if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
+					needConsiderIndexMerge = false
+					break
+				}
 			}
 		}
 		if needConsiderIndexMerge {

@@ -41,12 +41,12 @@ import (
 	_ "github.com/pingcap/tidb/pkg/types/parser_driver" // for parser driver
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	distroleutil "github.com/pingcap/tidb/pkg/util/distrole"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/servicescope"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
@@ -891,7 +891,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return "OFF", nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.GenWithStack("tidb_enable_telemetry is deprecated since Telemetry has been removed, this variable is 'OFF' always."))
+		s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_enable_telemetry is deprecated since Telemetry has been removed, this variable is 'OFF' always."))
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: On, Type: TypeBool, Depended: true},
@@ -3136,14 +3136,7 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeInstance, Name: TiDBServiceScope, Value: "", Type: TypeStr,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
-			_, ok := distroleutil.ToTiDBServiceScope(originalValue)
-			if !ok {
-				err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
-					originalValue,
-					TiDBServiceScope, `"", background`)
-				return normalizedValue, err
-			}
-			return normalizedValue, nil
+			return normalizedValue, servicescope.CheckServiceScope(originalValue)
 		},
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 			newValue := strings.ToLower(s)

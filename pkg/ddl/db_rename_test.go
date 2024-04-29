@@ -20,12 +20,12 @@ import (
 	gotime "time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -334,7 +334,7 @@ func TestRenameConcurrentAutoID(t *testing.T) {
 			}
 			res := tk3.MustQuery(`admin show ddl jobs where table_name = '` + tableName + `' and job_type = 'rename table'`).Rows()
 			if len(res) == 1 && res[0][pos] == s {
-				logutil.BgLogger().Info("Got state", zap.String("State", s))
+				logutil.DDLLogger().Info("Got state", zap.String("State", s))
 				break
 			}
 			gotime.Sleep(50 * gotime.Millisecond)
