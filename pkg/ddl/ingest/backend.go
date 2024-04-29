@@ -41,6 +41,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// MockDMLExecutionStateBeforeImport is a failpoint to mock the DML execution state before import.
 var MockDMLExecutionStateBeforeImport func()
 
 // BackendCtx is the backend context for add index reorg task.
