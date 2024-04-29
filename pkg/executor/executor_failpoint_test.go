@@ -276,7 +276,7 @@ func TestCollectCopRuntimeStats(t *testing.T) {
 	rows := tk.MustQuery("explain analyze select * from t1").Rows()
 	require.Len(t, rows, 2)
 	explain := fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*rpc_num: .*, .*regionMiss:.*", explain)
+	require.Regexp(t, ".*num_rpc:.*, .*regionMiss:.*", explain)
 	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreRespResult"))
 }
 
