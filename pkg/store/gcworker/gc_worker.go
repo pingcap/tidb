@@ -98,9 +98,6 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 	if err != nil {
 		hostName = "unknown"
 	}
-	if !ok {
-		return nil, errors.New("GC should run against TiKV storage")
-	}
 	uuid := strconv.FormatUint(ts, 16)
 	resolverIdentifier := fmt.Sprintf("gc-worker-%s", uuid)
 	worker := &GCWorker{
@@ -347,7 +344,7 @@ func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) 
 	// Get safe point from PD.
 	// The GC safe point is updated only after the global GC have done resolveLocks phase globally.
 	// So, in the following code, resolveLocks must have been done by the global GC on the ranges to be deleted,
-	// so its safe to delete the ranges.
+	// so it's safe to delete the ranges.
 	safePoint, err := w.getGCSafePoint(ctx, w.pdClient)
 	if err != nil {
 		logutil.Logger(ctx).Info("get gc safe point error", zap.String("category", "gc worker"), zap.Error(errors.Trace(err)))
@@ -1219,7 +1216,7 @@ func (w *GCWorker) resolveLocks(
 			return errors.Trace(err)
 		}
 	} else {
-		logutil.Logger(ctx).Info("[gc worker] start resolve locks in null keyspace range and keyspace range which is use global gc.")
+		logutil.Logger(ctx).Info("[gc worker] start resolve locks in null keyspace range and range of keyspace which is use global gc.")
 		err = w.resolveLocksInGlobalGC(ctx, runner, safePoint)
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] resolve locks all keyspace failed", zap.String("category", "gc worker"),
