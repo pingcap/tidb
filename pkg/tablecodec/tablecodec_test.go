@@ -730,11 +730,7 @@ func TestTempIndexValueCodec(t *testing.T) {
 func TestV2TableCodec(t *testing.T) {
 	const tableID int64 = 31415926
 	key := EncodeTablePrefix(tableID)
-
-	testKeyspaceMeta := keyspacepb.KeyspaceMeta{
-		Id: 271828,
-	}
-	c, err := tikv.NewCodecV2(tikv.ModeTxn, &testKeyspaceMeta)
+	c, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: 271828})
 	require.NoError(t, err)
 	key = c.EncodeKey(key)
 	tbid := DecodeTableID(key)
