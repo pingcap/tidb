@@ -5,11 +5,16 @@ package operator
 import (
 	"context"
 	"crypto/tls"
+<<<<<<< HEAD
 	"strings"
+=======
+	"runtime/debug"
+>>>>>>> 2969b9e5767 (br/operator: fix adapt env for snapshot backup stuck when encountered error (#52607))
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -99,10 +104,29 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	}
 	cx.rdGrp.Add(3)
 
+<<<<<<< HEAD
 	eg.Go(func() error { return pauseGCKeeper(cx) })
 	eg.Go(func() error { return pauseSchedulerKeeper(cx) })
 	eg.Go(func() error { return pauseImporting(cx) })
+=======
+	initChan := make(chan struct{})
+	cx.run(func() error { return pauseGCKeeper(cx) })
+	cx.run(func() error {
+		log.Info("Pause scheduler waiting all connections established.")
+		select {
+		case <-initChan:
+		case <-cx.Done():
+			return cx.Err()
+		}
+		log.Info("Pause scheduler noticed connections established.")
+		return pauseSchedulerKeeper(cx)
+	})
+	cx.run(func() error { return pauseAdminAndWaitApply(cx, initChan) })
+>>>>>>> 2969b9e5767 (br/operator: fix adapt env for snapshot backup stuck when encountered error (#52607))
 	go func() {
+		failpoint.Inject("SkipReadyHint", func() {
+			failpoint.Return()
+		})
 		cx.rdGrp.Wait()
 		hintAllReady()
 	}()
@@ -140,7 +164,11 @@ func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
 	return nil
 }
 
+<<<<<<< HEAD
 func pauseGCKeeper(ctx *AdaptEnvForSnapshotBackupContext) error {
+=======
+func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {
+>>>>>>> 2969b9e5767 (br/operator: fix adapt env for snapshot backup stuck when encountered error (#52607))
 	// Note: should we remove the service safepoint as soon as this exits?
 	sp := utils.BRServiceSafePoint{
 		ID:       utils.MakeSafePointID(),
