@@ -758,9 +758,9 @@ func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint ui
 		minSafePoint, err = w.pdClient.UpdateServiceSafePointV2(ctx, keyspaceID, gcWorkerServiceSafePointID, ttl, safePoint)
 		logutil.Logger(ctx).Info("[gc worker] update keyspace gc worker service safe point ",
 			zap.String("uuid", w.uuid),
+			zap.Uint32("keyspace-id", keyspaceID),
 			zap.Uint64("req-service-safe-point", safePoint),
-			zap.Uint64("resp-min-service-safe-point", minSafePoint),
-			zap.Uint32("keyspace-id", keyspaceID))
+			zap.Uint64("resp-min-service-safe-point", minSafePoint))
 	} else {
 		// It is the situation when the keyspace is not set.
 		minSafePoint, err = w.pdClient.UpdateServiceGCSafePoint(ctx, gcWorkerServiceSafePointID, ttl, safePoint)
@@ -1211,6 +1211,7 @@ func (w *GCWorker) resolveLocks(
 			logutil.Logger(ctx).Error("[gc worker] resolve locks by keyspace range failed",
 				zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
+				zap.Uint32("keyspace-id", keyspaceID),
 				zap.Uint64("safePoint", safePoint),
 				zap.String("txnLeftBound", hex.EncodeToString(txnLeftBound)),
 				zap.String("txnRightBound", hex.EncodeToString(txnRightBound)),
@@ -1381,6 +1382,7 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 			newSafePoint, err = w.pdClient.UpdateGCSafePointV2(ctx, keyspaceID, safePoint)
 			logutil.Logger(ctx).Info("[gc worker] update keyspace gc safe point",
 				zap.String("uuid", w.uuid),
+				zap.Uint32("keyspace-id", keyspaceID),
 				zap.Uint64("req-gc-safe-point", safePoint),
 				zap.Uint64("resp-gc-safe-point", newSafePoint))
 		} else {
