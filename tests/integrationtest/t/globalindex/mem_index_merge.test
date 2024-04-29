@@ -7,6 +7,7 @@ CREATE TABLE `tpk2` (
   `d` int(11) NOT NULL AUTO_INCREMENT,
   KEY `idx_bc` (`b`,`c`),
   UNIQUE KEY `uidx_a` (`a`),
+  UNIQUE KEY `uidx_ac` (`a`, `c`),
   KEY `idx_c` (`c`)
 ) PARTITION BY HASH (`c`) PARTITIONS 5;
 
@@ -30,11 +31,13 @@ select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 where a > 1 and c
 select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 where a > 0 and c > 0;
 
 --echo ## for indexMerge union with specified PARTITION
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
 explain select /*+ use_index_merge(tpk2, uidx_a, idx_bc) */ * from tpk2 partition(p1) where a=1 or b=4;
 --sorted_result
 select /*+ use_index_merge(tpk2, uidx_a, idx_bc) */ * from tpk2 partition(p1) where a=1 or b=4;
 
 --echo ## for indexMerge intersection with specified PARTITION
+--replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid1)/
 explain select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 partition(p1) where a > 1 or c > 1;
 --sorted_result
 select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 partition(p1) where a > 1 or c > 1;
@@ -52,6 +55,7 @@ CREATE TABLE `tpk2` (
   `d` int(11) NOT NULL,
   KEY `idx_bc` (`b`,`c`),
   UNIQUE KEY `uidx_a` (`a`),
+  UNIQUE KEY `uidx_ac` (`a`, `c`),
   KEY `idx_c` (`c`),
   PRIMARY KEY(`d`, `c`)
 ) PARTITION BY HASH (`d`) PARTITIONS 5;
@@ -89,4 +93,11 @@ select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 partition(p1) whe
 --sorted_result
 select /*+ use_index_merge(tpk2, uidx_a, idx_c) */ * from tpk2 partition(p1) where a > 0 or c > 0;
 
+--echo ## for indexMerge union with order by limit
+explain select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c limit 1;
+select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c limit 1;
+explain select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c desc limit 1;
+select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c desc limit 1;
+
 rollback;
+
