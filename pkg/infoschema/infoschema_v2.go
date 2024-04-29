@@ -303,8 +303,7 @@ func (is *infoschemaV2) base() *infoSchema {
 }
 
 func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
-	var tmp infoschemaV2
-	tmp = *is
+	tmp := *is
 	tmp.ts = startTS
 	return &tmp
 }
