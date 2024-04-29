@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 type leftOuterJoinProbe struct {
@@ -190,7 +191,7 @@ func (j *leftOuterJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, star
 	}
 }
 
-func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, remainCap int) (err error) {
+func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller sqlkiller.SQLKiller) (err error) {
 	meta := j.ctx.hashTableMeta
 	length := 0
 	startProbeRow := j.currentProbeRow
@@ -216,7 +217,11 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 			// 2. filter by probeFilter
 			j.appendOffsetAndLength(j.currentProbeRow, length)
 			length = 0
-			j.advanceCurrentProbeRow()
+			j.currentProbeRow++
+			err = sqlKiller.HandleSignal()
+			if err != nil {
+				return err
+			}
 		}
 		remainCap--
 	}
@@ -244,7 +249,7 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 	return
 }
 
-func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, remainCap int) (err error) {
+func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller sqlkiller.SQLKiller) (err error) {
 	meta := j.ctx.hashTableMeta
 	length := 0
 	hasOtherCondition := j.ctx.hasOtherCondition()
@@ -267,7 +272,11 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 		} else {
 			j.appendOffsetAndLength(j.currentProbeRow, length)
 			length = 0
-			j.advanceCurrentProbeRow()
+			j.currentProbeRow++
+			err = sqlKiller.HandleSignal()
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if len(j.cachedBuildRows) > 0 {
@@ -291,7 +300,7 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 	return
 }
 
-func (j *leftOuterJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, _ *util.HashjoinWorkerResult) {
+func (j *leftOuterJoinProbe) Probe(joinResult *util.HashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (ok bool, _ *util.HashjoinWorkerResult) {
 	if joinResult.Chk.IsFull() {
 		return true, joinResult
 	}
@@ -301,9 +310,9 @@ func (j *leftOuterJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bo
 		return false, joinResult
 	}
 	if j.rightAsBuildSide {
-		err = j.probeForRightBuild(joinResult.Chk, joinedChk, remainCap)
+		err = j.probeForRightBuild(joinResult.Chk, joinedChk, remainCap, sqlKiller)
 	} else {
-		err = j.probeForLeftBuild(joinResult.Chk, joinedChk, remainCap)
+		err = j.probeForLeftBuild(joinResult.Chk, joinedChk, remainCap, sqlKiller)
 	}
 	if err != nil {
 		joinResult.Err = err

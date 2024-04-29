@@ -18,13 +18,14 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 type innerJoinProbe struct {
 	baseJoinProbe
 }
 
-func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, _ *util.HashjoinWorkerResult) {
+func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (ok bool, _ *util.HashjoinWorkerResult) {
 	if joinResult.Chk.IsFull() {
 		return true, joinResult
 	}
@@ -50,7 +51,12 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, 
 		} else {
 			j.appendOffsetAndLength(j.currentProbeRow, length)
 			length = 0
-			j.advanceCurrentProbeRow()
+			j.currentProbeRow++
+			err = sqlKiller.HandleSignal()
+			if err != nil {
+				joinResult.Err = err
+				return false, joinResult
+			}
 		}
 	}
 
