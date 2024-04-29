@@ -89,7 +89,8 @@ func (h *InfoCache) GetLatest() InfoSchema {
 	infoschema_metrics.GetLatestCounter.Inc()
 	if len(h.cache) > 0 {
 		infoschema_metrics.HitLatestCounter.Inc()
-		return h.cache[0].infoschema
+		ret := h.cache[0].infoschema
+		return ret
 	}
 	return nil
 }
@@ -203,13 +204,19 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 	})
 
 	// cached entry
-	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version &&
-		IsV2(h.cache[i].infoschema) == IsV2(is) {
-		// update timestamp if it is not 0 and cached one is 0
-		if schemaTS > 0 && h.cache[i].timestamp == 0 {
-			h.cache[i].timestamp = int64(schemaTS)
+	if i < len(h.cache) && h.cache[i].infoschema.SchemaMetaVersion() == version {
+		xisV2, _ := IsV2(h.cache[i].infoschema)
+		yisV2, _ := IsV2(is)
+		if xisV2 == yisV2 {
+			// update timestamp if it is not 0 and cached one is 0
+			if schemaTS > 0 && h.cache[i].timestamp == 0 {
+				h.cache[i].timestamp = int64(schemaTS)
+			} else if xisV2 {
+				// update infoschema if it's infoschema v2
+				h.cache[i].infoschema = is
+			}
+			return true
 		}
-		return true
 	}
 
 	if len(h.cache) < cap(h.cache) {
