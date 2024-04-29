@@ -303,7 +303,7 @@ func (s *session) cleanRetryInfo() {
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
 				bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(s.pctx, preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
 				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedObj.SchemaVersion,
-					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
+					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -846,7 +846,10 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 	}
 	originErr := errors.Cause(oldErr)
 	inErr, _ := originErr.(*errors.Error)
-	args := inErr.Args()
+	// we don't want to modify the oldErr, so copy the args list
+	oldArgs := inErr.Args()
+	args := make([]any, len(oldArgs))
+	copy(args, oldArgs)
 	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 	if is == nil {
 		return nil
@@ -2274,6 +2277,19 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	rs, err = s.Exec(ctx)
+
+	if se.txn.Valid() && se.txn.IsPipelined() {
+		// Pipelined-DMLs can return assertion errors and write conflicts here because they flush
+		// during execution, handle these errors as we would handle errors after a commit.
+		if err != nil {
+			err = se.handleAssertionFailure(ctx, err)
+		}
+		newErr := se.tryReplaceWriteConflictError(err)
+		if newErr != nil {
+			err = newErr
+		}
+	}
+
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
