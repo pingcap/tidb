@@ -1487,6 +1487,7 @@ const (
 	DefDivPrecisionIncrement                          = 4
 	DefTiDBDMLType                                    = "STANDARD"
 	DefGroupConcatMaxLen                              = uint64(1024)
+	DefDefaultWeekFormat                              = "0"
 )
 
 // Process global variables.

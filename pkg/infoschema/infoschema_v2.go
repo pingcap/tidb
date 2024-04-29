@@ -28,11 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	fifo "github.com/scalalang2/golang-fifo"
-	"github.com/scalalang2/golang-fifo/sieve"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/tidwall/btree"
-	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -87,7 +84,7 @@ type Data struct {
 	// Stores the full data in memory.
 	schemaMap *btree.BTreeG[schemaItem]
 
-	tableCache fifo.Cache[tableCacheKey, table.Table]
+	tableCache *Sieve[tableCacheKey, table.Table]
 
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	mu struct {
@@ -153,11 +150,10 @@ type tableCacheKey struct {
 // NewData creates an infoschema V2 data struct.
 func NewData() *Data {
 	ret := &Data{
-		byID:      btree.NewBTreeG[tableItem](compareByID),
-		byName:    btree.NewBTreeG[tableItem](compareByName),
-		schemaMap: btree.NewBTreeG[schemaItem](compareSchemaItem),
-		// TODO: limit by size instead of by table count.
-		tableCache: sieve.New[tableCacheKey, table.Table](1000),
+		byID:       btree.NewBTreeG[tableItem](compareByID),
+		byName:     btree.NewBTreeG[tableItem](compareByName),
+		schemaMap:  btree.NewBTreeG[schemaItem](compareSchemaItem),
+		tableCache: newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
 		specials:   make(map[string]*schemaTables),
 		pid2tid:    btree.NewBTreeG[partitionItem](comparePartitionItem),
 	}
@@ -891,59 +887,17 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
 	if b.deltaUpdate {
 		b.completeUpdateTablesV2(is)
 		for tblID := range b.updateTables {
-			b.updateTableBundlesV2(is, tblID)
+			b.updateTableBundles(is, tblID)
 		}
 		return
 	}
 
-	// do full update bundles and policyRefs.
+	// do full update bundles
 	// TODO: This is quite inefficient! we need some better way or avoid this API.
 	is.ruleBundleMap = make(map[int64]*placement.Bundle)
 	for _, dbInfo := range is.AllSchemas() {
 		for _, tbl := range is.SchemaTables(dbInfo.Name) {
-			b.updateTableBundlesV2(is, tbl.Meta().ID)
-		}
-	}
-}
-
-func (b *bundleInfoBuilder) updateTableBundlesV2(infoSchemaInterface InfoSchema, tableID int64) {
-	is := infoSchemaInterface.base()
-	tbl, ok := infoSchemaInterface.TableByID(tableID)
-	if !ok {
-		b.deleteBundle(is, tableID)
-		delete(is.policyRefMap, tableID)
-		return
-	}
-
-	getter := &policyGetter{is: is}
-	bundle, err := placement.NewTableBundle(getter, tbl.Meta())
-	if err != nil {
-		logutil.BgLogger().Error("create table bundle failed", zap.Error(err))
-	} else if bundle != nil {
-		is.policyRefMap[tableID] = tbl.Meta().PlacementPolicyRef
-		is.ruleBundleMap[tableID] = bundle
-	} else {
-		b.deleteBundle(is, tableID)
-		delete(is.policyRefMap, tableID)
-	}
-
-	if tbl.Meta().Partition == nil {
-		return
-	}
-
-	for _, par := range tbl.Meta().Partition.Definitions {
-		bundle, err = placement.NewPartitionBundle(getter, par)
-		if err != nil {
-			logutil.BgLogger().Error("create partition bundle failed",
-				zap.Error(err),
-				zap.Int64("partition id", par.ID),
-			)
-		} else if bundle != nil {
-			is.policyRefMap[par.ID] = par.PlacementPolicyRef
-			is.ruleBundleMap[par.ID] = bundle
-		} else {
-			b.deleteBundle(is, par.ID)
-			delete(is.policyRefMap, par.ID)
+			b.updateTableBundles(is, tbl.Meta().ID)
 		}
 	}
 }
@@ -953,15 +907,23 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 		return
 	}
 
-	for id := range b.updatePolicies {
-		if _, ok := is.policyRefMap[id]; ok {
-			b.markTableBundleShouldUpdate(id)
-		}
-	}
+	// TODO: This is quite inefficient! we need some better way or avoid this API.
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbl := range is.SchemaTables(dbInfo.Name) {
+			tblInfo := tbl.Meta()
+			if tblInfo.PlacementPolicyRef != nil {
+				if _, ok := b.updatePolicies[tblInfo.PlacementPolicyRef.ID]; ok {
+					b.markTableBundleShouldUpdate(tblInfo.ID)
+				}
+			}
 
-	for id := range b.updatePartitions {
-		if _, ok := is.policyRefMap[id]; ok {
-			b.markTableBundleShouldUpdate(id)
+			if tblInfo.Partition != nil {
+				for _, par := range tblInfo.Partition.Definitions {
+					if _, ok := b.updatePartitions[par.ID]; ok {
+						b.markTableBundleShouldUpdate(tblInfo.ID)
+					}
+				}
+			}
 		}
 	}
 }

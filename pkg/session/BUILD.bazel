@@ -36,7 +36,7 @@ go_library(
         "//pkg/executor",
         "//pkg/expression",
         "//pkg/expression/context",
-        "//pkg/expression/contextimpl",
+        "//pkg/expression/contextsession",
         "//pkg/extension",
         "//pkg/extension/extensionimpl",
         "//pkg/infoschema",

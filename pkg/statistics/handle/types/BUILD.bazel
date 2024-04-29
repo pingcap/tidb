@@ -17,6 +17,5 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/sqlexec",
-        "@org_golang_x_sync//singleflight",
     ],
 )

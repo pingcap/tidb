@@ -197,7 +197,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 	}
 	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
-		sessVars.StmtCtx.SetSkipPlanCache(errors.NewNoStackError("SET_VAR is used in the SQL"))
+		sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
 	}
 
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
@@ -486,7 +486,7 @@ func optimize(ctx context.Context, sctx pctx.PlanContext, node ast.Node, is info
 	names := p.OutputNames()
 
 	// Handle the non-logical plan statement.
-	logic, isLogicalPlan := p.(core.LogicalPlan)
+	logic, isLogicalPlan := p.(base.LogicalPlan)
 	if !isLogicalPlan {
 		return p, names, 0, nil
 	}
