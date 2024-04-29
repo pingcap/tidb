@@ -21,6 +21,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/ddl/internal/session",
+        "//pkg/ddl/logutil",
         "//pkg/ddl/util",
         "//pkg/kv",
         "//pkg/lightning/backend",
