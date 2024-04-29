@@ -69,7 +69,6 @@ func TestGetKeyspaceRange(t *testing.T) {
 }
 
 func TestGetKeyspaceGCManagementType(t *testing.T) {
-
 	// Case 1: The keyspace use global GC by default.
 	keyspaceMeta := keyspacepb.KeyspaceMeta{
 		Id: 1,
@@ -104,5 +103,4 @@ func TestGetKeyspaceGCManagementType(t *testing.T) {
 	// Case 4: The keyspace meta is nil, it means use global GC.
 	require.Equal(t, false, IsKeyspaceUseKeyspaceLevelGC(nil))
 	require.Equal(t, true, IsKeyspaceUseGlobalGC(nil))
-
 }
