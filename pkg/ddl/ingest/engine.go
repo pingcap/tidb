@@ -148,7 +148,7 @@ func (ei *engineInfo) ImportAndClean() error {
 		logutil.Logger(ei.ctx).Info(LitInfoStartImport, zap.Int64("job ID", ei.jobID),
 			zap.Int64("index ID", ei.indexID),
 			zap.String("split region size", strconv.FormatInt(int64(config.SplitRegionSize), 10)))
-		err := ei.closedEngine.Import(ei.ctx, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+		err := ei.closedEngine.Import(ei.ctx, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), int64(config.MinRegionNum))
 		if err != nil {
 			logLevel := zap.ErrorLevel
 			if common.ErrFoundDuplicateKeys.Equal(err) {

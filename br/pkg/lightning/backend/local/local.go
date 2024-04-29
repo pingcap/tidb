@@ -1075,6 +1075,7 @@ func readAndSplitIntoRange(
 	engine common.Engine,
 	sizeLimit int64,
 	keysLimit int64,
+	minRegionNum int64,
 ) ([]common.Range, error) {
 	startKey, endKey, err := engine.GetKeyRange()
 	if err != nil {
@@ -1085,13 +1086,23 @@ func readAndSplitIntoRange(
 	}
 
 	engineFileTotalSize, engineFileLength := engine.KVStatistics()
+	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
+	if minRegionNum > 0 && engineFileTotalSize/sizeLimit < minRegionNum {
+		sizeLimit = engineFileTotalSize / minRegionNum
+		logger.Info("enforce minRegionNum",
+			zap.Int64("totalSize", engineFileTotalSize), zap.Int64("minRegionNum", minRegionNum), zap.Int64("sizeLimit", sizeLimit))
+	}
+	if minRegionNum > 0 && engineFileLength/keysLimit < minRegionNum {
+		keysLimit = engineFileLength / minRegionNum
+		logger.Info("enforce minRegionNum",
+			zap.Int64("totalCount", engineFileLength), zap.Int64("minRegionNum", minRegionNum), zap.Int64("keysLimit", keysLimit))
+	}
 
 	if engineFileTotalSize <= sizeLimit && engineFileLength <= keysLimit {
 		ranges := []common.Range{{Start: startKey, End: endKey}}
 		return ranges, nil
 	}
 
-	logger := log.FromContext(ctx).With(zap.String("engine", engine.ID()))
 	ranges, err := engine.SplitRanges(startKey, endKey, sizeLimit, keysLimit, logger)
 	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
@@ -1476,6 +1487,7 @@ func (local *Backend) ImportEngine(
 	ctx context.Context,
 	engineUUID uuid.UUID,
 	regionSplitSize, regionSplitKeys int64,
+	minRegionNum int64,
 ) error {
 	var e common.Engine
 	if externalEngine, ok := local.externalEngine[engineUUID]; ok {
@@ -1509,7 +1521,7 @@ func (local *Backend) ImportEngine(
 	}
 
 	// split sorted file into range about regionSplitSize per file
-	regionRanges, err := readAndSplitIntoRange(ctx, e, regionSplitSize, regionSplitKeys)
+	regionRanges, err := readAndSplitIntoRange(ctx, e, regionSplitSize, regionSplitKeys, minRegionNum)
 	if err != nil {
 		return err
 	}
@@ -1812,7 +1824,7 @@ func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormana
 // into the target and then reset the engine to empty. This method will not
 // close the engine. Make sure the engine is flushed manually before calling
 // this method.
-func (local *Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
+func (local *Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys, minRegionNum int64) error {
 	// DO NOT call be.abstract.CloseEngine()! The engine should still be writable after
 	// calling UnsafeImportAndReset().
 	logger := log.FromContext(ctx).With(
@@ -1820,7 +1832,7 @@ func (local *Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.
 		zap.Stringer("engineUUID", engineUUID),
 	)
 	closedEngine := backend.NewClosedEngine(local, logger, engineUUID, 0)
-	if err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys); err != nil {
+	if err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys, minRegionNum); err != nil {
 		return err
 	}
 	return local.ResetEngine(ctx, engineUUID)

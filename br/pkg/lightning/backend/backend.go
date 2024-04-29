@@ -174,7 +174,7 @@ type Backend interface {
 	// ImportEngine imports engine data to the backend. If it returns ErrDuplicateDetected,
 	// it means there is duplicate detected. For this situation, all data in the engine must be imported.
 	// It's safe to reset or cleanup this engine.
-	ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error
+	ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys, minRegionNum int64) error
 
 	CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error
 
@@ -358,12 +358,12 @@ func NewClosedEngine(backend Backend, logger log.Logger, uuid uuid.UUID, id int3
 }
 
 // Import the data written to the engine into the target.
-func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionSplitKeys int64) error {
+func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionSplitKeys, minRegionNum int64) error {
 	var err error
 
 	for i := 0; i < importMaxRetryTimes; i++ {
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
-		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize, regionSplitKeys)
+		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize, regionSplitKeys, minRegionNum)
 		if !common.IsRetryableError(err) {
 			if common.ErrFoundDuplicateKeys.Equal(err) {
 				task.End(zap.WarnLevel, err)

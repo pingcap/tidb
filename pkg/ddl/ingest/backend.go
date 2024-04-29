@@ -233,7 +233,7 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 
 	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
 	regionSplitKeys := int64(lightning.SplitRegionKeys)
-	if err := ei.closedEngine.Import(bc.ctx, regionSplitSize, regionSplitKeys); err != nil {
+	if err := ei.closedEngine.Import(bc.ctx, regionSplitSize, regionSplitKeys, int64(lightning.MinRegionNum)); err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrIngestDataErr, zap.Int64("index ID", ei.indexID),
 			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		return err

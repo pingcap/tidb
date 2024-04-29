@@ -230,6 +230,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		// todo: use different default for single-node import and distributed import.
 		regionSplitSize: 2 * int64(config.SplitRegionSize),
 		regionSplitKeys: 2 * int64(config.SplitRegionKeys),
+		minRegionNum:    int64(config.MinRegionNum),
 		diskQuota:       adjustDiskQuota(int64(e.DiskQuota), dir, e.logger),
 		diskQuotaLock:   new(syncutil.RWMutex),
 	}, nil
@@ -250,6 +251,7 @@ type TableImporter struct {
 	logger          *zap.Logger
 	regionSplitSize int64
 	regionSplitKeys int64
+	minRegionNum    int64
 	diskQuota       int64
 	diskQuotaLock   *syncutil.RWMutex
 }
@@ -477,7 +479,7 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 // ImportAndCleanup imports the engine and cleanup the engine data.
 func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) (int64, error) {
 	var kvCount int64
-	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
+	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys, ti.minRegionNum)
 	if closedEngine.GetID() != common.IndexEngineID {
 		// todo: change to a finer-grain progress later.
 		// each row is encoded into 1 data key
@@ -571,6 +573,7 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 				engine,
 				int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio),
 				int64(config.SplitRegionKeys)*int64(config.MaxSplitRegionSizeRatio),
+				int64(config.MinRegionNum),
 			); err != nil {
 				importErr = multierr.Append(importErr, err)
 			}
