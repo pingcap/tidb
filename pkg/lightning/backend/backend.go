@@ -89,6 +89,9 @@ type EngineConfig struct {
 	// KeepSortDir indicates whether to keep the temporary sort directory
 	// when opening the engine, instead of removing it.
 	KeepSortDir bool
+	// TS is the preset timestamp of data in the engine. When it's 0, the used TS
+	// will be set lazily.
+	TS uint64
 }
 
 // LocalEngineConfig is the configuration used for local backend in OpenEngine.
@@ -236,8 +239,12 @@ func MakeEngineManager(ab Backend) EngineManager {
 }
 
 // OpenEngine opens an engine with the given table name and engine ID.
-func (be EngineManager) OpenEngine(ctx context.Context, config *EngineConfig,
-	tableName string, engineID int32) (*OpenedEngine, error) {
+func (be EngineManager) OpenEngine(
+	ctx context.Context,
+	config *EngineConfig,
+	tableName string,
+	engineID int32,
+) (*OpenedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, int64(engineID))
 	logger := makeLogger(log.FromContext(ctx), tag, engineUUID)
 

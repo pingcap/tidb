@@ -42,7 +42,6 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/status"
 )
 
 var (
@@ -266,6 +265,11 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 	if err = engine.loadEngineMeta(); err != nil {
 		return errors.Trace(err)
 	}
+	if engine.TS == 0 && cfg.TS > 0 {
+		engine.TS = cfg.TS
+		// even if we don't saveEngineMeta and the engine metadata is lost, we can rely
+		// on the caller use the same TS to open the engine again.
+	}
 	if err = em.allocateTSIfNotExists(ctx, engine); err != nil {
 		return errors.Trace(err)
 	}
@@ -298,7 +302,10 @@ func (em *engineManager) closeEngine(
 		if err != nil {
 			return err
 		}
-		ts := oracle.ComposeTS(physical, logical)
+		ts := cfg.TS
+		if ts == 0 {
+			ts = oracle.ComposeTS(physical, logical)
+		}
 		externalEngine := external.NewExternalEngine(
 			store,
 			externalCfg.DataFiles,
@@ -408,6 +415,7 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 		return nil
 	}
 	defer localEngine.unlock()
+	oldTS := localEngine.TS
 	if err := localEngine.Close(); err != nil {
 		return err
 	}
@@ -417,7 +425,7 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 	db, err := em.openEngineDB(engineUUID, false)
 	if err == nil {
 		localEngine.db.Store(db)
-		localEngine.engineMeta = engineMeta{}
+		localEngine.engineMeta = engineMeta{TS: oldTS}
 		if !common.IsDirExists(localEngine.sstDir) {
 			if err := os.Mkdir(localEngine.sstDir, 0o750); err != nil {
 				return errors.Trace(err)
@@ -426,12 +434,6 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 		if err = em.allocateTSIfNotExists(ctx, localEngine); err != nil {
 			return errors.Trace(err)
 		}
-		failpoint.Inject("mockAllocateTSErr", func() {
-			// mock generate timestamp error when reset engine.
-			localEngine.TS = 0
-			mockGRPCErr, _ := status.FromError(errors.Errorf("mock generate timestamp error"))
-			failpoint.Return(errors.Trace(mockGRPCErr.Err()))
-		})
 	}
 	localEngine.pendingFileSize.Store(0)
 
