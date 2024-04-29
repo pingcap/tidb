@@ -16,10 +16,11 @@ package partitionedhashjoin
 
 import (
 	"fmt"
-	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"sync/atomic"
 	"time"
+
+	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
 type subTable struct {
@@ -46,7 +47,12 @@ func (st *subTable) lookup(hashValue uint64) uintptr {
 
 func nextPowerOfTwo(value uint64) uint64 {
 	ret := uint64(2)
-	for ; ret <= value; ret = ret << 1 {
+	round := 1
+	for ; ret <= value && round <= 64; ret = ret << 1 {
+		round++
+	}
+	if round > 64 {
+		panic("input value is too large")
 	}
 	return ret
 }
