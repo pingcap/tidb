@@ -515,6 +515,8 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 			} else {
 				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
 
+				// after creating the new EQ function, the 2 args might not be column anymore, which breaks the assumption that
+				// join eq keys must be `col=col`, to handle this, inject 2 projections.
 				_, isCol0 := newSf.GetArgs()[0].(*expression.Column)
 				_, isCol1 := newSf.GetArgs()[1].(*expression.Column)
 				if !isCol0 || !isCol1 {
