@@ -48,6 +48,12 @@ var (
 	_ exec.Executor = &PartitionedHashJoinExec{}
 )
 
+type buildTable struct {
+	rowTables     [][]*rowTable
+	hashTable     *JoinHashTable
+	memoryTracker *memory.Tracker
+}
+
 type PartitionedHashJoinCtx struct {
 	SessCtx   sessionctx.Context
 	allocPool chunk.Allocator
@@ -56,15 +62,16 @@ type PartitionedHashJoinCtx struct {
 	PartitionNumber int
 	joinResultCh    chan *internalutil.HashjoinWorkerResult
 	// closeCh add a lock for closing executor.
-	closeCh       chan struct{}
-	finished      atomic.Bool
-	buildFinished chan error
-	JoinType      plannercore.JoinType
-	stats         *hashJoinRuntimeStats
-	ProbeKeyTypes []*types.FieldType
-	BuildKeyTypes []*types.FieldType
-	memTracker    *memory.Tracker // track memory usage.
-	diskTracker   *disk.Tracker   // track disk usage.
+	closeCh                chan struct{}
+	finished               atomic.Bool
+	buildFinished          chan error
+	JoinType               plannercore.JoinType
+	stats                  *hashJoinRuntimeStats
+	ProbeKeyTypes          []*types.FieldType
+	BuildKeyTypes          []*types.FieldType
+	memTracker             *memory.Tracker // track memory usage.
+	memTrackerForHashTable *memory.Tracker // track memory usage in hash table.
+	diskTracker            *disk.Tracker   // track disk usage.
 
 	RightAsBuildSide               bool
 	BuildFilter                    expression.CNFExprs
@@ -224,6 +231,8 @@ func (e *PartitionedHashJoinExec) Open(ctx context.Context) error {
 		e.PartitionedHashJoinCtx.memTracker = memory.NewTracker(e.ID(), -1)
 	}
 	e.PartitionedHashJoinCtx.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
+	e.PartitionedHashJoinCtx.memTrackerForHashTable = memory.NewTracker(memory.LabelForHashTableInHashJoinV2, -1)
+	e.PartitionedHashJoinCtx.memTrackerForHashTable.AttachTo(e.PartitionedHashJoinCtx.memTracker)
 
 	e.diskTracker = disk.NewTracker(e.ID(), -1)
 	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
