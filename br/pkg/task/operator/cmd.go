@@ -5,15 +5,13 @@ package operator
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
-	"math/rand"
-	"os"
 	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	preparesnap "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -136,9 +134,26 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	defer cx.Close()
 
 	cx.run(func() error { return pauseGCKeeper(cx) })
+<<<<<<< HEAD
 	cx.run(func() error { return pauseSchedulerKeeper(cx) })
 	cx.run(func() error { return pauseAdminAndWaitApply(cx) })
+=======
+	cx.run(func() error {
+		log.Info("Pause scheduler waiting all connections established.")
+		select {
+		case <-initChan:
+		case <-cx.Done():
+			return cx.Err()
+		}
+		log.Info("Pause scheduler noticed connections established.")
+		return pauseSchedulerKeeper(cx)
+	})
+	cx.run(func() error { return pauseAdminAndWaitApply(cx, initChan) })
+>>>>>>> 2969b9e5767 (br/operator: fix adapt env for snapshot backup stuck when encountered error (#52607))
 	go func() {
+		failpoint.Inject("SkipReadyHint", func() {
+			failpoint.Return()
+		})
 		cx.rdGrp.Wait()
 		if cfg.OnAllReady != nil {
 			cfg.OnAllReady()
@@ -180,14 +195,6 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
 	cx.ReadyL("pause_admin_and_wait_apply", zap.Stringer("take", time.Since(begin)))
 	<-cx.Done()
 	return nil
-}
-
-func getCallerName() string {
-	name, err := os.Hostname()
-	if err != nil {
-		name = fmt.Sprintf("UNKNOWN-%d", rand.Int63())
-	}
-	return fmt.Sprintf("operator@%sT%d#%d", name, time.Now().Unix(), os.Getpid())
 }
 
 func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {
