@@ -1351,6 +1351,9 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 	}
 
 	t = invalidTask
+	if strings.Contains(ds.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select max(col_304) from (select /*+ use_index_merge( tbl_43 ) */") {
+		fmt.Println(1)
+	}
 	candidates := ds.skylinePruning(prop)
 	pruningInfo := ds.getPruningInfo(candidates, prop)
 	defer func() {
