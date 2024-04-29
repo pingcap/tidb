@@ -29,6 +29,7 @@ restart_services
 # prepare the data
 echo "prepare the data"
 run_sql_file $CUR/prepare_data/delete_range.sql
+run_sql_file $CUR/prepare_data/ingest_repair.sql
 # ...
 
 # check something after prepare the data
@@ -46,6 +47,7 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full"
 # load the incremental data
 echo "load the incremental data"
 run_sql_file $CUR/incremental_data/delete_range.sql
+run_sql_file $CUR/incremental_data/ingest_repair.sql
 # ...
 
 # check something after load the incremental data
@@ -101,9 +103,12 @@ run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-bac
 # check something in downstream cluster
 echo "check br log"
 check_contains "restore log success summary"
+## check feature history ddl delete range
 check_not_contains "rewrite delete range"
 echo "" > $res_file
 echo "check sql result"
 run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
 expect_delete_range=$(($incremental_delete_range_count-$prepare_delete_range_count))
 check_contains "DELETE_RANGE_CNT: $expect_delete_range"
+## check feature compatibility between PITR and accelerate indexing
+bash $CUR/check/check_ingest_repair.sh

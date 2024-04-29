@@ -444,7 +444,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		if err := c.env.ClearV3GlobalCheckpointForTask(ctx, e.Name); err != nil {
 			log.Warn("failed to clear global checkpoint", logutil.ShortError(err))
 		}
-		if _, err := c.env.BlockGCUntil(ctx, 0); err != nil {
+		if err := c.env.UnblockGC(ctx); err != nil {
 			log.Warn("failed to remove service GC safepoint", logutil.ShortError(err))
 		}
 		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
@@ -713,4 +713,13 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 		c.lastCheckpointMu.Unlock()
 		c.inResolvingLock.Store(false)
 	}()
+}
+
+func (c *CheckpointAdvancer) TEST_registerCallbackForSubscriptions(f func()) int {
+	cnt := 0
+	for _, sub := range c.subscriber.subscriptions {
+		sub.onDaemonExit = f
+		cnt += 1
+	}
+	return cnt
 }

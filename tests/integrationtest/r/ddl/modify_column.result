@@ -729,52 +729,52 @@ drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("2019");
 alter table t_mc modify a date;
-Error 1292 (22007): Incorrect time value: '2019'
+Error 1292 (22007): Incorrect date value: '2019'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (2019);
 alter table t_mc modify a date;
-Error 1292 (22007): Incorrect time value: '2019'
+Error 1292 (22007): Incorrect date value: '2019'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("00");
 alter table t_mc modify a date;
-Error 1292 (22007): Incorrect time value: '2000'
+Error 1292 (22007): Incorrect date value: '2000'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("69");
 alter table t_mc modify a date;
-Error 1292 (22007): Incorrect time value: '2069'
+Error 1292 (22007): Incorrect date value: '2069'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("70");
 alter table t_mc modify a date;
-Error 1292 (22007): Incorrect time value: '1970'
+Error 1292 (22007): Incorrect date value: '1970'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("99");
 alter table t_mc modify a date;
-Error 1292 (22007): Incorrect time value: '1999'
+Error 1292 (22007): Incorrect date value: '1999'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (00);
 alter table t_mc modify a date;
-Error 1292 (22007): Truncated incorrect date value: '0'
+Error 1292 (22007): Incorrect date value: '0'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (69);
 alter table t_mc modify a date;
-Error 1292 (22007): Incorrect time value: '2069'
+Error 1292 (22007): Incorrect date value: '2069'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (70);
 alter table t_mc modify a date;
-Error 1292 (22007): Incorrect time value: '1970'
+Error 1292 (22007): Incorrect date value: '1970'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (99);
 alter table t_mc modify a date;
-Error 1292 (22007): Incorrect time value: '1999'
+Error 1292 (22007): Incorrect date value: '1999'
 set @@global.tidb_ddl_error_count_limit = default;
 set @@time_zone=default;
 set @@global.tidb_ddl_error_count_limit = 3;
@@ -783,52 +783,52 @@ drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("2019");
 alter table t_mc modify a datetime;
-Error 1292 (22007): Incorrect time value: '2019'
+Error 1292 (22007): Incorrect datetime value: '2019'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (2019);
 alter table t_mc modify a datetime;
-Error 1292 (22007): Incorrect time value: '2019'
+Error 1292 (22007): Incorrect datetime value: '2019'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("00");
 alter table t_mc modify a datetime;
-Error 1292 (22007): Incorrect time value: '2000'
+Error 1292 (22007): Incorrect datetime value: '2000'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("69");
 alter table t_mc modify a datetime;
-Error 1292 (22007): Incorrect time value: '2069'
+Error 1292 (22007): Incorrect datetime value: '2069'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("70");
 alter table t_mc modify a datetime;
-Error 1292 (22007): Incorrect time value: '1970'
+Error 1292 (22007): Incorrect datetime value: '1970'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("99");
 alter table t_mc modify a datetime;
-Error 1292 (22007): Incorrect time value: '1999'
+Error 1292 (22007): Incorrect datetime value: '1999'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (00);
 alter table t_mc modify a datetime;
-Error 1292 (22007): Truncated incorrect datetime value: '0'
+Error 1292 (22007): Incorrect datetime value: '0'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (69);
 alter table t_mc modify a datetime;
-Error 1292 (22007): Incorrect time value: '2069'
+Error 1292 (22007): Incorrect datetime value: '2069'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (70);
 alter table t_mc modify a datetime;
-Error 1292 (22007): Incorrect time value: '1970'
+Error 1292 (22007): Incorrect datetime value: '1970'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (99);
 alter table t_mc modify a datetime;
-Error 1292 (22007): Incorrect time value: '1999'
+Error 1292 (22007): Incorrect datetime value: '1999'
 set @@global.tidb_ddl_error_count_limit = default;
 set @@time_zone=default;
 set @@global.tidb_ddl_error_count_limit = 3;
@@ -837,51 +837,51 @@ drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("2019");
 alter table t_mc modify a timestamp;
-Error 1292 (22007): Incorrect time value: '2019'
+Error 1292 (22007): Incorrect timestamp value: '2019'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (2019);
 alter table t_mc modify a timestamp;
-Error 1292 (22007): Incorrect time value: '2019'
+Error 1292 (22007): Incorrect timestamp value: '2019'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("00");
 alter table t_mc modify a timestamp;
-Error 1292 (22007): Incorrect time value: '2000'
+Error 1292 (22007): Incorrect timestamp value: '2000'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("69");
 alter table t_mc modify a timestamp;
-Error 1292 (22007): Incorrect time value: '2069'
+Error 1292 (22007): Incorrect timestamp value: '2069'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("70");
 alter table t_mc modify a timestamp;
-Error 1292 (22007): Incorrect time value: '1970'
+Error 1292 (22007): Incorrect timestamp value: '1970'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values ("99");
 alter table t_mc modify a timestamp;
-Error 1292 (22007): Incorrect time value: '1999'
+Error 1292 (22007): Incorrect timestamp value: '1999'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (00);
 alter table t_mc modify a timestamp;
-Error 1292 (22007): Truncated incorrect timestamp value: '0'
+Error 1292 (22007): Incorrect timestamp value: '0'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (69);
 alter table t_mc modify a timestamp;
-Error 1292 (22007): Incorrect time value: '2069'
+Error 1292 (22007): Incorrect timestamp value: '2069'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (70);
 alter table t_mc modify a timestamp;
-Error 1292 (22007): Incorrect time value: '1970'
+Error 1292 (22007): Incorrect timestamp value: '1970'
 drop table if exists t_mc;
 create table t_mc(a year);
 insert into t_mc (a) values (99);
 alter table t_mc modify a timestamp;
-Error 1292 (22007): Incorrect time value: '1999'
+Error 1292 (22007): Incorrect timestamp value: '1999'
 set @@global.tidb_ddl_error_count_limit = default;
 set @@time_zone=default;

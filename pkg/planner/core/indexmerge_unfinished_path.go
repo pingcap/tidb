@@ -411,7 +411,7 @@ func buildIntoAccessPath(
 	// 2. Collect the final table filter
 	// We always put all filters in the top level AND list except for the OR list into the final table filters.
 	// Whether to put the OR list into the table filters also depends on the needSelectionGlobal.
-	tableFilter := allConds[:]
+	tableFilter := slices.Clone(allConds)
 	if !needSelectionGlobal {
 		tableFilter = slices.Delete(tableFilter, orListIdxInAllConds, orListIdxInAllConds+1)
 	}

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -129,8 +130,8 @@ type IndexMergeReaderExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue // nolint:unused
 
-	partialPlans        [][]plannercore.PhysicalPlan
-	tblPlans            []plannercore.PhysicalPlan
+	partialPlans        [][]base.PhysicalPlan
+	tblPlans            []base.PhysicalPlan
 	partialNetDataSizes []float64
 	dataAvgRowSize      float64
 
@@ -167,7 +168,7 @@ func (e *IndexMergeReaderExecutor) Open(_ context.Context) (err error) {
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
 	e.initRuntimeStats()
 	if e.isCorColInTableFilter {
-		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetPlanCtx(), e.tblPlans)
+		e.tableRequest.Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetBuildPBCtx(), e.tblPlans)
 		if err != nil {
 			return err
 		}
@@ -370,7 +371,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
 					var err error
-					if e.dagPBs[workID].Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetPlanCtx(), e.partialPlans[workID]); err != nil {
+					if e.dagPBs[workID].Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetBuildPBCtx(), e.partialPlans[workID]); err != nil {
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
@@ -513,7 +514,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				}
 
 				if e.isCorColInPartialFilters[workID] {
-					if e.dagPBs[workID].Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetPlanCtx(), e.partialPlans[workID]); err != nil {
+					if e.dagPBs[workID].Executors, err = builder.ConstructListBasedDistExec(e.Ctx().GetBuildPBCtx(), e.partialPlans[workID]); err != nil {
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
@@ -1649,7 +1650,7 @@ type partialIndexWorker struct {
 	scannedKeys        uint64
 	pushedLimit        *plannercore.PushedDownLimit
 	dagPB              *tipb.DAGRequest
-	plan               []plannercore.PhysicalPlan
+	plan               []base.PhysicalPlan
 }
 
 func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexMergeTableTask, err error) {
@@ -1840,7 +1841,7 @@ type indexMergeTableScanWorker struct {
 	workCh         <-chan *indexMergeTableTask
 	finished       <-chan struct{}
 	indexMergeExec *IndexMergeReaderExecutor
-	tblPlans       []plannercore.PhysicalPlan
+	tblPlans       []base.PhysicalPlan
 
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker

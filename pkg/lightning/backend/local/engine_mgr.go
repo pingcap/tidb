@@ -19,9 +19,12 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/vfs"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -33,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/manual"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
@@ -191,10 +195,10 @@ func (em *engineManager) flushAllEngines(parentCtx context.Context) (err error) 
 
 func (em *engineManager) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
 	opt := &pebble.Options{
-		MemTableSize: em.MemTableSize,
+		MemTableSize: uint64(em.MemTableSize),
 		// the default threshold value may cause write stall.
 		MemTableStopWritesThreshold: 8,
-		MaxConcurrentCompactions:    16,
+		MaxConcurrentCompactions:    func() int { return 16 },
 		// set threshold to half of the max open files to avoid trigger compaction
 		L0CompactionThreshold: math.MaxInt32,
 		L0StopWritesThreshold: math.MaxInt32,
@@ -514,7 +518,10 @@ func (em *engineManager) close() {
 
 	if em.duplicateDB != nil {
 		// Check if there are duplicates that are not collected.
-		iter := em.duplicateDB.NewIter(&pebble.IterOptions{})
+		iter, err := em.duplicateDB.NewIter(&pebble.IterOptions{})
+		if err != nil {
+			em.logger.Panic("fail to create iterator")
+		}
 		hasDuplicates := iter.First()
 		allIsWell := true
 		if err := iter.Error(); err != nil {
@@ -578,6 +585,25 @@ func (em *engineManager) getBufferPool() *membuf.Pool {
 	return em.bufferPool
 }
 
+// only used in tests
+type slowCreateFS struct {
+	vfs.FS
+}
+
+// WaitRMFolderChForTest is a channel for testing.
+var WaitRMFolderChForTest = make(chan struct{})
+
+func (s slowCreateFS) Create(name string) (vfs.File, error) {
+	if strings.Contains(name, "temporary") {
+		select {
+		case <-WaitRMFolderChForTest:
+		case <-time.After(1 * time.Second):
+			logutil.BgLogger().Info("no one removes folder")
+		}
+	}
+	return s.FS.Create(name)
+}
+
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	dbPath := filepath.Join(storeDir, duplicateDBName)
 	// TODO: Optimize the opts for better write.
@@ -586,6 +612,9 @@ func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 			newRangePropertiesCollector,
 		},
 	}
+	failpoint.Inject("slowCreateFS", func() {
+		opts.FS = slowCreateFS{vfs.Default}
+	})
 	return pebble.Open(dbPath, opts)
 }
 

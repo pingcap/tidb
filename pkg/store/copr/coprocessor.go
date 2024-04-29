@@ -190,6 +190,17 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		buildTaskElapsed: *buildOpt.elapsed,
 		runawayChecker:   req.RunawayChecker,
 	}
+	// Pipelined-dml can flush locks when it is still reading.
+	// The coprocessor of the txn should not be blocked by itself.
+	// It should be the only case where a coprocessor can read locks of the same ts.
+	//
+	// But when start_ts is not obtained from PD,
+	// the start_ts could conflict with another pipelined-txn's start_ts.
+	// in which case the locks of same ts cannot be ignored.
+	// We rely on the assumption: start_ts is not from PD => this is a stale read.
+	if !req.IsStaleness {
+		it.resolvedLocks.Put(req.StartTs)
+	}
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
@@ -1450,6 +1461,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		logutil.Logger(bo.GetCtx()).Warn("other error",
 			zap.Uint64("txnStartTS", worker.req.StartTs),
 			zap.Uint64("regionID", task.region.GetID()),
+			zap.Uint64("regionVer", task.region.GetVer()),
+			zap.Uint64("regionConfVer", task.region.GetConfVer()),
 			zap.Uint64("bucketsVer", task.bucketsVer),
 			zap.Uint64("latestBucketsVer", resp.pbResp.GetLatestBucketsVersion()),
 			zap.Int("rangeNums", task.ranges.Len()),
@@ -1580,6 +1593,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			logutil.Logger(bo.GetCtx()).Warn("other error",
 				zap.Uint64("txnStartTS", worker.req.StartTs),
 				zap.Uint64("regionID", task.region.GetID()),
+				zap.Uint64("regionVer", task.region.GetVer()),
+				zap.Uint64("regionConfVer", task.region.GetConfVer()),
 				zap.Uint64("bucketsVer", task.bucketsVer),
 				// TODO: add bucket version in log
 				//zap.Uint64("latestBucketsVer", batchResp.GetLatestBucketsVersion()),
@@ -1607,6 +1622,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				zap.Uint64("id", task.taskID),
 				zap.Uint64("txnStartTS", worker.req.StartTs),
 				zap.Uint64("regionID", task.region.GetID()),
+				zap.Uint64("regionVer", task.region.GetVer()),
+				zap.Uint64("regionConfVer", task.region.GetConfVer()),
 				zap.Uint64("bucketsVer", task.bucketsVer),
 				zap.Int("rangeNums", task.ranges.Len()),
 				zap.ByteString("firstRangeStartKey", firstRangeStartKey),

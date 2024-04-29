@@ -20,6 +20,7 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
+        "@org_golang_x_text//encoding/simplifiedchinese",
         "@org_uber_go_zap//:zap",
     ],
 )

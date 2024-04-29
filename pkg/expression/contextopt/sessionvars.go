@@ -25,13 +25,13 @@ var _ RequireOptionalEvalProps = SessionVarsPropReader{}
 
 // SessionVarsPropProvider is a provider to get the session variables
 type SessionVarsPropProvider struct {
-	variable.SessionVarsProvider
+	vars variable.SessionVarsProvider
 }
 
 // NewSessionVarsProvider returns a new SessionVarsPropProvider
 func NewSessionVarsProvider(provider variable.SessionVarsProvider) *SessionVarsPropProvider {
 	intest.AssertNotNil(provider)
-	return &SessionVarsPropProvider{provider}
+	return &SessionVarsPropProvider{vars: provider}
 }
 
 // Desc implements the OptionalEvalPropProvider interface.
@@ -53,5 +53,10 @@ func (SessionVarsPropReader) GetSessionVars(ctx context.EvalContext) (*variable.
 	if err != nil {
 		return nil, err
 	}
-	return p.GetSessionVars(), nil
+
+	if intest.InTest {
+		context.AssertLocationWithSessionVars(ctx.Location(), p.vars.GetSessionVars())
+	}
+
+	return p.vars.GetSessionVars(), nil
 }

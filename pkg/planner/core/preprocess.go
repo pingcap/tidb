@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -1759,6 +1760,7 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 				if err := txnManager.OnStmtStart(context.TODO(), txnManager.GetCurrentStmt()); err != nil {
 					return err
 				}
+				p.sctx.GetSessionVars().TxnCtx.StaleReadTs = p.LastSnapshotTS
 			}
 		}
 	}
@@ -1794,7 +1796,7 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	return false
 }
 
-func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
+func tryLockMDLAndUpdateSchemaIfNecessary(sctx base.PlanContext, dbName model.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
 		return tbl, nil
 	}
@@ -1818,6 +1820,12 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
+	var err error
+	defer func() {
+		if err == nil && !skipLock {
+			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[tbl.Meta().ID] = struct{}{}
+		}
+	}()
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
@@ -1836,7 +1844,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx PlanContext, dbName model.CIStr, 
 		dom := domain.GetDomain(sctx)
 		domainSchema := dom.InfoSchema()
 		domainSchemaVer := domainSchema.SchemaMetaVersion()
-		var err error
 		tbl, err = domainSchema.TableByName(dbName, tableInfo.Name)
 		if err != nil {
 			if !skipLock {

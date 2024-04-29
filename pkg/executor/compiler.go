@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -158,9 +159,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 // If the estimated output row count of any operator in the physical plan tree
 // is greater than the specific threshold, we'll set it to lowPriority when
 // sending it to the coprocessor.
-func needLowerPriority(p plannercore.Plan) bool {
+func needLowerPriority(p base.Plan) bool {
 	switch x := p.(type) {
-	case plannercore.PhysicalPlan:
+	case base.PhysicalPlan:
 		return isPhysicalPlanNeedLowerPriority(x)
 	case *plannercore.Execute:
 		return needLowerPriority(x.Plan)
@@ -180,7 +181,7 @@ func needLowerPriority(p plannercore.Plan) bool {
 	return false
 }
 
-func isPhysicalPlanNeedLowerPriority(p plannercore.PhysicalPlan) bool {
+func isPhysicalPlanNeedLowerPriority(p base.PhysicalPlan) bool {
 	expensiveThreshold := int64(config.GetGlobalConfig().Log.ExpensiveThreshold)
 	if int64(p.StatsCount()) > expensiveThreshold {
 		return true

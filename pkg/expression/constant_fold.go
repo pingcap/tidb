@@ -173,7 +173,6 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 		}
 
 		args := x.GetArgs()
-		sc := ctx.GetSessionVars().StmtCtx
 		argIsConst := make([]bool, len(args))
 		hasNullArg := false
 		allConstArg := true
@@ -194,7 +193,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 			//
 			// NullEQ and ConcatWS are excluded, because they could have different value when the non-constant value is
 			// 1 or NULL. For example, concat_ws(NULL, NULL) gives NULL, but concat_ws(1, NULL) gives ''
-			if !hasNullArg || !sc.InNullRejectCheck || x.FuncName.L == ast.NullEQ || x.FuncName.L == ast.ConcatWS {
+			if !hasNullArg || !ctx.IsInNullRejectCheck() || x.FuncName.L == ast.NullEQ || x.FuncName.L == ast.ConcatWS {
 				return expr, isDeferredConst
 			}
 			constArgs := make([]Expression, len(args))

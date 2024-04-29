@@ -175,7 +175,7 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 func TestGenIndexValueFromIndex(t *testing.T) {
 	tblInfo := buildTableInfo(t, "create table a (a int primary key, b int not null, c text, unique key key_b(b));")
 	tblInfo.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{

@@ -217,6 +217,9 @@ type stmtSummaryByDigestElement struct {
 	// request-units
 	resourceGroupName string
 	StmtRUSummary
+
+	planCacheUnqualifiedCount int64
+	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -257,6 +260,8 @@ type StmtExecInfo struct {
 	KeyspaceID        uint32
 	ResourceGroupName string
 	RUDetail          *util.RUDetails
+
+	PlanCacheUnqualified string
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -854,6 +859,10 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.planCacheHits++
 	} else {
 		ssElement.planInCache = false
+	}
+	if sei.PlanCacheUnqualified != "" {
+		ssElement.planCacheUnqualifiedCount++
+		ssElement.lastPlanCacheUnqualified = sei.PlanCacheUnqualified
 	}
 
 	// SPM

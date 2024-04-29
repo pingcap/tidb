@@ -29,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -742,10 +744,17 @@ func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, index
 	needConsiderIndexMerge := true
 	// if current index merge hint is nil, once there is a no-access-cond in one of possible access path.
 	if len(ds.indexMergeHints) == 0 {
-		for i := 1; i < len(ds.possibleAccessPaths); i++ {
-			if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
-				needConsiderIndexMerge = false
-				break
+		skipRangeScanCheck := fixcontrol.GetBoolWithDefault(
+			ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
+			fixcontrol.Fix52869,
+			false,
+		)
+		if !skipRangeScanCheck {
+			for i := 1; i < len(ds.possibleAccessPaths); i++ {
+				if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
+					needConsiderIndexMerge = false
+					break
+				}
 			}
 		}
 		if needConsiderIndexMerge {
@@ -1370,7 +1379,7 @@ func collectFilters4MVIndex(
 //	accessFilters: [x=1, (2 member of a), z=1], remainingFilters: [x+z>0], mvColOffset: 1, mvFilterMutations[(2 member of a), (1 member of a)]
 //
 // the outer usage will be: accessFilter[mvColOffset] = each element of mvFilterMutations to get the mv access filters mutation combination.
-func CollectFilters4MVIndexMutations(sctx PlanContext, filters []expression.Expression,
+func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression.Expression,
 	idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression) {
 	usedAsAccess := make([]bool, len(filters))
 	// accessFilters [x, a<json>, z]
@@ -1481,7 +1490,7 @@ const (
 // Though this function is introduced for MV index, it can also be used for normal index
 // If the return value ok is false, the type must be unspecifiedFilterTp.
 func checkAccessFilter4IdxCol(
-	sctx PlanContext,
+	sctx base.PlanContext,
 	filter expression.Expression,
 	idxCol *expression.Column,
 ) (
@@ -1598,7 +1607,7 @@ func jsonArrayExpr2Exprs(
 ) ([]expression.Expression, bool) {
 	if checkForSkipPlanCache && expression.MaybeOverOptimized4PlanCache(sctx, []expression.Expression{jsonArrayExpr}) {
 		// skip plan cache and try to generate the best plan in this case.
-		sctx.SetSkipPlanCache(errors.NewNoStackError(jsonFuncName + " function with immutable parameters can affect index selection"))
+		sctx.SetSkipPlanCache(jsonFuncName + " function with immutable parameters can affect index selection")
 	}
 	if !expression.IsImmutableFunc(jsonArrayExpr) || jsonArrayExpr.GetType().EvalType() != types.ETJson {
 		return nil, false

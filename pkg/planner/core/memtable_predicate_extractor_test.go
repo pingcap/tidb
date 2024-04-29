@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -48,7 +49,7 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 	plan, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
 
-	logicalPlan, err := plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), plan.(plannercore.LogicalPlan))
+	logicalPlan, err := plannercore.LogicalOptimize(ctx, builder.GetOptFlag(), plan.(base.LogicalPlan))
 	require.NoError(t, err)
 
 	// Obtain the leaf plan
@@ -634,6 +635,7 @@ func TestMetricTableExtractor(t *testing.T) {
 			quantiles: []float64{0},
 		},
 	}
+	se.GetSessionVars().TimeZone = time.Local
 	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
 	for _, ca := range cases {
 		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
@@ -1048,6 +1050,7 @@ func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
+	se.GetSessionVars().TimeZone = time.Local
 	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
 
 	var cases = []struct {

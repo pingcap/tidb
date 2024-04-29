@@ -25,7 +25,9 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/objstorage/objstorageprovider"
 	"github.com/cockroachdb/pebble/sstable"
+	"github.com/cockroachdb/pebble/vfs"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -47,7 +49,7 @@ func makePebbleDB(t *testing.T, opt *pebble.Options) (*pebble.DB, string) {
 func TestGetEngineSizeWhenImport(t *testing.T) {
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
-		MaxConcurrentCompactions: 16,
+		MaxConcurrentCompactions: func() int { return 16 },
 		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
 		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
 		DisableWAL:               true,
@@ -85,7 +87,7 @@ func TestGetEngineSizeWhenImport(t *testing.T) {
 func TestIngestSSTWithClosedEngine(t *testing.T) {
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
-		MaxConcurrentCompactions: 16,
+		MaxConcurrentCompactions: func() int { return 16 },
 		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
 		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
 		DisableWAL:               true,
@@ -107,9 +109,10 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 	f.db.Store(db)
 	f.sstIngester = dbSSTIngester{e: f}
 	sstPath := path.Join(tmpPath, uuid.New().String()+".sst")
-	file, err := os.Create(sstPath)
+	file, err := vfs.Default.Create(sstPath)
 	require.NoError(t, err)
-	w := sstable.NewWriter(file, sstable.WriterOptions{})
+	writable := objstorageprovider.NewFileWritable(file)
+	w := sstable.NewWriter(writable, sstable.WriterOptions{})
 	for i := 0; i < 10; i++ {
 		require.NoError(t, w.Add(sstable.InternalKey{
 			Trailer: uint64(sstable.InternalKeyKindSet),
