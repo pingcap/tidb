@@ -2947,14 +2947,15 @@ func TestTiDBRowChecksumBuiltin(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, c int)")
 
-	// row with 2 checksums
+	// row with 1 checksum
 	tk.MustExec("insert into t values (1, 10)")
 	tk.MustExec("alter table t change column c c varchar(10)")
-	checksum1 := fmt.Sprintf("%d,%d", checksum(1, 10), checksum(1, "10"))
-	// row with 1 checksum
+	checksum1 := fmt.Sprintf("%d", checksum(1, "10"))
+
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = true
 	tk.MustExec("insert into t values (2, '20')")
 	checksum2 := fmt.Sprintf("%d", checksum(2, "20"))
+
 	// row without checksum
 	tk.Session().GetSessionVars().EnableRowLevelChecksum = false
 	tk.MustExec("insert into t values (3, '30')")
