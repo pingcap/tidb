@@ -513,11 +513,38 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan Log
 				usedEdges = append(usedEdges, edge)
 			} else {
 				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+
+				_, isCol0 := newSf.GetArgs()[0].(*expression.Column)
+				_, isCol1 := newSf.GetArgs()[1].(*expression.Column)
+				if !isCol0 || !isCol1 {
+					col0Idx := leftPlan.Schema().ColumnIndex(rCol)
+					col1Idx := rightPlan.Schema().ColumnIndex(lCol)
+					if !isCol0 {
+						leftPlan = s.injectProj(leftPlan, col0Idx, newSf.GetArgs()[0])
+					}
+					if !isCol1 {
+						rightPlan = s.injectProj(rightPlan, col1Idx, newSf.GetArgs()[1])
+					}
+					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(),
+						leftPlan.Schema().Columns[col0Idx], rightPlan.Schema().Columns[col1Idx]).(*expression.ScalarFunction)
+				}
 				usedEdges = append(usedEdges, newSf)
 			}
 		}
 	}
 	return
+}
+
+func (s *baseSingleGroupJoinOrderSolver) injectProj(p base.LogicalPlan, colIdx int, expr expression.Expression) base.LogicalPlan {
+	proj := LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+	proj.SetSchema(p.Schema().Clone())
+	proj.SetChildren(p)
+	proj.Exprs[colIdx] = expr
+	proj.schema.Columns[colIdx] = &expression.Column{
+		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  expr.GetType(),
+	}
+	return proj
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.
