@@ -59,9 +59,8 @@ func TestHandle(t *testing.T) {
 	require.NoError(t, err)
 	require.ErrorContains(t, waitedTask.Error, "unknown task type")
 
-	task, err = mgr.GetTaskByID(ctx, 1)
+	task, err = mgr.GetTaskByID(ctx, task.ID)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), task.ID)
 	require.Equal(t, "1", task.Key)
 	require.Equal(t, proto.TaskTypeExample, task.Type)
 	// no scheduler registered.
