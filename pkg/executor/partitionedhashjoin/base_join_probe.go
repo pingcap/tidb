@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"hash/fnv"
 	"unsafe"
 
@@ -46,7 +47,7 @@ func (hCtx *PartitionedHashJoinCtx) hasOtherCondition() bool {
 
 type JoinProbe interface {
 	SetChunkForProbe(chunk *chunk.Chunk) error
-	Probe(joinResult *util.HashjoinWorkerResult) (ok bool, result *util.HashjoinWorkerResult)
+	Probe(joinResult *util.HashjoinWorkerResult, sqlKiller sqlkiller.SQLKiller) (ok bool, result *util.HashjoinWorkerResult)
 	IsCurrentChunkProbeDone() bool
 	ScanRowTable(joinResult *util.HashjoinWorkerResult) (result *util.HashjoinWorkerResult)
 	IsScanRowTableDone() bool
@@ -111,13 +112,6 @@ type baseJoinProbe struct {
 
 func (j *baseJoinProbe) IsCurrentChunkProbeDone() bool {
 	return j.currentChunk == nil || j.currentProbeRow >= j.chunkRows
-}
-
-func (j *baseJoinProbe) advanceCurrentProbeRow() {
-	j.currentProbeRow++
-	//if j.currentProbeRow < j.chunkRows {
-	//	j.matchedRowsHeaders[j.currentProbeRow] = j.ctx.joinHashTable.lookup(j.hashValues[j.currentProbeRow])
-	//}
 }
 
 func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
@@ -511,7 +505,7 @@ func (m *mockJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) error {
 	return errors.New("not supported")
 }
 
-func (m *mockJoinProbe) Probe(joinResult *util.HashjoinWorkerResult) (ok bool, result *util.HashjoinWorkerResult) {
+func (m *mockJoinProbe) Probe(joinResult *util.HashjoinWorkerResult, killer sqlkiller.SQLKiller) (ok bool, result *util.HashjoinWorkerResult) {
 	panic("not supported")
 }
 

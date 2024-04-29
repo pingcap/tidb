@@ -544,7 +544,7 @@ func (w *ProbeWorker) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *
 		return false, waitTime, joinResult
 	}
 	for !w.JoinProbe.IsCurrentChunkProbeDone() {
-		ok, joinResult = w.JoinProbe.Probe(joinResult)
+		ok, joinResult = w.JoinProbe.Probe(joinResult, w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller)
 		if !ok || joinResult.Err != nil {
 			return ok, waitTime, joinResult
 		}
