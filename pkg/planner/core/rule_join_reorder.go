@@ -526,6 +526,7 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 						rightPlan = s.injectProj(rightPlan, newSf.GetArgs()[1])
 						lCol = rightPlan.Schema().Columns[len(rightPlan.Schema().Columns)-1]
 					}
+					leftNode, rightNode = leftPlan, rightPlan
 					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(),
 						rCol, lCol).(*expression.ScalarFunction)
 				}
