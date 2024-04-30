@@ -222,7 +222,6 @@ func getPossibleHints(ctx context.PlanContext, result map[string]*UnityTableInfo
 		}
 	}
 
-	// TODO: verify
 	// explain format='unity' select * from t1 where a<1
 	sctx, err := AsSctx(ctx)
 	must(err)
