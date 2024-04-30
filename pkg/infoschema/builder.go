@@ -447,7 +447,7 @@ func getKeptAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) auto
 	case model.ActionRebaseAutoRandomBase:
 		autoRandomChanged = true
 	case model.ActionMultiSchemaChange:
-		for _, t := range diff.ActionTypes {
+		for _, t := range diff.SubActionTypes {
 			switch t {
 			case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
 				autoIDChanged = true

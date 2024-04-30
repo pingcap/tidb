@@ -167,11 +167,11 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			// so this diff is enough, but it wound be better to accumulate all the diffs,
 			// and then merge them into a single diff.
 			if err = t.SetSchemaDiff(&model.SchemaDiff{
-				Version:     ver,
-				Type:        job.Type,
-				TableID:     job.TableID,
-				SchemaID:    job.SchemaID,
-				ActionTypes: actionTypes,
+				Version:        ver,
+				Type:           job.Type,
+				TableID:        job.TableID,
+				SchemaID:       job.SchemaID,
+				SubActionTypes: actionTypes,
 			}); err != nil {
 				return ver, err
 			}

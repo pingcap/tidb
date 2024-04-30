@@ -66,22 +66,22 @@ func TestGetKeptAllocators(t *testing.T) {
 		},
 		{
 			diff: &model.SchemaDiff{Type: model.ActionMultiSchemaChange,
-				ActionTypes: []model.ActionType{model.ActionAddColumn, model.ActionRebaseAutoID}},
+				SubActionTypes: []model.ActionType{model.ActionAddColumn, model.ActionRebaseAutoID}},
 			expected: []autoid.AllocatorType{autoid.AutoRandomType},
 		},
 		{
 			diff: &model.SchemaDiff{Type: model.ActionMultiSchemaChange,
-				ActionTypes: []model.ActionType{model.ActionModifyTableAutoIdCache}},
+				SubActionTypes: []model.ActionType{model.ActionModifyTableAutoIdCache}},
 			expected: []autoid.AllocatorType{autoid.AutoRandomType},
 		},
 		{
 			diff: &model.SchemaDiff{Type: model.ActionMultiSchemaChange,
-				ActionTypes: []model.ActionType{model.ActionRebaseAutoRandomBase}},
+				SubActionTypes: []model.ActionType{model.ActionRebaseAutoRandomBase}},
 			expected: []autoid.AllocatorType{autoid.RowIDAllocType, autoid.AutoIncrementType},
 		},
 		{
 			diff: &model.SchemaDiff{Type: model.ActionMultiSchemaChange,
-				ActionTypes: []model.ActionType{model.ActionAddColumn}},
+				SubActionTypes: []model.ActionType{model.ActionAddColumn}},
 			expected: []autoid.AllocatorType{autoid.RowIDAllocType, autoid.AutoIncrementType, autoid.AutoRandomType},
 		},
 	}
