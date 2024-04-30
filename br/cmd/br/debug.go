@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock/mockid"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
@@ -447,8 +448,8 @@ func searchStreamBackupCommand() *cobra.Command {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			comparator := NewStartWithComparator()
-			bs := NewStreamBackupSearch(s, comparator, keyBytes)
+			comparator := stream.NewStartWithComparator()
+			bs := stream.NewStreamBackupSearch(s, comparator, keyBytes)
 			bs.SetStartTS(startTs)
 			bs.SetEndTs(endTs)
 

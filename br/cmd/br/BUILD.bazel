@@ -23,6 +23,7 @@ go_library(
         "//br/pkg/mock/mockid",
         "//br/pkg/restore/utils",
         "//br/pkg/rtree",
+        "//br/pkg/stream",
         "//br/pkg/streamhelper/config",
         "//br/pkg/summary",
         "//br/pkg/task",
