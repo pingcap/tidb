@@ -21,8 +21,69 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	fileimporter "github.com/pingcap/tidb/br/pkg/restore/file_importer"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGetKeyRangeByMode(t *testing.T) {
+	file := &backuppb.File{
+		Name:     "file_write.sst",
+		StartKey: []byte("t1a"),
+		EndKey:   []byte("t1ccc"),
+	}
+	endFile := &backuppb.File{
+		Name:     "file_write.sst",
+		StartKey: []byte("t1a"),
+		EndKey:   []byte(""),
+	}
+	rule := &restoreutils.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{
+				OldKeyPrefix: []byte("t1"),
+				NewKeyPrefix: []byte("t2"),
+			},
+		},
+	}
+	// raw kv
+	testRawFn := fileimporter.GetKeyRangeByModeForTest(fileimporter.Raw)
+	start, end, err := testRawFn(file, rule)
+	require.NoError(t, err)
+	require.Equal(t, []byte("t1a"), start)
+	require.Equal(t, []byte("t1ccc"), end)
+
+	start, end, err = testRawFn(endFile, rule)
+	require.NoError(t, err)
+	require.Equal(t, []byte("t1a"), start)
+	require.Equal(t, []byte(""), end)
+
+	// txn kv: the keys must be encoded.
+	testTxnFn := fileimporter.GetKeyRangeByModeForTest(fileimporter.Txn)
+	start, end, err = testTxnFn(file, rule)
+	require.NoError(t, err)
+	require.Equal(t, codec.EncodeBytes(nil, []byte("t1a")), start)
+	require.Equal(t, codec.EncodeBytes(nil, []byte("t1ccc")), end)
+
+	start, end, err = testTxnFn(endFile, rule)
+	require.NoError(t, err)
+	require.Equal(t, codec.EncodeBytes(nil, []byte("t1a")), start)
+	require.Equal(t, []byte(""), end)
+
+	// normal kv: the keys must be encoded.
+	testFn := fileimporter.GetKeyRangeByModeForTest(fileimporter.TiDB)
+	start, end, err = testFn(file, rule)
+	require.NoError(t, err)
+	require.Equal(t, codec.EncodeBytes(nil, []byte("t2a")), start)
+	require.Equal(t, codec.EncodeBytes(nil, []byte("t2ccc")), end)
+
+	// TODO maybe fix later
+	// current restore does not support rewrite empty endkey.
+	// because backup guarantees that the end key is not empty.
+	// start, end, err = testFn(endFile, rule)
+	// require.NoError(t, err)
+	// require.Equal(t, codec.EncodeBytes(nil, []byte("t2a")), start)
+	// require.Equal(t, []byte(""), end)
+}
 
 func TestGetSSTMetaFromFile(t *testing.T) {
 	file := &backuppb.File{

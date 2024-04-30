@@ -520,6 +520,8 @@ func getKeyRangeByMode(mode KvMode) func(f *backuppb.File, rules *restoreutils.R
 	}
 }
 
+var GetKeyRangeByModeForTest = getKeyRangeByMode
+
 // getKeyRangeForFiles gets the maximum range on files.
 func (importer *FileImporter) getKeyRangeForFiles(
 	files []*backuppb.File,
