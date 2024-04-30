@@ -4,6 +4,7 @@ import (
 	context2 "context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -169,6 +170,10 @@ func fillUpStats(result map[string]*UnityTableInfo) {
 			if len(buckets) > 0 {
 				col.Min = buckets[0].Lower
 				col.Max = buckets[len(buckets)-1].Upper
+			}
+
+			if intest.InTest {
+				col.Histogram = []UnityHistBucket{}
 			}
 		}
 		for idxName, idx := range tblInfo.Indexes {
