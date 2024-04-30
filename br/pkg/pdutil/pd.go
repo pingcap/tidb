@@ -52,7 +52,7 @@ const (
 	pauseTimeout         = 5 * time.Minute
 
 	// pd request retry time when connection fail
-	pdRequestRetryTime = 10
+	pdRequestRetryTime = 120
 
 	// set max-pending-peer-count to a large value to avoid scatter region failed.
 	maxPendingPeerUnlimited uint64 = math.MaxInt32
@@ -174,6 +174,11 @@ func pdRequestWithCode(
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
+		failpoint.Inject("DNSError", func() {
+			req.Host = "nosuchhost"
+			req.URL.Host = "nosuchhost"
+			fmt.Println(req.URL.String())
+		})
 		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
 		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
