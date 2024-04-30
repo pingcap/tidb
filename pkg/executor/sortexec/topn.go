@@ -477,7 +477,7 @@ func (e *TopNExec) generateResultWithMultiWayMerge(offset int64, limit int64) er
 
 	outputRowNum := int64(0)
 	for {
-		if limit != -1 && outputRowNum >= limit {
+		if outputRowNum >= limit {
 			return nil
 		}
 
