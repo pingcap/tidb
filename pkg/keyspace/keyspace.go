@@ -42,13 +42,18 @@ const (
 	// maxKeyspaceID is the maximum keyspace id that can be created, no keyspace can be created greater than this value.
 	maxKeyspaceID = 0xffffff
 
+	// API V2 key bounds:
+	// See https://github.com/tikv/rfcs/blob/master/text/0069-api-v2.md for more keyspace and API V2 details.
+
 	// KeyspaceTxnModePrefix is txn data prefix of keyspace.
 	KeyspaceTxnModePrefix byte = 'x'
-
 	// MaxKeyspaceRightBoundaryPrefix is the max keyspace txn right boundary.
 	// Because the keyspace ranges are all under the 'x' prefix, so MaxKeyspaceRightBoundaryPrefix = 'y'
-	// See https://github.com/tikv/rfcs/blob/master/text/0069-api-v2.md for more details.
 	MaxKeyspaceRightBoundaryPrefix byte = 'y'
+	// RawKVLeftBoundaryPrefix is RawKV left boundary.
+	RawKVLeftBoundaryPrefix byte = 'r'
+	// RawKVRightBoundaryPrefix is RawKV right boundary.
+	RawKVRightBoundaryPrefix byte = 's'
 )
 
 // CodecV1 represents api v1 codec.

@@ -1199,7 +1199,7 @@ func (w *GCWorker) resolveLocks(
 	var txnRightBound []byte
 
 	if w.isCurrentKeyspaceUseKeyspaceLevelGC() {
-		// When enable keyspace level gc, legacyResolveLocks only resolve specified keyspace locks.
+		// When enable keyspace level gc, ResolveLocksForRange only resolve specified keyspace locks.
 		keyspaceID := w.store.GetCodec().GetKeyspaceMeta().GetId()
 		// resolve locks in `keyspaceID` range.
 
@@ -1272,13 +1272,14 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 	logutil.Logger(ctx).Info("[gc worker] start resolving locks in global GC mode")
 
 	// There is 3 steps of resolve locks in global gc.
-	// step 1. resolve locks in [ unbounded, keyspace 0 left bound )
-	// step 2. resolve locks in [ keyspace txnLeftBound , keyspace txnRightBound ) for all keyspaces with keyspace level GC disabled
-	// step 3. resolve locks in [ max keyspace txnRightBound , unbounded )
+	// step 1. resolve locks in [ unbounded, Raw KV left bound ), skip RawKV ranges
+	// step 2. resolve locks in [ Raw KV right bound, keyspace 0 txn left bound )
+	// step 3. resolve locks in [ keyspace txn left bound , keyspace txn right bound ) for all keyspaces with keyspace level GC disabled
+	// step 4. resolve locks in [ max keyspace txn left bound , unbounded )
 
-	// step 1. resolve locks in [ unbounded, keyspace 0 left bound )
+	// step 1. resolve locks in [ unbounded, Raw KV left bound ), skip RawKV ranges
 	txnLeftBound := []byte("")
-	txnRightBound := keyspace.GetKeyspaceTxnLeftBound(0)
+	txnRightBound := []byte{keyspace.RawKVLeftBoundaryPrefix}
 	err = runner.RunOnRange(ctx, txnLeftBound, txnRightBound)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] resolve locks by range failed",
@@ -1291,7 +1292,22 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 		return errors.Trace(err)
 	}
 
-	// step 2. resolve locks in [ keyspace txnLeftBound , keyspace txnRightBound ) for all keyspaces with keyspace level GC disabled.
+	// step 2. resolve locks in [ Raw KV right bound, keyspace 0 txn left bound )
+	txnLeftBound = []byte{keyspace.RawKVRightBoundaryPrefix}
+	txnRightBound = keyspace.GetKeyspaceTxnLeftBound(0)
+	err = runner.RunOnRange(ctx, txnLeftBound, txnRightBound)
+	if err != nil {
+		logutil.Logger(ctx).Error("[gc worker] resolve locks by range failed",
+			zap.String("category", "gc worker"),
+			zap.String("uuid", w.uuid),
+			zap.Uint64("safePoint", safePoint),
+			zap.String("txnLeftBound", hex.EncodeToString(txnLeftBound)),
+			zap.String("txnRightBound", hex.EncodeToString(txnRightBound)),
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+
+	// step 3. resolve locks in [ keyspace txnLeftBound , keyspace txnRightBound ) for all keyspaces with keyspace level GC disabled.
 
 	// Start keyspaces resolve locks
 	for i := range keyspaces {
@@ -1318,7 +1334,7 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 		}
 	}
 
-	// step 3. resolve locks in [ max keyspace txnRightBound , unbounded )
+	// step 4. resolve locks in [ max keyspace txnRightBound , unbounded )
 	txnLeftBound = []byte{keyspace.MaxKeyspaceRightBoundaryPrefix}
 	txnRightBound = []byte("")
 	err = runner.RunOnRange(ctx, txnLeftBound, txnRightBound)
