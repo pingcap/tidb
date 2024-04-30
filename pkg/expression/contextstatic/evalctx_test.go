@@ -32,11 +32,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewDefaultStaticEvalCtx(t *testing.T) {
+func TestNewStaticEvalCtx(t *testing.T) {
+	// default context
 	prevID := contextutil.GenContextID()
 	ctx := NewStaticEvalContext()
 	require.Equal(t, prevID+1, ctx.CtxID())
 	checkDefaultStaticEvalCtx(t, ctx)
+
+	// with options
+	prevID = ctx.CtxID()
+	options, stateForTest := getEvalCtxOptionsForTest(t)
+	ctx = NewStaticEvalContext(options...)
+	require.Equal(t, prevID+1, ctx.CtxID())
+	checkOptionsStaticEvalCtx(t, ctx, stateForTest)
 }
 
 func checkDefaultStaticEvalCtx(t *testing.T, ctx *StaticEvalContext) {
@@ -67,14 +75,6 @@ func checkDefaultStaticEvalCtx(t *testing.T, ctx *StaticEvalContext) {
 	warnHandler, ok := ctx.warnHandler.(*contextutil.StaticWarnHandler)
 	require.True(t, ok)
 	require.Equal(t, 0, warnHandler.WarningCount())
-}
-
-func TestStaticEvalCtxOptions(t *testing.T) {
-	prevID := contextutil.GenContextID()
-	options, stateForTest := getEvalCtxOptionsForTest(t)
-	ctx := NewStaticEvalContext(options...)
-	require.Equal(t, prevID+1, ctx.CtxID())
-	checkOptionsStaticEvalCtx(t, ctx, stateForTest)
 }
 
 type evalCtxOptionsTestState struct {

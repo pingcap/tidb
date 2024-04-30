@@ -21,13 +21,13 @@ SHOW CREATE TABLE u1;
 Table	Create Table
 u1	CREATE TABLE `u1` (
   `id` int(11) NOT NULL,
-  `c1` varchar(36) DEFAULT uuid(),
+  `c1` varchar(36) DEFAULT (uuid()),
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 SHOW CREATE TABLE u2;
 Table	Create Table
 u2	CREATE TABLE `u2` (
   `id` int(11) NOT NULL,
-  `c1` varbinary(16) DEFAULT uuid_to_bin(uuid()),
+  `c1` varbinary(16) DEFAULT (uuid_to_bin(uuid())),
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
