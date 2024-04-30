@@ -751,7 +751,7 @@ func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint ui
 	ttl := int64(math.MaxInt64)
 
 	if w.isCurrentKeyspaceUseKeyspaceLevelGC() {
-		keyspaceID := w.store.GetCodec().GetKeyspaceMeta().Id
+		keyspaceID := w.store.GetCodec().GetKeyspaceMeta().GetId()
 		minSafePoint, err = w.pdClient.UpdateServiceSafePointV2(ctx, keyspaceID, gcWorkerServiceSafePointID, ttl, safePoint)
 		logutil.Logger(ctx).Info("[gc worker] update keyspace gc worker service safe point ",
 			zap.String("uuid", w.uuid),
@@ -1200,11 +1200,12 @@ func (w *GCWorker) resolveLocks(
 
 	if w.isCurrentKeyspaceUseKeyspaceLevelGC() {
 		// When enable keyspace level gc, legacyResolveLocks only resolve specified keyspace locks.
-		keyspaceID := w.store.GetCodec().GetKeyspaceMeta().Id
+		keyspaceID := w.store.GetCodec().GetKeyspaceMeta().GetId()
 		// resolve locks in `keyspaceID` range.
 
 		// If TiDB sets keyspace-name, the keyspace prefix of the 'startKey' and 'endKey' of the resolve locks
-		// is added in the encodeRange function in client-go before the request is sent
+		// is added in the encodeRange function in client-go before the request is sent.
+		// So if we want to resolve locks on the full range of the current keyspace, then startKey and endKey should be []byte("").
 		err = runner.RunOnRange(ctx, []byte(""), []byte(""))
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] resolve locks by keyspace range failed",
@@ -1371,7 +1372,7 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 	for {
 		if w.isCurrentKeyspaceUseKeyspaceLevelGC() {
-			keyspaceID := w.store.GetCodec().GetKeyspaceMeta().Id
+			keyspaceID := w.store.GetCodec().GetKeyspaceMeta().GetId()
 			newSafePoint, err = w.pdClient.UpdateGCSafePointV2(ctx, keyspaceID, safePoint)
 			logutil.Logger(ctx).Info("[gc worker] update keyspace gc safe point",
 				zap.String("uuid", w.uuid),
