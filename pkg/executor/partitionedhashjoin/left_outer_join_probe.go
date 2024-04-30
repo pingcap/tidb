@@ -58,7 +58,7 @@ func (j *leftOuterJoinProbe) InitForScanRowTable() {
 	if j.rightAsBuildSide {
 		panic("should not reach here")
 	}
-	totalRowCount := j.ctx.joinHashTable.totalRowCount()
+	totalRowCount := j.ctx.hashTableContext.hashTable.totalRowCount()
 	concurrency := j.ctx.Concurrency
 	workId := uint64(j.workID)
 	avgRowPerWorker := totalRowCount / uint64(concurrency)
@@ -70,7 +70,7 @@ func (j *leftOuterJoinProbe) InitForScanRowTable() {
 	if endIndex > totalRowCount {
 		endIndex = totalRowCount
 	}
-	j.rowIter = j.ctx.joinHashTable.createRowIter(startIndex, endIndex)
+	j.rowIter = j.ctx.hashTableContext.hashTable.createRowIter(startIndex, endIndex)
 }
 
 func (j *leftOuterJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult) *util.HashjoinWorkerResult {

@@ -15,6 +15,7 @@
 package partitionedhashjoin
 
 import (
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"sort"
 	"strconv"
 	"testing"
@@ -262,6 +263,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		RUsed:                 rightUsed,
 		LUsedInOtherCondition: leftUsedByOtherCondition,
 		RUsedInOtherCondition: rightUsedByOtherCondition,
+		hashTableContext:      newHashTableContext(partitionNumber, partitionNumber),
 	}
 	joinProbe := NewJoinProbe(hashJoinCtx, 0, joinType, probeKeyIndex, joinedTypes, probeTypes, rightAsBuildSide)
 	buildSchema := &expression.Schema{}
@@ -324,23 +326,16 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	if !rightAsBuildSide {
 		leftChunks, rightChunks = buildChunks, probeChunks
 	}
-	rowTables := make([]*rowTable, hashJoinCtx.PartitionNumber)
 	for i := 0; i < chunkNumber; i++ {
-		err := builder.processOneChunk(buildChunks[i], hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, rowTables)
+		err := builder.processOneChunk(buildChunks[i], hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 		require.NoError(t, err)
 	}
-	builder.appendRemainingRowLocations(rowTables)
-	checkRowLocationAlignment(t, rowTables)
-	// make sure there is no nil rowTable
-	for index := range rowTables {
-		if rowTables[index] == nil {
-			rowTables[index] = newRowTable(meta)
-		}
-	}
+	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
+	checkRowLocationAlignment(t, hashJoinCtx.hashTableContext.rowTables[0])
+	hashJoinCtx.hashTableContext.mergeRowTablesToHashTable(hashJoinCtx.hashTableMeta, hashJoinCtx.PartitionNumber)
 	// build hash table
-	hashJoinCtx.joinHashTable = newJoinHashTable(rowTables)
 	for i := 0; i < partitionNumber; i++ {
-		hashJoinCtx.joinHashTable.buildHashTable(i, 0, len(rowTables[i].segments))
+		hashJoinCtx.hashTableContext.hashTable.buildHashTable(i, 0, len(hashJoinCtx.hashTableContext.hashTable.tables[i].rowData.segments))
 	}
 	// probe
 	resultChunks := make([]*chunk.Chunk, 0)
@@ -351,7 +346,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		err := joinProbe.SetChunkForProbe(probeChunk)
 		require.NoError(t, err, "unexpected error during SetChunkForProbe")
 		for !joinProbe.IsCurrentChunkProbeDone() {
-			_, joinResult = joinProbe.Probe(joinResult)
+			_, joinResult = joinProbe.Probe(joinResult, sqlkiller.SQLKiller{})
 			require.NoError(t, joinResult.Err, "unexpected error during join probe")
 			if joinResult.Chk.IsFull() {
 				resultChunks = append(resultChunks, joinResult.Chk)
