@@ -1,6 +1,6 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package main
+package stream
 
 import (
 	"bytes"
@@ -16,7 +16,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
@@ -93,11 +92,11 @@ func (s *StreamBackupSearch) SetEndTs(endTs uint64) {
 }
 
 func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backuppb.DataFileInfo) error {
-	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
+	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
 	pool := util.NewWorkerPool(64, "read backup meta")
 	eg, egCtx := errgroup.WithContext(ctx)
 	err := s.storage.WalkDir(egCtx, opt, func(path string, size int64) error {
-		if !strings.Contains(path, stream.GetStreamBackupMetaPrefix()) {
+		if !strings.Contains(path, GetStreamBackupMetaPrefix()) {
 			return nil
 		}
 
@@ -224,7 +223,7 @@ func (s *StreamBackupSearch) searchFromDataFile(
 		return errors.Annotatef(err, "validate checksum failed, file: %s", dataFile.Path)
 	}
 
-	iter := stream.NewEventIterator(buff)
+	iter := NewEventIterator(buff)
 	for iter.Valid() {
 		iter.Next()
 		if err := iter.GetError(); err != nil {
@@ -248,7 +247,7 @@ func (s *StreamBackupSearch) searchFromDataFile(
 		}
 
 		if dataFile.Cf == writeCFName {
-			rawWriteCFValue := new(stream.RawWriteCFValue)
+			rawWriteCFValue := new(RawWriteCFValue)
 			if err := rawWriteCFValue.ParseFrom(v); err != nil {
 				return errors.Annotatef(err, "parse raw write cf value error, file: %s", dataFile.Path)
 			}

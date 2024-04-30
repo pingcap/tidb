@@ -55,10 +55,11 @@ go_test(
         "import_test.go",
     ],
     flaky = True,
-    shard_count = 10,
+    shard_count = 11,
     deps = [
         ":file_importer",
         "//br/pkg/restore/split",
+        "//br/pkg/restore/utils",
         "//br/pkg/utils",
         "//pkg/store/pdtypes",
         "//pkg/util/codec",
