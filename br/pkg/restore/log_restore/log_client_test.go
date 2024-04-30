@@ -3,7 +3,7 @@
 // NOTE: we need to create client with only `storage` field.
 // However adding a public API for that is weird, so this test uses the `restore` package instead of `restore_test`.
 // Maybe we should refactor these APIs when possible.
-package restore
+package logrestore_test
 
 import (
 	"context"
@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	logrestore "github.com/pingcap/tidb/br/pkg/restore/log_restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
@@ -226,17 +227,17 @@ func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
 				os.RemoveAll(temp)
 			}
 		}()
-		init := LogFileManagerInit{
+		init := logrestore.LogFileManagerInit{
 			StartTS:   c.startTS,
 			RestoreTS: c.endTS,
 			Storage:   loc,
 
 			MetadataDownloadBatchSize: 32,
 		}
-		cli, err := CreateLogFileManager(ctx, init)
+		cli, err := logrestore.CreateLogFileManager(ctx, init)
 		req.Equal(cli.ShiftTS(), c.expectedShiftTS)
 		req.NoError(err)
-		metas, err := cli.readStreamMeta(ctx)
+		metas, err := cli.ReadStreamMeta(ctx)
 		req.NoError(err)
 		actualStoreIDs := make([]int64, 0, len(metas))
 		for _, meta := range metas {
@@ -301,13 +302,14 @@ func testReadFromMetadataWithVersion(t *testing.T, m metaMaker) {
 			}
 		}()
 
-		meta := new(StreamMetadataSet)
+		meta := new(stream.StreamMetadataSet)
 		meta.Helper = stream.NewMetadataHelper()
 		meta.MetadataDownloadBatchSize = 128
-		meta.LoadUntilAndCalculateShiftTS(ctx, loc, c.untilTS)
+		_, err := meta.LoadUntilAndCalculateShiftTS(ctx, loc, c.untilTS)
+		require.NoError(t, err)
 
 		var metas []*backuppb.Metadata
-		for path := range meta.metadataInfos {
+		for path := range meta.TEST_GetMetadataInfos() {
 			data, err := loc.ReadFile(ctx, path)
 			require.NoError(t, err)
 
@@ -459,7 +461,7 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 			}
 		}()
 		ctx := context.Background()
-		fm, err := CreateLogFileManager(ctx, LogFileManagerInit{
+		fm, err := logrestore.CreateLogFileManager(ctx, logrestore.LogFileManagerInit{
 			StartTS:   start,
 			RestoreTS: end,
 			Storage:   loc,
@@ -476,7 +478,7 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 				ctx,
 				iter.Map(
 					datas,
-					func(d *LogDataFileInfo) *backuppb.DataFileInfo {
+					func(d *logrestore.LogDataFileInfo) *backuppb.DataFileInfo {
 						return d.DataFileInfo
 					},
 				),
@@ -509,10 +511,23 @@ func TestFileManger(t *testing.T) {
 func TestFilterDataFiles(t *testing.T) {
 	req := require.New(t)
 	ctx := context.Background()
-	fm := logFileManager{
-		startTS:   0,
-		restoreTS: 10,
-	}
+	loc, temp := (&mockMetaBuilder{
+		metas: nil,
+	}).b(true)
+	defer func() {
+		t.Log("temp dir", temp)
+		if !t.Failed() {
+			os.RemoveAll(temp)
+		}
+	}()
+	fm, err := logrestore.CreateLogFileManager(ctx, logrestore.LogFileManagerInit{
+		StartTS:   0,
+		RestoreTS: 10,
+		Storage:   loc,
+
+		MetadataDownloadBatchSize: 32,
+	})
+	req.NoError(err)
 	metas := []*backuppb.Metadata{
 		m2(wr(1, 1, 1), wr(2, 2, 2), wr(3, 3, 3), wr(4, 4, 4)),
 		m2(wr(1, 1, 1), wr(2, 2, 2), wr(3, 3, 3), wr(4, 4, 4), wr(5, 5, 5)),
@@ -520,7 +535,7 @@ func TestFilterDataFiles(t *testing.T) {
 	}
 	metaIter := iter.FromSlice(metas)
 	files := iter.CollectAll(ctx, fm.FilterDataFiles(metaIter)).Item
-	check := func(file *LogDataFileInfo, metaKey string, goff, foff int) {
+	check := func(file *logrestore.LogDataFileInfo, metaKey string, goff, foff int) {
 		req.Equal(file.MetaDataGroupName, metaKey)
 		req.Equal(file.OffsetInMetaGroup, goff)
 		req.Equal(file.OffsetInMergedGroup, foff)

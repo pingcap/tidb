@@ -1,6 +1,6 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package file_importer
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/tikv/client-go/v2/kv"
 	"go.uber.org/multierr"
@@ -41,7 +42,7 @@ func OverRegionsInRange(start, end []byte, metaClient split.SplitClient, retrySt
 	// but scanRegion will drop the TimeStamp and the end key is exclusive.
 	// if we do not use PrefixNextKey. we might scan fewer regions than we expected.
 	// and finally cause the data lost.
-	end = TruncateTS(end)
+	end = restoreutils.TruncateTS(end)
 	end = kv.PrefixNextKey(end)
 
 	return OverRegionsInRangeController{

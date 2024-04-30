@@ -1,6 +1,6 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore_test
+package rawkv_test
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	rawclient "github.com/pingcap/tidb/br/pkg/restore/rawkv"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -57,7 +57,7 @@ func (f *fakeRawkvClient) Close() error {
 func TestRawKVBatchClient(t *testing.T) {
 	fakeRawkvClient := newFakeRawkvClient()
 	batchCount := 3
-	rawkvBatchClient := restore.NewRawKVBatchClient(fakeRawkvClient, batchCount)
+	rawkvBatchClient := rawclient.NewRawKVBatchClient(fakeRawkvClient, batchCount)
 	defer rawkvBatchClient.Close()
 
 	rawkvBatchClient.SetColumnFamily("default")
@@ -93,7 +93,7 @@ func TestRawKVBatchClient(t *testing.T) {
 func TestRawKVBatchClientDuplicated(t *testing.T) {
 	fakeRawkvClient := newFakeRawkvClient()
 	batchCount := 3
-	rawkvBatchClient := restore.NewRawKVBatchClient(fakeRawkvClient, batchCount)
+	rawkvBatchClient := rawclient.NewRawKVBatchClient(fakeRawkvClient, batchCount)
 	defer rawkvBatchClient.Close()
 
 	rawkvBatchClient.SetColumnFamily("default")

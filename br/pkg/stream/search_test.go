@@ -1,6 +1,6 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package stream
 
 import (
 	"bytes"
@@ -13,7 +13,6 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
@@ -114,7 +113,7 @@ func fakeDataFile(t *testing.T, s storage.ExternalStorage) (defaultCFDataFile, w
 	ctx := context.Background()
 	defaultCFBuf := bytes.NewBuffer([]byte{})
 	for _, defaultCF := range defaultCFs {
-		defaultCFBuf.Write(stream.EncodeKVEntry(encodeKey(defaultCF.key, defaultCF.startTs), []byte(defaultCF.val)))
+		defaultCFBuf.Write(EncodeKVEntry(encodeKey(defaultCF.key, defaultCF.startTs), []byte(defaultCF.val)))
 	}
 
 	err := s.WriteFile(ctx, defaultCFFile, defaultCFBuf.Bytes())
@@ -128,7 +127,7 @@ func fakeDataFile(t *testing.T, s storage.ExternalStorage) (defaultCFDataFile, w
 
 	writeCFBuf := bytes.NewBuffer([]byte{})
 	for _, writeCF := range writeCFs {
-		writeCFBuf.Write(stream.EncodeKVEntry(encodeKey(writeCF.key, writeCF.commitTS), encodeShortValue(writeCF.val, writeCF.startTs)))
+		writeCFBuf.Write(EncodeKVEntry(encodeKey(writeCF.key, writeCF.commitTS), encodeShortValue(writeCF.val, writeCF.startTs)))
 	}
 
 	err = s.WriteFile(ctx, writeCFFile, writeCFBuf.Bytes())

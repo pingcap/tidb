@@ -42,7 +42,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/rawkv"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
@@ -1008,7 +1010,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		return storage.UnlockRemote(ctx, extStorage, truncateLockPath)
 	})
 
-	sp, err := restore.GetTSFromFile(ctx, extStorage, restore.TruncateSafePointFileName)
+	sp, err := stream.GetTSFromFile(ctx, extStorage, stream.TruncateSafePointFileName)
 	if err != nil {
 		return err
 	}
@@ -1021,7 +1023,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	}
 
 	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
-	metas := restore.StreamMetadataSet{
+	metas := stream.StreamMetadataSet{
 		MetadataDownloadBatchSize: cfg.MetadataDownloadBatchSize,
 		Helper:                    stream.NewMetadataHelper(),
 		DryRun:                    cfg.DryRun,
@@ -1038,7 +1040,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		totalSize uint64 = 0
 	)
 
-	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *restore.FileGroupInfo) (shouldBreak bool) {
+	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *stream.FileGroupInfo) (shouldBreak bool) {
 		fileCount++
 		totalSize += d.Length
 		kvCount += d.KVCount
@@ -1053,8 +1055,8 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	}
 
 	if cfg.Until > sp && !cfg.DryRun {
-		if err := restore.SetTSToFile(
-			ctx, extStorage, cfg.Until, restore.TruncateSafePointFileName); err != nil {
+		if err := stream.SetTSToFile(
+			ctx, extStorage, cfg.Until, stream.TruncateSafePointFileName); err != nil {
 			return err
 		}
 	}
@@ -1409,7 +1411,7 @@ func restoreStream(
 	idrules := make(map[int64]int64)
 	downstreamIdset := make(map[int64]struct{})
 	for upstreamId, rule := range rewriteRules {
-		downstreamId := restore.GetRewriteTableID(upstreamId, rule)
+		downstreamId := restoreutils.GetRewriteTableID(upstreamId, rule)
 		idrules[upstreamId] = downstreamId
 		downstreamIdset[downstreamId] = struct{}{}
 	}
@@ -1606,7 +1608,7 @@ func getLogRangeWithStorage(
 
 	// truncateTS: get log truncate ts from TruncateSafePointFileName.
 	// If truncateTS equals 0, which represents the stream log has never been truncated.
-	truncateTS, err := restore.GetTSFromFile(ctx, s, restore.TruncateSafePointFileName)
+	truncateTS, err := stream.GetTSFromFile(ctx, s, stream.TruncateSafePointFileName)
 	if err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
@@ -1687,8 +1689,8 @@ func parseFullBackupTablesStorage(
 	}, nil
 }
 
-func initRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restore.RewriteRules {
-	rules := make(map[int64]*restore.RewriteRules)
+func initRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restoreutils.RewriteRules {
+	rules := make(map[int64]*restoreutils.RewriteRules)
 	filter := schemasReplace.TableFilter
 
 	for _, dbReplace := range schemasReplace.DbMap {
@@ -1705,7 +1707,7 @@ func initRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restore.
 				log.Info("add rewrite rule",
 					zap.String("tableName", dbReplace.Name+"."+tableReplace.Name),
 					zap.Int64("oldID", oldTableID), zap.Int64("newID", tableReplace.TableID))
-				rules[oldTableID] = restore.GetRewriteRuleOfTable(
+				rules[oldTableID] = restoreutils.GetRewriteRuleOfTable(
 					oldTableID, tableReplace.TableID, 0, tableReplace.IndexMap, false)
 			}
 
@@ -1714,7 +1716,7 @@ func initRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restore.
 					log.Info("add rewrite rule",
 						zap.String("tableName", dbReplace.Name+"."+tableReplace.Name),
 						zap.Int64("oldID", oldID), zap.Int64("newID", newID))
-					rules[oldID] = restore.GetRewriteRuleOfTable(oldID, newID, 0, tableReplace.IndexMap, false)
+					rules[oldID] = restoreutils.GetRewriteRuleOfTable(oldID, newID, 0, tableReplace.IndexMap, false)
 				}
 			}
 		}
@@ -1726,18 +1728,18 @@ func newRawBatchClient(
 	ctx context.Context,
 	pdAddrs []string,
 	tlsConfig TLSConfig,
-) (*restore.RawKVBatchClient, error) {
+) (*rawkv.RawKVBatchClient, error) {
 	security := config.Security{
 		ClusterSSLCA:   tlsConfig.CA,
 		ClusterSSLCert: tlsConfig.Cert,
 		ClusterSSLKey:  tlsConfig.Key,
 	}
-	rawkvClient, err := restore.NewRawkvClient(ctx, pdAddrs, security)
+	rawkvClient, err := rawkv.NewRawkvClient(ctx, pdAddrs, security)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	return restore.NewRawKVBatchClient(rawkvClient, rawKVBatchCount), nil
+	return rawkv.NewRawKVBatchClient(rawkvClient, rawKVBatchCount), nil
 }
 
 // ShiftTS gets a smaller shiftTS than startTS.

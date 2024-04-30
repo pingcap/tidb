@@ -1,6 +1,6 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package stream
 
 import (
 	"bytes"
@@ -16,11 +16,15 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+)
+
+const (
+	writeCFName   = "write"
+	defaultCFName = "default"
 )
 
 // Comparator is used for comparing the relationship of src and dst
@@ -63,7 +67,11 @@ type StreamBackupSearch struct {
 }
 
 // NewStreamBackupSearch creates an instance of StreamBackupSearch
-func NewStreamBackupSearch(storage storage.ExternalStorage, comparator Comparator, searchKey []byte) *StreamBackupSearch {
+func NewStreamBackupSearch(
+	storage storage.ExternalStorage,
+	comparator Comparator,
+	searchKey []byte,
+) *StreamBackupSearch {
 	bs := &StreamBackupSearch{
 		storage:    storage,
 		comparator: comparator,
@@ -84,11 +92,11 @@ func (s *StreamBackupSearch) SetEndTs(endTs uint64) {
 }
 
 func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backuppb.DataFileInfo) error {
-	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
+	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
 	pool := util.NewWorkerPool(64, "read backup meta")
 	eg, egCtx := errgroup.WithContext(ctx)
 	err := s.storage.WalkDir(egCtx, opt, func(path string, size int64) error {
-		if !strings.Contains(path, stream.GetStreamBackupMetaPrefix()) {
+		if !strings.Contains(path, GetStreamBackupMetaPrefix()) {
 			return nil
 		}
 
@@ -118,7 +126,11 @@ func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backu
 	return eg.Wait()
 }
 
-func (s *StreamBackupSearch) resolveMetaData(ctx context.Context, metaData *backuppb.Metadata, ch chan<- *backuppb.DataFileInfo) {
+func (s *StreamBackupSearch) resolveMetaData(
+	ctx context.Context,
+	metaData *backuppb.Metadata,
+	ch chan<- *backuppb.DataFileInfo,
+) {
 	for _, file := range metaData.Files {
 		if file.IsMeta {
 			continue
@@ -197,7 +209,11 @@ func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error
 	return entries, nil
 }
 
-func (s *StreamBackupSearch) searchFromDataFile(ctx context.Context, dataFile *backuppb.DataFileInfo, ch chan<- *StreamKVInfo) error {
+func (s *StreamBackupSearch) searchFromDataFile(
+	ctx context.Context,
+	dataFile *backuppb.DataFileInfo,
+	ch chan<- *StreamKVInfo,
+) error {
 	buff, err := s.storage.ReadFile(ctx, dataFile.Path)
 	if err != nil {
 		return errors.Annotatef(err, "read data file error, file: %s", dataFile.Path)
@@ -207,7 +223,7 @@ func (s *StreamBackupSearch) searchFromDataFile(ctx context.Context, dataFile *b
 		return errors.Annotatef(err, "validate checksum failed, file: %s", dataFile.Path)
 	}
 
-	iter := stream.NewEventIterator(buff)
+	iter := NewEventIterator(buff)
 	for iter.Valid() {
 		iter.Next()
 		if err := iter.GetError(); err != nil {
@@ -231,7 +247,7 @@ func (s *StreamBackupSearch) searchFromDataFile(ctx context.Context, dataFile *b
 		}
 
 		if dataFile.Cf == writeCFName {
-			rawWriteCFValue := new(stream.RawWriteCFValue)
+			rawWriteCFValue := new(RawWriteCFValue)
 			if err := rawWriteCFValue.ParseFrom(v); err != nil {
 				return errors.Annotatef(err, "parse raw write cf value error, file: %s", dataFile.Path)
 			}
@@ -278,7 +294,8 @@ func (s *StreamBackupSearch) mergeCFEntries(defaultCFEntries, writeCFEntries map
 
 		keyBytes, err := hex.DecodeString(entry.Key)
 		if err != nil {
-			log.Warn("hex decode key failed", zap.String("key", entry.Key), zap.String("encode-key", entry.EncodedKey), zap.Error(err))
+			log.Warn("hex decode key failed",
+				zap.String("key", entry.Key), zap.String("encode-key", entry.EncodedKey), zap.Error(err))
 			continue
 		}
 

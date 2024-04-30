@@ -1,5 +1,5 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
-package restore_test
+package data_test
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/data"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	pd "github.com/tikv/pd/client"
@@ -27,7 +27,7 @@ type testData struct {
 	cancel context.CancelFunc
 
 	mockPDClient pd.Client
-	mockRecovery restore.Recovery
+	mockRecovery data.Recovery
 }
 
 func newRegionMeta(
@@ -55,19 +55,19 @@ func newRegionMeta(
 }
 
 func (t *testData) generateRegionMeta() {
-	storeMeta0 := restore.NewStoreMeta(1)
+	storeMeta0 := data.NewStoreMeta(1)
 	storeMeta0.RegionMetas = append(storeMeta0.RegionMetas, newRegionMeta(11, 24, 8, 5, 4, 1, false, []byte(""), []byte("b")))
 	storeMeta0.RegionMetas = append(storeMeta0.RegionMetas, newRegionMeta(12, 34, 5, 6, 5, 1, false, []byte("b"), []byte("c")))
 	storeMeta0.RegionMetas = append(storeMeta0.RegionMetas, newRegionMeta(13, 44, 1200, 7, 6, 1, false, []byte("c"), []byte("")))
 	t.mockRecovery.StoreMetas[0] = storeMeta0
 
-	storeMeta1 := restore.NewStoreMeta(2)
+	storeMeta1 := data.NewStoreMeta(2)
 	storeMeta1.RegionMetas = append(storeMeta1.RegionMetas, newRegionMeta(11, 25, 7, 6, 4, 1, false, []byte(""), []byte("b")))
 	storeMeta1.RegionMetas = append(storeMeta1.RegionMetas, newRegionMeta(12, 35, 5, 6, 5, 1, false, []byte("b"), []byte("c")))
 	storeMeta1.RegionMetas = append(storeMeta1.RegionMetas, newRegionMeta(13, 45, 1200, 6, 6, 1, false, []byte("c"), []byte("")))
 	t.mockRecovery.StoreMetas[1] = storeMeta1
 
-	storeMeta2 := restore.NewStoreMeta(3)
+	storeMeta2 := data.NewStoreMeta(3)
 	storeMeta2.RegionMetas = append(storeMeta2.RegionMetas, newRegionMeta(11, 26, 7, 5, 4, 1, false, []byte(""), []byte("b")))
 	storeMeta2.RegionMetas = append(storeMeta2.RegionMetas, newRegionMeta(12, 36, 5, 6, 6, 1, false, []byte("b"), []byte("c")))
 	storeMeta2.RegionMetas = append(storeMeta2.RegionMetas, newRegionMeta(13, maxAllocateId, 1200, 6, 6, 1, false, []byte("c"), []byte("")))
@@ -96,7 +96,7 @@ func createDataSuite(t *testing.T) *testData {
 
 	fakeProgress := mockGlue.StartProgress(ctx, "Restore Data", int64(numOnlineStore*3), false)
 
-	var recovery = restore.NewRecovery(createStores(), mockMgr, fakeProgress, 64)
+	var recovery = data.NewRecovery(createStores(), mockMgr, fakeProgress, 64)
 	tikvClient.Close()
 	return &testData{
 		ctx:          ctx,
