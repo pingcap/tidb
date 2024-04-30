@@ -31,9 +31,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/internal"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -222,7 +222,7 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 }
 
 func TestMPPHintsWithBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -271,7 +271,7 @@ func TestMPPHintsWithBinding(t *testing.T) {
 }
 
 func TestJoinHintCompatibilityWithBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_cost_model_version=2")
@@ -442,7 +442,7 @@ func TestPhysicalPlanMemoryTrace(t *testing.T) {
 }
 
 func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
-	store := testkit.CreateMockStore(t, internal.WithMockTiFlash(2))
+	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int, client_type tinyint, client_no char(18), taxpayer_no varchar(50), status tinyint, update_time datetime)")

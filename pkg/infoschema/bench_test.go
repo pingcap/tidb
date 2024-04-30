@@ -42,7 +42,7 @@ var (
 //
 // GOOS=linux GOARCH=amd64 go test -tags intest -c -o bench.test ./pkg/infoschema
 //
-// ./bench.test -test.v -run ^$ -test.bench=BenchmarkInfoschemaOverhead --with-tikv "upstream-pd:2379?disableGC=true"
+// bench.test -test.v -run ^$ -test.bench=BenchmarkInfoschemaOverhead --with-tikv "upstream-pd:2379?disableGC=true"
 func BenchmarkInfoschemaOverhead(b *testing.B) {
 	wg := testkit.MockTiDBStatusPort(context.Background(), b, *port)
 
@@ -69,11 +69,7 @@ func BenchmarkInfoschemaOverhead(b *testing.B) {
 	}
 	startTime := time.Now()
 	for j := 0; j < *tableCnt; j++ {
-		delta := true
-		if j == 0 {
-			delta = false
-		}
-		tc.runCreateTable("test"+strconv.Itoa(j), delta)
+		tc.runCreateTable("test" + strconv.Itoa(j))
 	}
 	logutil.BgLogger().Info("all table created", zap.Duration("cost time", time.Since(startTime)))
 	// TODO: add more scenes.

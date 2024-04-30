@@ -408,6 +408,10 @@ func TestGetTSWithRetry(t *testing.T) {
 	})
 
 	t.Run("PD leader failure:", func(t *testing.T) {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/set-attempt-to-one", "1*return(true)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/set-attempt-to-one"))
+		}()
 		retryTimes := -1000
 		pDClient := fakePDClient{notLeader: true, retryTimes: &retryTimes}
 		client := restore.NewRestoreClient(pDClient, nil, nil, defaultKeepaliveCfg)

@@ -14,7 +14,7 @@ go_test(
         "//pkg/config",
         "//pkg/domain",
         "//pkg/parser/model",
-        "//pkg/planner/core/internal",
+        "//pkg/planner/util/coretestsdk",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/testkit/testdata",

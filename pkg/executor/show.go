@@ -59,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -69,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -1032,12 +1032,19 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 						}
 						buf.WriteString(" DEFAULT NULL")
 					}
-				case "CURRENT_TIMESTAMP", "CURRENT_DATE":
+				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT ")
 					buf.WriteString(defaultValue.(string))
 					if col.GetDecimal() > 0 {
 						fmt.Fprintf(buf, "(%d)", col.GetDecimal())
 					}
+				case "CURRENT_DATE":
+					buf.WriteString(" DEFAULT (")
+					buf.WriteString(defaultValue.(string))
+					if col.GetDecimal() > 0 {
+						fmt.Fprintf(buf, "(%d)", col.GetDecimal())
+					}
+					buf.WriteString(")")
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
@@ -1050,7 +1057,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 					}
 
 					if col.DefaultIsExpr {
-						fmt.Fprintf(buf, " DEFAULT %s", defaultValStr)
+						fmt.Fprintf(buf, " DEFAULT (%s)", defaultValStr)
 					} else {
 						if col.GetType() == mysql.TypeBit {
 							defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
@@ -1870,7 +1877,7 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 		return nil
 	}
 	for _, w := range stmtCtx.GetWarnings() {
-		if errOnly && w.Level != stmtctx.WarnLevelError {
+		if errOnly && w.Level != contextutil.WarnLevelError {
 			continue
 		}
 		warn := errors.Cause(w.Err)

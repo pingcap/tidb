@@ -580,3 +580,37 @@ func TestFirstLitSlowStart(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+func TestConcFastReorg(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+
+	tblNum := 10
+	for i := 0; i < tblNum; i++ {
+		tk.MustExec(fmt.Sprintf("create table t%d(a int);", i))
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(tblNum)
+	for i := 0; i < tblNum; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use addindexlit;")
+			tk2.MustExec(fmt.Sprintf("insert into t%d values (1), (2), (3);", i))
+
+			if i%2 == 0 {
+				tk2.MustExec(fmt.Sprintf("alter table t%d add index idx(a);", i))
+			} else {
+				tk2.MustExec(fmt.Sprintf("alter table t%d add unique index idx(a);", i))
+			}
+		}()
+	}
+
+	wg.Wait()
+}
