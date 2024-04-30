@@ -84,11 +84,7 @@ go_test(
     ],
     embed = [":infoschema"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 13,
-=======
-    shard_count = 20,
->>>>>>> c24dca58f5e (infoschema: load auto id related changes for multi-schema-change diff (#52967))
+    shard_count = 14,
     deps = [
         "//pkg/ddl/placement",
         "//pkg/domain",
