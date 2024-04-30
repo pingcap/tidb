@@ -1445,7 +1445,7 @@ func setNoDefaultValueFlag(c *table.Column, hasDefaultValue bool) {
 	}
 }
 
-func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue bool) error {
+func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue bool) (err error) {
 	if !hasDefaultValue {
 		return nil
 	}
@@ -1454,7 +1454,14 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 		if c.DefaultIsExpr {
 			return nil
 		}
+<<<<<<< HEAD:ddl/ddl_api.go
 		if _, err := table.GetColDefaultValue(ctx, c.ToInfo()); err != nil {
+=======
+		handleWithTruncateErr(ctx, func() {
+			_, err = table.GetColDefaultValue(ctx.GetExprCtx(), c.ToInfo())
+		})
+		if err != nil {
+>>>>>>> 2343c5420ef (ddl: fix the issue about create columns with wrong default when sql_mode is empty. (#52988)):pkg/ddl/ddl_api.go
 			return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 		}
 		return nil
@@ -4446,10 +4453,23 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 	return errors.Trace(err)
 }
 
+// handleWithTruncateErr handles the doFunc with FlagTruncateAsWarning and FlagIgnoreTruncateErr flags, both of which are false.
+func handleWithTruncateErr(ctx sessionctx.Context, doFunc func()) {
+	sv := ctx.GetSessionVars().StmtCtx
+	oldTypeFlags := sv.TypeFlags()
+	newTypeFlags := oldTypeFlags.WithTruncateAsWarning(false).WithIgnoreTruncateErr(false)
+	sv.SetTypeFlags(newTypeFlags)
+	doFunc()
+	sv.SetTypeFlags(oldTypeFlags)
+}
+
 // SetDefaultValue sets the default value of the column.
-func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
-	hasDefaultValue := false
-	value, isSeqExpr, err := getDefaultValue(ctx, col, option)
+func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (hasDefaultValue bool, err error) {
+	var value any
+	var isSeqExpr bool
+	handleWithTruncateErr(ctx, func() {
+		value, isSeqExpr, err = getDefaultValue(ctx, col, option)
+	})
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -4808,11 +4828,17 @@ func GetModifiableColumnJob(
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
 			}
 			pAst := at.Specs[0].Partition
+<<<<<<< HEAD:ddl/ddl_api.go
 			sv := sctx.GetSessionVars().StmtCtx
 			oldTruncAsWarn, oldIgnoreTrunc := sv.TruncateAsWarning, sv.IgnoreTruncate
 			sv.TruncateAsWarning, sv.IgnoreTruncate = false, false
 			_, err = buildPartitionDefinitionsInfo(sctx, pAst.Definitions, &newTblInfo)
 			sv.TruncateAsWarning, sv.IgnoreTruncate = oldTruncAsWarn, oldIgnoreTrunc
+=======
+			handleWithTruncateErr(sctx, func() {
+				_, err = buildPartitionDefinitionsInfo(sctx.GetExprCtx(), pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)))
+			})
+>>>>>>> 2343c5420ef (ddl: fix the issue about create columns with wrong default when sql_mode is empty. (#52988)):pkg/ddl/ddl_api.go
 			if err != nil {
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 			}
