@@ -366,7 +366,7 @@ func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*Pro
 	})
 
 	if ret == nil {
-		return nil, errors.Errorf("Cannot find progress range that contains the start key: %s.", redact.Key(startKey))
+		return nil, errors.Errorf("Cannot find progress range that contains the start key: %s", redact.Key(startKey))
 	}
 
 	if !ret.Origin.ContainsRegion(startKey, endKey) {

@@ -783,14 +783,23 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 	return nil
 }
 
-func (bc *Client) buildProgressRangeTree(ranges []rtree.Range) (rtree.ProgressRangeTree, []*kvrpcpb.KeyRange) {
+func (bc *Client) getProgressRanges(ranges []rtree.Range) []*rtree.ProgressRange {
+	prs := make([]*rtree.ProgressRange, 0, len(ranges))
+	for _, r := range ranges {
+		prs = append(prs, bc.getProgressRange(r))
+	}
+	return prs
+}
+
+func buildProgressRangeTree(pranges []*rtree.ProgressRange) (rtree.ProgressRangeTree, []*kvrpcpb.KeyRange, error) {
 	// the response from TiKV only contains the region's key, so use the
 	// progress range tree to quickly seek the region's corresponding progress range.
 	progressRangeTree := rtree.NewProgressRangeTree()
 	subRangesCount := 0
-	for _, r := range ranges {
-		pr := bc.getProgressRange(r)
-		progressRangeTree.Insert(pr)
+	for _, pr := range pranges {
+		if err := progressRangeTree.Insert(pr); err != nil {
+			return progressRangeTree, nil, errors.Trace(err)
+		}
 		subRangesCount += len(pr.Incomplete)
 	}
 	// either the `incomplete` is origin range itself,
@@ -807,7 +816,7 @@ func (bc *Client) buildProgressRangeTree(ranges []rtree.Range) (rtree.ProgressRa
 		return true
 	})
 
-	return progressRangeTree, subRanges
+	return progressRangeTree, subRanges, nil
 }
 
 func (bc *Client) getBackupTargetStores(
@@ -885,13 +894,17 @@ func (bc *Client) BackupRanges(
 			regionCountInBatch = regionCounts[id]
 		}
 		// merge the ranges[rangeInBatchStartIndex, id) into a batch
-		prTree, subRanges := bc.buildProgressRangeTree(ranges[rangeInBatchStartIndex:id])
+		pranges := bc.getProgressRanges(ranges[rangeInBatchStartIndex:id])
 		id := id
 		req := request
 		workerPool.ApplyOnErrorGroup(eg, func() (retErr error) {
 			elctx := logutil.ContextWithField(ectx,
 				logutil.RedactAny("range-sn-start", rangeInBatchStartIndex), logutil.RedactAny("range-sn-end", id))
 
+			prTree, subRanges, err := buildProgressRangeTree(pranges)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			start := time.Now()
 			defer func() {
 				key := "range start: " +
