@@ -61,33 +61,33 @@ type UnityOutput struct {
 	Hints  []string
 }
 
-func collectColumn(c *expression.Column, result map[string]*UnityTableInfo) {
+func collectColumn(c *expression.Column, o *UnityOutput) {
 	colName := strings.ToLower(c.OrigName)
-	result[tblName(colName)].Columns[colName] = &UnityColumnInfo{}
+	o.Tables[tblName(colName)].Columns[colName] = &UnityColumnInfo{}
 }
 
-func collectColumnFromExpr(expr expression.Expression, result map[string]*UnityTableInfo) {
+func collectColumnFromExpr(expr expression.Expression, o *UnityOutput) {
 	switch x := expr.(type) {
 	case *expression.Column:
-		collectColumn(x, result)
+		collectColumn(x, o)
 	case *expression.CorrelatedColumn:
-		collectColumn(&x.Column, result)
+		collectColumn(&x.Column, o)
 	case *expression.ScalarFunction:
 		for _, arg := range x.GetArgs() {
-			collectColumnFromExpr(arg, result)
+			collectColumnFromExpr(arg, o)
 		}
 	}
 }
 
-func collectUnityInfo(p base.LogicalPlan, result map[string]*UnityTableInfo) {
+func collectUnityInfo(p base.LogicalPlan, o *UnityOutput) {
 	for _, child := range p.Children() {
-		collectUnityInfo(child, result)
+		collectUnityInfo(child, o)
 	}
 	switch x := p.(type) {
 	case *DataSource:
 		tableName := x.DBName.L + "." + x.tableInfo.Name.L
-		if _, ok := result[tableName]; !ok {
-			result[tableName] = &UnityTableInfo{
+		if _, ok := o.Tables[tableName]; !ok {
+			o.Tables[tableName] = &UnityTableInfo{
 				AsName:  x.TableAsName.L,
 				Columns: map[string]*UnityColumnInfo{},
 				Indexes: map[string]*UnityIndexInfo{},
@@ -97,12 +97,12 @@ func collectUnityInfo(p base.LogicalPlan, result map[string]*UnityTableInfo) {
 			}
 			for _, col := range x.tableInfo.Columns {
 				colName := tableName + "." + col.Name.L
-				result[tableName].col2id[colName] = col.ID
+				o.Tables[tableName].col2id[colName] = col.ID
 			}
 			for _, idx := range x.tableInfo.Indices {
 				idxName := tableName + "." + idx.Name.L
-				result[tableName].Indexes[idxName] = &UnityIndexInfo{}
-				result[tableName].idx2id[idxName] = idx.ID
+				o.Tables[tableName].Indexes[idxName] = &UnityIndexInfo{}
+				o.Tables[tableName].idx2id[idxName] = idx.ID
 			}
 			//if x.tableInfo.PKIsHandle || x.tableInfo.IsCommonHandle {
 			//	idxName := tableName+".primary"
@@ -110,42 +110,42 @@ func collectUnityInfo(p base.LogicalPlan, result map[string]*UnityTableInfo) {
 			//}
 		}
 		for _, expr := range x.allConds {
-			collectColumnFromExpr(expr, result)
+			collectColumnFromExpr(expr, o)
 		}
 	case *LogicalSelection:
 		for _, expr := range x.Conditions {
-			collectColumnFromExpr(expr, result)
+			collectColumnFromExpr(expr, o)
 		}
 	case *LogicalJoin:
 		for _, expr := range x.EqualConditions {
-			collectColumnFromExpr(expr, result)
+			collectColumnFromExpr(expr, o)
 		}
 		for _, expr := range x.NAEQConditions {
-			collectColumnFromExpr(expr, result)
+			collectColumnFromExpr(expr, o)
 		}
 		for _, expr := range x.LeftConditions {
-			collectColumnFromExpr(expr, result)
+			collectColumnFromExpr(expr, o)
 		}
 		for _, expr := range x.RightConditions {
-			collectColumnFromExpr(expr, result)
+			collectColumnFromExpr(expr, o)
 		}
 		for _, expr := range x.OtherConditions {
-			collectColumnFromExpr(expr, result)
+			collectColumnFromExpr(expr, o)
 		}
 	case *LogicalAggregation:
 		for _, expr := range x.GroupByItems {
-			collectColumnFromExpr(expr, result)
+			collectColumnFromExpr(expr, o)
 		}
 	case *LogicalSort:
 		for _, item := range x.ByItems {
-			collectColumnFromExpr(item.Expr, result)
+			collectColumnFromExpr(item.Expr, o)
 		}
 	default:
 	}
 }
 
-func fillUpStats(result map[string]*UnityTableInfo) {
-	for _, tblInfo := range result {
+func fillUpStats(o *UnityOutput) {
+	for _, tblInfo := range o.Tables {
 		tblStats := tblInfo.stats
 		tblInfo.ModifiedRows = tblStats.ModifyCount
 		tblInfo.RealtimeRows = tblStats.RealtimeCount
@@ -184,10 +184,10 @@ func fillUpStats(result map[string]*UnityTableInfo) {
 	}
 }
 
-func getPossibleHints(ctx context.PlanContext, result map[string]*UnityTableInfo) []string {
+func getPossibleHints(ctx context.PlanContext, o *UnityOutput) {
 	possibleHints := make(map[string]bool)
 	var hintTableNames []string
-	for tableName, tblInfo := range result {
+	for tableName, tblInfo := range o.Tables {
 		hintTableName := tableName
 		if tblInfo.AsName != "" {
 			hintTableName = dbName(tableName) + "." + tblInfo.AsName
@@ -249,23 +249,19 @@ func getPossibleHints(ctx context.PlanContext, result map[string]*UnityTableInfo
 		possibleHints = tmp
 	}
 
-	hints := make([]string, 0, len(possibleHints))
+	o.Hints = make([]string, 0, len(possibleHints))
 	for h := range possibleHints {
-		hints = append(hints, h)
+		o.Hints = append(o.Hints, h)
 	}
-	return hints
 }
 
 func prepareForUnity(ctx context.PlanContext, p base.LogicalPlan) string {
-	result := make(map[string]*UnityTableInfo)
-	collectUnityInfo(p, result)
-	fillUpStats(result)
-	hints := getPossibleHints(ctx, result)
+	o := &UnityOutput{Tables: make(map[string]*UnityTableInfo)}
+	collectUnityInfo(p, o)
+	fillUpStats(o)
+	getPossibleHints(ctx, o)
 
-	v, err := json.Marshal(UnityOutput{
-		Tables: result,
-		Hints:  hints,
-	})
+	v, err := json.Marshal(o)
 	must(err)
 	return string(v)
 }
