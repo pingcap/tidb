@@ -15,7 +15,11 @@ func TestUnity(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t1 (a int, b int, c int, key(a))`)
 	tk.MustExec(`create table t2 (a int, b int, c int, key(a))`)
-	data := tk.MustQuery(`explain format='unity' select * from t1, t2 where t1.a=t2.a`).Rows()[0][0]
+	formatPrint(tk, `explain format='unity' select * from t1, t2 where t1.a=t2.a`)
+}
+
+func formatPrint(tk *testkit.TestKit, sql string) {
+	data := tk.MustQuery(sql).Rows()[0][0]
 	jsonData := data.(string)
 
 	var j core.UnityOutput
