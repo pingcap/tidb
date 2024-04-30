@@ -57,6 +57,11 @@ type UnityTableInfo struct {
 	idx2id map[string]int64  `json:"-"`
 }
 
+type UnityOutput struct {
+	Tables map[string]*UnityTableInfo
+	Hints  []string
+}
+
 func collectColumn(c *expression.Column, result map[string]*UnityTableInfo) {
 	colName := strings.ToLower(c.OrigName)
 	result[tblName(colName)].Columns[colName] = &UnityColumnInfo{}
@@ -261,10 +266,7 @@ func prepareForUnity(ctx context.PlanContext, p base.LogicalPlan) string {
 	fillUpStats(result)
 	hints := getPossibleHints(ctx, result)
 
-	v, err := json.Marshal(struct {
-		Tables map[string]*UnityTableInfo
-		Hints  []string
-	}{
+	v, err := json.Marshal(UnityOutput{
 		Tables: result,
 		Hints:  hints,
 	})
