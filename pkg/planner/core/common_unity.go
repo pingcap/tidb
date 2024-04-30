@@ -59,6 +59,8 @@ type UnityTableInfo struct {
 type UnityOutput struct {
 	Tables map[string]*UnityTableInfo
 	Hints  []string
+
+	joins map[string]string
 }
 
 func collectColumn(c *expression.Column, o *UnityOutput) {
@@ -75,6 +77,37 @@ func collectColumnFromExpr(expr expression.Expression, o *UnityOutput) {
 	case *expression.ScalarFunction:
 		for _, arg := range x.GetArgs() {
 			collectColumnFromExpr(arg, o)
+		}
+	}
+}
+
+func tablesInExpr(expr expression.Expression) map[string]bool {
+	m := make(map[string]bool)
+	switch x := expr.(type) {
+	case *expression.Column:
+		m[tblName(x.OrigName)] = true
+	case *expression.CorrelatedColumn:
+		m[tblName(x.OrigName)] = true
+	case *expression.ScalarFunction:
+		for _, arg := range x.GetArgs() {
+			am := tablesInExpr(arg)
+			for k, v := range am {
+				m[k] = v
+			}
+		}
+	}
+	return m
+}
+
+func collectJoins(expr expression.Expression, o *UnityOutput) {
+	tbls := tablesInExpr(expr)
+	for t1 := range tbls {
+		for t2 := range tbls {
+			if t1 == t2 {
+				continue
+			}
+			o.joins[t1] = t2
+			o.joins[t2] = t1
 		}
 	}
 }
@@ -119,18 +152,23 @@ func collectUnityInfo(p base.LogicalPlan, o *UnityOutput) {
 	case *LogicalJoin:
 		for _, expr := range x.EqualConditions {
 			collectColumnFromExpr(expr, o)
+			collectJoins(expr, o)
 		}
 		for _, expr := range x.NAEQConditions {
 			collectColumnFromExpr(expr, o)
+			collectJoins(expr, o)
 		}
 		for _, expr := range x.LeftConditions {
 			collectColumnFromExpr(expr, o)
+			collectJoins(expr, o)
 		}
 		for _, expr := range x.RightConditions {
 			collectColumnFromExpr(expr, o)
+			collectJoins(expr, o)
 		}
 		for _, expr := range x.OtherConditions {
 			collectColumnFromExpr(expr, o)
+			collectJoins(expr, o)
 		}
 	case *LogicalAggregation:
 		for _, expr := range x.GroupByItems {
@@ -256,7 +294,10 @@ func getPossibleHints(ctx context.PlanContext, o *UnityOutput) {
 }
 
 func prepareForUnity(ctx context.PlanContext, p base.LogicalPlan) string {
-	o := &UnityOutput{Tables: make(map[string]*UnityTableInfo)}
+	o := &UnityOutput{
+		Tables: make(map[string]*UnityTableInfo),
+		joins:  make(map[string]string),
+	}
 	collectUnityInfo(p, o)
 	fillUpStats(o)
 	getPossibleHints(ctx, o)
