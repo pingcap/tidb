@@ -75,16 +75,16 @@ func createRowTable(t *testing.T, rows int) *rowTable {
 	partitionNumber := 1
 	chk := chunk.GenRandomChunks(buildTypes, rows)
 	hashJoinCtx := &PartitionedHashJoinCtx{
-		SessCtx:         mock.NewContext(),
-		PartitionNumber: partitionNumber,
-		hashTableMeta:   meta,
+		SessCtx:          mock.NewContext(),
+		PartitionNumber:  partitionNumber,
+		hashTableMeta:    meta,
+		hashTableContext: newHashTableContext(partitionNumber, partitionNumber),
 	}
-	rowTables := make([]*rowTable, hashJoinCtx.PartitionNumber)
 	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, partitionNumber, hasNullableKey, false, false)
-	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, rowTables)
+	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err)
-	builder.appendRemainingRowLocations(rowTables)
-	return rowTables[0]
+	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
+	return hashJoinCtx.hashTableContext.rowTables[0][0]
 }
 
 func TestHashTableSize(t *testing.T) {

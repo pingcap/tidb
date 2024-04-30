@@ -31,6 +31,7 @@ import (
 const SizeOfNextPtr = int(unsafe.Sizeof(uintptr(0)))
 const SizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
 const sizeOfUInt64 = int(unsafe.Sizeof(uint64(1)))
+const sizeOfInt = int(unsafe.Sizeof(int(1)))
 const sizeOfFloat64 = int(unsafe.Sizeof(float64(1)))
 const usedFlagMaskBigEndian = uint32(1) << 31
 const usedFlagMaskLittleEndian = uint32(1) << 7
@@ -64,6 +65,15 @@ type rowTableSegment struct {
 	hashValues      []uint64  // the hash value of each rows
 	rowLocations    []uintptr // the start address of each row
 	validJoinKeyPos []int     // the pos of rows that need to be inserted into hash table, used in hash table build
+	finalized       bool
+}
+
+func (rts *rowTableSegment) totalUsedBytes() int64 {
+	ret := int64(cap(rts.rawData))
+	ret += int64(cap(rts.hashValues) * sizeOfUInt64)
+	ret += int64(cap(rts.rowLocations) * SizeOfNextPtr)
+	ret += int64(cap(rts.rowLocations) * sizeOfInt)
+	return ret
 }
 
 const MAX_ROW_TABLE_SEGMENT_SIZE = 1024
@@ -491,7 +501,7 @@ func (b *rowTableBuilder) initBuffer() {
 	}
 }
 
-func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Context, hashJoinCtx *PartitionedHashJoinCtx, rowTables []*rowTable) error {
+func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Context, hashJoinCtx *PartitionedHashJoinCtx, workerId int) error {
 	b.ResetBuffer(chk)
 	var err error
 	if b.hasFilter {
@@ -525,7 +535,7 @@ func (b *rowTableBuilder) processOneChunk(chk *chunk.Chunk, typeCtx types.Contex
 	}
 
 	// 2. build rowtable
-	b.appendToRowTable(chk, rowTables, hashJoinCtx.hashTableMeta)
+	b.appendToRowTable(chk, hashJoinCtx, workerId)
 	return nil
 }
 
@@ -578,21 +588,18 @@ func newRowTable(meta *JoinTableMeta) *rowTable {
 	}
 }
 
-func (builder *rowTableBuilder) appendRemainingRowLocations(rowTables []*rowTable) {
-	for partId := 0; partId < len(rowTables); partId++ {
+func (builder *rowTableBuilder) appendRemainingRowLocations(workerId int, htCtx *hashTableContext) {
+	for partId := 0; partId < int(htCtx.hashTable.partitionNumber); partId++ {
 		startPosInRawData := builder.startPosInRawData[partId]
 		if len(startPosInRawData) > 0 {
-			seg := rowTables[partId].segments[len(rowTables[partId].segments)-1]
-			for _, pos := range startPosInRawData {
-				seg.rowLocations = append(seg.rowLocations, uintptr(unsafe.Pointer(&seg.rawData[pos])))
-			}
-			builder.startPosInRawData[partId] = builder.startPosInRawData[partId][:]
+			htCtx.finalizeCurrentSeg(workerId, partId, builder)
 		}
 	}
 }
 
-func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*rowTable, rowTableMeta *JoinTableMeta) {
+func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *PartitionedHashJoinCtx, workerId int) {
 	fakeAddrByte := make([]byte, 8)
+	rowTableMeta := hashJoinCtx.hashTableMeta
 	var fakeKeyByte []byte
 	if builder.keepFilteredRows && rowTableMeta.isJoinKeysFixedLength && !rowTableMeta.isJoinKeysInlined {
 		fakeKeyByte = make([]byte, rowTableMeta.joinKeysLength)
@@ -607,23 +614,10 @@ func (builder *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, rowTables []*
 			partIdx = builder.partIdxVector[logicalRowIndex]
 			seg     *rowTableSegment
 		)
-		if rowTables[partIdx] == nil {
-			rowTables[partIdx] = newRowTable(rowTableMeta)
-			seg = newRowTableSegment()
-			rowTables[partIdx].segments = append(rowTables[partIdx].segments, seg)
-			builder.startPosInRawData[partIdx] = builder.startPosInRawData[partIdx][:0]
-		} else {
-			seg = rowTables[partIdx].segments[len(rowTables[partIdx].segments)-1]
-			if builder.crrntSizeOfRowTable[partIdx] >= MAX_ROW_TABLE_SEGMENT_SIZE {
-				for _, pos := range builder.startPosInRawData[partIdx] {
-					seg.rowLocations = append(seg.rowLocations, uintptr(unsafe.Pointer(&seg.rawData[pos])))
-				}
-				builder.crrntSizeOfRowTable[partIdx] = 0
-				builder.startPosInRawData[partIdx] = builder.startPosInRawData[partIdx][:0]
-				seg = newRowTableSegment()
-				rowTables[partIdx].segments = append(rowTables[partIdx].segments, seg)
-			}
+		if builder.crrntSizeOfRowTable[partIdx] >= MAX_ROW_TABLE_SEGMENT_SIZE {
+			hashJoinCtx.hashTableContext.finalizeCurrentSeg(workerId, partIdx, builder)
 		}
+		seg = hashJoinCtx.hashTableContext.getCurrentRowSegment(workerId, partIdx, hashJoinCtx.hashTableMeta, true)
 		if hasValidKey {
 			seg.validJoinKeyPos = append(seg.validJoinKeyPos, len(seg.hashValues))
 		}
