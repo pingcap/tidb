@@ -76,6 +76,7 @@ go_test(
     timeout = "short",
     srcs = [
         "bench_test.go",
+        "builder_test.go",
         "infoschema_test.go",
         "infoschema_v2_test.go",
         "main_test.go",
@@ -83,7 +84,11 @@ go_test(
     ],
     embed = [":infoschema"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 13,
+=======
+    shard_count = 20,
+>>>>>>> c24dca58f5e (infoschema: load auto id related changes for multi-schema-change diff (#52967))
     deps = [
         "//pkg/ddl/placement",
         "//pkg/domain",

@@ -127,6 +127,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
 		// Step the sub-jobs to the non-revertible states all at once.
 		// We only generate 1 schema version for these sub-job.
+		actionTypes := make([]model.ActionType, 0, len(job.MultiSchemaInfo.SubJobs))
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
 			if sub.IsFinished() {
 				continue
@@ -144,12 +145,35 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			sub.FromProxyJob(&proxyJob, proxyJobVer)
 			if err != nil || proxyJob.Error != nil {
 				for j := i - 1; j >= 0; j-- {
+					// TODO if some sub-job is finished, this will empty them
+					// also some sub-job cannot be rollback completely, maybe keep them?
 					job.MultiSchemaInfo.SubJobs[j] = &subJobs[j]
 				}
 				handleRevertibleException(job, sub, proxyJob.Error)
 				// The TableInfo and sub-jobs should be restored
 				// because some schema changes update the transaction aggressively.
+				// TODO this error handling cannot handle below case:
+				// suppose the job is for "alter table t auto_increment = 100, add column c int".
+				// if we fail on "add column c int", the allocator is rebased to 100
+				// which cannot be rollback, but it's table-info.AutoIncID is rollback by below call.
+				// TODO we should also change schema diff of 'ver' if len(actionTypes) > 1.
 				return updateVersionAndTableInfo(d, t, job, tblInfo, true)
+			}
+			actionTypes = append(actionTypes, sub.Type)
+		}
+		if len(actionTypes) > 1 {
+			// only single table schema changes can be put into a multi-schema-change
+			// job except AddForeignKey which is handled separately in the first loop.
+			// so this diff is enough, but it wound be better to accumulate all the diffs,
+			// and then merge them into a single diff.
+			if err = t.SetSchemaDiff(&model.SchemaDiff{
+				Version:        ver,
+				Type:           job.Type,
+				TableID:        job.TableID,
+				SchemaID:       job.SchemaID,
+				SubActionTypes: actionTypes,
+			}); err != nil {
+				return ver, err
 			}
 		}
 		// All the sub-jobs are non-revertible.
