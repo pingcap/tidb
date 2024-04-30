@@ -268,7 +268,6 @@ import (
 	sqlSmallResult    "SQL_SMALL_RESULT"
 	ssl               "SSL"
 	starting          "STARTING"
-	statsExtended     "STATS_EXTENDED"
 	stored            "STORED"
 	straightJoin      "STRAIGHT_JOIN"
 	tableKwd          "TABLE"
