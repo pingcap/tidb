@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"sync/atomic"
 )
 
 type innerJoinProbe struct {
@@ -46,6 +47,8 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult, sqlKiller 
 				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow}, joinedChk, 0, hasOtherCondition)
 				length++
 				remainCap--
+			} else {
+				atomic.AddInt64(&j.ctx.stats.hashStat.probeCollision, 1)
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
