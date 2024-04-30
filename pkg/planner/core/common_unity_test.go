@@ -15,7 +15,9 @@ func TestUnity(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t1 (a int, b int, c int, key(a))`)
 	tk.MustExec(`create table t2 (a int, b int, c int, key(a))`)
-	formatPrint(tk, `explain format='unity' select * from t1, t2 where t1.a=t2.a`)
+	tk.MustExec(`create table t3 (a int, b int, c int, key(a))`)
+	//formatPrint(tk, `explain format='unity' select * from t1, t2 where t1.a=t2.a`)
+	formatPrint(tk, `explain format='unity' select 1 from t1, t2, t3 where t1.a=t2.a and t2.a=t3.a`)
 }
 
 func formatPrint(tk *testkit.TestKit, sql string) {

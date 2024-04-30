@@ -250,13 +250,11 @@ func getPossibleHints(ctx context.PlanContext, o *UnityOutput) {
 		possibleHints[fmt.Sprintf("hash_join(%v)", strings.Join(hintTableNames, ", "))] = true
 
 		// leading hint
-		for _, t1 := range hintTableNames {
-			for _, t2 := range hintTableNames {
-				if t1 == t2 {
-					continue
-				}
-				possibleHints[fmt.Sprintf("leading(%v, %v)", t1, t2)] = true
+		for t1, t2 := range o.joins {
+			if t1 == t2 {
+				continue
 			}
+			possibleHints[fmt.Sprintf("leading(%v, %v)", t1, t2)] = true
 		}
 	}
 
