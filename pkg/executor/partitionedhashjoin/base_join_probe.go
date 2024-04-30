@@ -208,7 +208,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	j.currentProbeRow = 0
 	for i := 0; i < j.ctx.PartitionNumber; i++ {
 		for index := range j.hashValues[i] {
-			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.joinHashTable.tables[i].lookup(j.hashValues[i][index].hashValue)
+			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.hashTable.tables[i].lookup(j.hashValues[i][index].hashValue)
 		}
 	}
 	return
