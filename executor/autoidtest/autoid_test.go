@@ -768,7 +768,6 @@ func TestIssue39528(t *testing.T) {
 	require.False(t, codeRun)
 }
 
-<<<<<<< HEAD:executor/autoidtest/autoid_test.go
 func TestAutoIDConstraint(t *testing.T) {
 	// Remove the constraint that auto id column must be defined as a key
 	// See https://github.com/pingcap/tidb/issues/40580
@@ -806,7 +805,8 @@ func TestAutoIDConstraint(t *testing.T) {
 	// Cover case: create table with auto id column as key, and remove it later
 	tk.MustExec("create table tt2 (id int, c int auto_increment, key c_idx(c))")
 	tk.MustExec("alter table tt2 drop index c_idx")
-=======
+}
+
 func TestIssue52622(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -845,5 +845,4 @@ func TestIssue52622(t *testing.T) {
 
 		tk.MustExec("drop table issue52622;")
 	}
->>>>>>> f5e591d107b (*: fix 'Duplicate entry' error when @@auto_increment_increment and @@auto_increment_offset is set (#52626)):pkg/executor/test/autoidtest/autoid_test.go
 }
