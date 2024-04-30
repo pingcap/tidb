@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -178,6 +179,15 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 	if !flushed || err != nil {
 		return err
 	}
+
+	failpoint.Inject("resignAfterFlush", func() {
+		// used in a manual test
+		ResignOwnerForTest.Store(true)
+		// wait until ResignOwnerForTest is processed
+		for ResignOwnerForTest.Load() {
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -385,6 +395,10 @@ func (s *CheckpointManager) updateCheckpoint() error {
 }
 
 func (s *CheckpointManager) updateCheckpointLoop() {
+	failpoint.Inject("checkpointLoopExit", func() {
+		// used in a manual test
+		failpoint.Return()
+	})
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {

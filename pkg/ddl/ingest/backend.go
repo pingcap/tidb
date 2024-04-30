@@ -271,6 +271,10 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 var ForceSyncFlagForTest = false
 
 func (bc *litBackendCtx) ShouldSync(mode FlushMode) (shouldFlush bool, shouldImport bool) {
+	failpoint.Inject("forceSyncFlagForTest", func() {
+		// used in a manual test
+		ForceSyncFlagForTest = true
+	})
 	if mode == FlushModeForceGlobal || ForceSyncFlagForTest {
 		return true, true
 	}
