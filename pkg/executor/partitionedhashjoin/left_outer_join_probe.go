@@ -15,6 +15,8 @@
 package partitionedhashjoin
 
 import (
+	"sync/atomic"
+
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -209,6 +211,8 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 					j.isNotMatchedRows[j.currentProbeRow] = false
 				}
 				length++
+			} else {
+				atomic.AddInt64(&j.ctx.stats.hashStat.probeCollision, 1)
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
@@ -267,6 +271,8 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 				}
 				length++
 				remainCap--
+			} else {
+				atomic.AddInt64(&j.ctx.stats.hashStat.probeCollision, 1)
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
