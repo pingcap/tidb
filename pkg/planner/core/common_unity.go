@@ -248,6 +248,11 @@ func getPossibleHints(ctx context.PlanContext, o *UnityOutput) {
 		}
 		// hash join all
 		possibleHints[fmt.Sprintf("hash_join(%v)", strings.Join(hintTableNames, ", "))] = true
+		possibleHints[fmt.Sprintf("index_join(%v)", strings.Join(hintTableNames, ", "))] = true
+		possibleHints[fmt.Sprintf("merge_join(%v)", strings.Join(hintTableNames, ", "))] = true
+		possibleHints[fmt.Sprintf("no_hash_join(%v)", strings.Join(hintTableNames, ", "))] = true
+		possibleHints[fmt.Sprintf("no_index_join(%v)", strings.Join(hintTableNames, ", "))] = true
+		possibleHints[fmt.Sprintf("no_merge_join(%v)", strings.Join(hintTableNames, ", "))] = true
 
 		// leading hint
 		for t1, t2 := range o.joins {
