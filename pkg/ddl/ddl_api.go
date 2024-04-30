@@ -1663,7 +1663,7 @@ func setNoDefaultValueFlag(c *table.Column, hasDefaultValue bool) {
 	}
 }
 
-func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue bool) error {
+func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue bool) (err error) {
 	if !hasDefaultValue {
 		return nil
 	}
@@ -1675,7 +1675,10 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 			}
 			return nil
 		}
-		if _, err := table.GetColDefaultValue(ctx.GetExprCtx(), c.ToInfo()); err != nil {
+		handleWithTruncateErr(ctx, func() {
+			_, err = table.GetColDefaultValue(ctx.GetExprCtx(), c.ToInfo())
+		})
+		if err != nil {
 			return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 		}
 		return nil
@@ -5513,10 +5516,23 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 	return errors.Trace(err)
 }
 
+// handleWithTruncateErr handles the doFunc with FlagTruncateAsWarning and FlagIgnoreTruncateErr flags, both of which are false.
+func handleWithTruncateErr(ctx sessionctx.Context, doFunc func()) {
+	sv := ctx.GetSessionVars().StmtCtx
+	oldTypeFlags := sv.TypeFlags()
+	newTypeFlags := oldTypeFlags.WithTruncateAsWarning(false).WithIgnoreTruncateErr(false)
+	sv.SetTypeFlags(newTypeFlags)
+	doFunc()
+	sv.SetTypeFlags(oldTypeFlags)
+}
+
 // SetDefaultValue sets the default value of the column.
-func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
-	hasDefaultValue := false
-	value, isSeqExpr, err := getDefaultValue(ctx, col, option)
+func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (hasDefaultValue bool, err error) {
+	var value any
+	var isSeqExpr bool
+	handleWithTruncateErr(ctx, func() {
+		value, isSeqExpr, err = getDefaultValue(ctx, col, option)
+	})
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -5923,12 +5939,9 @@ func GetModifiableColumnJob(
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
 			}
 			pAst := at.Specs[0].Partition
-			sv := sctx.GetSessionVars().StmtCtx
-			oldTypeFlags := sv.TypeFlags()
-			newTypeFlags := oldTypeFlags.WithTruncateAsWarning(false).WithIgnoreTruncateErr(false)
-			sv.SetTypeFlags(newTypeFlags)
-			_, err = buildPartitionDefinitionsInfo(sctx.GetExprCtx(), pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)))
-			sv.SetTypeFlags(oldTypeFlags)
+			handleWithTruncateErr(sctx, func() {
+				_, err = buildPartitionDefinitionsInfo(sctx.GetExprCtx(), pAst.Definitions, &newTblInfo, uint64(len(newTblInfo.Partition.Definitions)))
+			})
 			if err != nil {
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 			}
