@@ -212,7 +212,9 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 				}
 				length++
 			} else {
-				atomic.AddInt64(&j.ctx.stats.hashStat.probeCollision, 1)
+				if j.ctx.stats != nil {
+					atomic.AddInt64(&j.ctx.stats.hashStat.probeCollision, 1)
+				}
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
@@ -272,7 +274,9 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 				length++
 				remainCap--
 			} else {
-				atomic.AddInt64(&j.ctx.stats.hashStat.probeCollision, 1)
+				if j.ctx.stats != nil {
+					atomic.AddInt64(&j.ctx.stats.hashStat.probeCollision, 1)
+				}
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
