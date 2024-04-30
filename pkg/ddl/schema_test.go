@@ -23,6 +23,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -373,14 +373,14 @@ func TestRenameTableAutoIDs(t *testing.T) {
 			if len(res) == 1 && res[0][col] == s {
 				break
 			}
-			logutil.BgLogger().Info("Could not find match", zap.String("tableName", tableName), zap.String("s", s), zap.Int("colNum", col))
+			logutil.DDLLogger().Info("Could not find match", zap.String("tableName", tableName), zap.String("s", s), zap.Int("colNum", col))
 
 			for i := range res {
 				strs := make([]string, 0, len(res[i]))
 				for j := range res[i] {
 					strs = append(strs, res[i][j].(string))
 				}
-				logutil.BgLogger().Info("ddl jobs", zap.Strings("jobs", strs))
+				logutil.DDLLogger().Info("ddl jobs", zap.Strings("jobs", strs))
 			}
 			time.Sleep(10 * time.Millisecond)
 		}

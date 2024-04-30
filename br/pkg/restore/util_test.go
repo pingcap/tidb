@@ -22,8 +22,7 @@ import (
 )
 
 type fakeRestorer struct {
-	mu sync.Mutex
-
+	mu                  sync.Mutex
 	errorInSplit        bool
 	splitRanges         []rtree.Range
 	restoredFiles       []*backuppb.File

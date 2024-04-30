@@ -51,7 +51,7 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	// 1. schedule and pause one running task.
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pauseTaskAfterRefreshTask", "2*return(true)")
-	task1 := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", 1)
+	task1 := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
 	require.Equal(t, proto.TaskStatePaused, task1.State)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pauseTaskAfterRefreshTask"))
 	// 4 subtask scheduled.
@@ -68,7 +68,7 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 
 	// 2. pause pending task.
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pausePendingTask", "2*return(true)")
-	task2 := testutil.SubmitAndWaitTask(c.Ctx, t, "key2", 1)
+	task2 := testutil.SubmitAndWaitTask(c.Ctx, t, "key2", "", 1)
 	require.Equal(t, proto.TaskStatePaused, task2.State)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pausePendingTask"))
 	// 4 subtask scheduled.

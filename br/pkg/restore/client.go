@@ -1607,7 +1607,10 @@ func (rc *Client) WaitForFilesRestored(ctx context.Context, files []*backuppb.Fi
 		fileReplica := file
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
-				defer updateCh.Inc()
+				defer func() {
+					log.Info("import sst files done", logutil.Files(files))
+					updateCh.Inc()
+				}()
 				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, restoreutils.EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
 			})
 	}
