@@ -128,6 +128,16 @@ func genInnerJoinResult(t *testing.T, sessCtx sessionctx.Context, leftChunks []*
 	return returnChks
 }
 
+func checkVirtualRows(t *testing.T, resultChunks []*chunk.Chunk) {
+	for _, chk := range resultChunks {
+		require.Equal(t, false, chk.IsInCompleteChunk())
+		numRows := chk.GetNumVirtualRows()
+		for i := 0; i < chk.NumCols(); i++ {
+			require.Equal(t, numRows, chk.Column(i).Rows())
+		}
+	}
+}
+
 func checkChunksEqual(t *testing.T, expectedChunks []*chunk.Chunk, resultChunks []*chunk.Chunk, schema []*types.FieldType) {
 	expectedNum := 0
 	resultNum := 0
@@ -374,6 +384,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	if joinResult.Chk.NumRows() > 0 {
 		resultChunks = append(resultChunks, joinResult.Chk)
 	}
+	checkVirtualRows(t, resultChunks)
 	switch joinType {
 	case plannercore.InnerJoin:
 		expectedChunks := genInnerJoinResult(t, hashJoinCtx.SessCtx, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes, rightTypes,
