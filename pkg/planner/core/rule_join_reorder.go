@@ -521,10 +521,10 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 				_, isCol1 := newSf.GetArgs()[1].(*expression.Column)
 				if !isCol0 || !isCol1 {
 					if !isCol0 {
-						leftPlan, rCol = s.injectProj(leftPlan, newSf.GetArgs()[0])
+						leftPlan, rCol = s.injectExpr(leftPlan, newSf.GetArgs()[0])
 					}
 					if !isCol1 {
-						rightPlan, lCol = s.injectProj(rightPlan, newSf.GetArgs()[1])
+						rightPlan, lCol = s.injectExpr(rightPlan, newSf.GetArgs()[1])
 					}
 					leftNode, rightNode = leftPlan, rightPlan
 					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(),
@@ -537,7 +537,7 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 	return
 }
 
-func (s *baseSingleGroupJoinOrderSolver) injectProj(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+func (s *baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
 	proj, ok := p.(*LogicalProjection)
 	if !ok {
 		proj = LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
