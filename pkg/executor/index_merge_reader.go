@@ -1383,13 +1383,11 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 		for _, h := range task.handles {
 			if w.indexMerge.hasGlobalIndex {
 				if ph, ok := h.(kv.PartitionHandle); ok {
-					offset := -1
 					if v, exists := w.partitionIDMap[ph.PartitionID]; exists {
-						offset = v
-					}
-					if hMap, ok = w.handleMapsPerWorker[offset]; !ok {
-						hMap = kv.NewMemAwareHandleMap[*int]()
-						w.handleMapsPerWorker[offset] = hMap
+						if hMap, ok = w.handleMapsPerWorker[v]; !ok {
+							hMap = kv.NewMemAwareHandleMap[*int]()
+							w.handleMapsPerWorker[v] = hMap
+						}
 					}
 				} else {
 					h = kv.NewPartitionHandle(task.partitionTable.GetPhysicalID(), h)

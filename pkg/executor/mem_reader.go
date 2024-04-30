@@ -1071,21 +1071,18 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 	}
 
 	var handles []kv.Handle
-	numHandles := 0
 	hMap.Range(func(h kv.Handle, val any) bool {
 		if m.isIntersection {
 			if *(val.(*int)) == len(m.memReaders) {
-				numHandles++
 				handles = append(handles, h)
 			}
 		} else {
-			numHandles++
 			handles = append(handles, h)
 		}
 		return true
 	})
 
-	if numHandles == 0 {
+	if len(handles) == 0 {
 		return nil, nil
 	}
 
@@ -1105,7 +1102,7 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 		columns:       m.columns,
 		kvRanges:      tblKVRanges,
 		conditions:    m.conditions,
-		addedRows:     make([][]types.Datum, 0, numHandles),
+		addedRows:     make([][]types.Datum, 0, len(handles)),
 		retFieldTypes: m.retFieldTypes,
 		colIDs:        colIDs,
 		pkColIDs:      pkColIDs,

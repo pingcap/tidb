@@ -1675,7 +1675,7 @@ func (ds *DataSource) convertToPartialIndexScan(physPlanPartInfo *PhysPlanPartIn
 	}
 
 	// Add a `Selection` for `IndexScan` with global index.
-	// It should pushdown to TiKV, DataSource schema doesn't contain this column.
+	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
 	indexConds, err := is.addSelectionConditionForGlobalIndex(ds, physPlanPartInfo, indexConds)
 	if err != nil {
 		return nil, err
@@ -2275,7 +2275,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
 	// Add a `Selection` for `IndexScan` with global index.
-	// It should pushdown to TiKV, DataSource schema doesn't contain this column.
+	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
 	indexConds, err := is.addSelectionConditionForGlobalIndex(p, &copTask.physPlanPartInfo, indexConds)
 	if err != nil {
 		return err
