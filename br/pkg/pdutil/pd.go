@@ -177,7 +177,6 @@ func pdRequestWithCode(
 		failpoint.Inject("DNSError", func() {
 			req.Host = "nosuchhost"
 			req.URL.Host = "nosuchhost"
-			fmt.Println(req.URL.String())
 		})
 		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
