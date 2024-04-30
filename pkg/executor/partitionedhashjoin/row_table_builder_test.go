@@ -107,16 +107,17 @@ func checkKeys(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs, b
 		chk.SetSel(sel)
 	}
 	hashJoinCtx := &PartitionedHashJoinCtx{
-		SessCtx:         mock.NewContext(),
-		PartitionNumber: 1,
-		hashTableMeta:   meta,
-		BuildFilter:     buildFilter,
+		SessCtx:          mock.NewContext(),
+		PartitionNumber:  1,
+		hashTableMeta:    meta,
+		BuildFilter:      buildFilter,
+		hashTableContext: newHashTableContext(1, 1),
 	}
-	rowTables := make([]*rowTable, hashJoinCtx.PartitionNumber)
-	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, rowTables)
-	builder.appendRemainingRowLocations(rowTables)
+	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
+	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	require.NoError(t, err, "processOneChunk returns error")
 	require.Equal(t, chk.NumRows(), len(builder.usedRows))
+	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
 	checkRowLocationAlignment(t, rowTables)
 	// all the selected rows should be converted to row format, even for the rows that contains null key
 	if keepFilteredRows {
@@ -318,12 +319,13 @@ func checkColumns(t *testing.T, withSelCol bool, buildFilter expression.CNFExprs
 		BuildFilter:           buildFilter,
 		LUsedInOtherCondition: columnsUsedByOtherCondition,
 		LUsed:                 outputColumns,
+		hashTableContext:      newHashTableContext(1, 1),
 	}
-	rowTables := make([]*rowTable, hashJoinCtx.PartitionNumber)
-	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, rowTables)
-	builder.appendRemainingRowLocations(rowTables)
+	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
+	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	require.NoError(t, err, "processOneChunk returns error")
 	require.Equal(t, chk.NumRows(), len(builder.usedRows))
+	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
 	checkRowLocationAlignment(t, rowTables)
 	mockJoinProber := newMockJoinProbe(hashJoinCtx)
 	resultChunk := chunk.NewEmptyChunk(resultTypes)
@@ -539,15 +541,16 @@ func TestBalanceOfFilteredRows(t *testing.T) {
 	builder := createRowTableBuilder(buildKeyIndex, buildSchema, meta, partitionNumber, hasNullableKey, true, true)
 	chk := chunk.GenRandomChunks(buildTypes, 3000)
 	hashJoinCtx := &PartitionedHashJoinCtx{
-		SessCtx:         mock.NewContext(),
-		PartitionNumber: partitionNumber,
-		hashTableMeta:   meta,
-		BuildFilter:     buildFilter,
+		SessCtx:          mock.NewContext(),
+		PartitionNumber:  partitionNumber,
+		hashTableMeta:    meta,
+		BuildFilter:      buildFilter,
+		hashTableContext: newHashTableContext(partitionNumber, partitionNumber),
 	}
-	rowTables := make([]*rowTable, hashJoinCtx.PartitionNumber)
-	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, rowTables)
+	err := builder.processOneChunk(chk, hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 	require.NoError(t, err)
-	builder.appendRemainingRowLocations(rowTables)
+	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
+	rowTables := hashJoinCtx.hashTableContext.rowTables[0]
 	for i := 0; i < partitionNumber; i++ {
 		require.Equal(t, 3000/partitionNumber, int(rowTables[i].rowCount()))
 	}
