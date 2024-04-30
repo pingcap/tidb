@@ -204,6 +204,9 @@ func getPossibleHints(ctx context.PlanContext, result map[string]*UnityTableInfo
 			possibleHints[fmt.Sprintf("hash_join(%v)", t)] = true
 			possibleHints[fmt.Sprintf("merge_join(%v)", t)] = true
 			possibleHints[fmt.Sprintf("index_join(%v)", t)] = true
+			possibleHints[fmt.Sprintf("no_hash_join(%v)", t)] = true
+			possibleHints[fmt.Sprintf("no_merge_join(%v)", t)] = true
+			possibleHints[fmt.Sprintf("no_index_join(%v)", t)] = true
 		}
 
 		// leading hint
