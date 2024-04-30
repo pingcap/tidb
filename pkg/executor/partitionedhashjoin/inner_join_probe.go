@@ -48,7 +48,9 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult, sqlKiller 
 				length++
 				remainCap--
 			} else {
-				atomic.AddInt64(&j.ctx.stats.hashStat.probeCollision, 1)
+				if j.ctx.stats != nil {
+					atomic.AddInt64(&j.ctx.stats.hashStat.probeCollision, 1)
+				}
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {

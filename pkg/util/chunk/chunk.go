@@ -169,6 +169,16 @@ func (c *Chunk) SetInCompleteChunk(isInCompleteChunk bool) {
 	c.inCompleteChunk = isInCompleteChunk
 }
 
+// IsInCompleteChunk returns true if this chunk is inCompleteChunk, used only in test
+func (c *Chunk) IsInCompleteChunk() bool {
+	return c.inCompleteChunk
+}
+
+// GetNumVirtualRows return c.numVirtualRows, used only in test
+func (c *Chunk) GetNumVirtualRows() int {
+	return c.numVirtualRows
+}
+
 // MemoryUsage returns the total memory usage of a Chunk in bytes.
 // We ignore the size of Column.length and Column.nullCount
 // since they have little effect of the total memory usage.
