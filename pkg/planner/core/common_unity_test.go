@@ -26,6 +26,13 @@ func formatPrint(tk *testkit.TestKit, sql string) {
 	if err := json.Unmarshal([]byte(jsonData), &j); err != nil {
 		panic(err)
 	}
+
+	for _, t := range j.Tables {
+		for _, c := range t.Columns {
+			c.Histogram = []core.UnityHistBucket{}
+		}
+	}
+
 	v, err := json.MarshalIndent(j, "", "  ")
 	if err != nil {
 		panic(err)
