@@ -250,6 +250,8 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 		return err
 	}
 
+	// TODO(lance6716): use open engine to create a new engine, and update the TS to checkpoint before it.
+
 	err := bc.backend.ResetEngine(bc.ctx, ei.uuid)
 	if err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
