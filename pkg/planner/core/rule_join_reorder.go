@@ -516,16 +516,14 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan Log
 
 				// after creating the new EQ function, the 2 args might not be column anymore, which breaks the assumption that
 				// join eq keys must be `col=col`, to handle this, inject 2 projections.
-				_, isCol0 := newSf.GetArgs()[0].(*expression.Column)
-				_, isCol1 := newSf.GetArgs()[1].(*expression.Column)
+				expr0, isCol0 := newSf.GetArgs()[0].(*expression.Column)
+				expr1, isCol1 := newSf.GetArgs()[1].(*expression.Column)
 				if !isCol0 || !isCol1 {
 					if !isCol0 {
-						leftPlan = s.injectProj(leftPlan, newSf.GetArgs()[0])
-						rCol = leftPlan.Schema().Columns[len(leftPlan.Schema().Columns)-1]
+						leftPlan, rCol = s.injectProj(leftPlan, expr0)
 					}
 					if !isCol1 {
-						rightPlan = s.injectProj(rightPlan, newSf.GetArgs()[1])
-						lCol = rightPlan.Schema().Columns[len(rightPlan.Schema().Columns)-1]
+						rightPlan, lCol = s.injectProj(rightPlan, expr1)
 					}
 					leftNode, rightNode = leftPlan, rightPlan
 					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(),
@@ -538,18 +536,14 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan Log
 	return
 }
 
-func (s *baseSingleGroupJoinOrderSolver) injectProj(p base.LogicalPlan, expr expression.Expression) base.LogicalPlan {
-	proj := LogicalProjection{}.Init(p.SCtx(), p.QueryBlockOffset())
-	proj.SetChildren(p)
-	exprs := append(cols2Exprs(p.Schema().Columns), expr)
-	schema := p.Schema().Clone()
-	schema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  expr.GetType(),
-	})
-	proj.Exprs = exprs
-	proj.SetSchema(schema)
-	return proj
+func (s *baseSingleGroupJoinOrderSolver) injectProj(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+	proj, ok := p.(*LogicalProjection)
+	if !ok {
+		proj = LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj.SetSchema(p.Schema().Clone())
+		proj.SetChildren(p)
+	}
+	return proj, proj.appendExpr(expr)
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.
