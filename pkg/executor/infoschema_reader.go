@@ -1529,7 +1529,7 @@ func (e *memtableRetriever) setDataFromCollations() {
 			isDefault = "Yes"
 		}
 		rows = append(rows,
-			types.MakeDatums(collation.Name, collation.CharsetName, collation.ID, isDefault, "Yes", 1),
+			types.MakeDatums(collation.Name, collation.CharsetName, int(collation.ID), isDefault, "Yes", 1),
 		)
 	}
 	e.rows = rows

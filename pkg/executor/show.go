@@ -1621,7 +1621,7 @@ func (e *ShowExec) fetchShowCollation() error {
 		e.appendRow([]any{
 			v.Name,
 			v.CharsetName,
-			v.ID,
+			int(v.ID),
 			isDefault,
 			"Yes",
 			1,
