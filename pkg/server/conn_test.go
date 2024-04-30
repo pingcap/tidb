@@ -306,7 +306,7 @@ func TestInitialHandshake(t *testing.T) {
 	expected.Write([]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00})        // Salt
 	err = binary.Write(expected, binary.LittleEndian, uint16(defaultCapability&0xFFFF)) // Server Capability
 	require.NoError(t, err)
-	expected.WriteByte(mysql.DefaultCollationID)                                    // Server Language
+	expected.WriteByte(byte(mysql.DefaultCollationID))                              // Server Language
 	err = binary.Write(expected, binary.LittleEndian, mysql.ServerStatusAutocommit) // Server Status
 	require.NoError(t, err)
 	err = binary.Write(expected, binary.LittleEndian, uint16((defaultCapability>>16)&0xFFFF)) // Extended Server Capability

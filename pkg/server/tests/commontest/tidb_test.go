@@ -751,11 +751,11 @@ func TestFieldList(t *testing.T) {
 		case 10, 11, 12, 15, 16:
 			// c_char char(20), c_varchar varchar(20), c_text_d text,
 			// c_set set('a', 'b', 'c'), c_enum enum('a', 'b', 'c')
-			require.Equalf(t, uint16(tmysql.CharsetNameToID(tmysql.DefaultCharset)), col.Charset, "index %d", i)
+			require.Equalf(t, tmysql.CharsetNameToID(tmysql.DefaultCharset), col.Charset, "index %d", i)
 			continue
 		}
 
-		require.Equalf(t, uint16(tmysql.CharsetNameToID("binary")), col.Charset, "index %d", i)
+		require.Equalf(t, tmysql.CharsetNameToID("binary"), col.Charset, "index %d", i)
 	}
 
 	// c_decimal decimal(6, 3)
