@@ -2092,6 +2092,7 @@ func TestPartitionByIntListExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`SET @@global.tidb_ttl_job_enable = OFF`)
 	schemaName := "PartitionByIntListExtensive"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
@@ -2206,6 +2207,7 @@ func TestPartitionByIntExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`SET @@global.tidb_ttl_job_enable = OFF`)
 	schemaName := "PartitionByIntExtensive"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
@@ -2327,6 +2329,7 @@ func TestPartitionByExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`SET @@global.tidb_ttl_job_enable = OFF`)
 	schemaName := "PartitionByExtensive"
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
@@ -2434,6 +2437,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "ReorgPartExtensive"
+	tk.MustExec(`SET @@global.tidb_ttl_job_enable = OFF`)
 	tk.MustExec("create database " + schemaName)
 	tk.MustExec("use " + schemaName)
 	tk2 := testkit.NewTestKit(t, store)
@@ -3103,7 +3107,9 @@ func TestPartitionCoverage(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`set tidb_partition_prune_mode = 'dynamic'`)
 	tk.MustExec(`create table t (id int, d date, filler varchar(255))`)
+	tk.MustExec(`start transaction`)
 	tk.MustExec(`insert into t (id, d) values (1, '2024-02-29'), (2,'2024-03-01')`)
+	tk.MustExec(`commit`)
 	tk.MustExec(`alter table t partition by list (YEAR(d)) (partition p0 values in  (2024,2025), partition p1 values in (2023))`)
 	tk.MustQuery(`select id,d from t partition (p0)`).Check(testkit.Rows("1 2024-02-29", "2 2024-03-01"))
 	tk.MustQuery(`show warnings`).Check(testkit.Rows())
