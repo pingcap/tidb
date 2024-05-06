@@ -337,6 +337,8 @@ var Keywords = []KeywordsType{
 	{"CHECKSUM_CONCURRENCY", false, "unreserved"},
 	{"COMPRESSION_LEVEL", false, "unreserved"},
 	{"BACKUP_COMPRESSION", false, "unreserved"},
+	{"ENCRYPTION_METHOD", false, "unreserved"},
+	{"ENCRYPTION_KEY_FILE", false, "unreserved"},
 	{"CURRENT", false, "unreserved"},
 	{"CYCLE", false, "unreserved"},
 	{"DATA", false, "unreserved"},

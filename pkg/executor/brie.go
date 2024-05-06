@@ -332,6 +332,20 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			cfg.SendCreds = opt.UintValue != 0
 		case ast.BRIEOptionChecksumConcurrency:
 			cfg.ChecksumConcurrency = uint(opt.UintValue)
+		case ast.BRIEOptionEncryptionMethod:
+			switch opt.StrValue {
+			case "aes128-ctr":
+				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_AES128_CTR
+			case "aes192-ctr":
+				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_AES192_CTR
+			case "aes256-ctr":
+				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_AES256_CTR
+			case "plaintext":
+				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_PLAINTEXT
+			default:
+				cfg.CipherInfo.CipherType = encryptionpb.EncryptionMethod_PLAINTEXT
+				b.err = errors.Errorf("unsupported encryption method: %s", opt.StrValue)
+			}
 		}
 	}
 
@@ -386,18 +400,17 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 				}
 				e.backupCfg.BackupTS = tso
 			case ast.BRIEOptionCompression:
-				compressionType := backuppb.CompressionType_UNKNOWN
 				switch opt.StrValue {
 				case "zstd":
-					compressionType = backuppb.CompressionType_ZSTD
+					e.backupCfg.CompressionConfig.CompressionType = backuppb.CompressionType_ZSTD
 				case "snappy":
-					compressionType = backuppb.CompressionType_SNAPPY
+					e.backupCfg.CompressionConfig.CompressionType = backuppb.CompressionType_SNAPPY
 				case "lz4":
-					compressionType = backuppb.CompressionType_LZ4
+					e.backupCfg.CompressionConfig.CompressionType = backuppb.CompressionType_LZ4
 				default:
-					log.Warn("unsupported compression type", zap.String("type", opt.StrValue))
+					e.backupCfg.CompressionConfig.CompressionType = backuppb.CompressionType_ZSTD
+					b.err = errors.Errorf("unsupported compression type: %s", opt.StrValue)
 				}
-				e.backupCfg.CompressionConfig.CompressionType = compressionType
 			case ast.BRIEOptionCompressionLevel:
 				e.backupCfg.CompressionConfig.CompressionLevel = int32(opt.UintValue)
 			case ast.BRIEOptionIgnoreStats:

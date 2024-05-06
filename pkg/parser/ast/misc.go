@@ -3279,6 +3279,8 @@ const (
 	BRIEOptionStartTS
 	BRIEOptionUntilTS
 	BRIEOptionChecksumConcurrency
+	BRIEOptionEncryptionMethod
+	BRIEOptionEncryptionKeyFile
 	// backup options
 	BRIEOptionBackupTimeAgo
 	BRIEOptionBackupTS
@@ -3426,6 +3428,10 @@ func (kind BRIEOptionType) String() string {
 		return "COMPRESSION_LEVEL"
 	case BRIEOptionCompression:
 		return "BACKUP_COMPRESSION"
+	case BRIEOptionEncryptionMethod:
+		return "ENCRYPTION_METHOD"
+	case BRIEOptionEncryptionKeyFile:
+		return "ENCRYPTION_KEY_FILE"
 	default:
 		return ""
 	}
@@ -3454,7 +3460,7 @@ func (opt *BRIEOption) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(opt.Tp.String())
 	ctx.WritePlain(" = ")
 	switch opt.Tp {
-	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionUntilTS, BRIEOptionGCTTL, BRIEOptionCompression:
+	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionUntilTS, BRIEOptionGCTTL, BRIEOptionCompression, BRIEOptionEncryptionMethod, BRIEOptionEncryptionKeyFile:
 		ctx.WriteString(opt.StrValue)
 	case BRIEOptionBackupTimeAgo:
 		ctx.WritePlainf("%d ", opt.UintValue/1000)

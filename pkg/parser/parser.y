@@ -392,6 +392,8 @@ import (
 	checksumConcurrency   "CHECKSUM_CONCURRENCY"
 	compressionLevel      "COMPRESSION_LEVEL"
 	backupCompression     "BACKUP_COMPRESSION"
+	encryptionMethod      "ENCRYPTION_METHOD"
+	encryptionKeyFile     "ENCRYPTION_KEY_FILE"
 	current               "CURRENT"
 	cycle                 "CYCLE"
 	data                  "DATA"
@@ -5671,6 +5673,14 @@ BRIEStringOptionName:
 	{
 		$$ = ast.BRIEOptionCompression
 	}
+|	"ENCRYPTION_METHOD"
+	{
+		$$ = ast.BRIEOptionEncryptionMethod
+	}
+|	"ENCRYPTION_KEY_FILE"
+	{
+		$$ = ast.BRIEOptionEncryptionKeyFile
+	}
 
 BRIEKeywordOptionName:
 	"BACKEND"
@@ -6914,6 +6924,8 @@ UnReservedKeyword:
 |	"CHECKSUM_CONCURRENCY"
 |	"COMPRESSION_LEVEL"
 |	"BACKUP_COMPRESSION"
+|	"ENCRYPTION_METHOD"
+|	"ENCRYPTION_KEY_FILE"
 |	"ON_DUPLICATE"
 |	"TIKV_IMPORTER"
 |	"REPLICAS"
