@@ -674,8 +674,8 @@ func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 		} else if !cop.idxMergeIsIntersection {
 			// We only support push part of the order prop down to index merge build case.
 			if len(cop.rootTaskConds) == 0 {
-				// since issues/52947, we shouldn't push down part limit down to table plans, because
-				// the handles we pruned/limited is not according to index-order (internal handles reorder should be considered)
+				// For double read which requires order being kept, the limit cannot be pushed down to the table side,
+				// because handles would be reordered before being sent to table scan.
 				if cop.indexPlanFinished && !cop.keepOrder {
 					// when the index plan is finished and index plan is not ordered, sink the limit to the index merge table side.
 					suspendLimitAboveTablePlan()
