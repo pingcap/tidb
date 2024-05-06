@@ -76,7 +76,7 @@ func TestGetKeyspaceGCManagementType(t *testing.T) {
 	}
 
 	require.Equal(t, false, IsKeyspaceUseKeyspaceLevelGC(&keyspaceMeta))
-	require.Equal(t, true, IsKeyspaceMetaExistsAndUseGlobalGC(&keyspaceMeta))
+	require.Equal(t, true, IsKeyspaceMetaNotNilAndUseGlobalGC(&keyspaceMeta))
 
 	// Case 2: The keyspace is set to use global GC.
 	keyspaceConfig := map[string]string{
@@ -88,7 +88,7 @@ func TestGetKeyspaceGCManagementType(t *testing.T) {
 	}
 
 	require.Equal(t, false, IsKeyspaceUseKeyspaceLevelGC(&keyspaceMeta))
-	require.Equal(t, true, IsKeyspaceMetaExistsAndUseGlobalGC(&keyspaceMeta))
+	require.Equal(t, true, IsKeyspaceMetaNotNilAndUseGlobalGC(&keyspaceMeta))
 
 	// Case 3: The keyspace is set to use keyspace level GC.
 	keyspaceConfig = map[string]string{
@@ -99,11 +99,11 @@ func TestGetKeyspaceGCManagementType(t *testing.T) {
 		Config: keyspaceConfig,
 	}
 	require.Equal(t, true, IsKeyspaceUseKeyspaceLevelGC(&keyspaceMeta))
-	require.Equal(t, false, IsKeyspaceMetaExistsAndUseGlobalGC(&keyspaceMeta))
+	require.Equal(t, false, IsKeyspaceMetaNotNilAndUseGlobalGC(&keyspaceMeta))
 
 	// Case 4: The keyspace meta is nil, it means use global GC.
 	require.Equal(t, false, IsKeyspaceUseKeyspaceLevelGC(nil))
 
 	// Case 5: The keyspace meta is nil.
-	require.Equal(t, false, IsKeyspaceMetaExistsAndUseGlobalGC(nil))
+	require.Equal(t, false, IsKeyspaceMetaNotNilAndUseGlobalGC(nil))
 }

@@ -425,7 +425,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	       and update the global GC safe point and resolve locks in the Null Keyspace range and in keyspaces
 	       which is using the global GC range.
 	*/
-	if keyspace.IsKeyspaceMetaExistsAndUseGlobalGC(w.store.GetCodec().GetKeyspaceMeta()) {
+	if keyspace.IsKeyspaceMetaNotNilAndUseGlobalGC(w.store.GetCodec().GetKeyspaceMeta()) {
 		// If the keyspace use global GC safe point, the gc worker leader of this keyspace should only do delete ranges logic.
 		err = w.runKeyspaceGCJobInGlobalGC(ctx, concurrency)
 		if err != nil {
@@ -1319,8 +1319,8 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 	// Start keyspaces resolve locks
 	for i := range keyspaces {
 		keyspaceMeta := keyspaces[i]
-		// Skip the keyspace which state is not enabled or enabled keyspace level GC.
-		if keyspaceMeta.State != keyspacepb.KeyspaceState_ENABLED || keyspace.IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta) {
+		// Skip the keyspace which state is not enabled or not use global GC.
+		if keyspaceMeta.State != keyspacepb.KeyspaceState_ENABLED || !keyspace.IsKeyspaceMetaNotNilAndUseGlobalGC(keyspaceMeta) {
 			logutil.BgLogger().Debug("[gc worker] skip resolve locks in this keyspace range", zap.Any("keyspace-meta", keyspaceMeta))
 			continue
 		}
