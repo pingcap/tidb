@@ -386,6 +386,12 @@ import (
 	csvNull               "CSV_NULL"
 	csvSeparator          "CSV_SEPARATOR"
 	csvTrimLastSeparators "CSV_TRIM_LAST_SEPARATORS"
+	waitTiflashReady "WAIT_TIFLASH_READY"
+	withSysTable "WITH_SYS_TABLE"
+	ignoreStats "IGNORE_STATS"
+	checksumConcurrency "CHECKSUM_CONCURRENCY"
+	compressionLevel "COMPRESSION_LEVEL"
+	compression "COMPRESSION"
 	current               "CURRENT"
 	cycle                 "CYCLE"
 	data                  "DATA"
@@ -5589,6 +5595,14 @@ BRIEIntegerOptionName:
 	{
 		$$ = ast.BRIEOptionResume
 	}
+| "CHECKSUM_CONCURRENCY"
+	{
+		$$ = ast.BRIEOptionChecksumConcurrency
+	}
+| "COMPRESSION_LEVEL"
+	{
+		$$ = ast.BRIEOptionCompressionLevel
+	}
 
 BRIEBooleanOptionName:
 	"SEND_CREDENTIALS_TO_TIKV"
@@ -5623,6 +5637,18 @@ BRIEBooleanOptionName:
 	{
 		$$ = ast.BRIEOptionCSVTrimLastSeparators
 	}
+| "WAIT_TIFLASH_READY"
+	{
+		$$ = ast.BRIEOptionWaitTiflashReady
+	}
+| "WITH_SYS_TABLE"
+	{
+		$$ = ast.BRIEOptionWithSysTable
+	}
+| "IGNORE_STATS"
+	{
+		$$ = ast.BRIEOptionIgnoreStats
+	}
 
 BRIEStringOptionName:
 	"TIKV_IMPORTER"
@@ -5640,6 +5666,10 @@ BRIEStringOptionName:
 |	"CSV_NULL"
 	{
 		$$ = ast.BRIEOptionCSVNull
+	}
+| "COMPRESSION"
+	{
+		$$ = ast.BRIEOptionCompression
 	}
 
 BRIEKeywordOptionName:
@@ -6878,6 +6908,12 @@ UnReservedKeyword:
 |	"CSV_HEADER"
 |	"CSV_NULL"
 |	"CSV_SEPARATOR"
+| "WAIT_TIFLASH_READY"
+| "WITH_SYS_TABLE"
+| "IGNORE_STATS"
+| "CHECKSUM_CONCURRENCY"
+| "COMPRESSION_LEVEL"
+| "COMPRESSION"
 |	"ON_DUPLICATE"
 |	"TIKV_IMPORTER"
 |	"REPLICAS"
