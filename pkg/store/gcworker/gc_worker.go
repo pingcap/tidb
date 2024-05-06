@@ -340,12 +340,13 @@ func (w *GCWorker) logIsGCSafePointTooEarly(ctx context.Context, safePoint uint6
 	return nil
 }
 
-func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency int) error {
-	if w.store.GetCodec().GetKeyspaceMeta() == nil {
-		return errors.New("run keyspace delete range, but without keyspace meta")
+func (w *GCWorker) runKeyspaceDeleteRangeByGlobalGCSafePoint(ctx context.Context, concurrency int) error {
+	// Check the current keyspace is valid.
+	if !keyspace.IsKeyspaceMetaNotNilAndUseGlobalGC(w.store.GetCodec().GetKeyspaceMeta()) {
+		return errors.New("run keyspace delete ranges with global GC safe point, but the keyspace is not valid")
 	}
-	// Get safe point from PD.
-	// The GC safe point is updated only after the global GC have done resolveLocks phase globally.
+	// Get global GC safe point from PD.
+	// The global GC safe point is updated only after the global GC have done resolveLocks phase globally.
 	// So, in the following code, resolveLocks must have been done by the global GC on the ranges to be deleted,
 	// so it's safe to delete the ranges.
 	safePoint, err := w.getGCSafePoint(ctx, w.pdClient)
@@ -479,7 +480,7 @@ func (w *GCWorker) runKeyspaceGCJobInGlobalGC(ctx context.Context, concurrency i
 	}
 
 	go func() {
-		w.done <- w.runKeyspaceDeleteRange(ctx, concurrency)
+		w.done <- w.runKeyspaceDeleteRangeByGlobalGCSafePoint(ctx, concurrency)
 	}()
 
 	err = w.saveTime(gcLastRunTimeKey, now)
