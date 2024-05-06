@@ -94,7 +94,7 @@ type memtableRetriever struct {
 	rowIdx      int
 	retrieved   bool
 	initialized bool
-	extractor   plannercore.MemTablePredicateExtractor
+	extractor   base.MemTablePredicateExtractor
 	is          infoschema.InfoSchema
 	memTracker  *memory.Tracker
 }
