@@ -203,7 +203,6 @@ func (j *leftOuterJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, star
 
 func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller sqlkiller.SQLKiller) (err error) {
 	meta := j.ctx.hashTableMeta
-	length := 0
 	startProbeRow := j.currentProbeRow
 	hasOtherCondition := j.ctx.hasOtherCondition()
 
@@ -218,7 +217,7 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 					// has no other condition, key match mean join match
 					j.isNotMatchedRows[j.currentProbeRow] = false
 				}
-				length++
+				j.matchedRowsForCurrentProbeRow++
 			} else {
 				if j.ctx.stats != nil {
 					atomic.AddInt64(&j.ctx.stats.hashStat.probeCollision, 1)
@@ -229,21 +228,18 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 			// it could be
 			// 1. no match when lookup the hash table
 			// 2. filter by probeFilter
-			j.appendOffsetAndLength(j.currentProbeRow, length)
-			length = 0
+			j.finishLookupCurrentProbeRow()
 			j.currentProbeRow++
-			err = sqlKiller.HandleSignal()
-			if err != nil {
-				return err
-			}
 		}
 		remainCap--
 	}
-	if len(j.cachedBuildRows) > 0 {
-		j.batchConstructBuildRows(joinedChk, 0, hasOtherCondition)
+
+	err = j.checkSqlKiller(sqlKiller)
+	if err != nil {
+		return err
 	}
-	j.appendOffsetAndLength(j.currentProbeRow, length)
-	j.appendProbeRowToChunk(joinedChk, j.currentChunk)
+
+	j.finishCurrentLookupLoop(joinedChk)
 
 	if hasOtherCondition {
 		if joinedChk.NumRows() > 0 {
@@ -265,7 +261,6 @@ func (j *leftOuterJoinProbe) probeForRightBuild(chk, joinedChk *chunk.Chunk, rem
 
 func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller sqlkiller.SQLKiller) (err error) {
 	meta := j.ctx.hashTableMeta
-	length := 0
 	hasOtherCondition := j.ctx.hasOtherCondition()
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
@@ -279,7 +274,7 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 					// has no other condition, key match means join match
 					meta.setUsedFlag(candidateRow)
 				}
-				length++
+				j.matchedRowsForCurrentProbeRow++
 				remainCap--
 			} else {
 				if j.ctx.stats != nil {
@@ -288,20 +283,15 @@ func (j *leftOuterJoinProbe) probeForLeftBuild(chk, joinedChk *chunk.Chunk, rema
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
-			j.appendOffsetAndLength(j.currentProbeRow, length)
-			length = 0
+			j.finishLookupCurrentProbeRow()
 			j.currentProbeRow++
-			err = sqlKiller.HandleSignal()
-			if err != nil {
-				return err
-			}
 		}
 	}
-	if len(j.cachedBuildRows) > 0 {
-		j.batchConstructBuildRows(joinedChk, 0, hasOtherCondition)
+	err = j.checkSqlKiller(sqlKiller)
+	if err != nil {
+		return err
 	}
-	j.appendOffsetAndLength(j.currentProbeRow, length)
-	j.appendProbeRowToChunk(joinedChk, j.currentChunk)
+	j.finishCurrentLookupLoop(joinedChk)
 
 	if j.ctx.hasOtherCondition() && joinedChk.NumRows() > 0 {
 		j.selected, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), j.selected)
