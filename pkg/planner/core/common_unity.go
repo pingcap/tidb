@@ -263,6 +263,7 @@ func getPossibleHints(ctx context.PlanContext, o *UnityOutput) {
 		// use_index hint
 		for idxName := range tblInfo.Indexes {
 			possibleHints[fmt.Sprintf("use_index(%v, %v)", hintTableName, idxName)] = true
+			possibleHints[fmt.Sprintf("ignore_index(%v, %v)", hintTableName, idxName)] = true
 		}
 	}
 	if len(hintTableNames) >= 2 {
