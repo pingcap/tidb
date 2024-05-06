@@ -345,7 +345,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	if err != nil {
 		return nil, nil, err
 	}
-	err = tryCachePointPlan(ctx, sctx.GetPlanCtx(), stmt, p, names)
+	err = tryCachePointPlan(ctx, sctx.GetPlanCtx(), stmt, p)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -800,7 +800,7 @@ func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
 func tryCachePointPlan(_ context.Context, sctx base.PlanContext,
-	stmt *PlanCacheStmt, p base.Plan, names types.NameSlice) error {
+	stmt *PlanCacheStmt, p base.Plan) error {
 	if !sctx.GetSessionVars().StmtCtx.UseCache() {
 		return nil
 	}
@@ -821,8 +821,6 @@ func tryCachePointPlan(_ context.Context, sctx base.PlanContext,
 
 	if ok {
 		// just cache point plan now
-		stmt.PointGet.Plan = p
-		stmt.PointGet.ColumnNames = names
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		sctx.GetSessionVars().StmtCtx.SetPlan(p)
 		sctx.GetSessionVars().StmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
