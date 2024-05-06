@@ -2228,7 +2228,7 @@ type LogicalShow struct {
 	logicalSchemaProducer
 	ShowContents
 
-	Extractor ShowPredicateExtractor
+	Extractor base.ShowPredicateExtractor
 }
 
 // LogicalShowDDLJobs is for showing DDL job list.
