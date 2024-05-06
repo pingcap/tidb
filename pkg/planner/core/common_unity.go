@@ -182,6 +182,11 @@ func collectUnityInfo(p base.LogicalPlan, o *UnityOutput) {
 		for _, expr := range x.GroupByItems {
 			collectColumnFromExpr(expr, o)
 		}
+		for _, agg := range x.AggFuncs {
+			for _, expr := range agg.Args {
+				collectColumnFromExpr(expr, o)
+			}
+		}
 	case *LogicalSort:
 		for _, item := range x.ByItems {
 			collectColumnFromExpr(item.Expr, o)
