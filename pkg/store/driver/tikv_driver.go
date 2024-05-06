@@ -122,9 +122,9 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 	}
 }
 
-// NewEtcdSafePointKVWithKeyspacePrefix is used to add etcd namespace with keyspace prefix,
+// NewEtcdSafePointKVWithKeyspacePrefixIfNeeded is used to add etcd namespace with keyspace prefix,
 // if the current keyspace use keyspace level GC.
-func NewEtcdSafePointKVWithKeyspacePrefix(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
+func NewEtcdSafePointKVWithKeyspacePrefixIfNeeded(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
 	var etcdNameSpace string
 	if keyspace.IsKeyspaceUseKeyspaceLevelGC(codec.GetKeyspaceMeta()) {
 		etcdNameSpace = keyspace.MakeKeyspaceEtcdNamespace(codec)
@@ -217,7 +217,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		tikv.WithCodec(codec),
 	)
 
-	spkv, err = NewEtcdSafePointKVWithKeyspacePrefix(etcdAddrs, codec, tlsConfig)
+	spkv, err = NewEtcdSafePointKVWithKeyspacePrefixIfNeeded(etcdAddrs, codec, tlsConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
