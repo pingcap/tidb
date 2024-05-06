@@ -36,7 +36,6 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult, sqlKiller 
 		joinResult.Err = err
 		return false, joinResult
 	}
-	length := 0
 	meta := j.ctx.hashTableMeta
 
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
@@ -45,7 +44,7 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult, sqlKiller 
 			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
 				// key matched, convert row to column for build side
 				j.appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(rowIndexInfo{probeRowIndex: j.currentProbeRow, buildRowStart: candidateRow}, joinedChk, 0, hasOtherCondition)
-				length++
+				j.matchedRowsForCurrentProbeRow++
 				remainCap--
 			} else {
 				if j.ctx.stats != nil {
@@ -54,22 +53,18 @@ func (j *innerJoinProbe) Probe(joinResult *util.HashjoinWorkerResult, sqlKiller 
 			}
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow)
 		} else {
-			j.appendOffsetAndLength(j.currentProbeRow, length)
-			length = 0
+			j.finishLookupCurrentProbeRow()
 			j.currentProbeRow++
-			err = sqlKiller.HandleSignal()
-			if err != nil {
-				joinResult.Err = err
-				return false, joinResult
-			}
 		}
 	}
 
-	if len(j.cachedBuildRows) > 0 {
-		j.batchConstructBuildRows(joinedChk, 0, hasOtherCondition)
+	err = j.checkSqlKiller(sqlKiller)
+	if err != nil {
+		joinResult.Err = err
+		return false, joinResult
 	}
-	j.appendOffsetAndLength(j.currentProbeRow, length)
-	j.appendProbeRowToChunk(joinedChk, j.currentChunk)
+
+	j.finishCurrentLookupLoop(joinedChk)
 
 	if j.ctx.hasOtherCondition() && joinedChk.NumRows() > 0 {
 		// eval other condition, and construct final chunk
