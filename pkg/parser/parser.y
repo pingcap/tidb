@@ -391,7 +391,7 @@ import (
 	ignoreStats "IGNORE_STATS"
 	checksumConcurrency "CHECKSUM_CONCURRENCY"
 	compressionLevel "COMPRESSION_LEVEL"
-	compression "COMPRESSION"
+	backupCompression "BACKUP_COMPRESSION"
 	current               "CURRENT"
 	cycle                 "CYCLE"
 	data                  "DATA"
@@ -5667,7 +5667,7 @@ BRIEStringOptionName:
 	{
 		$$ = ast.BRIEOptionCSVNull
 	}
-| "COMPRESSION"
+| "BACKUP_COMPRESSION"
 	{
 		$$ = ast.BRIEOptionCompression
 	}
@@ -6913,7 +6913,7 @@ UnReservedKeyword:
 | "IGNORE_STATS"
 | "CHECKSUM_CONCURRENCY"
 | "COMPRESSION_LEVEL"
-| "COMPRESSION"
+| "BACKUP_COMPRESSION"
 |	"ON_DUPLICATE"
 |	"TIKV_IMPORTER"
 |	"REPLICAS"
