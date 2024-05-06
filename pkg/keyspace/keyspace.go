@@ -31,7 +31,7 @@ const (
 	// tidbKeyspaceEtcdPathPrefix is the keyspace prefix for etcd namespace
 	tidbKeyspaceEtcdPathPrefix = "/keyspaces/tidb/"
 
-	// KeyspaceMetaConfigGCManagementType is gc management type in keyspace meta config.
+	// KeyspaceMetaConfigGCManagementType is GC management type in keyspace meta config.
 	KeyspaceMetaConfigGCManagementType = "gc_management_type"
 	// KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC is a type of GC management in keyspace meta config,
 	// it means this keyspace will calculate GC safe point by its own.

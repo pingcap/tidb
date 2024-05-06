@@ -178,8 +178,11 @@ const (
 	tidbGCLeaderUUID  = "tidb_gc_leader_uuid"
 	tidbGCSafePoint   = "tidb_gc_safe_point"
 
-	// Get all keyspace page size.
+	// getAllKeyspacePageSize is the page size used to get all keyspaces.
 	getAllKeyspacePageSize = 50
+
+	// unboundedKey is the unbounded key used to resolve locks.
+	unboundedKey = ""
 )
 
 var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
@@ -421,7 +424,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	       The global GC worker will calculate and update the global GC safe point and resolve locks in the Null Keyspace range and in keyspaces which is using the global GC range.
 	*/
 	if w.store.GetCodec().GetKeyspaceMeta() != nil && keyspace.IsKeyspaceUseGlobalGC(w.store.GetCodec().GetKeyspaceMeta()) {
-		// If we use global gc safe point, a tidb which has keyspace-name should only do delete range logic.
+		// If we use global GC safe point, a TiDB which has keyspace-name should only do delete range logic.
 		err = w.runKeyspaceGCJobInGlobalGC(ctx, concurrency)
 		if err != nil {
 			return errors.Trace(err)
@@ -1199,22 +1202,22 @@ func (w *GCWorker) resolveLocks(
 	var txnRightBound []byte
 
 	if w.isCurrentKeyspaceUseKeyspaceLevelGC() {
-		// When enable keyspace level gc, ResolveLocksForRange only resolve specified keyspace locks.
+		// When enable keyspace level GC, ResolveLocksForRange only resolve specified keyspace locks.
 		keyspaceID := uint32(w.store.GetCodec().GetKeyspaceID())
 		// resolve locks in `keyspaceID` range.
 
 		// If TiDB sets keyspace-name, the keyspace prefix of the 'startKey' and 'endKey' of the resolve locks
 		// is added in the encodeRange function in client-go before the request is sent.
-		// So if we want to resolve locks on the full range of the current keyspace, then startKey and endKey should be []byte("").
-		err = runner.RunOnRange(ctx, []byte(""), []byte(""))
+		// So if we want to resolve locks on the full range of the current keyspace, then startKey and endKey should be []byte(unboundedKey).
+		err = runner.RunOnRange(ctx, []byte(unboundedKey), []byte(unboundedKey))
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] resolve locks by keyspace range failed",
 				zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Uint32("keyspace-id", keyspaceID),
-				zap.Uint64("safePoint", safePoint),
-				zap.String("txnLeftBound", hex.EncodeToString(txnLeftBound)),
-				zap.String("txnRightBound", hex.EncodeToString(txnRightBound)),
+				zap.Uint64("gc-safe-point", safePoint),
+				zap.String("txn-left-bound", hex.EncodeToString(txnLeftBound)),
+				zap.String("txn-right-bound", hex.EncodeToString(txnRightBound)),
 				zap.Error(err))
 			return errors.Trace(err)
 		}
@@ -1224,7 +1227,7 @@ func (w *GCWorker) resolveLocks(
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] resolve locks all keyspace failed", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
-				zap.Uint64("safePoint", safePoint),
+				zap.Uint64("safe-point", safePoint),
 				zap.Error(err))
 			return errors.Trace(err)
 		}
@@ -1278,7 +1281,7 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 	// step 4. resolve locks in [ max keyspace txn left bound , unbounded )
 
 	// step 1. resolve locks in [ unbounded, Raw KV left bound ), skip RawKV ranges
-	txnLeftBound := []byte("")
+	txnLeftBound := []byte(unboundedKey)
 	txnRightBound := []byte{keyspace.RawKVLeftBoundaryPrefix}
 	err = runner.RunOnRange(ctx, txnLeftBound, txnRightBound)
 	if err != nil {
@@ -1312,7 +1315,7 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 	// Start keyspaces resolve locks
 	for i := range keyspaces {
 		keyspaceMeta := keyspaces[i]
-		// Skip the keyspace which state is not enabled or enabled keyspace level gc.
+		// Skip the keyspace which state is not enabled or enabled keyspace level GC.
 		if keyspaceMeta.State != keyspacepb.KeyspaceState_ENABLED || keyspace.IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta) {
 			logutil.BgLogger().Debug("[gc worker] skip resolve locks in this keyspace range", zap.Any("keyspace-meta", keyspaceMeta))
 			continue
@@ -1336,7 +1339,7 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 
 	// step 4. resolve locks in [ max keyspace txnRightBound , unbounded )
 	txnLeftBound = []byte{keyspace.MaxKeyspaceRightBoundaryPrefix}
-	txnRightBound = []byte("")
+	txnRightBound = []byte(unboundedKey)
 	err = runner.RunOnRange(ctx, txnLeftBound, txnRightBound)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] resolve locks by range failed",
@@ -1397,7 +1400,7 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 				zap.Uint64("resp-gc-safe-point", newSafePoint))
 		} else {
 			newSafePoint, err = w.pdClient.UpdateGCSafePoint(ctx, safePoint)
-			logutil.Logger(ctx).Info("[gc worker] update gc safe point",
+			logutil.Logger(ctx).Info("[gc worker] update global gc safe point",
 				zap.String("uuid", w.uuid),
 				zap.Uint64("req-gc-safe-point", safePoint),
 				zap.Uint64("resp-gc-safe-point", newSafePoint))
@@ -1520,7 +1523,7 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 			return w.doGCForRange(ctx, r.StartKey, r.EndKey, safePoint)
 		})
 
-	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
+	err := runner.RunOnRange(ctx, []byte(unboundedKey), []byte(unboundedKey))
 	if err != nil {
 		logutil.Logger(ctx).Warn("failed to do gc for all keys", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
