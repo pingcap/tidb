@@ -15,11 +15,12 @@
 package partitionedhashjoin
 
 import (
+	"sync/atomic"
+
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"sync/atomic"
 )
 
 type innerJoinProbe struct {

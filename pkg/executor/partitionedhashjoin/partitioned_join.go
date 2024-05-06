@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -28,12 +27,12 @@ import (
 	"unsafe"
 
 	"github.com/cznic/mathutil"
-	internalutil "github.com/pingcap/tidb/pkg/executor/internal/util"
-	"github.com/pingcap/tidb/pkg/expression"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	internalutil "github.com/pingcap/tidb/pkg/executor/internal/util"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"

@@ -15,7 +15,6 @@
 package partitionedhashjoin
 
 import (
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"sort"
 	"strconv"
 	"testing"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
