@@ -226,10 +226,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		return nil, nil, err
 	}
 
-	if stmtCtx.UseCache() { // for non-point plans
-		if plan, names, ok, err := getCachedPointPlan(sctx, cacheKey, matchOpts); ok {
-			return plan, names, err
-		}
+	if stmtCtx.UseCache() {
 		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt, matchOpts); err != nil || ok {
 			return plan, names, err
 		}
@@ -256,36 +253,6 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 		paramTypes = append(paramTypes, tp)
 	}
 	return
-}
-
-func getCachedPointPlan(sctx sessionctx.Context, cacheKey kvcache.Key, matchOpts *utilpc.PlanCacheMatchOpts) (base.Plan,
-	[]*types.FieldName, bool, error) {
-	// short path for point-get plans
-	// Rewriting the expression in the select.where condition  will convert its
-	// type from "paramMarker" to "Constant".When Point Select queries are executed,
-	// the expression in the where condition will not be evaluated,
-	// so you don't need to consider whether prepared.useCache is enabled.
-	candidate, exist := sctx.GetSessionPlanCache().Get(cacheKey, matchOpts)
-	if !exist {
-		return nil, nil, false, nil
-	}
-	cachedVal := candidate.(*PlanCacheValue)
-	plan, names := cachedVal.Plan, cachedVal.OutPutNames
-	if !RebuildPlan4CachedPlan(plan) {
-		return nil, nil, false, nil
-	}
-	if metrics.ResettablePlanCacheCounterFortTest {
-		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
-	} else {
-		// only for prepared plan cache
-		core_metrics.GetPlanCacheHitCounter(false).Inc()
-	}
-	sctx.GetSessionVars().FoundInPlanCache = true
-	sctx.GetSessionVars().StmtCtx.PointExec = true
-	if pointGetPlan, ok := plan.(*PointGetPlan); ok && pointGetPlan != nil && pointGetPlan.stmtHints != nil {
-		sctx.GetSessionVars().StmtCtx.StmtHints = *pointGetPlan.stmtHints
-	}
-	return plan, names, true, nil
 }
 
 func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache.Key, bindSQL string,
@@ -326,7 +293,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	stmtCtx.StmtHints = *cachedVal.stmtHints
-	return cachedVal.Plan, cachedVal.OutPutNames, true, nil
+	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
