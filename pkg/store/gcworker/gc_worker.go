@@ -1292,9 +1292,9 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 		logutil.Logger(ctx).Error("[gc worker] resolve locks by range failed",
 			zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
-			zap.Uint64("safePoint", safePoint),
-			zap.String("txnLeftBound", hex.EncodeToString(txnLeftBound)),
-			zap.String("txnRightBound", hex.EncodeToString(txnRightBound)),
+			zap.Uint64("gc-safe-point", safePoint),
+			zap.String("txn-left-bound", hex.EncodeToString(txnLeftBound)),
+			zap.String("txn-right-bound", hex.EncodeToString(txnRightBound)),
 			zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -1307,9 +1307,9 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 		logutil.Logger(ctx).Error("[gc worker] resolve locks by range failed",
 			zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
-			zap.Uint64("safePoint", safePoint),
-			zap.String("txnLeftBound", hex.EncodeToString(txnLeftBound)),
-			zap.String("txnRightBound", hex.EncodeToString(txnRightBound)),
+			zap.Uint64("gc-safe-point", safePoint),
+			zap.String("txn-left-bound", hex.EncodeToString(txnLeftBound)),
+			zap.String("txn-right-bound", hex.EncodeToString(txnRightBound)),
 			zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -1333,9 +1333,9 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 			logutil.Logger(ctx).Error("[gc worker] resolve locks by range failed",
 				zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
-				zap.Uint64("safePoint", safePoint),
-				zap.String("txnLeftBound", hex.EncodeToString(txnLeftBound)),
-				zap.String("txnRightBound", hex.EncodeToString(txnRightBound)),
+				zap.Uint64("gc-safe-point", safePoint),
+				zap.String("txn-left-bound", hex.EncodeToString(txnLeftBound)),
+				zap.String("txn-right-bound", hex.EncodeToString(txnRightBound)),
 				zap.Error(err))
 			return errors.Trace(err)
 		}
@@ -1349,9 +1349,9 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 		logutil.Logger(ctx).Error("[gc worker] resolve locks by range failed",
 			zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
-			zap.Uint64("safePoint", safePoint),
-			zap.String("txnLeftBound", hex.EncodeToString(txnLeftBound)),
-			zap.String("txnRightBound", hex.EncodeToString(txnRightBound)),
+			zap.Uint64("gc-safe-point", safePoint),
+			zap.String("txn-left-bound", hex.EncodeToString(txnLeftBound)),
+			zap.String("txn-right-bound", hex.EncodeToString(txnRightBound)),
 			zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -1362,17 +1362,17 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 func (w *GCWorker) resolveLocksByKeyspaceRange(ctx context.Context, txnLeftBound []byte, txnRightBound []byte, runner *rangetask.Runner, safePoint uint64) error {
 	logutil.Logger(ctx).Info("[gc worker] resolve locks by range",
 		zap.String("uuid", w.uuid),
-		zap.Uint64("safePoint", safePoint),
-		zap.String("txnLeftBound", hex.EncodeToString(txnLeftBound)),
-		zap.String("txnRightBound", hex.EncodeToString(txnRightBound)),
+		zap.Uint64("gc-safe-point", safePoint),
+		zap.String("txn-left-bound", hex.EncodeToString(txnLeftBound)),
+		zap.String("txn-right-bound", hex.EncodeToString(txnRightBound)),
 	)
 	err := runner.RunOnRange(ctx, txnLeftBound, txnRightBound)
 	if err != nil {
 		logutil.Logger(ctx).Error("[gc worker] resolve locks by range failed",
 			zap.String("uuid", w.uuid),
-			zap.Uint64("safePoint", safePoint),
-			zap.String("txnLeftBound", hex.EncodeToString(txnLeftBound)),
-			zap.String("txnRightBound", hex.EncodeToString(txnRightBound)),
+			zap.Uint64("gc-safe-point", safePoint),
+			zap.String("txn-left-bound", hex.EncodeToString(txnLeftBound)),
+			zap.String("txn-right-bound", hex.EncodeToString(txnRightBound)),
 			zap.Error(err))
 		return errors.Trace(err)
 	}
