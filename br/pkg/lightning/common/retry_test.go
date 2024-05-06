@@ -36,7 +36,7 @@ func TestIsRetryableError(t *testing.T) {
 	require.False(t, IsRetryableError(context.DeadlineExceeded))
 	require.False(t, IsRetryableError(io.EOF))
 	require.False(t, IsRetryableError(&net.AddrError{}))
-	require.False(t, IsRetryableError(&net.DNSError{}))
+	require.True(t, IsRetryableError(&net.DNSError{}))
 	require.True(t, IsRetryableError(&net.DNSError{IsTimeout: true}))
 
 	// kv errors
