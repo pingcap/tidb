@@ -15,6 +15,8 @@
 package base
 
 import (
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -42,4 +44,24 @@ type ShowPredicateExtractor interface {
 	ExplainInfo() string
 	Field() string
 	FieldPatternLike() collate.WildcardPattern
+}
+
+// MemTablePredicateExtractor is used to extract some predicates from `WHERE` clause
+// and push the predicates down to the data retrieving on reading memory table stage.
+//
+// e.g:
+// SELECT * FROM cluster_config WHERE type='tikv' AND instance='192.168.1.9:2379'
+// We must request all components in the cluster via HTTP API for retrieving
+// configurations and filter them by `type/instance` columns.
+//
+// The purpose of defining a `MemTablePredicateExtractor` is to optimize this
+// 1. Define a `ClusterConfigTablePredicateExtractor`
+// 2. Extract the `type/instance` columns on the logic optimizing stage and save them via fields.
+// 3. Passing the extractor to the `ClusterReaderExecExec` executor
+// 4. Executor sends requests to the target components instead of all of the components
+type MemTablePredicateExtractor interface {
+	// Extract extracts predicates which can be pushed down and returns the remained predicates
+	Extract(PlanContext, *expression.Schema, []*types.FieldName, []expression.Expression) (remained []expression.Expression)
+	// ExplainInfo give the basic desc of this mem extractor, `p` indicates a PhysicalPlan here.
+	ExplainInfo(p PhysicalPlan) string
 }

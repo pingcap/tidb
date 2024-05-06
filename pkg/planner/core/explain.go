@@ -1124,7 +1124,7 @@ func (p *PhysicalMemTable) ExplainInfo() string {
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
 	if p.Extractor != nil {
-		return p.Extractor.explainInfo(p)
+		return p.Extractor.ExplainInfo(p)
 	}
 	return ""
 }
