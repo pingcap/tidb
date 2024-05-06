@@ -1395,7 +1395,7 @@ type LogicalTableDual struct {
 type LogicalMemTable struct {
 	logicalSchemaProducer
 
-	Extractor MemTablePredicateExtractor
+	Extractor base.MemTablePredicateExtractor
 	DBName    model.CIStr
 	TableInfo *model.TableInfo
 	Columns   []*model.ColumnInfo
