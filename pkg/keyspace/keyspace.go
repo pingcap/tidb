@@ -67,7 +67,7 @@ func MakeKeyspaceEtcdNamespace(c tikv.Codec) string {
 	return fmt.Sprintf(tidbKeyspaceEtcdPathPrefix+"%d", c.GetKeyspaceID())
 }
 
-// MakeKeyspaceEtcdNamespaceSlash return the keyspace prefix path for etcd namespace, and end with a slash.
+// MakeKeyspaceEtcdNamespaceSlash returns the keyspace prefix path for etcd namespace, and end with a slash.
 func MakeKeyspaceEtcdNamespaceSlash(c tikv.Codec) string {
 	if c.GetAPIVersion() == kvrpcpb.APIVersion_V1 {
 		return ""
@@ -97,7 +97,7 @@ func WrapZapcoreWithKeyspace() zap.Option {
 	})
 }
 
-// IsKeyspaceUseKeyspaceLevelGC return true if keyspace meta config set "gc_management_type" = "keyspace_level_gc" explicitly.
+// IsKeyspaceUseKeyspaceLevelGC returns true if keyspace meta config set "gc_management_type" = "keyspace_level_gc" explicitly.
 func IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	if keyspaceMeta == nil {
 		return false
@@ -108,7 +108,7 @@ func IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	return false
 }
 
-// IsKeyspaceMetaNotNilAndUseGlobalGC return whether the specified keyspace meta use global GC.
+// IsKeyspaceMetaNotNilAndUseGlobalGC returns whether the specified keyspace meta use global GC.
 func IsKeyspaceMetaNotNilAndUseGlobalGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	if keyspaceMeta == nil {
 		return false
@@ -119,7 +119,7 @@ func IsKeyspaceMetaNotNilAndUseGlobalGC(keyspaceMeta *keyspacepb.KeyspaceMeta) b
 	return true
 }
 
-// GetKeyspaceTxnLeftBound return the specified keyspace txn left boundary.
+// GetKeyspaceTxnLeftBound returns the specified keyspace txn left boundary.
 func GetKeyspaceTxnLeftBound(keyspaceID uint32) []byte {
 	keyspaceIDBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(keyspaceIDBytes, keyspaceID)
@@ -129,7 +129,7 @@ func GetKeyspaceTxnLeftBound(keyspaceID uint32) []byte {
 	return txnLeftBound
 }
 
-// GetKeyspaceTxnRange return the specified keyspace txn left boundary and txn right boundary.
+// GetKeyspaceTxnRange returns the specified keyspace txn left boundary and txn right boundary.
 func GetKeyspaceTxnRange(keyspaceID uint32) ([]byte, []byte) {
 	// Get keyspace txn left boundary
 	txnLeftBound := GetKeyspaceTxnLeftBound(keyspaceID)

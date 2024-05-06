@@ -101,9 +101,9 @@ func TestGetKeyspaceGCManagementType(t *testing.T) {
 	require.Equal(t, true, IsKeyspaceUseKeyspaceLevelGC(&keyspaceMeta))
 	require.Equal(t, false, IsKeyspaceMetaNotNilAndUseGlobalGC(&keyspaceMeta))
 
-	// Case 4: The keyspace meta is nil, it means use global GC.
+	// Case 4: The keyspace meta is nil, it doesn't use keyspace level GC.
 	require.Equal(t, false, IsKeyspaceUseKeyspaceLevelGC(nil))
 
-	// Case 5: The keyspace meta is nil.
+	// Case 5: The keyspace meta is nil, IsKeyspaceMetaNotNilAndUseGlobalGC will return false.
 	require.Equal(t, false, IsKeyspaceMetaNotNilAndUseGlobalGC(nil))
 }
