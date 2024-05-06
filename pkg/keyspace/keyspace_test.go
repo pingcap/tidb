@@ -54,7 +54,8 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 }
 
 func TestGetKeyspaceRange(t *testing.T) {
-	leftBound, rightBound := GetKeyspaceTxnRange(1)
+	keyspaceID := uint32(1)
+	leftBound, rightBound := GetKeyspaceTxnRange(keyspaceID)
 	expectLeftBound := codec.EncodeBytes(nil, []byte{'x', 0, 0, 1})
 	expectRightBound := codec.EncodeBytes(nil, []byte{'x', 0, 0, 2})
 	require.Equal(t, expectLeftBound, leftBound)
@@ -63,7 +64,7 @@ func TestGetKeyspaceRange(t *testing.T) {
 	// Check the max keyspace ID txn left boundary and txn right boundary.
 	maxKeyspaceIDLeftBound, maxKeyspaceIDRightBound := GetKeyspaceTxnRange(maxKeyspaceID)
 	expectMaxKeyspaceIDLeftBound := codec.EncodeBytes(nil, []byte{'x', 0xff, 0xff, 0xff})
-	maxKeyspaceIDexpectRightBound := codec.EncodeBytes(nil, []byte{'y', 0, 0, 0})
+	maxKeyspaceIDexpectRightBound := codec.EncodeBytes(nil, []byte{MaxKeyspaceRightBoundaryPrefix})
 	require.Equal(t, expectMaxKeyspaceIDLeftBound, maxKeyspaceIDLeftBound)
 	require.Equal(t, maxKeyspaceIDexpectRightBound, maxKeyspaceIDRightBound)
 }

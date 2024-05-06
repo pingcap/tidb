@@ -31,7 +31,7 @@ const (
 	// tidbKeyspaceEtcdPathPrefix is the keyspace prefix for etcd namespace
 	tidbKeyspaceEtcdPathPrefix = "/keyspaces/tidb/"
 
-	// KeyspaceMetaConfigGCManagementType is GC management type in keyspace meta config.
+	// KeyspaceMetaConfigGCManagementType is the name of the key for GC management type in keyspace meta config.
 	KeyspaceMetaConfigGCManagementType = "gc_management_type"
 	// KeyspaceMetaConfigGCManagementTypeKeyspaceLevelGC is a type of GC management in keyspace meta config,
 	// it means this keyspace will calculate GC safe point by its own.
@@ -97,7 +97,7 @@ func WrapZapcoreWithKeyspace() zap.Option {
 	})
 }
 
-// IsKeyspaceUseKeyspaceLevelGC return true if keyspace meta config has "gc_management_type" = "keyspace_level_gc".
+// IsKeyspaceUseKeyspaceLevelGC return true if keyspace meta config set "gc_management_type" = "keyspace_level_gc" explicitly.
 func IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	if keyspaceMeta == nil {
 		return false
@@ -108,7 +108,7 @@ func IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	return false
 }
 
-// IsKeyspaceUseGlobalGC return true if TiDB set 'keyspace-name' and use global GC.
+// IsKeyspaceUseGlobalGC return whether the specified keyspace meta use global GC.
 func IsKeyspaceUseGlobalGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	if keyspaceMeta == nil {
 		return true
@@ -119,7 +119,7 @@ func IsKeyspaceUseGlobalGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	return true
 }
 
-// GetKeyspaceTxnLeftBound return the keyspace txn left boundary.
+// GetKeyspaceTxnLeftBound return the specified keyspace txn left boundary.
 func GetKeyspaceTxnLeftBound(keyspaceID uint32) []byte {
 	keyspaceIDBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(keyspaceIDBytes, keyspaceID)
@@ -129,7 +129,7 @@ func GetKeyspaceTxnLeftBound(keyspaceID uint32) []byte {
 	return txnLeftBound
 }
 
-// GetKeyspaceTxnRange return the keyspace txn left boundary and txn right boundary.
+// GetKeyspaceTxnRange return the specified keyspace txn left boundary and txn right boundary.
 func GetKeyspaceTxnRange(keyspaceID uint32) ([]byte, []byte) {
 	// Get keyspace txn left boundary
 	txnLeftBound := GetKeyspaceTxnLeftBound(keyspaceID)
@@ -137,7 +137,7 @@ func GetKeyspaceTxnRange(keyspaceID uint32) ([]byte, []byte) {
 	var txnRightBound []byte
 	if keyspaceID == maxKeyspaceID {
 		// Directly set the right boundary of maxKeyspaceID to be {MaxKeyspaceRightBoundaryPrefix}
-		maxKeyspaceIDTxnRightBound := [4]byte{MaxKeyspaceRightBoundaryPrefix, 0, 0, 0}
+		maxKeyspaceIDTxnRightBound := []byte{MaxKeyspaceRightBoundaryPrefix}
 		txnRightBound = codec.EncodeBytes(nil, maxKeyspaceIDTxnRightBound[:])
 	} else {
 		// The right boundary of the specified keyspace is the left boundary of keyspaceID + 1.
