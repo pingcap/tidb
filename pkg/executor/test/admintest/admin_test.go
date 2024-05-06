@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1772,4 +1773,47 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 		err = txn.Commit(context.Background())
 		tk.MustExec("admin check table admin_test")
 	}
+}
+
+func TestAdminCheckGlobalIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+
+	tk.MustExec("set tidb_enable_global_index = true")
+	tk.MustExec("set tidb_enable_fast_table_check = false")
+
+	tk.MustExec("create table admin_test (a int, b int, c int, unique key uidx_a(a)) partition by hash(c) partitions 5")
+	tk.MustExec("insert admin_test values (-10, -20, 1), (-1, -10, 2), (1, 11, 3), (2, 12, 0), (5, 15, -1), (10, 20, -2), (20, 30, -3)")
+
+	// Make some corrupted index. Build the index information.
+	sctx := mock.NewContext()
+	sctx.Store = store
+	// ctx := sctx.GetTableCtx()
+	is := domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test")
+	tbl, err := is.TableByName(dbName, tblName)
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	// idxInfo := tblInfo.Indices[0]
+	df := tblInfo.GetPartitionInfo().Definitions[0]
+	// indexOpr := tables.NewIndex(df.ID, tblInfo, idxInfo)
+	tk.Session().GetSessionVars().IndexLookupSize = 3
+	tk.Session().GetSessionVars().MaxChunkSize = 3
+
+	// Reduce one row of index.
+	// Table count > index count.
+	// Index c2 is missing 2.
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	txn.Delete(tablecodec.EncodeRowKey(df.ID, kv.IntHandle(4).Encoded()))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+	require.EqualError(t, err, "[admin:8223]data inconsistency in table: admin_test, index: uidx_a, handle: 4, index-values:\"\" != record-values:\"handle: -1, values: [KindInt64 -10]\"")
+	require.True(t, consistency.ErrAdminCheckInconsistent.Equal(err))
 }
