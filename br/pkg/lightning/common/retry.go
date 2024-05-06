@@ -108,6 +108,10 @@ func isSingleRetryableError(err error) bool {
 
 	switch nerr := err.(type) {
 	case net.Error:
+		var dErr *net.DNSError
+		if goerrors.As(nerr, &dErr) {
+			return true
+		}
 		if nerr.Timeout() {
 			return true
 		}
