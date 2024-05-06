@@ -110,6 +110,7 @@ func (j *leftOuterJoinProbe) ScanRowTable(joinResult *util.HashjoinWorkerResult)
 }
 
 func (j *leftOuterJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk *chunk.Chunk) {
+	rowCount := chk.NumRows()
 	markedJoined := false
 	for index, colIndex := range j.lUsed {
 		dstCol := chk.Column(index)
@@ -160,6 +161,13 @@ func (j *leftOuterJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, j
 			}
 		}
 	}
+	rowsAdded := 0
+	for _, result := range j.selected {
+		if result {
+			rowsAdded++
+		}
+	}
+	chk.SetNumVirtualRows(rowCount + rowsAdded)
 }
 
 func (j *leftOuterJoinProbe) buildResultForNotMatchedRows(chk *chunk.Chunk, startProbeRow int) {
