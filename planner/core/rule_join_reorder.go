@@ -394,12 +394,42 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan Log
 				rightNode, leftNode = leftPlan, rightPlan
 				usedEdges = append(usedEdges, edge)
 			} else {
+<<<<<<< HEAD:planner/core/rule_join_reorder.go
 				newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+=======
+				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+
+				// after creating the new EQ function, the 2 args might not be column anymore, for example `sf=sf(cast(col))`,
+				// which breaks the assumption that join eq keys must be `col=col`, to handle this, inject 2 projections.
+				_, isCol0 := newSf.GetArgs()[0].(*expression.Column)
+				_, isCol1 := newSf.GetArgs()[1].(*expression.Column)
+				if !isCol0 || !isCol1 {
+					if !isCol0 {
+						leftPlan, rCol = s.injectExpr(leftPlan, newSf.GetArgs()[0])
+					}
+					if !isCol1 {
+						rightPlan, lCol = s.injectExpr(rightPlan, newSf.GetArgs()[1])
+					}
+					leftNode, rightNode = leftPlan, rightPlan
+					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.GetType(),
+						rCol, lCol).(*expression.ScalarFunction)
+				}
+>>>>>>> 06ee59bd9c6 (planner: add projections to keep join keys as `col=col` (#52989)):pkg/planner/core/rule_join_reorder.go
 				usedEdges = append(usedEdges, newSf)
 			}
 		}
 	}
 	return
+}
+
+func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+	proj, ok := p.(*LogicalProjection)
+	if !ok {
+		proj = LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj.SetSchema(p.Schema().Clone())
+		proj.SetChildren(p)
+	}
+	return proj, proj.appendExpr(expr)
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.
