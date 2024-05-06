@@ -40,7 +40,7 @@ show create table t1;
 show create table t2;
 
 # test modify column, set default value, add index, add column
--- replace_regex /Incorrect date value:.*/Incorrect date value:<time>/
+-- replace_regex /Incorrect datetime value:.*/Incorrect datetime value:<time>/
 -- error 1292
 alter table t0 add column c2 date default (date_format(now(),'%Y-%m'));
 alter table t0 add index idx(c1);
