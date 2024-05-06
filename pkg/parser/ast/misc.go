@@ -3414,6 +3414,18 @@ func (kind BRIEOptionType) String() string {
 		return "UNTIL_TS"
 	case BRIEOptionGCTTL:
 		return "GC_TTL"
+	case BRIEOptionWaitTiflashReady:
+		return "WAIT_TIFLASH_READY"
+	case BRIEOptionWithSysTable:
+		return "WITH_SYS_TABLE"
+	case BRIEOptionIgnoreStats:
+		return "IGNORE_STATS"
+	case BRIEOptionChecksumConcurrency:
+		return "CHECKSUM_CONCURRENCY"
+	case BRIEOptionCompressionLevel:
+		return "COMPRESSION_LEVEL"
+	case BRIEOptionCompression:
+		return "BACKUP_COMPRESSION"
 	default:
 		return ""
 	}
@@ -3442,7 +3454,7 @@ func (opt *BRIEOption) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(opt.Tp.String())
 	ctx.WritePlain(" = ")
 	switch opt.Tp {
-	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionUntilTS, BRIEOptionGCTTL:
+	case BRIEOptionBackupTS, BRIEOptionLastBackupTS, BRIEOptionBackend, BRIEOptionOnDuplicate, BRIEOptionTiKVImporter, BRIEOptionCSVDelimiter, BRIEOptionCSVNull, BRIEOptionCSVSeparator, BRIEOptionFullBackupStorage, BRIEOptionRestoredTS, BRIEOptionStartTS, BRIEOptionUntilTS, BRIEOptionGCTTL, BRIEOptionCompression:
 		ctx.WriteString(opt.StrValue)
 	case BRIEOptionBackupTimeAgo:
 		ctx.WritePlainf("%d ", opt.UintValue/1000)
