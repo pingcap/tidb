@@ -282,7 +282,6 @@ func getCachedPointPlan(stmt *PlanCacheStmt, sessVars *variable.SessionVars, stm
 		core_metrics.GetPlanCacheHitCounter(false).Inc()
 	}
 	sessVars.FoundInPlanCache = true
-	stmtCtx.PointExec = true
 	if pointGetPlan, ok := plan.(*PointGetPlan); ok && pointGetPlan != nil && pointGetPlan.stmtHints != nil {
 		sessVars.StmtCtx.StmtHints = *pointGetPlan.stmtHints
 	}
