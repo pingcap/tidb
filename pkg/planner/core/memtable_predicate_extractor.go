@@ -519,7 +519,7 @@ func (helper extractHelper) extractTimeRange(
 	timezone *time.Location,
 ) (
 	remained []expression.Expression,
-	// unix timestamp in nanoseconds
+// unix timestamp in nanoseconds
 	startTime int64,
 	endTime int64,
 ) {
@@ -803,6 +803,7 @@ func (e *ClusterLogTableExtractor) Extract(ctx base.PlanContext,
 	return remained
 }
 
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
 func (e *ClusterLogTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 	p := pp.(*PhysicalMemTable)
 	if e.SkipRequest {
