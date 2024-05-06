@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -807,11 +806,11 @@ type memIndexMergeReader struct {
 	indexMergeReader *IndexMergeReaderExecutor
 	memReaders       []memReader
 	isIntersection   bool
-	ranges           [][]*ranger.Range
 
 	// partition mode
-	partitionMode   bool                  // if it is accessing a partition table
-	partitionTables []table.PhysicalTable // partition tables to access
+	partitionMode     bool                  // if it is accessing a partition table
+	partitionTables   []table.PhysicalTable // partition tables to access
+	partitionKVRanges [][][]kv.KeyRange     // kv ranges for these partition tables
 
 	keepOrder bool
 	compareExec
@@ -863,10 +862,10 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 		indexMergeReader: indexMergeReader,
 		memReaders:       memReaders,
 		isIntersection:   indexMergeReader.isIntersection,
-		ranges:           indexMergeReader.ranges,
 
-		partitionMode:   indexMergeReader.partitionTableMode,
-		partitionTables: indexMergeReader.prunedPartitions,
+		partitionMode:     indexMergeReader.partitionTableMode,
+		partitionTables:   indexMergeReader.prunedPartitions,
+		partitionKVRanges: indexMergeReader.partitionKeyRanges,
 
 		keepOrder:   us.keepOrder,
 		compareExec: us.compareExec,
@@ -1027,7 +1026,7 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 		// [partitionNum][rangeNum]
 		var readerKvRanges [][]kv.KeyRange
 		if m.partitionMode {
-			readerKvRanges = m.indexMergeReader.partitionKeyRanges[i]
+			readerKvRanges = m.partitionKVRanges[i]
 		} else {
 			readerKvRanges = [][]kv.KeyRange{m.indexMergeReader.keyRanges[i]}
 		}
