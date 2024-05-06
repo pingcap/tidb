@@ -519,7 +519,7 @@ func (helper extractHelper) extractTimeRange(
 	timezone *time.Location,
 ) (
 	remained []expression.Expression,
-// unix timestamp in nanoseconds
+	// unix timestamp in nanoseconds
 	startTime int64,
 	endTime int64,
 ) {
