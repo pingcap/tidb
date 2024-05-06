@@ -28,9 +28,6 @@ type gbkBinCollator struct {
 
 // Compare implement Collator interface.
 func (g *gbkBinCollator) Compare(a, b string) int {
-	a = truncateTailingSpace(a)
-	b = truncateTailingSpace(b)
-
 	// compare the character one by one.
 	for len(a) > 0 && len(b) > 0 {
 		aLen, bLen := runeLen(a[0]), runeLen(b[0])
@@ -58,7 +55,7 @@ func (g *gbkBinCollator) Compare(a, b string) int {
 
 // Key implement Collator interface.
 func (g *gbkBinCollator) Key(str string) []byte {
-	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
+	return g.KeyWithoutTrimRightSpace(str)
 }
 
 // KeyWithoutTrimRightSpace implement Collator interface.

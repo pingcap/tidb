@@ -23,8 +23,6 @@ type generalCICollator struct {
 
 // Compare implements Collator interface.
 func (*generalCICollator) Compare(a, b string) int {
-	a = truncateTailingSpace(a)
-	b = truncateTailingSpace(b)
 	r1, r2 := rune(0), rune(0)
 	ai, bi := 0, 0
 	for ai < len(a) && bi < len(b) {
@@ -41,7 +39,7 @@ func (*generalCICollator) Compare(a, b string) int {
 
 // Key implements Collator interface.
 func (gc *generalCICollator) Key(str string) []byte {
-	return gc.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
+	return gc.KeyWithoutTrimRightSpace(str)
 }
 
 // KeyWithoutTrimRightSpace implements Collator interface.

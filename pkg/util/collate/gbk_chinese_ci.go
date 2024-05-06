@@ -21,9 +21,6 @@ type gbkChineseCICollator struct {
 
 // Compare implements Collator interface.
 func (*gbkChineseCICollator) Compare(a, b string) int {
-	a = truncateTailingSpace(a)
-	b = truncateTailingSpace(b)
-
 	r1, r2 := rune(0), rune(0)
 	ai, bi := 0, 0
 	for ai < len(a) && bi < len(b) {
@@ -40,7 +37,7 @@ func (*gbkChineseCICollator) Compare(a, b string) int {
 
 // Key implements Collator interface.
 func (g *gbkChineseCICollator) Key(str string) []byte {
-	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
+	return g.KeyWithoutTrimRightSpace(str)
 }
 
 // KeyWithoutTrimRightSpace implement Collator interface.

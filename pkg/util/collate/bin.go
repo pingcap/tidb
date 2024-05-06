@@ -57,11 +57,11 @@ type binPaddingCollator struct {
 }
 
 func (*binPaddingCollator) Compare(a, b string) int {
-	return strings.Compare(truncateTailingSpace(a), truncateTailingSpace(b))
+	return strings.Compare(a, b)
 }
 
 func (*binPaddingCollator) Key(str string) []byte {
-	return []byte(truncateTailingSpace(str))
+	return []byte(str)
 }
 
 // KeyWithoutTrimRightSpace implement Collator interface.
