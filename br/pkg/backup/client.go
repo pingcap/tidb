@@ -805,8 +805,7 @@ func buildProgressRangeTree(pranges []*rtree.ProgressRange) (rtree.ProgressRange
 	// either the `incomplete` is origin range itself,
 	// or the `incomplete` is sub-ranges split by checkpoint of origin range.
 	subRanges := make([]*kvrpcpb.KeyRange, 0, subRangesCount)
-	progressRangeTree.Ascend(func(item btree.Item) bool {
-		pr := item.(*rtree.ProgressRange)
+	progressRangeTree.Ascend(func(pr *rtree.ProgressRange) bool {
 		for _, r := range pr.Incomplete {
 			subRanges = append(subRanges, &kvrpcpb.KeyRange{
 				StartKey: r.StartKey,
@@ -885,21 +884,21 @@ func (bc *Client) BackupRanges(
 	rangeInBatchStartIndex := 0
 	regionCountInBatch := 0
 	// ASSERT: len(ranges) > 0
-	for id := 0; id <= len(ranges); id += 1 {
-		if id != len(ranges) {
+	for idx := 0; idx <= len(ranges); idx += 1 {
+		if idx != len(ranges) {
 			if regionCountInBatch <= targetRangesBatchSize {
-				regionCountInBatch += regionCounts[id]
+				regionCountInBatch += regionCounts[idx]
 				continue
 			}
-			regionCountInBatch = regionCounts[id]
+			regionCountInBatch = regionCounts[idx]
 		}
 		// merge the ranges[rangeInBatchStartIndex, id) into a batch
-		pranges := bc.getProgressRanges(ranges[rangeInBatchStartIndex:id])
-		id := id
+		pranges := bc.getProgressRanges(ranges[rangeInBatchStartIndex:idx])
+		idx := idx
 		req := request
 		workerPool.ApplyOnErrorGroup(eg, func() (retErr error) {
 			elctx := logutil.ContextWithField(ectx,
-				logutil.RedactAny("range-sn-start", rangeInBatchStartIndex), logutil.RedactAny("range-sn-end", id))
+				logutil.RedactAny("range-sn-start", rangeInBatchStartIndex), logutil.RedactAny("range-sn-end", idx))
 
 			prTree, subRanges, err := buildProgressRangeTree(pranges)
 			if err != nil {
@@ -907,10 +906,12 @@ func (bc *Client) BackupRanges(
 			}
 			start := time.Now()
 			defer func() {
+				minPr, _ := prTree.Min()
+				maxPr, _ := prTree.Max()
 				key := "range start: " +
-					hex.EncodeToString(prTree.Min().(*rtree.ProgressRange).Origin.StartKey) +
+					hex.EncodeToString(minPr.Origin.StartKey) +
 					" end: " +
-					hex.EncodeToString(prTree.Max().(*rtree.ProgressRange).Origin.EndKey)
+					hex.EncodeToString(maxPr.Origin.EndKey)
 				logutil.CL(elctx).Info("backup range completed", zap.String("key range", key), zap.Duration("take", time.Since(start)))
 				if retErr != nil {
 					summary.CollectFailureUnit(key, err)
@@ -929,7 +930,7 @@ func (bc *Client) BackupRanges(
 			return nil
 		})
 
-		rangeInBatchStartIndex = id
+		rangeInBatchStartIndex = idx
 	}
 
 	return eg.Wait()
@@ -956,8 +957,7 @@ func (bc *Client) pushBackupInBatch(
 
 func collectRangeFiles(progressRangeTree rtree.ProgressRangeTree, metaWriter *metautil.MetaWriter) error {
 	var progressRangeAscendErr error
-	progressRangeTree.Ascend(func(item btree.Item) bool {
-		progressRange := item.(*rtree.ProgressRange)
+	progressRangeTree.Ascend(func(progressRange *rtree.ProgressRange) bool {
 		var rangeAscendErr error
 		progressRange.Res.Ascend(func(i btree.Item) bool {
 			r := i.(*rtree.Range)

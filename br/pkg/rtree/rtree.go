@@ -71,8 +71,8 @@ func (rg *Range) Contains(key []byte) bool {
 		(len(end) == 0 || bytes.Compare(key, end) < 0)
 }
 
-// ContainsRegion check if the range contains the region's key range.
-func (rg *Range) ContainsRegion(startKey, endKey []byte) bool {
+// ContainsRange check if the range contains the region's key range.
+func (rg *Range) ContainsRange(startKey, endKey []byte) bool {
 	start, end := rg.StartKey, rg.EndKey
 	return bytes.Compare(startKey, start) >= 0 &&
 		(len(end) == 0 || bytes.Compare(endKey, end) <= 0)
@@ -304,32 +304,29 @@ type ProgressRange struct {
 }
 
 // Less impls btree.Item.
-func (pr *ProgressRange) Less(than btree.Item) bool {
+func (pr *ProgressRange) Less(than *ProgressRange) bool {
 	// pr.StartKey <= than.StartKey
-	ta := than.(*ProgressRange)
-	return bytes.Compare(pr.Origin.StartKey, ta.Origin.StartKey) < 0
+	return bytes.Compare(pr.Origin.StartKey, than.Origin.StartKey) < 0
 }
-
-var _ btree.Item = &ProgressRange{}
 
 // ProgressRangeTree is a sorted tree for ProgressRanges.
 // All the progress ranges it sorted do not overlap.
 type ProgressRangeTree struct {
-	*btree.BTree
+	*btree.BTreeG[*ProgressRange]
 }
 
 // NewProgressRangeTree returns an empty range tree.
 func NewProgressRangeTree() ProgressRangeTree {
 	return ProgressRangeTree{
-		BTree: btree.New(32),
+		BTreeG: btree.NewG[*ProgressRange](32, (*ProgressRange).Less),
 	}
 }
 
 // find is a helper function to find an item that contains the range.
 func (rangeTree *ProgressRangeTree) find(pr *ProgressRange) *ProgressRange {
 	var ret *ProgressRange
-	rangeTree.DescendLessOrEqual(pr, func(item btree.Item) bool {
-		ret = item.(*ProgressRange)
+	rangeTree.DescendLessOrEqual(pr, func(item *ProgressRange) bool {
+		ret = item
 		return false
 	})
 
@@ -356,8 +353,7 @@ func (rangeTree *ProgressRangeTree) Insert(pr *ProgressRange) error {
 // FindContained finds if there is a progress range containing the key range [startKey, endKey).
 func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*ProgressRange, error) {
 	var ret *ProgressRange
-	rangeTree.Descend(func(item btree.Item) bool {
-		pr := item.(*ProgressRange)
+	rangeTree.Descend(func(pr *ProgressRange) bool {
 		if bytes.Compare(pr.Origin.StartKey, startKey) <= 0 {
 			ret = pr
 			return false
@@ -369,7 +365,7 @@ func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*Pro
 		return nil, errors.Errorf("Cannot find progress range that contains the start key: %s", redact.Key(startKey))
 	}
 
-	if !ret.Origin.ContainsRegion(startKey, endKey) {
+	if !ret.Origin.ContainsRange(startKey, endKey) {
 		return nil, errors.Errorf("The given region is not contained in the found progress range. "+
 			"The region start key is %s; The progress range start key is %s, end key is %s.",
 			startKey, redact.Key(ret.Origin.StartKey), redact.Key(ret.Origin.EndKey))
@@ -378,32 +374,32 @@ func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*Pro
 	return ret, nil
 }
 
-type progressRangeIterItem struct {
+type incompleteRangesFetcherItem struct {
 	pr       *ProgressRange
 	complete bool
 }
 
-type ProgressRangeIter struct {
-	items []*progressRangeIterItem
+type IncompleteRangesFetcher struct {
+	items []*incompleteRangesFetcherItem
 	left  int
 }
 
-func (rangeTree *ProgressRangeTree) Iter() *ProgressRangeIter {
-	items := make([]*progressRangeIterItem, 0, rangeTree.Len())
-	rangeTree.Ascend(func(item btree.Item) bool {
-		items = append(items, &progressRangeIterItem{
-			pr:       item.(*ProgressRange),
+func (rangeTree *ProgressRangeTree) Iter() *IncompleteRangesFetcher {
+	items := make([]*incompleteRangesFetcherItem, 0, rangeTree.Len())
+	rangeTree.Ascend(func(item *ProgressRange) bool {
+		items = append(items, &incompleteRangesFetcherItem{
+			pr:       item,
 			complete: false,
 		})
 		return true
 	})
-	return &ProgressRangeIter{
+	return &IncompleteRangesFetcher{
 		items: items,
 		left:  len(items),
 	}
 }
 
-func (iter *ProgressRangeIter) GetIncompleteRanges() []Range {
+func (iter *IncompleteRangesFetcher) GetIncompleteRanges() []Range {
 	incompleteRanges := make([]Range, 0, 64*len(iter.items))
 	for _, item := range iter.items {
 		if item.complete {
@@ -421,6 +417,6 @@ func (iter *ProgressRangeIter) GetIncompleteRanges() []Range {
 	return incompleteRanges
 }
 
-func (iter *ProgressRangeIter) Len() int {
+func (iter *IncompleteRangesFetcher) Len() int {
 	return iter.left
 }
