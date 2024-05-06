@@ -325,7 +325,7 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	stmtCtx.StmtHints = *cachedVal.stmtHints
-	return cachedVal.Plan, cachedVal.OutPutNames, true, nil
+	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
