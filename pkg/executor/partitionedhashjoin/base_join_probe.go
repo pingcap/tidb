@@ -16,9 +16,11 @@ package partitionedhashjoin
 
 import (
 	"bytes"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"hash/fnv"
 	"unsafe"
@@ -84,12 +86,13 @@ type baseJoinProbe struct {
 	currentRowsPos     []uintptr // the current address of each matched rows
 	serializedKeys     [][]byte  // used for save serialized keys
 	// filterVector and nullKeyVector is indexed by physical row index because the return vector of VectorizedFilter is based on physical row index
-	filterVector    []bool              // if there is filter before probe, filterVector saves the filter result
-	nullKeyVector   []bool              // nullKeyVector[i] = true if any of the key is null
-	hashValues      [][]posAndHashValue // the start address of each matched rows
-	currentProbeRow int
-	chunkRows       int
-	cachedBuildRows []rowIndexInfo
+	filterVector                  []bool              // if there is filter before probe, filterVector saves the filter result
+	nullKeyVector                 []bool              // nullKeyVector[i] = true if any of the key is null
+	hashValues                    [][]posAndHashValue // the start address of each matched rows
+	currentProbeRow               int
+	matchedRowsForCurrentProbeRow int
+	chunkRows                     int
+	cachedBuildRows               []rowIndexInfo
 
 	keyIndex         []int
 	columnTypes      []*types.FieldType
@@ -112,6 +115,14 @@ type baseJoinProbe struct {
 
 func (j *baseJoinProbe) IsCurrentChunkProbeDone() bool {
 	return j.currentChunk == nil || j.currentProbeRow >= j.chunkRows
+}
+
+func (j *baseJoinProbe) finishCurrentLookupLoop(joinedChk *chunk.Chunk) {
+	if len(j.cachedBuildRows) > 0 {
+		j.batchConstructBuildRows(joinedChk, 0, j.ctx.hasOtherCondition())
+	}
+	j.finishLookupCurrentProbeRow()
+	j.appendProbeRowToChunk(joinedChk, j.currentChunk)
 }
 
 func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
@@ -214,10 +225,21 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	return
 }
 
-func (j *baseJoinProbe) appendOffsetAndLength(offset int, length int) {
-	if length > 0 {
-		j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: j.usedRows[offset], length: length})
+func (j *baseJoinProbe) finishLookupCurrentProbeRow() {
+	if j.matchedRowsForCurrentProbeRow > 0 {
+		j.offsetAndLengthArray = append(j.offsetAndLengthArray, offsetAndLength{offset: j.usedRows[j.currentProbeRow], length: j.matchedRowsForCurrentProbeRow})
 	}
+	j.matchedRowsForCurrentProbeRow = 0
+}
+
+func (j *baseJoinProbe) checkSqlKiller(killer sqlkiller.SQLKiller) error {
+	err := killer.HandleSignal()
+	failpoint.Inject("killedDuringProbe", func(val failpoint.Value) {
+		if val.(bool) {
+			err = exeerrors.ErrQueryInterrupted
+		}
+	})
+	return err
 }
 
 func (j *baseJoinProbe) appendBuildRowToCachedBuildRowsAndConstructBuildRowsIfNeeded(buildRow rowIndexInfo, chk *chunk.Chunk, currentColumnIndexInRow int, forOtherCondition bool) {
@@ -238,6 +260,7 @@ func (j *baseJoinProbe) batchConstructBuildRows(chk *chunk.Chunk, currentColumnI
 func (j *baseJoinProbe) prepareForProbe(chk *chunk.Chunk) (joinedChk *chunk.Chunk, remainCap int, err error) {
 	j.offsetAndLengthArray = j.offsetAndLengthArray[:0]
 	j.cachedBuildRows = j.cachedBuildRows[:0]
+	j.matchedRowsForCurrentProbeRow = 0
 	joinedChk = chk
 	if j.ctx.OtherCondition != nil {
 		j.tmpChk.Reset()
@@ -506,10 +529,6 @@ func (m *mockJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) error {
 }
 
 func (m *mockJoinProbe) Probe(joinResult *util.HashjoinWorkerResult, killer sqlkiller.SQLKiller) (ok bool, result *util.HashjoinWorkerResult) {
-	panic("not supported")
-}
-
-func (m *mockJoinProbe) IsCurrentChunkProbeDone() bool {
 	panic("not supported")
 }
 

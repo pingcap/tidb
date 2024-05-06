@@ -86,6 +86,7 @@ func (htc *hashTableContext) finalizeCurrentSeg(workerId, partitionId int, build
 	}
 	builder.crrntSizeOfRowTable[partitionId] = 0
 	builder.startPosInRawData[partitionId] = builder.startPosInRawData[partitionId][:0]
+	failpoint.Inject("finalizeCurrentSegPanic", nil)
 	seg.finalized = true
 	htc.memoryTracker.Consume(seg.totalUsedBytes())
 }
@@ -431,6 +432,7 @@ func (w *BuildWorker) splitPartitionAndAppendToRowTable(typeCtx types.Context, s
 	for chk := range srcChkCh {
 		start := time.Now()
 		err = builder.processOneChunk(chk, typeCtx, w.HashJoinCtx, int(w.WorkerID))
+		failpoint.Inject("splitPartitionPanic", nil)
 		cost += int64(time.Since(start))
 		if err != nil {
 			return err
@@ -627,6 +629,7 @@ func (w *ProbeWorker) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult *
 		if !ok || joinResult.Err != nil {
 			return ok, waitTime, joinResult
 		}
+		failpoint.Inject("processOneProbeChunkPanic", nil)
 		if joinResult.Chk.IsFull() {
 			waitStart := time.Now()
 			w.HashJoinCtx.joinResultCh <- joinResult
@@ -777,6 +780,7 @@ func (e *PartitionedHashJoinExec) createTasks(buildTaskCh chan<- *buildTask, tot
 	createBuildTask := func(partIdx int, segStartIdx int, segEndIdx int) *buildTask {
 		return &buildTask{partitionIdx: partIdx, segStartIdx: segStartIdx, segEndIdx: segEndIdx}
 	}
+	failpoint.Inject("createTasksPanic", nil)
 
 	for partIdx, subTable := range subTables {
 		segmentsLen := len(subTable.rowData.segments)
@@ -933,6 +937,7 @@ func (w *BuildWorker) buildHashTable(taskCh chan *buildTask) error {
 		start := time.Now()
 		partIdx, segStartIdx, segEndIdx := task.partitionIdx, task.segStartIdx, task.segEndIdx
 		w.HashJoinCtx.hashTableContext.hashTable.tables[partIdx].build(segStartIdx, segEndIdx)
+		failpoint.Inject("buildHashTablePanic", nil)
 		cost += int64(time.Since(start))
 	}
 	return nil
