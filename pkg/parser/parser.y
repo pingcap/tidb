@@ -386,12 +386,12 @@ import (
 	csvNull               "CSV_NULL"
 	csvSeparator          "CSV_SEPARATOR"
 	csvTrimLastSeparators "CSV_TRIM_LAST_SEPARATORS"
-	waitTiflashReady "WAIT_TIFLASH_READY"
-	withSysTable "WITH_SYS_TABLE"
-	ignoreStats "IGNORE_STATS"
-	checksumConcurrency "CHECKSUM_CONCURRENCY"
-	compressionLevel "COMPRESSION_LEVEL"
-	backupCompression "BACKUP_COMPRESSION"
+	waitTiflashReady      "WAIT_TIFLASH_READY"
+	withSysTable          "WITH_SYS_TABLE"
+	ignoreStats           "IGNORE_STATS"
+	checksumConcurrency   "CHECKSUM_CONCURRENCY"
+	compressionLevel      "COMPRESSION_LEVEL"
+	backupCompression     "BACKUP_COMPRESSION"
 	current               "CURRENT"
 	cycle                 "CYCLE"
 	data                  "DATA"
@@ -5595,11 +5595,11 @@ BRIEIntegerOptionName:
 	{
 		$$ = ast.BRIEOptionResume
 	}
-| "CHECKSUM_CONCURRENCY"
+|	"CHECKSUM_CONCURRENCY"
 	{
 		$$ = ast.BRIEOptionChecksumConcurrency
 	}
-| "COMPRESSION_LEVEL"
+|	"COMPRESSION_LEVEL"
 	{
 		$$ = ast.BRIEOptionCompressionLevel
 	}
@@ -5637,15 +5637,15 @@ BRIEBooleanOptionName:
 	{
 		$$ = ast.BRIEOptionCSVTrimLastSeparators
 	}
-| "WAIT_TIFLASH_READY"
+|	"WAIT_TIFLASH_READY"
 	{
 		$$ = ast.BRIEOptionWaitTiflashReady
 	}
-| "WITH_SYS_TABLE"
+|	"WITH_SYS_TABLE"
 	{
 		$$ = ast.BRIEOptionWithSysTable
 	}
-| "IGNORE_STATS"
+|	"IGNORE_STATS"
 	{
 		$$ = ast.BRIEOptionIgnoreStats
 	}
@@ -5667,7 +5667,7 @@ BRIEStringOptionName:
 	{
 		$$ = ast.BRIEOptionCSVNull
 	}
-| "BACKUP_COMPRESSION"
+|	"BACKUP_COMPRESSION"
 	{
 		$$ = ast.BRIEOptionCompression
 	}
@@ -6908,12 +6908,12 @@ UnReservedKeyword:
 |	"CSV_HEADER"
 |	"CSV_NULL"
 |	"CSV_SEPARATOR"
-| "WAIT_TIFLASH_READY"
-| "WITH_SYS_TABLE"
-| "IGNORE_STATS"
-| "CHECKSUM_CONCURRENCY"
-| "COMPRESSION_LEVEL"
-| "BACKUP_COMPRESSION"
+|	"WAIT_TIFLASH_READY"
+|	"WITH_SYS_TABLE"
+|	"IGNORE_STATS"
+|	"CHECKSUM_CONCURRENCY"
+|	"COMPRESSION_LEVEL"
+|	"BACKUP_COMPRESSION"
 |	"ON_DUPLICATE"
 |	"TIKV_IMPORTER"
 |	"REPLICAS"
