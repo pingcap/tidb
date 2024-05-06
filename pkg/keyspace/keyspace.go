@@ -108,10 +108,10 @@ func IsKeyspaceUseKeyspaceLevelGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	return false
 }
 
-// IsKeyspaceUseGlobalGC return whether the specified keyspace meta use global GC.
-func IsKeyspaceUseGlobalGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
+// IsKeyspaceMetaExistsAndUseGlobalGC return whether the specified keyspace meta use global GC.
+func IsKeyspaceMetaExistsAndUseGlobalGC(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	if keyspaceMeta == nil {
-		return true
+		return false
 	}
 	if val, ok := keyspaceMeta.Config[KeyspaceMetaConfigGCManagementType]; ok {
 		return val == KeyspaceMetaConfigGCManagementTypeGlobalGC

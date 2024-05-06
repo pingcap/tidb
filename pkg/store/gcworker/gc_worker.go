@@ -425,7 +425,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	       and update the global GC safe point and resolve locks in the Null Keyspace range and in keyspaces
 	       which is using the global GC range.
 	*/
-	if w.store.GetCodec().GetKeyspaceMeta() != nil && keyspace.IsKeyspaceUseGlobalGC(w.store.GetCodec().GetKeyspaceMeta()) {
+	if keyspace.IsKeyspaceMetaExistsAndUseGlobalGC(w.store.GetCodec().GetKeyspaceMeta()) {
 		// If the keyspace use global GC safe point, the gc worker leader of this keyspace should only do delete ranges logic.
 		err = w.runKeyspaceGCJobInGlobalGC(ctx, concurrency)
 		if err != nil {
@@ -1277,10 +1277,12 @@ func (w *GCWorker) resolveLocksInGlobalGC(ctx context.Context, runner *rangetask
 	logutil.Logger(ctx).Info("[gc worker] start resolving locks in global GC mode")
 
 	// There is 3 steps of resolve locks in global gc.
-	// step 1. resolve locks in [ unbounded, Raw KV left bound ), skip RawKV ranges
-	// step 2. resolve locks in [ Raw KV right bound, keyspace 0 txn left bound )
-	// step 3. resolve locks in [ keyspace txn left bound , keyspace txn right bound ) for all keyspaces with keyspace level GC disabled
-	// step 4. resolve locks in [ max keyspace txn left bound , unbounded )
+	// step 1. resolve locks in [ unbounded, Raw KV left bound ),
+	//         and skip RawKV ranges.
+	// step 2. resolve locks in [ Raw KV right bound, keyspace 0 txn left bound ).
+	// step 3. resolve locks in [ keyspace txn left bound , keyspace txn right bound ) .
+	//         for all keyspaces with keyspace level GC disabled.
+	// step 4. resolve locks in [ max keyspace txn left bound , unbounded ).
 
 	// step 1. resolve locks in [ unbounded, Raw KV left bound ), skip RawKV ranges
 	txnLeftBound := []byte(unboundedKey)
