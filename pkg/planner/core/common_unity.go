@@ -145,12 +145,12 @@ func collectUnityInfo(p base.LogicalPlan, o *UnityOutput) {
 				o.Tables[tableName].Indexes[idxName] = &UnityIndexInfo{}
 				o.Tables[tableName].idx2id[idxName] = idx.ID
 			}
-			//if x.tableInfo.PKIsHandle || x.tableInfo.IsCommonHandle {
-			//	idxName := tableName+".primary"
-			//	result[tableName].Indexes[idxName] = &UnityIndexInfo{}
-			//}
+			if x.tableInfo.PKIsHandle {
+				idxName := tableName + ".primary"
+				o.Tables[tableName].Indexes[idxName] = &UnityIndexInfo{}
+			}
 		}
-		for _, col := range x.Schema().Columns{
+		for _, col := range x.Schema().Columns {
 			colName := strings.ToLower(col.OrigName)
 			tName := tblName(col.OrigName)
 			if tName == "" {
@@ -240,7 +240,11 @@ func fillUpStats(o *UnityOutput) {
 			}
 		}
 		for idxName, idx := range tblInfo.Indexes {
-			idxStats := tblStats.Indices[tblInfo.idx2id[idxName]]
+			idxID, ok := tblInfo.idx2id[idxName]
+			if !ok { // single-col PK
+				continue
+			}
+			idxStats := tblStats.Indices[idxID]
 			idx.NDV = int(idxStats.NDV)
 			idx.Nulls = int(idxStats.NullCount)
 		}
