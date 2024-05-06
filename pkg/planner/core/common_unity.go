@@ -150,6 +150,14 @@ func collectUnityInfo(p base.LogicalPlan, o *UnityOutput) {
 			//	result[tableName].Indexes[idxName] = &UnityIndexInfo{}
 			//}
 		}
+		for _, col := range x.Schema().Columns{
+			colName := strings.ToLower(col.OrigName)
+			tName := tblName(col.OrigName)
+			if tName == "" {
+				continue
+			}
+			o.Tables[tableName].Columns[colName] = &UnityColumnInfo{}
+		}
 		for _, expr := range x.allConds {
 			collectColumnFromExpr(expr, o)
 		}
@@ -186,6 +194,10 @@ func collectUnityInfo(p base.LogicalPlan, o *UnityOutput) {
 			for _, expr := range agg.Args {
 				collectColumnFromExpr(expr, o)
 			}
+		}
+	case *LogicalProjection:
+		for _, expr := range x.Exprs {
+			collectColumnFromExpr(expr, o)
 		}
 	case *LogicalSort:
 		for _, item := range x.ByItems {
