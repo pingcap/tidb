@@ -3278,6 +3278,7 @@ const (
 	BRIEOptionCheckpoint
 	BRIEOptionStartTS
 	BRIEOptionUntilTS
+	BRIEOptionChecksumConcurrency
 	// backup options
 	BRIEOptionBackupTimeAgo
 	BRIEOptionBackupTS
@@ -3285,10 +3286,15 @@ const (
 	BRIEOptionLastBackupTS
 	BRIEOptionLastBackupTSO
 	BRIEOptionGCTTL
+	BRIEOptionCompressionLevel
+	BRIEOptionCompression
+	BRIEOptionIgnoreStats
 	// restore options
 	BRIEOptionOnline
 	BRIEOptionFullBackupStorage
 	BRIEOptionRestoredTS
+	BRIEOptionWaitTiflashReady
+	BRIEOptionWithSysTable
 	// import options
 	BRIEOptionAnalyze
 	BRIEOptionBackend
