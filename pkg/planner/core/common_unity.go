@@ -22,6 +22,10 @@ func dbName(fullName string) string {
 
 func tblName(fullName string) string {
 	tmp := strings.Split(strings.ToLower(fullName), ".")
+	if len(tmp) < 2 {
+		return ""
+	}
+
 	return tmp[0] + "." + tmp[1]
 }
 
@@ -65,7 +69,11 @@ type UnityOutput struct {
 
 func collectColumn(c *expression.Column, o *UnityOutput) {
 	colName := strings.ToLower(c.OrigName)
-	o.Tables[tblName(colName)].Columns[colName] = &UnityColumnInfo{}
+	tName := tblName(colName)
+	if tName == "" {
+		return
+	}
+	o.Tables[tName].Columns[colName] = &UnityColumnInfo{}
 }
 
 func collectColumnFromExpr(expr expression.Expression, o *UnityOutput) {
