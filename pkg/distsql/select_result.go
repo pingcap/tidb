@@ -345,9 +345,6 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if r.selectResp == nil {
-			panic("should not be nil")
-		}
 		respSize := int64(r.selectResp.Size())
 		atomic.StoreInt64(&r.selectRespSize, respSize)
 		r.memConsume(respSize)
@@ -373,9 +370,6 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 				copStats.CopTime = duration
 				r.ctx.ExecDetails.MergeExecDetails(&copStats.ExecDetails, nil)
 			}
-		}
-		if r.selectResp == nil {
-			panic("should not be nil")
 		}
 		if len(r.selectResp.Chunks) != 0 {
 			break
