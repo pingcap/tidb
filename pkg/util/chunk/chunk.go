@@ -15,11 +15,11 @@
 package chunk
 
 import (
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 var msgErrSelNotNil = "The selection vector of Chunk is not nil. Please file a bug to the TiDB Team"
