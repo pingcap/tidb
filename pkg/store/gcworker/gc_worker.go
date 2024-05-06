@@ -414,17 +414,19 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	/* If TIDB is configured with 'keyspace-name',
 	   and there's no configuration for 'gc_management_type'
 	   or 'gc_management_type' = 'global_gc' in the current keyspace meta config,
-	   There will be several special places:
+	   There will be several special points:
 	    1. The GC management type of this keyspace is global GC.
-	       The keyspace which uses the global GC cannot be changed to use keyspace level GC now.
+	       The keyspace which already uses the global GC cannot be changed to use keyspace level GC now.
 	    2. The keyspace which uses the global GC will have its own GC worker leader.
-	       The GC worker leader of the current keyspace will not calculate the GC safe point
-	       and resolve locks and will only do 'deleteRanges' within the current keyspace range.
-	    3. The keyspace which uses the global GC needs at least one TiDB without `keyspace-name` in the whole cluster as a global GC worker.
-	       The global GC worker will calculate and update the global GC safe point and resolve locks in the Null Keyspace range and in keyspaces which is using the global GC range.
+	       However, the GC worker leader of the current keyspace will not calculate the GC safe point
+	       and resolve locks, it will only do 'deleteRanges' within the current keyspace range.
+	    3. The keyspace which uses the global GC needs at least one TiDB without `keyspace-name`
+	       in the whole cluster as a global GC worker. The global GC worker will calculate
+	       and update the global GC safe point and resolve locks in the Null Keyspace range and in keyspaces
+	       which is using the global GC range.
 	*/
 	if w.store.GetCodec().GetKeyspaceMeta() != nil && keyspace.IsKeyspaceUseGlobalGC(w.store.GetCodec().GetKeyspaceMeta()) {
-		// If we use global GC safe point, a TiDB which has keyspace-name should only do delete range logic.
+		// If the keyspace use global GC safe point, the gc worker leader of this keyspace should only do delete ranges logic.
 		err = w.runKeyspaceGCJobInGlobalGC(ctx, concurrency)
 		if err != nil {
 			return errors.Trace(err)
