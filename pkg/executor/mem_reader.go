@@ -810,9 +810,8 @@ type memIndexMergeReader struct {
 	ranges           [][]*ranger.Range
 
 	// partition mode
-	partitionMode     bool                  // if it is accessing a partition table
-	partitionTables   []table.PhysicalTable // partition tables to access
-	partitionKVRanges [][][]kv.KeyRange     // kv ranges for these partition tables
+	partitionMode   bool                  // if it is accessing a partition table
+	partitionTables []table.PhysicalTable // partition tables to access
 
 	keepOrder bool
 	compareExec
@@ -866,9 +865,8 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 		isIntersection:   indexMergeReader.isIntersection,
 		ranges:           indexMergeReader.ranges,
 
-		partitionMode:     indexMergeReader.partitionTableMode,
-		partitionTables:   indexMergeReader.prunedPartitions,
-		partitionKVRanges: indexMergeReader.partitionKeyRanges,
+		partitionMode:   indexMergeReader.partitionTableMode,
+		partitionTables: indexMergeReader.prunedPartitions,
 
 		keepOrder:   us.keepOrder,
 		compareExec: us.compareExec,
@@ -1027,20 +1025,7 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 	hMap := kv.NewHandleMap()
 	for i, reader := range m.memReaders {
 		// [partNum][rangeNum]
-		var readerKvRanges [][]kv.KeyRange
-		if m.partitionMode {
-			if r, ok := reader.(*memIndexReader); ok && r.index.Global {
-				keyRange, _ := distsql.IndexRangesToKVRanges(m.ctx.GetDistSQLCtx(), r.table.ID, r.index.ID, m.ranges[i])
-				readerKvRanges = [][]kv.KeyRange{keyRange.FirstPartitionRange()}
-			} else {
-				for _, pKeyRanges := range m.partitionKVRanges { // get all keyRanges related to this PartialIndex
-					readerKvRanges = append(readerKvRanges, pKeyRanges[i])
-				}
-			}
-		} else {
-			readerKvRanges = [][]kv.KeyRange{m.indexMergeReader.keyRanges[i]}
-		}
-
+		readerKvRanges := m.indexMergeReader.getPartitalIndexKeyRanges(i)
 		for j, kr := range readerKvRanges {
 			switch r := reader.(type) {
 			case *memTableReader:

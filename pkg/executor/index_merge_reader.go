@@ -315,6 +315,23 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 	}()
 }
 
+func (e *IndexMergeReaderExecutor) getPartitalIndexKeyRanges(indexID int) (ret [][]kv.KeyRange) {
+	if !e.partitionTableMode {
+		return [][]kv.KeyRange{e.keyRanges[indexID]}
+	}
+
+	if idx := e.indexes[indexID]; idx != nil && idx.Global {
+		keyRange, _ := distsql.IndexRangesToKVRanges(e.ctx.GetDistSQLCtx(), e.table.Meta().ID, idx.ID, e.ranges[indexID])
+		ret = [][]kv.KeyRange{keyRange.FirstPartitionRange()}
+	} else {
+		for _, pKeyRanges := range e.partitionKeyRanges { // get all keyRanges related to this PartialIndex
+			ret = append(ret, pKeyRanges[indexID])
+		}
+	}
+
+	return ret
+}
+
 func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask, workID int) error {
 	failpoint.Inject("testIndexMergeResultChCloseEarly", func(_ failpoint.Value) {
 		// Wait for processWorker to close resultCh.
@@ -327,15 +344,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		e.dagPBs[workID].CollectExecutionSummaries = &collExec
 	}
 
-	var keyRanges [][]kv.KeyRange
-	if e.partitionTableMode {
-		for _, pKeyRanges := range e.partitionKeyRanges { // get all keyRanges related to this PartialIndex
-			keyRanges = append(keyRanges, pKeyRanges[workID])
-		}
-	} else {
-		keyRanges = [][]kv.KeyRange{e.keyRanges[workID]}
-	}
-
+	keyRanges := e.getPartitalIndexKeyRanges(workID)
 	failpoint.Inject("startPartialIndexWorkerErr", func() error {
 		return errors.New("inject an error before start partialIndexWorker")
 	})
@@ -376,10 +385,6 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						syncErr(ctx, e.finished, fetchCh, err)
 						return
 					}
-				}
-				if is.Index.Global {
-					keyRange, _ := distsql.IndexRangesToKVRanges(e.Ctx().GetDistSQLCtx(), is.Table.ID, is.Index.ID, e.ranges[workID])
-					keyRanges = [][]kv.KeyRange{keyRange.FirstPartitionRange()}
 				}
 				var builder distsql.RequestBuilder
 				builder.SetDAGRequest(e.dagPBs[workID]).
