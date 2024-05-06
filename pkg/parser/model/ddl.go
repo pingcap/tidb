@@ -1138,6 +1138,12 @@ type SchemaDiff struct {
 	SchemaID int64      `json:"schema_id"`
 	TableID  int64      `json:"table_id"`
 
+	// SubActionTypes is the list of action types done together within a multiple schema
+	// change job. As the job might contain multiple steps that changes schema version,
+	// if some step only contains one action, Type will be that action, and SubActionTypes
+	// will be empty.
+	// for other types of job, it will always be empty.
+	SubActionTypes []ActionType `json:"sub_action_types,omitempty"`
 	// OldTableID is the table ID before truncate, only used by truncate table DDL.
 	OldTableID int64 `json:"old_table_id"`
 	// OldSchemaID is the schema ID before rename table, only used by rename table DDL.

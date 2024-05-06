@@ -1,6 +1,6 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore_test
+package utils_test
 
 import (
 	"bytes"
@@ -12,11 +12,9 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/restore"
-	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -93,7 +91,7 @@ func TestMergeRanges(t *testing.T) {
 	type Case struct {
 		files  [][5]int // tableID, indexID num, bytes, kv
 		merged []int    // length of each merged range
-		stat   restore.MergeRangesStat
+		stat   utils.MergeRangesStat
 	}
 	splitSizeBytes := int(conn.DefaultMergeRegionSizeBytes)
 	splitKeyCount := int(conn.DefaultMergeRegionKeyCount)
@@ -102,54 +100,54 @@ func TestMergeRanges(t *testing.T) {
 		{
 			files:  [][5]int{},
 			merged: []int{},
-			stat:   restore.MergeRangesStat{TotalRegions: 0, MergedRegions: 0},
+			stat:   utils.MergeRangesStat{TotalRegions: 0, MergedRegions: 0},
 		},
 
 		// Do not merge big range.
 		{
 			files:  [][5]int{{1, 0, 1, splitSizeBytes, 1}, {1, 0, 1, 1, 1}},
 			merged: []int{1, 1},
-			stat:   restore.MergeRangesStat{TotalRegions: 2, MergedRegions: 2},
+			stat:   utils.MergeRangesStat{TotalRegions: 2, MergedRegions: 2},
 		},
 		{
 			files:  [][5]int{{1, 0, 1, 1, 1}, {1, 0, 1, splitSizeBytes, 1}},
 			merged: []int{1, 1},
-			stat:   restore.MergeRangesStat{TotalRegions: 2, MergedRegions: 2},
+			stat:   utils.MergeRangesStat{TotalRegions: 2, MergedRegions: 2},
 		},
 		{
 			files:  [][5]int{{1, 0, 1, 1, splitKeyCount}, {1, 0, 1, 1, 1}},
 			merged: []int{1, 1},
-			stat:   restore.MergeRangesStat{TotalRegions: 2, MergedRegions: 2},
+			stat:   utils.MergeRangesStat{TotalRegions: 2, MergedRegions: 2},
 		},
 		{
 			files:  [][5]int{{1, 0, 1, 1, 1}, {1, 0, 1, 1, splitKeyCount}},
 			merged: []int{1, 1},
-			stat:   restore.MergeRangesStat{TotalRegions: 2, MergedRegions: 2},
+			stat:   utils.MergeRangesStat{TotalRegions: 2, MergedRegions: 2},
 		},
 
 		// 3 -> 1
 		{
 			files:  [][5]int{{1, 0, 1, 1, 1}, {1, 0, 1, 1, 1}, {1, 0, 1, 1, 1}},
 			merged: []int{3},
-			stat:   restore.MergeRangesStat{TotalRegions: 3, MergedRegions: 1},
+			stat:   utils.MergeRangesStat{TotalRegions: 3, MergedRegions: 1},
 		},
 		// 3 -> 2, size: [split*1/3, split*1/3, split*1/2] -> [split*2/3, split*1/2]
 		{
 			files:  [][5]int{{1, 0, 1, splitSizeBytes / 3, 1}, {1, 0, 1, splitSizeBytes / 3, 1}, {1, 0, 1, splitSizeBytes / 2, 1}},
 			merged: []int{2, 1},
-			stat:   restore.MergeRangesStat{TotalRegions: 3, MergedRegions: 2},
+			stat:   utils.MergeRangesStat{TotalRegions: 3, MergedRegions: 2},
 		},
 		// 4 -> 2, size: [split*1/3, split*1/3, split*1/2, 1] -> [split*2/3, split*1/2 +1]
 		{
 			files:  [][5]int{{1, 0, 1, splitSizeBytes / 3, 1}, {1, 0, 1, splitSizeBytes / 3, 1}, {1, 0, 1, splitSizeBytes / 2, 1}, {1, 0, 1, 1, 1}},
 			merged: []int{2, 2},
-			stat:   restore.MergeRangesStat{TotalRegions: 4, MergedRegions: 2},
+			stat:   utils.MergeRangesStat{TotalRegions: 4, MergedRegions: 2},
 		},
 		// 5 -> 3, size: [split*1/3, split*1/3, split, split*1/2, 1] -> [split*2/3, split, split*1/2 +1]
 		{
 			files:  [][5]int{{1, 0, 1, splitSizeBytes / 3, 1}, {1, 0, 1, splitSizeBytes / 3, 1}, {1, 0, 1, splitSizeBytes, 1}, {1, 0, 1, splitSizeBytes / 2, 1}, {1, 0, 1, 1, 1}},
 			merged: []int{2, 1, 2},
-			stat:   restore.MergeRangesStat{TotalRegions: 5, MergedRegions: 3},
+			stat:   utils.MergeRangesStat{TotalRegions: 5, MergedRegions: 3},
 		},
 
 		// Do not merge ranges from different tables
@@ -157,13 +155,13 @@ func TestMergeRanges(t *testing.T) {
 		{
 			files:  [][5]int{{1, 0, 1, 1, 1}, {2, 0, 1, 1, 1}},
 			merged: []int{1, 1},
-			stat:   restore.MergeRangesStat{TotalRegions: 2, MergedRegions: 2},
+			stat:   utils.MergeRangesStat{TotalRegions: 2, MergedRegions: 2},
 		},
 		// 3 -> 2, size: [1@split*1/3, 2@split*1/3, 2@split*1/2] -> [1@split*1/3, 2@split*5/6]
 		{
 			files:  [][5]int{{1, 0, 1, splitSizeBytes / 3, 1}, {2, 0, 1, splitSizeBytes / 3, 1}, {2, 0, 1, splitSizeBytes / 2, 1}},
 			merged: []int{1, 2},
-			stat:   restore.MergeRangesStat{TotalRegions: 3, MergedRegions: 2},
+			stat:   utils.MergeRangesStat{TotalRegions: 3, MergedRegions: 2},
 		},
 
 		// Do not merge ranges from different indexes.
@@ -171,28 +169,28 @@ func TestMergeRanges(t *testing.T) {
 		{
 			files:  [][5]int{{1, 1, 1, 1, 1}, {1, 2, 1, 1, 1}},
 			merged: []int{1, 1},
-			stat:   restore.MergeRangesStat{TotalRegions: 2, MergedRegions: 2},
+			stat:   utils.MergeRangesStat{TotalRegions: 2, MergedRegions: 2},
 		},
 		// Index ID out of order.
 		// 2 -> 2, size: [1, 1] -> [1, 1], index ID: [2, 1] -> [1, 2]
 		{
 			files:  [][5]int{{1, 2, 1, 1, 1}, {1, 1, 1, 1, 1}},
 			merged: []int{1, 1},
-			stat:   restore.MergeRangesStat{TotalRegions: 2, MergedRegions: 2},
+			stat:   utils.MergeRangesStat{TotalRegions: 2, MergedRegions: 2},
 		},
 		// 3 -> 3, size: [1, 1, 1] -> [1, 1, 1]
 		// (table ID, index ID): [(1, 0), (2, 1), (2, 2)] -> [(1, 0), (2, 1), (2, 2)]
 		{
 			files:  [][5]int{{1, 0, 1, 1, 1}, {2, 1, 1, 1, 1}, {2, 2, 1, 1, 1}},
 			merged: []int{1, 1, 1},
-			stat:   restore.MergeRangesStat{TotalRegions: 3, MergedRegions: 3},
+			stat:   utils.MergeRangesStat{TotalRegions: 3, MergedRegions: 3},
 		},
 		// 4 -> 3, size: [1, 1, 1, 1] -> [1, 1, 2]
 		// (table ID, index ID): [(1, 0), (2, 1), (2, 0), (2, 0)] -> [(1, 0), (2, 1), (2, 0)]
 		{
 			files:  [][5]int{{1, 0, 1, 1, 1}, {2, 1, 1, 1, 1}, {2, 0, 1, 1, 1}, {2, 0, 1, 1, 1}},
 			merged: []int{1, 1, 2},
-			stat:   restore.MergeRangesStat{TotalRegions: 4, MergedRegions: 3},
+			stat:   utils.MergeRangesStat{TotalRegions: 4, MergedRegions: 3},
 		},
 		// Merge the same table ID and index ID.
 		// 4 -> 3, size: [1, 1, 1, 1] -> [1, 2, 1]
@@ -200,7 +198,7 @@ func TestMergeRanges(t *testing.T) {
 		{
 			files:  [][5]int{{1, 0, 1, 1, 1}, {2, 1, 1, 1, 1}, {2, 1, 1, 1, 1}, {2, 0, 1, 1, 1}},
 			merged: []int{1, 2, 1},
-			stat:   restore.MergeRangesStat{TotalRegions: 4, MergedRegions: 3},
+			stat:   utils.MergeRangesStat{TotalRegions: 4, MergedRegions: 3},
 		},
 	}
 
@@ -210,7 +208,7 @@ func TestMergeRanges(t *testing.T) {
 		for _, f := range cs.files {
 			files = append(files, fb.build(f[0], f[1], f[2], f[3], f[4])...)
 		}
-		rngs, stat, err := restore.MergeAndRewriteFileRanges(files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
+		rngs, stat, err := utils.MergeAndRewriteFileRanges(files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 		require.NoErrorf(t, err, "%+v", cs)
 		require.Equalf(t, cs.stat.TotalRegions, stat.TotalRegions, "%+v", cs)
 		require.Equalf(t, cs.stat.MergedRegions, stat.MergedRegions, "%+v", cs)
@@ -232,7 +230,7 @@ func TestMergeRawKVRanges(t *testing.T) {
 	files = append(files, fb.build(1, 0, 2, 1, 1)...)
 	// RawKV does not have write cf
 	files = files[1:]
-	_, stat, err := restore.MergeAndRewriteFileRanges(
+	_, stat, err := utils.MergeAndRewriteFileRanges(
 		files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 	require.NoError(t, err)
 	require.Equal(t, 1, stat.TotalRegions)
@@ -245,7 +243,7 @@ func TestInvalidRanges(t *testing.T) {
 	files = append(files, fb.build(1, 0, 1, 1, 1)...)
 	files[0].Name = "invalid.sst"
 	files[0].Cf = "invalid"
-	_, _, err := restore.MergeAndRewriteFileRanges(
+	_, _, err := utils.MergeAndRewriteFileRanges(
 		files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 	require.Error(t, err)
 	require.Equal(t, berrors.ErrRestoreInvalidBackup, errors.Cause(err))
@@ -267,7 +265,7 @@ func benchmarkMergeRanges(b *testing.B, filesCount int) {
 	}
 	var err error
 	for i := 0; i < b.N; i++ {
-		_, _, err = restore.MergeAndRewriteFileRanges(files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
+		_, _, err = utils.MergeAndRewriteFileRanges(files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 		if err != nil {
 			b.Error(err)
 		}
@@ -292,92 +290,4 @@ func BenchmarkMergeRanges50k(b *testing.B) {
 
 func BenchmarkMergeRanges100k(b *testing.B) {
 	benchmarkMergeRanges(b, 100000)
-}
-func TestRewriteRange(t *testing.T) {
-	// Define test cases
-	cases := []struct {
-		rg            *rtree.Range
-		rewriteRules  *restore.RewriteRules
-		expectedRange *rtree.Range
-		expectedError error
-	}{
-		// Test case 1: No rewrite rules
-		{
-			rg: &rtree.Range{
-				StartKey: []byte("startKey"),
-				EndKey:   []byte("endKey"),
-			},
-			rewriteRules:  nil,
-			expectedRange: &rtree.Range{StartKey: []byte("startKey"), EndKey: []byte("endKey")},
-			expectedError: nil,
-		},
-		// Test case 2: Rewrite rule found for both start key and end key
-		{
-			rg: &rtree.Range{
-				StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
-				EndKey:   append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
-			},
-			rewriteRules: &restore.RewriteRules{
-				Data: []*import_sstpb.RewriteRule{
-					{
-						OldKeyPrefix: tablecodec.GenTableIndexPrefix(1),
-						NewKeyPrefix: tablecodec.GenTableIndexPrefix(2),
-					},
-				},
-			},
-			expectedRange: &rtree.Range{
-				StartKey: append(tablecodec.GenTableIndexPrefix(2), []byte("startKey")...),
-				EndKey:   append(tablecodec.GenTableIndexPrefix(2), []byte("endKey")...),
-			},
-			expectedError: nil,
-		},
-		// Test case 3: Rewrite rule found for end key
-		{
-			rg: &rtree.Range{
-				StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
-				EndKey:   append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
-			},
-			rewriteRules: &restore.RewriteRules{
-				Data: []*import_sstpb.RewriteRule{
-					{
-						OldKeyPrefix: append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
-						NewKeyPrefix: append(tablecodec.GenTableIndexPrefix(2), []byte("newEndKey")...),
-					},
-				},
-			},
-			expectedRange: &rtree.Range{
-				StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
-				EndKey:   append(tablecodec.GenTableIndexPrefix(2), []byte("newEndKey")...),
-			},
-			expectedError: nil,
-		},
-		// Test case 4: Table ID mismatch
-		{
-			rg: &rtree.Range{
-				StartKey: []byte("t1_startKey"),
-				EndKey:   []byte("t2_endKey"),
-			},
-			rewriteRules: &restore.RewriteRules{
-				Data: []*import_sstpb.RewriteRule{
-					{
-						OldKeyPrefix: []byte("t1_startKey"),
-						NewKeyPrefix: []byte("t2_newStartKey"),
-					},
-				},
-			},
-			expectedRange: nil,
-			expectedError: errors.Annotate(berrors.ErrRestoreTableIDMismatch, "table id mismatch"),
-		},
-	}
-
-	// Run test cases
-	for _, tc := range cases {
-		actualRange, actualError := restore.RewriteRange(tc.rg, tc.rewriteRules)
-		if tc.expectedError != nil {
-			require.EqualError(t, tc.expectedError, actualError.Error())
-		} else {
-			require.NoError(t, actualError)
-		}
-		require.Equal(t, tc.expectedRange, actualRange)
-	}
 }
