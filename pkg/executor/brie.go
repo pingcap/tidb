@@ -386,16 +386,16 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 				}
 				e.backupCfg.BackupTS = tso
 			case ast.BRIEOptionCompression:
-				compressionType  := backuppb.CompressionType_UNKNOWN
+				compressionType := backuppb.CompressionType_UNKNOWN
 				switch opt.StrValue {
-					case "zstd":
-						compressionType = backuppb.CompressionType_ZSTD
-					case "snappy":
-						compressionType = backuppb.CompressionType_SNAPPY
-					case "lz4":
-						compressionType = backuppb.CompressionType_LZ4
-					default:
-						log.Warn("unsupported compression type", zap.String("type", opt.StrValue))
+				case "zstd":
+					compressionType = backuppb.CompressionType_ZSTD
+				case "snappy":
+					compressionType = backuppb.CompressionType_SNAPPY
+				case "lz4":
+					compressionType = backuppb.CompressionType_LZ4
+				default:
+					log.Warn("unsupported compression type", zap.String("type", opt.StrValue))
 				}
 				e.backupCfg.CompressionConfig.CompressionType = compressionType
 			case ast.BRIEOptionCompressionLevel:
@@ -414,13 +414,14 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			// 	e.restoreCfg.Online = opt.UintValue != 0
 			// }
 			switch opt.Tp {
-				case ast.BRIEOptionOnline:
-					e.restoreCfg.Online = opt.UintValue != 0
-				case ast.BRIEOptionWaitTiflashReady:
-					e.restoreCfg.WaitTiflashReady = opt.UintValue != 0
-				case ast.BRIEOptionWithSysTable:
-					e.restoreCfg.WithSysTable = opt.UintValue != 0
-		}}
+			case ast.BRIEOptionOnline:
+				e.restoreCfg.Online = opt.UintValue != 0
+			case ast.BRIEOptionWaitTiflashReady:
+				e.restoreCfg.WaitTiflashReady = opt.UintValue != 0
+			case ast.BRIEOptionWithSysTable:
+				e.restoreCfg.WithSysTable = opt.UintValue != 0
+			}
+		}
 
 	default:
 		b.err = errors.Errorf("unsupported BRIE statement kind: %s", s.Kind)
