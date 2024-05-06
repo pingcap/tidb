@@ -110,7 +110,7 @@ type IndexMergeReaderExecutor struct {
 	// fields about accessing partition tables
 	partitionTableMode bool                  // if this IndexMerge is accessing a partition table
 	prunedPartitions   []table.PhysicalTable // pruned partition tables need to access
-	partitionKeyRanges [][][]kv.KeyRange     // [partitionIdx][partialIndex][ranges]
+	partitionKeyRanges [][][]kv.KeyRange     // [partialIndex][partitionIdx][ranges]
 
 	// All fields above are immutable.
 
@@ -183,10 +183,21 @@ func (e *IndexMergeReaderExecutor) Open(_ context.Context) (err error) {
 			return err
 		}
 	} else {
-		e.partitionKeyRanges = make([][][]kv.KeyRange, len(e.prunedPartitions))
+		e.partitionKeyRanges = make([][][]kv.KeyRange, len(e.indexes))
+		tmpPartitionKeyRanges := make([][][]kv.KeyRange, len(e.prunedPartitions))
 		for i, p := range e.prunedPartitions {
-			if e.partitionKeyRanges[i], err = e.buildKeyRangesForTable(p); err != nil {
+			if tmpPartitionKeyRanges[i], err = e.buildKeyRangesForTable(p); err != nil {
 				return err
+			}
+		}
+		for i, idx := range e.indexes {
+			if idx != nil && idx.Global {
+				keyRange, _ := distsql.IndexRangesToKVRanges(e.ctx.GetDistSQLCtx(), e.table.Meta().ID, idx.ID, e.ranges[i])
+				e.partitionKeyRanges[i] = [][]kv.KeyRange{keyRange.FirstPartitionRange()}
+			} else {
+				for _, pKeyRanges := range tmpPartitionKeyRanges {
+					e.partitionKeyRanges[i] = append(e.partitionKeyRanges[i], pKeyRanges[i])
+				}
 			}
 		}
 	}
@@ -315,23 +326,6 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 	}()
 }
 
-func (e *IndexMergeReaderExecutor) getPartitalIndexKeyRanges(indexID int) (ret [][]kv.KeyRange) {
-	if !e.partitionTableMode {
-		return [][]kv.KeyRange{e.keyRanges[indexID]}
-	}
-
-	if idx := e.indexes[indexID]; idx != nil && idx.Global {
-		keyRange, _ := distsql.IndexRangesToKVRanges(e.ctx.GetDistSQLCtx(), e.table.Meta().ID, idx.ID, e.ranges[indexID])
-		ret = [][]kv.KeyRange{keyRange.FirstPartitionRange()}
-	} else {
-		for _, pKeyRanges := range e.partitionKeyRanges { // get all keyRanges related to this PartialIndex
-			ret = append(ret, pKeyRanges[indexID])
-		}
-	}
-
-	return ret
-}
-
 func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask, workID int) error {
 	failpoint.Inject("testIndexMergeResultChCloseEarly", func(_ failpoint.Value) {
 		// Wait for processWorker to close resultCh.
@@ -344,7 +338,12 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		e.dagPBs[workID].CollectExecutionSummaries = &collExec
 	}
 
-	keyRanges := e.getPartitalIndexKeyRanges(workID)
+	var keyRanges [][]kv.KeyRange
+	if e.partitionTableMode {
+		keyRanges = e.partitionKeyRanges[workID]
+	} else {
+		keyRanges = [][]kv.KeyRange{e.keyRanges[workID]}
+	}
 	failpoint.Inject("startPartialIndexWorkerErr", func() error {
 		return errors.New("inject an error before start partialIndexWorker")
 	})
