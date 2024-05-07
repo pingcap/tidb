@@ -275,6 +275,9 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			if !ok {
 				break
 			}
+			failpoint.Inject("mockAnalyzeSamplingResultPanic", func() {
+				panic("failpoint triggered")
+			})
 			if mergeResult.err != nil {
 				err = mergeResult.err
 				if isAnalyzeWorkerPanic(mergeResult.err) {
