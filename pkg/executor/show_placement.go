@@ -21,9 +21,9 @@ import (
 	gjson "encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -269,14 +269,26 @@ func (e *ShowExec) fetchAllPlacementPolicies() error {
 }
 
 func (e *ShowExec) fetchRangesPlacementPlocy(ctx context.Context) error {
-	fetchFn := func(ctx context.Context, rangeName string) error {
-		bundle, err := infosync.GetRuleBundle(ctx, rangeName)
+	fetchFn := func(ctx context.Context, rangeBundleID string) error {
+		policyName, err := ddl.GetRangePlacementPolicyName(ctx, rangeBundleID)
 		if err != nil {
 			return err
 		}
-		if bundle == nil || len(bundle.Rules) == 0 {
-			return nil
+		if policyName != "" {
+			startKeyHex, endKeyHex := placement.GetRangeStartAndEndKeyHex(rangeBundleID)
+			startKey, _ := hex.DecodeString(startKeyHex)
+			endKey, _ := hex.DecodeString(endKeyHex)
+			state, err := infosync.GetReplicationState(ctx, startKey, endKey)
+			if err != nil {
+				return err
+			}
+			policy, ok := e.is.PolicyByName(model.NewCIStr(policyName))
+			if !ok {
+				return errors.Errorf("Policy with name '%s' not found", policyName)
+			}
+			e.appendRow([]any{"RANGE " + rangeBundleID, policy.PlacementSettings.String(), state.String()})
 		}
+<<<<<<< HEAD
 		policyName := ""
 		startKey := []byte("")
 		endKey := []byte("")
@@ -302,6 +314,9 @@ func (e *ShowExec) fetchRangesPlacementPlocy(ctx context.Context) error {
 			return errors.Errorf("Policy with name '%s' not found", policyName)
 		}
 		e.appendRow([]interface{}{"RANGE " + rangeName, policy.PlacementSettings.String(), state.String()})
+=======
+
+>>>>>>> 65817ac7bb7 (placement: fix alter placement policy cannot update the relative ranges policy (#52254))
 		return nil
 	}
 	// try fetch ranges placement policy
