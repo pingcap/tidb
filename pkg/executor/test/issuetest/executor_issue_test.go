@@ -169,7 +169,7 @@ func TestIssue28650(t *testing.T) {
 }
 
 func TestIssue30289(t *testing.T) {
-	fpName := "github.com/pingcap/tidb/pkg/executor/issue30289"
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/issue30289"
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -592,7 +592,7 @@ func TestIssue42662(t *testing.T) {
 	tk.MustExec("set global tidb_server_memory_limit='1600MB'")
 	tk.MustExec("set global tidb_server_memory_limit_sess_min_size=128*1024*1024")
 	tk.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/issue42662_1", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1", `return(true)`))
 	// tk.Session() should be marked as MemoryTop1Tracker but not killed.
 	tk.MustQuery("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
 
@@ -604,7 +604,7 @@ func TestIssue42662(t *testing.T) {
 	tk.MustQuery("select count(*) from t1")
 	tk.MustQuery("select count(*) from t1")
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/issue42662_1"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2"))
 }
 

@@ -18,6 +18,7 @@ go_library(
         "//pkg/planner/util/costusage",
         "//pkg/planner/util/optimizetrace",
         "//pkg/types",
+        "//pkg/util/collate",
         "//pkg/util/execdetails",
         "//pkg/util/tracing",
         "@com_github_pingcap_tipb//go-tipb",

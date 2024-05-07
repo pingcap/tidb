@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package join_test
 
 import (
 	"context"
@@ -128,8 +128,8 @@ func TestIssue45716(t *testing.T) {
 	tk.MustExec("insert into t1 values (1), (2);")
 	tk.MustExec("insert into t2 values (1),(1),(2),(2);")
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/inlNewInnerPanic", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/inlNewInnerPanic")
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/inlNewInnerPanic", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/inlNewInnerPanic")
 	err := tk.QueryToErr("select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a;")
 	tk.MustContainErrMsg(err.Error(), "test inlNewInnerPanic")
 }

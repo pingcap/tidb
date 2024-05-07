@@ -168,12 +168,12 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 	case *LogicalShow:
 		str = "Show"
 		if pl := in.(*LogicalShow); pl.Extractor != nil {
-			str = str + "(" + pl.Extractor.explainInfo() + ")"
+			str = str + "(" + pl.Extractor.ExplainInfo() + ")"
 		}
 	case *PhysicalShow:
 		str = "Show"
 		if pl := in.(*PhysicalShow); pl.Extractor != nil {
-			str = str + "(" + pl.Extractor.explainInfo() + ")"
+			str = str + "(" + pl.Extractor.ExplainInfo() + ")"
 		}
 	case *LogicalShowDDLJobs, *PhysicalShowDDLJobs:
 		str = "ShowDDLJobs"

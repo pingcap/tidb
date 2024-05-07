@@ -1395,7 +1395,7 @@ type LogicalTableDual struct {
 type LogicalMemTable struct {
 	logicalSchemaProducer
 
-	Extractor MemTablePredicateExtractor
+	Extractor base.MemTablePredicateExtractor
 	DBName    model.CIStr
 	TableInfo *model.TableInfo
 	Columns   []*model.ColumnInfo
@@ -2228,7 +2228,7 @@ type LogicalShow struct {
 	logicalSchemaProducer
 	ShowContents
 
-	Extractor ShowPredicateExtractor
+	Extractor base.ShowPredicateExtractor
 }
 
 // LogicalShowDDLJobs is for showing DDL job list.

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package join
 
 import (
 	"sync"
@@ -52,9 +52,9 @@ func TestConcurrentMap(t *testing.T) {
 	// check whether i exist in the map, surely
 	for i := 0; i < iterations; i++ {
 		found := false
-		for en, ok := m.Get(uint64(i % mod)); en != nil; en = en.next {
+		for en, ok := m.Get(uint64(i % mod)); en != nil; en = en.Next {
 			require.True(t, ok)
-			if en.ptr.RowIdx == uint32(i) && en.ptr.ChkIdx == uint32(i) {
+			if en.Ptr.RowIdx == uint32(i) && en.Ptr.ChkIdx == uint32(i) {
 				found = true
 			}
 		}

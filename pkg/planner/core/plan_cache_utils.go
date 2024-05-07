@@ -394,7 +394,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
 	Plan              base.Plan
-	OutPutNames       []*types.FieldName
+	OutputColumns     types.NameSlice
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	memoryUsage       int64
 
@@ -430,7 +430,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		sum = unKnownMemoryUsage
 	}
 
-	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutPutNames))*size.SizeOfPointer +
+	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
 		size.SizeOfMap + int64(len(v.TblInfo2UnionScan))*(size.SizeOfPointer+size.SizeOfBool) + size.SizeOfInt64*2
 	if v.matchOpts != nil {
 		sum += int64(cap(v.matchOpts.ParamTypes)) * size.SizeOfPointer
@@ -439,7 +439,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		}
 	}
 
-	for _, name := range v.OutPutNames {
+	for _, name := range v.OutputColumns {
 		sum += name.MemoryUsage()
 	}
 	v.memoryUsage = sum
@@ -459,7 +459,7 @@ func NewPlanCacheValue(plan base.Plan, names []*types.FieldName, srcMap map[*mod
 	}
 	return &PlanCacheValue{
 		Plan:              plan,
-		OutPutNames:       names,
+		OutputColumns:     names,
 		TblInfo2UnionScan: dstMap,
 		matchOpts:         matchOpts,
 		stmtHints:         stmtHints.Clone(),
@@ -503,12 +503,10 @@ type PlanCacheStmt struct {
 	// TODO: caching execution info directly is risky and tricky to the optimizer, refactor it later.
 	PointGet struct {
 		ColumnInfos any
-		ColumnNames any
 		// Executor is only used for point get scene.
 		// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
 		// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
 		Executor any
-		Plan     any // the cached PointGet Plan
 	}
 
 	// below fields are for PointGet short path
