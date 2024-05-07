@@ -88,11 +88,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	sessVars := c.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	// handle the execute statement
-	var (
-		pointGetPlanShortPathOK bool
-		preparedObj             *plannercore.PlanCacheStmt
-	)
-
+	var preparedObj *plannercore.PlanCacheStmt
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if preparedObj, err = plannercore.GetPreparedStmt(execStmt, sessVars); err != nil {
 			return nil, err
