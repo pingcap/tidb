@@ -1187,7 +1187,7 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 						newFlen = oldFlen + incDecimal
 						newDecimal = oldDecimal + incDecimal
 					} else {
-						oldFlen, oldDecimal = newFlen, newDecimal
+						newFlen, newDecimal = oldFlen, oldDecimal
 					}
 				}
 			}
