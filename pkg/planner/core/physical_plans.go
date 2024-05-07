@@ -839,7 +839,7 @@ type PhysicalMemTable struct {
 	Table          *model.TableInfo
 	Columns        []*model.ColumnInfo
 	Extractor      base.MemTablePredicateExtractor
-	QueryTimeRange QueryTimeRange
+	QueryTimeRange util.QueryTimeRange
 }
 
 // MemoryUsage return the memory usage of PhysicalMemTable
