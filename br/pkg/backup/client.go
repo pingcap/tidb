@@ -931,7 +931,6 @@ func (bc *Client) getBackupStores(ctx context.Context, replicaReadLabel map[stri
 		return nil, errors.Errorf("no store matches replica read label: %v", replicaReadLabel)
 	}
 	return targetStores, nil
-
 }
 
 // infinite loop to backup ranges on all tikv stores
@@ -978,16 +977,17 @@ func (bc *Client) executePushdownBackup(
 
 mainLoop:
 	for {
+		childCtx, cancel := context.WithCancel(ctx)
 		// Compute the left ranges
 		iter := globalProgressTree.Iter()
 		inCompleteRanges := iter.GetIncompleteRanges()
 		if len(inCompleteRanges) == 0 {
 			// all range backuped
+			cancel()
 			return nil
 		}
 
 		round += 1
-		childCtx, cancel := context.WithCancel(ctx)
 		BackupResponseCh := make(chan *responseAndStore)
 
 		request.SubRanges = getBackupRanges(inCompleteRanges)
@@ -1013,6 +1013,7 @@ mainLoop:
 
 		select {
 		case <-ctx.Done():
+			cancel()
 			return ctx.Err()
 		case storeBackupInfo := <-stateChan:
 			if storeBackupInfo.All {
@@ -1045,6 +1046,7 @@ mainLoop:
 				if err != nil {
 					logutil.CL(ctx).Error("failed to update the backup response",
 						zap.Reflect("error", err))
+					cancel()
 					return err
 				}
 				if bc.checkpointRunner != nil {
@@ -1073,6 +1075,7 @@ mainLoop:
 						errMsg = errPb.Msg
 					}
 					// TODO output a precise store address. @3pointer
+					cancel()
 					return errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v: %s",
 						storeID,
 						errMsg,
