@@ -847,13 +847,6 @@ func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema
 	switch stmt.PointGet.Plan.(type) {
 	case *PointGetPlan:
 		return true
-	case *Update:
-		pointUpdate := stmt.PointGet.Plan.(*Update)
-		if _, ok := pointUpdate.SelectPlan.(*PointGetPlan); !ok {
-			stmt.PointGet.Plan = nil
-			return false
-		}
-		return true
 	default:
 		return false
 	}
