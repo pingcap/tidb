@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package join
 
 import (
 	"fmt"
@@ -119,13 +119,13 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	chk0, colTypes := initBuildChunk(numRows)
 	chk1, _ := initBuildChunk(numRows)
 
-	hCtx := &hashContext{
-		allTypes:  colTypes[1:3],
-		keyColIdx: []int{1, 2},
+	hCtx := &HashContext{
+		AllTypes:  colTypes[1:3],
+		KeyColIdx: []int{1, 2},
 	}
-	hCtx.hasNull = make([]bool, numRows)
+	hCtx.HasNull = make([]bool, numRows)
 	for i := 0; i < numRows; i++ {
-		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
+		hCtx.HashVals = append(hCtx.HashVals, hashFunc())
 	}
 	rowContainer := newHashRowContainer(sctx, hCtx, colTypes)
 	copiedRC = rowContainer.ShallowCopy()
@@ -140,24 +140,24 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	err = rowContainer.PutChunk(chk1, nil)
 	require.NoError(t, err)
 	rowContainer.ActionSpill().(*chunk.SpillDiskAction).WaitForTest()
-	require.Equal(t, spill, rowContainer.alreadySpilledSafeForTest())
+	require.Equal(t, spill, rowContainer.AlreadySpilledSafeForTest())
 	require.Equal(t, spill, rowContainer.rowContainer.GetMemTracker().BytesConsumed() == 0)
 	require.Equal(t, !spill, rowContainer.rowContainer.GetMemTracker().BytesConsumed() > 0)
 	require.True(t, rowContainer.GetMemTracker().BytesConsumed() > 0) // hashtable need memory
-	if rowContainer.alreadySpilledSafeForTest() {
+	if rowContainer.AlreadySpilledSafeForTest() {
 		require.NotNil(t, rowContainer.GetDiskTracker())
 		require.True(t, rowContainer.GetDiskTracker().BytesConsumed() > 0)
 	}
 
 	probeChk, probeColType := initProbeChunk(2)
 	probeRow := probeChk.GetRow(1)
-	probeCtx := &hashContext{
-		allTypes:  probeColType[1:3],
-		keyColIdx: []int{1, 2},
+	probeCtx := &HashContext{
+		AllTypes:  probeColType[1:3],
+		KeyColIdx: []int{1, 2},
 	}
-	probeCtx.hasNull = make([]bool, 1)
-	probeCtx.hashVals = append(hCtx.hashVals, hashFunc())
-	matched, _, err := rowContainer.GetMatchedRowsAndPtrs(hCtx.hashVals[1].Sum64(), probeRow, probeCtx, nil, nil, false)
+	probeCtx.HasNull = make([]bool, 1)
+	probeCtx.HashVals = append(hCtx.HashVals, hashFunc())
+	matched, _, err := rowContainer.GetMatchedRowsAndPtrs(hCtx.HashVals[1].Sum64(), probeRow, probeCtx, nil, nil, false)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(matched))
 	require.Equal(t, chk0.GetRow(1).GetDatumRow(colTypes), matched[0].GetDatumRow(colTypes))
@@ -166,7 +166,7 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 }
 
 func TestConcurrentMapHashTableMemoryUsage(t *testing.T) {
-	m := newConcurrentMapHashTable()
+	m := NewConcurrentMapHashTable()
 	var iterations = 1024 * hack.LoadFactorNum / hack.LoadFactorDen // 6656
 	wg := &sync.WaitGroup{}
 	wg.Add(2)

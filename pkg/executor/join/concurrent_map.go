@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package join
 
 import (
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -52,7 +52,7 @@ func (m concurrentMap) Insert(key uint64, value *entry) (memDelta int64) {
 	shard := m.getShard(key)
 	shard.Lock()
 	oldValue := shard.items[key]
-	value.next = oldValue
+	value.Next = oldValue
 	shard.items[key] = value
 	if len(shard.items) > (1<<shard.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 		memDelta = hack.DefBucketMemoryUsageForMapIntToPtr * (1 << shard.bInMap)
