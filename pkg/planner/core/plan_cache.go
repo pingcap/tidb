@@ -313,15 +313,6 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		return nil, nil, err
 	}
 
-	// specially check for PointGet
-	if sctx.GetSessionVars().StmtCtx.UseCache() {
-		if _, ok := p.(*PointGetPlan); ok {
-			if _, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx.GetSessionVars(), p); err != nil {
-				return nil, nil, err
-			}
-		}
-	}
-
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache() {
 		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
