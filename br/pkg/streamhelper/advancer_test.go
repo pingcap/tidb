@@ -542,6 +542,34 @@ func TestCheckPointResume(t *testing.T) {
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 }
 
+func TestUnregisterAfterPause(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1 * time.Minute
+	})
+	adv.StartTaskListener(ctx)
+	c.advanceClusterTimeBy(1 * time.Minute)
+	require.NoError(t, adv.OnTick(ctx))
+	env.PauseTask(ctx,"whole")
+	time.Sleep(1 * time.Second)
+	c.advanceClusterTimeBy(1 * time.Minute)
+	require.NoError(t, adv.OnTick(ctx))
+	env.unregisterTask()
+	env.putTask()
+	time.Sleep(1 * time.Second)
+	require.Eventually(t, func() bool {
+		return assert.ErrorContains(t, adv.OnTick(ctx), "check point lagged too large")
+	}, 5*time.Second, 100*time.Millisecond)
+}
+
 func TestOwnershipLost(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	c.splitAndScatter(manyRegions(0, 10240)...)
