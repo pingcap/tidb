@@ -786,6 +786,7 @@ func (t *TableInfo) GetPkColInfo() *ColumnInfo {
 
 // GetAutoIncrementColInfo gets the ColumnInfo of auto_increment column if exists.
 func (t *TableInfo) GetAutoIncrementColInfo() *ColumnInfo {
+	// just to make a change
 	for _, colInfo := range t.Columns {
 		if mysql.HasAutoIncrementFlag(colInfo.GetFlag()) {
 			return colInfo
