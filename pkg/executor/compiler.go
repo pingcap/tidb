@@ -127,14 +127,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	}
 	// Use cached plan if possible.
 	if plannercore.IsPointGetPlanShortPathOK(c.Ctx, is, preparedObj) {
-		if ep, ok := stmt.Plan.(*plannercore.Execute); ok {
-			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
-				stmtCtx.SetPlan(stmt.Plan)
-				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
-				stmt.Plan = pointPlan
-				stmt.PsStmt = preparedObj
-			}
-		}
+		stmtCtx.SetPlan(stmt.Plan)
+		stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
+		stmt.Plan = preparedObj.PointGet.Plan.(base.Plan)
+		stmt.PsStmt = preparedObj
 	}
 
 	// Perform optimization and initialization related to the transaction level.
