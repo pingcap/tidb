@@ -59,3 +59,39 @@ func TestPanicInHandleAnalyzeWorkerPanic(t *testing.T) {
 	}()
 	tk.MustExecToErr("analyze table tbl_2;")
 }
+
+func TestAnalyzeSamplingWorkPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12)")
+	tk.MustExec("split table t between (-9223372036854775808) and (9223372036854775807) regions 12")
+
+	for i := 0; i < 10; i++ {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeSamplingBuildWorkerPanic", "return(1)"))
+		err := tk.ExecToErr("analyze table t")
+		require.NotNil(t, err)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeSamplingBuildWorkerPanic"))
+	}
+}
+
+func TestAnalyzeSamplingResultPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11), (12)")
+	tk.MustExec("split table t between (-9223372036854775808) and (9223372036854775807) regions 12")
+
+	for i := 0; i < 10; i++ {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeSamplingResultPanic", "return(1)"))
+		err := tk.ExecToErr("analyze table t")
+		require.NotNil(t, err)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeSamplingResultPanic"))
+	}
+}
