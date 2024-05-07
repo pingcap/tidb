@@ -48,6 +48,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 //revive:disable:exported
@@ -2724,6 +2725,66 @@ func (cli *TestServerClient) RunTestConnectionCount(t *testing.T) {
 		}
 		resourceGroupConnCountReached(t, "default", 0.0)
 		resourceGroupConnCountReached(t, "test", 0.0)
+	})
+}
+
+func (cli *TestServerClient) RunTestTypeAndCharsetOfSendLongData(t *testing.T) {
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "CREATE TABLE t (j JSON);")
+		require.NoError(t, err)
+
+		str := `"` + strings.Repeat("a", 1024) + `"`
+		stmt, err := conn.PrepareContext(ctx, "INSERT INTO t VALUES (cast(? as JSON));")
+		require.NoError(t, err)
+		_, err = stmt.ExecContext(ctx, str)
+		require.NoError(t, err)
+		result, err := conn.QueryContext(ctx, "SELECT j FROM t;")
+		require.NoError(t, err)
+
+		for result.Next() {
+			var j string
+			require.NoError(t, result.Scan(&j))
+			require.Equal(t, str, j)
+		}
+	})
+
+	str := strings.Repeat("你好", 1024)
+	enc := simplifiedchinese.GBK.NewEncoder()
+	gbkStr, err := enc.String(str)
+	require.NoError(t, err)
+
+	cli.RunTests(t, func(config *mysql.Config) {
+		config.MaxAllowedPacket = 1024
+		config.Params["charset"] = "gbk"
+	}, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "drop table t")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "CREATE TABLE t (t TEXT);")
+		require.NoError(t, err)
+
+		stmt, err := conn.PrepareContext(ctx, "INSERT INTO t VALUES (?);")
+		require.NoError(t, err)
+		_, err = stmt.ExecContext(ctx, gbkStr)
+		require.NoError(t, err)
+
+		result, err := conn.QueryContext(ctx, "SELECT * FROM t;")
+		require.NoError(t, err)
+
+		for result.Next() {
+			var txt string
+			require.NoError(t, result.Scan(&txt))
+			require.Equal(t, gbkStr, txt)
+		}
 	})
 }
 

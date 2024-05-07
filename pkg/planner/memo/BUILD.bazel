@@ -13,6 +13,7 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/planner/core",
+        "//pkg/planner/core/base",
         "//pkg/planner/pattern",
         "//pkg/planner/property",
     ],
@@ -37,6 +38,7 @@ go_test(
         "//pkg/parser",
         "//pkg/parser/model",
         "//pkg/planner/core",
+        "//pkg/planner/core/base",
         "//pkg/planner/pattern",
         "//pkg/planner/property",
         "//pkg/sessionctx/variable",

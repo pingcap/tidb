@@ -23,6 +23,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/checksum",
+        "//br/pkg/errors",
         "//br/pkg/logutil",
         "//br/pkg/membuf",
         "//br/pkg/pdutil",
@@ -59,6 +60,7 @@ go_library(
         "//pkg/util/compress",
         "//pkg/util/engine",
         "//pkg/util/hack",
+        "//pkg/util/logutil",
         "//pkg/util/mathutil",
         "//pkg/util/ranger",
         "@com_github_cockroachdb_pebble//:pebble",

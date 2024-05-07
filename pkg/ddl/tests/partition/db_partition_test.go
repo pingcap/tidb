@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -50,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -1456,7 +1456,9 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk3.MustExec(`begin`)
 	tk3.MustExec(`use test`)
 	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("IndexRangeScan")
+	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Selection")
 	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("IndexRangeScan")
+	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Selection")
 	tk3.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
 	tk3.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
 	// Here it will fail with
@@ -2105,7 +2107,6 @@ func TestExchangePartitionHook(t *testing.T) {
 func TestExchangePartitionAutoID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 
@@ -2188,7 +2189,7 @@ func checkPartitionDelRangeDone(t *testing.T, tk *testkit.TestKit, store kv.Stor
 	done := waitGCDeleteRangeDone(t, tk, oldPID)
 	if !done {
 		// Takes too long, give up the check.
-		logutil.BgLogger().Info("truncate partition table",
+		logutil.DDLLogger().Info("truncate partition table",
 			zap.Int64("id", oldPID),
 			zap.Stringer("duration", time.Since(startTime)),
 		)
@@ -2572,7 +2573,7 @@ func TestDropSchemaWithPartitionTable(t *testing.T) {
 	done := waitGCDeleteRangeDone(t, tk, tableIDs[2])
 	if !done {
 		// Takes too long, give up the check.
-		logutil.BgLogger().Info("drop schema",
+		logutil.DDLLogger().Info("drop schema",
 			zap.Int64("id", tableIDs[0]),
 			zap.Stringer("duration", time.Since(startTime)),
 		)
@@ -3178,20 +3179,21 @@ func TestRemoveListColumnsPartitioning(t *testing.T) {
 
 func TestRemovePartitioningAutoIDs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	tk1 := testkit.NewTestKit(t, store)
-
 	dbName := "RemovePartAutoIDs"
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+
 	tk1.MustExec(`create schema ` + dbName)
 	tk1.MustExec(`use ` + dbName)
+	tk2.MustExec(`use ` + dbName)
+	tk3.MustExec(`use ` + dbName)
+
 	tk1.MustExec(`CREATE TABLE t (a int auto_increment primary key nonclustered, b varchar(255), key (b)) partition by hash(a) partitions 3`)
 	tk1.MustExec(`insert into t values (11,11),(2,2),(null,12)`)
 	tk1.MustExec(`insert into t values (null,18)`)
 	tk1.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows("13 11 11", "14 2 2", "15 12 12", "17 16 18"))
 
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec(`use ` + dbName)
-	tk3 := testkit.NewTestKit(t, store)
-	tk3.MustExec(`use ` + dbName)
 	waitFor := func(col int, tableName, s string) {
 		for {
 			tk4 := testkit.NewTestKit(t, store)
@@ -3206,7 +3208,7 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 				for j := range res[i] {
 					strs = append(strs, res[i][j].(string))
 				}
-				logutil.BgLogger().Info("ddl jobs", zap.Strings("jobs", strs))
+				logutil.DDLLogger().Info("ddl jobs", zap.Strings("jobs", strs))
 			}
 			time.Sleep(10 * time.Millisecond)
 		}

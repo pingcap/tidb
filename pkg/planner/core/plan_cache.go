@@ -26,19 +26,19 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -57,7 +57,7 @@ type PlanCacheKeyTestIssue46760 struct{}
 type PlanCacheKeyTestIssue47133 struct{}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
-func SetParameterValuesIntoSCtx(sctx PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
+func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
 	vars.PlanCacheParams.Reset()
 	for i, usingParam := range params {
@@ -106,13 +106,37 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		return errors.Trace(err)
 	}
 
-	// step 3: check schema version
-	if stmt.SchemaVersion != is.SchemaMetaVersion() {
+	// step 3: add metadata lock and check each table's schema version
+	schemaNotMatch := false
+	for i := 0; i < len(stmt.dbName); i++ {
+		_, ok := is.TableByID(stmt.tbls[i].Meta().ID)
+		if !ok {
+			tblByName, err := is.TableByName(stmt.dbName[i], stmt.tbls[i].Meta().Name)
+			if err != nil {
+				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+			}
+			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
+			stmt.tbls[i] = tblByName
+			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().Revision
+		}
+		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+		if err != nil {
+			schemaNotMatch = true
+			continue
+		}
+		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
+			schemaNotMatch = true
+		}
+		stmt.tbls[i] = newTbl
+		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
+	}
+
+	// step 4: check schema version
+	if schemaNotMatch || stmt.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
 		// Cached plan in prepared struct does NOT have a "cache key" with
 		// schema version like prepared plan cache key
-		stmt.PointGet.Plan = nil
 		stmt.PointGet.Executor = nil
 		stmt.PointGet.ColumnInfos = nil
 		// If the schema version has changed we need to preprocess it again,
@@ -129,7 +153,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		stmt.SchemaVersion = is.SchemaMetaVersion()
 	}
 
-	// step 4: handle expiration
+	// step 5: handle expiration
 	// If the lastUpdateTime less than expiredTimeStamp4PC,
 	// it means other sessions have executed 'admin flush instance plan_cache'.
 	// So we need to clear the current session's plan cache.
@@ -137,9 +161,9 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()
 	if stmt.StmtCacheable && expiredTimeStamp4PC.Compare(vars.LastUpdateTime4PC) > 0 {
 		sctx.GetSessionPlanCache().DeleteAll()
-		stmt.PointGet.Plan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
+
 	return nil
 }
 
@@ -149,7 +173,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 // isNonPrepared indicates whether to use the non-prepared plan cache or the prepared plan cache.
 func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt,
-	params []expression.Expression) (plan Plan, names []*types.FieldName, err error) {
+	params []expression.Expression) (plan base.Plan, names []*types.FieldName, err error) {
 	if err := planCachePreprocess(ctx, sctx, isNonPrepared, is, stmt, params); err != nil {
 		return nil, nil, err
 	}
@@ -159,23 +183,25 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	stmtCtx := sessVars.StmtCtx
 	cacheEnabled := false
 	if isNonPrepared {
-		stmtCtx.CacheType = stmtctx.SessionNonPrepared
+		stmtCtx.SetCacheType(contextutil.SessionNonPrepared)
 		cacheEnabled = sctx.GetSessionVars().EnableNonPreparedPlanCache // plan-cache might be disabled after prepare.
 	} else {
-		stmtCtx.CacheType = stmtctx.SessionPrepared
+		stmtCtx.SetCacheType(contextutil.SessionPrepared)
 		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache
 	}
-	stmtCtx.UseCache = stmt.StmtCacheable && cacheEnabled
+	if stmt.StmtCacheable && cacheEnabled {
+		stmtCtx.EnablePlanCache()
+	}
 	if stmt.UncacheableReason != "" {
-		stmtCtx.ForceSetSkipPlanCache(errors.NewNoStackError(stmt.UncacheableReason))
+		stmtCtx.WarnSkipPlanCache(stmt.UncacheableReason)
 	}
 
 	var bindSQL string
-	if stmtCtx.UseCache {
+	if stmtCtx.UseCache() {
 		var ignoreByBinding bool
 		bindSQL, ignoreByBinding = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
 		if ignoreByBinding {
-			stmtCtx.SetSkipPlanCache(errors.Errorf("ignore plan cache by binding"))
+			stmtCtx.SetSkipPlanCache("ignore plan cache by binding")
 		}
 	}
 
@@ -183,7 +209,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
 	var latestSchemaVersion int64
 
-	if stmtCtx.UseCache {
+	if stmtCtx.UseCache() {
 		if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || stmt.ForUpdateRead {
 			// In Rc or ForUpdateRead, we should check if the information schema has been changed since
 			// last time. If it changed, we should rebuild the plan. Here, we use a different and more
@@ -191,14 +217,9 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
 		}
 		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), stmt.StmtText,
-			stmt.StmtDB, stmt.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
+			stmt.StmtDB, stmt.SchemaVersion, latestSchemaVersion, bindSQL,
+			expression.ExprPushDownBlackListReloadTimeStamp.Load(), stmt.RelateVersion); err != nil {
 			return nil, nil, err
-		}
-	}
-
-	if stmtCtx.UseCache && stmt.PointGet.Plan != nil { // special code path for fast point plan
-		if plan, names, ok, err := getCachedPointPlan(stmt, sessVars, stmtCtx); ok {
-			return plan, names, err
 		}
 	}
 
@@ -206,7 +227,8 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return nil, nil, err
 	}
-	if stmtCtx.UseCache { // for non-point plans
+
+	if stmtCtx.UseCache() {
 		if plan, names, ok, err := getCachedPlan(sctx, isNonPrepared, cacheKey, bindSQL, is, stmt, matchOpts); err != nil || ok {
 			return plan, names, err
 		}
@@ -235,34 +257,8 @@ func parseParamTypes(sctx sessionctx.Context, params []expression.Expression) (p
 	return
 }
 
-func getCachedPointPlan(stmt *PlanCacheStmt, sessVars *variable.SessionVars, stmtCtx *stmtctx.StatementContext) (Plan,
-	[]*types.FieldName, bool, error) {
-	// short path for point-get plans
-	// Rewriting the expression in the select.where condition  will convert its
-	// type from "paramMarker" to "Constant".When Point Select queries are executed,
-	// the expression in the where condition will not be evaluated,
-	// so you don't need to consider whether prepared.useCache is enabled.
-	plan := stmt.PointGet.Plan.(Plan)
-	names := stmt.PointGet.ColumnNames.(types.NameSlice)
-	if !RebuildPlan4CachedPlan(plan) {
-		return nil, nil, false, nil
-	}
-	if metrics.ResettablePlanCacheCounterFortTest {
-		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
-	} else {
-		// only for prepared plan cache
-		core_metrics.GetPlanCacheHitCounter(false).Inc()
-	}
-	sessVars.FoundInPlanCache = true
-	stmtCtx.PointExec = true
-	if pointGetPlan, ok := plan.(*PointGetPlan); ok && pointGetPlan != nil && pointGetPlan.stmtHints != nil {
-		sessVars.StmtCtx.StmtHints = *pointGetPlan.stmtHints
-	}
-	return plan, names, true, nil
-}
-
 func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache.Key, bindSQL string,
-	is infoschema.InfoSchema, stmt *PlanCacheStmt, matchOpts *utilpc.PlanCacheMatchOpts) (Plan,
+	is infoschema.InfoSchema, stmt *PlanCacheStmt, matchOpts *utilpc.PlanCacheMatchOpts) (base.Plan,
 	[]*types.FieldName, bool, error) {
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -299,14 +295,14 @@ func getCachedPlan(sctx sessionctx.Context, isNonPrepared bool, cacheKey kvcache
 	}
 	stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	stmtCtx.StmtHints = *cachedVal.stmtHints
-	return cachedVal.Plan, cachedVal.OutPutNames, true, nil
+	return cachedVal.Plan, cachedVal.OutputColumns, true, nil
 }
 
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
 	stmt *PlanCacheStmt, cacheKey kvcache.Key, latestSchemaVersion int64, bindSQL string,
-	matchOpts *utilpc.PlanCacheMatchOpts) (Plan, []*types.FieldName, error) {
+	matchOpts *utilpc.PlanCacheMatchOpts) (base.Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -318,25 +314,25 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	if err != nil {
 		return nil, nil, err
 	}
-	err = tryCachePointPlan(ctx, sctx.GetPlanCtx(), stmt, p, names)
+	err = tryCachePointPlan(ctx, sctx.GetPlanCtx(), stmt, p)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// check whether this plan is cacheable.
-	if stmtCtx.UseCache {
+	if stmtCtx.UseCache() {
 		if cacheable, reason := isPlanCacheable(sctx.GetPlanCtx(), p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
-			stmtCtx.SetSkipPlanCache(errors.Errorf(reason))
+			stmtCtx.SetSkipPlanCache(reason)
 		}
 	}
 
 	// put this plan into the plan cache.
-	if stmtCtx.UseCache {
+	if stmtCtx.UseCache() {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmtAst.Stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
 			if cacheKey, err = NewPlanCacheKey(sessVars, stmt.StmtText, stmt.StmtDB,
-				stmt.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load()); err != nil {
+				stmt.SchemaVersion, latestSchemaVersion, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), stmt.RelateVersion); err != nil {
 				return nil, nil, err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
@@ -352,9 +348,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 }
 
 // RebuildPlan4CachedPlan will rebuild this plan under current user parameters.
-func RebuildPlan4CachedPlan(p Plan) (ok bool) {
+func RebuildPlan4CachedPlan(p base.Plan) (ok bool) {
 	sc := p.SCtx().GetSessionVars().StmtCtx
-	if !sc.UseCache {
+	if !sc.UseCache() {
 		return false // plan-cache is disabled for this query
 	}
 
@@ -364,7 +360,7 @@ func RebuildPlan4CachedPlan(p Plan) (ok bool) {
 		sc.AppendWarning(errors.NewNoStackErrorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
 		return false // fail to rebuild ranges
 	}
-	if !sc.UseCache {
+	if !sc.UseCache() {
 		// in this case, the UseCache flag changes from `true` to `false`, then there must be some
 		// over-optimized operations were triggered, return `false` for safety here.
 		return false
@@ -372,7 +368,7 @@ func RebuildPlan4CachedPlan(p Plan) (ok bool) {
 	return true
 }
 
-func updateRange(p PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
+func updateRange(p base.PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
 	switch x := p.(type) {
 	case *PhysicalTableScan:
 		x.Ranges = ranges
@@ -398,7 +394,7 @@ func updateRange(p PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
 //     generated, its complete ranges are ['a','a'], ['b','b'], ['c','c'], whose mem usage is under range mem limit 100B.
 //     When the cached plan is hit, the complete ranges may become ['aaa','aaa'], ['bbb','bbb'], ['ccc','ccc'], whose mem
 //     usage exceeds range mem limit 100B, and range fallback happens and tidb may fetch more rows than users expect.
-func rebuildRange(p Plan) error {
+func rebuildRange(p base.Plan) error {
 	sctx := p.SCtx()
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
@@ -615,7 +611,7 @@ func rebuildRange(p Plan) error {
 		}
 		// We don't need to handle the indexMerge.TablePlans, because the tablePlans
 		// only can be (Selection) + TableRowIDScan. There have no range need to rebuild.
-	case PhysicalPlan:
+	case base.PhysicalPlan:
 		for _, child := range x.Children() {
 			err = rebuildRange(child)
 			if err != nil {
@@ -638,7 +634,7 @@ func rebuildRange(p Plan) error {
 	return nil
 }
 
-func convertConstant2Datum(ctx PlanContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
+func convertConstant2Datum(ctx base.PlanContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
 	val, err := con.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		return nil, err
@@ -656,7 +652,7 @@ func convertConstant2Datum(ctx PlanContext, con *expression.Constant, target *ty
 	return &dVal, nil
 }
 
-func buildRangeForTableScan(sctx PlanContext, ts *PhysicalTableScan) (err error) {
+func buildRangeForTableScan(sctx base.PlanContext, ts *PhysicalTableScan) (err error) {
 	if ts.Table.IsCommonHandle {
 		pk := tables.FindPrimaryIndex(ts.Table)
 		pkCols := make([]*expression.Column, 0, len(pk.Columns))
@@ -721,7 +717,7 @@ func buildRangeForTableScan(sctx PlanContext, ts *PhysicalTableScan) (err error)
 	return
 }
 
-func buildRangeForIndexScan(sctx PlanContext, is *PhysicalIndexScan) (err error) {
+func buildRangeForIndexScan(sctx base.PlanContext, is *PhysicalIndexScan) (err error) {
 	if len(is.IdxCols) == 0 {
 		if ranger.HasFullRange(is.Ranges, false) { // the original range is already a full-range.
 			is.Ranges = ranger.FullRange()
@@ -778,9 +774,9 @@ func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
-func tryCachePointPlan(_ context.Context, sctx PlanContext,
-	stmt *PlanCacheStmt, p Plan, names types.NameSlice) error {
-	if !sctx.GetSessionVars().StmtCtx.UseCache {
+func tryCachePointPlan(_ context.Context, sctx base.PlanContext,
+	stmt *PlanCacheStmt, p base.Plan) error {
+	if !sctx.GetSessionVars().StmtCtx.UseCache() {
 		return nil
 	}
 	var (
@@ -800,8 +796,6 @@ func tryCachePointPlan(_ context.Context, sctx PlanContext,
 
 	if ok {
 		// just cache point plan now
-		stmt.PointGet.Plan = p
-		stmt.PointGet.ColumnNames = names
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		sctx.GetSessionVars().StmtCtx.SetPlan(p)
 		sctx.GetSessionVars().StmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
@@ -812,8 +806,8 @@ func tryCachePointPlan(_ context.Context, sctx PlanContext,
 // IsPointGetPlanShortPathOK check if we can execute using plan cached in prepared structure
 // Be careful with the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
-func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt) (bool, error) {
-	if stmt.PointGet.Plan == nil || staleread.IsStmtStaleness(sctx) {
+func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, plan base.Plan) (bool, error) {
+	if staleread.IsStmtStaleness(sctx) {
 		return false, nil
 	}
 	// check auto commit
@@ -821,7 +815,6 @@ func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema
 		return false, nil
 	}
 	if stmt.SchemaVersion != is.SchemaMetaVersion() {
-		stmt.PointGet.Plan = nil
 		stmt.PointGet.ColumnInfos = nil
 		return false, nil
 	}
@@ -829,15 +822,14 @@ func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema
 	// only point select/update will be cached, see "getPhysicalPlan" func
 	var ok bool
 	var err error
-	switch stmt.PointGet.Plan.(type) {
+	switch plan.(type) {
 	case *PointGetPlan:
 		ok = true
 	case *Update:
-		pointUpdate := stmt.PointGet.Plan.(*Update)
+		pointUpdate := plan.(*Update)
 		_, ok = pointUpdate.SelectPlan.(*PointGetPlan)
 		if !ok {
 			err = errors.Errorf("cached update plan not point update")
-			stmt.PointGet.Plan = nil
 			return false, err
 		}
 	default:

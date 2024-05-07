@@ -200,6 +200,7 @@ type TxnCtxNoNeedToRestore struct {
 	InfoSchema  any
 	History     any
 	StartTS     uint64
+	StaleReadTs uint64
 
 	// ShardStep indicates the max size of continuous rowid shard in one transaction.
 	ShardStep    int
