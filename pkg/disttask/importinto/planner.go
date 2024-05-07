@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -362,6 +363,14 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 			},
 		}, nil)
 	})
+
+	pdCli := planCtx.SessionCtx.GetStore().(tidbkv.StorageWithPD).GetPDClient()
+	pTS, lTS, err := pdCli.GetTS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ts := oracle.ComposeTS(pTS, lTS)
+
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
 		splitter, err1 := getRangeSplitter(ctx, controller.GlobalSortStore, kvMeta)
@@ -409,6 +418,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 					StatFiles:      statFiles,
 					RangeSplitKeys: rangeSplitKeys,
 					RangeSplitSize: splitter.GetRangeSplitSize(),
+					TS:             ts,
 				}
 				specs = append(specs, &WriteIngestSpec{m})
 

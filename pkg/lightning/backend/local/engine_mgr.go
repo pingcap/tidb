@@ -267,8 +267,8 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 	}
 	if engine.TS == 0 && cfg.TS > 0 {
 		engine.TS = cfg.TS
-		// even if we don't saveEngineMeta and the engine metadata is lost, we can rely
-		// on the caller use the same TS to open the engine again.
+		// we don't saveEngineMeta here, we can rely on the caller use the same TS to
+		// open the engine again.
 	}
 	if err = em.allocateTSIfNotExists(ctx, engine); err != nil {
 		return errors.Trace(err)
@@ -350,7 +350,7 @@ func (em *engineManager) closeEngine(
 		engine.db.Store(db)
 		engine.sstIngester = dbSSTIngester{e: engine}
 		if err = engine.loadEngineMeta(); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		em.engines.Store(engineUUID, engine)
 		return nil
