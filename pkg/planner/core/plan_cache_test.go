@@ -1535,4 +1535,3 @@ func BenchmarkNonPreparedPlanCacheDML(b *testing.B) {
 		tk.MustExec("delete from t where a = 2")
 	}
 }
-
