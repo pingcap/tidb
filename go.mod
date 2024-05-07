@@ -90,8 +90,8 @@ require (
 	github.com/stretchr/testify v1.8.0
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-        github.com/tikv/client-go/v2 v2.0.4-0.20231020030327-4ecf7c282e37
-        github.com/tikv/pd/client v0.0.0-20230904040343-947701a32c05
+	github.com/tikv/client-go/v2 v2.0.4-0.20231020030327-4ecf7c282e37
+	github.com/tikv/pd/client v0.0.0-20230904040343-947701a32c05
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -275,3 +275,5 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+replace github.com/tikv/client-go/v2 => github.com/zyguan/client-go/v2 v2.0.0-alpha.0.20240110111729-6e9a19b9e654
