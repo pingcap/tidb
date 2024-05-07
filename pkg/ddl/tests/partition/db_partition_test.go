@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -50,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -1456,7 +1456,9 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk3.MustExec(`begin`)
 	tk3.MustExec(`use test`)
 	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("IndexRangeScan")
+	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Selection")
 	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("IndexRangeScan")
+	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Selection")
 	tk3.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
 	tk3.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
 	// Here it will fail with
@@ -2187,7 +2189,7 @@ func checkPartitionDelRangeDone(t *testing.T, tk *testkit.TestKit, store kv.Stor
 	done := waitGCDeleteRangeDone(t, tk, oldPID)
 	if !done {
 		// Takes too long, give up the check.
-		logutil.BgLogger().Info("truncate partition table",
+		logutil.DDLLogger().Info("truncate partition table",
 			zap.Int64("id", oldPID),
 			zap.Stringer("duration", time.Since(startTime)),
 		)
@@ -2571,7 +2573,7 @@ func TestDropSchemaWithPartitionTable(t *testing.T) {
 	done := waitGCDeleteRangeDone(t, tk, tableIDs[2])
 	if !done {
 		// Takes too long, give up the check.
-		logutil.BgLogger().Info("drop schema",
+		logutil.DDLLogger().Info("drop schema",
 			zap.Int64("id", tableIDs[0]),
 			zap.Stringer("duration", time.Since(startTime)),
 		)
@@ -3206,7 +3208,7 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 				for j := range res[i] {
 					strs = append(strs, res[i][j].(string))
 				}
-				logutil.BgLogger().Info("ddl jobs", zap.Strings("jobs", strs))
+				logutil.DDLLogger().Info("ddl jobs", zap.Strings("jobs", strs))
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
