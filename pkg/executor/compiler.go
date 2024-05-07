@@ -88,16 +88,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	sessVars := c.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	// handle the execute statement
-	var (
-		pointGetPlanShortPathOK bool
-		preparedObj             *plannercore.PlanCacheStmt
-	)
+	var preparedObj *plannercore.PlanCacheStmt
 
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if preparedObj, err = plannercore.GetPreparedStmt(execStmt, sessVars); err != nil {
-			return nil, err
-		}
-		if pointGetPlanShortPathOK, err = plannercore.IsPointGetPlanShortPathOK(c.Ctx, is, preparedObj); err != nil {
 			return nil, err
 		}
 	}
@@ -132,16 +126,13 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		OutputNames:   names,
 	}
 	// Use cached plan if possible.
-	if pointGetPlanShortPathOK {
+	if plannercore.IsPointGetPlanShortPathOK(c.Ctx, is, preparedObj) {
 		if ep, ok := stmt.Plan.(*plannercore.Execute); ok {
 			if pointPlan, ok := ep.Plan.(*plannercore.PointGetPlan); ok {
 				stmtCtx.SetPlan(stmt.Plan)
 				stmtCtx.SetPlanDigest(preparedObj.NormalizedPlan, preparedObj.PlanDigest)
 				stmt.Plan = pointPlan
 				stmt.PsStmt = preparedObj
-			} else {
-				// invalid the previous cached point plan
-				preparedObj.PointGet.Plan = nil
 			}
 		}
 	}
