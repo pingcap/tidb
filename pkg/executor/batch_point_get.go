@@ -199,7 +199,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		err = fillRowChecksum(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo, val, handle, req, nil)
+		err = fillRowChecksum(e.Schema(), e.tblInfo, e.BaseExecutor.Ctx().GetSessionVars().Location(), val, handle, req, nil)
 		if err != nil {
 			return err
 		}

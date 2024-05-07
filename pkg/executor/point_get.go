@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -389,12 +390,14 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	err = DecodeRowValToChunk(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo, e.handle, val, req, e.rowDecoder)
+
+	schema := e.Schema()
+	err = DecodeRowValToChunk(e.BaseExecutor.Ctx(), schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {
 		return err
 	}
 
-	err = fillRowChecksum(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo, val, e.handle, req, nil)
+	err = fillRowChecksum(schema, e.tblInfo, e.BaseExecutor.Ctx().GetSessionVars().Location(), val, e.handle, req, nil)
 	if err != nil {
 		return err
 	}
@@ -417,7 +420,7 @@ func shouldFillRowChecksum(schema *expression.Schema) (int, bool) {
 }
 
 func fillRowChecksum(
-	sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
+	schema *expression.Schema, tblInfo *model.TableInfo, tz *time.Location,
 	val []byte, handle kv.Handle, req *chunk.Chunk, buf []byte,
 ) error {
 	if !rowcodec.IsNewFormat(val) {
@@ -426,23 +429,6 @@ func fillRowChecksum(
 	targetIndex, ok := shouldFillRowChecksum(schema)
 	if !ok {
 		return nil
-	}
-
-	columns := tblInfo.Cols()
-	reqCols := make([]rowcodec.ColInfo, len(columns))
-	for idx := range columns {
-		col := columns[idx]
-		reqCols[idx] = rowcodec.ColInfo{
-			ID: col.ID,
-			Ft: &col.FieldType,
-		}
-	}
-
-	tz := sctx.GetSessionVars().Location()
-	decoder := rowcodec.NewDatumMapDecoder(reqCols, tz)
-	datums, err := decoder.DecodeToDatumMap(val, nil)
-	if err != nil {
-		return err
 	}
 
 	var handleColIDs []int64
@@ -463,11 +449,16 @@ func fillRowChecksum(
 		columnFt[col.ID] = &col.FieldType
 	}
 
+	datums, err := tablecodec.DecodeRowWithMapNew(val, columnFt, tz, nil)
+	if err != nil {
+		return err
+	}
 	datums, err = tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, columnFt, tz, datums)
 	if err != nil {
 		return err
 	}
 
+	columns := tblInfo.Cols()
 	colData := make([]rowcodec.ColData, len(datums))
 	for idx, col := range columns {
 		d := datums[col.ID]
