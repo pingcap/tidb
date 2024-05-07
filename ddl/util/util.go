@@ -18,6 +18,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+<<<<<<< HEAD:ddl/util/util.go
+=======
+	"fmt"
+	"os"
+>>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/util/util.go
 	"strings"
 	"time"
 
@@ -363,4 +368,10 @@ func IsContextDone(ctx context.Context) bool {
 	default:
 	}
 	return false
+}
+
+// FolderNotEmpty returns true only when the folder is not empty.
+func FolderNotEmpty(path string) bool {
+	entries, _ := os.ReadDir(path)
+	return len(entries) > 0
 }

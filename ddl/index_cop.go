@@ -113,8 +113,13 @@ func (c *copReqSender) run() {
 		if !ok {
 			return
 		}
+<<<<<<< HEAD:ddl/index_cop.go
 		if p.checkpointMgr != nil && p.checkpointMgr.IsComplete(task.endKey) {
 			logutil.BgLogger().Info("[ddl-ingest] checkpoint detected, skip a cop-request task",
+=======
+		if p.checkpointMgr != nil && p.checkpointMgr.IsKeyProcessed(task.endKey) {
+			logutil.Logger(p.ctx).Info("checkpoint detected, skip a cop-request task",
+>>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/index_cop.go
 				zap.Int("task ID", task.id),
 				zap.String("task end key", hex.EncodeToString(task.endKey)))
 			continue
@@ -154,7 +159,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 				return err
 			}
 			if p.checkpointMgr != nil {
-				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
+				p.checkpointMgr.UpdateTotalKeys(task.id, srcChk.NumRows(), done)
 			}
 			idxRs := idxRecResult{id: task.id, chunk: srcChk, done: done}
 			failpoint.Inject("MockCopSenderError", func() {

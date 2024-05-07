@@ -33,52 +33,65 @@ import (
 	"go.uber.org/zap"
 )
 
-// CheckpointManager is a checkpoint manager implementation that used by non-distributed reorganization.
+// CheckpointManager is a checkpoint manager implementation that used by
+// non-distributed reorganization. It manages the data as two-level checkpoints:
+// "flush"ed to local storage and "import"ed to TiKV. The checkpoint is saved in
+// a table in the TiDB cluster.
 type CheckpointManager struct {
+<<<<<<< HEAD:ddl/ingest/checkpoint.go
 	ctx       context.Context
 	flushCtrl FlushController
 	sessPool  *sess.Pool
 	jobID     int64
 	indexID   int64
+=======
+	ctx           context.Context
+	cancel        context.CancelFunc
+	flushCtrl     FlushController
+	sessPool      *sess.Pool
+	jobID         int64
+	indexIDs      []int64
+	localStoreDir string
+	logger        *zap.Logger
+>>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 
 	// Derived and unchanged after the initialization.
 	instanceAddr     string
 	localDataIsValid bool
 
 	// Live in memory.
-	checkpoints     map[int]*TaskCheckpoint // task ID -> checkpoint
-	mu              sync.Mutex
-	minTaskIDSynced int
-	dirty           bool
+	mu          sync.Mutex
+	checkpoints map[int]*taskCheckpoint // task ID -> checkpoint
+	// we require each task ID to be continuous and start from 1.
+	minTaskIDFinished int
+	dirty             bool
 	// Local meta.
-	pidLocal   int64
-	startLocal kv.Key
-	endLocal   kv.Key
+	pidFlushed      int64
+	startKeyFlushed kv.Key
+	endKeyFlushed   kv.Key
 
 	// Persisted to the storage.
-	minKeySyncLocal  kv.Key
-	minKeySyncGlobal kv.Key
-	localCnt         int
-	globalCnt        int
+	minFlushedKey  kv.Key
+	minImportedKey kv.Key
+	flushedKeyCnt  int
+	importedKeyCnt int
 	// Global meta.
-	pidGlobal   int64
-	startGlobal kv.Key
-	endGlobal   kv.Key
+	pidImported      int64
+	startKeyImported kv.Key
+	endKeyImported   kv.Key
 
 	// For persisting the checkpoint periodically.
-	updating      bool
-	updaterWg     sync.WaitGroup
-	updaterCh     chan *sync.WaitGroup
-	updaterExitCh chan struct{}
+	updaterWg sync.WaitGroup
+	updaterCh chan chan struct{}
 }
 
-// TaskCheckpoint is the checkpoint for a single task.
-type TaskCheckpoint struct {
+// taskCheckpoint is the checkpoint for a single task.
+type taskCheckpoint struct {
 	totalKeys     int
-	currentKeys   int
+	writtenKeys   int
 	checksum      int64
 	endKey        kv.Key
-	lastBatchSent bool
+	lastBatchRead bool
 }
 
 // FlushController is an interface to control the flush of the checkpoint.
@@ -87,21 +100,44 @@ type FlushController interface {
 }
 
 // NewCheckpointManager creates a new checkpoint manager.
+<<<<<<< HEAD:ddl/ingest/checkpoint.go
 func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
 	sessPool *sess.Pool, jobID, indexID int64) (*CheckpointManager, error) {
 	instanceAddr := InitInstanceAddr()
+=======
+func NewCheckpointManager(
+	ctx context.Context,
+	flushCtrl FlushController,
+	sessPool *sess.Pool,
+	jobID int64,
+	indexIDs []int64,
+	localStoreDir string,
+) (*CheckpointManager, error) {
+	instanceAddr := InstanceAddr()
+	ctx2, cancel := context.WithCancel(ctx)
+	logger := logutil.DDLIngestLogger().With(
+		zap.Int64("jobID", jobID), zap.Int64s("indexIDs", indexIDs))
+
+>>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 	cm := &CheckpointManager{
-		ctx:           ctx,
+		ctx:           ctx2,
+		cancel:        cancel,
 		flushCtrl:     flushCtrl,
 		sessPool:      sessPool,
 		jobID:         jobID,
+<<<<<<< HEAD:ddl/ingest/checkpoint.go
 		indexID:       indexID,
 		checkpoints:   make(map[int]*TaskCheckpoint, 16),
+=======
+		indexIDs:      indexIDs,
+		localStoreDir: localStoreDir,
+		logger:        logger,
+		checkpoints:   make(map[int]*taskCheckpoint, 16),
+>>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 		mu:            sync.Mutex{},
 		instanceAddr:  instanceAddr,
 		updaterWg:     sync.WaitGroup{},
-		updaterExitCh: make(chan struct{}),
-		updaterCh:     make(chan *sync.WaitGroup),
+		updaterCh:     make(chan chan struct{}),
 	}
 	err := cm.resumeCheckpoint()
 	if err != nil {
@@ -112,65 +148,75 @@ func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
 		cm.updateCheckpointLoop()
 		cm.updaterWg.Done()
 	}()
+<<<<<<< HEAD:ddl/ingest/checkpoint.go
 	logutil.BgLogger().Info("[ddl-ingest] create checkpoint manager",
 		zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
+=======
+	logger.Info("create checkpoint manager")
+>>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 	return cm, nil
 }
 
-// InitInstanceAddr returns the string concat with instance address and temp-dir.
-func InitInstanceAddr() string {
+// InstanceAddr returns the string concat with instance address and temp-dir.
+func InstanceAddr() string {
 	cfg := config.GetGlobalConfig()
 	dsn := net.JoinHostPort(cfg.AdvertiseAddress, strconv.Itoa(int(cfg.Port)))
 	return fmt.Sprintf("%s:%s", dsn, cfg.TempDir)
 }
 
-// IsComplete checks if the task is complete.
-// This is called before the reader reads the data and decides whether to skip the current task.
-func (s *CheckpointManager) IsComplete(end kv.Key) bool {
+// IsKeyProcessed checks if the key is processed. The key may not be imported.
+// This is called before the reader reads the data and decides whether to skip
+// the current task.
+func (s *CheckpointManager) IsKeyProcessed(end kv.Key) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.minKeySyncGlobal) > 0 && end.Cmp(s.minKeySyncGlobal) <= 0 {
+	if len(s.minImportedKey) > 0 && end.Cmp(s.minImportedKey) <= 0 {
 		return true
 	}
-	return s.localDataIsValid && len(s.minKeySyncLocal) > 0 && end.Cmp(s.minKeySyncLocal) <= 0
+	return s.localDataIsValid && len(s.minFlushedKey) > 0 && end.Cmp(s.minFlushedKey) <= 0
 }
 
 // Status returns the status of the checkpoint.
-func (s *CheckpointManager) Status() (int, kv.Key) {
+func (s *CheckpointManager) Status() (keyCnt int, minKeyImported kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	total := 0
 	for _, cp := range s.checkpoints {
-		total += cp.currentKeys
+		total += cp.writtenKeys
 	}
-	return s.localCnt + total, s.minKeySyncGlobal
+	// TODO(lance6716): ???
+	return s.flushedKeyCnt + total, s.minImportedKey
 }
 
-// Register registers a new task.
+// Register registers a new task. taskID MUST be continuous ascending and start
+// from 1.
+//
+// TODO(lance6716): remove this constraint, use endKey as taskID and use
+// ordered map type for checkpoints.
 func (s *CheckpointManager) Register(taskID int, end kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.checkpoints[taskID] = &TaskCheckpoint{
+	s.checkpoints[taskID] = &taskCheckpoint{
 		endKey: end,
 	}
 }
 
-// UpdateTotal updates the total keys of the task.
+// UpdateTotalKeys updates the total keys of the task.
 // This is called by the reader after reading the data to update the number of rows contained in the current chunk.
-func (s *CheckpointManager) UpdateTotal(taskID int, added int, last bool) {
+func (s *CheckpointManager) UpdateTotalKeys(taskID int, delta int, last bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := s.checkpoints[taskID]
-	cp.totalKeys += added
-	cp.lastBatchSent = last
+	cp.totalKeys += delta
+	cp.lastBatchRead = last
 }
 
-// UpdateCurrent updates the current keys of the task.
+// UpdateWrittenKeys updates the written keys of the task.
 // This is called by the writer after writing the local engine to update the current number of rows written.
-func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
+func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) error {
 	s.mu.Lock()
 	cp := s.checkpoints[taskID]
-	cp.currentKeys += added
+	cp.writtenKeys += delta
 	s.mu.Unlock()
 
 	flushed, imported, err := s.flushCtrl.Flush(s.indexID, FlushModeAuto)
@@ -179,37 +225,40 @@ func (s *CheckpointManager) UpdateCurrent(taskID int, added int) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.progressLocalSyncMinKey()
-	if imported && s.minKeySyncGlobal.Cmp(s.minKeySyncLocal) != 0 {
-		s.minKeySyncGlobal = s.minKeySyncLocal
-		s.globalCnt = s.localCnt
+	s.afterFlush()
+	if imported && s.minImportedKey.Cmp(s.minFlushedKey) != 0 {
+		// TODO(lance6716): add warning log if cmp > 0
+		s.minImportedKey = s.minFlushedKey
+		s.importedKeyCnt = s.flushedKeyCnt
 		s.dirty = true
 
-		s.pidGlobal = s.pidLocal
-		s.startGlobal = s.startLocal
-		s.endGlobal = s.endLocal
+		s.pidImported = s.pidFlushed
+		s.startKeyImported = s.startKeyFlushed
+		s.endKeyImported = s.endKeyFlushed
 	}
 	return nil
 }
 
-func (s *CheckpointManager) progressLocalSyncMinKey() {
+// afterFlush should be called after all engine is flushed.
+func (s *CheckpointManager) afterFlush() {
 	for {
-		cp := s.checkpoints[s.minTaskIDSynced+1]
-		if cp == nil || !cp.lastBatchSent || cp.currentKeys < cp.totalKeys {
+		cp := s.checkpoints[s.minTaskIDFinished+1]
+		if cp == nil || !cp.lastBatchRead || cp.writtenKeys < cp.totalKeys {
 			break
 		}
-		s.minTaskIDSynced++
-		s.minKeySyncLocal = cp.endKey
-		s.localCnt += cp.totalKeys
-		delete(s.checkpoints, s.minTaskIDSynced)
+		s.minTaskIDFinished++
+		s.minFlushedKey = cp.endKey
+		s.flushedKeyCnt += cp.totalKeys
+		delete(s.checkpoints, s.minTaskIDFinished)
 		s.dirty = true
 	}
 }
 
 // Close closes the checkpoint manager.
 func (s *CheckpointManager) Close() {
-	s.updaterExitCh <- struct{}{}
+	s.cancel()
 	s.updaterWg.Wait()
+<<<<<<< HEAD:ddl/ingest/checkpoint.go
 	logutil.BgLogger().Info("[ddl-ingest] close checkpoint manager",
 		zap.Int64("jobID", s.jobID), zap.Int64("indexID", s.indexID))
 }
@@ -219,20 +268,40 @@ func (s *CheckpointManager) Sync() {
 	_, _, err := s.flushCtrl.Flush(s.indexID, FlushModeForceLocal)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl-ingest] flush local engine failed", zap.Error(err))
+=======
+	s.logger.Info("close checkpoint manager")
+}
+
+// Flush flushed the data and updates checkpoint.
+func (s *CheckpointManager) Flush() {
+	// use FlushModeForceFlushNoImport to finish the flush process timely.
+	_, _, _, err := TryFlushAllIndexes(s.flushCtrl, FlushModeForceFlushNoImport, s.indexIDs)
+	if err != nil {
+		s.logger.Warn("flush local engine failed", zap.Error(err))
+>>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 	}
 	s.mu.Lock()
-	s.progressLocalSyncMinKey()
+	s.afterFlush()
 	s.mu.Unlock()
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	s.updaterCh <- &wg
-	wg.Wait()
+
+	finishCh := make(chan struct{})
+	select {
+	case s.updaterCh <- finishCh:
+	case <-s.ctx.Done():
+		return
+	}
+	// wait updateCheckpointLoop to finish checkpoint update.
+	select {
+	case <-finishCh:
+	case <-s.ctx.Done():
+	}
 }
 
 // Reset resets the checkpoint manager between two partitions.
 func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+<<<<<<< HEAD:ddl/ingest/checkpoint.go
 	logutil.BgLogger().Info("[ddl-ingest] reset checkpoint manager",
 		zap.Int64("newPhysicalID", newPhysicalID), zap.Int64("oldPhysicalID", s.pidLocal),
 		zap.Int64("indexID", s.indexID), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
@@ -243,6 +312,20 @@ func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 		s.pidLocal = newPhysicalID
 		s.startLocal = start
 		s.endLocal = end
+=======
+
+	s.logger.Info("reset checkpoint manager",
+		zap.Int64("newPhysicalID", newPhysicalID),
+		zap.Int64("oldPhysicalID", s.pidFlushed),
+		zap.Int("flushedKeyCnt", s.flushedKeyCnt))
+	if s.pidFlushed != newPhysicalID {
+		s.minFlushedKey = nil
+		s.minImportedKey = nil
+		s.minTaskIDFinished = 0
+		s.pidFlushed = newPhysicalID
+		s.startKeyFlushed = start
+		s.endKeyFlushed = end
+>>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 	}
 }
 
@@ -297,47 +380,53 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 			return errors.Trace(err)
 		}
 		if cp := reorgMeta.Checkpoint; cp != nil {
-			s.minKeySyncGlobal = cp.GlobalSyncKey
-			s.globalCnt = cp.GlobalKeyCount
-			s.pidGlobal = cp.PhysicalID
-			s.startGlobal = cp.StartKey
-			s.endGlobal = cp.EndKey
-			if s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */ {
+			s.minImportedKey = cp.GlobalSyncKey
+			s.importedKeyCnt = cp.GlobalKeyCount
+			s.pidImported = cp.PhysicalID
+			s.startKeyImported = cp.StartKey
+			s.endKeyImported = cp.EndKey
+			if util.FolderNotEmpty(s.localStoreDir) &&
+				(s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */) {
 				s.localDataIsValid = true
-				s.minKeySyncLocal = cp.LocalSyncKey
-				s.localCnt = cp.LocalKeyCount
+				s.minFlushedKey = cp.LocalSyncKey
+				s.flushedKeyCnt = cp.LocalKeyCount
 			}
+<<<<<<< HEAD:ddl/ingest/checkpoint.go
 			logutil.BgLogger().Info("[ddl-ingest] resume checkpoint",
 				zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
 				zap.String("local checkpoint", hex.EncodeToString(s.minKeySyncLocal)),
 				zap.String("global checkpoint", hex.EncodeToString(s.minKeySyncGlobal)),
+=======
+			s.logger.Info("resume checkpoint",
+				zap.String("minimum flushed key", hex.EncodeToString(s.minFlushedKey)),
+				zap.String("minimum imported key", hex.EncodeToString(s.minImportedKey)),
+>>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 				zap.Int64("physical table ID", cp.PhysicalID),
 				zap.String("previous instance", cp.InstanceAddr),
 				zap.String("current instance", s.instanceAddr))
 			return nil
 		}
+<<<<<<< HEAD:ddl/ingest/checkpoint.go
 		logutil.BgLogger().Info("[ddl-ingest] checkpoint is empty",
 			zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID))
+=======
+		s.logger.Info("checkpoint is empty")
+>>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 		return nil
 	})
 }
 
+// updateCheckpoint is only used by updateCheckpointLoop goroutine.
 func (s *CheckpointManager) updateCheckpoint() error {
 	s.mu.Lock()
-	currentLocalKey := s.minKeySyncLocal
-	currentGlobalKey := s.minKeySyncGlobal
-	currentLocalCnt := s.localCnt
-	currentGlobalCnt := s.globalCnt
-	currentGlobalPID := s.pidGlobal
-	currentGlobalStart := s.startGlobal
-	currentGlobalEnd := s.endGlobal
-	s.updating = true
+	minKeyFlushed := s.minFlushedKey
+	minKeyImported := s.minImportedKey
+	flushedKeyCnt := s.flushedKeyCnt
+	importedKeyCnt := s.importedKeyCnt
+	pidImported := s.pidImported
+	startKeyImported := s.startKeyImported
+	endKeyImported := s.endKeyImported
 	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		s.updating = false
-		s.mu.Unlock()
-	}()
 
 	sessCtx, err := s.sessPool.Get()
 	if err != nil {
@@ -348,14 +437,14 @@ func (s *CheckpointManager) updateCheckpoint() error {
 	err = ddlSess.RunInTxn(func(se *sess.Session) error {
 		template := "update mysql.tidb_ddl_reorg set reorg_meta = %s where job_id = %d and ele_id = %d and ele_type = %s;"
 		cp := &ReorgCheckpoint{
-			LocalSyncKey:   currentLocalKey,
-			GlobalSyncKey:  currentGlobalKey,
-			LocalKeyCount:  currentLocalCnt,
-			GlobalKeyCount: currentGlobalCnt,
+			LocalSyncKey:   minKeyFlushed,
+			GlobalSyncKey:  minKeyImported,
+			LocalKeyCount:  flushedKeyCnt,
+			GlobalKeyCount: importedKeyCnt,
 			InstanceAddr:   s.instanceAddr,
-			PhysicalID:     currentGlobalPID,
-			StartKey:       currentGlobalStart,
-			EndKey:         currentGlobalEnd,
+			PhysicalID:     pidImported,
+			StartKey:       startKeyImported,
+			EndKey:         endKeyImported,
 			Version:        JobCheckpointVersionCurrent,
 		}
 		rawReorgMeta, err := json.Marshal(JobReorgMeta{Checkpoint: cp})
@@ -373,11 +462,18 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		s.mu.Unlock()
 		return nil
 	})
+<<<<<<< HEAD:ddl/ingest/checkpoint.go
 	logutil.BgLogger().Info("[ddl-ingest] update checkpoint",
 		zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
 		zap.String("local checkpoint", hex.EncodeToString(currentLocalKey)),
 		zap.String("global checkpoint", hex.EncodeToString(currentGlobalKey)),
 		zap.Int64("global physical ID", currentGlobalPID),
+=======
+	s.logger.Info("update checkpoint",
+		zap.String("local checkpoint", hex.EncodeToString(minKeyFlushed)),
+		zap.String("global checkpoint", hex.EncodeToString(minKeyImported)),
+		zap.Int64("global physical ID", pidImported),
+>>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 		zap.Error(err))
 	return err
 }
@@ -387,24 +483,32 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 	defer ticker.Stop()
 	for {
 		select {
-		case wg := <-s.updaterCh:
+		case finishCh := <-s.updaterCh:
 			err := s.updateCheckpoint()
 			if err != nil {
+<<<<<<< HEAD:ddl/ingest/checkpoint.go
 				logutil.BgLogger().Error("[ddl-ingest] update checkpoint failed", zap.Error(err))
+=======
+				s.logger.Error("update checkpoint failed", zap.Error(err))
+>>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 			}
-			wg.Done()
+			close(finishCh)
 		case <-ticker.C:
 			s.mu.Lock()
-			if !s.dirty || s.updating {
+			if !s.dirty {
 				s.mu.Unlock()
 				continue
 			}
 			s.mu.Unlock()
 			err := s.updateCheckpoint()
 			if err != nil {
+<<<<<<< HEAD:ddl/ingest/checkpoint.go
 				logutil.BgLogger().Error("[ddl-ingest] update checkpoint failed", zap.Error(err))
+=======
+				s.logger.Error("periodically update checkpoint failed", zap.Error(err))
+>>>>>>> b1b09954485 (ddl: check local file existence before resume checkpoint (#53072)):pkg/ddl/ingest/checkpoint.go
 			}
-		case <-s.updaterExitCh:
+		case <-s.ctx.Done():
 			return
 		}
 	}
