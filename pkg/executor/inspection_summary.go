@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	util2 "github.com/pingcap/tidb/pkg/planner/util"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -35,7 +35,7 @@ type inspectionSummaryRetriever struct {
 	retrieved bool
 	table     *model.TableInfo
 	extractor *plannercore.InspectionSummaryTableExtractor
-	timeRange util2.QueryTimeRange
+	timeRange plannerutil.QueryTimeRange
 }
 
 // inspectionSummaryRules is used to maintain
