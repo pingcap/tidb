@@ -338,6 +338,7 @@ type buildCopTaskOpt struct {
 func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*copTask, error) {
 	req, cache, eventCb, hints := opt.req, opt.cache, opt.eventCb, opt.rowHints
 	start := time.Now()
+	defer tracing.StartRegion(bo.GetCtx(), "copr.buildCopTasks").End()
 	cmdType := tikvrpc.CmdCop
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
@@ -457,9 +458,6 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 			zap.Duration("elapsed", elapsed),
 			zap.Int("range len", rangesLen),
 			zap.Int("task len", len(tasks)))
-	}
-	if elapsed > time.Millisecond {
-		defer tracing.StartRegion(bo.GetCtx(), "copr.buildCopTasks").End()
 	}
 	if opt.elapsed != nil {
 		*opt.elapsed = *opt.elapsed + elapsed
