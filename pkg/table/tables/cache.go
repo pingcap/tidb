@@ -215,7 +215,7 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 		// lease duration, then the loaded data get staled and that process repeats forever.
 		go func() {
 			start := time.Now()
-			mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store)
+			mb, _, totalSize, err := c.loadDataFromOriginalTable(store)
 			metrics.LoadTableCacheDurationHistogram.Observe(time.Since(start).Seconds())
 			if err != nil {
 				log.Info("load data from table fail", zap.Error(err))
@@ -225,7 +225,7 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 			tmp := c.cacheData.Load()
 			if tmp != nil && tmp.Start == ts {
 				c.cacheData.Store(&cacheData{
-					Start:     startTS,
+					Start:     ts,
 					Lease:     tmp.Lease,
 					MemBuffer: mb,
 				})
