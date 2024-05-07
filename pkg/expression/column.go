@@ -158,7 +158,7 @@ func (col *CorrelatedColumn) Equal(_ EvalContext, expr Expression) bool {
 	return col.EqualColumn(expr)
 }
 
-// EqualColumn returns whether two colum is equal
+// EqualColumn returns whether two column is equal
 func (col *CorrelatedColumn) EqualColumn(expr Expression) bool {
 	if cc, ok := expr.(*CorrelatedColumn); ok {
 		return col.Column.EqualColumn(&cc.Column)
@@ -268,7 +268,7 @@ func (col *Column) Equal(_ EvalContext, expr Expression) bool {
 	return col.EqualColumn(expr)
 }
 
-// EqualColumn returns whether two colum is equal
+// EqualColumn returns whether two column is equal
 func (col *Column) EqualColumn(expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		return newCol.UniqueID == col.UniqueID

@@ -1240,6 +1240,7 @@ const (
 	DefTiDBEnableOuterJoinReorder                  = true
 	DefTiDBEnableNAAJ                              = true
 	DefTiDBAllowBatchCop                           = 1
+	DefBlockEncryptionMode                         = "aes-128-ecb"
 	DefTiDBAllowMPPExecution                       = true
 	DefTiDBAllowTiFlashCop                         = false
 	DefTiDBHashExchangeWithNewCollation            = true
@@ -1487,6 +1488,7 @@ const (
 	DefDivPrecisionIncrement                          = 4
 	DefTiDBDMLType                                    = "STANDARD"
 	DefGroupConcatMaxLen                              = uint64(1024)
+	DefDefaultWeekFormat                              = "0"
 )
 
 // Process global variables.
