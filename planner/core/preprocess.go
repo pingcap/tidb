@@ -157,13 +157,10 @@ const (
 	inSequenceFunction
 	// initTxnContextProvider is set when we should init txn context in preprocess
 	initTxnContextProvider
-<<<<<<< HEAD:planner/core/preprocess.go
-=======
 	// inImportInto is set when visiting an import into statement.
 	inImportInto
 	// inAnalyze is set when visiting an analyze statement.
 	inAnalyze
->>>>>>> fce2805f2a5 (planner: skip MDL when analyzing table (#50928)):pkg/planner/core/preprocess.go
 )
 
 // Make linter happy.
@@ -1914,8 +1911,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 	}
 	return tbl, nil
 }
-<<<<<<< HEAD:planner/core/preprocess.go
-=======
 
 // skipLockMDL returns true if the preprocessor should skip the lock of MDL.
 func (p *preprocessor) skipLockMDL() bool {
@@ -1924,4 +1919,3 @@ func (p *preprocessor) skipLockMDL() bool {
 	// skip lock mdl for ANALYZE statement.
 	return p.flag&inImportInto > 0 || p.flag&inAnalyze > 0
 }
->>>>>>> fce2805f2a5 (planner: skip MDL when analyzing table (#50928)):pkg/planner/core/preprocess.go
