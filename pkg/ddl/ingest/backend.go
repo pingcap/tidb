@@ -63,14 +63,14 @@ type BackendCtx interface {
 type FlushMode byte
 
 const (
-	// FlushModeAuto means flush when the memory table size reaches the threshold.
+	// FlushModeAuto means caller does not enforce any flush, the implementation can
+	// decide it.
 	FlushModeAuto FlushMode = iota
-	// FlushModeForceLocal means flush all data to local storage.
-	FlushModeForceLocal
-	// FlushModeForceLocalAndCheckDiskQuota means flush all data to local storage and check disk quota.
-	FlushModeForceLocalAndCheckDiskQuota
-	// FlushModeForceGlobal means import all data in local storage to global storage.
-	FlushModeForceGlobal
+	// FlushModeForceFlushNoImport means flush all data to local storage, but don't
+	// import the data to TiKV.
+	FlushModeForceFlushNoImport
+	// FlushModeForceFlushAndImport means flush and import all data to TiKV.
+	FlushModeForceFlushAndImport
 )
 
 // litBackendCtx store a backend info for add index reorg task.
@@ -183,7 +183,7 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
-	shouldFlush, shouldImport := bc.ShouldSync(mode)
+	shouldFlush, shouldImport := bc.checkFlush(mode)
 	if !shouldFlush {
 		return false, false, nil
 	}
@@ -268,28 +268,24 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 // ForceSyncFlagForTest is a flag to force sync only for test.
 var ForceSyncFlagForTest = false
 
-func (bc *litBackendCtx) ShouldSync(mode FlushMode) (shouldFlush bool, shouldImport bool) {
-	if mode == FlushModeForceGlobal || ForceSyncFlagForTest {
+func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImport bool) {
+	if mode == FlushModeForceFlushAndImport || ForceSyncFlagForTest {
 		return true, true
 	}
-	if mode == FlushModeForceLocal {
+	if mode == FlushModeForceFlushNoImport {
 		return true, false
 	}
 	bc.diskRoot.UpdateUsage()
 	shouldImport = bc.diskRoot.ShouldImport()
-	if mode == FlushModeForceLocalAndCheckDiskQuota {
-		shouldFlush = true
-	} else {
-		interval := bc.updateInterval
-		// This failpoint will be manually set through HTTP status port.
-		failpoint.Inject("mockSyncIntervalMs", func(val failpoint.Value) {
-			if v, ok := val.(int); ok {
-				interval = time.Duration(v) * time.Millisecond
-			}
-		})
-		shouldFlush = shouldImport ||
-			time.Since(bc.timeOfLastFlush.Load()) >= interval
-	}
+	interval := bc.updateInterval
+	// This failpoint will be manually set through HTTP status port.
+	failpoint.Inject("mockSyncIntervalMs", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			interval = time.Duration(v) * time.Millisecond
+		}
+	})
+	shouldFlush = shouldImport ||
+		time.Since(bc.timeOfLastFlush.Load()) >= interval
 	return shouldFlush, shouldImport
 }
 
