@@ -17,6 +17,7 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -1153,10 +1154,10 @@ func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt 
 func PropagateType(evalType types.EvalType, args ...Expression) {
 	switch evalType {
 	case types.ETReal:
-		if _, ok := args[0].(*Constant); ok {
-			// don't propagate type for constant
-			return
-		}
+		//		if _, ok := args[0].(*Constant); ok {
+		//			// don't propagate type for constant
+		//			return
+		//		}
 		expr := args[0]
 		oldFlen, oldDecimal := expr.GetType().GetFlen(), expr.GetType().GetDecimal()
 		newFlen, newDecimal := setDataTypeDouble(expr.GetType().GetDecimal())
@@ -1178,6 +1179,16 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 			if args[0].GetType().GetType() == mysql.TypeNewDecimal {
 				if newDecimal > mysql.MaxDecimalScale {
 					newDecimal = mysql.MaxDecimalScale
+				}
+				if oldFlen-oldDecimal > newFlen-newDecimal {
+					// the input data should never be overflow under the new type
+					if newDecimal > oldDecimal {
+						incDecimal := mathutil.Min(newDecimal-oldDecimal, mysql.MaxDecimalWidth-oldFlen)
+						newFlen = oldFlen + incDecimal
+						newDecimal = oldDecimal + incDecimal
+					} else {
+						oldFlen, oldDecimal = newFlen, newDecimal
+					}
 				}
 			}
 			args[0].GetType().SetFlenUnderLimit(newFlen)
