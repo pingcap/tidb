@@ -64,8 +64,8 @@ type CheckpointManager struct {
 	endKeyFlushed   kv.Key
 
 	// Persisted to the storage.
-	minKeyFlushed  kv.Key
-	minKeyImported kv.Key
+	minFlushedKey  kv.Key
+	minImportedKey kv.Key
 	flushedKeyCnt  int
 	importedKeyCnt int
 	// Global meta.
@@ -147,10 +147,10 @@ func InstanceAddr() string {
 func (s *CheckpointManager) IsKeyProcessed(end kv.Key) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.minKeyImported) > 0 && end.Cmp(s.minKeyImported) <= 0 {
+	if len(s.minImportedKey) > 0 && end.Cmp(s.minImportedKey) <= 0 {
 		return true
 	}
-	return s.localDataIsValid && len(s.minKeyFlushed) > 0 && end.Cmp(s.minKeyFlushed) <= 0
+	return s.localDataIsValid && len(s.minFlushedKey) > 0 && end.Cmp(s.minFlushedKey) <= 0
 }
 
 // Status returns the status of the checkpoint.
@@ -162,7 +162,7 @@ func (s *CheckpointManager) Status() (keyCnt int, minKeyImported kv.Key) {
 		total += cp.writtenKeys
 	}
 	// TODO(lance6716): ???
-	return s.flushedKeyCnt + total, s.minKeyImported
+	return s.flushedKeyCnt + total, s.minImportedKey
 }
 
 // Register registers a new task. taskID MUST be continuous ascending and start
@@ -204,9 +204,9 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.afterFlush()
-	if imported && s.minKeyImported.Cmp(s.minKeyFlushed) != 0 {
+	if imported && s.minImportedKey.Cmp(s.minFlushedKey) != 0 {
 		// TODO(lance6716): add warning log if cmp > 0
-		s.minKeyImported = s.minKeyFlushed
+		s.minImportedKey = s.minFlushedKey
 		s.importedKeyCnt = s.flushedKeyCnt
 		s.dirty = true
 
@@ -225,7 +225,7 @@ func (s *CheckpointManager) afterFlush() {
 			break
 		}
 		s.minTaskIDFinished++
-		s.minKeyFlushed = cp.endKey
+		s.minFlushedKey = cp.endKey
 		s.flushedKeyCnt += cp.totalKeys
 		delete(s.checkpoints, s.minTaskIDFinished)
 		s.dirty = true
@@ -273,8 +273,8 @@ func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 		zap.Int64("oldPhysicalID", s.pidFlushed),
 		zap.Int("flushedKeyCnt", s.flushedKeyCnt))
 	if s.pidFlushed != newPhysicalID {
-		s.minKeyFlushed = nil
-		s.minKeyImported = nil
+		s.minFlushedKey = nil
+		s.minImportedKey = nil
 		s.minTaskIDFinished = 0
 		s.pidFlushed = newPhysicalID
 		s.startKeyFlushed = start
@@ -333,7 +333,7 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 			return errors.Trace(err)
 		}
 		if cp := reorgMeta.Checkpoint; cp != nil {
-			s.minKeyImported = cp.GlobalSyncKey
+			s.minImportedKey = cp.GlobalSyncKey
 			s.importedKeyCnt = cp.GlobalKeyCount
 			s.pidImported = cp.PhysicalID
 			s.startKeyImported = cp.StartKey
@@ -341,12 +341,12 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 			if util.FolderNotEmpty(s.localStoreDir) &&
 				(s.instanceAddr == cp.InstanceAddr || cp.InstanceAddr == "" /* initial state */) {
 				s.localDataIsValid = true
-				s.minKeyFlushed = cp.LocalSyncKey
+				s.minFlushedKey = cp.LocalSyncKey
 				s.flushedKeyCnt = cp.LocalKeyCount
 			}
 			s.logger.Info("resume checkpoint",
-				zap.String("local checkpoint", hex.EncodeToString(s.minKeyFlushed)),
-				zap.String("global checkpoint", hex.EncodeToString(s.minKeyImported)),
+				zap.String("minimum flushed key", hex.EncodeToString(s.minFlushedKey)),
+				zap.String("minimum imported key", hex.EncodeToString(s.minImportedKey)),
 				zap.Int64("physical table ID", cp.PhysicalID),
 				zap.String("previous instance", cp.InstanceAddr),
 				zap.String("current instance", s.instanceAddr))
@@ -360,8 +360,8 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 // updateCheckpoint is only used by updateCheckpointLoop goroutine.
 func (s *CheckpointManager) updateCheckpoint() error {
 	s.mu.Lock()
-	minKeyFlushed := s.minKeyFlushed
-	minKeyImported := s.minKeyImported
+	minKeyFlushed := s.minFlushedKey
+	minKeyImported := s.minImportedKey
 	flushedKeyCnt := s.flushedKeyCnt
 	importedKeyCnt := s.importedKeyCnt
 	pidImported := s.pidImported
