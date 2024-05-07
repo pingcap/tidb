@@ -12,18 +12,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package join
 
 import (
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func defaultCtx() sessionctx.Context {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, ctx.GetSessionVars().MemQuotaQuery)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
+	ctx.GetSessionVars().SnapshotTS = uint64(1)
+	domain.BindDomain(ctx, domain.NewMockDomain())
+	return ctx
+}
 
 func TestRequiredRows(t *testing.T) {
 	joinTypes := []core.JoinType{core.InnerJoin, core.LeftOuterJoin, core.RightOuterJoin}
@@ -54,7 +71,7 @@ func TestRequiredRows(t *testing.T) {
 				for i, f := range rfields {
 					defaultInner = append(defaultInner, innerChk.GetRow(0).GetDatum(i, f))
 				}
-				joiner := newJoiner(defaultCtx(), joinType, false, defaultInner, nil, lfields, rfields, nil, false)
+				joiner := NewJoiner(defaultCtx(), joinType, false, defaultInner, nil, lfields, rfields, nil, false)
 
 				fields := make([]*types.FieldType, 0, len(lfields)+len(rfields))
 				fields = append(fields, rfields...)
@@ -67,7 +84,7 @@ func TestRequiredRows(t *testing.T) {
 					result.Reset()
 					it := chunk.NewIterator4Chunk(innerChk)
 					it.Begin()
-					_, _, err := joiner.tryToMatchInners(outerRow, it, result)
+					_, _, err := joiner.TryToMatchInners(outerRow, it, result)
 					require.NoError(t, err)
 					require.Equal(t, required, result.NumRows())
 				}

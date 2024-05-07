@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package join_test
 
 import (
 	"testing"
@@ -23,9 +23,9 @@ import (
 )
 
 func TestIndexLookupMergeJoinHang(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/IndexMergeJoinMockOOM", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/IndexMergeJoinMockOOM", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/IndexMergeJoinMockOOM"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/IndexMergeJoinMockOOM"))
 	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -42,9 +42,9 @@ func TestIndexLookupMergeJoinHang(t *testing.T) {
 }
 
 func TestIssue18068(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIssue18068", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testIssue18068", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIssue18068"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/testIssue18068"))
 	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

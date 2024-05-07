@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package join_test
 
 import (
 	"bytes"
@@ -39,9 +39,9 @@ func checkMergeAndRun(tk *testkit.TestKit, t *testing.T, sql string) *testkit.Re
 }
 
 func TestShuffleMergeJoinInDisk(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testMergeJoinRowContainerSpill", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testMergeJoinRowContainerSpill", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testMergeJoinRowContainerSpill"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/testMergeJoinRowContainerSpill"))
 	}()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -85,9 +85,9 @@ func TestMergeJoinInDisk(t *testing.T) {
 		conf.TempStoragePath = t.TempDir()
 	})
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testMergeJoinRowContainerSpill", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testMergeJoinRowContainerSpill", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testMergeJoinRowContainerSpill"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/testMergeJoinRowContainerSpill"))
 	}()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
