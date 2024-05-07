@@ -784,6 +784,11 @@ func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema
 		stmt.PointGet.ColumnInfos = nil
 		return false, nil
 	}
+
+	if exec, ok := plan.(*Execute); ok {
+		plan = exec.Plan
+	}
+
 	// maybe we'd better check cached plan type here, current
 	// only point select/update will be cached, see "getPhysicalPlan" func
 	var ok bool
