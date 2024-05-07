@@ -214,7 +214,7 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 			chk.AppendNull(colIdx)
 			continue
 		}
-		
+
 		idx, isNil, notFound := decoder.row.findColID(col.ID)
 		if !notFound && !isNil {
 			colData := decoder.getData(idx)
