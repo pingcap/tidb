@@ -72,7 +72,8 @@ type QueryTimeRange struct {
 
 // Condition returns a WHERE clause base on it's value
 func (tr *QueryTimeRange) Condition() string {
-	return fmt.Sprintf("where time>='%s' and time<='%s'", tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
+	return fmt.Sprintf("where time>='%s' and time<='%s'",
+		tr.From.Format(MetricTableTimeFormat), tr.To.Format(MetricTableTimeFormat))
 }
 
 // MetricTableTimeFormat is the time format for metric table explain and format.
