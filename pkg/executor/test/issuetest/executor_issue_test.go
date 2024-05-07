@@ -635,3 +635,15 @@ func TestIssue51874(t *testing.T) {
 	tk.MustExec("insert into t2 values (10), (100)")
 	tk.MustQuery("select (select sum(a) over () from t2 limit 1) from t;").Check(testkit.Rows("10", "2"))
 }
+
+func TestIssue52978(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (-1790816583),(2049821819), (-1366665321), (536581933), (-1613686445)")
+	tk.MustQuery("select min(truncate(cast(-26340 as double), ref_11.a)) as c3 from t as ref_11;").Check(testkit.Rows("-26340"))
+	tk.MustExec("drop table if exists t")
+}
