@@ -13,7 +13,7 @@ go_test(
     shard_count = 7,
     deps = [
         "//pkg/config",
-        "//pkg/planner/core/internal",
+        "//pkg/planner/util/coretestsdk",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/testkit/testdata",

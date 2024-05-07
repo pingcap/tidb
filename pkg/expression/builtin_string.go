@@ -816,7 +816,7 @@ func (c *spaceFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
@@ -1622,7 +1622,7 @@ func (c *hexFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 			return nil, err
 		}
 		bf.tp.SetFlen(args[0].GetType().GetFlen() * 2)
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
 		sig := &builtinHexIntArgSig{bf}
@@ -2738,7 +2738,7 @@ func (c *octFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		if err != nil {
 			return nil, err
 		}
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
 
@@ -2751,7 +2751,7 @@ func (c *octFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		if err != nil {
 			return nil, err
 		}
-		charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
 		bf.tp.SetFlen(64)
@@ -2966,7 +2966,7 @@ func (c *binFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)
@@ -3248,7 +3248,7 @@ func (c *formatFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	if err != nil {
 		return nil, err
 	}
-	charset, colalte := ctx.GetSessionVars().GetCharsetInfo()
+	charset, colalte := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(colalte)
 	bf.tp.SetFlen(mysql.MaxBlobWidth)
@@ -3497,7 +3497,7 @@ func (c *toBase64FunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 
@@ -3812,7 +3812,7 @@ func (c *loadFileFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)

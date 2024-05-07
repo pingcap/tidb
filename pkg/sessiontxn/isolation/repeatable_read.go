@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -185,7 +186,7 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val any) (err e
 		return nil
 	}
 
-	plan, ok := val.(plannercore.Plan)
+	plan, ok := val.(base.Plan)
 	if !ok {
 		return nil
 	}
@@ -203,7 +204,7 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val any) (err e
 // Note: For point get and batch point get (name it plan), if one of the ancestor node is update/delete/physicalLock,
 // we should check whether the plan.Lock is true or false. See comments in needNotToBeOptimized.
 // inLockOrWriteStmt = true means one of the ancestor node is update/delete/physicalLock.
-func notNeedGetLatestTSFromPD(plan plannercore.Plan, inLockOrWriteStmt bool) bool {
+func notNeedGetLatestTSFromPD(plan base.Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
 	case *plannercore.PointGetPlan:
 		// We do not optimize the point get/ batch point get if plan.lock = false and inLockOrWriteStmt = true.
@@ -213,7 +214,7 @@ func notNeedGetLatestTSFromPD(plan plannercore.Plan, inLockOrWriteStmt bool) boo
 		return !inLockOrWriteStmt || v.Lock
 	case *plannercore.BatchPointGetPlan:
 		return !inLockOrWriteStmt || v.Lock
-	case plannercore.PhysicalPlan:
+	case base.PhysicalPlan:
 		if len(v.Children()) == 0 {
 			return false
 		}

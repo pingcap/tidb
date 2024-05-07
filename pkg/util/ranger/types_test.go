@@ -138,7 +138,7 @@ func TestRange(t *testing.T) {
 	}
 	for _, v := range isPointTests {
 		ctx := core.MockContext()
-		require.Equal(t, v.isPoint, v.ran.IsPoint(ctx))
+		require.Equal(t, v.isPoint, v.ran.IsPoint(ctx.GetRangerCtx()))
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}
 }

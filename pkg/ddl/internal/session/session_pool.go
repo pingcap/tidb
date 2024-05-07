@@ -20,13 +20,12 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
-	"go.uber.org/zap"
 )
 
 // Pool is used to new Session.
@@ -72,6 +71,7 @@ func (sg *Pool) Get() (sessionctx.Context, error) {
 	}
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
+	ctx.GetSessionVars().StmtCtx.SetTimeZone(ctx.GetSessionVars().Location())
 	infosync.StoreInternalSession(ctx)
 	return ctx, nil
 }
@@ -96,7 +96,7 @@ func (sg *Pool) Close() {
 	if sg.mu.closed || sg.resPool == nil {
 		return
 	}
-	logutil.BgLogger().Info("closing session pool", zap.String("category", "ddl"))
+	logutil.DDLLogger().Info("closing session pool")
 	sg.resPool.Close()
 	sg.mu.closed = true
 }

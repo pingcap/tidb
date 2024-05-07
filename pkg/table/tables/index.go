@@ -15,7 +15,6 @@
 package tables
 
 import (
-	"bytes"
 	"context"
 	"sync"
 	"time"
@@ -355,15 +354,6 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 			continue
 		}
-		if c.idxInfo.Global && len(value) != 0 && !bytes.Equal(value, idxVal) {
-			val := idxVal
-			err = txn.GetMemBuffer().Set(key, val)
-			if err != nil {
-				return nil, err
-			}
-			continue
-		}
-
 		if keyIsTempIdxKey && !tempIdxVal.IsEmpty() {
 			value = tempIdxVal.Current().Value
 		}

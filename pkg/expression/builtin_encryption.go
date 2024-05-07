@@ -24,6 +24,7 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"hash"
 	"io"
@@ -123,7 +124,7 @@ func (c *aesDecryptFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	bf.tp.SetFlen(args[0].GetType().GetFlen()) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 
-	blockMode, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	blockMode := ctx.GetBlockEncryptionMode()
 	mode, exists := aesModes[strings.ToLower(blockMode)]
 	if !exists {
 		return nil, errors.Errorf("unsupported block encryption mode - %v", blockMode)
@@ -258,7 +259,7 @@ func (c *aesEncryptFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	bf.tp.SetFlen(aes.BlockSize * (args[0].GetType().GetFlen()/aes.BlockSize + 1)) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 
-	blockMode, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	blockMode := ctx.GetBlockEncryptionMode()
 	mode, exists := aesModes[strings.ToLower(blockMode)]
 	if !exists {
 		return nil, errors.Errorf("unsupported block encryption mode - %v", blockMode)
@@ -543,7 +544,7 @@ func (b *builtinPasswordSig) evalString(ctx EvalContext, row chunk.Row) (val str
 	// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 	// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 	tc := typeCtx(ctx)
-	tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD"))
+	tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD", ""))
 
 	return auth.EncodePassword(pass), false, nil
 }
@@ -608,7 +609,7 @@ func (c *md5FunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(32)
@@ -635,7 +636,8 @@ func (b *builtinMD5Sig) evalString(ctx EvalContext, row chunk.Row) (string, bool
 		return "", isNull, err
 	}
 	sum := md5.Sum([]byte(arg)) // #nosec G401
-	hexStr := fmt.Sprintf("%x", sum)
+	hexStr := hex.EncodeToString(sum[:])
+
 	return hexStr, false, nil
 }
 
@@ -651,7 +653,7 @@ func (c *sha1FunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(40)
@@ -698,7 +700,7 @@ func (c *sha2FunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(128) // sha512
@@ -729,7 +731,7 @@ func (c *sm3FunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(40)

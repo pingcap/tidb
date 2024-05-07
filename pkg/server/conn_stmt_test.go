@@ -357,8 +357,8 @@ func TestCursorFetchReset(t *testing.T) {
 	require.NoError(t, c.flush(context.Background()))
 	require.Equal(t, expected, out.Bytes())
 	// reset the statement
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtReset}, uint32(stmt.ID())),
+	require.NoError(t, c.Dispatch(ctx, appendUint32(
+		[]byte{mysql.ComStmtReset}, uint32(stmt.ID()),
 	)))
 	// the following fetch will fail
 	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1)))
@@ -446,9 +446,9 @@ func TestCursorFetchSendLongDataReset(t *testing.T) {
 	// send a parameter to the server
 	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, appendUint64([]byte{}, 1)))
 	// reset the statement
-	require.NoError(t, c.Dispatch(ctx, append(
-		appendUint32([]byte{mysql.ComStmtReset}, uint32(stmt.ID())),
-	)))
+	require.NoError(t, c.Dispatch(ctx, appendUint32(
+		[]byte{mysql.ComStmtReset}, uint32(stmt.ID())),
+	))
 	// execute directly will fail
 	require.Error(t, c.Dispatch(ctx, append(
 		appendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),

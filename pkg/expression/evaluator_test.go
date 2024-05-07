@@ -91,7 +91,7 @@ func datumsToConstants(datums []types.Datum) []Expression {
 
 func primitiveValsToConstants(ctx BuildContext, args []any) []Expression {
 	cons := datumsToConstants(types.MakeDatums(args...))
-	char, col := ctx.GetSessionVars().GetCharsetInfo()
+	char, col := ctx.GetCharsetInfo()
 	for i, arg := range args {
 		types.DefaultTypeForValue(arg, cons[i].GetType(), char, col)
 	}

@@ -17,6 +17,7 @@ package expression
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -60,7 +61,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
 
-	ctx.GetSessionVars().StmtCtx.UseCache = true
+	ctx.GetSessionVars().StmtCtx.EnablePlanCache()
 
 	// cases for parameters
 	ltWithoutParam, err := newFunctionForTest(ctx, ast.LT, col0, NewOne())
@@ -75,7 +76,7 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	res = EvaluateExprWithNull(ctx, schema, ltWithParam)
 	_, isConst := res.(*Constant)
 	require.True(t, isConst) // this expression is evaluated and skip-plan cache flag is set.
-	require.True(t, !ctx.GetSessionVars().StmtCtx.UseCache)
+	require.True(t, !ctx.GetSessionVars().StmtCtx.UseCache())
 }
 
 func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
@@ -294,4 +295,35 @@ func TestExpressionMemeoryUsage(t *testing.T) {
 	c3 := Constant{Value: types.NewIntDatum(1)}
 	c4 := Constant{Value: types.NewStringDatum("11")}
 	require.Greater(t, c4.MemoryUsage(), c3.MemoryUsage())
+}
+
+func TestIgnoreTruncateExprCtx(t *testing.T) {
+	ctx := createContext(t)
+	ctx.GetSessionVars().StmtCtx.SetTypeFlags(types.StrictFlags)
+	evalCtx := ctx.GetEvalCtx()
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+	require.True(t, !tc.Flags().IgnoreTruncateErr() && !tc.Flags().TruncateAsWarning())
+	require.Equal(t, errctx.LevelError, ec.LevelForGroup(errctx.ErrGroupTruncate))
+
+	// new ctx will ignore truncate error
+	newEvalCtx := ignoreTruncate(ctx).GetEvalCtx()
+	tc, ec = newEvalCtx.TypeCtx(), newEvalCtx.ErrCtx()
+	require.True(t, tc.Flags().IgnoreTruncateErr() && !tc.Flags().TruncateAsWarning())
+	require.Equal(t, errctx.LevelIgnore, ec.LevelForGroup(errctx.ErrGroupTruncate))
+
+	// old eval ctx will not change
+	tc, ec = evalCtx.TypeCtx(), evalCtx.ErrCtx()
+	require.True(t, !tc.Flags().IgnoreTruncateErr() && !tc.Flags().TruncateAsWarning())
+	require.Equal(t, errctx.LevelError, ec.LevelForGroup(errctx.ErrGroupTruncate))
+
+	// old build ctx will not change
+	evalCtx = ctx.GetEvalCtx()
+	tc, ec = evalCtx.TypeCtx(), evalCtx.ErrCtx()
+	require.True(t, !tc.Flags().IgnoreTruncateErr() && !tc.Flags().TruncateAsWarning())
+	require.Equal(t, errctx.LevelError, ec.LevelForGroup(errctx.ErrGroupTruncate))
+
+	// truncate ignored ctx will not create new ctx
+	ctx.GetSessionVars().StmtCtx.SetTypeFlags(types.StrictFlags.WithIgnoreTruncateErr(true))
+	newCtx := ignoreTruncate(ctx)
+	require.Same(t, ctx, newCtx)
 }

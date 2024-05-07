@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/contextsession"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -73,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner"
 	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
@@ -107,6 +109,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/sli"
@@ -171,7 +174,7 @@ type session struct {
 	}
 
 	currentCtx  context.Context // only use for runtime.trace, Please NEVER use it.
-	currentPlan plannercore.Plan
+	currentPlan base.Plan
 
 	store kv.Storage
 
@@ -181,7 +184,7 @@ type session struct {
 	sessionManager util.SessionManager
 
 	pctx    *planContextImpl
-	exprctx *expressionContextImpl
+	exprctx *contextsession.SessionExprContext
 	tblctx  *tbctximpl.TableContextImpl
 
 	statsCollector *usage.SessionStatsItem
@@ -301,7 +304,7 @@ func (s *session) cleanRetryInfo() {
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
 				bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(s.pctx, preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
 				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedObj.SchemaVersion,
-					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
+					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
 				if err != nil {
 					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
 					return
@@ -844,7 +847,10 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 	}
 	originErr := errors.Cause(oldErr)
 	inErr, _ := originErr.(*errors.Error)
-	args := inErr.Args()
+	// we don't want to modify the oldErr, so copy the args list
+	oldArgs := inErr.Args()
+	args := make([]any, len(oldArgs))
+	copy(args, oldArgs)
 	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 	if is == nil {
 		return nil
@@ -2272,6 +2278,19 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	rs, err = s.Exec(ctx)
+
+	if se.txn.Valid() && se.txn.IsPipelined() {
+		// Pipelined-DMLs can return assertion errors and write conflicts here because they flush
+		// during execution, handle these errors as we would handle errors after a commit.
+		if err != nil {
+			err = se.handleAssertionFailure(ctx, err)
+		}
+		newErr := se.tryReplaceWriteConflictError(err)
+		if newErr != nil {
+			err = newErr
+		}
+	}
+
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
@@ -2513,7 +2532,7 @@ func (s *session) GetPlanCtx() planctx.PlanContext {
 }
 
 // GetExprCtx returns the expression context of the session.
-func (s *session) GetExprCtx() exprctx.BuildContext {
+func (s *session) GetExprCtx() exprctx.ExprContext {
 	return s.exprctx
 }
 
@@ -2527,7 +2546,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	vars := s.GetSessionVars()
 	sc := vars.StmtCtx
 
-	dctx := sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
+	return sc.GetOrInitDistSQLFromCache(func() *distsqlctx.DistSQLContext {
 		return &distsqlctx.DistSQLContext{
 			AppendWarning:   sc.AppendWarning,
 			InRestrictedSQL: sc.InRestrictedSQL,
@@ -2579,8 +2598,56 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			ExecDetails: &sc.SyncExecDetails,
 		}
 	})
+}
 
-	return dctx.(*distsqlctx.DistSQLContext)
+// GetRangerCtx returns the context used in `ranger` related functions
+func (s *session) GetRangerCtx() *rangerctx.RangerContext {
+	vars := s.GetSessionVars()
+	sc := vars.StmtCtx
+
+	rctx := sc.GetOrInitRangerCtxFromCache(func() any {
+		return &rangerctx.RangerContext{
+			ExprCtx: s.GetExprCtx(),
+			TypeCtx: s.GetSessionVars().StmtCtx.TypeCtx(),
+			ErrCtx:  s.GetSessionVars().StmtCtx.ErrCtx(),
+
+			InPreparedPlanBuilding:   s.GetSessionVars().StmtCtx.InPreparedPlanBuilding,
+			RegardNULLAsPoint:        s.GetSessionVars().RegardNULLAsPoint,
+			OptPrefixIndexSingleScan: s.GetSessionVars().OptPrefixIndexSingleScan,
+			OptimizerFixControl:      s.GetSessionVars().OptimizerFixControl,
+
+			PlanCacheTracker:     &s.GetSessionVars().StmtCtx.PlanCacheTracker,
+			RangeFallbackHandler: &s.GetSessionVars().StmtCtx.RangeFallbackHandler,
+		}
+	})
+
+	return rctx.(*rangerctx.RangerContext)
+}
+
+// GetBuildPBCtx returns the context used in `ToPB` method
+func (s *session) GetBuildPBCtx() *planctx.BuildPBContext {
+	vars := s.GetSessionVars()
+	sc := vars.StmtCtx
+
+	bctx := sc.GetOrInitBuildPBCtxFromCache(func() any {
+		return &planctx.BuildPBContext{
+			ExprCtx: s.GetExprCtx(),
+			Client:  s.GetClient(),
+
+			TiFlashFastScan:                    s.GetSessionVars().TiFlashFastScan,
+			TiFlashFineGrainedShuffleBatchSize: s.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
+
+			// the following fields are used to build `expression.PushDownContext`.
+			// TODO: it'd be better to embed `expression.PushDownContext` in `BuildPBContext`. But `expression` already
+			// depends on this package, so we need to move `expression.PushDownContext` to a standalone package first.
+			GroupConcatMaxLen:  s.GetSessionVars().GroupConcatMaxLen,
+			InExplainStmt:      s.GetSessionVars().StmtCtx.InExplainStmt,
+			AppendWarning:      s.GetSessionVars().StmtCtx.AppendWarning,
+			AppendExtraWarning: s.GetSessionVars().StmtCtx.AppendExtraWarning,
+		}
+	})
+
+	return bctx.(*planctx.BuildPBContext)
 }
 
 func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
@@ -2997,6 +3064,7 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (types.Session, error
 		s.GetSessionVars().MaxChunkSize = 32
 		s.GetSessionVars().MinPagingSize = variable.DefMinPagingSize
 		s.GetSessionVars().EnablePaging = variable.DefTiDBEnablePaging
+		s.GetSessionVars().StmtCtx.SetTimeZone(s.GetSessionVars().Location())
 		err = s.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, "utf8mb4")
 	}
 	return s, err
@@ -3074,7 +3142,11 @@ var (
 		{ddl.BackgroundSubtaskTableSQL, ddl.BackgroundSubtaskTableID},
 		{ddl.BackgroundSubtaskHistoryTableSQL, ddl.BackgroundSubtaskHistoryTableID},
 	}
-	mdlTable = "create table mysql.tidb_mdl_info(job_id BIGINT NOT NULL PRIMARY KEY, version BIGINT NOT NULL, table_ids text(65535));"
+	mdlTable = `create table mysql.tidb_mdl_info(
+		job_id BIGINT NOT NULL PRIMARY KEY,
+		version BIGINT NOT NULL,
+		table_ids text(65535)
+	);`
 )
 
 func splitAndScatterTable(store kv.Storage, tableIDs []int64) {
@@ -3558,7 +3630,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.sessionVars = variable.NewSessionVars(s)
-	s.exprctx = newExpressionContextImpl(s)
+	s.exprctx = contextsession.NewSessionExprContext(s)
 	s.pctx = newPlanContextImpl(s)
 	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
 
@@ -3621,7 +3693,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		stmtStats:             stmtstats.CreateStatementStats(),
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
-	s.exprctx = newExpressionContextImpl(s)
+	s.exprctx = contextsession.NewSessionExprContext(s)
 	s.pctx = newPlanContextImpl(s)
 	s.tblctx = tbctximpl.NewTableContextImpl(s, s.exprctx)
 	s.mu.values = make(map[fmt.Stringer]any)

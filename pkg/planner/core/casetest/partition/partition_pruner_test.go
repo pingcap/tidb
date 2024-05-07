@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/planner/core/internal"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -86,12 +86,12 @@ func getPartitionInfoFromPlan(plan []string) string {
 	infos := make([]testTablePartitionInfo, 0, 2)
 	info := testTablePartitionInfo{}
 	for _, row := range plan {
-		partitions := internal.GetFieldValue("partition:", row)
+		partitions := coretestsdk.GetFieldValue("partition:", row)
 		if partitions != "" {
 			info.Partitions = partitions
 			continue
 		}
-		tbl := internal.GetFieldValue("table:", row)
+		tbl := coretestsdk.GetFieldValue("table:", row)
 		if tbl != "" {
 			info.Table = tbl
 			infos = append(infos, info)

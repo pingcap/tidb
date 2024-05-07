@@ -7,10 +7,10 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/ddl",
+        "//pkg/ddl/logutil",
         "//pkg/infoschema",
         "//pkg/parser/model",
         "//pkg/sessionctx",
-        "//pkg/util/logutil",
         "@org_uber_go_zap//:zap",
     ],
 )

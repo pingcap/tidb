@@ -5,14 +5,15 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "widow_with_exist_subquery_test.go",
         "window_push_down_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//pkg/domain",
-        "//pkg/planner/core/internal",
+        "//pkg/planner/util/coretestsdk",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",

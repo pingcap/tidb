@@ -1,5 +1,5 @@
 #!/bin/bash
-#
+
 # Copyright 2019 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,8 +38,8 @@ rm -rf $TEST_DIR && mkdir -p $TEST_DIR
 # Generate TLS certs
 generate_certs &> /dev/null
 
-SELECTED_TEST_NAME="${TEST_NAME-$(find tests -mindepth 2 -maxdepth 2 -name run.sh | cut -d/ -f2 | sort)}"
-
+# Use the environment variable TEST_NAME if set, otherwise find all test cases
+SELECTED_TEST_NAME="${TEST_NAME:-$(find "$CUR" -mindepth 2 -maxdepth 2 -name run.sh | awk -F'/' '{print $(NF-1)}' | sort)}"
 trap stop_services EXIT
 start_services $@
 
@@ -53,7 +53,7 @@ if [ "${1-}" = '--debug' ]; then
     read line
 fi
 
-echo "selected test cases: $SELECTED_TEST_NAME"
+echo "Selected test cases: $SELECTED_TEST_NAME"
 
 run_case() {
     local case=$1
@@ -75,7 +75,7 @@ run_case() {
     bash "$script" && echo "TEST: [$case] success!"
 }
 
-# wait for global variable cache invalid
+# Wait for global variable cache invalid
 sleep 2
 
 for casename in $SELECTED_TEST_NAME; do

@@ -1029,7 +1029,7 @@ func (c *randFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	}
 	bt := bf
 	if len(args) == 0 {
-		sig = &builtinRandSig{bt, ctx.GetSessionVars().Rng}
+		sig = &builtinRandSig{bt, ctx.Rng()}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else if _, isConstant := args[0].(*Constant); isConstant {
 		// According to MySQL manual:
@@ -1163,7 +1163,7 @@ func (c *convFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	if err != nil {
 		return nil, err
 	}
-	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	charset, collate := ctx.GetCharsetInfo()
 	bf.tp.SetCharset(charset)
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(64)

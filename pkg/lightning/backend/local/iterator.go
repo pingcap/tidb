@@ -164,9 +164,13 @@ func newDupDetectIter(
 	}
 
 	detector := common.NewDupDetector(keyAdapter, dupDB.NewBatch(), logger, dupOpt)
+	iter, err := db.NewIter(newOpts)
+	if err != nil {
+		panic("fail to create iterator")
+	}
 	return &dupDetectIter{
 		keyAdapter:  keyAdapter,
-		iter:        db.NewIter(newOpts),
+		iter:        iter,
 		buf:         buf,
 		dupDetector: detector,
 		logger:      logger,
@@ -256,8 +260,12 @@ func newDupDBIter(dupDB *pebble.DB, keyAdapter common.KeyAdapter, opts *pebble.I
 	if len(opts.UpperBound) > 0 {
 		newOpts.UpperBound = keyAdapter.Encode(nil, opts.UpperBound, common.MinRowID)
 	}
+	iter, err := dupDB.NewIter(newOpts)
+	if err != nil {
+		panic("fail to create iterator")
+	}
 	return &dupDBIter{
-		iter:       dupDB.NewIter(newOpts),
+		iter:       iter,
 		keyAdapter: keyAdapter,
 	}
 }

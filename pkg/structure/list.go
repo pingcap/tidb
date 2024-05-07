@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 )
 
+// valid index: [LIndex, RIndex)
 type listMeta struct {
 	LIndex int64
 	RIndex int64

@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -24,10 +25,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
@@ -339,9 +342,16 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	}
 }
 
-func checkRangeFallbackAndReset(t *testing.T, ctx PlanContext, expectedRangeFallback bool) {
-	require.Equal(t, expectedRangeFallback, ctx.GetSessionVars().StmtCtx.RangeFallback)
-	ctx.GetSessionVars().StmtCtx.RangeFallback = false
+func checkRangeFallbackAndReset(t *testing.T, ctx base.PlanContext, expectedRangeFallback bool) {
+	stmtCtx := ctx.GetSessionVars().StmtCtx
+	hasRangeFallbackWarn := false
+	for _, warn := range stmtCtx.GetWarnings() {
+		hasRangeFallbackWarn = hasRangeFallbackWarn || strings.Contains(warn.Err.Error(), "'tidb_opt_range_max_size' exceeded when building ranges")
+	}
+	require.Equal(t, expectedRangeFallback, hasRangeFallbackWarn)
+	stmtCtx.PlanCacheTracker = contextutil.NewPlanCacheTracker(stmtCtx)
+	stmtCtx.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&stmtCtx.PlanCacheTracker, stmtCtx)
+	stmtCtx.SetWarnings(nil)
 }
 
 func TestRangeFallbackForAnalyzeLookUpFilters(t *testing.T) {

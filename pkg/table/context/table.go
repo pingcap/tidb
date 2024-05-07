@@ -32,7 +32,7 @@ var _ AllocatorContext = MutateContext(nil)
 type MutateContext interface {
 	AllocatorContext
 	// GetExprCtx returns the context to build or evaluate expressions
-	GetExprCtx() exprctx.BuildContext
+	GetExprCtx() exprctx.ExprContext
 	// Value returns the value associated with this context for key.
 	Value(key fmt.Stringer) any
 	// GetSessionVars returns the session variables.

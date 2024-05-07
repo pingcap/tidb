@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
-var _ Misc = &infoSchemaMisc{}
+var _ context.Misc = &infoSchemaMisc{}
 
 type sortedTables []table.Table
 
