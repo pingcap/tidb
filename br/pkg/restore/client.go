@@ -34,10 +34,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
+	fileimporter "github.com/pingcap/tidb/br/pkg/restore/file_importer"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
+	logrestore "github.com/pingcap/tidb/br/pkg/restore/log_restore"
 	tidalloc "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
+	"github.com/pingcap/tidb/br/pkg/restore/rawkv"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -105,8 +109,8 @@ type Client struct {
 	pdClient      pd.Client
 	pdHTTPClient  pdhttp.Client
 	toolClient    split.SplitClient
-	fileImporter  FileImporter
-	rawKVClient   *RawKVBatchClient
+	fileImporter  fileimporter.FileImporter
+	rawKVClient   *rawkv.RawKVBatchClient
 	workerPool    *tidbutil.WorkerPool
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
@@ -170,7 +174,7 @@ type Client struct {
 	// clusterID is the cluster id from down-stream cluster.
 	clusterID uint64
 
-	*logFileManager
+	*logrestore.LogFileManager
 
 	// storage for log restore
 	storage storage.ExternalStorage
@@ -198,7 +202,7 @@ type Client struct {
 	preallocedTableIDs *tidalloc.PreallocIDs
 
 	// the rewrite mode of the downloaded SST files in TiKV.
-	rewriteMode RewriteMode
+	rewriteMode fileimporter.RewriteMode
 
 	// checkpoint information for snapshot restore
 	checkpointRunner   *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
@@ -227,6 +231,21 @@ func NewRestoreClient(
 		deleteRangeQuery:   make([]*stream.PreDelRangeQuery, 0),
 		deleteRangeQueryCh: make(chan *stream.PreDelRangeQuery, 10),
 	}
+}
+
+// makeDBPool makes a session pool with specficated size by sessionFactory.
+func makeDBPool(size uint, dbFactory func() (*DB, error)) ([]*DB, error) {
+	dbPool := make([]*DB, 0, size)
+	for i := uint(0); i < size; i++ {
+		db, e := dbFactory()
+		if e != nil {
+			return dbPool, e
+		}
+		if db != nil {
+			dbPool = append(dbPool, db)
+		}
+	}
+	return dbPool, nil
 }
 
 // Init create db connection and domain for storage.
@@ -494,11 +513,11 @@ func (rc *Client) GetBatchDdlSize() uint {
 	return rc.batchDdlSize
 }
 
-func (rc *Client) SetRewriteMode(mode RewriteMode) {
+func (rc *Client) SetRewriteMode(mode fileimporter.RewriteMode) {
 	rc.rewriteMode = mode
 }
 
-func (rc *Client) GetRewriteMode() RewriteMode {
+func (rc *Client) GetRewriteMode() fileimporter.RewriteMode {
 	return rc.rewriteMode
 }
 
@@ -561,11 +580,11 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.GetStoreCount()+1, splitClientOpts...)
-	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
+	importCli := fileimporter.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
+	rc.fileImporter = fileimporter.NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
 }
 
-func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
+func (rc *Client) SetRawKVClient(c *rawkv.RawKVBatchClient) {
 	rc.rawKVClient = c
 }
 
@@ -912,8 +931,8 @@ func (rc *Client) CreateTables(
 	dom *domain.Domain,
 	tables []*metautil.Table,
 	newTS uint64,
-) (*RewriteRules, []*model.TableInfo, error) {
-	rewriteRules := &RewriteRules{
+) (*restoreutils.RewriteRules, []*model.TableInfo, error) {
+	rewriteRules := &restoreutils.RewriteRules{
 		Data: make([]*import_sstpb.RewriteRule, 0),
 	}
 	newTables := make([]*model.TableInfo, 0, len(tables))
@@ -971,7 +990,7 @@ func (rc *Client) createTables(
 				table.Info.IsCommonHandle,
 				newTableInfo.IsCommonHandle)
 		}
-		rules := GetRewriteRules(newTableInfo, table.Info, newTS, true)
+		rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
 		ct := CreatedTable{
 			RewriteRule: rules,
 			Table:       newTableInfo,
@@ -1009,7 +1028,7 @@ func (rc *Client) createTable(
 			table.Info.IsCommonHandle,
 			newTableInfo.IsCommonHandle)
 	}
-	rules := GetRewriteRules(newTableInfo, table.Info, newTS, true)
+	rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
 	et := CreatedTable{
 		RewriteRule: rules,
 		Table:       newTableInfo,
@@ -1318,11 +1337,11 @@ func (rc *Client) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error {
 }
 
 // Mock the call of setSpeedLimit function
-func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient, rc *Client, concurrency uint) error {
+func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient fileimporter.ImporterClient, rc *Client, concurrency uint) error {
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode, 128, false)
+	rc.fileImporter = fileimporter.NewFileImporter(nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode, 128, false)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
@@ -1351,7 +1370,7 @@ func (rc *Client) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
 			finalStore := store
 			rc.workerPool.ApplyOnErrorGroup(eg,
 				func() error {
-					err := rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
+					err := rc.fileImporter.SetDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -1420,7 +1439,7 @@ func (rc *Client) SplitRanges(ctx context.Context,
 	return SplitRanges(ctx, rc, ranges, updateCh, isRawKv)
 }
 
-func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int64]*RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
+func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter logrestore.LogIter, rules map[int64]*restoreutils.RewriteRules, g glue.Glue, store kv.Storage) (logrestore.LogIter, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1429,11 +1448,11 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 	client := split.NewClient(rc.GetPDClient(), rc.pdHTTPClient, rc.GetTLSConfig(), maxSplitKeysOnce, 3)
-	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
+	return logrestore.NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
 }
 
-func (rc *Client) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}, taskName string) (*LogFilesSkipMap, error) {
-	skipMap := NewLogFilesSkipMap()
+func (rc *Client) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}, taskName string) (*restoreutils.LogFilesSkipMap, error) {
+	skipMap := restoreutils.NewLogFilesSkipMap()
 	t, err := checkpoint.WalkCheckpointFileForRestore(ctx, rc.storage, rc.cipher, taskName, func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
 		for tableID, foffs := range off.Foffs {
 			// filter out the checkpoint data of dropped table
@@ -1453,17 +1472,17 @@ func (rc *Client) generateKvFilesSkipMap(ctx context.Context, downstreamIdset ma
 
 func (rc *Client) WrapLogFilesIterWithCheckpoint(
 	ctx context.Context,
-	logIter LogIter,
+	logIter logrestore.LogIter,
 	downstreamIdset map[int64]struct{},
 	taskName string,
 	updateStats func(kvCount, size uint64),
 	onProgress func(),
-) (LogIter, error) {
+) (logrestore.LogIter, error) {
 	skipMap, err := rc.generateKvFilesSkipMap(ctx, downstreamIdset, taskName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return iter.FilterOut(logIter, func(d *LogDataFileInfo) bool {
+	return iter.FilterOut(logIter, func(d *logrestore.LogDataFileInfo) bool {
 		if skipMap.NeedSkip(d.MetaDataGroupName, d.OffsetInMetaGroup, d.OffsetInMergedGroup) {
 			onProgress()
 			updateStats(uint64(d.NumberOfEntries), d.Length)
@@ -1525,7 +1544,7 @@ LOOPFORTABLE:
 				break LOOPFORTABLE
 			}
 			restoreFn := func() error {
-				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.supportMultiIngest)
+				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.SupportMultiIngest)
 				for _, filesGroup := range filesGroups {
 					if importErr := func(fs []*backuppb.File) (err error) {
 						fileStart := time.Now()
@@ -1554,12 +1573,7 @@ LOOPFORTABLE:
 				return nil
 			}
 			if rc.granularity == string(CoarseGrained) {
-				rc.fileImporter.cond.L.Lock()
-				for rc.fileImporter.ShouldBlock() {
-					// wait for download worker notified
-					rc.fileImporter.cond.Wait()
-				}
-				rc.fileImporter.cond.L.Unlock()
+				rc.fileImporter.WaitUntilUnblock()
 				rc.workerPool.ApplyOnErrorGroup(eg, restoreFn)
 			} else {
 				// if we are not use coarse granularity which means
@@ -1597,7 +1611,7 @@ func (rc *Client) WaitForFilesRestored(ctx context.Context, files []*backuppb.Fi
 					log.Info("import sst files done", logutil.Files(files))
 					updateCh.Inc()
 				}()
-				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
+				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, restoreutils.EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
 			})
 	}
 	if err := eg.Wait(); err != nil {
@@ -1914,7 +1928,7 @@ func (rc *Client) GoUpdateMetaAndLoadStats(
 				zap.Int64("new id", tbl.Table.ID),
 			)
 			start := time.Now()
-			rewriteIDMap := getTableIDMap(tbl.Table, tbl.OldTable.Info)
+			rewriteIDMap := restoreutils.GetTableIDMap(tbl.Table, tbl.OldTable.Info)
 			if statsErr = metautil.RestoreStats(ctx, s, cipher, rc.statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); statsErr != nil {
 				log.Error("analyze table failed", zap.Any("table", oldTable.StatsFileIndexes), zap.Error(statsErr))
 			}
@@ -2023,7 +2037,7 @@ func (rc *Client) FailpointDoChecksumForLogRestore(
 	kvClient kv.Client,
 	pdClient pd.Client,
 	idrules map[int64]int64,
-	rewriteRules map[int64]*RewriteRules,
+	rewriteRules map[int64]*restoreutils.RewriteRules,
 ) (finalErr error) {
 	startTS, err := rc.GetTSWithRetry(ctx)
 	if err != nil {
@@ -2422,7 +2436,7 @@ func (rc *Client) PreCheckTableClusterIndex(
 }
 
 func (rc *Client) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint) error {
-	init := LogFileManagerInit{
+	init := logrestore.LogFileManagerInit{
 		StartTS:   startTS,
 		RestoreTS: restoreTS,
 		Storage:   rc.storage,
@@ -2430,7 +2444,7 @@ func (rc *Client) InstallLogFileManager(ctx context.Context, startTS, restoreTS 
 		MetadataDownloadBatchSize: metadataDownloadBatchSize,
 	}
 	var err error
-	rc.logFileManager, err = CreateLogFileManager(ctx, init)
+	rc.LogFileManager, err = logrestore.CreateLogFileManager(ctx, init)
 	if err != nil {
 		return err
 	}
@@ -2502,9 +2516,9 @@ type FilesInRegion struct {
 	writeSize      uint64
 	writeKVCount   int64
 
-	defaultFiles []*LogDataFileInfo
-	writeFiles   []*LogDataFileInfo
-	deleteFiles  []*LogDataFileInfo
+	defaultFiles []*logrestore.LogDataFileInfo
+	writeFiles   []*logrestore.LogDataFileInfo
+	deleteFiles  []*logrestore.LogDataFileInfo
 }
 
 type FilesInTable struct {
@@ -2513,15 +2527,15 @@ type FilesInTable struct {
 
 func ApplyKVFilesWithBatchMethod(
 	ctx context.Context,
-	logIter LogIter,
+	logIter logrestore.LogIter,
 	batchCount int,
 	batchSize uint64,
-	applyFunc func(files []*LogDataFileInfo, kvCount int64, size uint64),
+	applyFunc func(files []*logrestore.LogDataFileInfo, kvCount int64, size uint64),
 	applyWg *sync.WaitGroup,
 ) error {
 	var (
 		tableMapFiles        = make(map[int64]*FilesInTable)
-		tmpFiles             = make([]*LogDataFileInfo, 0, batchCount)
+		tmpFiles             = make([]*logrestore.LogDataFileInfo, 0, batchCount)
 		tmpSize       uint64 = 0
 		tmpKVCount    int64  = 0
 	)
@@ -2532,7 +2546,7 @@ func ApplyKVFilesWithBatchMethod(
 
 		f := r.Item
 		if f.GetType() == backuppb.FileType_Put && f.GetLength() >= batchSize {
-			applyFunc([]*LogDataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+			applyFunc([]*logrestore.LogDataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
 			continue
 		}
 
@@ -2551,13 +2565,13 @@ func ApplyKVFilesWithBatchMethod(
 
 		if f.GetType() == backuppb.FileType_Delete {
 			if fs.defaultFiles == nil {
-				fs.deleteFiles = make([]*LogDataFileInfo, 0)
+				fs.deleteFiles = make([]*logrestore.LogDataFileInfo, 0)
 			}
 			fs.deleteFiles = append(fs.deleteFiles, f)
 		} else {
 			if f.GetCf() == stream.DefaultCF {
 				if fs.defaultFiles == nil {
-					fs.defaultFiles = make([]*LogDataFileInfo, 0, batchCount)
+					fs.defaultFiles = make([]*logrestore.LogDataFileInfo, 0, batchCount)
 				}
 				fs.defaultFiles = append(fs.defaultFiles, f)
 				fs.defaultSize += f.Length
@@ -2570,7 +2584,7 @@ func ApplyKVFilesWithBatchMethod(
 				}
 			} else {
 				if fs.writeFiles == nil {
-					fs.writeFiles = make([]*LogDataFileInfo, 0, batchCount)
+					fs.writeFiles = make([]*logrestore.LogDataFileInfo, 0, batchCount)
 				}
 				fs.writeFiles = append(fs.writeFiles, f)
 				fs.writeSize += f.GetLength()
@@ -2606,14 +2620,14 @@ func ApplyKVFilesWithBatchMethod(
 
 				if len(tmpFiles) >= batchCount || tmpSize >= batchSize {
 					applyFunc(tmpFiles, tmpKVCount, tmpSize)
-					tmpFiles = make([]*LogDataFileInfo, 0, batchCount)
+					tmpFiles = make([]*logrestore.LogDataFileInfo, 0, batchCount)
 					tmpSize = 0
 					tmpKVCount = 0
 				}
 			}
 			if len(tmpFiles) > 0 {
 				applyFunc(tmpFiles, tmpKVCount, tmpSize)
-				tmpFiles = make([]*LogDataFileInfo, 0, batchCount)
+				tmpFiles = make([]*logrestore.LogDataFileInfo, 0, batchCount)
 				tmpSize = 0
 				tmpKVCount = 0
 			}
@@ -2625,11 +2639,11 @@ func ApplyKVFilesWithBatchMethod(
 
 func ApplyKVFilesWithSingelMethod(
 	ctx context.Context,
-	files LogIter,
-	applyFunc func(file []*LogDataFileInfo, kvCount int64, size uint64),
+	files logrestore.LogIter,
+	applyFunc func(file []*logrestore.LogDataFileInfo, kvCount int64, size uint64),
 	applyWg *sync.WaitGroup,
 ) error {
-	deleteKVFiles := make([]*LogDataFileInfo, 0)
+	deleteKVFiles := make([]*logrestore.LogDataFileInfo, 0)
 
 	for r := files.TryNext(ctx); !r.Finished; r = files.TryNext(ctx) {
 		if r.Err != nil {
@@ -2641,14 +2655,14 @@ func ApplyKVFilesWithSingelMethod(
 			deleteKVFiles = append(deleteKVFiles, f)
 			continue
 		}
-		applyFunc([]*LogDataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+		applyFunc([]*logrestore.LogDataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
 	}
 
 	applyWg.Wait()
 	log.Info("restore delete files", zap.Int("count", len(deleteKVFiles)))
 	for _, file := range deleteKVFiles {
 		f := file
-		applyFunc([]*LogDataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
+		applyFunc([]*logrestore.LogDataFileInfo{f}, f.GetNumberOfEntries(), f.GetLength())
 	}
 
 	return nil
@@ -2656,9 +2670,9 @@ func ApplyKVFilesWithSingelMethod(
 
 func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
-	rules map[int64]*RewriteRules,
+	rules map[int64]*restoreutils.RewriteRules,
 	idrules map[int64]int64,
-	logIter LogIter,
+	logIter logrestore.LogIter,
 	runner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType],
 	pitrBatchCount uint32,
 	pitrBatchSize uint32,
@@ -2688,7 +2702,7 @@ func (rc *Client) RestoreKVFiles(
 
 	var applyWg sync.WaitGroup
 	eg, ectx := errgroup.WithContext(ctx)
-	applyFunc := func(files []*LogDataFileInfo, kvCount int64, size uint64) {
+	applyFunc := func(files []*logrestore.LogDataFileInfo, kvCount int64, size uint64) {
 		if len(files) == 0 {
 			return
 		}
@@ -2735,7 +2749,7 @@ func (rc *Client) RestoreKVFiles(
 					}
 				}()
 
-				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
+				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.ShiftStartTS, rc.StartTS, rc.RestoreTS, supportBatch)
 			})
 		}
 	}
@@ -2880,7 +2894,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	if !cfg.IsNewTask {
 		log.Info("try to load pitr id maps")
 		needConstructIdMap = false
-		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.restoreTS)
+		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.RestoreTS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -2889,9 +2903,9 @@ func (rc *Client) InitSchemasReplaceForDDL(
 	// a new task, but without full snapshot restore, tries to load
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
 	if len(dbMaps) <= 0 && !cfg.HasFullRestore {
-		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
+		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.StartTS))
 		needConstructIdMap = true
-		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.startTS)
+		dbMaps, err = rc.initSchemasMap(ctx, rc.GetClusterID(ctx), rc.StartTS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -2935,8 +2949,8 @@ func (rc *Client) InitSchemasReplaceForDDL(
 			dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
 				Name:         newTableInfo.Name.O,
 				TableID:      newTableInfo.ID,
-				PartitionMap: getPartitionIDMap(newTableInfo, t.Info),
-				IndexMap:     getIndexIDMap(newTableInfo, t.Info),
+				PartitionMap: restoreutils.GetPartitionIDMap(newTableInfo, t.Info),
+				IndexMap:     restoreutils.GetIndexIDMap(newTableInfo, t.Info),
 			}
 		}
 	} else {
@@ -3088,7 +3102,7 @@ func (rc *Client) constructIDMap(
 		}
 
 		for _, entry := range entries {
-			if _, err := sr.RewriteKvEntry(&entry.e, f.GetCf()); err != nil {
+			if _, err := sr.RewriteKvEntry(&entry.E, f.GetCf()); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -3107,12 +3121,12 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 		ctx context.Context,
 		files []*backuppb.DataFileInfo,
 		schemasReplace *stream.SchemasReplace,
-		kvEntries []*KvEntryWithTS,
+		kvEntries []*logrestore.KvEntryWithTS,
 		filterTS uint64,
 		updateStats func(kvCount uint64, size uint64),
 		progressInc func(),
 		cf string,
-	) ([]*KvEntryWithTS, error),
+	) ([]*logrestore.KvEntryWithTS, error),
 ) error {
 	// the average size of each KV is 2560 Bytes
 	// kvEntries is kvs left by the previous batch
@@ -3126,8 +3140,8 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 		defaultIdx int    = 0
 		writeIdx   int    = 0
 
-		defaultKvEntries = make([]*KvEntryWithTS, 0)
-		writeKvEntries   = make([]*KvEntryWithTS, 0)
+		defaultKvEntries = make([]*logrestore.KvEntryWithTS, 0)
+		writeKvEntries   = make([]*logrestore.KvEntryWithTS, 0)
 	)
 	// Set restoreKV to SchemaReplace.
 	schemasReplace.SetRestoreKVStatus()
@@ -3186,31 +3200,25 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 	return nil
 }
 
-// the kv entry with ts, the ts is decoded from entry.
-type KvEntryWithTS struct {
-	e  kv.Entry
-	ts uint64
-}
-
 func (rc *Client) RestoreBatchMetaKVFiles(
 	ctx context.Context,
 	files []*backuppb.DataFileInfo,
 	schemasReplace *stream.SchemasReplace,
-	kvEntries []*KvEntryWithTS,
+	kvEntries []*logrestore.KvEntryWithTS,
 	filterTS uint64,
 	updateStats func(kvCount uint64, size uint64),
 	progressInc func(),
 	cf string,
-) ([]*KvEntryWithTS, error) {
-	nextKvEntries := make([]*KvEntryWithTS, 0)
-	curKvEntries := make([]*KvEntryWithTS, 0)
+) ([]*logrestore.KvEntryWithTS, error) {
+	nextKvEntries := make([]*logrestore.KvEntryWithTS, 0)
+	curKvEntries := make([]*logrestore.KvEntryWithTS, 0)
 	if len(files) == 0 && len(kvEntries) == 0 {
 		return nextKvEntries, nil
 	}
 
 	// filter the kv from kvEntries again.
 	for _, kv := range kvEntries {
-		if kv.ts < filterTS {
+		if kv.Ts < filterTS {
 			curKvEntries = append(curKvEntries, kv)
 		} else {
 			nextKvEntries = append(nextKvEntries, kv)
@@ -3229,8 +3237,8 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 	}
 
 	// sort these entries.
-	slices.SortFunc(curKvEntries, func(i, j *KvEntryWithTS) int {
-		return cmp.Compare(i.ts, j.ts)
+	slices.SortFunc(curKvEntries, func(i, j *logrestore.KvEntryWithTS) int {
+		return cmp.Compare(i.Ts, j.Ts)
 	})
 
 	// restore these entries with rawPut() method.
@@ -3251,7 +3259,7 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 func (rc *Client) restoreMetaKvEntries(
 	ctx context.Context,
 	sr *stream.SchemasReplace,
-	entries []*KvEntryWithTS,
+	entries []*logrestore.KvEntryWithTS,
 	columnFamily string,
 ) (uint64, uint64, error) {
 	var (
@@ -3262,24 +3270,24 @@ func (rc *Client) restoreMetaKvEntries(
 	rc.rawKVClient.SetColumnFamily(columnFamily)
 
 	for _, entry := range entries {
-		log.Debug("before rewrte entry", zap.Uint64("key-ts", entry.ts), zap.Int("key-len", len(entry.e.Key)),
-			zap.Int("value-len", len(entry.e.Value)), zap.ByteString("key", entry.e.Key))
+		log.Debug("before rewrte entry", zap.Uint64("key-ts", entry.Ts), zap.Int("key-len", len(entry.E.Key)),
+			zap.Int("value-len", len(entry.E.Value)), zap.ByteString("key", entry.E.Key))
 
-		newEntry, err := sr.RewriteKvEntry(&entry.e, columnFamily)
+		newEntry, err := sr.RewriteKvEntry(&entry.E, columnFamily)
 		if err != nil {
-			log.Error("rewrite txn entry failed", zap.Int("klen", len(entry.e.Key)),
-				logutil.Key("txn-key", entry.e.Key))
+			log.Error("rewrite txn entry failed", zap.Int("klen", len(entry.E.Key)),
+				logutil.Key("txn-key", entry.E.Key))
 			return 0, 0, errors.Trace(err)
 		} else if newEntry == nil {
 			continue
 		}
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
-			zap.Int("new-value-len", len(entry.e.Value)), zap.ByteString("new-key", newEntry.Key))
+			zap.Int("new-value-len", len(entry.E.Value)), zap.ByteString("new-key", newEntry.Key))
 
 		failpoint.Inject("failed-to-restore-metakv", func(_ failpoint.Value) {
 			failpoint.Return(0, 0, errors.Errorf("failpoint: failed to restore metakv"))
 		})
-		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.ts); err != nil {
+		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.Ts); err != nil {
 			return 0, 0, errors.Trace(err)
 		}
 		// for failpoint, we need to flush the cache in rawKVClient every time
@@ -3645,7 +3653,7 @@ func (rc *Client) SaveIDMap(
 ) error {
 	idMaps := sr.TidySchemaMaps()
 	clusterID := rc.GetClusterID(ctx)
-	metaFileName := metautil.PitrIDMapsFilename(clusterID, rc.restoreTS)
+	metaFileName := metautil.PitrIDMapsFilename(clusterID, rc.RestoreTS)
 	metaWriter := metautil.NewMetaWriter(rc.storage, metautil.MetaFileSize, false, metaFileName, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		// save log startTS to backupmeta file
@@ -3664,8 +3672,8 @@ func (rc *Client) SaveIDMap(
 		log.Info("save checkpoint task info with InLogRestoreAndIdMapPersist status")
 		if err := checkpoint.SaveCheckpointTaskInfoForLogRestore(ctx, rc.storage, &checkpoint.CheckpointTaskInfoForLogRestore{
 			Progress:     checkpoint.InLogRestoreAndIdMapPersist,
-			StartTS:      rc.startTS,
-			RestoreTS:    rc.restoreTS,
+			StartTS:      rc.StartTS,
+			RestoreTS:    rc.RestoreTS,
 			RewriteTS:    rc.currentTS,
 			TiFlashItems: items,
 		}, rc.GetClusterID(ctx)); err != nil {
@@ -3761,14 +3769,14 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 
 // RangeFilterFromIngestRecorder rewrites the table id of items in the ingestRecorder
 // TODO: need to implement the range filter out feature
-func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecorder, rewriteRules map[int64]*RewriteRules) error {
+func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecorder, rewriteRules map[int64]*restoreutils.RewriteRules) error {
 	err := recorder.RewriteTableID(func(tableID int64) (int64, bool, error) {
 		rewriteRule, exists := rewriteRules[tableID]
 		if !exists {
 			// since the table's files will be skipped restoring, here also skips.
 			return 0, true, nil
 		}
-		newTableID := GetRewriteTableID(tableID, rewriteRule)
+		newTableID := restoreutils.GetRewriteTableID(tableID, rewriteRule)
 		if newTableID == 0 {
 			return 0, false, errors.Errorf("newTableID is 0, tableID: %d", tableID)
 		}

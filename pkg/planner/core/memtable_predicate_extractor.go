@@ -44,25 +44,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// MemTablePredicateExtractor is used to extract some predicates from `WHERE` clause
-// and push the predicates down to the data retrieving on reading memory table stage.
-//
-// e.g:
-// SELECT * FROM cluster_config WHERE type='tikv' AND instance='192.168.1.9:2379'
-// We must request all components in the cluster via HTTP API for retrieving
-// configurations and filter them by `type/instance` columns.
-//
-// The purpose of defining a `MemTablePredicateExtractor` is to optimize this
-// 1. Define a `ClusterConfigTablePredicateExtractor`
-// 2. Extract the `type/instance` columns on the logic optimizing stage and save them via fields.
-// 3. Passing the extractor to the `ClusterReaderExecExec` executor
-// 4. Executor sends requests to the target components instead of all of the components
-type MemTablePredicateExtractor interface {
-	// Extracts predicates which can be pushed down and returns the remained predicates
-	Extract(base.PlanContext, *expression.Schema, []*types.FieldName, []expression.Expression) (remained []expression.Expression)
-	explainInfo(p *PhysicalMemTable) string
-}
-
 // extractHelper contains some common utililty functions for all extractor.
 // define an individual struct instead of a bunch of un-exported functions
 // to avoid polluting the global scope of current package.
@@ -732,7 +713,8 @@ func (e *ClusterTableExtractor) Extract(_ base.PlanContext,
 	return remained
 }
 
-func (e *ClusterTableExtractor) explainInfo(_ *PhysicalMemTable) string {
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *ClusterTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
@@ -821,7 +803,9 @@ func (e *ClusterLogTableExtractor) Extract(ctx base.PlanContext,
 	return remained
 }
 
-func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *ClusterLogTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
+	p := pp.(*PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -955,7 +939,9 @@ func (e *HotRegionsHistoryTableExtractor) Extract(ctx base.PlanContext,
 	return remained
 }
 
-func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) string {
+// ExplainInfo implements the base.MemTablePredicateExtractor interface.
+func (e *HotRegionsHistoryTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
+	p := pp.(*PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1070,7 +1056,9 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.T
 	return startTime, endTime
 }
 
-func (e *MetricTableExtractor) explainInfo(p *PhysicalMemTable) string {
+// ExplainInfo implements the base.MemTablePredicateExtractor interface.
+func (e *MetricTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
+	p := pp.(*PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1130,7 +1118,8 @@ func (e *MetricSummaryTableExtractor) Extract(_ base.PlanContext,
 	return remained
 }
 
-func (*MetricSummaryTableExtractor) explainInfo(_ *PhysicalMemTable) string {
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (*MetricSummaryTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	return ""
 }
 
@@ -1162,7 +1151,8 @@ func (e *InspectionResultTableExtractor) Extract(_ base.PlanContext,
 	return remained
 }
 
-func (e *InspectionResultTableExtractor) explainInfo(_ *PhysicalMemTable) string {
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *InspectionResultTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	if e.SkipInspection {
 		return "skip_inspection:true"
 	}
@@ -1203,7 +1193,8 @@ func (e *InspectionSummaryTableExtractor) Extract(_ base.PlanContext,
 	return remained
 }
 
-func (e *InspectionSummaryTableExtractor) explainInfo(_ *PhysicalMemTable) string {
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *InspectionSummaryTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	if e.SkipInspection {
 		return "skip_inspection: true"
 	}
@@ -1255,7 +1246,8 @@ func (e *InspectionRuleTableExtractor) Extract(_ base.PlanContext,
 	return remained
 }
 
-func (e *InspectionRuleTableExtractor) explainInfo(_ *PhysicalMemTable) string {
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *InspectionRuleTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1408,7 +1400,8 @@ func (e *TableStorageStatsExtractor) Extract(_ base.PlanContext,
 	return remained
 }
 
-func (e *TableStorageStatsExtractor) explainInfo(_ *PhysicalMemTable) string {
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *TableStorageStatsExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1426,7 +1419,9 @@ func (e *TableStorageStatsExtractor) explainInfo(_ *PhysicalMemTable) string {
 	return r.String()
 }
 
-func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
+// ExplainInfo implements the base.MemTablePredicateExtractor interface.
+func (e *SlowQueryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
+	p := pp.(*PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1481,7 +1476,8 @@ func (e *TiFlashSystemTableExtractor) Extract(_ base.PlanContext,
 	return remained
 }
 
-func (e *TiFlashSystemTableExtractor) explainInfo(_ *PhysicalMemTable) string {
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *TiFlashSystemTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
@@ -1550,7 +1546,9 @@ func (e *StatementsSummaryExtractor) Extract(sctx base.PlanContext,
 	return remained
 }
 
-func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
+	p := pp.(*PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1641,7 +1639,8 @@ func (e *TikvRegionPeersExtractor) Extract(_ base.PlanContext,
 	return remained
 }
 
-func (e *TikvRegionPeersExtractor) explainInfo(_ *PhysicalMemTable) string {
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *TikvRegionPeersExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
@@ -1706,7 +1705,8 @@ func (e *ColumnsTableExtractor) Extract(_ base.PlanContext,
 	return remained
 }
 
-func (e *ColumnsTableExtractor) explainInfo(_ *PhysicalMemTable) string {
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *ColumnsTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
@@ -1767,7 +1767,8 @@ func (e *TiKVRegionStatusExtractor) Extract(_ base.PlanContext,
 	return remained
 }
 
-func (e *TiKVRegionStatusExtractor) explainInfo(_ *PhysicalMemTable) string {
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *TiKVRegionStatusExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	r := new(bytes.Buffer)
 	if len(e.tablesID) > 0 {
 		r.WriteString("table_id in {")
@@ -1827,7 +1828,8 @@ func (e *InfoSchemaTablesExtractor) Extract(_ base.PlanContext,
 	return remained
 }
 
-func (e *InfoSchemaTablesExtractor) explainInfo(_ *PhysicalMemTable) string {
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *InfoSchemaTablesExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
