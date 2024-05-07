@@ -789,20 +789,7 @@ func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema
 		plan = exec.Plan
 	}
 
-	// maybe we'd better check cached plan type here, current
-	// only point select/update will be cached, see "getPhysicalPlan" func
-	var ok bool
-	switch plan.(type) {
-	case *PointGetPlan:
-		ok = true
-	case *Update:
-		pointUpdate := plan.(*Update)
-		_, ok = pointUpdate.SelectPlan.(*PointGetPlan)
-		if !ok {
-			return false
-		}
-	default:
-		ok = false
-	}
-	return ok
+	// only support simple PointGet Plan
+	_, isPointGet := plan.(*PointGetPlan)
+	return isPointGet
 }
