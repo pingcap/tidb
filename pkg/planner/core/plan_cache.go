@@ -809,10 +809,7 @@ func tryCachePointPlan(_ context.Context, sctx base.PlanContext,
 	)
 
 	if plan, _ok := p.(*PointGetPlan); _ok {
-		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx.GetSessionVars(), p)
-		if err != nil {
-			return err
-		}
+		ok = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx.GetSessionVars(), p)
 		if ok {
 			plan.stmtHints = sctx.GetSessionVars().StmtCtx.StmtHints.Clone()
 		}
