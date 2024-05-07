@@ -547,7 +547,7 @@ func (w *ProbeWorker) runJoinWorker() {
 	}
 }
 
-func (w *probeWorker) joinMatchedProbeSideRow2ChunkForOuterHashJoin(probeKey uint64, probeSideRow chunk.Row, hCtx *HashContext, joinResult *internalutil.HashjoinWorkerResult) (bool, int64, *internalutil.HashjoinWorkerResult) {
+func (w *ProbeWorker) joinMatchedProbeSideRow2ChunkForOuterHashJoin(probeKey uint64, probeSideRow chunk.Row, hCtx *HashContext, joinResult *internalutil.HashjoinWorkerResult) (bool, int64, *internalutil.HashjoinWorkerResult) {
 	var err error
 	waitTime := int64(0)
 	oneWaitTime := int64(0)
@@ -589,7 +589,7 @@ func (w *probeWorker) joinMatchedProbeSideRow2ChunkForOuterHashJoin(probeKey uin
 }
 
 // joinNAALOSJMatchProbeSideRow2Chunk implement the matching logic for NA-AntiLeftOuterSemiJoin
-func (w *probeWorker) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *HashContext, joinResult *internalutil.HashjoinWorkerResult) (bool, int64, *internalutil.HashjoinWorkerResult) {
+func (w *ProbeWorker) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *HashContext, joinResult *internalutil.HashjoinWorkerResult) (bool, int64, *internalutil.HashjoinWorkerResult) {
 	var (
 		err error
 		ok  bool
@@ -747,7 +747,7 @@ func (w *probeWorker) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, probeK
 }
 
 // joinNAASJMatchProbeSideRow2Chunk implement the matching logic for NA-AntiSemiJoin
-func (w *probeWorker) joinNAASJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *HashContext, joinResult *internalutil.HashjoinWorkerResult) (bool, int64, *internalutil.HashjoinWorkerResult) {
+func (w *ProbeWorker) joinNAASJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *HashContext, joinResult *internalutil.HashjoinWorkerResult) (bool, int64, *internalutil.HashjoinWorkerResult) {
 	var (
 		err error
 		ok  bool
@@ -921,9 +921,9 @@ func (w *probeWorker) joinNAASJMatchProbeSideRow2Chunk(probeKey uint64, probeKey
 //
 //	       For NA-AntiLeftOuterSemiJoin, we couldn't match null-bucket first, because once y set has a same key x and null
 //	       key, we should return the result as left side row appended with a scalar value 0 which is from same key matching failure.
-func (w *probeWorker) joinNAAJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *HashContext, joinResult *internalutil.HashjoinWorkerResult) (bool, int64, *internalutil.HashjoinWorkerResult) {
-	naAntiSemiJoin := w.HashJoinCtx.joinType == plannercore.AntiSemiJoin && w.HashJoinCtx.IsNullAware
-	naAntiLeftOuterSemiJoin := w.HashJoinCtx.joinType == plannercore.AntiLeftOuterSemiJoin && w.HashJoinCtx.IsNullAware
+func (w *ProbeWorker) joinNAAJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *HashContext, joinResult *internalutil.HashjoinWorkerResult) (bool, int64, *internalutil.HashjoinWorkerResult) {
+	naAntiSemiJoin := w.HashJoinCtx.JoinType == plannercore.AntiSemiJoin && w.HashJoinCtx.IsNullAware
+	naAntiLeftOuterSemiJoin := w.HashJoinCtx.JoinType == plannercore.AntiLeftOuterSemiJoin && w.HashJoinCtx.IsNullAware
 	if naAntiSemiJoin {
 		return w.joinNAASJMatchProbeSideRow2Chunk(probeKey, probeKeyNullBits, probeSideRow, hCtx, joinResult)
 	}
@@ -934,7 +934,7 @@ func (w *probeWorker) joinNAAJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyN
 	return false, 0, joinResult
 }
 
-func (w *probeWorker) joinMatchedProbeSideRow2Chunk(probeKey uint64, probeSideRow chunk.Row, hCtx *HashContext,
+func (w *ProbeWorker) joinMatchedProbeSideRow2Chunk(probeKey uint64, probeSideRow chunk.Row, hCtx *HashContext,
 	joinResult *internalutil.HashjoinWorkerResult) (bool, int64, *internalutil.HashjoinWorkerResult) {
 	var err error
 	waitTime := int64(0)
