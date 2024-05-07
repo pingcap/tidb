@@ -73,7 +73,11 @@ go_test(
     ],
     embed = [":tables"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 30,
+=======
+    shard_count = 32,
+>>>>>>> 96f9797fca4 (tablecodec: fix the issue that decoding an index value might panic (#53034))
     deps = [
         "//pkg/ddl",
         "//pkg/ddl/util/callback",
