@@ -21,6 +21,7 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -509,4 +510,32 @@ func TestConnectionDelay(t *testing.T) {
 	ms.mu.Unlock()
 	delayConn <- struct{}{}
 	req.NoError(<-connectionPrepareResult)
+}
+
+func TestHooks(t *testing.T) {
+	req := require.New(t)
+	pdc := fakeCluster(t, 3, dummyRegions(100)...)
+	pauseWaitApply := make(chan struct{})
+	ms := newTestEnv(pdc)
+	ms.onCreateStore = func(ms *mockStore) {
+		ms.onWaitApply = func(r *metapb.Region) error {
+			<-pauseWaitApply
+			return nil
+		}
+	}
+	adv := New(ms)
+	connectionsEstablished := new(atomic.Bool)
+	adv.AfterConnectionsEstablished = func() {
+		connectionsEstablished.Store(true)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- adv.DriveLoopAndWaitPrepare(context.Background())
+	}()
+	req.Eventually(connectionsEstablished.Load, 1*time.Second, 100*time.Millisecond)
+	close(pauseWaitApply)
+	req.NoError(<-errCh)
+	ms.AssertSafeForBackup(t)
+	req.NoError(adv.Finalize(context.Background()))
+	ms.AssertIsNormalMode(t)
 }
