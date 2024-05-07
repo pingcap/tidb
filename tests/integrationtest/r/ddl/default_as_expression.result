@@ -960,7 +960,7 @@ SHOW CREATE TABLE jd1;
 Table	Create Table
 jd1	CREATE TABLE `jd1` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-  `j` json DEFAULT json_object(_utf8mb4'foo', _utf8mb4'bar'),
+  `j` json DEFAULT (json_object(_utf8mb4'foo', _utf8mb4'bar')),
   UNIQUE KEY `id` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 INSERT INTO jd1(id) VALUES(1);
@@ -972,7 +972,7 @@ SHOW CREATE TABLE jd2;
 Table	Create Table
 jd2	CREATE TABLE `jd2` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-  `j` json DEFAULT json_array(_utf8mb4'foo', _utf8mb4'bar'),
+  `j` json DEFAULT (json_array(_utf8mb4'foo', _utf8mb4'bar')),
   UNIQUE KEY `id` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 INSERT INTO jd2(id) VALUES(1);
@@ -984,7 +984,7 @@ SHOW CREATE TABLE jd3;
 Table	Create Table
 jd3	CREATE TABLE `jd3` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-  `j` json DEFAULT json_quote(_utf8mb4'foobar'),
+  `j` json DEFAULT (json_quote(_utf8mb4'foobar')),
   UNIQUE KEY `id` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 INSERT INTO jd3(id) VALUES(1);
