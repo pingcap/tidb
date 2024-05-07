@@ -130,7 +130,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	}
 
 	if _, ok := stmtNode.(*ast.ExecuteStmt); ok {
-		if pointGetPlanShortPathOK, err = plannercore.IsPointGetPlanShortPathOK(c.Ctx, is, preparedObj, finalPlan); err != nil {
+		if pointGetPlanShortPathOK = plannercore.IsPointGetPlanShortPathOK(c.Ctx, is, preparedObj, finalPlan); err != nil {
 			return nil, err
 		}
 	}
