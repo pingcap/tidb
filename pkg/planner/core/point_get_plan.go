@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -105,8 +104,6 @@ type PointGetPlan struct {
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in PhysicalPlan for details.
 	probeParents []base.PhysicalPlan
-	// stmtHints should restore in executing context.
-	stmtHints *hint.StmtHints
 	// explicit partition selection
 	PartitionNames []model.CIStr
 }

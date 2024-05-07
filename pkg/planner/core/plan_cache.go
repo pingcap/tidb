@@ -312,9 +312,14 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	if err != nil {
 		return nil, nil, err
 	}
-	err = tryCachePointPlan(ctx, sctx.GetPlanCtx(), stmt, p)
-	if err != nil {
-		return nil, nil, err
+
+	// specially check for PointGet
+	if sctx.GetSessionVars().StmtCtx.UseCache() {
+		if _, ok := p.(*PointGetPlan); ok {
+			if _, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx.GetSessionVars(), p); err != nil {
+				return nil, nil, err
+			}
+		}
 	}
 
 	// check whether this plan is cacheable.
@@ -761,37 +766,6 @@ func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 		}
 	}
 	err := CheckTableLock(sctx, is, stmt.VisitInfos)
-	return err
-}
-
-// tryCachePointPlan will try to cache point execution plan, there may be some
-// short paths for these executions, currently "point select" and "point update"
-func tryCachePointPlan(_ context.Context, sctx base.PlanContext,
-	stmt *PlanCacheStmt, p base.Plan) error {
-	if !sctx.GetSessionVars().StmtCtx.UseCache() {
-		return nil
-	}
-	var (
-		ok  bool
-		err error
-	)
-
-	if plan, _ok := p.(*PointGetPlan); _ok {
-		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx.GetSessionVars(), p)
-		if err != nil {
-			return err
-		}
-		if ok {
-			plan.stmtHints = sctx.GetSessionVars().StmtCtx.StmtHints.Clone()
-		}
-	}
-
-	if ok {
-		// just cache point plan now
-		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
-		sctx.GetSessionVars().StmtCtx.SetPlan(p)
-		sctx.GetSessionVars().StmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
-	}
 	return err
 }
 
