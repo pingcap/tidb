@@ -22,6 +22,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -139,4 +142,50 @@ func TestFetchShowBRIE(t *testing.T) {
 	info2Res := brieTaskInfoToResult(info2)
 	globalBRIEQueue.clearTask(e.Ctx().GetSessionVars().StmtCtx)
 	require.Equal(t, info2Res, fetchShowBRIEResult(t, e, brieColTypes))
+}
+
+func TestBRIEBuilderOPtions(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
+	ResetGlobalBRIEQueueForTest()
+
+	ctx := context.Background()
+	p := parser.New()
+	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
+	stmt, err := p.ParseOneStmt("BACKUP TABLE `a` TO 'noop://' CHECKSUM_CONCURRENCY = 4 COMPRESSION_LEVEL = 4 IGNORE_STATS = 1 BACKUP_COMPRESSION = 'lz4' ENCRYPTION_METHOD = 'aes256-ctr'", "", "")
+	require.NoError(t, err)
+	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
+	require.NoError(t, err)
+	s, ok := stmt.(*ast.BRIEStmt)
+	require.True(t, ok)
+	require.True(t, s.Kind == ast.BRIEKindBackup)
+	for _, opt := range s.Options {
+		switch opt.Tp {
+		case ast.BRIEOptionChecksumConcurrency:
+			require.True(t, opt.UintValue == 4)
+		case ast.BRIEOptionCompressionLevel:
+			require.True(t, opt.UintValue == 4)
+		case ast.BRIEOptionIgnoreStats:
+			require.True(t, opt.UintValue == 1)
+		case ast.BRIEOptionCompression:
+			require.True(t, opt.StrValue == "lz4")
+		case ast.BRIEOptionEncryptionMethod:
+			require.True(t, opt.StrValue == "aes256-ctr")
+		}
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	builder := NewMockExecutorBuilderForTest(sctx, is)
+	s.Kind = ast.BRIEKindBackup
+	require.True(t, ok)
+	schema := plan.Schema()
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/modifyStore", `return("tikv")`)
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/modifyStore")
+	exec := builder.buildBRIE(s, schema)
+	e := exec.(*BRIEExec)
+	require.True(t, e.backupCfg.ChecksumConcurrency == 4)
+	require.True(t, e.backupCfg.CompressionLevel == 4)
+	require.True(t, e.backupCfg.IgnoreStats)
+	require.True(t, e.backupCfg.CompressionConfig.CompressionType == backuppb.CompressionType_LZ4)
+	require.True(t, e.backupCfg.CipherInfo.CipherType == encryptionpb.EncryptionMethod_AES256_CTR)
 }
