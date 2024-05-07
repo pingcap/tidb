@@ -853,6 +853,10 @@ func TestAlterRangePlacementPolicy(t *testing.T) {
 	require.Equal(t, 1, len(bundle.Rules))
 	require.Equal(t, 0, len(bundle.Rules[0].LocationLabels))
 	tk.MustExec("alter range meta placement policy fiveReplicas")
+	tk.MustQuery(`show placement;`).Sort().Check(testkit.Rows(
+		"POLICY fiveReplicas FOLLOWERS=4 NULL",
+		"RANGE TiDB_GLOBAL FOLLOWERS=4 PENDING",
+		"RANGE TiDB_META FOLLOWERS=4 PENDING"))
 	bundle, err = infosync.GetRuleBundle(context.TODO(), placement.TiDBBundleRangePrefixForMeta)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(bundle.Rules))
@@ -860,6 +864,10 @@ func TestAlterRangePlacementPolicy(t *testing.T) {
 
 	// Test Issue #51712
 	tk.MustExec("alter placement policy fiveReplicas followers=4 SURVIVAL_PREFERENCES=\"[region]\"")
+	tk.MustQuery(`show placement;`).Sort().Check(testkit.Rows(
+		"POLICY fiveReplicas FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[region]\" NULL",
+		"RANGE TiDB_GLOBAL FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[region]\" PENDING",
+		"RANGE TiDB_META FOLLOWERS=4 SURVIVAL_PREFERENCES=\"[region]\" PENDING"))
 	bundle, err = infosync.GetRuleBundle(context.TODO(), placement.TiDBBundleRangePrefixForGlobal)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(bundle.Rules))
