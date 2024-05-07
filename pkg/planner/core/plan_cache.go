@@ -842,8 +842,7 @@ func IsPointGetPlanShortPathOK(sctx sessionctx.Context, is infoschema.InfoSchema
 		stmt.PointGet.ColumnInfos = nil
 		return false
 	}
-	// maybe we'd better check cached plan type here, current
-	// only point select/update will be cached, see "getPhysicalPlan" func
+	// only support simple PointGet Plan now
 	switch stmt.PointGet.Plan.(type) {
 	case *PointGetPlan:
 		return true
