@@ -1016,12 +1016,9 @@ func (m *memIndexMergeReader) getMemRowsIter(ctx context.Context) (memRowsIter, 
 	return &defaultRowsIter{data: data}, nil
 }
 
-func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
-	r, ctx := tracing.StartRegionEx(ctx, "memIndexMergeReader.getMemRows")
-	defer r.End()
-
-	var err error
+func (m *memIndexMergeReader) getHandles() (handles []kv.Handle, err error) {
 	hMap := kv.NewHandleMap()
+	// loop each memReaders and fill handle map
 	for i, reader := range m.memReaders {
 		// [partitionNum][rangeNum]
 		var readerKvRanges [][]kv.KeyRange
@@ -1039,8 +1036,8 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 			default:
 				return nil, errors.New("memReader have to be memTableReader or memIndexReader")
 			}
-			var handles []kv.Handle
-			if handles, err = reader.getMemRowsHandle(); err != nil {
+			handles, err := reader.getMemRowsHandle()
+			if err != nil {
 				return nil, err
 			}
 			// Filter same row.
@@ -1059,7 +1056,7 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 		}
 	}
 
-	var handles []kv.Handle
+	// process handle map, return handles meets the requirements (union or intersection)
 	hMap.Range(func(h kv.Handle, val any) bool {
 		if m.isIntersection {
 			if *(val.(*int)) == len(m.memReaders) {
@@ -1071,8 +1068,16 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 		return true
 	})
 
-	if len(handles) == 0 {
-		return nil, nil
+	return handles, nil
+}
+
+func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, error) {
+	r, ctx := tracing.StartRegionEx(ctx, "memIndexMergeReader.getMemRows")
+	defer r.End()
+
+	handles, err := m.getHandles()
+	if err != nil || len(handles) == 0 {
+		return nil, err
 	}
 
 	var tblKVRanges []kv.KeyRange
