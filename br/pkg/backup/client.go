@@ -983,7 +983,7 @@ mainLoop:
 		inCompleteRanges := iter.GetIncompleteRanges()
 		if len(inCompleteRanges) == 0 {
 			// all range backuped
-			break
+			return nil
 		}
 
 		round += 1
@@ -1081,7 +1081,6 @@ mainLoop:
 			}
 		}
 	}
-	return nil
 }
 
 func collectRangeFiles(progressRangeTree *rtree.ProgressRangeTree, metaWriter *metautil.MetaWriter) error {
