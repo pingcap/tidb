@@ -1355,6 +1355,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader exec.Executor, v *plan
 				}
 			}
 		}
+		us.partitionIDMap = x.partitionIDMap
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -3848,6 +3849,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	isCorColInPartialFilters := make([]bool, 0, partialPlanCount)
 	isCorColInPartialAccess := make([]bool, 0, partialPlanCount)
+	hasGlobalIndex := false
 	for i := 0; i < partialPlanCount; i++ {
 		var tempReq *tipb.DAGRequest
 		var err error
@@ -3856,6 +3858,9 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i])
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
+			if is.Index.Global {
+				hasGlobalIndex = true
+			}
 		} else {
 			ts := v.PartialPlans[i][0].(*plannercore.PhysicalTableScan)
 			tempReq, _, err = buildTableReq(b, len(ts.Columns), v.PartialPlans[i])
@@ -3913,6 +3918,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		byItems:                  v.ByItems,
 		pushedLimit:              v.PushedLimit,
 		keepOrder:                v.KeepOrder,
+		hasGlobalIndex:           hasGlobalIndex,
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
@@ -3954,10 +3960,14 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	}
 	ret.ranges = make([][]*ranger.Range, 0, len(v.PartialPlans))
 	sctx := b.ctx.GetSessionVars().StmtCtx
+	hasGlobalIndex := false
 	for i := 0; i < len(v.PartialPlans); i++ {
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
 			ret.ranges = append(ret.ranges, is.Ranges)
 			sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
+			if is.Index.Global {
+				hasGlobalIndex = true
+			}
 		} else {
 			ret.ranges = append(ret.ranges, v.PartialPlans[i][0].(*plannercore.PhysicalTableScan).Ranges)
 			if ret.table.Meta().IsCommonHandle {
@@ -3984,6 +3994,12 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 		return nil
 	}
 	ret.partitionTableMode, ret.prunedPartitions = true, partitions
+	if hasGlobalIndex {
+		ret.partitionIDMap = make(map[int64]struct{})
+		for _, p := range partitions {
+			ret.partitionIDMap[p.GetPhysicalID()] = struct{}{}
+		}
+	}
 	return ret
 }
 

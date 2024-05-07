@@ -1614,7 +1614,10 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		if partPath.IsTablePath() {
 			scan = ds.convertToPartialTableScan(prop, partPath, candidate.isMatchProp, byItems)
 		} else {
-			scan = ds.convertToPartialIndexScan(prop, partPath, candidate.isMatchProp, byItems)
+			scan, err = ds.convertToPartialIndexScan(&cop.physPlanPartInfo, prop, partPath, candidate.isMatchProp, byItems)
+			if err != nil {
+				return invalidTask, err
+			}
 		}
 		scans = append(scans, scan)
 	}
@@ -1659,7 +1662,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	return task, nil
 }
 
-func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (indexPlan base.PhysicalPlan) {
+func (ds *DataSource) convertToPartialIndexScan(physPlanPartInfo *PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp bool, byItems []*util.ByItems) (base.PhysicalPlan, error) {
 	is := ds.getOriginalPhysicalIndexScan(prop, path, matchProp, false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
@@ -1670,6 +1673,14 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		// Add sort items for index scan for merge-sort operation between partitions.
 		is.ByItems = byItems
 	}
+
+	// Add a `Selection` for `IndexScan` with global index.
+	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
+	indexConds, err := is.addSelectionConditionForGlobalIndex(ds, physPlanPartInfo, indexConds)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(indexConds) > 0 {
 		var selectivity float64
 		if path.CountAfterAccess > 0 {
@@ -1683,10 +1694,9 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		}
 		indexPlan := PhysicalSelection{Conditions: indexConds}.Init(is.SCtx(), stats, ds.QueryBlockOffset())
 		indexPlan.SetChildren(is)
-		return indexPlan
+		return indexPlan, nil
 	}
-	indexPlan = is
-	return indexPlan
+	return is, nil
 }
 
 func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool {
@@ -2265,7 +2275,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *DataSou
 	copTask.rootTaskConds = append(copTask.rootTaskConds, newRootConds...)
 
 	// Add a `Selection` for `IndexScan` with global index.
-	// It should pushdown to TiKV, DataSource schema doesn't contain this column.
+	// It should pushdown to TiKV, DataSource schema doesn't contain partition id column.
 	indexConds, err := is.addSelectionConditionForGlobalIndex(p, &copTask.physPlanPartInfo, indexConds)
 	if err != nil {
 		return err
